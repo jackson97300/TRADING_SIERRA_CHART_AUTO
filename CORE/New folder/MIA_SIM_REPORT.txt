@@ -1,0 +1,98 @@
+╔══════════════════════════════════════════════════════════════╗
+║             MIA SIM — RAPPORT DE BACKTEST                   ║
+╚══════════════════════════════════════════════════════════════╝
+
+  ── RÉSULTATS PAR JOUR ──
+
+  Date       Sym  Trades    W/L    WR      PnL     PF     Avg   MaxDD Halt
+  ----------------------------------------------------------------------
+  20260313    NQ     10  5/ 5    50%  $   +199  1.74 $   +20 $  151  
+  20260313    ES     10  5/ 5    50%  $    +31  2.43 $    +3 $   14  
+
+  ── TOTAUX ──
+
+  Jours:          1
+  Symboles:       ES, NQ
+  Trades:         20 (20.0/jour)
+  Win/Loss:       10/10
+  Win Rate:       50%
+  PnL total:      $+230
+  PnL/jour:       $+230
+  Profit Factor:  1.79
+  Avg win:        $+52
+  Avg loss:       $-29
+  Avg trade:      $+11.5
+  Max Drawdown:   $151
+
+  ── PAR SYMBOLE ──
+
+  Sym    Trades    WR       PnL      PF      Avg
+  --------------------------------------------------
+  ES        10    50% $     +31    2.43 $     +3
+  NQ        10    50% $    +199    1.74 $    +20
+
+  ── DÉTAIL DES TRADES ──
+
+    # Sym   Bar   Dir Phase      Zone         Wall             SL           M1           M2           M3   Total
+  -------------------------------------------------------------------------------------------------------------------
+    1  NQ   508 SHORT London     RVOL_ABS_SELL [EDGE_SELL+COLOR2_DN+RVOL_ABS_SELL+VOL_CLIMAX_SELL] SESS_HVN_UP     48t TP1(142t)(+142t) TRAIL(100t)(+100t)   EOB(+129t) $  +186
+    2  NQ   513 SHORT London     EXT_EDGE_SELL [EDGE_SELL+COLOR2_DN+BAR_CONF] SESS_HVN_UP     36t TP1(39t)(+39t) TRAIL(65t)(+65t)     EOB(-1t) $   +52
+    3  NQ   527 SHORT London     EXT_EDGE_SELL [EDGE_SELL+COLOR2_DN+BAR_CONF+EXT_LONG_UP] SESS_HVN_UP     35t     SL(-35t)     SL(-35t)     SL(-35t) $   -52
+    4  NQ   536 SHORT London     EXT_EDGE_SELL [EDGE_SELL+COLOR2_DN+BAR_CONF+EXT_LONG_UP] SESS_HVN_UP     43t     SL(-43t)     SL(-43t)     SL(-43t) $   -64
+    5  NQ   549 SHORT London     EXT_EDGE_SELL [EDGE_SELL+COLOR2_DN] SESS_LVN_UP     39t TP1(48t)(+48t) TRAIL(52t)(+52t)     SL(-39t) $   +30
+    6  NQ   840 SHORT Open_30m   RVOL_ABS_SELL[CONTRA_DB] [EDGE_SELL+COLOR2_DN+BAR_CONF+RVOL_ABS_SELL+VA_TOP+VOL_CLIMAX_SELL+CONTRA_DB] OPEN_CASH+OVN_HIGH+CUR_VAH  48t TP1(58t)(+58t) TRAIL(132t)(+132t) TP3(59t)(+59t) $  +125
+    7  NQ   844 SHORT Open_30m   RANGE_VA_TOP [EDGE_SELL+COLOR2_DN+BAR_CONF+VA_TOP] VWAP+1SD+OPEN_CASH  36t     SL(-36t)     SL(-36t)     SL(-36t) $   -54
+    8  NQ   864 SHORT Open_30m   EXT_EDGE_SELL [EDGE_SELL+COLOR2_DN+BAR_CONF] GEX_UP          47t TP1(47t)(+47t)     SL(-47t)     SL(-47t) $   -24
+    9  NQ   872 SHORT Open_30m   PREV_VPOC [COLOR2_DN] EXT_EDGE_SELL   49t     SL(-49t)     SL(-49t)     SL(-49t) $   -74
+   10  NQ   882 SHORT Open_30m   RANGE_VA_TOP [EDGE_SELL+COLOR2_DN+BAR_CONF+VA_TOP] OPEN_CASH       37t TP1(39t)(+39t) TRAIL(71t)(+71t) TP3(40t)(+40t) $   +75
+   11  ES   513 SHORT London     EXT_EDGE_SELL [EDGE_SELL+COLOR2_DN] GEX_UP          13t TP1(13t)(+13t) TRAIL(19t)(+19t)     EOB(+1t) $    +4
+   12  ES   527 SHORT London     EXT_EDGE_SELL [EDGE_SELL+COLOR2_DN+EXT_LONG_UP] GEX_UP          18t     SL(-18t) TRAIL(9t)(+9t)     SL(-18t) $    -3
+   13  ES   533 SHORT London     EXT_EDGE_SELL [EDGE_SELL+COLOR2_DN+EXT_LONG_UP] SESS_LVN_UP     20t     SL(-20t) TRAIL(16t)(+16t)     SL(-20t) $    -3
+   14  ES   566 SHORT London     IB_HIGH[DT@IB_HIGH[MODERATE]] [COLOR2_DN+EXT_LONG_UP+DT@IB_HIGH] SESS_LVN_UP     14t     SL(-14t)     SL(-14t)     SL(-14t) $    -5
+   15  ES   576 SHORT London     GEX_UP [COLOR2_DN+EXT_LONG_UP] SESS_LVN_UP     18t     EOB(+9t) TRAIL(4t)(+4t)     EOB(+9t) $    +3
+   16  ES   840 SHORT Open_30m   RVOL_ABS_SELL[DT@PVAL+abs[STRONG]] [EDGE_SELL+COLOR2_DN+RVOL_ABS_SELL+EXT_LONG_UP+DT@PVAL] EXT_EDGE_SELL   13t     SL(-13t)     SL(-13t)     SL(-13t) $    -5
+   17  ES   854 SHORT Open_30m   EXT_EDGE_SELL [EDGE_SELL+COLOR2_DN] SESS_HIGH       17t TP1(35t)(+35t) TRAIL(50t)(+50t) TP3(52t)(+52t) $   +17
+   18  ES   859 SHORT Open_30m   MQ_CALL0D [EDGE_SELL+COLOR2_DN] SESS_LVN_UP     14t     SL(-14t)     SL(-14t)     SL(-14t) $    -5
+   19  ES   865 SHORT Open_30m   MQ_CALL0D [EDGE_SELL+COLOR2_DN+EXT_LONG_UP] GEX_UP          12t TP1(33t)(+33t) TRAIL(8t)(+8t) TP3(50t)(+50t) $   +11
+   20  ES   872 SHORT Open_30m   MQ_CALL0D[DT@HVN_ABOVE+abs[STRONG]] [COLOR2_DN+EXT_LONG_UP+DT@HVN_ABOVE] SESS_HVN_UP     18t TP1(30t)(+30t) TRAIL(73t)(+73t) TP3(36t)(+36t) $   +17
+
+  ── PAR PHASE ──
+
+  Phase         Trades    WR      PnL     PF     Avg
+  --------------------------------------------------
+  London           10    50% $   +146  2.13 $   +15
+  Open_30m         10    50% $    +85  1.53 $    +8
+
+  ── PAR MUR SL ──
+
+  SESS_HVN_UP         : 5 trades, 3W, $+137
+  SESS_LVN_UP         : 5 trades, 2W, $+20
+  GEX_UP              : 4 trades, 2W, $-11
+  EXT_EDGE_SELL       : 2 trades, 0W, $-78
+  OPEN_CASH+OVN_HIGH+CUR_VAH: 1 trades, 1W, $+125
+  VWAP+1SD+OPEN_CASH  : 1 trades, 0W, $-54
+  OPEN_CASH           : 1 trades, 1W, $+75
+  SESS_HIGH           : 1 trades, 1W, $+17
+
+  ── EQUITY CURVE ──
+
+  T 1 $   +186 ██████████████████████████
+  T 2 $   +237 ██████████████████████████████████
+  T 3 $   +184 ██████████████████████████
+  T 4 $   +120 █████████████████
+  T 5 $   +150 █████████████████████
+  T 6 $   +275 ████████████████████████████████████████
+  T 7 $   +221 ████████████████████████████████
+  T 8 $   +198 ████████████████████████████
+  T 9 $   +124 ██████████████████
+  T10 $   +199 ████████████████████████████
+  T11 $   +203 █████████████████████████████
+  T12 $   +200 █████████████████████████████
+  T13 $   +197 ████████████████████████████
+  T14 $   +192 ███████████████████████████
+  T15 $   +194 ████████████████████████████
+  T16 $   +190 ███████████████████████████
+  T17 $   +207 ██████████████████████████████
+  T18 $   +202 █████████████████████████████
+  T19 $   +213 ██████████████████████████████
+  T20 $   +230 █████████████████████████████████

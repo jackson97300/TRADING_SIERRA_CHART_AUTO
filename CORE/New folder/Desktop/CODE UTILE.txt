@@ -1,0 +1,5 @@
+# Arrêt propre (recommandé)
+python scripts/stop_all_processes.py
+
+# Arrêt forcé immédiat (si nécessaire)
+python scripts/stop_all_processes.py --force

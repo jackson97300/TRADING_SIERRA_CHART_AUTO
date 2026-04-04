@@ -1,0 +1,170 @@
+======================================================================
+  ETUDE VWAP SD BANDS — MIMETISME & MEAN REVERSION
+  MIA Trading System
+======================================================================
+
+======================================================================
+  NQ — 3861 barres (7 jours)
+======================================================================
+
+  A. DISTRIBUTION PAR ZONE
+        Zone      N      %      r10      r30
+  ------------------------------------------
+       ~-2SD     73   1.9%    -6.7t   -13.5t
+       ~-1SD    242   6.3%    -4.7t    -4.6t
+       ~VWAP   3371  87.3%    -0.1t    -0.5t
+       ~+1SD    164   4.2%    -2.0t    -7.0t
+       ~+2SD     11   0.3%   +70.2t   +41.1t
+
+  B. REGIME VWAP
+    RANGE       :  2002 (51.9%)
+    TREND UP    :   632 (16.4%)
+    TREND DN    :  1227 (31.8%)
+
+  C. MEAN REVERSION PAR REGIME
+  (Separe le signal du biais macro)
+
+  -- RANGE (2002 barres) --
+                        Signal    N   WR10   WR30   Avg30
+  -------------------------------------------------------
+           Touch -2SD -> monte   11  27.3%  27.3%  -45.8t
+           Touch -1SD -> monte  116  37.1%  31.0%   -2.2t
+         Touch +1SD -> descend   79  69.6%  82.3%  -12.2t ***
+         Touch +2SD -> descend  <3b
+
+  -- TREND UP (632 barres) --
+                        Signal    N   WR10   WR30   Avg30
+  -------------------------------------------------------
+           Touch -2SD -> monte  <3b
+           Touch -1SD -> monte    6  16.7% 100.0%  +26.8t ***
+         Touch +1SD -> descend   46  54.3%  54.3%   +2.1t
+         Touch +2SD -> descend  <3b
+
+  -- TREND DN (1227 barres) --
+                        Signal    N   WR10   WR30   Avg30
+  -------------------------------------------------------
+           Touch -2SD -> monte   19  26.3%  26.3%   +0.9t
+           Touch -1SD -> monte  113  31.9%  28.4%   -9.2t
+         Touch +1SD -> descend   39  48.7%  56.4%   -7.1t *
+         Touch +2SD -> descend   11  27.3%  27.3%  +23.4t
+
+  D. TRAVERSEE COMPLETE (mimetisme, 60 barres)
+   RANGE -2SD-> (N=11)
+    -> VWAP :   1/11 =   9.1%
+    -> +1SD :   1/11 =   9.1%
+    -> +2SD :   1/11 =   9.1%
+    TOUS -2SD-> (N=30)
+    -> VWAP :   6/30 =  20.0%
+    -> +1SD :   6/30 =  20.0%
+    -> +2SD :   4/30 =  13.3%
+    TOUS +2SD-> (N=12)
+    -> VWAP :   5/12 =  41.7%
+    -> -1SD :   5/12 =  41.7%
+    -> -2SD :   5/12 =  41.7%
+
+  E. COMBOS (bande + confirmation)
+                                   Combo    N   WR10   Avg10
+  ----------------------------------------------------------
+                               -2SD seul   30  26.7%  -11.6t
+                              -2SD+RANGE   11  27.3%  -29.3t
+                               +2SD seul   12  33.3%  +34.8t
+                               +2SD+RVOL    2  50.0%  +61.2t
+
+  F. SCORING ENGINE PERFORMANCE
+    LONG  :  256b WR=37.1% avg=-4.0t
+    SHORT :  211b WR=62.1% avg=-0.5t
+
+======================================================================
+  ES — 3393 barres (6 jours)
+======================================================================
+
+  A. DISTRIBUTION PAR ZONE
+        Zone      N      %      r10      r30
+  ------------------------------------------
+       ~-2SD    396  11.7%    -0.7t    -2.0t
+       ~-1SD    708  20.9%    +1.3t    +2.3t
+       ~VWAP   1796  52.9%    -0.4t    -0.4t
+       ~+1SD    479  14.1%    -0.5t    -2.7t
+       ~+2SD     14   0.4%   -10.9t   -11.6t
+
+  B. REGIME VWAP
+    RANGE       :  2824 (83.2%)
+    TREND UP    :   318 (9.4%)
+    TREND DN    :   251 (7.4%)
+
+  C. MEAN REVERSION PAR REGIME
+  (Separe le signal du biais macro)
+
+  -- RANGE (2824 barres) --
+                        Signal    N   WR10   WR30   Avg30
+  -------------------------------------------------------
+           Touch -2SD -> monte  133  44.4%  57.5%   +0.7t *
+           Touch -1SD -> monte  683  45.1%  41.8%   +2.7t
+         Touch +1SD -> descend  435  53.8%  62.1%   -0.8t ***
+         Touch +2SD -> descend    9 100.0% 100.0%  -12.8t ***
+
+  -- TREND UP (318 barres) --
+                        Signal    N   WR10   WR30   Avg30
+  -------------------------------------------------------
+           Touch -2SD -> monte  <3b
+           Touch -1SD -> monte  <3b
+         Touch +1SD -> descend   31  87.1%  93.5%  -18.2t ***
+         Touch +2SD -> descend  <3b
+
+  -- TREND DN (251 barres) --
+                        Signal    N   WR10   WR30   Avg30
+  -------------------------------------------------------
+           Touch -2SD -> monte   80  36.2%  22.5%   -5.2t
+           Touch -1SD -> monte   23  26.1%  21.7%   -8.8t
+         Touch +1SD -> descend   13  30.8%  69.2%  -27.3t ***
+         Touch +2SD -> descend    8  87.5% 100.0%  -13.4t ***
+
+  D. TRAVERSEE COMPLETE (mimetisme, 60 barres)
+   RANGE -2SD-> (N=120)
+    -> VWAP :  30/120 =  25.0%
+    -> +1SD :  29/120 =  24.2%
+    -> +2SD :   7/120 =   5.8%
+   RANGE +2SD-> (N=8)
+    -> VWAP :   3/8 =  37.5%
+    -> -1SD :   3/8 =  37.5%
+    -> -2SD :   2/8 =  25.0%
+    TOUS -2SD-> (N=189)
+    -> VWAP :  46/189 =  24.3%
+    -> +1SD :  41/189 =  21.7%
+    -> +2SD :  11/189 =   5.8%
+    TOUS +2SD-> (N=16)
+    -> VWAP :  11/16 =  68.8%
+    -> -1SD :  11/16 =  68.8%
+    -> -2SD :  10/16 =  62.5%
+
+  E. COMBOS (bande + confirmation)
+                                   Combo    N   WR10   Avg10
+  ----------------------------------------------------------
+                               -2SD seul  213  41.3%   -0.7t
+                               -2SD+RVOL   28  53.6%   +1.3t
+                             -2SD+absorb    5  60.0%   -0.7t ***
+                              -2SD+RANGE  133  44.4%   -0.6t
+                       -2SD+RANGE+absorb    2  50.0%   -1.8t
+                               +2SD seul   17  94.1%   -8.4t ***
+                               +2SD+RVOL    5 100.0%   -6.5t ***
+                              +2SD+RANGE    9 100.0%  -12.2t ***
+
+  F. SCORING ENGINE PERFORMANCE
+    LONG  : 1065b WR=44.9% avg=+0.6t
+    SHORT :  500b WR=56.2% avg=-0.6t
+
+======================================================================
+  CONCLUSION
+======================================================================
+
+  1. Le mimetisme -2SD <-> +2SD EXISTE en RANGE, PAS en TREND.
+  2. Le slope VWAP est le filtre N1 : plat=fade, pentu=trend.
+  3. Confirmations (RVOL, absorption) augmentent le WR de 10-20%.
+  4. Target VWAP > target bande opposee (plus conservateur, plus fiable).
+  5. Biais macro (geopolitique) fausse les resultats bruts.
+     TOUJOURS separer par regime avant de conclure.
+  6. Setup recommande (a valider avec plus de donnees) :
+     ENTRY: Touch +/-2SD + RANGE regime + confirmation
+     TARGET: VWAP / +/-1SD oppose
+     STOP: Au-dela du rejet + 1 ATR
+     AVOID: Trend days, news macro, expansion des bandes

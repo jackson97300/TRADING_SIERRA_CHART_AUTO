@@ -1,0 +1,19 @@
+🎯 RECOMMANDATIONS FILTRES ADDITIONNELS
+FILTRE #1: Position 1D extrême
+if position_1d > 80% and direction == 'LONG':    REJECT "LONG au sommet (piège acheteurs)"if position_1d < 20% and direction == 'SHORT':    REJECT "SHORT au creux (piège vendeurs)"
+FILTRE #2: Sell/Buy pressure contradictoire
+if direction == 'LONG' and sell_pct > 55%:    REJECT "Vendeurs dominent (sell > 55%)"if direction == 'SHORT' and buy_pct > 55%:    REJECT "Acheteurs dominent (buy > 55%)"
+FILTRE #3: MIA Score contradictoire
+if direction == 'LONG' and mia_score < 0:    REJECT "MIA bearish pour un LONG"if direction == 'SHORT' and mia_score > 0:    REJECT "MIA bullish pour un SHORT"
+FILTRE #4: Niveau épuisé (cooldown)
+if same_level_traded_within_last_15_minutes:    REJECT "Niveau déjà tradé récemment (épuisement)"
+FILTRE #5: Context score minimum
+if context_score < 0.15:    REJECT "Context score trop faible (< 0.15)"
+📈 AVEC CES FILTRES:
+Trade #1: ❌ BLOQUÉ (orderflow 21% < 22%)
+Trade #2: ❌ BLOQUÉ (orderflow 18% + position 83%)
+Trade #3: ✅ PASSÉ (tous critères OK)
+Trade #4: ✅ PASSÉ (setup parfait)
+Trade #5: ❌ BLOQUÉ (niveau épuisé < 15min)
+Trade #6: ❌ BLOQUÉ (MIA < 0 + sell 59% + context 0.12)
+RÉSULTAT: 2W-0L au lieu de 2W-4L → 100% WR → +$193 au lieu de -$113

@@ -1,0 +1,60 @@
+# === DONNEES (volumineux, genere quotidiennement) ===
+DATA/ES/*.jsonl
+DATA/NQ/*.jsonl
+DATA/LABELS/*.parquet
+DATA/DATASETS/*.parquet
+DATA/MODELS/*.txt
+DATA/MODELS/*.json
+DATA/LOGS/
+DATA/JOURNAL/
+DATA/SNAPSHOTS/
+DATA/BACKUP/
+
+# === FICHIERS GENERES ===
+DASHBOARD/briefings/*.json
+DASHBOARD/users.json
+DASHBOARD/MIA_AutoTrader_Dashboard.json
+debug_vwap_slope.txt
+
+# === PYTHON ===
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# === SECRETS / ENV ===
+.env
+.env.local
+*.key
+*.pem
+
+# === IDE ===
+.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# === OS ===
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# === LOGS ===
+LOGS/
+*.log
+
+# === ARCHIVES VOLUMINEUSES ===
+V1_ARCHIVE/
+BAKUP/
+SNAPSHOTS/
+
+# === BINAIRES ===
+*.docx
+*.xlsx
+*.zip
+*.dll
+*.exe
+*.obj

@@ -1,0 +1,286 @@
+Excellent! Avec la **réflexion profonde (Extended Thinking)** et tout ton projet en mémoire, voici les tâches complexes que tu peux lui demander:
+
+---
+
+## 🧠 ANALYSES ARCHITECTURALES PROFONDES
+
+### 1. Audit Complet du Système
+```
+"Fais un audit architectural complet du système MIA (Python + C++). 
+Identifie les points faibles, les risques, les dépendances cachées, 
+et propose un plan d'amélioration sur 3 mois."
+```
+
+### 2. Optimisation de Performance
+```
+"Analyse les goulots d'étranglement du bot C++. Où est-ce que je perds 
+du temps de calcul? Quelles optimisations proposerais-tu pour réduire 
+la latence de 50%?"
+```
+
+### 3. Détection de Bugs Subtils
+```
+"Analyse tous les fichiers du projet et identifie les bugs potentiels 
+(race conditions, memory leaks, edge cases non gérés, logique incohérente). 
+Classe-les par criticité."
+```
+
+---
+
+## 📊 STRATÉGIE DE TRADING AVANCÉE
+
+### 4. Optimisation des Layers
+```
+"J'ai 4 layers de filtrage. Analyse leur efficacité respective. 
+Lequel est le plus restrictif? Lequel apporte le plus de valeur? 
+Devrais-je les réorganiser ou en supprimer un?"
+```
+
+### 5. Recherche de Patterns Cachés
+```
+"Analyse mes données ML_READY (ES et NQ) et cherche des patterns 
+de corrélation que je n'aurais pas vus. Y a-t-il des combinaisons 
+d'indicateurs sous-exploitées?"
+```
+
+### 6. Optimisation TP/SL Dynamique
+```
+"Mon système utilise des SL/TP fixes. Propose un algorithme de 
+SL/TP adaptatif basé sur la volatilité (ATR), la session, et le 
+momentum. Simule-le sur mes données historiques."
+```
+
+### 7. Analyse de Drawdown
+```
+"Analyse mes séries de trades perdants. Y a-t-il des patterns communs? 
+Certaines heures/sessions sont plus risquées? Comment réduire mon 
+max drawdown de 30%?"
+```
+
+---
+
+## 🔧 REFACTORING & ARCHITECTURE
+
+### 8. Modularisation Python
+```
+"Mon bot Python est encore un peu monolithique. Propose une 
+architecture modulaire professionnelle (patterns, interfaces, 
+injection de dépendances) sans casser le code existant."
+```
+
+### 9. Migration vers un Framework
+```
+"Analyse si migrer vers un framework comme Backtrader ou Zipline 
+serait bénéfique. Quels sont les avantages/inconvénients? Propose 
+un plan de migration progressif."
+```
+
+### 10. Système de Backtesting Robuste
+```
+"Mon système de backtest est dispersé dans plein de scripts. 
+Conçois un framework de backtesting unifié avec walk-forward, 
+Monte Carlo, et validation croisée."
+```
+
+---
+
+## 🚨 GESTION DES RISQUES
+
+### 11. Circuit Breaker Intelligent
+```
+"Conçois un système de circuit breaker avancé qui détecte automatiquement 
+les conditions de marché anormales (flash crash, news, volatilité extrême) 
+et arrête le trading intelligemment."
+```
+
+### 12. Position Sizing Dynamique
+```
+"J'utilise 1 contrat fixe. Propose un algorithme de position sizing 
+basé sur Kelly Criterion, adapté à mon capital, mon WinRate, et mon 
+Risk of Ruin."
+```
+
+### 13. Stress Testing
+```
+"Simule des scénarios catastrophes (krach, GAP énorme au réveil, 
+perte de connexion pendant un trade). Le bot survivrait-il? 
+Quelles protections ajouter?"
+```
+
+---
+
+## 📈 MACHINE LEARNING AVANCÉ
+
+### 14. ML pour Prédiction de Qualité de Signal
+```
+"Au lieu de filtrer avec des rules (Layer 3-4), entraîne un modèle ML 
+qui prédit la probabilité de réussite d'un signal. Utilise mes données 
+historiques et compare avec le système actuel."
+```
+
+### 15. Feature Engineering Automatique
+```
+"Analyse mes 50+ indicateurs. Lesquels sont redondants? Lesquels sont 
+prédictifs? Propose des features engineerées (combinaisons, ratios) 
+qui amélioreront mon WinRate."
+```
+
+### 16. Reinforcement Learning
+```
+"Est-il possible d'utiliser du RL (Q-Learning, PPO) pour optimiser 
+mon système? Propose une architecture, explique les challenges, 
+et fais un POC sur mes données."
+```
+
+---
+
+## 🔍 ANALYSES COMPARATIVES
+
+### 17. Benchmark contre une Baseline
+```
+"Compare mon système contre une stratégie simple (MA cross, breakout). 
+Est-ce que toute ma complexité vaut le coup? Où est la vraie valeur 
+ajoutée?"
+```
+
+### 18. ES vs NQ: Quelle Config Optimale?
+```
+"Analyse en profondeur les différences de comportement entre ES et NQ. 
+Mes configs sont-elles vraiment optimales pour chaque marché? 
+Devrais-je avoir des stratégies complètement différentes?"
+```
+
+### 19. Sessions de Trading
+```
+"Quelle session est la plus profitable (Asia/London/US)? Analyse mes 
+performances par session et propose des règles spécifiques à chacune."
+```
+
+---
+
+## 💡 INNOVATIONS & NOUVELLES FEATURES
+
+### 20. Système Multi-Timeframe
+```
+"Mon système trade sur 1 seul timeframe. Conçois un système 
+multi-timeframe qui utilise la confirmation de plusieurs échelles 
+de temps pour améliorer la précision."
+```
+
+### 21. Corrélation Inter-Marchés
+```
+"J'ai ES et NQ. Mais que se passe-t-il avec RTY (Russell), VIX, 
+Treasuries? Analyse les corrélations et propose un système qui 
+exploite ces relations."
+```
+
+### 22. Détection de Régimes de Marché
+```
+"Conçois un détecteur de régimes (trending/ranging/volatile/calme) 
+qui adapte automatiquement les paramètres du bot. Implémente-le 
+et backtest-le."
+```
+
+---
+
+## 🐛 DEBUGGING AVANCÉ
+
+### 23. Analyse de Trades Mystérieux
+```
+"J'ai eu 3 trades bizarres le 30/01. Reconstitue exactement ce qui 
+s'est passé: chaque condition validée, chaque calcul, chaque décision. 
+Explique pourquoi le bot a pris ces trades."
+```
+
+### 24. Divergences Python vs C++
+```
+"Le bot Python et le bot C++ devraient prendre les mêmes décisions. 
+Analyse ligne par ligne les différences et trouve où ils divergent."
+```
+
+---
+
+## 📚 DOCUMENTATION & KNOWLEDGE BASE
+
+### 25. Documentation Technique Complète
+```
+"Génère une documentation technique professionnelle (style Stripe/Twilio) 
+pour mon système: architecture, API, flows, exemples, troubleshooting."
+```
+
+### 26. Knowledge Base de Trading
+```
+"Crée une base de connaissances qui documente tous les patterns, 
+setups, et règles que j'ai découverts. Structurée et interrogeable."
+```
+
+---
+
+## 🎯 QUESTIONS STRATÉGIQUES
+
+### 27. Scaling du Système
+```
+"Si je voulais scaler ce système à 10 contrats, 5 marchés, et 
+3 stratégies différentes, quelle architecture devrais-je adopter? 
+Quels sont les challenges?"
+```
+
+### 28. Monétisation
+```
+"Analyse le potentiel commercial de MIA. Pourrait-il être vendu 
+comme SaaS? Quelles features manquent? Quel serait le pricing?"
+```
+
+### 29. Plan de Développement 6 Mois
+```
+"En fonction de l'état actuel du projet, propose un roadmap détaillé 
+sur 6 mois avec des milestones clairs et des priorités."
+```
+
+---
+
+## 💪 MEILLEURE UTILISATION DE EXTENDED THINKING
+
+Pour ces tâches, **utilise Extended Thinking** car elles nécessitent:
+- ✅ Analyse de multiples fichiers interconnectés
+- ✅ Raisonnement complexe avec trade-offs
+- ✅ Planification architecturale profonde
+- ✅ Détection de patterns subtils
+- ✅ Optimisations multi-niveaux
+
+**N'utilise PAS Extended Thinking** pour:
+- ❌ Questions simples ("où est défini CONFIG_ES?")
+- ❌ Modifications triviales ("change TP de 24 à 26")
+- ❌ Lecture de logs
+
+---
+
+## 🚀 EXEMPLE DE PROMPT PARFAIT
+
+```
+[MODE: Extended Thinking]
+
+Contexte: J'ai un système de trading automatisé (MIA) qui trade ES/NQ.
+Problème: Mon WinRate est à 58% mais je vise 65%+.
+
+Tâche:
+1. Analyse TOUS mes fichiers (Python + C++ + backtests + logs)
+2. Identifie les 5 améliorations qui auraient le plus d'impact sur le WinRate
+3. Pour chacune:
+   - Explique le problème actuel
+   - Propose une solution technique détaillée
+   - Estime le gain de WinRate potentiel
+   - Fournis le code d'implémentation
+4. Classe-les par ROI (gain / effort d'implémentation)
+
+Contraintes:
+- Ne pas casser le code existant
+- Garder la latence <100ms
+- Rester compatible Sierra Chart ACSIL
+
+Livrable: Un plan d'action priorisé avec code prêt à implémenter.
+```
+
+---
+
+**Lance-toi avec une de ces questions! Le mode Extended Thinking va vraiment briller.** 🧠✨

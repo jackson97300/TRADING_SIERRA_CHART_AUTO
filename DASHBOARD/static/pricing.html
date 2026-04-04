@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tarifs - MIA IA SYSTEM</title>
+    <meta name="description" content="MIA IA SYSTEM — Choisissez votre plan d'acces aux analyses de marche ES/NQ futures.">
+    <link rel="icon" href="/static/images/favicon.ico" type="image/x-icon">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <style>
+        /* --- Pricing-specific styles --- */
+        body {
+            padding-top: calc(var(--ticker-height) + var(--navbar-height));
+        }
+
+        .pricing-container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 2rem 1rem 3rem;
+        }
+
+        .pricing-header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+        }
+
+        .pricing-title {
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #fff 0%, var(--cyan) 50%, var(--gold) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .pricing-subtitle {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .pricing-disclaimer {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 1rem;
+            background: rgba(245, 158, 11, 0.08);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--warning);
+        }
+
+        /* --- Grid 3 colonnes --- */
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 1.5rem;
+            align-items: start;
+            margin-bottom: 3rem;
+        }
+
+        /* --- Card pricing --- */
+        .pricing-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid var(--glass-border);
+            border-radius: var(--panel-radius);
+            padding: 1.75rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            transition: border-color 0.2s ease, transform 0.2s ease;
+        }
+
+        .pricing-card:hover {
+            border-color: rgba(0, 180, 220, 0.2);
+        }
+
+        .pricing-card-featured {
+            border-color: var(--cyan);
+            transform: scale(1.05);
+            box-shadow: 0 0 40px rgba(0, 180, 220, 0.1);
+            z-index: 2;
+        }
+
+        .pricing-card-featured:hover {
+            border-color: var(--cyan);
+        }
+
+        .pricing-card-badge {
+            margin-bottom: 1rem;
+        }
+
+        .pricing-card-price {
+            margin-bottom: 1rem;
+        }
+
+        .pricing-price-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1;
+        }
+
+        .pricing-price-period {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-left: 0.25rem;
+        }
+
+        .pricing-divider {
+            border: none;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            margin: 0.75rem 0 1rem;
+        }
+
+        /* --- Features list --- */
+        .pricing-features {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.625rem;
+            margin-bottom: 1.5rem;
+            flex: 1;
+        }
+
+        .pricing-features li {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            font-size: 0.8125rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .pricing-check {
+            color: var(--green);
+            font-size: 0.875rem;
+            flex-shrink: 0;
+            margin-top: 0.0625rem;
+        }
+
+        /* --- Boutons --- */
+        .pricing-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 0.625rem 1.5rem;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.875rem;
+            font-weight: 700;
+            border-radius: 9999px;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            text-decoration: none;
+            border: none;
+        }
+
+        .pricing-btn:hover {
+            opacity: 0.85;
+        }
+
+        .pricing-btn-secondary {
+            background: var(--bg-hover);
+            color: var(--text-disabled);
+            cursor: default;
+        }
+
+        .pricing-btn-secondary:hover {
+            opacity: 1;
+        }
+
+        .pricing-btn-primary {
+            background: linear-gradient(135deg, var(--cyan), var(--cyan-dark));
+            color: var(--text-primary);
+        }
+
+        /* --- FAQ --- */
+        .pricing-faq {
+            max-width: 700px;
+            margin: 0 auto 3rem;
+        }
+
+        .pricing-faq-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .pricing-faq-item {
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid var(--glass-border);
+            border-radius: 0.75rem;
+            padding: 1rem 1.25rem;
+            margin-bottom: 0.75rem;
+            cursor: pointer;
+            transition: border-color 0.2s ease;
+        }
+
+        .pricing-faq-item:hover {
+            border-color: rgba(0, 180, 220, 0.2);
+        }
+
+        .pricing-faq-question {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .pricing-faq-arrow {
+            color: var(--text-muted);
+            transition: transform 0.2s ease;
+            font-size: 0.75rem;
+        }
+
+        .pricing-faq-item.open .pricing-faq-arrow {
+            transform: rotate(180deg);
+        }
+
+        .pricing-faq-answer {
+            font-size: 0.8125rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            margin-top: 0.75rem;
+            display: none;
+        }
+
+        .pricing-faq-item.open .pricing-faq-answer {
+            display: block;
+        }
+
+        /* --- Toast pricing --- */
+        .pricing-toast {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid rgba(212, 175, 55, 0.3);
+            border-radius: 0.75rem;
+            padding: 0.875rem 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            min-width: 300px;
+            max-width: 400px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            z-index: 200;
+            animation: toast-in 0.4s ease forwards;
+            pointer-events: auto;
+        }
+
+        .pricing-toast-hidden {
+            display: none;
+        }
+
+        .pricing-toast-icon {
+            font-size: 1.25rem;
+        }
+
+        .pricing-toast-text {
+            font-size: 0.8125rem;
+            color: var(--text-secondary);
+        }
+
+        .pricing-toast-close {
+            background: none;
+            border: none;
+            color: var(--text-disabled);
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 0.25rem;
+            line-height: 1;
+            margin-left: auto;
+        }
+
+        .pricing-toast-close:hover {
+            color: var(--text-secondary);
+        }
+
+        /* --- Responsive --- */
+        @media (max-width: 900px) {
+            .pricing-grid {
+                grid-template-columns: 1fr;
+                max-width: 400px;
+                margin-left: auto;
+                margin-right: auto;
+            }
+
+            .pricing-card-featured {
+                transform: none;
+            }
+
+            .pricing-title {
+                font-size: 1.5rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .navbar-links {
+                display: none;
+            }
+
+            .pricing-toast {
+                min-width: unset;
+                max-width: calc(100vw - 2rem);
+                right: 1rem;
+                left: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ========== Ticker TradingView ========== -->
+    <div id="tv-ticker" style="position:fixed;top:0;left:0;right:0;height:46px;z-index:9999;background:#0a0e17;"></div>
+
+    <!-- ========== Navbar ========== -->
+    <nav class="navbar">
+        <div class="navbar-brand">
+            <img src="/static/images/logo-dark.jpg" alt="MIA Logo" class="navbar-logo" width="36" height="36">
+            <span class="navbar-name">MIA Dashboard</span>
+        </div>
+
+        <div class="navbar-links">
+            <a href="/" class="navbar-link">Dashboard</a>
+            <a href="/briefing" class="navbar-link navbar-link-gold">Briefing</a>
+            <a href="/pricing" class="navbar-link navbar-link-active">Tarifs</a>
+            <a href="https://mia-ia-system.com/education/" class="navbar-link" target="_blank" rel="noopener">Education</a>
+        </div>
+
+        <div class="navbar-right">
+            <div class="navbar-live">
+                <span class="badge badge-green"><span class="dot dot-green"></span> LIVE</span>
+                <span id="navbar-time" class="navbar-time">--:--:--</span>
+            </div>
+            <a href="/" class="navbar-btn-premium">Retour Dashboard</a>
+        </div>
+    </nav>
+
+    <!-- ========== Contenu Pricing ========== -->
+    <div class="pricing-container">
+
+        <!-- Header -->
+        <div class="pricing-header">
+            <h1 class="pricing-title">Choisissez votre plan</h1>
+            <p class="pricing-subtitle">Accedez aux analyses de marche les plus completes</p>
+            <span class="pricing-disclaimer">Outil d'aide a la decision — Pas un conseil en investissement</span>
+        </div>
+
+        <!-- Grille 3 plans -->
+        <div class="pricing-grid">
+
+            <!-- Card 1 : Gratuit -->
+            <div class="pricing-card">
+                <div class="pricing-card-badge">
+                    <span class="badge badge-cyan">ACTUEL</span>
+                </div>
+                <div class="pricing-card-price">
+                    <span class="pricing-price-value">0&euro;</span>
+                    <span class="pricing-price-period">/mois</span>
+                </div>
+                <hr class="pricing-divider">
+                <ul class="pricing-features">
+                    <li><span class="pricing-check">&#10003;</span> Status bot (running/stopped)</li>
+                    <li><span class="pricing-check">&#10003;</span> VIX, ATR, VWAP slope</li>
+                    <li><span class="pricing-check">&#10003;</span> Correlation ES/NQ basique</li>
+                    <li><span class="pricing-check">&#10003;</span> Apercu briefing (3 lignes)</li>
+                    <li><span class="pricing-check">&#10003;</span> Acces education (40 lecons)</li>
+                </ul>
+                <button class="pricing-btn pricing-btn-secondary" disabled>Plan actuel</button>
+            </div>
+
+            <!-- Card 2 : Starter (featured) -->
+            <div class="pricing-card pricing-card-featured">
+                <div class="pricing-card-badge">
+                    <span class="badge badge-cyan" style="background:rgba(0,180,220,0.15);">POPULAIRE</span>
+                </div>
+                <div class="pricing-card-price">
+                    <span class="pricing-price-value">19&euro;</span>
+                    <span class="pricing-price-period">/mois</span>
+                </div>
+                <hr class="pricing-divider">
+                <ul class="pricing-features">
+                    <li><span class="pricing-check">&#10003;</span> Tout du plan Gratuit</li>
+                    <li><span class="pricing-check">&#10003;</span> Contexte marche complet (Open Type, Day Type, IB, Profile)</li>
+                    <li><span class="pricing-check">&#10003;</span> Intermarket complet (AMD, SMT, PO3)</li>
+                    <li><span class="pricing-check">&#10003;</span> Briefing MIA quotidien complet</li>
+                    <li><span class="pricing-check">&#10003;</span> Alertes Discord (retardees 15min)</li>
+                </ul>
+                <button class="pricing-btn pricing-btn-primary" data-plan="starter" onclick="handleCheckout('starter')">Commencer</button>
+            </div>
+
+            <!-- Card 3 : Premium -->
+            <div class="pricing-card">
+                <div class="pricing-card-badge">
+                    <span class="badge" style="background:rgba(212,175,55,0.15);color:var(--gold);">COMPLET</span>
+                </div>
+                <div class="pricing-card-price">
+                    <span class="pricing-price-value">49&euro;</span>
+                    <span class="pricing-price-period">/mois</span>
+                </div>
+                <hr class="pricing-divider">
+                <ul class="pricing-features">
+                    <li><span class="pricing-check">&#10003;</span> Tout du plan Starter</li>
+                    <li><span class="pricing-check">&#10003;</span> Order Flow (delta, CVD, RVOL, absorption)</li>
+                    <li><span class="pricing-check">&#10003;</span> Options &amp; Gamma (murs, GEX, 0DTE, VIX)</li>
+                    <li><span class="pricing-check">&#10003;</span> Signaux &amp; Journal (score ML, SL/TP, trades)</li>
+                    <li><span class="pricing-check">&#10003;</span> Alertes Discord temps reel</li>
+                    <li><span class="pricing-check">&#10003;</span> Briefings archives</li>
+                </ul>
+                <button class="pricing-btn pricing-btn-primary" data-plan="premium" onclick="handleCheckout('premium')">Debloquer tout</button>
+            </div>
+
+        </div>
+
+        <!-- FAQ -->
+        <div class="pricing-faq">
+            <h2 class="pricing-faq-title">Questions frequentes</h2>
+
+            <div class="pricing-faq-item" onclick="toggleFaq(this)">
+                <div class="pricing-faq-question">
+                    <span>Puis-je changer de plan ?</span>
+                    <span class="pricing-faq-arrow">&#9660;</span>
+                </div>
+                <div class="pricing-faq-answer">
+                    Oui, a tout moment depuis votre compte. Le changement prend effet immediatement et la facturation est ajustee au prorata.
+                </div>
+            </div>
+
+            <div class="pricing-faq-item" onclick="toggleFaq(this)">
+                <div class="pricing-faq-question">
+                    <span>Y a-t-il une periode d'essai ?</span>
+                    <span class="pricing-faq-arrow">&#9660;</span>
+                </div>
+                <div class="pricing-faq-answer">
+                    7 jours d'essai gratuit sur le plan Premium. Aucun engagement, annulation en un clic.
+                </div>
+            </div>
+
+            <div class="pricing-faq-item" onclick="toggleFaq(this)">
+                <div class="pricing-faq-question">
+                    <span>Comment fonctionnent les alertes Discord ?</span>
+                    <span class="pricing-faq-arrow">&#9660;</span>
+                </div>
+                <div class="pricing-faq-answer">
+                    Les signaux detectes par MIA sont postes automatiquement dans le canal #signals-live. Le plan Starter recoit les alertes avec 15 minutes de decalage, le plan Premium en temps reel.
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ========== Toast notification ========== -->
+    <div id="pricing-toast" class="pricing-toast pricing-toast-hidden">
+        <span class="pricing-toast-icon">&#9888;</span>
+        <span class="pricing-toast-text">Paiement en cours de configuration — Bientot disponible</span>
+        <button class="pricing-toast-close" onclick="closeToast()">&times;</button>
+    </div>
+
+    <!-- ========== Footer ========== -->
+    <footer class="dashboard-footer">
+        <div class="footer-links">
+            <a href="/cgu">CGU</a>
+            <a href="/confidentialite">Confidentialite</a>
+            <a href="/risques">Risques</a>
+            <a href="/contact">Contact</a>
+        </div>
+        <p>&copy; 2026 MIA IA SYSTEM. Tous droits reserves.</p>
+        <p class="footer-tech">377 features &middot; Schema DMP 3.7.2 &middot; Dashboard v1.0</p>
+    </footer>
+
+    <!-- ========== Scripts ========== -->
+    <script src="/static/js/ticker-widget.js"></script>
+    <script>
+        /* --- Horloge navbar --- */
+        function updateClock() {
+            var now = new Date();
+            var h = String(now.getUTCHours()).padStart(2, '0');
+            var m = String(now.getUTCMinutes()).padStart(2, '0');
+            var s = String(now.getUTCSeconds()).padStart(2, '0');
+            var el = document.getElementById('navbar-time');
+            if (el) el.textContent = h + ':' + m + ':' + s + ' UTC';
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+
+        /* --- FAQ toggle --- */
+        function toggleFaq(item) {
+            item.classList.toggle('open');
+        }
+
+        /* --- Checkout (Stripe placeholder) --- */
+        var toastTimeout = null;
+
+        function handleCheckout(plan) {
+            /* Quand Stripe sera configure, ceci appellera POST /api/stripe/create-checkout */
+            var toast = document.getElementById('pricing-toast');
+            toast.classList.remove('pricing-toast-hidden');
+
+            if (toastTimeout) clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(function() {
+                closeToast();
+            }, 5000);
+        }
+
+        function closeToast() {
+            var toast = document.getElementById('pricing-toast');
+            toast.classList.add('pricing-toast-hidden');
+            if (toastTimeout) {
+                clearTimeout(toastTimeout);
+                toastTimeout = null;
+            }
+        }
+    </script>
+
+</body>
+</html>

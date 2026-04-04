@@ -1,0 +1,55 @@
+[2 tools called]
+
+## 📊 Analyse des 2 Trades Perdants
+
+### Trade 1: NQ LONG ❌
+| Paramètre | Valeur |
+|-----------|--------|
+| **Heure** | 16:30:03 |
+| **Direction** | LONG |
+| **Entry** | 25505.25 |
+| **Exit (SL)** | 25491.50 |
+| **P&L** | **-$275.00** |
+| **ML Score** | 117.4% |
+| **MFE/MAE** | 0.0 / -275.0 |
+| **Post-mortem** | Direction incorrecte |
+
+### Trade 2: ES SHORT ❌
+| Paramètre | Valeur |
+|-----------|--------|
+| **Heure** | 16:31:24 |
+| **Direction** | SHORT |
+| **Entry** | 6873.13 |
+| **Exit (SL)** | 6875.75 |
+| **P&L** | **-$131.00** |
+| **ML Score** | 105.9% |
+| **MFE/MAE** | 0.0 / -131.0 |
+| **Post-mortem** | Direction incorrecte |
+
+---
+
+## 🚨 PROBLÈME IDENTIFIÉ
+
+### ⚠️ Trades pris IMMÉDIATEMENT après l'annonce PCE !
+
+```
+16:00 - Annonce Core PCE Price Index (⭐⭐⭐)
+16:30 - Fin du blocage calendrier
+16:30:03 - Trade 1 NQ LONG ❌
+16:31:24 - Trade 2 ES SHORT ❌
+```
+
+**Les deux trades ont MFE = 0** → Le prix n'est **JAMAIS** allé dans la direction prévue. Le ML a prédit dans le **mauvais sens** dans les deux cas.
+
+### 🔥 Cause Probable: Volatilité Post-Annonce
+
+Après une annonce ⭐⭐⭐ comme le PCE:
+1. Le marché est **extrêmement volatile**
+2. Les mouvements sont **erratiques et imprévisibles**
+3. Les signaux techniques sont **souvent invalides**
+
+### 💡 Recommandation
+
+**Augmenter le délai post-annonce de 30min à 45-60min** pour les annonces ⭐⭐⭐ (PCE, CPI, FOMC, NFP).
+
+Voulez-vous que j'applique cette modification?

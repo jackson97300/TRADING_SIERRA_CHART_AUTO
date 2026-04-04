@@ -1,0 +1,116 @@
+{
+    "_comment": "MIA Trading Bot C++ - Study IDs ALIGNED with MIA_AutoTrader_BN_v1.cpp (scan 17/01/2026)",
+    "_version": "3.0",
+    "_updated": "2026-02-06",
+    "_path": "D:\\TRADING_SIERRA_CHART_AUTO\\CPP\\MIA_REFACTORED\\study_mapping.json",
+
+    "ES_FOOTPRINT": {
+        "chart_number": 1,
+        "description": "ES Footprint - Bataille Navale",
+        "studies": {
+            "EDGE_BUY": 32,
+            "EDGE_SELL": 35,
+            "COLOR_UP": 56,
+            "COLOR_DOWN": 57,
+            "ABSORB_ASK": 25,
+            "ABSORB_BID": 26,
+            "ROTATION_UP": 19,
+            "ROTATION_DOWN": 20,
+            "FPBS": 31,
+            "ASK_100": 102,
+            "BID_100": 103,
+            "ASK_150": 6,
+            "BID_150": 7,
+            "ASK_400": 8,
+            "BID_400": 9,
+            "ASK_1000": 29,
+            "BID_1000": 30,
+            "DOUBLE_ASK": 28,
+            "DOUBLE_BID": 27,
+            "CLUSTER_VOL": 10
+        }
+    },
+
+    "NQ_FOOTPRINT": {
+        "chart_number": 2,
+        "description": "NQ Footprint - Bataille Navale",
+        "studies": {
+            "EDGE_BUY": 55,
+            "EDGE_SELL": 56,
+            "COLOR_UP": 53,
+            "COLOR_DOWN": 54,
+            "ABSORB_ASK": 29,
+            "ABSORB_BID": 30,
+            "ROTATION_UP": 21,
+            "ROTATION_DOWN": 22,
+            "FPBS": 33,
+            "TRIPLE_ASK": 28,
+            "TRIPLE_BID": 27,
+            "VOLUME_UP": 35,
+            "VOLUME_DOWN": 36,
+            "ASK_10": 8,
+            "BID_10": 9,
+            "ASK_30": 10,
+            "BID_30": 11,
+            "ASK_100": 31,
+            "BID_100": 32,
+            "CLUSTER_VOL": 12
+        }
+    },
+
+    "ES_BARRES": {
+        "chart_number": 25,
+        "description": "ES 1min Barres - MenthorQ + Rectangles",
+        "studies": {
+            "MQ_GAMMA": 2,
+            "MQ_BLIND": 22,
+            "VWAP": 1,
+            "LONG_UP_BAR": 18,
+            "LONG_DOWN_BAR": 17,
+            "EDGE_BUY": 16,
+            "EDGE_SELL": 44,
+            "COLOR_UP": 24,
+            "COLOR_DOWN": 25,
+            "LONG_DOWN_UP": 38,
+            "LONG_UP_DOWN": 39,
+            "VP": 3
+        }
+    },
+
+    "NQ_BARRES": {
+        "chart_number": 23,
+        "description": "NQ 1min Barres - MenthorQ + Rectangles",
+        "studies": {
+            "MQ_GAMMA": 25,
+            "MQ_BLIND": 2,
+            "VWAP": 1,
+            "LONG_UP_BAR": 18,
+            "LONG_DOWN_BAR": 17,
+            "EDGE_BUY": 32,
+            "EDGE_SELL": 33,
+            "COLOR_UP": 26,
+            "COLOR_DOWN": 27,
+            "LONG_DOWN_UP": 23,
+            "LONG_UP_DOWN": 24,
+            "VP": 3
+        }
+    },
+
+    "ES_MAIN": {
+        "chart_number": 25,
+        "description": "ES Main - MenthorQ Gamma Levels",
+        "studies": {
+            "MQ_GAMMA": 2,
+            "MQ_BLIND": 22
+        }
+    },
+
+    "NQ_MAIN": {
+        "chart_number": 23,
+        "description": "NQ Main - MenthorQ Gamma Levels",
+        "studies": {
+            "MQ_GAMMA": 25,
+            "MQ_BLIND": 2
+        }
+    }
+}

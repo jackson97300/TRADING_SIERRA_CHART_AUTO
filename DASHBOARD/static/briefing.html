@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Briefing MIA - Analyse Quotidienne</title>
+    <meta name="description" content="Briefing MIA — Analyse quotidienne du marche ES/NQ futures. Niveaux cles, biais directionnel, positionnement institutionnel.">
+    <link rel="icon" href="/static/images/favicon.ico" type="image/x-icon">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <style>
+        /* --- Briefing-specific styles --- */
+        .briefing-container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 1.5rem 1rem 3rem;
+        }
+
+        .briefing-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .briefing-date-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 1rem;
+            background: rgba(0, 180, 220, 0.1);
+            border: 1px solid rgba(0, 180, 220, 0.2);
+            border-radius: 9999px;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: var(--cyan);
+            margin-bottom: 0.75rem;
+        }
+
+        .briefing-main-title {
+            font-size: 1.75rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--cyan), var(--gold));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .briefing-disclaimer-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.625rem 1rem;
+            background: rgba(245, 158, 11, 0.08);
+            border: 1px solid rgba(245, 158, 11, 0.15);
+            border-radius: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--warning);
+            margin-bottom: 2rem;
+        }
+
+        .briefing-disclaimer-bar .icon {
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
+        .briefing-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .briefing-section-title {
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            margin-bottom: 0.75rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .briefing-section-title .num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: rgba(0, 180, 220, 0.15);
+            color: var(--cyan);
+            font-size: 0.6875rem;
+            font-weight: 700;
+            margin-right: 0.5rem;
+        }
+
+        /* VIX regime badges */
+        .vix-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .vix-low {
+            background: rgba(0, 200, 83, 0.15);
+            color: var(--green);
+        }
+
+        .vix-normal {
+            background: rgba(0, 180, 220, 0.15);
+            color: var(--cyan);
+        }
+
+        .vix-high {
+            background: rgba(255, 82, 82, 0.15);
+            color: var(--red);
+        }
+
+        .vix-desc {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-style: italic;
+            margin-top: 0.25rem;
+            padding-left: 0.25rem;
+        }
+
+        /* Niveaux table */
+        .niveaux-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .niveaux-table th {
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-muted);
+            padding: 0.5rem 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            text-align: center;
+        }
+
+        .niveaux-table th:first-child {
+            text-align: left;
+        }
+
+        .niveaux-table td {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8125rem;
+            padding: 0.4375rem 0.5rem;
+            color: var(--text-secondary);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            text-align: center;
+        }
+
+        .niveaux-table td:first-child {
+            font-family: 'Inter', sans-serif;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-align: left;
+        }
+
+        .niveaux-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .val-positive {
+            color: var(--green);
+        }
+
+        .val-negative {
+            color: var(--red);
+        }
+
+        .val-zero {
+            color: var(--text-disabled);
+        }
+
+        /* Biais cards inline */
+        .biais-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .biais-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+        }
+
+        .biais-card-label {
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        .biais-card-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .biais-card-sub {
+            font-size: 0.6875rem;
+            color: var(--text-disabled);
+            margin-top: 0.125rem;
+        }
+
+        .badge-bull {
+            background: rgba(0, 200, 83, 0.15);
+            color: var(--green);
+        }
+
+        .badge-bear {
+            background: rgba(255, 82, 82, 0.15);
+            color: var(--red);
+        }
+
+        .badge-neutral {
+            background: rgba(148, 163, 184, 0.15);
+            color: var(--text-muted);
+        }
+
+        /* Gauge delta agreement */
+        .delta-gauge-container {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-top: 0.25rem;
+        }
+
+        .delta-gauge-bar {
+            flex: 1;
+            height: 8px;
+            background: var(--bg-hover);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .delta-gauge-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+
+        /* Commentary */
+        .commentary-text {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            line-height: 1.7;
+            padding: 0.75rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-left: 3px solid var(--gold);
+            border-radius: 0 0.5rem 0.5rem 0;
+        }
+
+        .commentary-empty {
+            font-size: 0.8125rem;
+            color: var(--text-disabled);
+            font-style: italic;
+            text-align: center;
+            padding: 1.5rem 1rem;
+        }
+
+        /* Footer briefing */
+        .briefing-footer {
+            text-align: center;
+            padding: 2rem 1rem;
+            color: var(--text-disabled);
+            font-size: 0.6875rem;
+            line-height: 1.6;
+        }
+
+        .briefing-footer a {
+            color: var(--text-muted);
+        }
+
+        .briefing-footer a:hover {
+            color: var(--cyan);
+        }
+
+        .briefing-footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            margin-bottom: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        /* Loading state */
+        .loading-spinner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem 1rem;
+            color: var(--text-disabled);
+            font-size: 0.875rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .spinner-icon {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--glass-border);
+            border-top-color: var(--cyan);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 0.75rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .biais-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .briefing-main-title {
+                font-size: 1.375rem;
+            }
+        }
+    </style>
+</head>
+<body class="has-banner">
+
+    <!-- ========== Ticker TradingView ========== -->
+    <div id="tv-ticker" style="position:fixed;top:0;left:0;right:0;height:46px;z-index:9999;background:#0a0e17;"></div>
+
+    <!-- ========== Navbar ========== -->
+    <nav class="navbar">
+        <div class="navbar-brand">
+            <img src="/static/images/logo-dark.jpg" alt="MIA Logo" class="navbar-logo" width="36" height="36">
+            <span class="navbar-name">MIA Dashboard</span>
+        </div>
+
+        <div class="navbar-links">
+            <a href="/" class="navbar-link">Dashboard</a>
+            <a href="/briefing" class="navbar-link navbar-link-active navbar-link-gold">Briefing</a>
+            <a href="https://mia-ia-system.com/education/" class="navbar-link" target="_blank" rel="noopener">Education</a>
+        </div>
+
+        <div class="navbar-right">
+            <a href="https://discord.gg/mia-ia-system" class="badge badge-purple" target="_blank" rel="noopener">Discord</a>
+            <button class="navbar-btn-premium" id="btn-premium">Premium &#9733;</button>
+        </div>
+    </nav>
+
+    <!-- ========== Bandeau CTA (masque sur briefing) ========== -->
+    <div class="cta-banner" id="cta-banner" style="display:none;"></div>
+
+    <!-- ========== Contenu principal ========== -->
+    <div class="briefing-container">
+
+        <!-- Header -->
+        <div class="briefing-header">
+            <div class="briefing-date-badge" id="briefing-date">--/--/----</div>
+            <h1 class="briefing-main-title">Briefing MIA</h1>
+        </div>
+
+        <!-- Disclaimer bandeau -->
+        <div class="briefing-disclaimer-bar">
+            <span class="icon">&#9888;</span>
+            Outil d'aide a la decision, PAS un conseil en investissement. Le trading de futures comporte un risque de perte en capital.
+        </div>
+
+        <!-- Loading -->
+        <div id="briefing-loading" class="loading-spinner">
+            <div class="spinner-icon"></div>
+            Chargement du briefing...
+        </div>
+
+        <!-- Contenu (cache au chargement) -->
+        <div id="briefing-content" style="display:none;">
+
+            <!-- Section 1 : Contexte Macro -->
+            <div class="briefing-section">
+                <div class="briefing-section-title"><span class="num">1</span> Contexte Macro</div>
+                <section class="glass">
+                    <div class="kv-row">
+                        <span class="kv-key">VIX</span>
+                        <span class="kv-value">
+                            <span id="macro-vix" class="text-mono">--</span>
+                            <span id="macro-vix-badge" class="vix-badge vix-normal" style="margin-left:0.5rem;">NORMAL</span>
+                        </span>
+                    </div>
+                    <div id="macro-vix-desc" class="vix-desc"></div>
+
+                    <hr class="section-divider">
+
+                    <div class="kv-row">
+                        <span class="kv-key">ATR ES</span>
+                        <span id="macro-atr-es" class="kv-value">--</span>
+                    </div>
+                    <div class="kv-row">
+                        <span class="kv-key">ATR NQ</span>
+                        <span id="macro-atr-nq" class="kv-value">--</span>
+                    </div>
+
+                    <hr class="section-divider">
+
+                    <div class="kv-row">
+                        <span class="kv-key">Overnight Range ES</span>
+                        <span id="macro-ovn-es" class="kv-value">-- ticks</span>
+                    </div>
+                    <div class="kv-row">
+                        <span class="kv-key">Overnight Range NQ</span>
+                        <span id="macro-ovn-nq" class="kv-value">-- ticks</span>
+                    </div>
+
+                    <hr class="section-divider">
+
+                    <div class="kv-row">
+                        <span class="kv-key">Gap ES</span>
+                        <span id="macro-gap-es" class="kv-value">-- ticks</span>
+                    </div>
+                    <div class="kv-row">
+                        <span class="kv-key">Gap NQ</span>
+                        <span id="macro-gap-nq" class="kv-value">-- ticks</span>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Section 2 : Niveaux Cles -->
+            <div class="briefing-section" id="section-niveaux">
+                <div class="briefing-section-title"><span class="num">2</span> Niveaux Cles (ticks vs prix actuel)</div>
+                <section class="glass">
+                    <div id="niveaux-premium-lock" class="premium-locked">
+                        <div class="premium-content">
+                            <table class="niveaux-table">
+                                <thead>
+                                    <tr>
+                                        <th>Niveau</th>
+                                        <th>ES</th>
+                                        <th>NQ</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="niveaux-body">
+                                    <tr><td colspan="3" style="text-align:center;color:var(--text-disabled);">Chargement...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="premium-overlay" id="niveaux-overlay">
+                            <span class="premium-lock-icon">&#128274;</span>
+                            <span class="premium-label">Premium</span>
+                            <a href="#" class="premium-cta">Debloquer</a>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Section 3 : Biais Directionnel -->
+            <div class="briefing-section" id="section-biais">
+                <div class="briefing-section-title"><span class="num">3</span> Biais Directionnel</div>
+                <section class="glass">
+                    <div id="biais-premium-lock" class="premium-locked">
+                        <div class="premium-content">
+                            <div class="biais-grid" id="biais-grid">
+                                <!-- Rempli par JS -->
+                            </div>
+                        </div>
+                        <div class="premium-overlay" id="biais-overlay">
+                            <span class="premium-lock-icon">&#128274;</span>
+                            <span class="premium-label">Premium</span>
+                            <a href="#" class="premium-cta">Debloquer</a>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Section 4 : Positionnement Institutionnel -->
+            <div class="briefing-section" id="section-instit">
+                <div class="briefing-section-title"><span class="num">4</span> Positionnement Institutionnel</div>
+                <section class="glass">
+                    <div id="instit-premium-lock" class="premium-locked">
+                        <div class="premium-content">
+                            <div id="instit-content">
+                                <!-- Rempli par JS -->
+                            </div>
+                        </div>
+                        <div class="premium-overlay" id="instit-overlay">
+                            <span class="premium-lock-icon">&#128274;</span>
+                            <span class="premium-label">Premium</span>
+                            <a href="#" class="premium-cta">Debloquer</a>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Section 5 : Commentaire -->
+            <div class="briefing-section">
+                <div class="briefing-section-title"><span class="num">5</span> Commentaire de l'Analyste</div>
+                <section class="glass">
+                    <div id="commentary-zone">
+                        <div class="commentary-empty">Commentaire disponible prochainement</div>
+                    </div>
+                </section>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ========== Footer ========== -->
+    <footer class="briefing-footer">
+        <div class="briefing-footer-links">
+            <a href="/cgu">CGU</a>
+            <a href="/confidentialite">Confidentialite</a>
+            <a href="/risques">Risques</a>
+            <a href="/contact">Contact</a>
+        </div>
+        <p>
+            Ceci est un outil d'aide a la decision, PAS un conseil en investissement.
+            Les performances passees ne garantissent pas les resultats futurs.
+            Le trading de futures comporte un risque de perte en capital.
+        </p>
+        <p style="margin-top:0.5rem;">&copy; 2026 MIA IA SYSTEM. Tous droits reserves.</p>
+    </footer>
+
+    <!-- ========== Scripts ========== -->
+    <script src="/static/js/ticker-widget.js"></script>
+    <script>
+    (function() {
+        "use strict";
+
+        var API_URL = "/api/briefing/today";
+
+        // --- Helpers ---
+
+        function fmt(val, suffix) {
+            if (val === null || val === undefined) return "--";
+            return val + (suffix || "");
+        }
+
+        function tickClass(val) {
+            if (val > 0) return "val-positive";
+            if (val < 0) return "val-negative";
+            return "val-zero";
+        }
+
+        function tickVal(val) {
+            if (val === null || val === undefined || val === 0) return '<span class="val-zero">0.0</span>';
+            var cls = val > 0 ? "val-positive" : "val-negative";
+            var prefix = val > 0 ? "+" : "";
+            return '<span class="' + cls + '">' + prefix + val.toFixed(1) + '</span>';
+        }
+
+        function vixBadgeClass(regime) {
+            if (regime === "LOW") return "vix-low";
+            if (regime === "HIGH") return "vix-high";
+            return "vix-normal";
+        }
+
+        function biasColor(val) {
+            if (val > 0.3) return "val-positive";
+            if (val < -0.3) return "val-negative";
+            return "val-zero";
+        }
+
+        function tripleClass(label) {
+            if (label === "BULL") return "badge-bull";
+            if (label === "BEAR") return "badge-bear";
+            return "badge-neutral";
+        }
+
+        // --- Render Macro ---
+
+        function renderMacro(macro) {
+            document.getElementById("macro-vix").textContent = fmt(macro.vix);
+            var badge = document.getElementById("macro-vix-badge");
+            badge.textContent = macro.vix_regime || "NORMAL";
+            badge.className = "vix-badge " + vixBadgeClass(macro.vix_regime);
+            document.getElementById("macro-vix-desc").textContent = macro.vix_desc || "";
+
+            document.getElementById("macro-atr-es").textContent = fmt(macro.atr_es);
+            document.getElementById("macro-atr-nq").textContent = fmt(macro.atr_nq);
+            document.getElementById("macro-ovn-es").textContent = fmt(macro.ovn_range_es, " ticks");
+            document.getElementById("macro-ovn-nq").textContent = fmt(macro.ovn_range_nq, " ticks");
+
+            var gapEs = document.getElementById("macro-gap-es");
+            var gapNq = document.getElementById("macro-gap-nq");
+            gapEs.innerHTML = tickVal(macro.open_gap_es) + " ticks";
+            gapNq.innerHTML = tickVal(macro.open_gap_nq) + " ticks";
+        }
+
+        // --- Render Niveaux ---
+
+        function renderNiveaux(niveaux) {
+            var rows = [
+                ["Call Wall", "call_wall"],
+                ["Put Wall", "put_wall"],
+                ["HVL", "hvl"],
+                ["GEX Up", "gex_up"],
+                ["GEX Down", "gex_dn"],
+                ["VWAP +1SD", "vwap_sd1u"],
+                ["VWAP -1SD", "vwap_sd1d"],
+                ["Prev VPOC", "prev_vpoc"],
+                ["IB High", "ib_high"],
+                ["IB Low", "ib_low"],
+            ];
+
+            var es = niveaux.ES || {};
+            var nq = niveaux.NQ || {};
+            var html = "";
+
+            for (var i = 0; i < rows.length; i++) {
+                var label = rows[i][0];
+                var key = rows[i][1];
+                var esVal = es[key] !== undefined ? es[key] : 0;
+                var nqVal = nq[key] !== undefined ? nq[key] : 0;
+                html += "<tr>";
+                html += "<td>" + label + "</td>";
+                html += "<td>" + tickVal(esVal) + "</td>";
+                html += "<td>" + tickVal(nqVal) + "</td>";
+                html += "</tr>";
+            }
+
+            document.getElementById("niveaux-body").innerHTML = html;
+        }
+
+        // --- Render Biais ---
+
+        function renderBiais(biais) {
+            var items = [
+                {label: "Open Type ES", value: biais.open_type_es || "UNKNOWN", sub: ""},
+                {label: "Open Type NQ", value: biais.open_type_nq || "UNKNOWN", sub: ""},
+                {label: "Day Type ES", value: biais.day_type_es || "--", sub: ""},
+                {label: "Day Type NQ", value: biais.day_type_nq || "--", sub: ""},
+                {label: "AMD Bias ES", value: fmt(biais.amd_bias_es), sub: "-1 Bear / +1 Bull", colorClass: biasColor(biais.amd_bias_es)},
+                {label: "AMD Bias NQ", value: fmt(biais.amd_bias_nq), sub: "-1 Bear / +1 Bull", colorClass: biasColor(biais.amd_bias_nq)},
+                {label: "PO3 Score ES", value: fmt(biais.po3_score_es), sub: "Probabilite trend"},
+                {label: "PO3 Score NQ", value: fmt(biais.po3_score_nq), sub: "Probabilite trend"},
+                {label: "VWAP Triple ES", value: biais.vwap_triple_es || "NEUTRE", sub: "", badgeClass: tripleClass(biais.vwap_triple_es)},
+                {label: "VWAP Triple NQ", value: biais.vwap_triple_nq || "NEUTRE", sub: "", badgeClass: tripleClass(biais.vwap_triple_nq)},
+            ];
+
+            var html = "";
+            for (var i = 0; i < items.length; i++) {
+                var it = items[i];
+                html += '<div class="biais-card">';
+                html += '<div class="biais-card-label">' + it.label + '</div>';
+
+                if (it.badgeClass) {
+                    html += '<span class="badge ' + it.badgeClass + '" style="font-size:0.8125rem;">' + it.value + '</span>';
+                } else if (it.colorClass) {
+                    html += '<div class="biais-card-value ' + it.colorClass + '">' + it.value + '</div>';
+                } else {
+                    html += '<div class="biais-card-value">' + it.value + '</div>';
+                }
+
+                if (it.sub) {
+                    html += '<div class="biais-card-sub">' + it.sub + '</div>';
+                }
+                html += '</div>';
+            }
+
+            document.getElementById("biais-grid").innerHTML = html;
+        }
+
+        // --- Render Institutionnel ---
+
+        function renderInstitutionnel(inst) {
+            var html = "";
+
+            // GEX Clusters
+            html += '<div class="kv-row"><span class="kv-key">GEX Clusters ES</span><span class="kv-value">' + fmt(inst.gex_clusters_es) + '</span></div>';
+            html += '<div class="kv-row"><span class="kv-key">GEX Clusters NQ</span><span class="kv-value">' + fmt(inst.gex_clusters_nq) + '</span></div>';
+
+            // GEX Flip Zone
+            var flipEs = inst.gex_flip_es ? '<span class="badge badge-red" style="font-size:0.75rem;">OUI</span>' : '<span class="badge badge-green" style="font-size:0.75rem;">NON</span>';
+            var flipNq = inst.gex_flip_nq ? '<span class="badge badge-red" style="font-size:0.75rem;">OUI</span>' : '<span class="badge badge-green" style="font-size:0.75rem;">NON</span>';
+            html += '<div class="kv-row"><span class="kv-key">GEX Flip Zone ES</span><span class="kv-value">' + flipEs + '</span></div>';
+            html += '<div class="kv-row"><span class="kv-key">GEX Flip Zone NQ</span><span class="kv-value">' + flipNq + '</span></div>';
+
+            html += '<hr class="section-divider">';
+
+            // SMT Divergence
+            var smtLabel = inst.smt_divergence || "AUCUNE";
+            var smtClass = "badge-neutral";
+            if (smtLabel === "BULL TRAP") smtClass = "badge-bear";
+            if (smtLabel === "BEAR TRAP") smtClass = "badge-bull";
+            html += '<div class="kv-row"><span class="kv-key">SMT Divergence</span><span class="badge ' + smtClass + '" style="font-size:0.75rem;">' + smtLabel + '</span></div>';
+
+            // Delta Agreement
+            var agreeVal = inst.cross_delta_agree || 0;
+            var agreeWidth = agreeVal ? 100 : 0;
+            var agreeColor = agreeVal ? "var(--green)" : "var(--red)";
+            var agreeText = agreeVal ? "ACCORD" : "DIVERGENT";
+            html += '<div class="kv-row"><span class="kv-key">Delta Agreement</span><span class="kv-value">' + agreeText + '</span></div>';
+            html += '<div class="delta-gauge-container">';
+            html += '<div class="delta-gauge-bar"><div class="delta-gauge-fill" style="width:' + agreeWidth + '%;background:' + agreeColor + ';"></div></div>';
+            html += '</div>';
+
+            html += '<hr class="section-divider">';
+
+            // Correlation
+            var corr = inst.correlation !== undefined ? inst.correlation : 0;
+            var corrClass = corr < 0.8 ? "val-negative" : "val-positive";
+            html += '<div class="kv-row"><span class="kv-key">Correlation ES/NQ</span><span class="kv-value ' + corrClass + '">' + corr.toFixed(2) + '</span></div>';
+
+            // Large Trader
+            html += '<div class="kv-row"><span class="kv-key">Large Trader ES</span><span class="kv-value">' + fmt(inst.large_trader_es) + '</span></div>';
+            html += '<div class="kv-row"><span class="kv-key">Large Trader NQ</span><span class="kv-value">' + fmt(inst.large_trader_nq) + '</span></div>';
+
+            document.getElementById("instit-content").innerHTML = html;
+        }
+
+        // --- Render Commentary ---
+
+        function renderCommentary(commentary) {
+            var zone = document.getElementById("commentary-zone");
+            if (commentary && commentary.trim().length > 0) {
+                zone.innerHTML = '<div class="commentary-text">' + commentary.replace(/\n/g, "<br>") + '</div>';
+            } else {
+                zone.innerHTML = '<div class="commentary-empty">Commentaire disponible prochainement</div>';
+            }
+        }
+
+        // --- Unlock premium sections ---
+
+        function unlockSection(lockId, overlayId) {
+            var lock = document.getElementById(lockId);
+            var overlay = document.getElementById(overlayId);
+            if (lock) lock.classList.remove("premium-locked");
+            if (overlay) overlay.style.display = "none";
+        }
+
+        // --- Main fetch ---
+
+        function loadBriefing() {
+            fetch(API_URL)
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    document.getElementById("briefing-loading").style.display = "none";
+                    document.getElementById("briefing-content").style.display = "block";
+
+                    // Date
+                    var dateStr = data.date || "--";
+                    document.getElementById("briefing-date").textContent = dateStr;
+
+                    var sections = data.sections || {};
+
+                    // Macro (toujours affiche)
+                    if (sections.macro) {
+                        renderMacro(sections.macro);
+                    }
+
+                    // Si preview (free), laisser les premium-locked
+                    if (data.preview) {
+                        return;
+                    }
+
+                    // Premium : deverrouiller + remplir
+                    unlockSection("niveaux-premium-lock", "niveaux-overlay");
+                    unlockSection("biais-premium-lock", "biais-overlay");
+                    unlockSection("instit-premium-lock", "instit-overlay");
+
+                    if (sections.niveaux_cles) {
+                        renderNiveaux(sections.niveaux_cles);
+                    }
+
+                    if (sections.biais) {
+                        renderBiais(sections.biais);
+                    }
+
+                    if (sections.institutionnel) {
+                        renderInstitutionnel(sections.institutionnel);
+                    }
+
+                    renderCommentary(data.commentary || "");
+                })
+                .catch(function(err) {
+                    console.error("Erreur chargement briefing:", err);
+                    document.getElementById("briefing-loading").innerHTML =
+                        '<span style="color:var(--red);">Erreur de chargement du briefing. Reessayez plus tard.</span>';
+                });
+        }
+
+        // Init
+        loadBriefing();
+    })();
+    </script>
+
+</body>
+</html>

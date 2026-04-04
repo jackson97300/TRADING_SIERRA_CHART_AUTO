@@ -1,0 +1,55 @@
+{
+  "_comment": "Mise à jour VWAP W/M : Daily → Intraday (02/03/2026)",
+  "_migration": "VWAP Weekly/Monthly déplacés de charts daily (16/17) vers charts barres intraday (25/23)",
+  
+  "ES_BARRES": {
+    "chart": 25,
+    "studies": {
+      "VWAP_DAY": 1,
+      "MQ_GAMMA": 2,
+      "HH_SESSION": 8,
+      "LL_SESSION": 9,
+      "HH_CASH": 12,
+      "LL_CASH": 13,
+      "OPEN_830": 14,
+      "MQ_BLIND": 22,
+      "VWAP_WEEKLY": 23,
+      "VWAP_MONTHLY": 33
+    }
+  },
+  
+  "NQ_BARRES": {
+    "chart": 23,
+    "studies": {
+      "VWAP_DAY": 1,
+      "HH_SESSION": 8,
+      "LL_SESSION": 9,
+      "HH_CASH": 12,
+      "LL_CASH": 13,
+      "OPEN_830": 14,
+      "MQ_GAMMA": 25,
+      "VWAP_MONTHLY": 41,
+      "VWAP_WEEKLY": 43
+    }
+  },
+
+  "ES_DAILY": {
+    "chart": 16,
+    "studies": {
+      "ATR": 1,
+      "MA": 3,
+      "_VWAP_WEEKLY_DEPRECATED": "Migré vers ES_BARRES study 23",
+      "_VWAP_MONTHLY_DEPRECATED": "Migré vers ES_BARRES study 33"
+    }
+  },
+  
+  "NQ_DAILY": {
+    "chart": 17,
+    "studies": {
+      "ATR": 1,
+      "MA": 3,
+      "_VWAP_WEEKLY_DEPRECATED": "Migré vers NQ_BARRES study 43",
+      "_VWAP_MONTHLY_DEPRECATED": "Migré vers NQ_BARRES study 41"
+    }
+  }
+}

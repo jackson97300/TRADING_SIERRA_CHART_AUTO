@@ -1,0 +1,55 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c *)",
+      "Bash(python3 -c *)",
+      "Bash(python -X utf8 *)",
+      "Bash(python3 *)",
+      "Bash(python CORE/*)",
+      "Bash(cd d:/TRADING_SIERRA_CHART_AUTO *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(wc *)",
+      "Bash(find *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Read(d:/TRADING_SIERRA_CHART_AUTO/**)",
+      "Read(d:/MIA_IA_system/**)",
+      "Read(D:/DIMANCHE/**)",
+      "Edit(d:/TRADING_SIERRA_CHART_AUTO/**)",
+      "Write(d:/TRADING_SIERRA_CHART_AUTO/**)",
+      "Write(D:/DIMANCHE/**)"
+    ],
+    "additionalDirectories": [
+      "d:\\TRADING_SIERRA_CHART_AUTO",
+      "d:\\MIA_IA_system",
+      "D:\\DIMANCHE"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scp -o ConnectTimeout=10 Administrator@212.28.179.199:\"C:/TRADING_SIERRA_CHART_AUTO/DATA/ES/*.jsonl\" D:/TRADING_SIERRA_CHART_AUTO/DATA/ES/ 2>/dev/null; scp -o ConnectTimeout=10 Administrator@212.28.179.199:\"C:/TRADING_SIERRA_CHART_AUTO/DATA/NQ/*.jsonl\" D:/TRADING_SIERRA_CHART_AUTO/DATA/NQ/ 2>/dev/null; scp -o ConnectTimeout=10 Administrator@212.28.179.199:\"C:/TRADING_SIERRA_CHART_AUTO/DATA/MENTHORQ/*.json\" D:/TRADING_SIERRA_CHART_AUTO/DATA/MENTHORQ/ 2>/dev/null; echo '[AUTO-SYNC] Donnees VPS + MenthorQ synchronisees' || echo '[AUTO-SYNC] VPS non disponible'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash(scp * Administrator@212.28.179.199:*ACS_Source*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd D:/TRADING_SIERRA_CHART_AUTO && python -X utf8 CORE/test_all.py --quick 2>&1 | tail -5"
+          }
+        ]
+      }
+    ]
+  }
+}

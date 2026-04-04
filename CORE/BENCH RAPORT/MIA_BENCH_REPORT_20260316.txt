@@ -1,0 +1,466 @@
+╔══════════════════════════════════════════════════════════════════╗
+║              MIA BENCH — RAPPORT AUTOMATIQUE                   ║
+║                       2026-03-16 18:37:36                        ║
+║  Schema 3.6.0 — 250 colonnes                                          ║
+╚══════════════════════════════════════════════════════════════════╝
+
+  Fichiers trouvés dans /home/claude:
+    20260316: ES=20260316_ES.jsonl, NQ=20260316_NQ.jsonl
+
+======================================================================
+  TEST 1 — FONCTIONNEL
+======================================================================
+
+  game_changers.py parité C++: 105/105 ✅
+  schema NQ 20260316: 252 colonnes (attendu ≥245) ✅
+  schema ES 20260316: 252 colonnes (attendu ≥245) ✅
+  direction() NQ 20260316: 0/719 mismatch ✅
+  confidence() NQ 20260316: 0/719 mismatch ✅
+  profile_shape NQ 20260316: 0/719 mismatch ✅
+  direction() ES 20260316: 0/718 mismatch ✅
+  confidence() ES 20260316: 0/718 mismatch ✅
+  profile_shape ES 20260316: 0/718 mismatch ✅
+  FEATURES sync 20260316: ctx=❌ im=✅
+  NaN check 20260316: max=264 ⚠️
+
+  Total: 9/11 tests passent
+
+======================================================================
+  TEST 2 — INVENTAIRE
+======================================================================
+
+  NQ 20260316: 719 barres | 252 cols | {'London': 361, 'US': 332, 'Asia': 26} | 24684.00→24927.25 (+243.25) | OT=OAIR
+  ES 20260316: 718 barres | 252 cols | {'London': 361, 'US': 332, 'Asia': 25} | 6674.00→6762.50 (+88.50) | OT=OAIR
+
+  Total: 1437 barres, 1 jours, sessions=['Asia', 'London', 'US']
+
+======================================================================
+  TEST 3 — RANKING GLOBAL BOOTSTRAP
+======================================================================
+
+    # Feature                              r(3)   r(5)             95%CI   0316   T   Class
+  -----------------------------------------------------------------------------------------------
+   1  ctx_mq_put_call_ratio            +0.329  +0.449  [-0.117,+0.579] +0.329 CTX frag
+   2  im_rolling_correlation_10        -0.164  -0.169  [-0.266,-0.054] -0.164  IM PROB
+   3  ctx_poor_high                    +0.114  +0.137  [+0.045,+0.189] +0.114 CTX PROB
+   4  im_smt_divergence                +0.108  +0.108  [+0.019,+0.215] +0.108  IM PROB
+   5  ctx_poor_low                     +0.099  +0.088  [-0.004,+0.269] +0.099 CTX frag
+   6  ctx_excess_high_bars             -0.090  -0.115  [-0.150,-0.031] -0.090 CTX PROB
+   7  ctx_rotation_factor_20           -0.090  -0.102  [-0.146,-0.023] -0.090 CTX PROB
+   8  ctx_vol_z_5                      -0.088  -0.065  [-0.149,-0.028] -0.088 CTX PROB
+   9  volume_imbalance                 +0.084  +0.107  [+0.031,+0.142] +0.084  GC PROB
+  10  ctx_delta_slope_5                -0.079  -0.051  [-0.172,-0.000] -0.079 CTX PROB
+  11  ctx_dist_vwap_velocity           +0.075  +0.084  [+0.024,+0.137] +0.075 CTX PROB
+  12  ctx_trend_day_score              +0.071  +0.088  [-0.015,+0.138] +0.071 CTX frag
+  13  im_price_ratio_slope_10          -0.066  -0.031  [-0.163,+0.030] -0.066  IM frag
+  14  ctx_large_trader_slope_5         +0.063  +0.066  [-0.044,+0.164] +0.063 CTX frag
+  15  im_ltr_slope_diff                +0.062  +0.042  [-0.037,+0.160] +0.062  IM frag
+  16  ctx_delta_sum_3                  -0.062  -0.040  [-0.169,+0.024] -0.062 CTX frag
+  17  ctx_instant_absorption           +0.055  +0.040  [-0.005,+0.123] +0.055 CTX frag
+  18  im_cross_delta_agreement_5       -0.054  -0.044  [-0.123,+0.011] -0.054  IM frag
+  19  im_cross_delta_weighted_5        -0.053  -0.026  [-0.121,+0.007] -0.053  IM frag
+  20  ctx_climax_signal                -0.052  -0.031  [-0.116,+0.004] -0.052 CTX frag
+  21  poc_position                     -0.052  -0.066  [-0.100,+0.008] -0.052  GC frag
+  22  ctx_delta_exhaustion             -0.051  -0.017  [-0.110,+0.013] -0.051 CTX frag
+  23  im_volume_lead                   +0.048  +0.071  [-0.034,+0.129] +0.048  IM frag
+  24  ctx_va_position_velocity         +0.048  +0.056  [+0.005,+0.100] +0.048 CTX PROB
+  25  ctx_vol_slope_5                  -0.043  -0.024  [-0.151,+0.057] -0.043 CTX frag
+  26  ctx_ib_position_velocity         -0.041  -0.028  [-0.084,-0.000] -0.041 CTX PROB
+  27  ctx_range_vs_atr_10              -0.039  -0.050  [-0.089,+0.006] -0.039 CTX frag
+  28  ctx_absorption_score_5           -0.038  -0.025  [-0.112,+0.029] -0.038 CTX frag
+  29  open_bias_conf                   -0.037  -0.051  [-0.097,+0.029] -0.037  GC frag
+  30  ctx_failed_auction               -0.036  -0.011  [-0.076,+0.004] -0.036 CTX frag
+  31  ctx_price_slope_5                -0.035  -0.046  [-0.081,-0.008] -0.035 CTX PROB
+  32  ctx_poc_migration_10             -0.032  -0.038  [-0.066,-0.003] -0.032 CTX PROB
+  33  ctx_ib_extension_ratio           +0.025  +0.044  [-0.043,+0.081] +0.025 CTX frag
+  34  profile_skew                     -0.023  -0.030  [-0.079,+0.041] -0.023  GC frag
+  35  ctx_finish_strength_mean_5       +0.020  -0.030  [-0.053,+0.098] +0.020 CTX frag
+  36  ctx_absorption_streak_5          +0.019  -0.060  [-0.054,+0.099] +0.019 CTX frag
+  37  ctx_diag_imbalance_mean_5        -0.019  -0.004  [-0.090,+0.038] -0.019 CTX frag
+  38  ctx_vwap_slope_accel             +0.018  +0.005  [-0.056,+0.088] +0.018 CTX frag
+  39  ctx_va_developing_10             -0.015  -0.007  [-0.065,+0.048] -0.015 CTX frag
+  40  ctx_price_delta_div_3            -0.013  -0.028  [-0.090,+0.062] -0.013 CTX frag
+  41  ctx_cvd_recovery_rate            +0.013  +0.003  [-0.012,+0.043] +0.013 CTX frag
+  42  ctx_va_width                     -0.012  -0.014  [-0.073,+0.042] -0.012 CTX frag
+  43  ctx_day_type_intensity           -0.008  -0.034  [-0.059,+0.033] -0.008 CTX frag
+  44  ctx_side_flip_count_10           -0.008  -0.016  [-0.054,+0.043] -0.008 CTX frag
+  45  ctx_delta_sum_10                 +0.005  +0.033  [-0.077,+0.071] +0.005 CTX frag
+  46  im_delta_day_divergence          +0.001  -0.002  [-0.055,+0.062] +0.001  IM frag
+  47  ctx_vol_sell_buy_ratio_5         -0.000  -0.011  [-0.064,+0.075] -0.000 CTX frag
+
+  BÉTON:     0  (CI + jour/jour)
+  PROBABLE: 13  (CI seul)
+  FRAGILE:  34  (CI croise 0)
+
+======================================================================
+  TEST 4 — CROSS-ASSET (NQ target vs ES target)
+======================================================================
+
+  Feature                             NQ r(3)  ES r(3)  Stable
+  ------------------------------------------------------------
+  ctx_mq_put_call_ratio              +0.329    -0.067    ❌ FLIP
+  im_rolling_correlation_10          -0.164    -0.153    ✅ OUI
+  ctx_poor_high                      +0.114    +0.058    ✅ OUI
+  im_smt_divergence                  +0.108    +0.003    ✅ OUI
+  ctx_poor_low                       +0.099    +0.015    ✅ OUI
+  ctx_excess_high_bars               -0.090    -0.082    ✅ OUI
+  ctx_rotation_factor_20             -0.090    -0.033    ✅ OUI
+  ctx_vol_z_5                        -0.088    -0.032    ✅ OUI
+  volume_imbalance                   +0.084    +0.063    ✅ OUI
+  ctx_delta_slope_5                  -0.079    -0.057    ✅ OUI
+  ctx_dist_vwap_velocity             +0.075    +0.012    ✅ OUI
+  ctx_trend_day_score                +0.071    +0.064    ✅ OUI
+  im_price_ratio_slope_10            -0.066    +0.005    ❌ FLIP
+  ctx_large_trader_slope_5           +0.063    -0.028    ❌ FLIP
+  im_ltr_slope_diff                  +0.062    -0.061    ❌ FLIP
+
+======================================================================
+  TEST 5 — PAR RÉGIME (session)
+======================================================================
+
+  Feature                            Asia_20260 London_202 US_2026031  stable
+  ----------------------------------------------------------------------------
+  ctx_mq_put_call_ratio                N/A     +0.481     -0.267      non
+  im_rolling_correlation_10          +0.158     -0.179     -0.239      non
+  ctx_poor_high                      +0.344     +0.011     +0.187      OUI
+  im_smt_divergence                    N/A     +0.035     +0.210      OUI
+  ctx_poor_low                       +0.344       N/A       N/A      non
+  ctx_excess_high_bars                 N/A     -0.050     -0.152      OUI
+  ctx_rotation_factor_20             -0.014     -0.122     -0.025      OUI
+  ctx_vol_z_5                        -0.295     -0.083     -0.106      OUI
+  volume_imbalance                   -0.615     +0.057     +0.084      non
+  ctx_delta_slope_5                  -0.193     -0.041     -0.126      OUI
+  ctx_dist_vwap_velocity             -0.042     +0.044     +0.124      non
+  ctx_trend_day_score                +0.490     +0.094     -0.047      non
+
+======================================================================
+  TEST 6 — SENSIBILITÉ SEUILS
+======================================================================
+
+  ctx_climax_signal — vol_z threshold
+    1.0:  236 triggers (33%) r=-0.052
+    1.2:  161 triggers (22%) r=-0.019
+    1.5:   72 triggers (10%) r=-0.023 ← ACTUEL
+    2.0:    0 triggers (0%) r=+nan
+  ctx_instant_absorption — delta threshold
+     10:   82 triggers (11%) r=-0.025
+     20:   45 triggers (6%) r=+0.026
+     30:   29 triggers (4%) r=+0.055 ← ACTUEL
+     50:   15 triggers (2%) r=-0.006
+     80:    4 triggers (1%) r=-0.001
+
+======================================================================
+  TEST 7 — GAME CHANGERS
+======================================================================
+
+  NQ 20260316 Asia    : OT=UNKNOWN    conf=0.00 dir=+0 DT=NonTrend bb(L/S)=+0.00/+0.00 px=24684→24565(-119)
+  NQ 20260316 London  : OT=UNKNOWN    conf=0.00 dir=+0 DT=NonTrend bb(L/S)=+0.00/+0.00 px=24567→24880(+313)
+  NQ 20260316 US      : OT=OAIR       conf=0.30 dir=+0 DT=NormVar  bb(L/S)=+0.00/+0.00 px=24884→24927(+43)
+  ES 20260316 Asia    : OT=UNKNOWN    conf=0.00 dir=+0 DT=NonTrend bb(L/S)=+0.00/+0.00 px=6674→6679(+5)
+  ES 20260316 London  : OT=UNKNOWN    conf=0.00 dir=+0 DT=NonTrend bb(L/S)=+0.00/+0.00 px=6680→6747(+68)
+  ES 20260316 US      : OT=OAIR       conf=0.30 dir=+0 DT=NormVar  bb(L/S)=+0.00/+0.00 px=6747→6762(+15)
+
+======================================================================
+  VERDICT
+======================================================================
+
+  Dataset: 1 jours, 719 barres NQ
+  Bootstrap: 2000 itérations, IC 95%
+
+  BÉTON:     0 features
+  PROBABLE: 13 features
+    im_rolling_correlation_10          r=-0.164 [-0.266,-0.054]
+    ctx_poor_high                      r=+0.114 [+0.045,+0.189]
+    im_smt_divergence                  r=+0.108 [+0.019,+0.215]
+    ctx_excess_high_bars               r=-0.090 [-0.150,-0.031]
+    ctx_rotation_factor_20             r=-0.090 [-0.146,-0.023]
+    ctx_vol_z_5                        r=-0.088 [-0.149,-0.028]
+    volume_imbalance                   r=+0.084 [+0.031,+0.142]
+    ctx_delta_slope_5                  r=-0.079 [-0.172,-0.000]
+    ctx_dist_vwap_velocity             r=+0.075 [+0.024,+0.137]
+    ctx_va_position_velocity           r=+0.048 [+0.005,+0.100]
+    ctx_ib_position_velocity           r=-0.041 [-0.084,-0.000]
+    ctx_price_slope_5                  r=-0.035 [-0.081,-0.008]
+    ctx_poc_migration_10               r=-0.032 [-0.066,-0.003]
+  FRAGILE:  34 features
+
+  ⚠️ 1 jours seulement — minimum recommandé: 20 jours
+     Les features FRAGILES sont non-prouvées, pas mortes.
+     Ne pas optimiser de seuils sur ce dataset.
+
+======================================================================
+  TEST 9 — SIGNAL vs BRUIT (tri automatique)
+======================================================================
+
+  289 colonnes testées → 0 SIGNAL, 34 MAYBE, 103 BRUIT
+
+  SIGNAL (0):
+
+  MAYBE (34):
+     1. cvd_bar_delta                      r=-0.269 flip CI✅
+     2. dist_ext_edge_buy                  r=+0.211 flip CI✅
+     3. im_rolling_correlation_10          r=-0.164 flip CI✅
+     4. momentum_3b                        r=-0.139 flip CI✅
+     5. dist_blind_nearest_dn              r=-0.139 flip CI✅
+     6. dist_session_lvn_below             r=-0.124 flip CI✅
+     7. momentum_5b                        r=-0.112 flip CI✅
+     8. dist_open_830                      r=+0.112 flip CI✅
+     9. im_smt_divergence                  r=+0.108 flip CI✅
+    10. delta_bar                          r=-0.107 flip CI✅
+    ... et 24 de plus
+
+  BRUIT: 103 colonnes éliminées
+
+======================================================================
+  TEST 10 — NOYAU DUR BACKTEST (7 features)
+======================================================================
+
+  20260316: r(3)=+0.027  r(5)=-0.010
+    SHORT: 129 sig | 49% WR | avg_r3=-0.6
+    LONG:  257 sig | 54% WR | avg_r3=+2.0
+    NEUTRE: 69
+
+  7 features: r=+0.027 | 50 features: r=+0.424 | 7 capte 6% du signal
+
+======================================================================
+  TEST 11 — WALL TRACKER (niveaux par jour)
+======================================================================
+
+  NQ 20260316:
+    ✅ FONCTIONNÉ: PREV_VAL(100%), OVN_LOW(100%), SESS_LVN_DN(93%), IB_LOW(89%), SESS_HVN_UP(71%), SESS_HVN_DN(71%)
+    🔄 DT/DB:      SESS_LVN_DN 49DT, IB_LOW 7DB, SESS_HVN_UP 62DT, SESS_HVN_DN 55DT, SESS_LVN_UP 27DT
+
+  ES 20260316:
+    ✅ FONCTIONNÉ: 1D_MAX(80%), GEX_DN(79%), GEX_UP(77%), SESS_LVN_UP(58%), VWAP-2SD(80%), SESS_LVN_DN(54%)
+    🔄 DT/DB:      1D_MAX 2DT, GEX_DN 27DB, GEX_UP 12DT, SESS_LVN_UP 29DT, VWAP-2SD 3DB
+
+  ── CLASSEMENT GLOBAL (tous jours) ──
+
+  Niveau              App  %Reb Cross   Pen  Score  DT  DB Tier
+  ----------------------------------------------------------------------
+  1D_MAX               5   80%    0    0p  0.80    2     T1 🧱
+  GEX_DN              33   79%    0    0p  0.79       27 T1 🧱
+  GEX_UP              22   77%    0    0p  0.77   12     T1 🧱
+  SESS_LVN_DN         96   76%    0    0p  0.76   77     T1 🧱
+  SESS_HVN_UP         75   67%    0    0p  0.67   63     T1 🧱
+  IB_LOW              17   65%    0    0p  0.65       13 T1 🧱
+  SESS_HVN_DN         82   62%    0    0p  0.62   64     T1 🧱
+  SESS_LVN_UP         76   62%    0    0p  0.62   56     T1 🧱
+  OVN_LOW              2  100%    2   12p  0.47          ?
+  CUR_VPOC            96   82%  122   16p  0.31   33  36 T2 🪨
+  EXT_EDGE_BUY        60   55%  375    8p  0.31   10  32 T2 🪨
+  VWAP_D              38   68%   56   12p  0.31    6  13 T2 🪨
+  COMP20_VPOC         49   90%   72   19p  0.31   17  20 T2 🪨
+  VWAP+2SD            31   61%   14   10p  0.30   17     T2 🪨
+  PREV_VWAP-1SD       22   64%   26   12p  0.29    3   7 T2 🪨
+  VWAP+1SD            71   70%   58   15p  0.28   25  20 T2 🪨
+  PREV_VWAP           21   57%   20   11p  0.27        6 T2 🪨
+  VWAP_W              29   62%   34   14p  0.25    1  12 T2 🪨
+  EXT_EDGE_SELL       69   46%  375    9p  0.25   23  20 T2 🪨
+  CUR_VAH             61   72%   53   20p  0.24   27   9 T2 🪨
+  PREV_VAH             7   43%    2    8p  0.24    2     T2 🪨
+  OPEN_CASH           25   76%   17   22p  0.24    1  10 T2 🪨
+  VWAP-2SD            13   85%   10   26p  0.24    2   6 T2 🪨
+  VWAP-1SD            15   67%   25   19p  0.23    2   9 T2 🪨
+  OVN_HIGH            23   65%   15   19p  0.22    5   1 T2 🪨
+  PREV_VAL            16   38%   10    7p  0.22    9     T2 🪨
+  CUR_VAL             32   62%   19   19p  0.22    3  15 T2 🪨
+  PREV_VWAP+1SD       31   81%   22   28p  0.21    6   6 T2 🪨
+  PREV_VPOC           58   64%   61   20p  0.21   14  12 T2 🪨
+  SESS_HIGH           55   65%    8   22p  0.21   34     T2 🪨
+  SWING_LOW           66   65%   55   22p  0.21    3  31 T2 🪨
+  SWING_HIGH          68   59%   90   20p  0.19   32   5 T3 💨
+  VWAP_M              30   47%   44   14p  0.19    6   3 T3 💨
+  IB_HIGH             42   67%   14   25p  0.19   23   1 T3 💨
+
+======================================================================
+  TEST 12 — MEILLEURES SESSIONS / HORAIRES
+======================================================================
+
+  ── PAR PHASE (score contextuel vs retour) ──
+
+  Phase        Barres  r(bias→r3)  r(bias→r5)  |r3| moy Verdict
+  ------------------------------------------------------------
+  Asia_Late       84   +0.000       +0.000        6.6p  🔴 FAIBLE
+  London         241   -0.044       -0.070       12.0p  🔴 FAIBLE
+  Pre_Mkt         61   -0.298       -0.363        7.2p  🟢 BON
+  Pre_Open        29   -0.023       -0.102        6.3p  🔴 FAIBLE
+  Open_30m        61   +0.268       +0.121       17.5p  🟢 BON
+  IB_Form         59   -0.072       -0.149       14.3p  🔴 FAIBLE
+  Mid_AM          90   +0.333       +0.337       10.9p  🟢 BON
+  Afternoon       93   -0.053       -0.176        9.3p  🔴 FAIBLE
+
+  ── PAR SLOT 30 MIN (win rate signaux) ──
+
+    Slot  #Sig  SHORT   LONG  WR_S  WR_L    r3_S    r3_L
+  -------------------------------------------------------
+   03:00    5      4      1    50%    0%   -3.5   +0.0    
+   04:00    8      5      3    60%   33%   -6.2  -13.2  🟡
+   06:00    7      7      0     0%    0%  +10.2   +0.0    
+   06:30   12     10      2    30%    0%   +1.9   +0.0    
+   07:00   21      1     20     0%   40%   +0.0   -1.9    
+   07:30   28      3     25    33%   64%   +4.3   +4.9  🟡
+   08:00   30     16     14    50%   93%   -0.1   +9.1  🟢
+   08:30   30     23      7    57%   71%   -2.5   +4.8  🟢
+   09:00   29     11     18    55%   33%   -2.6   +1.0    
+   09:30   30     27      3    56%  100%   +1.2  +39.5  🟢
+   10:00   31     29      2    52%    0%   -2.9   +0.0    
+   10:30   26     16     10    50%   70%   -6.5  +12.1  🟢
+   11:00   18     11      7    64%   86%   -1.5  +11.6  🟢
+   11:30   22     14      8    71%   50%   -6.8   -4.0  🟢
+   12:00   21      4     17   100%   47%  -27.8   +0.1  🟢
+   12:30   28      3     25    67%   76%   -2.6   +9.5  🟢
+   13:00   27     12     15    42%   40%   +0.7   -1.9    
+   13:30   23      7     16    29%   31%   +2.5   -6.8    
+   14:00   29     27      2    44%    0%   +1.9   +0.0    
+   14:30    3      1      2     0%    0%   +0.0   +0.0    
+
+  ── TRADES SLTP-VALIDÉS PAR PHASE ──
+
+  Phase         Trades  SL moy   TP1   R:R   $SL
+  ---------------------------------------------
+  Asia_Late         3    35t   52t  1.5 $ 52
+  London           20    38t  105t  2.8 $ 57
+  Pre_Mkt          22    38t   56t  1.5 $ 57
+  Pre_Open          6    44t   59t  1.3 $ 66
+  Open_30m         22    39t   69t  1.7 $ 59
+  IB_Form           8    33t   81t  2.4 $ 49
+  Mid_AM            6    44t   91t  2.2 $ 65
+  Afternoon        39    38t   56t  1.5 $ 57
+
+  ── VOLATILITÉ PAR PHASE (mouvement moyen 3 barres) ──
+
+  Asia_Late      6.6p ███
+  London        12.0p ██████
+  Pre_Mkt        7.2p ███
+  Pre_Open       6.3p ███
+  Open_30m      17.5p ████████
+  IB_Form       14.3p ███████
+  Mid_AM        10.9p █████
+  Afternoon      9.3p ████
+
+  ── CLASSEMENT (score = |corrélation| × volatilité × taux validation) ──
+
+  🟢 Open_30m     score=  2.2 | r=0.27 vol=17.5p valid=22/61
+  🟡 Pre_Mkt      score=  1.0 | r=0.30 vol=7.2p valid=22/61
+  🟡 Mid_AM       score=  0.7 | r=0.33 vol=10.9p valid= 6/90
+  🔴 IB_Form      score=  0.3 | r=0.07 vol=14.3p valid= 8/59
+  🔴 Afternoon    score=  0.3 | r=0.05 vol=9.3p valid=39/93
+  🔴 London       score=  0.2 | r=0.04 vol=12.0p valid=20/241
+  🔴 Pre_Open     score=  0.0 | r=0.02 vol=6.3p valid= 6/29
+  🔴 Asia_Late    score=  0.0 | r=0.00 vol=6.6p valid= 3/84
+
+  RECOMMANDATION: trader en priorité les phases 🟢
+  Phases 🔴 = le score contextuel ne prédit rien → pas de trade
+
+======================================================================
+  TEST 13 — DMP HEALTH CHECK (signaux vivants/morts)
+======================================================================
+
+  NQ 20260316 (719 barres, {'London': 361, 'US': 332, 'Asia': 26}):
+
+  ES 20260316 (718 barres, {'London': 361, 'US': 332, 'Asia': 25}):
+    ⚠️ bar_long_dn_up            0/718 — jamais firé
+    ⚠️ bar_long_up_dn            0/718 — jamais firé
+
+  ✅ DMP PROPRE — 86 checks passent, 2 warnings
+
+======================================================================
+  TEST 14 — RVOL VALIDATION (C++ vs Python)
+======================================================================
+
+  ✅ NQ 20260316: 99% match | avg_diff=3.9% max_diff=117% | 7/713 hors tolérance
+         spikes≥2x: 47 | buy=22 sell=17 absorb_buy=10 absorb_sell=9
+         RVOL stats: min=0.022 avg=1.041 max=10.389 std=0.730
+
+  ✅ ES 20260316: 98% match | avg_diff=4.1% max_diff=108% | 17/713 hors tolérance
+         spikes≥2x: 36 | buy=18 sell=11 absorb_buy=6 absorb_sell=11
+         RVOL stats: min=0.089 avg=1.050 max=8.291 std=0.603
+
+  ✅ RVOL C++ validé — 2 datasets matchent Python (>90%)
+
+======================================================================
+  TEST 15 — SESSION IB & TRANSITIONS
+======================================================================
+
+  NQ 20260316 (719 barres):
+
+    Zone                  N    Vol   |r3|   WR%  BN→r3      Verdict
+    -----------------------------------------------------------------
+    LONDON_TRANS         39    61   5.6   62%    55%      🟢 TRADE
+    LONDON_ACTIVE        76    76  10.0   50%    64%   🔴 NO TRADE
+    US_TRANS             16  1255  22.0   56%    64%      🟢 TRADE
+    US_IB_FORMING        45   751  15.9   56%    57%   📐 OBSERVER
+    US_ACTIVE            90   475  12.5   49%    43%   🔴 NO TRADE
+    MID_AM              119   347  10.7   51%    45%   🔴 NO TRADE
+    US_PM                30   329   8.7   57%    70%      🟢 TRADE
+
+  ── CLASSEMENT ZONES (1 jours) ──
+
+    Zone                Barres    Vol   |r3|   WR%      Verdict
+    ------------------------------------------------------------
+    LONDON_TRANS            39    61   5.6   62%      🟢 TRADE
+    US_PM                   30   329   8.7   57%     🟡 NEUTRE
+    US_TRANS                16  1255  22.0   56%    ⚠️ DANGER
+    US_IB_FORMING           45   751  15.9   56%   📐 OBSERVER
+    MID_AM                 119   347  10.7   51%   🔴 NO TRADE
+    LONDON_ACTIVE           76    76  10.0   50%   🔴 NO TRADE
+    US_ACTIVE               90   475  12.5   49%   🔴 NO TRADE
+
+  → Verdicts = base pour le Session Planner (Phase 2)
+  → Minimum recommandé: 10 jours (actuellement: 1)
+
+  ═══ TEST 16: RETOUR AUX PREV LEVELS ═══
+
+  Niveau             Sym    Sess     N     r5    r10  Reb%
+  -------------------------------------------------------
+  PREV_VWAP           NQ  London    13 +13.2 +14.8   31% ⚠️
+  PREV_VPOC           NQ  London    23 +23.1 +68.1   78% 🔥
+  PREV_VPOC           NQ      US    37  +7.3 +14.6   35% ⚠️
+  PREV_VWAP+1SD       NQ      US    18  -0.7  +4.0   39% ⚠️
+  PREV_VWAP-1SD       NQ  London    14 +12.2 +10.5   86% 🔥
+  PREV_VWAP           ES  London    50  +2.1  +5.7   54% ⚠️
+  PREV_VWAP           ES      US    27  +2.3  +5.5   89% 🔥
+  PREV_VAH            ES      US    15  -4.2  -8.4   93% 🔥
+  PREV_VAL            ES    Asia    18  +1.2  +2.6   67% 🔥
+  PREV_VAL            ES  London    89  -0.2  -1.0   52% ⚠️
+  PREV_VPOC           ES    Asia    25  +1.2  +2.0   12% ⚠️
+  PREV_VPOC           ES  London    72  -0.3  -1.3   57% ✅
+  PREV_VPOC           ES      US    98  +0.2  +0.4   57% ✅
+  PREV_VWAP+1SD       ES      US    66  +0.0  -1.2   44% ⚠️
+  PREV_VWAP-1SD       ES  London   119  -0.0  +0.5   53% ⚠️
+
+  ═══ TEST 17: MARKET PROFILE AVANCÉ ═══
+
+  ── NQ (719 barres) ──
+    IB Extension         n=  716 min=   1.000 max=   2.056 mean=   1.558
+    Rotation Factor      n=  715 min=   0.000 max=  10.000 mean=   2.091
+    POC Migration        n=  718 min=  -0.037 max=   0.062 mean=  -0.000
+    VA Developing        n=  706 min=-512.000 max= 367.000 mean=  -6.603
+    Failed Auction       n=  719 min=   0.000 max=   1.000 mean=   0.071
+    IB Extension buckets:
+      Inside (<1.0)            0 (   0%)
+      Normal (1-1.5)         298 (  41%)
+      Extend (1.5-2)         412 (  57%)
+      Trend (>2.0)             6 (   1%)
+    Failed Auctions: 51 détectés
+      Retour vers VPOC: 29/48 (60%)
+    Rotation: mean=2.1 | ≥4(range)=188(26%) | ≤1(trend)=378(53%)
+
+  ── ES (718 barres) ──
+    IB Extension         n=  716 min=   1.000 max=   2.021 mean=   1.542
+    Rotation Factor      n=  714 min=   0.000 max=   8.000 mean=   1.647
+    POC Migration        n=  717 min=  -0.037 max=   0.053 mean=  -0.000
+    VA Developing        n=  704 min=-169.000 max= 141.000 mean=  -0.847
+    Failed Auction       n=  718 min=   0.000 max=   1.000 mean=   0.029
+    IB Extension buckets:
+      Inside (<1.0)            0 (   0%)
+      Normal (1-1.5)         328 (  46%)
+      Extend (1.5-2)         379 (  53%)
+      Trend (>2.0)             9 (   1%)
+    Failed Auctions: 21 détectés
+      Retour vers VPOC: 8/21 (38%)
+    Rotation: mean=1.6 | ≥4(range)=142(20%) | ≤1(trend)=440(62%)
+
+
+  Temps total: 124.8s
