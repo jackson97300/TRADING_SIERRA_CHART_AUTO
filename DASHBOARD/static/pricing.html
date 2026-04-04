@@ -294,6 +294,29 @@
             color: var(--text-secondary);
         }
 
+        /* --- Period toggle --- */
+        .period-btn {
+            padding: 0.5rem 1.25rem;
+            border: none;
+            border-radius: 9999px;
+            background: transparent;
+            color: var(--text-muted);
+            font-family: 'Inter', sans-serif;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .period-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .period-btn-active {
+            background: linear-gradient(135deg, var(--cyan), var(--cyan-dark));
+            color: var(--text-primary);
+        }
+
         /* --- Responsive --- */
         @media (max-width: 900px) {
             .pricing-grid {
@@ -364,13 +387,22 @@
             <span class="pricing-disclaimer">Outil d'aide a la decision — Pas un conseil en investissement</span>
         </div>
 
+        <!-- Toggle periode -->
+        <div style="display:flex;justify-content:center;margin-bottom:2rem;">
+            <div id="period-toggle" style="display:inline-flex;background:var(--bg-input);border-radius:9999px;padding:4px;border:1px solid rgba(255,255,255,0.08);">
+                <button class="period-btn period-btn-active" data-period="monthly" onclick="setPeriod('monthly')">Mensuel</button>
+                <button class="period-btn" data-period="semi" onclick="setPeriod('semi')">6 mois <span style="color:var(--green);font-size:0.65rem;font-weight:700;">-15%</span></button>
+                <button class="period-btn" data-period="annual" onclick="setPeriod('annual')">Annuel <span style="color:var(--green);font-size:0.65rem;font-weight:700;">-30%</span></button>
+            </div>
+        </div>
+
         <!-- Grille 3 plans -->
         <div class="pricing-grid">
 
             <!-- Card 1 : Gratuit -->
             <div class="pricing-card">
                 <div class="pricing-card-badge">
-                    <span class="badge badge-cyan">ACTUEL</span>
+                    <span class="badge badge-cyan">GRATUIT</span>
                 </div>
                 <div class="pricing-card-price">
                     <span class="pricing-price-value">0&euro;</span>
@@ -393,9 +425,11 @@
                     <span class="badge badge-cyan" style="background:rgba(0,180,220,0.15);">POPULAIRE</span>
                 </div>
                 <div class="pricing-card-price">
-                    <span class="pricing-price-value">19&euro;</span>
-                    <span class="pricing-price-period">/mois</span>
+                    <span id="starter-price" class="pricing-price-value">19&euro;</span>
+                    <span id="starter-period" class="pricing-price-period">/mois</span>
                 </div>
+                <div id="starter-save" style="font-size:0.75rem;color:var(--green);font-weight:600;margin-top:0.25rem;display:none;"></div>
+                <div id="starter-equiv" style="font-size:0.7rem;color:var(--text-muted);margin-top:0.125rem;display:none;"></div>
                 <hr class="pricing-divider">
                 <ul class="pricing-features">
                     <li><span class="pricing-check">&#10003;</span> Tout du plan Gratuit</li>
@@ -404,7 +438,7 @@
                     <li><span class="pricing-check">&#10003;</span> Briefing MIA quotidien complet</li>
                     <li><span class="pricing-check">&#10003;</span> Alertes Discord (retardees 15min)</li>
                 </ul>
-                <button class="pricing-btn pricing-btn-primary" data-plan="starter" onclick="handleCheckout('starter')">Commencer</button>
+                <button class="pricing-btn pricing-btn-primary" data-plan="starter" onclick="handleCheckout('starter')">Commencer — 7j gratuit</button>
             </div>
 
             <!-- Card 3 : Premium -->
@@ -413,9 +447,11 @@
                     <span class="badge" style="background:rgba(212,175,55,0.15);color:var(--gold);">COMPLET</span>
                 </div>
                 <div class="pricing-card-price">
-                    <span class="pricing-price-value">49&euro;</span>
-                    <span class="pricing-price-period">/mois</span>
+                    <span id="premium-price" class="pricing-price-value">49&euro;</span>
+                    <span id="premium-period" class="pricing-price-period">/mois</span>
                 </div>
+                <div id="premium-save" style="font-size:0.75rem;color:var(--green);font-weight:600;margin-top:0.25rem;display:none;"></div>
+                <div id="premium-equiv" style="font-size:0.7rem;color:var(--text-muted);margin-top:0.125rem;display:none;"></div>
                 <hr class="pricing-divider">
                 <ul class="pricing-features">
                     <li><span class="pricing-check">&#10003;</span> Tout du plan Starter</li>
@@ -425,7 +461,7 @@
                     <li><span class="pricing-check">&#10003;</span> Alertes Discord temps reel</li>
                     <li><span class="pricing-check">&#10003;</span> Briefings archives</li>
                 </ul>
-                <button class="pricing-btn pricing-btn-primary" data-plan="premium" onclick="handleCheckout('premium')">Debloquer tout</button>
+                <button class="pricing-btn pricing-btn-primary" data-plan="premium" onclick="handleCheckout('premium')">Debloquer tout — 7j gratuit</button>
             </div>
 
         </div>
@@ -506,11 +542,72 @@
             item.classList.toggle('open');
         }
 
+        /* --- Grille tarifaire degressive --- */
+        /*
+         * Mensuel    : prix de base
+         * 6 mois     : -15% → paiement unique pour 6 mois
+         * Annuel     : -30% → paiement unique pour 12 mois
+         *
+         * Starter : 19/mois → 97 (6m) → 160 (12m)
+         * Premium : 49/mois → 250 (6m) → 412 (12m)
+         */
+        var PRICES = {
+            starter: {
+                monthly: { price: 19, period: "/mois", save: "", equiv: "" },
+                semi:    { price: 97, period: "/6 mois", save: "Economisez 17€", equiv: "soit 16,17€/mois" },
+                annual:  { price: 160, period: "/an", save: "Economisez 68€", equiv: "soit 13,33€/mois" }
+            },
+            premium: {
+                monthly: { price: 49, period: "/mois", save: "", equiv: "" },
+                semi:    { price: 250, period: "/6 mois", save: "Economisez 44€", equiv: "soit 41,67€/mois" },
+                annual:  { price: 412, period: "/an", save: "Economisez 176€", equiv: "soit 34,33€/mois" }
+            }
+        };
+
+        var currentPeriod = "monthly";
+
+        function setPeriod(period) {
+            currentPeriod = period;
+
+            /* Toggle buttons */
+            var btns = document.querySelectorAll('.period-btn');
+            for (var i = 0; i < btns.length; i++) {
+                btns[i].classList.remove('period-btn-active');
+                if (btns[i].getAttribute('data-period') === period) {
+                    btns[i].classList.add('period-btn-active');
+                }
+            }
+
+            /* Update prices */
+            updatePlanPrice('starter', period);
+            updatePlanPrice('premium', period);
+        }
+
+        function updatePlanPrice(plan, period) {
+            var data = PRICES[plan][period];
+            document.getElementById(plan + '-price').innerHTML = data.price + '&euro;';
+            document.getElementById(plan + '-period').textContent = data.period;
+
+            var saveEl = document.getElementById(plan + '-save');
+            var equivEl = document.getElementById(plan + '-equiv');
+
+            if (data.save) {
+                saveEl.textContent = data.save;
+                saveEl.style.display = 'block';
+                equivEl.textContent = data.equiv;
+                equivEl.style.display = 'block';
+            } else {
+                saveEl.style.display = 'none';
+                equivEl.style.display = 'none';
+            }
+        }
+
         /* --- Checkout (Stripe placeholder) --- */
         var toastTimeout = null;
 
         function handleCheckout(plan) {
-            /* Quand Stripe sera configure, ceci appellera POST /api/stripe/create-checkout */
+            /* Quand Stripe sera configure, ceci appellera POST /api/stripe/create-checkout
+               avec plan + currentPeriod */
             var toast = document.getElementById('pricing-toast');
             toast.classList.remove('pricing-toast-hidden');
 

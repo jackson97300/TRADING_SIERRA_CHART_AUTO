@@ -10,7 +10,7 @@
     // =========================================================
     var API_BASE = window.location.origin;
     var POLL_INTERVAL = 5000;
-    var DISCORD_WEBHOOK_URL = "DISCORD_WEBHOOK_URL"; // placeholder — remplacer par le vrai webhook
+    var DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1483825074128556062/oQ02-a3xTDn3lT59B2Uqij5Sq19wjThHomd03xZMkVKiCcz1sxSTzA9k9hlFU-ccLHM2";
 
     // =========================================================
     // Etat interne
@@ -238,9 +238,13 @@
     // =========================================================
 
     function renderBotStatus(data) {
+        // bot_status est un objet {running, global_status, last_heartbeat}
+        var bs = data.bot_status || {};
+        var isRunning = bs.running === true;
+
         var badgeEl = document.getElementById("bot-running-badge");
         if (badgeEl) {
-            if (data.bot_running) {
+            if (isRunning) {
                 badgeEl.className = "badge badge-green";
                 badgeEl.innerHTML = '<span class="dot dot-green"></span> RUNNING';
             } else {
@@ -249,20 +253,13 @@
             }
         }
 
-        setText("bot-global-status", data.bot_status || "--");
-        if (data.bot_running) {
-            var statusEl = document.getElementById("bot-global-status");
-            if (statusEl) {
-                statusEl.className = "kv-value text-green";
-            }
-        } else {
-            var statusEl2 = document.getElementById("bot-global-status");
-            if (statusEl2) {
-                statusEl2.className = "kv-value text-red";
-            }
+        setText("bot-global-status", bs.global_status || "--");
+        var statusEl = document.getElementById("bot-global-status");
+        if (statusEl) {
+            statusEl.className = "kv-value " + (isRunning ? "stat-positive" : "stat-negative");
         }
 
-        setText("bot-heartbeat", data.bot_heartbeat || "--:--:--");
+        setText("bot-heartbeat", bs.last_heartbeat || "--:--:--");
 
         if (data.es) renderInstrument("es", data.es);
         if (data.nq) renderInstrument("nq", data.nq);
@@ -290,26 +287,22 @@
             }
         }
 
-        // P&L
+        // P&L — champ pnl_today de l'API
         var pnlEl = document.getElementById(sym + "-pnl");
         if (pnlEl) {
-            var pnl = parseFloat(inst.pnl);
-            if (isNaN(pnl)) {
-                pnlEl.textContent = "$0.00";
-                pnlEl.className = "kv-value stat-neutral";
-            } else {
-                pnlEl.textContent = "$" + pnl.toFixed(2);
-                pnlEl.className = "kv-value " + (pnl >= 0 ? "stat-positive" : "stat-negative");
-            }
+            var pnl = parseFloat(inst.pnl_today);
+            if (isNaN(pnl)) pnl = 0;
+            pnlEl.textContent = "$" + pnl.toFixed(2);
+            pnlEl.className = "kv-value " + (pnl > 0 ? "stat-positive" : pnl < 0 ? "stat-negative" : "stat-neutral");
         }
 
-        // Trades W/L
+        // Trades W/L — champs wins, losses, trades_today de l'API
         var tradesEl = document.getElementById(sym + "-trades");
-        if (tradesEl && inst.trades != null) {
-            var w = inst.trades.wins || 0;
-            var l = inst.trades.losses || 0;
-            var total = inst.trades.total || (w + l);
-            tradesEl.textContent = w + "W / " + l + "L (" + total + " total)";
+        if (tradesEl) {
+            var w = inst.wins || 0;
+            var l = inst.losses || 0;
+            var total = inst.trades_today || (w + l);
+            tradesEl.textContent = w + " / " + l + " (" + total + ")";
         }
     }
 
@@ -836,6 +829,160 @@
 
         // Briefing preview
         fetchBriefingPreview();
+
+        // News alert banner — mise a jour toutes les 30s
+        updateNewsAlert();
+        setInterval(updateNewsAlert, 30000);
+    }
+
+    // =========================================================
+    // News Alert Banner (style prop firm)
+    // =========================================================
+
+    /**
+     * Events critiques US avec dates recurrentes.
+     * Format: { name, day, hour, min, impact }
+     * day: "first-friday" | "8th-15th" | "fomc" | "last-week" | "weekly-thursday"
+     */
+    var CRITICAL_EVENTS = [
+        { name: "NFP (Non-Farm Payrolls)", recurrence: "first-friday", hour: 14, min: 30, impact: "critical" },
+        { name: "CPI (Inflation)", recurrence: "monthly-mid", hour: 14, min: 30, impact: "critical" },
+        { name: "FOMC Decision Taux", recurrence: "fomc", hour: 20, min: 0, impact: "critical" },
+        { name: "PCE Core", recurrence: "monthly-end", hour: 14, min: 30, impact: "critical" },
+        { name: "Jobless Claims", recurrence: "weekly-thursday", hour: 14, min: 30, impact: "high" },
+        { name: "ISM Manufacturing", recurrence: "first-business-day", hour: 16, min: 0, impact: "high" },
+        { name: "Retail Sales", recurrence: "monthly-mid", hour: 14, min: 30, impact: "high" },
+    ];
+
+    /**
+     * FOMC dates 2026 (les 8 reunions — les dates reelles)
+     * Source: Federal Reserve schedule
+     */
+    var FOMC_DATES_2026 = [
+        "2026-01-28", "2026-03-18", "2026-05-06", "2026-06-17",
+        "2026-07-29", "2026-09-16", "2026-11-04", "2026-12-16"
+    ];
+
+    function getNextCriticalEvent() {
+        var now = new Date();
+        var nowET = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+
+        // Prochains jeudis (Jobless Claims) — le plus frequent
+        var nextThursday = new Date(nowET);
+        nextThursday.setDate(nowET.getDate() + ((4 - nowET.getDay() + 7) % 7 || 7));
+        nextThursday.setHours(14, 30, 0, 0);
+        if (nextThursday <= nowET) {
+            nextThursday.setDate(nextThursday.getDate() + 7);
+        }
+
+        var events = [];
+
+        // Jobless Claims (tous les jeudis 14:30 ET)
+        events.push({ name: "Jobless Claims", time: nextThursday, impact: "high" });
+
+        // FOMC dates
+        for (var i = 0; i < FOMC_DATES_2026.length; i++) {
+            var fomcDate = new Date(FOMC_DATES_2026[i] + "T20:00:00");
+            if (fomcDate > nowET) {
+                events.push({ name: "FOMC Decision", time: fomcDate, impact: "critical" });
+                break;
+            }
+        }
+
+        // NFP (premier vendredi du mois prochain si passe)
+        var nfpDate = getFirstFriday(nowET);
+        nfpDate.setHours(14, 30, 0, 0);
+        if (nfpDate <= nowET) {
+            var nextMonth = new Date(nowET.getFullYear(), nowET.getMonth() + 1, 1);
+            nfpDate = getFirstFriday(nextMonth);
+            nfpDate.setHours(14, 30, 0, 0);
+        }
+        events.push({ name: "NFP", time: nfpDate, impact: "critical" });
+
+        // CPI (~12-14 du mois, 14:30 ET)
+        var cpiDate = new Date(nowET.getFullYear(), nowET.getMonth(), 13);
+        cpiDate.setHours(14, 30, 0, 0);
+        if (cpiDate <= nowET) {
+            cpiDate = new Date(nowET.getFullYear(), nowET.getMonth() + 1, 13);
+            cpiDate.setHours(14, 30, 0, 0);
+        }
+        events.push({ name: "CPI", time: cpiDate, impact: "critical" });
+
+        // Trier par date la plus proche
+        events.sort(function (a, b) { return a.time - b.time; });
+
+        return events[0] || null;
+    }
+
+    function getFirstFriday(date) {
+        var d = new Date(date.getFullYear(), date.getMonth(), 1);
+        while (d.getDay() !== 5) {
+            d.setDate(d.getDate() + 1);
+        }
+        return d;
+    }
+
+    function updateNewsAlert() {
+        var banner = document.getElementById("news-alert-banner");
+        if (!banner) return;
+
+        var evt = getNextCriticalEvent();
+        if (!evt) {
+            banner.style.display = "none";
+            return;
+        }
+
+        var now = new Date();
+        var diffMs = evt.time - now;
+        var diffMin = Math.floor(diffMs / 60000);
+        var diffHours = Math.floor(diffMin / 60);
+        var diffDays = Math.floor(diffHours / 24);
+
+        var icon = document.getElementById("news-alert-icon");
+        var text = document.getElementById("news-alert-text");
+
+        var timeStr = "";
+        if (diffDays > 0) {
+            timeStr = diffDays + "j " + (diffHours % 24) + "h";
+        } else if (diffHours > 0) {
+            timeStr = diffHours + "h " + (diffMin % 60) + "min";
+        } else if (diffMin > 0) {
+            timeStr = diffMin + " min";
+        } else {
+            timeStr = "MAINTENANT";
+        }
+
+        banner.style.display = "flex";
+
+        if (diffMin <= 15 && evt.impact === "critical") {
+            // ROUGE — DANGER IMMINENT — trading bloque
+            banner.style.background = "#1a0808";
+            banner.style.borderBottom = "2px solid var(--red)";
+            banner.style.color = "var(--red)";
+            icon.textContent = "\u26A0";
+            text.textContent = "TRADING BLOQUE \u2014 " + evt.name + " dans " + timeStr;
+        } else if (diffMin <= 30 && evt.impact === "critical") {
+            // ORANGE — event critique dans 30min
+            banner.style.background = "#1a1008";
+            banner.style.borderBottom = "2px solid #FF9800";
+            banner.style.color = "#FF9800";
+            icon.textContent = "\u23F0";
+            text.textContent = "ATTENTION \u2014 " + evt.name + " dans " + timeStr;
+        } else if (diffMin <= 120) {
+            // JAUNE — event dans 2h
+            banner.style.background = "#141008";
+            banner.style.borderBottom = "1px solid rgba(245, 158, 11, 0.3)";
+            banner.style.color = "var(--warning)";
+            icon.textContent = "\uD83D\uDCC5";
+            text.textContent = "Prochain event : " + evt.name + " dans " + timeStr;
+        } else {
+            // VERT — pas de danger (fond opaque sombre)
+            banner.style.background = "#0a1210";
+            banner.style.borderBottom = "1px solid rgba(0, 200, 83, 0.2)";
+            banner.style.color = "var(--green)";
+            icon.textContent = "\u2705";
+            text.textContent = "Pas d'event critique \u2014 Prochain : " + evt.name + " dans " + timeStr;
+        }
     }
 
     // Lancement

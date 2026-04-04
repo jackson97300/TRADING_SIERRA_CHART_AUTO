@@ -16,14 +16,16 @@
     script.async = true;
     script.textContent = JSON.stringify({
         symbols: [
-            { proName: "CME_MINI:ES1!", title: "ES" },
-            { proName: "CME_MINI:NQ1!", title: "NQ" },
-            { proName: "CME_MINI:RTY1!", title: "RTY" },
-            { proName: "SP:SPX", title: "SPX" },
-            { proName: "CBOE:VIX", title: "VIX" },
-            { proName: "NYMEX:CL1!", title: "Petrole" },
-            { proName: "COMEX:GC1!", title: "Or" },
-            { proName: "BITSTAMP:BTCUSD", title: "BTC" }
+            { proName: "AMEX:SPY", title: "SPY (ES)" },
+            { proName: "NASDAQ:QQQ", title: "QQQ (NQ)" },
+            { proName: "AMEX:IWM", title: "IWM (RTY)" },
+            { proName: "AMEX:USO", title: "Petrole" },
+            { proName: "AMEX:GLD", title: "Or" },
+            { proName: "BITSTAMP:BTCUSD", title: "BTC" },
+            { proName: "FX_IDC:EURUSD", title: "EUR/USD" },
+            { proName: "NASDAQ:NVDA", title: "NVDA" },
+            { proName: "NASDAQ:AAPL", title: "AAPL" },
+            { proName: "NASDAQ:MSFT", title: "MSFT" }
         ],
         showSymbolLogo: false,
         isTransparent: true,

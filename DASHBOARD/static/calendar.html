@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendrier Economique - MIA IA SYSTEM</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/images/favicon-32x32.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <style>
+        body { padding-top: calc(var(--ticker-height) + var(--navbar-height)); }
+
+        .calendar-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+
+        .calendar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+
+        .calendar-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        /* Widget TradingView */
+        .tv-calendar-wrap {
+            background: rgba(13, 19, 33, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: var(--panel-radius);
+            overflow: hidden;
+            min-height: 600px;
+        }
+
+        .tv-calendar-wrap iframe {
+            width: 100%;
+            height: 650px;
+            border: none;
+        }
+
+        /* Legende MIA */
+        .mia-legend {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .legend-card {
+            background: rgba(13, 19, 33, 0.8);
+            border-radius: 0.75rem;
+            padding: 0.875rem;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .legend-card-red { border-left: 3px solid var(--red); }
+        .legend-card-orange { border-left: 3px solid #FF9800; }
+        .legend-card-yellow { border-left: 3px solid var(--warning); }
+
+        .legend-title {
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.25rem;
+        }
+
+        .legend-action {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+        }
+
+        .legend-events {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Ticker -->
+    <div id="tv-ticker" style="position:fixed;top:0;left:0;right:0;height:46px;z-index:9999;background:#0a0e17;"></div>
+
+    <!-- Navbar -->
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">
+            <img src="/static/images/logo-dark.jpg" alt="MIA" width="36" height="36" style="border-radius:50%;border:2px solid rgba(212,175,55,0.7);">
+            <span style="font-weight:700;font-size:1.125rem;background:linear-gradient(to right,#fff,var(--cyan),var(--gold));-webkit-background-clip:text;-webkit-text-fill-color:transparent;">MIA Dashboard</span>
+        </a>
+        <div style="display:flex;align-items:center;gap:1.5rem;margin-left:2rem;">
+            <a href="/" style="color:var(--text-secondary);text-decoration:none;font-size:0.875rem;font-weight:500;">Dashboard</a>
+            <a href="/briefing" style="color:var(--gold);text-decoration:none;font-size:0.875rem;font-weight:600;">Briefing</a>
+            <a href="/calendar" style="color:var(--cyan);text-decoration:none;font-size:0.875rem;font-weight:600;border-bottom:2px solid var(--cyan);padding-bottom:2px;">Calendrier</a>
+            <a href="https://mia-ia-system.com/education/" style="color:var(--text-secondary);text-decoration:none;font-size:0.875rem;font-weight:500;" target="_blank">Education</a>
+        </div>
+        <div style="flex:1"></div>
+        <div style="display:flex;align-items:center;gap:0.75rem;">
+            <a href="/" style="padding:0.5rem 1rem;background:linear-gradient(to right,var(--cyan),var(--cyan-dark));color:var(--bg-base);border-radius:0.5rem;text-decoration:none;font-weight:600;font-size:0.8125rem;">← Dashboard</a>
+        </div>
+    </nav>
+
+    <div class="calendar-container">
+
+        <!-- Header -->
+        <div class="calendar-header">
+            <div>
+                <h1 class="calendar-title">Calendrier Economique</h1>
+                <p style="font-size:0.8125rem;color:var(--text-muted);margin-top:0.25rem;">Events impactant ES, NQ, RTY — MIA bloque le trading 15min avant les events critiques</p>
+            </div>
+            <div style="display:flex;gap:0.5rem;">
+                <a href="https://www.forexfactory.com/calendar" target="_blank" rel="noopener" style="padding:0.375rem 0.75rem;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:0.5rem;color:var(--text-secondary);text-decoration:none;font-size:0.75rem;font-weight:500;">ForexFactory ↗</a>
+            </div>
+        </div>
+
+        <!-- Legende MIA Protection -->
+        <div class="mia-legend">
+            <div class="legend-card legend-card-red">
+                <div class="legend-title" style="color:var(--red);">CRITIQUE — Trading BLOQUE</div>
+                <div class="legend-action" style="color:var(--red);">-15min / +30min</div>
+                <div class="legend-events">FOMC, NFP, IPC (CPI), PCE Core</div>
+            </div>
+            <div class="legend-card legend-card-orange">
+                <div class="legend-title" style="color:#FF9800;">ELEVE — Prudence</div>
+                <div class="legend-action" style="color:#FF9800;">Stop elargi, pas de new trade 5min avant</div>
+                <div class="legend-events">PIB, ISM, Retail Sales, Jobless Claims</div>
+            </div>
+            <div class="legend-card legend-card-yellow">
+                <div class="legend-title" style="color:var(--warning);">MOYEN — Trading normal</div>
+                <div class="legend-action" style="color:var(--green);">Aucun blocage</div>
+                <div class="legend-events">PMI, Housing, Consumer Confidence</div>
+            </div>
+        </div>
+
+        <!-- Widget TradingView Economic Calendar -->
+        <div class="tv-calendar-wrap">
+            <div class="tradingview-widget-container">
+                <div class="tradingview-widget-container__widget"></div>
+                <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
+                {
+                    "colorTheme": "dark",
+                    "isTransparent": true,
+                    "width": "100%",
+                    "height": "650",
+                    "locale": "fr",
+                    "importanceFilter": "0,1",
+                    "countryFilter": "us"
+                }
+                </script>
+            </div>
+        </div>
+
+        <!-- Info supplementaire -->
+        <div style="margin-top:1rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+            <div class="glass" style="padding:1rem;">
+                <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.5rem;">Protection MIA</div>
+                <div class="kv-row">
+                    <span class="kv-key">Blocage avant event critique</span>
+                    <span class="kv-value mono" style="color:var(--red);">15 min</span>
+                </div>
+                <div class="kv-row">
+                    <span class="kv-key">Reprise apres event</span>
+                    <span class="kv-value mono" style="color:var(--green);">30 min</span>
+                </div>
+                <div class="kv-row">
+                    <span class="kv-key">Positions ouvertes</span>
+                    <span class="kv-value mono">Fermees avant l'event</span>
+                </div>
+            </div>
+            <div class="glass" style="padding:1rem;">
+                <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.5rem;">Events les plus dangereux</div>
+                <div class="kv-row">
+                    <span class="kv-key">NFP (Non-Farm Payrolls)</span>
+                    <span class="kv-value mono" style="color:var(--red);">1er vendredi du mois 14:30</span>
+                </div>
+                <div class="kv-row">
+                    <span class="kv-key">FOMC (Decision taux)</span>
+                    <span class="kv-value mono" style="color:var(--red);">8x/an, 20:00</span>
+                </div>
+                <div class="kv-row">
+                    <span class="kv-key">CPI (Inflation)</span>
+                    <span class="kv-value mono" style="color:var(--red);">~12 du mois 14:30</span>
+                </div>
+                <div class="kv-row">
+                    <span class="kv-key">PCE Core</span>
+                    <span class="kv-value mono" style="color:var(--red);">Fin de mois 14:30</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Footer -->
+    <footer class="dashboard-footer">
+        <p>&copy; 2026 MIA IA SYSTEM. Tous droits reserves.</p>
+        <p style="margin-top:0.5rem;">
+            <a href="https://mia-ia-system.com/terms/">CGU</a> &middot;
+            <a href="https://mia-ia-system.com/risk/">Risques</a> &middot;
+            <a href="mailto:contact@mia-ia-system.com">Contact</a>
+        </p>
+    </footer>
+
+    <script src="/static/js/ticker-widget.js"></script>
+</body>
+</html>

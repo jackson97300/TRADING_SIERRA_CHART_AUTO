@@ -32,6 +32,7 @@
     --ticker-height: 46px;
     --navbar-height: 64px;
     --banner-height: 40px;
+    --news-height: 36px;
     --panel-gap: 1rem;
     --panel-radius: 1rem;
 
@@ -68,7 +69,7 @@ body {
 }
 
 body.has-banner {
-    padding-top: calc(var(--ticker-height) + var(--navbar-height) + var(--banner-height));
+    padding-top: calc(var(--ticker-height) + var(--navbar-height) + var(--banner-height) + var(--news-height));
 }
 
 a {
@@ -515,13 +516,13 @@ img {
     left: 0;
     right: 0;
     height: var(--banner-height);
-    background: linear-gradient(90deg, rgba(0, 180, 220, 0.08), rgba(212, 175, 55, 0.08));
+    background: #0c1018;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0.75rem;
-    z-index: 999;
+    z-index: 90;
     padding: 0 1rem;
 }
 
@@ -562,7 +563,7 @@ img {
     flex-direction: column;
     gap: var(--panel-gap);
     position: sticky;
-    top: calc(var(--ticker-height) + var(--navbar-height) + var(--banner-height) + var(--panel-gap));
+    top: calc(var(--ticker-height) + var(--navbar-height) + var(--banner-height) + var(--news-height) + var(--panel-gap));
 }
 
 .sidebar-card {

@@ -18,8 +18,17 @@ from DASHBOARD.api.data_reader import (
     build_options_gamma,
     build_order_flow,
     build_signals_journal,
+    get_field,
     read_bot_status,
     read_last_bar,
+)
+from DASHBOARD.api.v1_engines import (
+    analyze_corridor,
+    bn_score,
+    check_health,
+    detect_confluence,
+    detect_regime,
+    suggest_trade,
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
@@ -83,6 +92,15 @@ async def briefing_page():
     return JSONResponse({"error": "briefing.html non trouve"}, status_code=404)
 
 
+@app.get("/calendar")
+async def calendar_page():
+    """Sert la page calendrier economique."""
+    path = os.path.join(STATIC_DIR, "calendar.html")
+    if os.path.exists(path):
+        return FileResponse(path)
+    return JSONResponse({"error": "calendar.html non trouve"}, status_code=404)
+
+
 @app.get("/pricing")
 async def pricing_page():
     """Sert la page tarifs."""
@@ -118,13 +136,29 @@ async def dashboard(request: Request):
         "bot_status": bot_status,
     }
 
-    if tier == "free":
-        response["market_context"] = build_market_context_basic(bot_data)
-        return response
-
-    # --- Tier premium : tout ---
+    # Toujours lire les dernieres barres pour les donnees live
     bar_es = read_last_bar("ES")
     bar_nq = read_last_bar("NQ")
+
+    if tier == "free":
+        # Enrichir market_context avec les JSONL si le dashboard.json est perime
+        mc = build_market_context_basic(bot_data)
+        if mc.get("vix", 0) == 0 and bar_es:
+            mc["vix"] = get_field(bar_es, "vix_level", 0.0)
+            mc["atr_es"] = get_field(bar_es, "atr", 0.0)
+            mc["vwap_slope_es"] = get_field(bar_es, "vwap_slope_10", 0.0)
+        if mc.get("atr_nq", 0) == 0 and bar_nq:
+            mc["atr_nq"] = get_field(bar_nq, "atr", 0.0)
+            mc["vwap_slope_nq"] = get_field(bar_nq, "vwap_slope_10", 0.0)
+        if mc.get("vix_regime", "UNKNOWN") == "UNKNOWN" and bar_es:
+            vr = get_field(bar_es, "vix_regime", 0)
+            mc["vix_regime"] = {0: "LOW", 1: "NORMAL", 2: "HIGH"}.get(int(vr), "NORMAL")
+        response["market_context"] = mc
+        # V1 engines pour free : regime + health
+        if bar_es:
+            response["regime_es"] = detect_regime(bar_es)
+        response["health"] = check_health(bot_data)
+        return response
 
     response["es"] = build_instrument_status(bot_data, "ES")
     response["nq"] = build_instrument_status(bot_data, "NQ")
@@ -135,6 +169,21 @@ async def dashboard(request: Request):
     response["options_gamma_nq"] = build_options_gamma(bar_nq) or None
     response["intermarket"] = build_intermarket(bar_es, bar_nq) or None
     response["signals_journal"] = build_signals_journal(bot_data) or None
+
+    # V1 engines — premium
+    if bar_es:
+        response["bn_score_es"] = bn_score(bar_es, "ES")
+        response["confluence_es"] = detect_confluence(bar_es)
+        response["corridor_es"] = analyze_corridor(bar_es)
+        response["regime_es"] = detect_regime(bar_es)
+        response["suggestion_es"] = suggest_trade(bar_es, "ES")
+    if bar_nq:
+        response["bn_score_nq"] = bn_score(bar_nq, "NQ")
+        response["confluence_nq"] = detect_confluence(bar_nq)
+        response["corridor_nq"] = analyze_corridor(bar_nq)
+        response["regime_nq"] = detect_regime(bar_nq)
+        response["suggestion_nq"] = suggest_trade(bar_nq, "NQ")
+    response["health"] = check_health(bot_data)
 
     # Warnings
     warnings = bot_data.get("warnings")

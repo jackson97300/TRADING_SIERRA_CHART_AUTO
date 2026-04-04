@@ -24,8 +24,9 @@
         </div>
 
         <div class="navbar-links">
-            <a href="/dashboard" class="navbar-link navbar-link-active">Dashboard</a>
+            <a href="/" class="navbar-link navbar-link-active">Dashboard</a>
             <a href="/briefing" class="navbar-link navbar-link-gold">Briefing</a>
+            <a href="/calendar" class="navbar-link">Calendrier</a>
             <a href="https://mia-ia-system.com/education/" class="navbar-link" target="_blank" rel="noopener">Education</a>
         </div>
 
@@ -46,6 +47,13 @@
             <a href="/briefing" class="cta-banner-link">Lire</a>
         </span>
         <button class="cta-banner-close" id="cta-banner-close" aria-label="Fermer le bandeau">&times;</button>
+    </div>
+
+    <!-- ========== NEWS ALERT BANNER (style prop firm — fixe sous le bandeau briefing) ========== -->
+    <div id="news-alert-banner" style="display:none;position:fixed;top:calc(var(--ticker-height) + var(--navbar-height) + 40px);left:0;right:0;height:36px;z-index:88;align-items:center;justify-content:center;gap:0.75rem;font-size:0.8125rem;font-weight:600;transition:all 0.3s ease;">
+        <span id="news-alert-icon" style="font-size:1rem;"></span>
+        <span id="news-alert-text" style="font-family:'JetBrains Mono',monospace;"></span>
+        <a href="/calendar" id="news-alert-link" style="font-size:0.7rem;color:inherit;opacity:0.8;text-decoration:underline;">Voir calendrier</a>
     </div>
 
     <!-- ========== Dashboard Layout ========== -->
@@ -232,7 +240,7 @@
                 <section id="panel-options-gamma" class="glass">
                     <div class="panel-header">
                         <span class="panel-title">Options &amp; Gamma</span>
-                        <span class="badge badge-gold">MenthorQ</span>
+                        <span class="badge badge-gold">GAMMA</span>
                     </div>
 
                     <div class="premium-locked">

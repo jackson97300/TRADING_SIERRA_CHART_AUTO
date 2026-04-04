@@ -298,7 +298,7 @@ def build_order_flow(bar: dict) -> dict:
 
 
 def build_options_gamma(bar: dict) -> dict:
-    """Panel options/gamma : distances MenthorQ, GEX, VIX."""
+    """Panel options/gamma : distances murs options, GEX, VIX."""
     if not bar:
         return {}
     return {
