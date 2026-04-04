@@ -23,9 +23,13 @@
             { proName: "AMEX:GLD", title: "Or" },
             { proName: "BITSTAMP:BTCUSD", title: "BTC" },
             { proName: "FX_IDC:EURUSD", title: "EUR/USD" },
-            { proName: "NASDAQ:NVDA", title: "NVDA" },
             { proName: "NASDAQ:AAPL", title: "AAPL" },
-            { proName: "NASDAQ:MSFT", title: "MSFT" }
+            { proName: "NASDAQ:MSFT", title: "MSFT" },
+            { proName: "NASDAQ:NVDA", title: "NVDA" },
+            { proName: "NASDAQ:AMZN", title: "AMZN" },
+            { proName: "NASDAQ:GOOGL", title: "GOOGL" },
+            { proName: "NASDAQ:META", title: "META" },
+            { proName: "NASDAQ:TSLA", title: "TSLA" }
         ],
         showSymbolLogo: false,
         isTransparent: true,
