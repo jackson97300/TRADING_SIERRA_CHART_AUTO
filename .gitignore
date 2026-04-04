@@ -37,6 +37,19 @@ build/
 *.swo
 *~
 
+# === SOUS-REPOS GIT (ont leur propre repo) ===
+mia-website/
+
+# === DOSSIERS LEGACY V1 ===
+A FAIRE/
+CODE/
+CONFIG/
+INDICATEUR/
+PYTHON/
+TOOLS/
+STUDIES/
+SNAPSHOTS/
+
 # === OS ===
 Thumbs.db
 Desktop.ini
