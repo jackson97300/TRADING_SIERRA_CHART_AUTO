@@ -1,0 +1,35 @@
+name: Deploy Dashboard to VPS
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'DASHBOARD/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy DASHBOARD to VPS via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "DASHBOARD/"
+          target: "C:/TRADING_SIERRA_CHART_AUTO/"
+          overwrite: true
+
+      - name: Restart dashboard on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            taskkill /F /FI "WINDOWTITLE eq uvicorn*" 2>nul
+            cd C:\TRADING_SIERRA_CHART_AUTO
+            start /B pythonw DASHBOARD/start_dashboard.py
+            echo "Dashboard redeploye avec succes"
