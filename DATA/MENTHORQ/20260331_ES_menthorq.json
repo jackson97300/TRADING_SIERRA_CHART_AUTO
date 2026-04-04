@@ -1,0 +1,64 @@
+{
+  "ticker": "ES1!",
+  "date": "2026-03-31",
+  "timestamp": "2026-03-31 15:59 EST",
+  "contract": "ESM2026",
+
+  "liquidity_snapshot": {
+    "Gamma_Condition": "Negative",
+    "P/C_OI": 2.77,
+    "1D_Exp_Move_Percent": 1.31,
+    "Implied_Vol_30D": 20.79
+  },
+
+  "q_scores": {
+    "Option": 1,
+    "Volatility": 4,
+    "Momentum": 1,
+    "Seasonality": 0
+  },
+
+  "key_levels": {
+    "Call_Resistance": 6800,
+    "Call_Resistance_0DTE": 6620,
+    "HVL": 6550,
+    "Put_Support": 6500,
+    "Put_Support_0DTE": 6450,
+    "1D_Max": 6656.81,
+    "1D_Min": 6484.69,
+    "Distance_to_HVL_Pct": 0.32,
+    "Implied_Vol_30D": 20.79
+  },
+
+  "gex": {
+    "Total_GEX_M": 450.34,
+    "Net_GEX_M": -58.94,
+    "Expiring_GEX_M": 13.64,
+    "Put_Call_GEX": 1.3,
+    "Total_DEX_B": 181.22,
+    "Net_DEX_B": -23.96
+  },
+
+  "gex_strikes": {
+    "GEX_1": 6600, "GEX_2": 6525, "GEX_3": 6650,
+    "GEX_4": 6625, "GEX_5": 6585, "GEX_6": 6400,
+    "GEX_7": 6700, "GEX_8": 6675, "GEX_9": 6425, "GEX_10": 6680
+  },
+
+  "tradingview_levels": {
+    "Call_Resistance": 6800,
+    "Put_Support": 6500,
+    "HVL": 6550,
+    "1D_Min": 6484.69,
+    "1D_Max": 6656.81,
+    "Call_Resistance_0DTE": 6620,
+    "Put_Support_0DTE": 6450,
+    "HVL_0DTE": 6550,
+    "Gamma_Wall_0DTE": 6620
+  },
+
+  "blind_spot_levels": [
+    6343.14, 6567.81, 6215.24, 6404.12, 6423.76,
+    6667.80, 6743.38, 6546.37, 6397.14, 6796.90
+  ]
+}

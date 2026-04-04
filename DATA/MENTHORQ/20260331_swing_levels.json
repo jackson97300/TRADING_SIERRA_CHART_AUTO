@@ -1,0 +1,34 @@
+{
+  "date": "2026-03-31",
+  "source": "MenthorQ Swing Models",
+
+  "ES_proxy_SPX": {
+    "5d": {
+      "upper_band": 6717.68,
+      "risk_trigger": 6339.36,
+      "bias": "BEARISH",
+      "success_rate_pct": 88.24
+    },
+    "20d": {
+      "upper_band": 6906.84,
+      "risk_trigger": 6150.20,
+      "bias": "BEARISH",
+      "success_rate_pct": 97.12
+    }
+  },
+
+  "NQ_proxy_QQQ": {
+    "5d": {
+      "upper_band_qqq": 597.52,
+      "risk_trigger_qqq": 556.84,
+      "bias": "BEARISH",
+      "success_rate_pct": 89.92
+    },
+    "20d": {
+      "upper_band_qqq": 617.86,
+      "risk_trigger_qqq": 536.50,
+      "bias": "BEARISH",
+      "success_rate_pct": 100.0
+    }
+  }
+}

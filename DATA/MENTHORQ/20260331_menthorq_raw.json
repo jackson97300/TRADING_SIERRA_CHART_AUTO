@@ -1,0 +1,1153 @@
+{
+  "date": "2026-03-31",
+  "source": "MenthorQ via mia_menthorq_scraper.py",
+  "scrape_time": "2026-04-01T08:43:03.640402+00:00",
+  "ES": {
+    "raw_ajax": {
+      "qscore_option": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "ES",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/score/Option_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082811Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=c2664208fe011c0c6da58377f1b2aa133cc2969b2675d5a6a03e519d7820a54f",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=qscore_option&ticker=SPX&date=2026-04-01"
+          }
+        }
+      },
+      "qscore_momentum": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "ES",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/score/Momentum_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D24H2OYLZ7%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082813Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIC%2Bo6bq%2BotFAM%2BRP1XAX4lhdClJzQ8IDDy02Oa1JwLuFAiB1%2FQ8f0RYjsJfRaE5chvBXl6gNZKx4r2s%2BTKRzUlqAEyqlAghSEAIaDDY2MTM5ODY3MTYwNSIM%2BhisLhcQXfyjcwz8KoICzPBnD4TOwzOdT59cs%2FOKsbELP6nR8MhiYG9ItlCt3Wre7h%2B0i6iZmjK3Rm5DHDUDuLGgAl4DdvSpWAmBWWBOrb9ywBXoHPl06kkf%2BqYoxCIa1gBtuTx4KbrdM8ybu28AIzpgYwGZ%2BVqcEZZ6%2FLh7B6silgTEI6Jl0jdH%2FyDhzhV1l6ou5uxJmIt0RpVdZLThLgGl5jstFuJEvi5dVKNu8Dc0CbdR3Ksz2XAZIXqptXFefTn3WqWfjvthxNgniwk%2BTIaUzOY8IKJWh3rVlAGausfx1hBux7QvBK2mGCPTqXmKin%2F%2FS%2FE9HB3juSNYcbP1bZ%2B12bgINTr356yiy7F%2FXurgMNSts84GOp4B4ZQ2x%2Br9AV9tlZtaed63vN%2FwGlLu%2ByOYtNfQ6AC080%2FDjbIbXA4sBGtuN4U3KhODJNJ%2B6SM%2Bx4Lu6WjRGxUFbWm7cFVHaxrru64zv0zxoyfaIXjuHLpUsXlPACYhPVxcpAk16b%2ByKKB6hunGQy45WHKS901kGg5yNlTaTx9rjdZ1ecIClPPeyzfXEivoYPEdJtVEXQqeNdj5cmGhE9c%3D&X-Amz-Signature=ca6e5f9c419ade2e25233f262c2f2723ae87e963608d31fa15ed00ea8cfd98e0",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=qscore_momentum&ticker=SPX&date=2026-04-01"
+          }
+        }
+      },
+      "qscore_volatility": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "ES",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/score/Volatility_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2YTO6MCES%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T080319Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQDNAwLUcLLohJdHBkZnM0sRi3EVQSajD5Pq9og%2FPtTPXAIgLhNl8dB%2FXc2hAL1dqwhda8wRqJimXV2GrOhZ7km790sqpQIIURACGgw2NjEzOTg2NzE2MDUiDI4cpZ4Qfs6bJHUJCyqCAiVWxet4xdcPUqN2XP9ThUihpaPDumzBJDnBeM6IRWaAz1k32Evvso5Fe96GROKnN6qCEB7H0IWaARVTDYse1XRZYjkzGQdscaLlUCd0SCnBH%2B%2Bom9ODXvxlBh0R0EH0WzmNM3tR4oTag4rqJX3Jepf%2F0eVSHZLOzxsFPNeo%2FXKISGzxlmf%2BwNETxDDaa5prg98GtNsUNVM2t0uCOnf3RXMao5yFx%2B9cTc1a5f%2BixP4ZCp%2F96qVZb%2FUym%2ByogDzv0JoG1rXZJbVF2A%2FZQhp5jPkbjHfjy83Z06TeCZrDLNhMuLp3kQG5wEA99HD1mjZOm6e0btgfV7N13oKOGFF9WfGCNjDsoLPOBjqdAcypqN3%2FNQnXNcv6MXQa9P7qAGcL3Zp3OQIh4SMdTyuPZNRo2kGBwbGJ%2F%2BZpwD2YWpYOEZeQKMa2YF04IZ2CWj%2BySQUkfMbwXEiM3zbzSUszcZoxvzzF4wrmchBeJ4xBNti5PUdR3iMsxYYOLGCF2vLOZKV9fnpP6jsoo%2B6YNRt1FOHt82aJgnJSapB6vuzQQlutd1V5LOPR48HFAlk%3D&X-Amz-Signature=cbf2a634d3bfd51674a270f3d09766339900d22a0bab8cb90dda1c901e4556dc",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=qscore_volatility&ticker=SPX&date=2026-04-01"
+          }
+        }
+      },
+      "qscore_seasonality": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "ES",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/score/Seasonality_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082811Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=d2605ea53d1fbf3b9d1b2a8ad7b787f642707491ca8ef69cdedcb070d467c8a4",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=qscore_seasonality&ticker=SPX&date=2026-04-01"
+          }
+        }
+      },
+      "netgex": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "es1!",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/es1%21/all_exp_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D24H2OYLZ7%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082805Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIC%2Bo6bq%2BotFAM%2BRP1XAX4lhdClJzQ8IDDy02Oa1JwLuFAiB1%2FQ8f0RYjsJfRaE5chvBXl6gNZKx4r2s%2BTKRzUlqAEyqlAghSEAIaDDY2MTM5ODY3MTYwNSIM%2BhisLhcQXfyjcwz8KoICzPBnD4TOwzOdT59cs%2FOKsbELP6nR8MhiYG9ItlCt3Wre7h%2B0i6iZmjK3Rm5DHDUDuLGgAl4DdvSpWAmBWWBOrb9ywBXoHPl06kkf%2BqYoxCIa1gBtuTx4KbrdM8ybu28AIzpgYwGZ%2BVqcEZZ6%2FLh7B6silgTEI6Jl0jdH%2FyDhzhV1l6ou5uxJmIt0RpVdZLThLgGl5jstFuJEvi5dVKNu8Dc0CbdR3Ksz2XAZIXqptXFefTn3WqWfjvthxNgniwk%2BTIaUzOY8IKJWh3rVlAGausfx1hBux7QvBK2mGCPTqXmKin%2F%2FS%2FE9HB3juSNYcbP1bZ%2B12bgINTr356yiy7F%2FXurgMNSts84GOp4B4ZQ2x%2Br9AV9tlZtaed63vN%2FwGlLu%2ByOYtNfQ6AC080%2FDjbIbXA4sBGtuN4U3KhODJNJ%2B6SM%2Bx4Lu6WjRGxUFbWm7cFVHaxrru64zv0zxoyfaIXjuHLpUsXlPACYhPVxcpAk16b%2ByKKB6hunGQy45WHKS901kGg5yNlTaTx9rjdZ1ecIClPPeyzfXEivoYPEdJtVEXQqeNdj5cmGhE9c%3D&X-Amz-Signature=c62d2b6cbeffbec133ce37fdd8a15e569d8c113350eef8f4041554a8bdaadd2a",
+            "data": {
+              "Call Resistance": 6800,
+              "Put Support": 6500,
+              "HVL": 6550,
+              "Top Net GEX Strikes": [
+                6600,
+                6525,
+                6650
+              ]
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=netgex&ticker=es1!&date=2026-04-01"
+          }
+        }
+      },
+      "netgex_multiexpiry": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "es1!",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/es1%21/next_exps_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082812Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=752b663d8d8e619922c2d2b9d7921a483a4ab704fed6214da8af303b5ac815aa",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "key_levels": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "es1!",
+            "image_url": "",
+            "data": {
+              "Call Resistance": 6800,
+              "Call Resistance 0DTE": 6620,
+              "High Vol Level": 6550,
+              "Put Support": 6500,
+              "Put Support 0DTE": 6450,
+              "1D Max.": 6656.81,
+              "1D Min.": 6484.69,
+              "Distance to HVL %": "0.32%",
+              "Implied Vol 30D": 20.79,
+              "Total GEX": "450.34M",
+              "Net GEX": "-58.94M",
+              "Expiring GEX": "13.64M",
+              "Put/Call GEX": 1.3,
+              "Total DEX": "181.22B",
+              "Net DEX": "-23.96B",
+              "Put/Call DEX": 1.3
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "bl_levels": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "es1!",
+            "image_url": "",
+            "data": [],
+            "text_data": "$ES1!: BL 1, 6343.14, BL 2, 6567.81, BL 3, 6215.24, BL 4, 6404.12, BL 5, 6423.76, BL 6, 6667.8, BL 7, 6743.38, BL 8, 6546.37, BL 9, 6397.14, BL 10, 6796.9",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=bl_levels&ticker=es1!&date=2026-04-01"
+          }
+        }
+      },
+      "matrix_v1": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "es1!",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/es1%21/styled_table.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082804Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=c9e1437680e22ead63e2e67c1d9c6eb0fb656d35c9a83aedfa61afbdda5ab37f",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "levels_tv": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "es1!",
+            "image_url": "",
+            "data": [],
+            "text_data": "$ES1!: Call Resistance, 6800, Put Support, 6500, HVL, 6550, 1D Min, 6484.69, 1D Max, 6656.81, Call Resistance 0DTE, 6620, Put Support 0DTE, 6450, HVL 0DTE, 6550, Gamma Wall 0DTE, 6620, GEX 1, 6600, GEX 2, 6525, GEX 3, 6650, GEX 4, 6625, GEX 5, 6585, GEX 6, 6400, GEX 7, 6700, GEX 8, 6675, GEX 9, 6425, GEX 10, 6680",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=levels_tv&ticker=es1!&date=2026-04-01"
+          }
+        }
+      }
+    },
+    "structured": {
+      "qscore_option": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "ES",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/score/Option_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082811Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=c2664208fe011c0c6da58377f1b2aa133cc2969b2675d5a6a03e519d7820a54f",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=qscore_option&ticker=SPX&date=2026-04-01"
+        }
+      },
+      "qscore_momentum": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "ES",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/score/Momentum_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D24H2OYLZ7%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082813Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIC%2Bo6bq%2BotFAM%2BRP1XAX4lhdClJzQ8IDDy02Oa1JwLuFAiB1%2FQ8f0RYjsJfRaE5chvBXl6gNZKx4r2s%2BTKRzUlqAEyqlAghSEAIaDDY2MTM5ODY3MTYwNSIM%2BhisLhcQXfyjcwz8KoICzPBnD4TOwzOdT59cs%2FOKsbELP6nR8MhiYG9ItlCt3Wre7h%2B0i6iZmjK3Rm5DHDUDuLGgAl4DdvSpWAmBWWBOrb9ywBXoHPl06kkf%2BqYoxCIa1gBtuTx4KbrdM8ybu28AIzpgYwGZ%2BVqcEZZ6%2FLh7B6silgTEI6Jl0jdH%2FyDhzhV1l6ou5uxJmIt0RpVdZLThLgGl5jstFuJEvi5dVKNu8Dc0CbdR3Ksz2XAZIXqptXFefTn3WqWfjvthxNgniwk%2BTIaUzOY8IKJWh3rVlAGausfx1hBux7QvBK2mGCPTqXmKin%2F%2FS%2FE9HB3juSNYcbP1bZ%2B12bgINTr356yiy7F%2FXurgMNSts84GOp4B4ZQ2x%2Br9AV9tlZtaed63vN%2FwGlLu%2ByOYtNfQ6AC080%2FDjbIbXA4sBGtuN4U3KhODJNJ%2B6SM%2Bx4Lu6WjRGxUFbWm7cFVHaxrru64zv0zxoyfaIXjuHLpUsXlPACYhPVxcpAk16b%2ByKKB6hunGQy45WHKS901kGg5yNlTaTx9rjdZ1ecIClPPeyzfXEivoYPEdJtVEXQqeNdj5cmGhE9c%3D&X-Amz-Signature=ca6e5f9c419ade2e25233f262c2f2723ae87e963608d31fa15ed00ea8cfd98e0",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=qscore_momentum&ticker=SPX&date=2026-04-01"
+        }
+      },
+      "qscore_volatility": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "ES",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/score/Volatility_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2YTO6MCES%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T080319Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQDNAwLUcLLohJdHBkZnM0sRi3EVQSajD5Pq9og%2FPtTPXAIgLhNl8dB%2FXc2hAL1dqwhda8wRqJimXV2GrOhZ7km790sqpQIIURACGgw2NjEzOTg2NzE2MDUiDI4cpZ4Qfs6bJHUJCyqCAiVWxet4xdcPUqN2XP9ThUihpaPDumzBJDnBeM6IRWaAz1k32Evvso5Fe96GROKnN6qCEB7H0IWaARVTDYse1XRZYjkzGQdscaLlUCd0SCnBH%2B%2Bom9ODXvxlBh0R0EH0WzmNM3tR4oTag4rqJX3Jepf%2F0eVSHZLOzxsFPNeo%2FXKISGzxlmf%2BwNETxDDaa5prg98GtNsUNVM2t0uCOnf3RXMao5yFx%2B9cTc1a5f%2BixP4ZCp%2F96qVZb%2FUym%2ByogDzv0JoG1rXZJbVF2A%2FZQhp5jPkbjHfjy83Z06TeCZrDLNhMuLp3kQG5wEA99HD1mjZOm6e0btgfV7N13oKOGFF9WfGCNjDsoLPOBjqdAcypqN3%2FNQnXNcv6MXQa9P7qAGcL3Zp3OQIh4SMdTyuPZNRo2kGBwbGJ%2F%2BZpwD2YWpYOEZeQKMa2YF04IZ2CWj%2BySQUkfMbwXEiM3zbzSUszcZoxvzzF4wrmchBeJ4xBNti5PUdR3iMsxYYOLGCF2vLOZKV9fnpP6jsoo%2B6YNRt1FOHt82aJgnJSapB6vuzQQlutd1V5LOPR48HFAlk%3D&X-Amz-Signature=cbf2a634d3bfd51674a270f3d09766339900d22a0bab8cb90dda1c901e4556dc",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=qscore_volatility&ticker=SPX&date=2026-04-01"
+        }
+      },
+      "qscore_seasonality": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "ES",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/score/Seasonality_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082811Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=d2605ea53d1fbf3b9d1b2a8ad7b787f642707491ca8ef69cdedcb070d467c8a4",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=qscore_seasonality&ticker=SPX&date=2026-04-01"
+        }
+      },
+      "netgex": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "es1!",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/es1%21/all_exp_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D24H2OYLZ7%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082805Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIC%2Bo6bq%2BotFAM%2BRP1XAX4lhdClJzQ8IDDy02Oa1JwLuFAiB1%2FQ8f0RYjsJfRaE5chvBXl6gNZKx4r2s%2BTKRzUlqAEyqlAghSEAIaDDY2MTM5ODY3MTYwNSIM%2BhisLhcQXfyjcwz8KoICzPBnD4TOwzOdT59cs%2FOKsbELP6nR8MhiYG9ItlCt3Wre7h%2B0i6iZmjK3Rm5DHDUDuLGgAl4DdvSpWAmBWWBOrb9ywBXoHPl06kkf%2BqYoxCIa1gBtuTx4KbrdM8ybu28AIzpgYwGZ%2BVqcEZZ6%2FLh7B6silgTEI6Jl0jdH%2FyDhzhV1l6ou5uxJmIt0RpVdZLThLgGl5jstFuJEvi5dVKNu8Dc0CbdR3Ksz2XAZIXqptXFefTn3WqWfjvthxNgniwk%2BTIaUzOY8IKJWh3rVlAGausfx1hBux7QvBK2mGCPTqXmKin%2F%2FS%2FE9HB3juSNYcbP1bZ%2B12bgINTr356yiy7F%2FXurgMNSts84GOp4B4ZQ2x%2Br9AV9tlZtaed63vN%2FwGlLu%2ByOYtNfQ6AC080%2FDjbIbXA4sBGtuN4U3KhODJNJ%2B6SM%2Bx4Lu6WjRGxUFbWm7cFVHaxrru64zv0zxoyfaIXjuHLpUsXlPACYhPVxcpAk16b%2ByKKB6hunGQy45WHKS901kGg5yNlTaTx9rjdZ1ecIClPPeyzfXEivoYPEdJtVEXQqeNdj5cmGhE9c%3D&X-Amz-Signature=c62d2b6cbeffbec133ce37fdd8a15e569d8c113350eef8f4041554a8bdaadd2a",
+          "data": {
+            "Call Resistance": 6800,
+            "Put Support": 6500,
+            "HVL": 6550,
+            "Top Net GEX Strikes": [
+              6600,
+              6525,
+              6650
+            ]
+          },
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=netgex&ticker=es1!&date=2026-04-01"
+        }
+      },
+      "netgex_multiexpiry": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "es1!",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/es1%21/next_exps_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082812Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=752b663d8d8e619922c2d2b9d7921a483a4ab704fed6214da8af303b5ac815aa",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": null
+        }
+      },
+      "key_levels": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "es1!",
+          "image_url": "",
+          "data": {
+            "Call Resistance": 6800,
+            "Call Resistance 0DTE": 6620,
+            "High Vol Level": 6550,
+            "Put Support": 6500,
+            "Put Support 0DTE": 6450,
+            "1D Max.": 6656.81,
+            "1D Min.": 6484.69,
+            "Distance to HVL %": "0.32%",
+            "Implied Vol 30D": 20.79,
+            "Total GEX": "450.34M",
+            "Net GEX": "-58.94M",
+            "Expiring GEX": "13.64M",
+            "Put/Call GEX": 1.3,
+            "Total DEX": "181.22B",
+            "Net DEX": "-23.96B",
+            "Put/Call DEX": 1.3
+          },
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": null
+        }
+      },
+      "bl_levels": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "es1!",
+          "image_url": "",
+          "data": [],
+          "text_data": "$ES1!: BL 1, 6343.14, BL 2, 6567.81, BL 3, 6215.24, BL 4, 6404.12, BL 5, 6423.76, BL 6, 6667.8, BL 7, 6743.38, BL 8, 6546.37, BL 9, 6397.14, BL 10, 6796.9",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=bl_levels&ticker=es1!&date=2026-04-01"
+        }
+      },
+      "matrix_v1": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "es1!",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/es1%21/styled_table.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082804Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=c9e1437680e22ead63e2e67c1d9c6eb0fb656d35c9a83aedfa61afbdda5ab37f",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": null
+        }
+      },
+      "levels_tv": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "es1!",
+          "image_url": "",
+          "data": [],
+          "text_data": "$ES1!: Call Resistance, 6800, Put Support, 6500, HVL, 6550, 1D Min, 6484.69, 1D Max, 6656.81, Call Resistance 0DTE, 6620, Put Support 0DTE, 6450, HVL 0DTE, 6550, Gamma Wall 0DTE, 6620, GEX 1, 6600, GEX 2, 6525, GEX 3, 6650, GEX 4, 6625, GEX 5, 6585, GEX 6, 6400, GEX 7, 6700, GEX 8, 6675, GEX 9, 6425, GEX 10, 6680",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=levels_tv&ticker=es1!&date=2026-04-01"
+        }
+      }
+    }
+  },
+  "NQ": {
+    "raw_ajax": {
+      "qscore_option": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "NQ",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/score/Option_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D23354XIZ5%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T084311Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQCNUU7CMQ%2FtUKI6JvCV8dajqfkbY9jVxLRWweeN1OXydQIgLIsqNBvcvEyIqGJqWQk9TUQnnZaiqNHSRfTywzfiFfcqpQIIUhACGgw2NjEzOTg2NzE2MDUiDCTRovjDW%2BDnAFVCmCqCAuNeV4stGmEnvQftAQ5Z8%2BlFnbZXc7b3wB8cRyxTBaMn%2FxOeoOBDyNv3XaMVmxTJQiX7Kh9CdssDebcb7L34zUZO2Zs4stq6KbrlmLsvaN5cgMnotq6mBjDZ9iRmbUPRfd%2Feb%2BokBmr1cwGgZu%2BWQICtCY5tK%2FOztclUP6oeCsnbfXzyIiSeJEKlHtSQnzum2w1pyT22gbY8Odt575RvvKDzAOCmRTGkpwnYl9TtMrP8JvPaqqxeJJ8BI8OXzkuG0XWJ9BUjGjE1PcZLsLORkx83UoAkanXWrKSqpxf5%2FqrFMeAu0mWWnH6SNuF4SuPLhJGUKDXeSyPMC5cEwAcJwSbV3zCAtbPOBjqdAelj8dH1xI68d6Eo4ZgEUrLXtv4bAAp%2FUgCiH7Z7LqY%2BNoBotEzhjz1xGMdon5YFLG7juU515ySLWUesk51sb38yegIpud%2Fq678Fgxp047QxSoKdpJPi7uBMNf64YyQW1nJo3MGHI51p3KKlTWAx85olwVYisTTUWGR8gjsdety57vVNs3PD9sI5SqDtldQ3ilEVPQU%2BcVW9ZOS5P1I%3D&X-Amz-Signature=fb6e06ec682aaf7d5d9f58eccd82b7b0e6a8fd9479fc073601676993b0becc18",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=qscore_option&ticker=QQQ&date=2026-04-01"
+          }
+        }
+      },
+      "qscore_momentum": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "NQ",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/score/Momentum_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D24H2OYLZ7%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082816Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIC%2Bo6bq%2BotFAM%2BRP1XAX4lhdClJzQ8IDDy02Oa1JwLuFAiB1%2FQ8f0RYjsJfRaE5chvBXl6gNZKx4r2s%2BTKRzUlqAEyqlAghSEAIaDDY2MTM5ODY3MTYwNSIM%2BhisLhcQXfyjcwz8KoICzPBnD4TOwzOdT59cs%2FOKsbELP6nR8MhiYG9ItlCt3Wre7h%2B0i6iZmjK3Rm5DHDUDuLGgAl4DdvSpWAmBWWBOrb9ywBXoHPl06kkf%2BqYoxCIa1gBtuTx4KbrdM8ybu28AIzpgYwGZ%2BVqcEZZ6%2FLh7B6silgTEI6Jl0jdH%2FyDhzhV1l6ou5uxJmIt0RpVdZLThLgGl5jstFuJEvi5dVKNu8Dc0CbdR3Ksz2XAZIXqptXFefTn3WqWfjvthxNgniwk%2BTIaUzOY8IKJWh3rVlAGausfx1hBux7QvBK2mGCPTqXmKin%2F%2FS%2FE9HB3juSNYcbP1bZ%2B12bgINTr356yiy7F%2FXurgMNSts84GOp4B4ZQ2x%2Br9AV9tlZtaed63vN%2FwGlLu%2ByOYtNfQ6AC080%2FDjbIbXA4sBGtuN4U3KhODJNJ%2B6SM%2Bx4Lu6WjRGxUFbWm7cFVHaxrru64zv0zxoyfaIXjuHLpUsXlPACYhPVxcpAk16b%2ByKKB6hunGQy45WHKS901kGg5yNlTaTx9rjdZ1ecIClPPeyzfXEivoYPEdJtVEXQqeNdj5cmGhE9c%3D&X-Amz-Signature=a80bd01a9ab79758fe3c43046b9936403066014b11a4fae653b14425f705a8d6",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=qscore_momentum&ticker=QQQ&date=2026-04-01"
+          }
+        }
+      },
+      "qscore_volatility": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "NQ",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/score/Volatility_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D24H2OYLZ7%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082814Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIC%2Bo6bq%2BotFAM%2BRP1XAX4lhdClJzQ8IDDy02Oa1JwLuFAiB1%2FQ8f0RYjsJfRaE5chvBXl6gNZKx4r2s%2BTKRzUlqAEyqlAghSEAIaDDY2MTM5ODY3MTYwNSIM%2BhisLhcQXfyjcwz8KoICzPBnD4TOwzOdT59cs%2FOKsbELP6nR8MhiYG9ItlCt3Wre7h%2B0i6iZmjK3Rm5DHDUDuLGgAl4DdvSpWAmBWWBOrb9ywBXoHPl06kkf%2BqYoxCIa1gBtuTx4KbrdM8ybu28AIzpgYwGZ%2BVqcEZZ6%2FLh7B6silgTEI6Jl0jdH%2FyDhzhV1l6ou5uxJmIt0RpVdZLThLgGl5jstFuJEvi5dVKNu8Dc0CbdR3Ksz2XAZIXqptXFefTn3WqWfjvthxNgniwk%2BTIaUzOY8IKJWh3rVlAGausfx1hBux7QvBK2mGCPTqXmKin%2F%2FS%2FE9HB3juSNYcbP1bZ%2B12bgINTr356yiy7F%2FXurgMNSts84GOp4B4ZQ2x%2Br9AV9tlZtaed63vN%2FwGlLu%2ByOYtNfQ6AC080%2FDjbIbXA4sBGtuN4U3KhODJNJ%2B6SM%2Bx4Lu6WjRGxUFbWm7cFVHaxrru64zv0zxoyfaIXjuHLpUsXlPACYhPVxcpAk16b%2ByKKB6hunGQy45WHKS901kGg5yNlTaTx9rjdZ1ecIClPPeyzfXEivoYPEdJtVEXQqeNdj5cmGhE9c%3D&X-Amz-Signature=f179d232a0a0089e54febca17ccf1fc29e1ecce7a6bc1aa571dad2bf27b8a2b1",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=qscore_volatility&ticker=QQQ&date=2026-04-01"
+          }
+        }
+      },
+      "qscore_seasonality": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "NQ",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/score/Seasonality_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082814Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=1aa579290733f4e0c902d3070f32d17b84941840dd2f123cca8d59d24fba822b",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=qscore_seasonality&ticker=QQQ&date=2026-04-01"
+          }
+        }
+      },
+      "netgex": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "nq1!",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/nq1%21/all_exp_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D25PQRVP6W%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T083604Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQDClFLFEggYFZsGBw6YyIpY8BJZelSxBT2%2FgxnMLB8stAIgBkxKXlNtkwOp3iadVVqKgkuT2g1PJ5KsKXF%2FVz0cAEEqpQIIUhACGgw2NjEzOTg2NzE2MDUiDOHyLSlPFu93XeMDxyqCAquqZAsxdpkHbqExNqIe8Qnca73aTB2CLMdTv5Q%2FOGDt0fh9GPHHi9MQ67NrZk8pmc2JGO9xYdABF%2BAyQEOGIjAlvKX3XE%2B%2BJiTe3TkV0aW2fC6fbHT4HNFmyBWXyJ674OTUW1NlXTpB3F3IZsbtJUCpw2E9mJOX4Y3dxky80ikXtuYm0RBNV4oQBa7VvZS5W%2FQ%2FFu6AeDgkF%2BevQban6VHTMtJq9OZSJVVAtIAlu25FoSikJJ7y3bzksLd9YvzrNJfvl5NTpjhIjewZ8Fi2ruY44Wr1rk%2BNZi86Xu1ovjtgv18vJW8k7sBM6lByMtpDtPF4GSNNEf2CXT9KouCHae%2FPPDCdsLPOBjqdAZOtbSE6XhYatWWAtb6Myg6xF7dJEzcdR4%2F8vKyBK8yoRUhb5Y0z8UBrw38OHmce8gPaBapAHYblee9dLimDDAJNBLDLIscQ5i6RrK6HxzF0hbz9%2FMILf7NCWSsgPfvVuSyvseMDcflXVLydpzzbYfslNPY6UGRDcaMeqMdaNrzTeO9HJnuKr5pCscaOJRQ%2FnXtf6xpIo1Oq%2BhwSDVw%3D&X-Amz-Signature=3f93426b097c75841aae47ba47d2b4e408c60916dbb17096f01a1ff1c6df0195",
+            "data": {
+              "Call Resistance": 24750,
+              "Put Support": 23000,
+              "HVL": 23520,
+              "Top Net GEX Strikes": [
+                23900,
+                23700,
+                24100
+              ]
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=netgex&ticker=nq1!&date=2026-04-01"
+          }
+        }
+      },
+      "netgex_multiexpiry": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "nq1!",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/nq1%21/next_exps_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D25PQRVP6W%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T083604Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQDClFLFEggYFZsGBw6YyIpY8BJZelSxBT2%2FgxnMLB8stAIgBkxKXlNtkwOp3iadVVqKgkuT2g1PJ5KsKXF%2FVz0cAEEqpQIIUhACGgw2NjEzOTg2NzE2MDUiDOHyLSlPFu93XeMDxyqCAquqZAsxdpkHbqExNqIe8Qnca73aTB2CLMdTv5Q%2FOGDt0fh9GPHHi9MQ67NrZk8pmc2JGO9xYdABF%2BAyQEOGIjAlvKX3XE%2B%2BJiTe3TkV0aW2fC6fbHT4HNFmyBWXyJ674OTUW1NlXTpB3F3IZsbtJUCpw2E9mJOX4Y3dxky80ikXtuYm0RBNV4oQBa7VvZS5W%2FQ%2FFu6AeDgkF%2BevQban6VHTMtJq9OZSJVVAtIAlu25FoSikJJ7y3bzksLd9YvzrNJfvl5NTpjhIjewZ8Fi2ruY44Wr1rk%2BNZi86Xu1ovjtgv18vJW8k7sBM6lByMtpDtPF4GSNNEf2CXT9KouCHae%2FPPDCdsLPOBjqdAZOtbSE6XhYatWWAtb6Myg6xF7dJEzcdR4%2F8vKyBK8yoRUhb5Y0z8UBrw38OHmce8gPaBapAHYblee9dLimDDAJNBLDLIscQ5i6RrK6HxzF0hbz9%2FMILf7NCWSsgPfvVuSyvseMDcflXVLydpzzbYfslNPY6UGRDcaMeqMdaNrzTeO9HJnuKr5pCscaOJRQ%2FnXtf6xpIo1Oq%2BhwSDVw%3D&X-Amz-Signature=2bb27465e384f358d5b363bfb6578d6578e9c0c411b0373104dac594083b9b2b",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "key_levels": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "nq1!",
+            "image_url": "",
+            "data": {
+              "Call Resistance": 24750,
+              "Call Resistance 0DTE": 24000,
+              "High Vol Level": 23520,
+              "Put Support": 23000,
+              "Put Support 0DTE": 23800,
+              "1D Max.": 24280.34,
+              "1D Min.": 23549.66,
+              "Distance to HVL %": "1.65%",
+              "Implied Vol 30D": 24.25,
+              "Total GEX": "10.56M",
+              "Net GEX": "1.25M",
+              "Expiring GEX": "0.47M",
+              "Put/Call GEX": 0.79,
+              "Total DEX": "13.03B",
+              "Net DEX": "-1.03B",
+              "Put/Call DEX": 1.17
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "bl_levels": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "nq1!",
+            "image_url": "",
+            "data": [],
+            "text_data": "$NQ1!: BL 1, 24388.17, BL 2, 23823.63, BL 3, 24125.61, BL 4, 24001.69, BL 5, 23551.17, BL 6, 24739.79, BL 7, 24277.74, BL 8, 23311.34, BL 9, 23700.99, BL 10, 23961.55",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=bl_levels&ticker=nq1!&date=2026-04-01"
+          }
+        }
+      },
+      "matrix_v1": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "nq1!",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/nq1%21/styled_table.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2XVNVZ3VT%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T083604Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIF9a9DDUvSgWLZIt5jvN5k9JID0JD1PSLvK%2FWmIhx2TXAiA5Aih8fhVX%2FHEwNTCHCKDkeZ7aFAPS%2BKl2fdA83tL9BSqlAghSEAIaDDY2MTM5ODY3MTYwNSIMTUnMVhPAo5Fq6uTnKoIC9haFOfZ5AkRRCT6PFQZ%2Bmok%2FBk7nDbci8mdHfclqZWY%2BPerlGA62UIyEJSsk%2BKmWvkW5kHOjb88tuE%2FDZXIVKIbui%2Fo7EYtOMbi%2FCPDyncHTH6h27WFX11uMmfdg3fzFcjpDgkYcLJeQvyiC%2FYNYw00Apt1a99Dfc76sgKGfMR1H3F5YcPPBodaL9VsKNsm8%2Ft4Bbpo3IJO4wKuNfYMp0aaU3CFRpH6NqeNWJQJrD1HCtG7D3FMpVuRUvzUkyYNxIGRYE9rV32f1Q%2BalVAOLAQOvjC2aY55358xZ6V1oQVhSnu3i%2FX3PNqbb6aW56bUxDONBPIofA8o0mfWDaIwKdB3AMLOws84GOp4BHl3NhK5D7uBeAbFvA9AaBY51yRLY0KKmC21zaxw2egzWNubL0c8VmDPeHxr52xlSg9qZTHNQAVwMeN%2BNULKWnURYeCHsK8C5uoC1Sq9P%2FlyUCX%2B6Zrd1TDVVGrjlh3VltqSezqYuyKq1FmYGQsHgOLILo8JFKakV6SsbosHt0vqhkTMbq8KVSEVPMtljbZc0jBrhA7Ybu51kY2Fw3sg%3D&X-Amz-Signature=93a4f4fff955bab9065dc73ec4231baff0dea42810ede6b8fe176360277dfd26",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "levels_tv": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "nq1!",
+            "image_url": "",
+            "data": [],
+            "text_data": "$NQ1!: Call Resistance, 24750, Put Support, 23000, HVL, 23520, 1D Min, 23549.66, 1D Max, 24280.34, Call Resistance 0DTE, 24000, Put Support 0DTE, 23800, HVL 0DTE, 23820, Gamma Wall 0DTE, 24000, GEX 1, 23900, GEX 2, 23700, GEX 3, 24100, GEX 4, 23850, GEX 5, 23590, GEX 6, 23500, GEX 7, 24500, GEX 8, 23250, GEX 9, 24600, GEX 10, 23300",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=levels_tv&ticker=nq1!&date=2026-04-01"
+          }
+        }
+      }
+    },
+    "structured": {
+      "qscore_option": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "NQ",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/score/Option_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D23354XIZ5%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T084311Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQCNUU7CMQ%2FtUKI6JvCV8dajqfkbY9jVxLRWweeN1OXydQIgLIsqNBvcvEyIqGJqWQk9TUQnnZaiqNHSRfTywzfiFfcqpQIIUhACGgw2NjEzOTg2NzE2MDUiDCTRovjDW%2BDnAFVCmCqCAuNeV4stGmEnvQftAQ5Z8%2BlFnbZXc7b3wB8cRyxTBaMn%2FxOeoOBDyNv3XaMVmxTJQiX7Kh9CdssDebcb7L34zUZO2Zs4stq6KbrlmLsvaN5cgMnotq6mBjDZ9iRmbUPRfd%2Feb%2BokBmr1cwGgZu%2BWQICtCY5tK%2FOztclUP6oeCsnbfXzyIiSeJEKlHtSQnzum2w1pyT22gbY8Odt575RvvKDzAOCmRTGkpwnYl9TtMrP8JvPaqqxeJJ8BI8OXzkuG0XWJ9BUjGjE1PcZLsLORkx83UoAkanXWrKSqpxf5%2FqrFMeAu0mWWnH6SNuF4SuPLhJGUKDXeSyPMC5cEwAcJwSbV3zCAtbPOBjqdAelj8dH1xI68d6Eo4ZgEUrLXtv4bAAp%2FUgCiH7Z7LqY%2BNoBotEzhjz1xGMdon5YFLG7juU515ySLWUesk51sb38yegIpud%2Fq678Fgxp047QxSoKdpJPi7uBMNf64YyQW1nJo3MGHI51p3KKlTWAx85olwVYisTTUWGR8gjsdety57vVNs3PD9sI5SqDtldQ3ilEVPQU%2BcVW9ZOS5P1I%3D&X-Amz-Signature=fb6e06ec682aaf7d5d9f58eccd82b7b0e6a8fd9479fc073601676993b0becc18",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=qscore_option&ticker=QQQ&date=2026-04-01"
+        }
+      },
+      "qscore_momentum": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "NQ",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/score/Momentum_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D24H2OYLZ7%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082816Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIC%2Bo6bq%2BotFAM%2BRP1XAX4lhdClJzQ8IDDy02Oa1JwLuFAiB1%2FQ8f0RYjsJfRaE5chvBXl6gNZKx4r2s%2BTKRzUlqAEyqlAghSEAIaDDY2MTM5ODY3MTYwNSIM%2BhisLhcQXfyjcwz8KoICzPBnD4TOwzOdT59cs%2FOKsbELP6nR8MhiYG9ItlCt3Wre7h%2B0i6iZmjK3Rm5DHDUDuLGgAl4DdvSpWAmBWWBOrb9ywBXoHPl06kkf%2BqYoxCIa1gBtuTx4KbrdM8ybu28AIzpgYwGZ%2BVqcEZZ6%2FLh7B6silgTEI6Jl0jdH%2FyDhzhV1l6ou5uxJmIt0RpVdZLThLgGl5jstFuJEvi5dVKNu8Dc0CbdR3Ksz2XAZIXqptXFefTn3WqWfjvthxNgniwk%2BTIaUzOY8IKJWh3rVlAGausfx1hBux7QvBK2mGCPTqXmKin%2F%2FS%2FE9HB3juSNYcbP1bZ%2B12bgINTr356yiy7F%2FXurgMNSts84GOp4B4ZQ2x%2Br9AV9tlZtaed63vN%2FwGlLu%2ByOYtNfQ6AC080%2FDjbIbXA4sBGtuN4U3KhODJNJ%2B6SM%2Bx4Lu6WjRGxUFbWm7cFVHaxrru64zv0zxoyfaIXjuHLpUsXlPACYhPVxcpAk16b%2ByKKB6hunGQy45WHKS901kGg5yNlTaTx9rjdZ1ecIClPPeyzfXEivoYPEdJtVEXQqeNdj5cmGhE9c%3D&X-Amz-Signature=a80bd01a9ab79758fe3c43046b9936403066014b11a4fae653b14425f705a8d6",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=qscore_momentum&ticker=QQQ&date=2026-04-01"
+        }
+      },
+      "qscore_volatility": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "NQ",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/score/Volatility_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D24H2OYLZ7%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082814Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIC%2Bo6bq%2BotFAM%2BRP1XAX4lhdClJzQ8IDDy02Oa1JwLuFAiB1%2FQ8f0RYjsJfRaE5chvBXl6gNZKx4r2s%2BTKRzUlqAEyqlAghSEAIaDDY2MTM5ODY3MTYwNSIM%2BhisLhcQXfyjcwz8KoICzPBnD4TOwzOdT59cs%2FOKsbELP6nR8MhiYG9ItlCt3Wre7h%2B0i6iZmjK3Rm5DHDUDuLGgAl4DdvSpWAmBWWBOrb9ywBXoHPl06kkf%2BqYoxCIa1gBtuTx4KbrdM8ybu28AIzpgYwGZ%2BVqcEZZ6%2FLh7B6silgTEI6Jl0jdH%2FyDhzhV1l6ou5uxJmIt0RpVdZLThLgGl5jstFuJEvi5dVKNu8Dc0CbdR3Ksz2XAZIXqptXFefTn3WqWfjvthxNgniwk%2BTIaUzOY8IKJWh3rVlAGausfx1hBux7QvBK2mGCPTqXmKin%2F%2FS%2FE9HB3juSNYcbP1bZ%2B12bgINTr356yiy7F%2FXurgMNSts84GOp4B4ZQ2x%2Br9AV9tlZtaed63vN%2FwGlLu%2ByOYtNfQ6AC080%2FDjbIbXA4sBGtuN4U3KhODJNJ%2B6SM%2Bx4Lu6WjRGxUFbWm7cFVHaxrru64zv0zxoyfaIXjuHLpUsXlPACYhPVxcpAk16b%2ByKKB6hunGQy45WHKS901kGg5yNlTaTx9rjdZ1ecIClPPeyzfXEivoYPEdJtVEXQqeNdj5cmGhE9c%3D&X-Amz-Signature=f179d232a0a0089e54febca17ccf1fc29e1ecce7a6bc1aa571dad2bf27b8a2b1",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=qscore_volatility&ticker=QQQ&date=2026-04-01"
+        }
+      },
+      "qscore_seasonality": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "NQ",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/score/Seasonality_score.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2WAOSK434%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T082814Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIj%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJIMEYCIQChVo5OhWEOYp2ZPbWYiA%2Byh46B2Tm2cb7Se8LTDxXQMwIhANfp8N394C4XT42i0NYcO0PfMq4hC1PT0NMqfvodUoL0KqUCCFIQAhoMNjYxMzk4NjcxNjA1IgyXr9LM5JYCDm8%2BHMEqggKMmR9P7wpThGS%2FkBPq%2F%2FVz6tfDst8VgUopPKumd0j8f4D%2BJEpexsm9cnTwd0cq%2Ff7Is8S7Cu%2BzjXt5F%2BoUw%2BDf0hgt2p3GCJX57Mt7Bq%2BqMiyl1F7UCAavZN6dBb50Jh8z4cv88dGYTes05yXPGQr0srEJH2m7kUkMgmCBmLgQg2cuIQAonQmppBWfueZaJKXAdNhP%2B%2FiEaWT6mxL1DsNjnqU%2BYZOBnVEaC2b0gf63xt4wtgq9lfIF0wKJ72rl5BSx8%2BJw2eH%2B2OigwTdshyY9RmOuxkegE%2BvbAq5vWMUnA7TzcAGp2kYeoF9m6itPVmJjYEjtJ968zdb4zYZ65Twwp1gw1q2zzgY6nAEw%2F06CJqx1z46WAdDtwhG%2F5rkdGq1fhOsN3Wq7Bi2t9GpL2PBIOB8gH1TCLa5Unyog7VWPGdQ1YEJDAktf0yFQd5YUAoQBMtFMCTQlCDKAFWk2x%2FKnRG%2BE9jYazSACHsyXQWP5Bb5Xiumc%2Ft5WC4smg5B78KldJUAUD8NA6yBb8Gg%2BNSQwCS5OIZdTKdRtT7LOfanENFRKhCRFKNI%3D&X-Amz-Signature=1aa579290733f4e0c902d3070f32d17b84941840dd2f123cca8d59d24fba822b",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=qscore_seasonality&ticker=QQQ&date=2026-04-01"
+        }
+      },
+      "netgex": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "nq1!",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/nq1%21/all_exp_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D25PQRVP6W%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T083604Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQDClFLFEggYFZsGBw6YyIpY8BJZelSxBT2%2FgxnMLB8stAIgBkxKXlNtkwOp3iadVVqKgkuT2g1PJ5KsKXF%2FVz0cAEEqpQIIUhACGgw2NjEzOTg2NzE2MDUiDOHyLSlPFu93XeMDxyqCAquqZAsxdpkHbqExNqIe8Qnca73aTB2CLMdTv5Q%2FOGDt0fh9GPHHi9MQ67NrZk8pmc2JGO9xYdABF%2BAyQEOGIjAlvKX3XE%2B%2BJiTe3TkV0aW2fC6fbHT4HNFmyBWXyJ674OTUW1NlXTpB3F3IZsbtJUCpw2E9mJOX4Y3dxky80ikXtuYm0RBNV4oQBa7VvZS5W%2FQ%2FFu6AeDgkF%2BevQban6VHTMtJq9OZSJVVAtIAlu25FoSikJJ7y3bzksLd9YvzrNJfvl5NTpjhIjewZ8Fi2ruY44Wr1rk%2BNZi86Xu1ovjtgv18vJW8k7sBM6lByMtpDtPF4GSNNEf2CXT9KouCHae%2FPPDCdsLPOBjqdAZOtbSE6XhYatWWAtb6Myg6xF7dJEzcdR4%2F8vKyBK8yoRUhb5Y0z8UBrw38OHmce8gPaBapAHYblee9dLimDDAJNBLDLIscQ5i6RrK6HxzF0hbz9%2FMILf7NCWSsgPfvVuSyvseMDcflXVLydpzzbYfslNPY6UGRDcaMeqMdaNrzTeO9HJnuKr5pCscaOJRQ%2FnXtf6xpIo1Oq%2BhwSDVw%3D&X-Amz-Signature=3f93426b097c75841aae47ba47d2b4e408c60916dbb17096f01a1ff1c6df0195",
+          "data": {
+            "Call Resistance": 24750,
+            "Put Support": 23000,
+            "HVL": 23520,
+            "Top Net GEX Strikes": [
+              23900,
+              23700,
+              24100
+            ]
+          },
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=netgex&ticker=nq1!&date=2026-04-01"
+        }
+      },
+      "netgex_multiexpiry": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "nq1!",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/nq1%21/next_exps_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D25PQRVP6W%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T083604Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQDClFLFEggYFZsGBw6YyIpY8BJZelSxBT2%2FgxnMLB8stAIgBkxKXlNtkwOp3iadVVqKgkuT2g1PJ5KsKXF%2FVz0cAEEqpQIIUhACGgw2NjEzOTg2NzE2MDUiDOHyLSlPFu93XeMDxyqCAquqZAsxdpkHbqExNqIe8Qnca73aTB2CLMdTv5Q%2FOGDt0fh9GPHHi9MQ67NrZk8pmc2JGO9xYdABF%2BAyQEOGIjAlvKX3XE%2B%2BJiTe3TkV0aW2fC6fbHT4HNFmyBWXyJ674OTUW1NlXTpB3F3IZsbtJUCpw2E9mJOX4Y3dxky80ikXtuYm0RBNV4oQBa7VvZS5W%2FQ%2FFu6AeDgkF%2BevQban6VHTMtJq9OZSJVVAtIAlu25FoSikJJ7y3bzksLd9YvzrNJfvl5NTpjhIjewZ8Fi2ruY44Wr1rk%2BNZi86Xu1ovjtgv18vJW8k7sBM6lByMtpDtPF4GSNNEf2CXT9KouCHae%2FPPDCdsLPOBjqdAZOtbSE6XhYatWWAtb6Myg6xF7dJEzcdR4%2F8vKyBK8yoRUhb5Y0z8UBrw38OHmce8gPaBapAHYblee9dLimDDAJNBLDLIscQ5i6RrK6HxzF0hbz9%2FMILf7NCWSsgPfvVuSyvseMDcflXVLydpzzbYfslNPY6UGRDcaMeqMdaNrzTeO9HJnuKr5pCscaOJRQ%2FnXtf6xpIo1Oq%2BhwSDVw%3D&X-Amz-Signature=2bb27465e384f358d5b363bfb6578d6578e9c0c411b0373104dac594083b9b2b",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": null
+        }
+      },
+      "key_levels": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "nq1!",
+          "image_url": "",
+          "data": {
+            "Call Resistance": 24750,
+            "Call Resistance 0DTE": 24000,
+            "High Vol Level": 23520,
+            "Put Support": 23000,
+            "Put Support 0DTE": 23800,
+            "1D Max.": 24280.34,
+            "1D Min.": 23549.66,
+            "Distance to HVL %": "1.65%",
+            "Implied Vol 30D": 24.25,
+            "Total GEX": "10.56M",
+            "Net GEX": "1.25M",
+            "Expiring GEX": "0.47M",
+            "Put/Call GEX": 0.79,
+            "Total DEX": "13.03B",
+            "Net DEX": "-1.03B",
+            "Put/Call DEX": 1.17
+          },
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": null
+        }
+      },
+      "bl_levels": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "nq1!",
+          "image_url": "",
+          "data": [],
+          "text_data": "$NQ1!: BL 1, 24388.17, BL 2, 23823.63, BL 3, 24125.61, BL 4, 24001.69, BL 5, 23551.17, BL 6, 24739.79, BL 7, 24277.74, BL 8, 23311.34, BL 9, 23700.99, BL 10, 23961.55",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=bl_levels&ticker=nq1!&date=2026-04-01"
+        }
+      },
+      "matrix_v1": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "nq1!",
+          "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/nq1%21/styled_table.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2XVNVZ3VT%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T083604Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIF9a9DDUvSgWLZIt5jvN5k9JID0JD1PSLvK%2FWmIhx2TXAiA5Aih8fhVX%2FHEwNTCHCKDkeZ7aFAPS%2BKl2fdA83tL9BSqlAghSEAIaDDY2MTM5ODY3MTYwNSIMTUnMVhPAo5Fq6uTnKoIC9haFOfZ5AkRRCT6PFQZ%2Bmok%2FBk7nDbci8mdHfclqZWY%2BPerlGA62UIyEJSsk%2BKmWvkW5kHOjb88tuE%2FDZXIVKIbui%2Fo7EYtOMbi%2FCPDyncHTH6h27WFX11uMmfdg3fzFcjpDgkYcLJeQvyiC%2FYNYw00Apt1a99Dfc76sgKGfMR1H3F5YcPPBodaL9VsKNsm8%2Ft4Bbpo3IJO4wKuNfYMp0aaU3CFRpH6NqeNWJQJrD1HCtG7D3FMpVuRUvzUkyYNxIGRYE9rV32f1Q%2BalVAOLAQOvjC2aY55358xZ6V1oQVhSnu3i%2FX3PNqbb6aW56bUxDONBPIofA8o0mfWDaIwKdB3AMLOws84GOp4BHl3NhK5D7uBeAbFvA9AaBY51yRLY0KKmC21zaxw2egzWNubL0c8VmDPeHxr52xlSg9qZTHNQAVwMeN%2BNULKWnURYeCHsK8C5uoC1Sq9P%2FlyUCX%2B6Zrd1TDVVGrjlh3VltqSezqYuyKq1FmYGQsHgOLILo8JFKakV6SsbosHt0vqhkTMbq8KVSEVPMtljbZc0jBrhA7Ybu51kY2Fw3sg%3D&X-Amz-Signature=93a4f4fff955bab9065dc73ec4231baff0dea42810ede6b8fe176360277dfd26",
+          "data": [],
+          "text_data": "",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": null
+        }
+      },
+      "levels_tv": {
+        "date": "2026-03-31",
+        "resource": {
+          "ticker": "nq1!",
+          "image_url": "",
+          "data": [],
+          "text_data": "$NQ1!: Call Resistance, 24750, Put Support, 23000, HVL, 23520, 1D Min, 23549.66, 1D Max, 24280.34, Call Resistance 0DTE, 24000, Put Support 0DTE, 23800, HVL 0DTE, 23820, Gamma Wall 0DTE, 24000, GEX 1, 23900, GEX 2, 23700, GEX 3, 24100, GEX 4, 23850, GEX 5, 23590, GEX 6, 23500, GEX 7, 24500, GEX 8, 23250, GEX 9, 24600, GEX 10, 23300",
+          "table_data": [],
+          "date": "2026-03-31",
+          "run_id": null,
+          "run_timestamp": null,
+          "previous_run_id": null,
+          "next_run_id": null,
+          "quin_url_template": "/en/chats?template=levels_tv&ticker=nq1!&date=2026-04-01"
+        }
+      }
+    }
+  },
+  "ES_swing": {
+    "proxy_ticker": "SPX",
+    "raw_ajax": {
+      "swing_5d": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "SPX",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/swing_model_5d.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2W7SNQHBQ%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T084318Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIFVMrwda0DtZ1OoUB%2BNDjhxMRSG5M4QvYfNR9sEgCzUuAiA%2FViMm4UuprZ127iP%2B481svvZZoeaxoeA0q3QEd36EzSqlAghSEAIaDDY2MTM5ODY3MTYwNSIMVOJXnag8p64h3ITZKoICr21LtggOiEs13MltTkOAI%2Bb2WK6nOKw%2Br60xfuGaqDeiiuFo0MNyvD3BurU4brF8HJ4ORqZOtagbX2UuzWj%2FVbnSAdLzjk0hyyVpDWuimUjcMHQqKA0pr5hEZHEAtvkRoEEZvB4NkVaFTMLCn%2BU%2F%2F5wOigGRiPdNruUO0GoJjBktszGSOlvVLEhIwtuB1zimyCTXmwNWMmLrCwPR7wU36bHTMX6fdYL5hfVtpWE%2BQLiZqWihgcLQORw7EUm2PmAcdfhnR24YYuHRb6T6lZgSlXS0rxUCofZYKrc%2FAEgP16AwbI3pnc7FE%2F8hyRWR%2Fosp1KVa96I0IxqL7PdYoizDuTg1MKO1s84GOp4BCTV2JHLAJ%2FO3dv0OEoliKdnY%2FbZNWV8bi3gsI2mnmto2jFDNUpJ%2BQV5JOBuXSP5fOxJ1BBxuB0WZw2m%2BOv7GqVN01Qw2M3VsRV2W%2FvLr0Nshh4vq7DCQcuzZdwV318SQey9mp7%2BT8tMS48eNjKcidTYStfJgkn4RNzSoevj1agEenbAAxDFOosdFwscH%2FzsZPPYUyjz3wOppQrMidWA%3D&X-Amz-Signature=bd09488cb246e393aa403d70d0d16e542de79c51bd4020a5328402d3b5207488",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "swing_20d": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "SPX",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/swing_model_20d.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D23354XIZ5%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T084319Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQCNUU7CMQ%2FtUKI6JvCV8dajqfkbY9jVxLRWweeN1OXydQIgLIsqNBvcvEyIqGJqWQk9TUQnnZaiqNHSRfTywzfiFfcqpQIIUhACGgw2NjEzOTg2NzE2MDUiDCTRovjDW%2BDnAFVCmCqCAuNeV4stGmEnvQftAQ5Z8%2BlFnbZXc7b3wB8cRyxTBaMn%2FxOeoOBDyNv3XaMVmxTJQiX7Kh9CdssDebcb7L34zUZO2Zs4stq6KbrlmLsvaN5cgMnotq6mBjDZ9iRmbUPRfd%2Feb%2BokBmr1cwGgZu%2BWQICtCY5tK%2FOztclUP6oeCsnbfXzyIiSeJEKlHtSQnzum2w1pyT22gbY8Odt575RvvKDzAOCmRTGkpwnYl9TtMrP8JvPaqqxeJJ8BI8OXzkuG0XWJ9BUjGjE1PcZLsLORkx83UoAkanXWrKSqpxf5%2FqrFMeAu0mWWnH6SNuF4SuPLhJGUKDXeSyPMC5cEwAcJwSbV3zCAtbPOBjqdAelj8dH1xI68d6Eo4ZgEUrLXtv4bAAp%2FUgCiH7Z7LqY%2BNoBotEzhjz1xGMdon5YFLG7juU515ySLWUesk51sb38yegIpud%2Fq678Fgxp047QxSoKdpJPi7uBMNf64YyQW1nJo3MGHI51p3KKlTWAx85olwVYisTTUWGR8gjsdety57vVNs3PD9sI5SqDtldQ3ilEVPQU%2BcVW9ZOS5P1I%3D&X-Amz-Signature=225f9a592ce481b1b6902068bb367e3a541b99a083fe34608bd9ab957856efe8",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "swing_levels": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "SPX",
+            "image_url": "",
+            "data": [],
+            "text_data": "$SPX: UB 03-25, 6783.43, RT 03-25, 6400.37, UB 03-26, 6683.06, RT 03-26, 6271.26, UB 03-27, 6590.35, RT 03-27, 6147.35, UB 03-30, 6563.57, RT 03-30, 6123.87, UB 03-31, 6717.68, RT 03-31, 6339.36",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=swing_levels&ticker=SPX&date=2026-04-01"
+          }
+        }
+      },
+      "liq_snapshot": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "SPX",
+            "image_url": "",
+            "data": {
+              "Last Price": "6529.00",
+              "Change %": 2.913,
+              "P/C OI": "1.45",
+              "1D Exp Move %": "± 1.3%",
+              "Gamma Condition": "Negative",
+              "Momentum": "Neutral",
+              "Implied Vol 30D": "20.57%",
+              "Historical Volatility (HV30)": "16.55%",
+              "IV Change %": "-16.39%",
+              "IV Rank": "37.99%",
+              "Vol Regime IV/HV": "Positive"
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "key_levels": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "SPX",
+            "image_url": "",
+            "data": {
+              "Spot Price": 6529,
+              "Call Resistance": 7000,
+              "Call Resistance 0DTE": 6625,
+              "High Vol Level": 6550,
+              "Put Support": 6300,
+              "Put Support 0DTE": 6390,
+              "1D Max.": 6613,
+              "1D Min.": 6444,
+              "Distance to HVL %": "0.32%",
+              "Implied Vol 30D": 20.57,
+              "Historical Vol 30D": 16.546,
+              "IV Rank": "38%",
+              "Total Call Volume": "1.05M",
+              "Total Put Volume": "1.35M",
+              "Total OI": "18.67M",
+              "Total Call OI": "7.61M",
+              "Total Put OI": "11.06M",
+              "Total GEX": "4089.43M",
+              "Net GEX": "-463.73M",
+              "Expiring GEX": "8.85M",
+              "Put/Call GEX": 1.26,
+              "Total DEX": "3.54T",
+              "Net DEX": "-18.68B",
+              "Put/Call DEX": 1.01
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "netgex": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "SPX",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/spx/all_exp_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2W7SNQHBQ%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T084323Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIFVMrwda0DtZ1OoUB%2BNDjhxMRSG5M4QvYfNR9sEgCzUuAiA%2FViMm4UuprZ127iP%2B481svvZZoeaxoeA0q3QEd36EzSqlAghSEAIaDDY2MTM5ODY3MTYwNSIMVOJXnag8p64h3ITZKoICr21LtggOiEs13MltTkOAI%2Bb2WK6nOKw%2Br60xfuGaqDeiiuFo0MNyvD3BurU4brF8HJ4ORqZOtagbX2UuzWj%2FVbnSAdLzjk0hyyVpDWuimUjcMHQqKA0pr5hEZHEAtvkRoEEZvB4NkVaFTMLCn%2BU%2F%2F5wOigGRiPdNruUO0GoJjBktszGSOlvVLEhIwtuB1zimyCTXmwNWMmLrCwPR7wU36bHTMX6fdYL5hfVtpWE%2BQLiZqWihgcLQORw7EUm2PmAcdfhnR24YYuHRb6T6lZgSlXS0rxUCofZYKrc%2FAEgP16AwbI3pnc7FE%2F8hyRWR%2Fosp1KVa96I0IxqL7PdYoizDuTg1MKO1s84GOp4BCTV2JHLAJ%2FO3dv0OEoliKdnY%2FbZNWV8bi3gsI2mnmto2jFDNUpJ%2BQV5JOBuXSP5fOxJ1BBxuB0WZw2m%2BOv7GqVN01Qw2M3VsRV2W%2FvLr0Nshh4vq7DCQcuzZdwV318SQey9mp7%2BT8tMS48eNjKcidTYStfJgkn4RNzSoevj1agEenbAAxDFOosdFwscH%2FzsZPPYUyjz3wOppQrMidWA%3D&X-Amz-Signature=ee4f62145907d79ad598a8fc3c1fb642ca2fad310347d798d30162abb5869162",
+            "data": {
+              "Spot Price": 6529,
+              "Call Resistance": 7000,
+              "Put Support": 6300,
+              "HVL": 6550,
+              "Top Net GEX Strikes": [
+                6500,
+                6600,
+                6475
+              ]
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=netgex&ticker=SPX&date=2026-04-01"
+          }
+        }
+      }
+    }
+  },
+  "NQ_swing": {
+    "proxy_ticker": "QQQ",
+    "raw_ajax": {
+      "swing_5d": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "QQQ",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/swing_model_5d.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D23354XIZ5%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T084324Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJHMEUCIQCNUU7CMQ%2FtUKI6JvCV8dajqfkbY9jVxLRWweeN1OXydQIgLIsqNBvcvEyIqGJqWQk9TUQnnZaiqNHSRfTywzfiFfcqpQIIUhACGgw2NjEzOTg2NzE2MDUiDCTRovjDW%2BDnAFVCmCqCAuNeV4stGmEnvQftAQ5Z8%2BlFnbZXc7b3wB8cRyxTBaMn%2FxOeoOBDyNv3XaMVmxTJQiX7Kh9CdssDebcb7L34zUZO2Zs4stq6KbrlmLsvaN5cgMnotq6mBjDZ9iRmbUPRfd%2Feb%2BokBmr1cwGgZu%2BWQICtCY5tK%2FOztclUP6oeCsnbfXzyIiSeJEKlHtSQnzum2w1pyT22gbY8Odt575RvvKDzAOCmRTGkpwnYl9TtMrP8JvPaqqxeJJ8BI8OXzkuG0XWJ9BUjGjE1PcZLsLORkx83UoAkanXWrKSqpxf5%2FqrFMeAu0mWWnH6SNuF4SuPLhJGUKDXeSyPMC5cEwAcJwSbV3zCAtbPOBjqdAelj8dH1xI68d6Eo4ZgEUrLXtv4bAAp%2FUgCiH7Z7LqY%2BNoBotEzhjz1xGMdon5YFLG7juU515ySLWUesk51sb38yegIpud%2Fq678Fgxp047QxSoKdpJPi7uBMNf64YyQW1nJo3MGHI51p3KKlTWAx85olwVYisTTUWGR8gjsdety57vVNs3PD9sI5SqDtldQ3ilEVPQU%2BcVW9ZOS5P1I%3D&X-Amz-Signature=d00597480b5b303217c0d0a340f2f87c7ea36909d996327be126e7ec8db148df",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "swing_20d": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "QQQ",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/swing_model_20d.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2W7SNQHBQ%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T084325Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIFVMrwda0DtZ1OoUB%2BNDjhxMRSG5M4QvYfNR9sEgCzUuAiA%2FViMm4UuprZ127iP%2B481svvZZoeaxoeA0q3QEd36EzSqlAghSEAIaDDY2MTM5ODY3MTYwNSIMVOJXnag8p64h3ITZKoICr21LtggOiEs13MltTkOAI%2Bb2WK6nOKw%2Br60xfuGaqDeiiuFo0MNyvD3BurU4brF8HJ4ORqZOtagbX2UuzWj%2FVbnSAdLzjk0hyyVpDWuimUjcMHQqKA0pr5hEZHEAtvkRoEEZvB4NkVaFTMLCn%2BU%2F%2F5wOigGRiPdNruUO0GoJjBktszGSOlvVLEhIwtuB1zimyCTXmwNWMmLrCwPR7wU36bHTMX6fdYL5hfVtpWE%2BQLiZqWihgcLQORw7EUm2PmAcdfhnR24YYuHRb6T6lZgSlXS0rxUCofZYKrc%2FAEgP16AwbI3pnc7FE%2F8hyRWR%2Fosp1KVa96I0IxqL7PdYoizDuTg1MKO1s84GOp4BCTV2JHLAJ%2FO3dv0OEoliKdnY%2FbZNWV8bi3gsI2mnmto2jFDNUpJ%2BQV5JOBuXSP5fOxJ1BBxuB0WZw2m%2BOv7GqVN01Qw2M3VsRV2W%2FvLr0Nshh4vq7DCQcuzZdwV318SQey9mp7%2BT8tMS48eNjKcidTYStfJgkn4RNzSoevj1agEenbAAxDFOosdFwscH%2FzsZPPYUyjz3wOppQrMidWA%3D&X-Amz-Signature=9411841bac2b94e9ffcb1e15a7b554e793b889ad232509922484c509876cb76d",
+            "data": [],
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "swing_levels": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "QQQ",
+            "image_url": "",
+            "data": [],
+            "text_data": "$QQQ: UB 03-25, 607.91, RT 03-25, 567.73, UB 03-26, 596.93, RT 03-26, 550.65, UB 03-27, 584.99, RT 03-27, 540.17, UB 03-30, 580.52, RT 03-30, 536.04, UB 03-31, 597.52, RT 03-31, 556.84",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=swing_levels&ticker=QQQ&date=2026-04-01"
+          }
+        }
+      },
+      "liq_snapshot": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "QQQ",
+            "image_url": "",
+            "data": {
+              "Last Price": "577.20",
+              "Change %": 3.3854,
+              "P/C OI": "1.40",
+              "1D Exp Move %": "± 1.58%",
+              "Gamma Condition": "Negative",
+              "Momentum": "Neutral",
+              "Implied Vol 30D": "25.02%",
+              "Historical Volatility (HV30)": "20.56%",
+              "IV Change %": "-11.53%",
+              "IV Rank": "36.74%",
+              "Vol Regime IV/HV": "Positive"
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "key_levels": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "QQQ",
+            "image_url": "",
+            "data": {
+              "Spot Price": 577.2,
+              "Call Resistance": 630,
+              "Call Resistance 0DTE": 575,
+              "High Vol Level": 590,
+              "Put Support": 570,
+              "Put Support 0DTE": 585,
+              "1D Max.": 586.3,
+              "1D Min.": 568.1,
+              "Distance to HVL %": "2.22%",
+              "Implied Vol 30D": 25.02,
+              "Historical Vol 30D": 20.563,
+              "IV Rank": "37%",
+              "Total Call Volume": "1.45M",
+              "Total Put Volume": "1.86M",
+              "Total OI": "8.15M",
+              "Total Call OI": "3.40M",
+              "Total Put OI": "4.75M",
+              "Total GEX": "2143.41M",
+              "Net GEX": "-335.60M",
+              "Expiring GEX": "42.53M",
+              "Put/Call GEX": 1.37,
+              "Total DEX": "120.72B",
+              "Net DEX": "-33.03B",
+              "Put/Call DEX": 1.75
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": null
+          }
+        }
+      },
+      "netgex": {
+        "success": true,
+        "data": {
+          "date": "2026-03-31",
+          "resource": {
+            "ticker": "QQQ",
+            "image_url": "https://mq-inf-main-bot-bucket.s3.amazonaws.com/2026-03-31/cboe_json/qqq/all_exp_profile.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAZT7TO2D2W7SNQHBQ%2F20260401%2Fus-east-2%2Fs3%2Faws4_request&X-Amz-Date=20260401T084331Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEIn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMiJGMEQCIFVMrwda0DtZ1OoUB%2BNDjhxMRSG5M4QvYfNR9sEgCzUuAiA%2FViMm4UuprZ127iP%2B481svvZZoeaxoeA0q3QEd36EzSqlAghSEAIaDDY2MTM5ODY3MTYwNSIMVOJXnag8p64h3ITZKoICr21LtggOiEs13MltTkOAI%2Bb2WK6nOKw%2Br60xfuGaqDeiiuFo0MNyvD3BurU4brF8HJ4ORqZOtagbX2UuzWj%2FVbnSAdLzjk0hyyVpDWuimUjcMHQqKA0pr5hEZHEAtvkRoEEZvB4NkVaFTMLCn%2BU%2F%2F5wOigGRiPdNruUO0GoJjBktszGSOlvVLEhIwtuB1zimyCTXmwNWMmLrCwPR7wU36bHTMX6fdYL5hfVtpWE%2BQLiZqWihgcLQORw7EUm2PmAcdfhnR24YYuHRb6T6lZgSlXS0rxUCofZYKrc%2FAEgP16AwbI3pnc7FE%2F8hyRWR%2Fosp1KVa96I0IxqL7PdYoizDuTg1MKO1s84GOp4BCTV2JHLAJ%2FO3dv0OEoliKdnY%2FbZNWV8bi3gsI2mnmto2jFDNUpJ%2BQV5JOBuXSP5fOxJ1BBxuB0WZw2m%2BOv7GqVN01Qw2M3VsRV2W%2FvLr0Nshh4vq7DCQcuzZdwV318SQey9mp7%2BT8tMS48eNjKcidTYStfJgkn4RNzSoevj1agEenbAAxDFOosdFwscH%2FzsZPPYUyjz3wOppQrMidWA%3D&X-Amz-Signature=c658e0442ac838ef4921995790c511da9f806c992489305718840ae5cb190522",
+            "data": {
+              "Spot Price": 577.2,
+              "Call Resistance": 630,
+              "Put Support": 570,
+              "HVL": 590,
+              "Top Net GEX Strikes": [
+                580,
+                574.8,
+                572
+              ]
+            },
+            "text_data": "",
+            "table_data": [],
+            "date": "2026-03-31",
+            "run_id": null,
+            "run_timestamp": null,
+            "previous_run_id": null,
+            "next_run_id": null,
+            "quin_url_template": "/en/chats?template=netgex&ticker=QQQ&date=2026-04-01"
+          }
+        }
+      }
+    }
+  }
+}

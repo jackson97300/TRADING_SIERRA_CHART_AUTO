@@ -1,0 +1,7 @@
+datetime_et,ts,price,valid_bar,partial_session,label,label_quality,setup_type,score_buy,score_sell,realized_pts,tp_pts,sl_pts,hl_mode,schema
+2026-03-26 23:36:00-04:00,1774582560000,6545.75,False,False,0,0,VAH_REJECTION,8,7,2.25,2.25,1.25,True,3.7.1
+2026-03-26 23:36:59-04:00,1774582619000,6545.75,False,False,0,0,BN_LONG_UP,9,8,2.25,2.25,1.25,True,3.7.1
+2026-03-26 23:38:00-04:00,1774582680000,6547.5,False,False,0,0,RVOL_SPIKE_BUY,11,7,2.25,2.25,1.25,True,3.7.1
+2026-03-26 23:39:00-04:00,1774582740000,6549.5,False,False,0,0,RVOL_SPIKE_BUY,11,7,-0.25,2.25,1.25,True,3.7.1
+2026-03-26 23:40:00-04:00,1774582800000,6549.75,False,False,0,0,RVOL_SPIKE_BUY,12,7,-0.5,2.25,1.25,True,3.7.1
+2026-03-26 23:40:59-04:00,1774582859000,6549.25,False,False,0,0,NONE,8,8,,2.25,1.25,True,3.7.1

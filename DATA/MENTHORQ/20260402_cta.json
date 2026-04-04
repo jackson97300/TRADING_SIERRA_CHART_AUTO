@@ -1,0 +1,38 @@
+{
+  "date": "2026-04-02",
+  "source": "MenthorQ via Chrome extension (verifie)",
+  "CTA": {
+    "ES": {"position_today": -0.78, "position_yesterday": -0.79, "position_1m_ago": 0.30, "percentile_1m": 0.48, "percentile_3m": 0.16, "percentile_1y": 0.14, "zscore_3m": -1.37},
+    "NQ": {"position_today": -1.10, "position_yesterday": -1.22, "position_1m_ago": -0.16, "percentile_1m": 0.43, "percentile_3m": 0.14, "percentile_1y": 0.08, "zscore_3m": -1.34},
+    "GOLD": {"position_today": 1.40, "position_yesterday": 1.63, "position_1m_ago": 2.40, "percentile_1m": 0.52, "percentile_3m": 0.17, "percentile_1y": 0.09, "zscore_3m": -1.18},
+    "TREASURY_10Y": {"position_today": -1.59, "position_yesterday": -0.97, "position_1m_ago": 0.26, "percentile_1m": 0.33, "percentile_3m": 0.13, "percentile_1y": 0.03, "zscore_3m": -1.27},
+    "TREASURY_2Y": {"position_today": -1.49, "position_yesterday": -0.93, "position_1m_ago": -0.25, "percentile_1m": 0.62, "percentile_3m": 0.21, "percentile_1y": 0.05, "zscore_3m": -1.23},
+    "BRENT": {"position_today": 2.80, "position_yesterday": 2.60, "position_1m_ago": 2.20, "percentile_1m": 0.24, "percentile_3m": 0.75, "percentile_1y": 0.94, "zscore_3m": 1.11},
+    "EUR_USD": {"position_today": 0.03, "position_yesterday": 0.48, "position_1m_ago": -0.10, "percentile_1m": 0.90, "percentile_3m": 0.46, "percentile_1y": 0.22, "zscore_3m": -0.22},
+    "CHF_USD": {"position_today": 0.49, "position_yesterday": 0.87, "position_1m_ago": 0.98, "percentile_1m": 0.48, "percentile_3m": 0.21, "percentile_1y": 0.19, "zscore_3m": -0.77},
+    "GSCI_COMMODITY": {"position_today": 3.38, "position_yesterday": 3.49, "position_1m_ago": 2.87, "percentile_1m": 0.62, "percentile_3m": 0.87, "percentile_1y": 0.97, "zscore_3m": 1.40},
+    "US_TREASURY_BOND": {"position_today": -1.57, "position_yesterday": -1.02, "position_1m_ago": 0.29, "percentile_1m": 0.38, "percentile_3m": 0.14, "percentile_1y": 0.04, "zscore_3m": -1.25}
+  },
+  "ES_levels": {
+    "call_resistance": 6800, "call_resistance_0dte": 6700, "hvl": 6605,
+    "put_support": 6500, "put_support_0dte": 6550,
+    "1d_max": 6704.22, "1d_min": 6540.28, "iv_30d": 19.65,
+    "total_gex": "465.56M", "net_gex": "-64.44M", "expiring_gex": "0.32M",
+    "pc_gex": 1.32, "total_dex": "182.18B", "net_dex": "-11.97B", "pc_dex": 1.14
+  },
+  "NQ_levels": {
+    "call_resistance": 24750, "call_resistance_0dte": 24600, "hvl": 24070,
+    "put_support": 23000, "put_support_0dte": 23880,
+    "1d_max": 24573.60, "1d_min": 23862.40, "iv_30d": 23.31,
+    "total_gex": "9.51M", "net_gex": "0.93M", "expiring_gex": "0.34M",
+    "pc_gex": 0.82, "total_dex": "12B", "net_dex": "-510M", "pc_dex": 1.09
+  },
+  "blind_spots": {
+    "ES": [6472.11, 6717.52, 6789.23, 6738.53, 6728.21, 6550.70, 6414.11, 6828.79, 6605.06, 6629.02],
+    "NQ": [23668.96, 24572.85, 24245.39, 25185.05, 24972.74, 24602.15, 24454.10, 23177.75, 24425.13, 24817.77]
+  },
+  "qscores": {
+    "ES": {"option": 1, "momentum": 2, "volatility": 4, "seasonality": 0},
+    "NQ": {"option": 2, "momentum": 1, "volatility": 4, "seasonality": 0}
+  }
+}

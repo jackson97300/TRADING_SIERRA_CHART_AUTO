@@ -1,0 +1,27 @@
+{
+  "date": "2026-04-01",
+  "source": "MenthorQ via Chrome extension (verifie)",
+  "CTA": "no_data_on_menthorq",
+  "ES_levels": {
+    "call_resistance": 6800, "call_resistance_0dte": 6720, "hvl": 6600,
+    "put_support": 6500, "put_support_0dte": 6500,
+    "1d_max": 6701.72, "1d_min": 6533.78, "iv_30d": 20.14,
+    "total_gex": "505.66M", "net_gex": "-65.61M", "expiring_gex": "-7.30M",
+    "pc_gex": 1.30, "total_dex": "188.57B", "net_dex": "-12.42B", "pc_dex": 1.14
+  },
+  "NQ_levels": {
+    "call_resistance": 24750, "call_resistance_0dte": 24400, "hvl": 24060,
+    "put_support": 23000, "put_support_0dte": 24150,
+    "1d_max": 24553.36, "1d_min": 23836.14, "iv_30d": 23.53,
+    "total_gex": "10.95M", "net_gex": "1.17M", "expiring_gex": "0.65M",
+    "pc_gex": 0.81, "total_dex": "13.77B", "net_dex": "454.55M", "pc_dex": 0.94
+  },
+  "blind_spots": {
+    "ES": [6538.42, 6676.56, 6702.34, 6627.29, 6599.59, 6588.75, 6284.85, 6649.35, 6497.38, 6440.97],
+    "NQ": [24408.02, 24428.41, 23903.00, 24125.08, 22976.77, 23798.20, 23841.54, 24229.72, 24841.79, 24305.34]
+  },
+  "qscores": {
+    "ES": {"option": 1, "momentum": 2, "volatility": 4, "seasonality": 0},
+    "NQ": {"option": 2, "momentum": 1, "volatility": 4, "seasonality": 0}
+  }
+}

@@ -1,0 +1,15 @@
+=== FULL SCAN CHART 2 ===
+Scanning studies 1 to 60
+Scanning subgraphs 0 to 70
+
+STUDY 58:
+  sg0 = 25685.2500
+  sg1 = 25928.5000
+  sg2 = 25582.0000
+  sg3 = 25906.2500
+  sg6 = 25775.5000
+  sg7 = 25805.5840
+  sg8 = 25755.2500
+
+=== END SCAN ===
+Total non-zero values found: 7

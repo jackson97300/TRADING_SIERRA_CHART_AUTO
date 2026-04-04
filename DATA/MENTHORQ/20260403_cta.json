@@ -1,0 +1,16 @@
+{
+  "date": "2026-04-03",
+  "source": "MenthorQ CTA via Chrome extension",
+  "CTA": {
+    "ES": {"position_today": -0.54, "position_yesterday": -0.47, "position_1m_ago": 0.23, "percentile_1m": 0.52, "percentile_3m": 0.17, "percentile_1y": 0.15, "zscore_3m": -1.11},
+    "NQ": {"position_today": -0.79, "position_yesterday": -0.79, "position_1m_ago": -0.19, "percentile_1m": 0.52, "percentile_3m": 0.17, "percentile_1y": 0.14, "zscore_3m": -1.02},
+    "GOLD": {"position_today": 1.32, "position_yesterday": 1.33, "position_1m_ago": 2.54, "percentile_1m": 0.48, "percentile_3m": 0.16, "percentile_1y": 0.07, "zscore_3m": -1.22},
+    "TREASURY_10Y": {"position_today": -1.37, "position_yesterday": -1.29, "position_1m_ago": -0.05, "percentile_1m": 0.48, "percentile_3m": 0.21, "percentile_1y": 0.05, "zscore_3m": -0.99},
+    "TREASURY_2Y": {"position_today": -1.35, "position_yesterday": -1.22, "position_1m_ago": -0.48, "percentile_1m": 0.62, "percentile_3m": 0.21, "percentile_1y": 0.05, "zscore_3m": -1.09},
+    "BRENT": {"position_today": 2.94, "position_yesterday": 2.89, "position_1m_ago": 2.80, "percentile_1m": 0.33, "percentile_3m": 0.78, "percentile_1y": 0.94, "zscore_3m": 1.16},
+    "EUR_USD": {"position_today": -0.04, "position_yesterday": 0.03, "position_1m_ago": -0.06, "percentile_1m": 0.76, "percentile_3m": 0.38, "percentile_1y": 0.19, "zscore_3m": -0.36},
+    "CHF_USD": {"position_today": 0.47, "position_yesterday": 0.48, "position_1m_ago": 1.01, "percentile_1m": 0.48, "percentile_3m": 0.21, "percentile_1y": 0.19, "zscore_3m": -0.80},
+    "GSCI_COMMODITY": {"position_today": 3.89, "position_yesterday": 3.80, "position_1m_ago": 3.49, "percentile_1m": 1.00, "percentile_3m": 1.00, "percentile_1y": 1.00, "zscore_3m": 1.81},
+    "US_TREASURY_BOND": {"position_today": -1.20, "position_yesterday": -1.21, "position_1m_ago": 0.00, "percentile_1m": 0.76, "percentile_3m": 0.33, "percentile_1y": 0.13, "zscore_3m": -0.83}
+  }
+}

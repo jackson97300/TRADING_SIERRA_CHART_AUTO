@@ -1,0 +1,6 @@
+=== FULL SCAN CHART 1 ===
+Scanning studies 1 to 60
+Scanning subgraphs 0 to 70
+
+=== END SCAN ===
+Total non-zero values found: 0

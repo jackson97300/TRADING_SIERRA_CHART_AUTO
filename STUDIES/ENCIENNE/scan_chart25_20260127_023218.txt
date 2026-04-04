@@ -1,0 +1,9 @@
+=== FULL SCAN CHART 25 ===
+Scanning studies 1 to 60
+Scanning subgraphs 0 to 70
+
+STUDY 3:
+  sg0 = 6986.0000
+
+=== END SCAN ===
+Total non-zero values found: 1

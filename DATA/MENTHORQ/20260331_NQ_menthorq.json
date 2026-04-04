@@ -1,0 +1,68 @@
+{
+  "ticker": "NQ1!",
+  "date": "2026-03-31",
+  "timestamp": "2026-03-31 15:59 EST",
+  "contract": "NQM2026",
+  "source": "MenthorQ via OpenClaw",
+
+  "liquidity_snapshot": {
+    "Gamma_Condition": "Positive",
+    "Gamma_Flip_Zone": 23590,
+    "P/C_OI": 1.37,
+    "Implied_Vol_30D": 24.25
+  },
+
+  "q_scores": {
+    "Option": 2,
+    "Volatility": 4,
+    "Momentum": 1,
+    "Seasonality": 0
+  },
+
+  "key_levels": {
+    "Call_Resistance": 24750,
+    "Call_Resistance_0DTE": 24000,
+    "HVL": 23520,
+    "Put_Support": 23000,
+    "Put_Support_0DTE": 23800,
+    "1D_Max": 24280.34,
+    "1D_Min": 23549.66,
+    "Distance_to_HVL_Pct": 1.65,
+    "Implied_Vol_30D": 24.25
+  },
+
+  "gex": {
+    "Total_GEX_M": 10.56,
+    "Net_GEX_M": 1.25,
+    "Expiring_GEX_M": 0.47,
+    "Put_Call_GEX": 0.79,
+    "Net_DEX_B": -1.03,
+    "Total_DEX_B": 13.03,
+    "Put_Call_DEX": 1.17
+  },
+
+  "top_gex_strikes": [
+    {"rank": 1, "strike": 24750, "gex": 280000, "type": "positive", "label": "Call Wall"},
+    {"rank": 2, "strike": 23110, "gex": -275000, "type": "negative"},
+    {"rank": 3, "strike": 23190, "gex": -200000, "type": "negative"},
+    {"rank": 4, "strike": 23270, "gex": -150000, "type": "negative"},
+    {"rank": 5, "strike": 23030, "gex": -120000, "type": "negative"},
+    {"rank": 6, "strike": 23000, "gex": -100000, "type": "negative", "label": "Put Wall"},
+    {"rank": 7, "strike": 22950, "gex": -80000, "type": "negative"},
+    {"rank": 8, "strike": 24070, "gex": 80000, "type": "positive"},
+    {"rank": 9, "strike": 23750, "gex": -60000, "type": "negative"},
+    {"rank": 10, "strike": 25350, "gex": 60000, "type": "positive"}
+  ],
+
+  "expirations": [
+    {"date": "2026-04-01", "dte": 1, "gex_m": 0.47, "dex_b": 0.57, "gex_pct": 21.1, "pc_gex": 0.68, "pc_dex": 0.41, "pc_oi": 1.50, "hvl": 23820, "call_res": 24000, "put_sup": 23800, "exp_move": 365},
+    {"date": "2026-04-02", "dte": 2, "gex_m": 0.96, "dex_b": 0.78, "gex_pct": 43.5, "pc_gex": 0.40, "pc_dex": 0.38, "pc_oi": 1.42, "hvl": 23400, "call_res": 23700, "put_sup": 23000, "exp_move": 517},
+    {"date": "2026-04-06", "dte": 6, "gex_m": 0.14, "dex_b": 0.30, "gex_pct": 6.4, "pc_gex": 0.61, "pc_dex": 0.33, "pc_oi": 0.82, "hvl": 23325, "call_res": 23400, "put_sup": 23575, "exp_move": 895},
+    {"date": "2026-04-10", "dte": 10, "gex_m": -0.05, "dex_b": -0.13, "gex_pct": -2.1, "pc_gex": 1.21, "pc_dex": 1.76, "pc_oi": 1.38, "hvl": 24100, "call_res": 25000, "put_sup": 23000, "exp_move": 1155},
+    {"date": "2026-04-17", "dte": 17, "gex_m": -0.09, "dex_b": -0.62, "gex_pct": -3.9, "pc_gex": 1.14, "pc_dex": 1.98, "pc_oi": 1.33, "hvl": 23750, "call_res": 24900, "put_sup": 21000, "exp_move": 1506},
+    {"date": "2026-04-30", "dte": 30, "gex_m": 0.04, "dex_b": -0.39, "gex_pct": 1.6, "pc_gex": 0.93, "pc_dex": 1.60, "pc_oi": 1.36, "hvl": 24100, "call_res": 24750, "put_sup": 23000, "exp_move": 2001},
+    {"date": "2026-06-18", "dte": 79, "gex_m": -0.29, "dex_b": -1.12, "gex_pct": -13.0, "pc_gex": 1.77, "pc_dex": 2.18, "pc_oi": 1.38, "hvl": 24500, "call_res": 25000, "put_sup": 22500, "exp_move": 3247}
+  ],
+
+  "blind_spot_levels": [24388.17, 23823.63, 24125.61, 24001.69, 23551.17, 24739.79, 24277.74, 23311.34, 23700.99, 23961.55]
+}
