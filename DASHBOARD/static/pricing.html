@@ -387,17 +387,8 @@
             <span class="pricing-disclaimer">Outil d'aide a la decision — Pas un conseil en investissement</span>
         </div>
 
-        <!-- Toggle periode -->
-        <div style="display:flex;justify-content:center;margin-bottom:2rem;">
-            <div id="period-toggle" style="display:inline-flex;background:var(--bg-input);border-radius:9999px;padding:4px;border:1px solid rgba(255,255,255,0.08);">
-                <button class="period-btn period-btn-active" data-period="monthly" onclick="setPeriod('monthly')">Mensuel</button>
-                <button class="period-btn" data-period="semi" onclick="setPeriod('semi')">6 mois <span style="color:var(--green);font-size:0.65rem;font-weight:700;">-15%</span></button>
-                <button class="period-btn" data-period="annual" onclick="setPeriod('annual')">Annuel <span style="color:var(--green);font-size:0.65rem;font-weight:700;">-30%</span></button>
-            </div>
-        </div>
-
-        <!-- Grille 3 plans -->
-        <div class="pricing-grid">
+        <!-- Grille 2 plans -->
+        <div class="pricing-grid" style="grid-template-columns:1fr 1fr;max-width:800px;">
 
             <!-- Card 1 : Gratuit -->
             <div class="pricing-card">
@@ -414,56 +405,41 @@
                     <li><span class="pricing-check">&#10003;</span> VIX, ATR, VWAP slope</li>
                     <li><span class="pricing-check">&#10003;</span> Correlation ES/NQ basique</li>
                     <li><span class="pricing-check">&#10003;</span> Apercu briefing (3 lignes)</li>
-                    <li><span class="pricing-check">&#10003;</span> Acces education (40 lecons)</li>
+                    <li><span class="pricing-check">&#10003;</span> Education (40 lecons)</li>
+                    <li><span class="pricing-check">&#10003;</span> Calendrier economique</li>
+                    <li><span class="pricing-check">&#10003;</span> Communaute Discord</li>
                 </ul>
-                <button class="pricing-btn pricing-btn-secondary" disabled>Plan actuel</button>
+                <a href="/" class="pricing-btn pricing-btn-secondary" style="text-decoration:none;text-align:center;">Acceder gratuitement</a>
             </div>
 
             <!-- Card 2 : Starter (featured) -->
             <div class="pricing-card pricing-card-featured">
                 <div class="pricing-card-badge">
-                    <span class="badge badge-cyan" style="background:rgba(0,180,220,0.15);">POPULAIRE</span>
+                    <span class="badge badge-cyan" style="background:rgba(0,180,220,0.15);">RECOMMANDE</span>
                 </div>
                 <div class="pricing-card-price">
-                    <span id="starter-price" class="pricing-price-value">19&euro;</span>
-                    <span id="starter-period" class="pricing-price-period">/mois</span>
+                    <span class="pricing-price-value">9&euro;</span>
+                    <span class="pricing-price-period">/mois</span>
                 </div>
-                <div id="starter-save" style="font-size:0.75rem;color:var(--green);font-weight:600;margin-top:0.25rem;display:none;"></div>
-                <div id="starter-equiv" style="font-size:0.7rem;color:var(--text-muted);margin-top:0.125rem;display:none;"></div>
                 <hr class="pricing-divider">
                 <ul class="pricing-features">
                     <li><span class="pricing-check">&#10003;</span> Tout du plan Gratuit</li>
+                    <li><span class="pricing-check">&#10003;</span> Briefing MIA quotidien complet</li>
                     <li><span class="pricing-check">&#10003;</span> Contexte marche complet (Open Type, Day Type, IB, Profile)</li>
                     <li><span class="pricing-check">&#10003;</span> Intermarket complet (AMD, SMT, PO3)</li>
-                    <li><span class="pricing-check">&#10003;</span> Briefing MIA quotidien complet</li>
-                    <li><span class="pricing-check">&#10003;</span> Alertes Discord (retardees 15min)</li>
+                    <li><span class="pricing-check">&#10003;</span> Regime Tracker live</li>
+                    <li><span class="pricing-check">&#10003;</span> Alertes Discord</li>
+                    <li><span class="pricing-check">&#10003;</span> Briefings archives</li>
                 </ul>
                 <button class="pricing-btn pricing-btn-primary" data-plan="starter" onclick="handleCheckout('starter')">Commencer — 7j gratuit</button>
             </div>
 
-            <!-- Card 3 : Premium -->
-            <div class="pricing-card">
-                <div class="pricing-card-badge">
-                    <span class="badge" style="background:rgba(212,175,55,0.15);color:var(--gold);">COMPLET</span>
-                </div>
-                <div class="pricing-card-price">
-                    <span id="premium-price" class="pricing-price-value">49&euro;</span>
-                    <span id="premium-period" class="pricing-price-period">/mois</span>
-                </div>
-                <div id="premium-save" style="font-size:0.75rem;color:var(--green);font-weight:600;margin-top:0.25rem;display:none;"></div>
-                <div id="premium-equiv" style="font-size:0.7rem;color:var(--text-muted);margin-top:0.125rem;display:none;"></div>
-                <hr class="pricing-divider">
-                <ul class="pricing-features">
-                    <li><span class="pricing-check">&#10003;</span> Tout du plan Starter</li>
-                    <li><span class="pricing-check">&#10003;</span> Order Flow (delta, CVD, RVOL, absorption)</li>
-                    <li><span class="pricing-check">&#10003;</span> Options &amp; Gamma (murs, GEX, 0DTE, VIX)</li>
-                    <li><span class="pricing-check">&#10003;</span> Signaux &amp; Journal (score ML, SL/TP, trades)</li>
-                    <li><span class="pricing-check">&#10003;</span> Alertes Discord temps reel</li>
-                    <li><span class="pricing-check">&#10003;</span> Briefings archives</li>
-                </ul>
-                <button class="pricing-btn pricing-btn-primary" data-plan="premium" onclick="handleCheckout('premium')">Debloquer tout — 7j gratuit</button>
-            </div>
+        </div>
 
+        <!-- Teaser Premium -->
+        <div style="max-width:800px;margin:0 auto 2rem;background:rgba(212,175,55,0.05);border:1px solid rgba(212,175,55,0.2);border-radius:0.75rem;padding:1.25rem;text-align:center;">
+            <span style="color:var(--gold);font-weight:700;font-size:0.875rem;">Premium — Bientot disponible</span>
+            <p style="color:var(--text-muted);font-size:0.8125rem;margin-top:0.5rem;">Order Flow, Options & Gamma, Signaux ML et Journal de trades seront disponibles quand le bot aura un track record verifiable. Inscrivez-vous en Starter pour etre notifie en priorite.</p>
         </div>
 
         <!-- FAQ -->
@@ -472,31 +448,31 @@
 
             <div class="pricing-faq-item" onclick="toggleFaq(this)">
                 <div class="pricing-faq-question">
-                    <span>Puis-je changer de plan ?</span>
+                    <span>Pourquoi pas de plan Premium pour l'instant ?</span>
                     <span class="pricing-faq-arrow">&#9660;</span>
                 </div>
                 <div class="pricing-faq-answer">
-                    Oui, a tout moment depuis votre compte. Le changement prend effet immediatement et la facturation est ajustee au prorata.
+                    Nous croyons a la transparence. Le plan Premium inclura des signaux de trading automatises. Nous ne le proposerons que lorsque le bot aura un track record verifiable d'au moins 3 mois. Les abonnes Starter seront les premiers informes.
                 </div>
             </div>
 
             <div class="pricing-faq-item" onclick="toggleFaq(this)">
                 <div class="pricing-faq-question">
-                    <span>Y a-t-il une periode d'essai ?</span>
+                    <span>Qu'est-ce que le Briefing MIA ?</span>
                     <span class="pricing-faq-arrow">&#9660;</span>
                 </div>
                 <div class="pricing-faq-answer">
-                    7 jours d'essai gratuit sur le plan Premium. Aucun engagement, annulation en un clic.
+                    Chaque matin avant l'ouverture US (8h30 ET), vous recevez une analyse complete : contexte macro (VIX, ATR), niveaux cles du jour (murs options, GEX, VWAP), biais directionnel, et events economiques. C'est l'equivalent d'un morning brief de prop firm.
                 </div>
             </div>
 
             <div class="pricing-faq-item" onclick="toggleFaq(this)">
                 <div class="pricing-faq-question">
-                    <span>Comment fonctionnent les alertes Discord ?</span>
+                    <span>Puis-je annuler a tout moment ?</span>
                     <span class="pricing-faq-arrow">&#9660;</span>
                 </div>
                 <div class="pricing-faq-answer">
-                    Les signaux detectes par MIA sont postes automatiquement dans le canal #signals-live. Le plan Starter recoit les alertes avec 15 minutes de decalage, le plan Premium en temps reel.
+                    Oui, aucun engagement. Annulation en un clic depuis votre compte. Vous conservez l'acces jusqu'a la fin de la periode payee.
                 </div>
             </div>
         </div>
@@ -540,66 +516,6 @@
         /* --- FAQ toggle --- */
         function toggleFaq(item) {
             item.classList.toggle('open');
-        }
-
-        /* --- Grille tarifaire degressive --- */
-        /*
-         * Mensuel    : prix de base
-         * 6 mois     : -15% → paiement unique pour 6 mois
-         * Annuel     : -30% → paiement unique pour 12 mois
-         *
-         * Starter : 19/mois → 97 (6m) → 160 (12m)
-         * Premium : 49/mois → 250 (6m) → 412 (12m)
-         */
-        var PRICES = {
-            starter: {
-                monthly: { price: 19, period: "/mois", save: "", equiv: "" },
-                semi:    { price: 97, period: "/6 mois", save: "Economisez 17€", equiv: "soit 16,17€/mois" },
-                annual:  { price: 160, period: "/an", save: "Economisez 68€", equiv: "soit 13,33€/mois" }
-            },
-            premium: {
-                monthly: { price: 49, period: "/mois", save: "", equiv: "" },
-                semi:    { price: 250, period: "/6 mois", save: "Economisez 44€", equiv: "soit 41,67€/mois" },
-                annual:  { price: 412, period: "/an", save: "Economisez 176€", equiv: "soit 34,33€/mois" }
-            }
-        };
-
-        var currentPeriod = "monthly";
-
-        function setPeriod(period) {
-            currentPeriod = period;
-
-            /* Toggle buttons */
-            var btns = document.querySelectorAll('.period-btn');
-            for (var i = 0; i < btns.length; i++) {
-                btns[i].classList.remove('period-btn-active');
-                if (btns[i].getAttribute('data-period') === period) {
-                    btns[i].classList.add('period-btn-active');
-                }
-            }
-
-            /* Update prices */
-            updatePlanPrice('starter', period);
-            updatePlanPrice('premium', period);
-        }
-
-        function updatePlanPrice(plan, period) {
-            var data = PRICES[plan][period];
-            document.getElementById(plan + '-price').innerHTML = data.price + '&euro;';
-            document.getElementById(plan + '-period').textContent = data.period;
-
-            var saveEl = document.getElementById(plan + '-save');
-            var equivEl = document.getElementById(plan + '-equiv');
-
-            if (data.save) {
-                saveEl.textContent = data.save;
-                saveEl.style.display = 'block';
-                equivEl.textContent = data.equiv;
-                equivEl.style.display = 'block';
-            } else {
-                saveEl.style.display = 'none';
-                equivEl.style.display = 'none';
-            }
         }
 
         /* --- Checkout (Stripe placeholder) --- */
