@@ -1,7 +1,10 @@
 # Recap Dashboard MIA — A transmettre a l'agent Media
 
-Date : 04/04/2026
+Date : 05/04/2026 (mis a jour)
 Auteur : Agent Trading (Claude Code)
+
+> **MISE A JOUR 05/04** : Dashboard EN LIGNE sur https://dashboard.mia-ia-system.com
+> Site principal mis a jour. 40 lecons education modernisees (SVG). Calendrier eco refait.
 
 ---
 
@@ -40,9 +43,9 @@ Analyse quotidienne publiee chaque matin avant l'ouverture US (8h30 ET) :
 | X (Twitter) | https://x.com/@mia_ia_system | EN LIGNE |
 | GitHub site | https://github.com/jackson97300/mia-website | Public |
 
-### Liens a venir (une fois deploye)
+### Liens LIVE (deployes et fonctionnels)
 
-| Page | URL prevue | Contenu |
+| Page | URL | Contenu |
 |------|-----------|---------|
 | Dashboard | https://mia-ia-system.com/dashboard | 6 panels temps reel |
 | Briefing du jour | https://mia-ia-system.com/briefing | Analyse quotidienne |
