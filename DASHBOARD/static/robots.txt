@@ -1,0 +1,6 @@
+User-agent: *
+Disallow: /
+Allow: /pricing
+Allow: /static/images/
+
+Sitemap: https://mia-ia-system.com/sitemap.xml
