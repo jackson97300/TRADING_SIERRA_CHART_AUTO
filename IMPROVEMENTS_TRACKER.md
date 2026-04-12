@@ -379,3 +379,109 @@ Objectif : si tu as la même idée dans 3 mois, tu retrouves le résultat et tu 
 **Règle d'or** : un chantier qui n'a pas été scoré ici **ne doit pas être démarré**. C'est la barrière contre la dérive "j'ai eu une idée cool".
 
 **Auteur framework** : inspiré des 9 livres analysés (López, Davey, Chan, Harris, Jansen, Aronson, Pardo, Hasbrouck) + philosophie Mark Douglas (edge statistique > trade individuel).
+
+---
+
+## 🗓️ Roadmap datée — engagement écrit 2026-04-12
+
+**Objectif** : passer de "85% production-ready" à "live petit size validé" **en 6-8 semaines réelles**.
+
+### Phase 1 — Attente data (JUSQU'AU 2026-04-15)
+- **Action** : ZÉRO code. Laisse le DMP collecter.
+- **Objectif** : 15+ jours de data propre (13 au 12/04 → 15+ au 15/04)
+- **Critère de succès** : `ls DATA/ES/*.jsonl | wc -l ≥ 15`
+- **Interdit** : toucher au code du DMP, ajouter des features, lire un nouveau livre
+
+### Phase 2 — Training réel (JUSQU'AU 2026-04-18)
+- **Actions autorisées** :
+  1. Relance pipeline (`labeler.py` → `dataset_builder.py --current` → `train_lightgbm.py`)
+  2. Integration meta-labeling (#4, score 88)
+  3. Monte Carlo Permutation + Deflated Sharpe (#5, score 85)
+  4. WFE metric (#7, score 68, quick win 2h)
+- **Critères GO/NO-GO** (TOUS doivent passer) :
+  - `trades ≥ 3/jour` par modèle
+  - `Sharpe OOS ≥ 0.8`
+  - `Deflated Sharpe > 0`
+  - `PBO < 50%`
+  - `p-value Monte Carlo < 0.05`
+  - `WFE ∈ [30%, 80%]`
+- **Si NO-GO** : STOP. Investigation cause racine. **PAS de nouvelle feature**.
+
+### Phase 3 — Paper trading incubation (JUSQU'AU 2026-05-15)
+- **Action** : déploiement dry-run sur VPS, 1 contrat simulé, 2-4 semaines
+- **Critères de succès** :
+  - Sharpe live ≥ 80% du Sharpe backtest
+  - Drawdown live ≤ 1.5× max DD backtest
+  - 0 orphelin DTC sur 100+ trades
+  - Slippage distribution collectée et documentée (#6)
+- **Si échec** : STOP. Diagnostic. Pas de feature.
+
+### Phase 4 — Live petit size (JUSQU'AU 2026-06-15)
+- **Action** : 1 micro ES ou NQ, max 5 trades/jour
+- **Kill rule Davey ACTIVE** (`backtest_max_dd_usd` renseigné)
+- **Critères de succès** :
+  - P&L net positif sur 100+ trades live
+  - DD live < 1.75× backtest max DD
+  - Pas de divergence critique vs backtest
+
+### Phase 5 — Scale-up (conditionnel, après 2026-06-15)
+- Uniquement SI phases 1-4 validées
+- Augmentation : 1 → 2 → 3 micros (jamais plus tant que live Sharpe < 1.5)
+
+---
+
+## ⚠️ Anti-patterns assistance IA — garde-fous obligatoires
+
+**Contexte** : Jackson a identifié le 2026-04-12 le piège majeur de la collaboration avec une IA : **une IA est une source inépuisable d'idées**. Sans garde-fous explicites, la collaboration devient une machine à procrastiner sophistiquée, car il y aura toujours "encore une amélioration à faire".
+
+Ces règles limitent explicitement le comportement de l'assistant IA pour protéger Jackson.
+
+### Règles pour l'IA (Claude, ou autre assistant futur)
+
+1. **Ne JAMAIS proposer de nouvelle feature** sans que Jackson l'ait explicitement demandée. Si Jackson parle d'un problème, proposer uniquement des solutions **dans le scope existant** (chantiers déjà scorés dans ce tracker).
+
+2. **Refuser de coder un chantier qui n'est pas dans `IMPROVEMENTS_TRACKER.md`** avec un score ≥ 50. Si Jackson demande quelque chose de nouveau, la première réaction doit être : "Passons ça dans le framework d'abord. Score ?"
+
+3. **Rappeler la deadline à chaque début de session**. Première action : lire la date courante et comparer aux deadlines de la roadmap. Si retard détecté → signal rouge.
+
+4. **Refuser de lire un nouveau livre de trading** tant que V2 n'est pas en paper trading validé. Exception : recherche web ciblée pour un fix spécifique déjà en cours.
+
+5. **Refuser d'ajouter une feature "juste parce que c'est intéressant"**. Toute feature doit avoir :
+   - Hypothèse testable explicite
+   - Preuve empirique en PoC de 30 minutes
+   - Score ≥ 70 dans le framework
+   - Aucun de ces 3 manquant → REFUS
+
+6. **Proposer explicitement de clore la session** si la session dérive (plus de 1h sans livrable concret, ou changement de sujet répété, ou "et si on testait..." sans justification).
+
+7. **Ne JAMAIS ajouter de chantier "nice-to-have" dans le tracker** sans marquer explicitement `❌ SKIP`. Un chantier ambigu devient un faux espoir qui dérive.
+
+8. **À la fin de chaque session, forcer un bilan** :
+   - Qu'est-ce qui a été ACCOMPLI concrètement (code mergé) ?
+   - Qu'est-ce qui reste pour la prochaine session (1 priorité, pas 5) ?
+   - Quelle deadline est impactée ?
+
+### Règles pour Jackson
+
+1. **Ne pas demander à l'IA "qu'est-ce qu'on pourrait améliorer ?"**. C'est une question piège. L'IA trouvera toujours quelque chose. Demander à la place : **"Est-ce qu'on peut avancer sur [chantier X du tracker] ?"**.
+
+2. **Ne pas céder à la tentation du benchmark infini**. Après un training, accepter le résultat (bon ou mauvais) et passer à la phase suivante. Pas de re-tuning à l'aveugle.
+
+3. **Respecter les deadlines**. Si tu es en retard, la solution n'est **jamais** d'ajouter de la complexité. C'est **toujours** de simplifier ou de skipper.
+
+4. **Relire ce fichier avant chaque session**. 5 minutes. Ça te recalibre contre la dérive.
+
+5. **Clore la session dès qu'un livrable concret est fait**. Ne pas enchaîner "tant qu'on est dedans". Une session productive qui se termine > une session marathon qui dérive.
+
+### Signal d'alarme rouge
+
+Si tu te retrouves à faire UN des trucs suivants, **arrête et ferme la session** :
+- Lire un nouveau livre de trading
+- Ajouter une feature qui n'a pas de PoC
+- Re-optimiser Optuna avec 200+ trials
+- Tester "juste un autre modèle" (XGBoost, CatBoost, etc.)
+- Refactorer du code qui marche
+- Passer de 1min à 5min bars
+- Combiner 3 stratégies en portfolio avant d'avoir 1 stratégie live profitable
+
+Ces 7 comportements sont **documentés** comme les tueurs de traders algo. Si tu y es, c'est **l'assistance IA qui t'a entraîné là**. Fais un break, relis ce fichier, et reviens avec un chantier du tracker.
