@@ -310,8 +310,14 @@ def tune_hyperparams(
     y_val: np.ndarray,
     n_trials: int = 100,
     early_stopping: int = 50,
+    sample_weight_train: Optional[np.ndarray] = None,
+    sample_weight_val: Optional[np.ndarray] = None,
 ) -> dict:
-    """Optimise les hyperparametres LightGBM avec Optuna."""
+    """Optimise les hyperparametres LightGBM avec Optuna.
+
+    sample_weight_train/val : poids par echantillon (Lopez AFML ch.4 — uniqueness).
+    Si None, LightGBM traite tous les echantillons avec poids=1.0 (comportement par defaut).
+    """
     try:
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -339,27 +345,39 @@ def tune_hyperparams(
         }
 
         model = lgb.LGBMClassifier(**params)
-        model.fit(
-            X_train, y_train,
+        fit_kwargs = dict(
             eval_set=[(X_val, y_val)],
             callbacks=[
                 lgb.early_stopping(early_stopping, verbose=False),
                 lgb.log_evaluation(period=0),
             ],
         )
+        if sample_weight_train is not None:
+            fit_kwargs["sample_weight"] = sample_weight_train
+        if sample_weight_val is not None:
+            fit_kwargs["eval_sample_weight"] = [sample_weight_val]
+        model.fit(X_train, y_train, **fit_kwargs)
         preds = model.predict_proba(X_val)[:, 1]
 
         # Optimiser pour le profit factor, pas la logloss
+        # Note : si sample_weight_val est fourni, le PF proxy est PONDERE pour
+        # rester fidele a Lopez AFML ch.4 (uniqueness weights).
         threshold = 0.5
         pred_pos = preds > threshold
         if pred_pos.sum() == 0:
             return 0.0
 
-        correct = (pred_pos & (y_val == 1)).sum()
-        wrong = (pred_pos & (y_val == 0)).sum()
+        if sample_weight_val is not None:
+            # Version ponderee : un label "unique" compte plus qu'un label chevauche
+            correct = float(((pred_pos) & (y_val == 1)) @ sample_weight_val)
+            wrong   = float(((pred_pos) & (y_val == 0)) @ sample_weight_val)
+        else:
+            correct = float((pred_pos & (y_val == 1)).sum())
+            wrong   = float((pred_pos & (y_val == 0)).sum())
+
         if wrong == 0:
-            return float(correct)
-        return float(correct) / float(wrong)  # proxy profit factor
+            return correct
+        return correct / wrong  # proxy profit factor
 
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
@@ -482,11 +500,18 @@ class ModelTrainer:
             y_tr = (train_f["label"] == target_label).astype(int).values
             X_vl = val_f[features]
             y_vl = (val_f["label"] == target_label).astype(int).values
+            # Sample weights Lopez AFML ch.4 (fallback None si colonne absente)
+            sw_tr_tune = train_f["sample_weight"].values if "sample_weight" in train_f.columns else None
+            sw_vl_tune = val_f["sample_weight"].values if "sample_weight" in val_f.columns else None
 
             print(f"  Tuning Optuna ({self.config.n_trials} trials)...")
             t0 = time.time()
-            params = tune_hyperparams(X_tr, y_tr, X_vl, y_vl,
-                                      self.config.n_trials, self.config.early_stopping_rounds)
+            params = tune_hyperparams(
+                X_tr, y_tr, X_vl, y_vl,
+                self.config.n_trials, self.config.early_stopping_rounds,
+                sample_weight_train=sw_tr_tune,
+                sample_weight_val=sw_vl_tune,
+            )
             print(f"  Tuning termine en {time.time()-t0:.0f}s")
         else:
             params = _default_params()
@@ -500,12 +525,22 @@ class ModelTrainer:
             y_tr = (train_df["label"] == target_label).astype(int).values
             X_te = test_df[features]
             y_te = (test_df["label"] == target_label).astype(int).values
+            # Sample weights (Lopez AFML ch.4 — corrige biais labels concurrents)
+            sw_tr = train_df["sample_weight"].values if "sample_weight" in train_df.columns else None
+            sw_te = test_df["sample_weight"].values if "sample_weight" in test_df.columns else None
 
             # Train
             model = lgb.LGBMClassifier(**params)
-            model.fit(X_tr, y_tr, eval_set=[(X_te, y_te)],
-                      callbacks=[lgb.early_stopping(self.config.early_stopping_rounds, verbose=False),
-                                 lgb.log_evaluation(period=0)])
+            fit_kwargs = dict(
+                eval_set=[(X_te, y_te)],
+                callbacks=[lgb.early_stopping(self.config.early_stopping_rounds, verbose=False),
+                           lgb.log_evaluation(period=0)],
+            )
+            if sw_tr is not None:
+                fit_kwargs["sample_weight"] = sw_tr
+            if sw_te is not None:
+                fit_kwargs["eval_sample_weight"] = [sw_te]
+            model.fit(X_tr, y_tr, **fit_kwargs)
 
             # Predict
             proba = model.predict_proba(X_te)[:, 1]
@@ -556,8 +591,12 @@ class ModelTrainer:
 
         # --- Train final model on ALL data ---
         print(f"\n  Training final model sur {len(df)} barres...")
+        sw_all = df["sample_weight"].values if "sample_weight" in df.columns else None
         final_model = lgb.LGBMClassifier(**params)
-        final_model.fit(X, y)
+        if sw_all is not None:
+            final_model.fit(X, y, sample_weight=sw_all)
+        else:
+            final_model.fit(X, y)
 
         # Feature importance MDI (native LightGBM)
         importance = pd.DataFrame({
@@ -847,8 +886,15 @@ def generate_report(results: List[dict], config: TrainConfig):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_features(df: pd.DataFrame) -> List[str]:
-    """Extrait la liste des features du dataset (exclut meta)."""
-    meta = {"ts", "label", "partial_session", "is_nq"}
+    """Extrait la liste des features du dataset (exclut meta).
+
+    IMPORTANT : sample_weight est une META colonne (Lopez AFML ch.4), pas une
+    feature. Il est passe au .fit() en parametre `sample_weight`, pas en input X.
+    """
+    meta = {
+        "ts", "label", "partial_session", "is_nq",
+        "sample_weight",   # Lopez AFML ch.4 — meta, pas feature
+    }
     return [c for c in df.columns if c not in meta]
 
 

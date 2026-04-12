@@ -28,25 +28,32 @@ EXPECTED_COLS_371 = 260           # +bar_high, +bar_low
 EXPECTED_COLS_372 = 262           # +dist_vwap_d_sd3u, +dist_vwap_d_sd3d
 EXPECTED_COLS = EXPECTED_COLS_370 # rétrocompatibilité (remplacé dynamiquement)
 
+# ─── NETTOYAGE 2026-04-12 ────────────────────────────────────────────────
+# Colonnes mortes documentees dans CLAUDE.md (audit 2026-04-09) retirees des
+# checks MUST_FIRE/SHOULD_FIRE/MUST_HAVE_DIST/MUST_VARY/BOUNDS :
+#   - bn_color_up, bn_color_dn, bn_color_dn_2  → toujours 0 (BN Trigger per-bar ephemere)
+#   - bar_color_up, bar_color_dn              → Extension to Future Intersection desactivee
+#   - bn_pressure_ask                         → toujours 0 (mort post-3.7.0)
+#   - bn_long_up, bn_long_dn                  → idem
+#   - bn_volume_up, bn_volume_dn              → idem
+#   - bn_score_bull                           → idem (bn_score_bear/raw survivent)
+#   - dist_ext_color_up, dist_ext_color_dn    → API CBBAC non alimentee
+# Survivants explicites gardes : bn_color_up_2 (+0.070 ES), bn_score_bear, bn_score_raw,
+# bn_absorb_bid, bn_absorb_ask, bn_pressure_bid, fp_edge_*, bar_edge_*, bar_long_*.
+# Ces colonnes mortes restent presentes dans le JSONL (DMP C++ les ecrit toujours),
+# mais le validateur ne leve plus de faux positifs a leur sujet.
+
 # Signaux qui DOIVENT firer (Extension Lines persistantes, toujours actives)
 # (colonne, seuil_min_pct, description)
 MUST_FIRE = [
-    ("bn_color_up",      0.30, "COLOR UP FP — pullback simple"),
-    ("bn_color_dn",      0.30, "COLOR DN FP — pullback simple"),
-    ("bn_pressure_ask",  0.15, "TRIPLE/DOUBLE ASK FP"),
     ("bn_pressure_bid",  0.15, "TRIPLE/DOUBLE BID FP"),
-    ("bar_color_up",     0.20, "COLOR UP BARRES"),
-    ("bar_color_dn",     0.20, "COLOR DN BARRES"),
     ("bar_pressure_ask", 0.15, "TRIPLE/DOUBLE ASK BARRES"),
     ("bar_pressure_bid", 0.15, "TRIPLE/DOUBLE BID BARRES"),
 ]
 
 # Signaux qui DEVRAIENT firer (au moins 1 fois sur 50+ barres)
 SHOULD_FIRE = [
-    ("bn_long_up",       "LONG UP — barre longue haussière"),
-    ("bn_long_dn",       "LONG DN — barre longue baissière"),
     ("bn_color_up_2",    "COLOR UP 2 — double stacké (continuation)"),
-    ("bn_color_dn_2",    "COLOR DN 2 — double stacké"),
     ("bar_edge_buy",     "EDGE BUY BARRES — imbalance acheteur"),
     ("bar_edge_sell",    "EDGE SELL BARRES — imbalance vendeur"),
     ("fp_edge_buy",      "EDGE BUY FP — imbalance footprint"),
@@ -57,8 +64,6 @@ SHOULD_FIRE = [
 
 # Distances qui doivent être non-null régulièrement
 MUST_HAVE_DIST = [
-    ("dist_ext_color_up",  0.40, "COLOR UP distance (API CBBAC)"),
-    ("dist_ext_color_dn",  0.40, "COLOR DN distance (API CBBAC)"),
     ("dist_ext_edge_buy",  0.05, "EDGE BUY distance (tracker 6D)"),
     ("dist_ext_edge_sell", 0.05, "EDGE SELL distance (tracker 6D)"),
 ]
@@ -72,7 +77,6 @@ MUST_VARY = [
     ("cvd_bar_delta",    5, "CVD per-bar"),
     ("bars_in_va",       5, "Barres consécutives dans la VA"),
     ("bn_score_raw",     2, "Score BN composite"),
-    ("bn_score_bull",    2, "Score BN bull"),
     ("bn_score_bear",    2, "Score BN bear"),
 ]
 
@@ -86,7 +90,6 @@ BOUNDS = [
     ("bid_pct",           0,     1.01),
     ("delta_bar_vol_norm",-1.01, 1.01),
     ("bn_score_raw",      -1.5,  1.5),
-    ("bn_score_bull",     0,     1.5),
     ("bn_score_bear",     0,     1.5),
 ]
 
@@ -96,7 +99,6 @@ US_ONLY_SIGNALS = [
     "n_big_ask_t1", "n_big_bid_t1",
     "n_big_ask_t2", "n_big_bid_t2",
     "n_big_ask_t3", "n_big_bid_t3",
-    "bn_volume_up", "bn_volume_dn",
 ]
 
 

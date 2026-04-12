@@ -66,9 +66,11 @@ class RiskManager:
             return False, f"KILLED: {self.state.kill_reason}"
 
         # ── Daily loss limit ──
-        if self.state.daily_pnl <= -self.cfg.max_daily_loss_usd:
-            self._kill(f"Daily loss limit ${self.cfg.max_daily_loss_usd}")
-            return False, f"Daily loss limit atteint (${self.state.daily_pnl:.2f})"
+        # Wrappe par flag : desactive en phase collecte, a reactiver avant live reel
+        if self.cfg.daily_loss_check_enabled:
+            if self.state.daily_pnl <= -self.cfg.max_daily_loss_usd:
+                self._kill(f"Daily loss limit ${self.cfg.max_daily_loss_usd}")
+                return False, f"Daily loss limit atteint (${self.state.daily_pnl:.2f})"
 
         # ── Max trades/jour ──
         if self.state.daily_trades >= self.cfg.max_daily_trades:
@@ -79,6 +81,22 @@ class RiskManager:
         if drawdown > self.cfg.max_drawdown_intraday_usd:
             self._kill(f"Intraday drawdown ${drawdown:.2f}")
             return False, f"Drawdown intraday ${drawdown:.2f} > ${self.cfg.max_drawdown_intraday_usd}"
+
+        # ── Davey kill rule : live DD > N x backtest max DD ──
+        # (Kevin Davey, Building Winning Algo Systems ch.Risk Mgmt)
+        # Active seulement si backtest_max_dd_usd > 0 (config manuelle apres training)
+        if self.cfg.backtest_max_dd_usd > 0.0:
+            kill_threshold = self.cfg.backtest_max_dd_usd * self.cfg.kill_dd_multiplier
+            if drawdown > kill_threshold:
+                self._kill(
+                    f"Davey rule: live DD ${drawdown:.2f} > "
+                    f"{self.cfg.kill_dd_multiplier}x backtest max DD "
+                    f"(${self.cfg.backtest_max_dd_usd:.2f}) = ${kill_threshold:.2f}"
+                )
+                return False, (
+                    f"Davey kill: DD ${drawdown:.2f} > "
+                    f"{self.cfg.kill_dd_multiplier}x backtest DD"
+                )
 
         # ── Circuit breaker (pause apres pertes consecutives) ──
         if self.state.is_paused:

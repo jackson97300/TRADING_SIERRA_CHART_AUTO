@@ -46,7 +46,11 @@ INSTRUMENTS: Dict[str, InstrumentConfig] = {"ES": ES, "NQ": NQ}
 class RiskConfig:
     """Parametres de gestion du risque."""
     # Daily limits
-    max_daily_loss_usd: float = 500.0       # Kill switch apres -$500
+    max_daily_loss_usd: float = 500.0       # Kill switch apres -$500 (si check enabled)
+    # NOTE 2026-04-12 : check desactive pour phase collecte (pas de kill journalier
+    # pendant la collecte de donnees, sur demande Jackson).
+    # Remettre a True avant passage en live reel.
+    daily_loss_check_enabled: bool = False  # False = phase collecte (kill desactive)
     max_daily_trades: int = 10              # Max 10 trades/jour par instrument
     max_drawdown_intraday_usd: float = 300.0  # Pause si drawdown > $300
 
@@ -63,6 +67,16 @@ class RiskConfig:
     # Position limits
     max_positions_total: int = 1            # 1 position max (tous instruments)
     max_positions_per_instrument: int = 1   # 1 par instrument
+
+    # Davey backtest-vs-live kill rule (Building Winning Algo Systems, 2014)
+    # Si le drawdown live depasse N x le drawdown max observe en backtest,
+    # le systeme s'arrete automatiquement — le comportement live a diverge
+    # significativement du backtest et le modele n'est probablement plus valide.
+    # Mettre a 0.0 pour desactiver cette regle (valeur par defaut = off).
+    # A mettre a jour manuellement apres chaque training LightGBM majeur :
+    #   backtest_max_dd_usd = metrics_from_train_lightgbm['max_drawdown_usd']
+    backtest_max_dd_usd: float = 0.0        # $ max DD observe en backtest (0 = desactive)
+    kill_dd_multiplier: float = 1.75        # Davey: 1.5 agressif, 2.0 prudent, 1.75 milieu
 
 
 @dataclass

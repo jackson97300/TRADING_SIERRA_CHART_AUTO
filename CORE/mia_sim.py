@@ -15,7 +15,7 @@ Simule barre par barre:
   - Max trades par jour (8)
   - Filtre horaire (phases 🟢 seulement)
 
-Schema 3.6.0 — 250 colonnes
+Schema 3.7.2 — 262 colonnes
 Intègre: Edge Zones (dist_ext_edge_buy/sell), COLOR_2 (continuation),
          Retest tracking, BN score composite avec bonus COLOR_2,
          RVOL absorption (rvol_absorb_buy/sell), Extension LONG (dist_ext_long),

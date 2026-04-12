@@ -129,6 +129,8 @@ rm.reset_daily()
 check("Reset OK", rm.state.daily_pnl == 0.0)
 
 # Kill switch
+# Force daily_loss_check_enabled=True pour ce test (desactive par defaut en phase collecte)
+rm.cfg.daily_loss_check_enabled = True
 rm.state.daily_pnl = -600
 allowed, reason = rm.can_trade("ES", 1, ES)
 check("Kill switch active", rm.state.is_killed)

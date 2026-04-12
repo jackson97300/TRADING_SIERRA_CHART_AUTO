@@ -64,6 +64,10 @@ FEATURES_DMP: List[str] = [
     "ib_broken_up", "ib_complete", "dist_ib_high", "open_zone", "open_in_prev_va",
     "bool_session_early", "bool_va_confluence", "is_double_dist",
     "dist_sess_high", "dist_1d_min_ticks", "dist_open_830",
+    # --- Game Changers (Open Type / Day Type / Profile) ---
+    "open_type", "open_bias_conf", "open_direction",
+    "day_type", "rule_80pct", "trend_day_probability",
+    "profile_skew", "poc_position", "volume_imbalance",
     # --- VWAP ---
     "vwap_slope_30", "vwap_m_side", "bool_above_vwap_m",
     "dist_prev_vwap_sd1u", "dist_vwap_d_sd1u",
@@ -91,11 +95,20 @@ _META_COLS = {
     "label", "valid_bar", "partial_session", "label_quality",
     "setup_type", "score_buy", "score_sell", "realized_pts",
     "tp_pts", "sl_pts", "hl_mode",
+    "sample_weight",   # Lopez AFML ch.4 — passe a LightGBM.fit(sample_weight=...)
+    # NOTE : exit_offset est dans le parquet labels mais non propage au dataset
+    # (utilise uniquement pour calculer sample_weight dans labeler.py, inutile downstream).
     "bn_color_up", "bn_color_dn", "bn_color_dn_2",
     "bar_color_up", "bar_color_dn",
     "bn_pressure_ask", "bn_long_up", "bn_long_dn",
     "bn_volume_up", "bn_volume_dn", "bn_score_bull",
     "dist_ext_color_up", "dist_ext_color_dn",
+    # Features collineaires (audit C4-data 2026-04-09)
+    # ask_pct == buy_sell_ratio, delta_pct == ask_bid_imbalance == delta_bar_vol_norm
+    # On garde delta_bar_vol_norm et ask_pct comme representants, on drop les redondants
+    "buy_sell_ratio",        # = ask_pct
+    "ask_bid_imbalance",     # = delta_bar_vol_norm = delta_pct
+    "delta_pct",             # = delta_bar_vol_norm (identique mathematiquement)
 }
 
 _INVALID_THRESHOLD = -100.0
@@ -154,12 +167,18 @@ class DatasetBuilder:
         # 2c. Enrichir avec MenthorQ (features macro daily)
         df_feat = self._compute_menthorq(df_feat, symbol)
 
-        # 3. Charger labels
+        # 3. Charger labels (+ sample_weight si disponible — Lopez AFML ch.4)
         lbl_file = self.labels_path / f"ALL_{symbol}_labels.parquet"
         if not lbl_file.exists():
             raise FileNotFoundError(f"Labels non trouves : {lbl_file}")
         df_lbl = pd.read_parquet(lbl_file)
-        df_lbl = df_lbl[df_lbl["valid_bar"] == True][["ts", "label", "partial_session"]].copy()
+        # sample_weight peut etre absent des anciens parquets — fallback a 1.0 (pas de correction)
+        lbl_cols = ["ts", "label", "partial_session"]
+        if "sample_weight" in df_lbl.columns:
+            lbl_cols.append("sample_weight")
+        df_lbl = df_lbl[df_lbl["valid_bar"] == True][lbl_cols].copy()
+        if "sample_weight" not in df_lbl.columns:
+            df_lbl["sample_weight"] = 1.0  # Fallback retro-compatible
 
         # 4. Merge
         merged = df_feat.merge(df_lbl, on="ts", how="inner")
@@ -198,6 +217,19 @@ class DatasetBuilder:
             "ts":              merged["ts"],
             "label":           merged["label"].astype(int),
             "partial_session": merged["partial_session"].fillna(False).astype(bool),
+            # Lopez AFML ch.4 — uniqueness weights a passer a LightGBMClassifier.fit()
+            # Fallback 1.0 si colonne absente des anciens parquets labels
+            "sample_weight":   merged.get(
+                "sample_weight",
+                pd.Series(1.0, index=merged.index)
+            ).fillna(1.0).astype(float),
+            # Identifiant instrument (boolean) — etait dans _META_COLS mais jamais creee
+            # avant ce fix. Utilise en aval si besoin de filtrer ou conditionner par symbol.
+            "is_nq":           pd.Series(
+                symbol.upper() == "NQ",
+                index=merged.index,
+                dtype=bool,
+            ),
         })
         for col in available:
             result[col] = df_clean[col].values
@@ -253,8 +285,12 @@ class DatasetBuilder:
         print(f"[DatasetBuilder] Sauvegarde: {out}  ({out.stat().st_size // 1024} KB)")
 
     def feature_list(self, df: pd.DataFrame) -> List[str]:
-        """Retourne la liste des features dans le dataset (sans ts/label/meta)."""
-        return [c for c in df.columns if c not in {"ts", "label", "partial_session", "is_nq"}]
+        """Retourne la liste des features dans le dataset (sans ts/label/meta).
+
+        Utilise _META_COLS (source unique de verite) pour exclure sample_weight,
+        exit_offset, hl_mode, etc. qui doivent rester hors features candidates.
+        """
+        return [c for c in df.columns if c not in _META_COLS]
 
     def walk_forward_splits(
         self,
@@ -402,25 +438,35 @@ class DatasetBuilder:
 
     # ─── LOADERS ─────────────────────────────────────────────────────────────
 
+    MIN_BARS_PER_FILE = 50  # Fichiers avec moins de 50 barres = weekend/jour incomplet
+
     def _load_features(self, symbol: str) -> pd.DataFrame:
-        """Charge tous les JSONL d'un symbole."""
+        """Charge tous les JSONL d'un symbole. Exclut weekends/jours incomplets (<50 barres)."""
         sym_dir = self.data_path / symbol
         if not sym_dir.exists():
             return pd.DataFrame()
 
         rows = []
+        skipped = []
         for f in sorted(os.listdir(sym_dir)):
             if not f.endswith(".jsonl"):
                 continue
+            file_rows = []
             with open(sym_dir / f, "r", encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
                         continue
                     try:
-                        rows.append(json.loads(line))
+                        file_rows.append(json.loads(line))
                     except json.JSONDecodeError:
                         pass
+            if len(file_rows) < self.MIN_BARS_PER_FILE:
+                skipped.append(f"{f} ({len(file_rows)} barres)")
+                continue
+            rows.extend(file_rows)
+        if skipped:
+            print(f"  [DatasetBuilder] {symbol}: {len(skipped)} fichiers exclus (weekends/incomplets): {', '.join(skipped)}")
 
         if not rows:
             return pd.DataFrame()

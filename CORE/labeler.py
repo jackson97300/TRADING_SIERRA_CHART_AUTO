@@ -164,6 +164,9 @@ def _simulate_tpsl(prices: pd.Series, tp_pts: float, sl_pts: float,
 
     labels       = np.zeros(n, dtype=np.int8)
     realized_pts = np.full(n, np.nan)
+    # Offset (nb de barres apres i) ou le trade virtuel se resout (TP/SL/timeout).
+    # Requis pour calculer les sample weights par uniqueness temporelle (Lopez AFML ch.4).
+    exit_offset  = np.zeros(n, dtype=np.int32)
 
     for i in range(n - 1):
         entry   = p[i]
@@ -176,8 +179,10 @@ def _simulate_tpsl(prices: pd.Series, tp_pts: float, sl_pts: float,
         sell_alive = True
         buy_won    = False
         sell_won   = False
+        last_j     = i  # Derniere barre visitee (sera utilisee pour exit_offset)
 
         for j in range(i + 1, min(i + 1 + n_bars, n)):
+            last_j = j
             h_j = h_arr[j]
             l_j = l_arr[j]
 
@@ -209,6 +214,8 @@ def _simulate_tpsl(prices: pd.Series, tp_pts: float, sl_pts: float,
             if not buy_alive and not sell_alive:
                 break
 
+        exit_offset[i] = last_j - i  # Nb barres avant resolution (>=1 si au moins 1 barre future)
+
         # ── Attribution du label ────────────────────────────────────────
         if buy_won and not sell_won:
             labels[i]       = 1
@@ -226,14 +233,78 @@ def _simulate_tpsl(prices: pd.Series, tp_pts: float, sl_pts: float,
         else:
             # Timeout ou double SL → return informatif (non utilisé pour label)
             labels[i]       = 0
-            last_j          = min(i + n_bars, n - 1)
-            realized_pts[i] = p[last_j] - entry
+            last_j_tm       = min(i + n_bars, n - 1)
+            realized_pts[i] = p[last_j_tm] - entry
 
     return (
         pd.Series(labels,       index=prices.index, dtype=np.int8),
         pd.Series(realized_pts, index=prices.index),
         pd.Series(hl_used,      index=prices.index, dtype=bool),
+        pd.Series(exit_offset,  index=prices.index, dtype=np.int32),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SAMPLE WEIGHTS — UNIQUENESS TEMPORELLE (Lopez de Prado AFML ch.4)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def compute_label_uniqueness(labels: pd.Series, exit_offsets: pd.Series) -> pd.Series:
+    """
+    Calcule les sample weights par uniqueness temporelle (Lopez de Prado, AFML ch.4).
+
+    Pourquoi : Triple Barrier genere des labels dont la duree de vie se chevauche
+    (ex: un label BUY a la barre i peut etre encore actif quand un nouveau BUY
+    demarre a i+3). LightGBM traite ces labels comme independants et gonfle
+    artificiellement l'information disponible → Sharpe in-sample surestime.
+
+    Formule (AFML p.60-61) :
+        Pour chaque barre active i avec intervalle de vie [i, i + offset_i] :
+            c_t        = nombre de labels actifs a l'instant t (t dans l'intervalle)
+            weight_i   = mean(1 / c_t) pour t dans [i, i + offset_i]
+
+    Interpretation :
+      - weight = 1.0  → label isole, aucune concurrence temporelle
+      - weight < 1.0  → label chevauche avec d'autres (moins d'information unique)
+      - weight = 0.5  → en moyenne partage le temps avec 1 autre label
+
+    Resultat attendu : sans correction, le Sharpe IS est gonfle de +0.3 a +0.6
+    selon benchmarks MQL5 2024. A passer en argument `sample_weight` de
+    `LightGBMModel.fit()`.
+
+    Args:
+        labels       : pd.Series int8 (+1/-1/0) — labels Triple Barrier
+        exit_offsets : pd.Series int32 — nb barres apres i ou le label se resout
+
+    Returns:
+        pd.Series float64 (index = labels.index, name = 'sample_weight').
+        Les barres HOLD (label=0) ont un poids de 1.0 (seront filtrees au training).
+    """
+    n = len(labels)
+    if n == 0:
+        return pd.Series([], dtype=np.float64, name='sample_weight')
+
+    labels_arr  = labels.values
+    offsets_arr = exit_offsets.values
+    active_mask = labels_arr != 0
+
+    # Passe 1 : compter les labels actifs a chaque instant t (vectorise par barre)
+    concurrent = np.zeros(n, dtype=np.int32)
+    for i in range(n):
+        if active_mask[i]:
+            end = min(i + int(offsets_arr[i]), n - 1)
+            concurrent[i:end + 1] += 1
+
+    # Passe 2 : poids = moyenne de 1/c_t sur la fenetre [i, i+offset]
+    weights = np.ones(n, dtype=np.float64)
+    for i in range(n):
+        if active_mask[i]:
+            end = min(i + int(offsets_arr[i]), n - 1)
+            c_slice = concurrent[i:end + 1]
+            # Protection : c_slice[0] >= 1 garanti car i est dans ses propres intervalles
+            c_safe = np.where(c_slice > 0, c_slice, 1)
+            weights[i] = float(np.mean(1.0 / c_safe))
+
+    return pd.Series(weights, index=labels.index, name='sample_weight', dtype=np.float64)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -644,7 +715,7 @@ def label_dataframe(df: pd.DataFrame, symbol: str,
     #    Schéma 3.7.0  : fallback sur price (close)
     has_hl = ("bar_high" in df.columns) and ("bar_low" in df.columns)
     has_sd3u = "dist_vwap_d_sd3u" in df.columns
-    labels, realized_pts, hl_mode = _simulate_tpsl(
+    labels, realized_pts, hl_mode, exit_offsets = _simulate_tpsl(
         prices  = df["price"],
         tp_pts  = tp_pts,
         sl_pts  = sl_pts,
@@ -690,7 +761,13 @@ def label_dataframe(df: pd.DataFrame, symbol: str,
         labels_filtered[~valid_mask] = 0
         label_quality[~valid_mask]   = 0
 
-    # 7. Assembler le résultat
+    # 7. Sample weights par uniqueness temporelle (Lopez AFML ch.4)
+    #    Calcul fait sur labels_filtered pour exclure les barres hors RTH /
+    #    partial session du calcul de concurrence. Les barres invalides auront
+    #    weight=1.0 (valeur par defaut, non utilisee au training car label=0).
+    sample_weights = compute_label_uniqueness(labels_filtered, exit_offsets)
+
+    # 8. Assembler le résultat
     result = df.copy()
     result["label"]            = labels_filtered
     result["label_quality"]    = label_quality
@@ -704,6 +781,8 @@ def label_dataframe(df: pd.DataFrame, symbol: str,
     result["schema"]           = schema_str     # "3.7.0" ou "3.7.1"
     result["valid_bar"]        = valid_mask
     result["partial_session"]  = pd.Series(partial_mask, index=df.index)
+    result["sample_weight"]    = sample_weights  # Lopez AFML ch.4
+    result["exit_offset"]      = exit_offsets    # Nb barres avant resolution TP/SL/timeout
 
     return result
 
@@ -824,6 +903,7 @@ def save_labels(df_labeled: pd.DataFrame, symbol: str, date_str: str,
         "score_buy", "score_sell",
         "realized_pts", "tp_pts", "sl_pts",
         "hl_mode", "schema",
+        "sample_weight", "exit_offset",   # Lopez AFML ch.4 — uniqueness weights
     ]
     out = df_labeled[[c for c in label_cols if c in df_labeled.columns]].copy()
 
@@ -878,6 +958,9 @@ def run_all(symbol: str = "ES", cfg: LabelConfig = None):
         if df.empty:
             print(f"  [SKIP] Fichier vide.")
             continue
+        if len(df) < 50:
+            print(f"  [SKIP] Jour incomplet ({len(df)} barres < 50) — weekend ou partiel.")
+            continue
 
         n_total = len(df)
         n_us    = (df["session_id"] == "US").sum() if "session_id" in df.columns else 0
@@ -923,6 +1006,7 @@ def run_all(symbol: str = "ES", cfg: LabelConfig = None):
         "score_buy", "score_sell",
         "realized_pts", "tp_pts", "sl_pts",
         "hl_mode", "schema",
+        "sample_weight", "exit_offset",   # Lopez AFML ch.4 — uniqueness weights
     ] if c in df_all.columns]
     df_all[save_cols].to_parquet(out_path, index=True)
     print(f"\n  Global sauvegardé: {out_path}")
