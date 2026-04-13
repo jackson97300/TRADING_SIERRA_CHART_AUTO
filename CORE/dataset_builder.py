@@ -67,15 +67,16 @@ POINTS_FEATURES = {
     # dist_vwap_m est drop (dist_vwap_m_atr existe en C++)
 }
 
-# Features a normaliser par ATR (26 features)
-# Note : bool_near_level et ctx_poor_high sont fixes directement dans
-# rolling_features.py (ratio /atr), pas ici.
+# Features a normaliser par ATR (Phase 1 + extension Option B 13/04)
+# Apres suppression du screening Spearman, beaucoup plus de features ticks/points
+# sont exposees et doivent etre normalisees. Note : bool_near_level et
+# ctx_poor_high sont fixes dans rolling_features.py.
 TO_NORMALIZE = [
-    # Priorite 1 (top V1)
+    # ── Priorite 1 (top V1) ──
     "dist_swing_high", "swing_range_ticks",
     "dist_ib_high", "dist_sess_high", "next_wall_dist_ticks",
     "dist_cur_vpoc", "poc_separation_ticks",
-    # Priorite 2
+    # ── Priorite 2 (Phase 1 initiale) ──
     "dist_comp_20d_vah", "dist_comp_50d_vah",
     "dist_cur_val", "dist_cur_vwap_vp",   # POINTS
     "dist_vwap_d_sd1d",                    # POINTS
@@ -86,21 +87,103 @@ TO_NORMALIZE = [
     "mq_dist_1d_max", "mq_dist_1d_min",
     "amd_asia_range_ticks", "amd_sweep_depth_ticks",
     "ovn_range_ticks", "ctx_va_width", "poc_bar_dist",
+    # ── Phase 1 extension Option B (Lopez no-Spearman) ──
+    # Note : avg_*_size (volume en lots) droppes dans PROHIBITED (pas normalisables par atr)
+    "dist_1d_max_ticks", "dist_1d_min_ticks",
+    "dist_blind_nearest_up",
+    "dist_comp_20d_val", "dist_comp_20d_vpoc", "dist_comp_20d_vwap",
+    "dist_comp_50d_val", "dist_comp_50d_vpoc", "dist_comp_50d_vwap",
+    "dist_cur_vah",
+    "dist_ib_low",
+    "dist_mq_call", "dist_mq_hvl", "dist_mq_put_0dte",
+    "dist_open_830", "dist_open_cash",
+    "dist_ovn_high", "dist_ovn_low",
+    "dist_prev_vah", "dist_prev_val", "dist_prev_vpoc", "dist_prev_vwap",
+    "dist_prev_vwap_sd1d", "dist_prev_vwap_sd1u",
+    "dist_session_lvn_below",
+    "dist_vwap_d_sd1u", "dist_vwap_d_sd2u", "dist_vwap_d_sd3u",
+    "dist_vwap_w",
+    "mq_dist_call_res", "mq_dist_hvl",
+    "mq_dist_call_0dte", "mq_dist_put_0dte",
+    "open_gap_ticks",
+    "range_size_ticks", "sess_range_ticks",
+    "dist_ext_edge_sell", "dist_ext_long_dn",
 ]
+
+# Features WHITELIST : forcees dans le dataset final meme si rho Spearman < 0.02.
+#
+# Pourquoi : le screening Spearman teste une correlation MONOTONE (lineaire ordonnee).
+# Les features CATEGORIELLES (open_type, day_type, profile_shape) et les SCORES
+# COMPOSITES (open_bias_conf, trend_day_probability) ont des signaux NON-LINEAIRES
+# que Spearman rate. LightGBM les exploite parfaitement via des splits non-lineaires.
+#
+# Ajoutees par Jackson 13/04/2026 : "open_type aussi serait bien de l'integrer".
+# Ces features passent directement dans validated_union_* sans filtre rho.
+WHITELIST_BYPASS = {
+    # Game Changers — Open Type (Dalton / Steidlmayer market profile)
+    "open_type",            # 0=Auction, 1=Drive, 2=Test Drive, 3=Rejection Reverse, 4=Auction Open
+    "open_bias_conf",       # Score confiance biais open [0-1]
+    "open_direction",       # -1/0/+1 direction probable de la journee
+    "open_zone",            # 0/1 dans zone value area apres open
+
+    # Game Changers — Day Type / Profile
+    "trend_day_probability",  # [0-1] prob que ce soit une trend day
+    "profile_shape",          # 0=D / 1=P / 2=b / 3=B (forme profil)
+    "profile_skew",           # [-1,+1] asymetrie volume upper/lower
+    "poc_position",           # [0,1] position du POC dans le range
+
+    # Signaux binaires contextuels importants
+    "vwap_triple_align",      # 1 si prix > vwap_d/w/m tous alignes
+    "bool_gex_flip_zone",     # 1 si dans zone gamma flip
+
+    # AMD composite scores (Lopez AFML chap.3 : scores non-monotones)
+    "amd_manip_score",        # [0,1] score manipulation Power of 3
+    "amd_po3_score",          # [0,1] score Power of 3
+    "amd_session_bias",       # {-1,0,+1} biais session AMD
+    # NOTE : rule_80pct et bool_va_confluence retires (quasi-constants post-regen).
+}
+
 
 # Features a DROP (ne passent JAMAIS dans le dataset final)
 PROHIBITED_FEATURES = {
-    # ── META (ne devraient pas etre features) ────────────────────────
-    "is_nq", "partial_session", "atr",
+    # Note Phase 1 Option B : is_nq, partial_session, atr NE SONT PAS ici.
+    # Ils sont exclus par quality_validator.META_COLUMNS et par
+    # train_lightgbm.get_features (meta cols). Les drop dans PROHIBITED
+    # casserait build() qui les utilise pour construire le result.
 
     # ── Prix absolus (fuite temporelle/instrument) ───────────────────
     "amd_asia_high", "amd_asia_low", "mq_top_gex_strike_1",
 
-    # ── Mortes ou quasi-constantes ───────────────────────────────────
+    # ── Mortes ou quasi-constantes (Phase 1 initiale) ───────────────
     "amd_sweep_up", "dist_vwap_d_sd3d", "ctx_momentum_exhaustion",
     "mq_dist_put_sup",      # doublon dist_mq_put
     "gex_cluster_count",    # seuil instrument-specifique
     "retest_low_count",     # seuil ticks non normalise
+
+    # ── Mortes Phase 1 extension Option B (13/04) ────────────────────
+    # Event detectors quasi-jamais actives (< 2% positive rate)
+    "amd_judas_swing", "amd_manip_dir",
+    "amd_po3_bearish", "amd_po3_bullish", "amd_sweep_dn",
+    "bn_absorb_ask", "bn_absorb_bid",
+    "bool_va_confluence", "comp_vpoc_align_day_20",
+    "ctx_div_at_swing", "ctx_double_top_trap", "ctx_failed_auction",
+    "im_smt_divergence",
+    "new_swing_high", "new_swing_low",
+    "retest_high_delta_div", "retest_low_delta_div",
+    "rule_80pct",
+    "rvol_absorb_buy", "rvol_absorb_sell",
+    "rvol_buy", "rvol_sell", "rvol_extreme",
+
+    # ── Prix/niveaux absolus additionnels ────────────────────────────
+    "profile_hvn_dominant", "single_print_mid",
+
+    # ── Volumes/CVD absolus ──────────────────────────────────────────
+    "cvd_day", "cvd_ohlc_range", "ctx_cvd_session",
+    # Volumes en lots non normalisables par atr (avg size per trade)
+    "avg_ask_size", "avg_bid_size", "avg_trade_size",
+
+    # ── mq_total_gex_m : unites incoherentes ES vs NQ (ES=509, NQ=10) ─
+    "mq_total_gex_m",
 
     # ── Bugs C++ backlog (a corriger plus tard) ──────────────────────
     "fp_edge_buy", "fp_edge_sell",  # bug SG ACSIL ES
@@ -282,6 +365,14 @@ class DatasetBuilder:
         merged = merged.drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
         print(f"  Merge: {len(merged)} barres valides")
 
+        # ═══════════════════════════════════════════════════════════════
+        # PHASE 1 (13/04/2026) : _normalize_by_atr applique sur MERGED
+        # avant le select features. Garantit que les versions _atr sont
+        # creees meme en Pass 2 ou validated_union_* ne contient pas les
+        # versions ticks brutes ni atr. Drop PROHIBITED ici aussi.
+        # ═══════════════════════════════════════════════════════════════
+        merged = self._normalize_by_atr(merged)
+
         # 5. Selectionner features
         if self.features is not None:
             candidates = self.features
@@ -331,16 +422,8 @@ class DatasetBuilder:
         for col in available:
             result[col] = df_clean[col].values
 
-        # ═══════════════════════════════════════════════════════════════
-        # PHASE 1 SAVE-OR-DROP (13/04/2026) — normalize /atr + drop PROHIBITED
-        # Applique ici (en fin de build()) pour capturer TOUTES les sources :
-        #   - features JSONL brutes (is_nq, atr, etc.)
-        #   - features derivees Python (_compute_derived)
-        #   - features MenthorQ (_compute_menthorq) : mq_dist_put_sup, etc.
-        #   - features labels (partial_session via merge)
-        # Les colonnes label, sample_weight, ts sont preservees (pas dans PROHIBITED).
-        # ═══════════════════════════════════════════════════════════════
-        result = self._normalize_by_atr(result)
+        # Note : _normalize_by_atr a ete applique sur merged ci-dessus,
+        # donc les _atr sont deja dans df_clean → available → result.
 
         print(f"  [OK] Dataset: {len(result)} barres x {len(result.columns)} cols")
         print(f"       Labels: BUY={int((result.label==1).sum())}  "
@@ -677,31 +760,45 @@ if __name__ == "__main__":
     # Pass 1 — Build complet ES et NQ pour obtenir les features brutes
     # ═══════════════════════════════════════════════════════════════
     df_es = builder.build("ES")
-    validated_es = builder.screen_spearman(df_es, min_rho=0.02)
-    print(f"\n=== ES: {len(validated_es)} features validees (local) ===")
-
     df_nq = builder.build("NQ")
-    validated_nq = builder.screen_spearman(df_nq, min_rho=0.02)
-    print(f"\n=== NQ: {len(validated_nq)} features validees (local) ===")
 
     # ═══════════════════════════════════════════════════════════════
-    # Symetrie ES/NQ miroir — Union des features validees
+    # APPROCHE LOPEZ AFML (13/04/2026) — Pas de feature selection avant training
     # ═══════════════════════════════════════════════════════════════
-    # Regle architecturale V2 : ES et NQ sont des miroirs.
-    # Une feature qui a un edge statistique sur un des 2 symboles doit
-    # etre disponible sur les 2 datasets (structure symetrique). Le
-    # screening Spearman est local par symbole → il crée une asymetrie
-    # artificielle (ex: mq_es_nq_gamma_div passe cote NQ mais pas ES).
+    # Jackson 13/04 : le screening Spearman rho >= 0.02 droppait 74% des features
+    # calculees (338 → 87). Lopez de Prado, Chan et Davey sont unanimes :
     #
-    # Fix 13/04/2026 : faire l'union des 2 validated_* + intersecter avec
-    # les colonnes reellement presentes dans chaque dataset (pour eviter
-    # KeyError si une feature n'existe que d'un cote — ex: cross-specific).
-    union_features = sorted(set(validated_es) | set(validated_nq))
+    #   "Feature importance analysis should be done BY THE MODEL, not before training."
+    #
+    # Les garde-fous qui rendent cette approche sure :
+    #   1. quality_validator.py : refuse toute feature polluee (fuite instrument,
+    #      volatilite, prix absolu, outlier, constante)
+    #   2. PROHIBITED_FEATURES : drop explicite META, mortes, doublons, absolus
+    #   3. _normalize_by_atr : normalise les features en ticks/points
+    #   4. sample_weight uniqueness (Lopez ch.4) : corrige le biais d'overlapping
+    #   5. importance_guard : detecte une feature qui domine apres training
+    #   6. Purged K-Fold + early stopping + L1 regularization dans train_lightgbm.py
+    #   7. Meta-labeling (Lopez ch.3) : 2e niveau de filtrage
+    #
+    # Union = toutes les features non-META non-PROHIBITED des 2 datasets.
+    # LightGBM decide lui-meme via feature_importances_ ce qui compte.
+
+    all_features_es = set(c for c in df_es.columns if c not in _META_COLS)
+    all_features_nq = set(c for c in df_nq.columns if c not in _META_COLS)
+    union_features = sorted(all_features_es | all_features_nq)
+
+    # WHITELIST_BYPASS est maintenant redondant (plus de filtre Spearman)
+    # mais on garde la documentation pour les features critiques.
+    whitelisted_missing = WHITELIST_BYPASS - set(union_features)
+    if whitelisted_missing:
+        print(f"\n[WARN] Features WHITELIST manquantes du dataset : {whitelisted_missing}")
+
     validated_union_es = [f for f in union_features if f in df_es.columns]
     validated_union_nq = [f for f in union_features if f in df_nq.columns]
-    print(f"\n=== Union ES|NQ: {len(union_features)} features totales ===")
-    print(f"    ES: {len(validated_union_es)} presentes (gain +{len(validated_union_es) - len(validated_es)})")
-    print(f"    NQ: {len(validated_union_nq)} presentes (gain +{len(validated_union_nq) - len(validated_nq)})")
+    print(f"\n=== Union ES|NQ (sans screening Spearman): {len(union_features)} features ===")
+    print(f"    ES: {len(validated_union_es)} presentes")
+    print(f"    NQ: {len(validated_union_nq)} presentes")
+    print(f"    Approche Lopez AFML : LightGBM decidera via feature_importances_")
 
     # ═══════════════════════════════════════════════════════════════
     # Pass 2 — Rebuild avec features unionees (symetrie respectee)

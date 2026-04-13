@@ -85,20 +85,56 @@ SHARED_FEATURES = [
 # Features legitimement differenciees par instrument (% ou ratios naturels)
 # — IV/HV d'un instrument est par nature differente entre ES et NQ
 # — les ratios macroeconomiques (PC ratio, GEX ratio) sont differents par marche
+# — les features CATEGORIELLES ont des distributions differentes ES/NQ sans etre
+#   des fuites volatilite (ex: profile_shape, open_type, day_type)
 NATURALLY_DIFFERENT = [
     "mq_iv_30d", "mq_hv_30d", "mq_iv_rank", "mq_hv_rank",
     "mq_exp_move_pct", "mq_exp_move",
     "mq_pc_oi", "mq_pc_gex", "mq_pc_dex",
     "mq_net_gex_ratio", "mq_net_dex_ratio",
     "ib_range_atr",  # ratio IB/ATR, peut legerement varier
+    # Features categorielles (valeurs entieres, distributions differentes par symbol)
+    "profile_shape",      # 0=D / 1=P / 2=b / 3=B
+    "open_type",          # 0-5 types Dalton
+    "day_type",           # 0-4 types jour
+    "open_direction",     # -1/0/+1
+    "profile_skew",       # [-1,+1] asymetrie
+    "poc_position",       # [0,1]
+    "trend_day_probability",  # [0,1]
+    "open_bias_conf",     # [0,1]
+    "vix_regime",         # 0/1/2 regime
+    "volume_imbalance",   # ratio asymetrique
+    # Extension Option B (13/04/2026) — features binaires / frequency / scores
+    "cvd_day_dir",        # -1/+1 direction CVD
+    "is_double_dist",     # 0/1 double distribution
+    "bar_edge_buy",       # frequence bar edge (pas fuite vol)
+    "bar_edge_sell",      # idem
+    "retest_high_count",  # compte retests (seuil instrument-specifique)
+    "mq_expiring_gex_pct", # pourcentage
+    "single_print_count", # compte single prints
+    # Distances aux niveaux options MenthorQ : structures de marche differentes
+    # ES et NQ ont des strikes placees differemment, les distances /atr sont
+    # naturellement non-symetriques (pas une fuite volatilite)
+    "mq_dist_call_0dte_atr",
+    "mq_dist_put_0dte_atr",
+    "mq_dist_call_res_atr",
+    "mq_dist_hvl_atr",
+    "dist_mq_call_atr",
+    "dist_mq_put_atr",
+    "dist_mq_hvl_atr",
+    "dist_mq_call_0dte_atr",
 ]
 
 # Meta columns a ignorer dans l'audit (pas des features)
+# Phase 1 (13/04/2026) : ajout is_nq, partial_session, atr qui sont construits
+# par dataset_builder mais excluses des features ML dans train_lightgbm.get_features.
 META_COLUMNS = {
     "ts", "sym", "contract", "session_id", "session", "datetime_utc",
     "datetime_et", "label", "label_buy", "label_sell", "sample_weight",
     "exit_offset", "hl_mode", "price", "open", "high", "low", "close",
     "bar_high", "bar_low", "valid_bar", "day", "date",
+    # Phase 1 extension
+    "is_nq", "partial_session", "atr",
 }
 
 

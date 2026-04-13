@@ -55,25 +55,33 @@ except ImportError:
 
 # Features contextuelles par defaut pour le meta model.
 # NOTE : ces features doivent etre DIFFERENTES de celles utilisees par le primary
-# pour eviter la redondance. Idealement : contexte macro (session, regime),
+# pour eviter la redondance. Idealement : contexte macro (regime, game changers),
 # pas de micro (OrderFlow tick-level qui est deja dans le primary).
 #
-# Validees comme PRESENTES dans ES_dataset_v2.parquet ET NQ_dataset_v2.parquet
-# au 2026-04-12 (apres screening Spearman). A re-verifier apres regeneration
-# des datasets si le screening drop certaines colonnes.
+# MISE A JOUR 13/04/2026 : post-Phase 1 save-or-drop + WHITELIST_BYPASS.
+# Les anciennes features (ctx_dist_vwap_velocity, ctx_vwap_slope_accel,
+# ctx_price_slope_5) ont ete droppees (fuite volatilite non normalisees).
+# Remplacees par les Game Changers (open_type, profile_shape) qui sont
+# des signaux non-monotones que le primary ne capte pas bien.
+#
+# Jackson 13/04 : "open_type aussi serait bien de l'integrer"
 DEFAULT_META_CONTEXT_FEATURES = [
-    # Contexte VWAP / velocity (regime)
-    "ctx_dist_vwap_velocity",   # velocite de la distance au VWAP
-    "ctx_vwap_slope_accel",     # acceleration de la pente VWAP (regime shift)
-    # Momentum contexte
-    "ctx_price_slope_5",        # pente prix sur 5 barres
-    "momentum_5b",               # momentum 5 barres
-    # Intermarket ES/NQ
+    # Game Changers — Open Type / Day Type (Dalton / Steidlmayer)
+    # Signaux categoriels du debut de journee qui definissent le contexte
+    "open_type",                # 0-5 Dalton open type (Drive, Test Drive, Rejection Reverse, Auction)
+    "open_bias_conf",           # [0,1] confiance biais open
+    "day_type",                 # 0-4 day type Steidlmayer
+    "trend_day_probability",    # [0,1] prob que ce soit une trend day
+    "profile_shape",            # 0=D / 1=P / 2=b / 3=B
+
+    # Intermarket ES/NQ (contexte cross-asset)
     "im_rolling_correlation_10",    # correlation rolling ES/NQ
     "im_cross_delta_agreement_5",   # delta agreement cross-instrument
-    "im_price_ratio_slope_10",      # pente du ratio ES/NQ
-    # Profile structure
-    "inside_comp_20d_va",       # inside compressed 20-day VA (regime range)
+    "im_open_type_agreement",       # agreement open type ES/NQ
+
+    # Regime volatilite
+    "vix_regime",               # 0/1/2 regime VIX
+    "ib_range_atr",             # IB normalisee (narrow vs wide)
 ]
 
 
