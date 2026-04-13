@@ -631,10 +631,70 @@ class ModelTrainer:
         # --- Verdict ---
         verdict = self._verdict(agg)
 
+        # ═══════════════════════════════════════════════════════════════
+        # META-LABELING (Lopez AFML ch.3) — 13/04/2026
+        # Train un 2e model LightGBM sur [p_primary + features contextuelles]
+        # pour filtrer les faux positifs du primary. Score final = p_primary × p_meta.
+        # Si le meta training echoue (pas assez de data, 1 seule classe),
+        # on continue avec primary uniquement (meta = None).
+        # ═══════════════════════════════════════════════════════════════
+        meta_model = None
+        meta_features = []
+        try:
+            from meta_labeler import (
+                MetaLabelConfig, MetaModel,
+                build_meta_labels, build_meta_features,
+                DEFAULT_META_CONTEXT_FEATURES,
+            )
+
+            print(f"\n  META-LABELING {symbol} {side} (Lopez AFML ch.3)")
+
+            # Predictions primary sur tout le dataset final
+            p_primary_full = final_model.predict_proba(X)[:, 1]
+
+            # Build labels meta (y_meta = 1 si primary_correct, 0 si faux positif, NaN si inactif)
+            meta_target = 1 if side == "buy" else -1
+            y_meta = build_meta_labels(
+                labels=df["label"],
+                primary_preds=p_primary_full,
+                primary_threshold=MetaLabelConfig().primary_threshold,
+                target_label=meta_target,
+            )
+
+            # Build features meta (p_primary + context features)
+            X_meta = build_meta_features(df, p_primary_full)
+            print(f"    Meta features ({len(X_meta.columns)}): {list(X_meta.columns)}")
+
+            # Fit meta model (garde-fou : min_samples, >= 2 classes)
+            meta_config = MetaLabelConfig()
+            meta = MetaModel(meta_config)
+
+            # sample_weight aligne sur meta mask
+            sw_meta = df["sample_weight"].values if "sample_weight" in df.columns else None
+
+            meta.fit(X_meta, y_meta, sample_weight=sw_meta)
+            meta_model = meta
+            meta_features = list(X_meta.columns)
+
+            # Stats meta sur le dataset d'entrainement
+            mask = ~y_meta.isna()
+            n_meta = int(mask.sum())
+            n_positive = int(y_meta.loc[mask].sum())
+            print(f"    Meta entraine sur {n_meta} signaux primary "
+                  f"({n_positive} positifs = {n_positive/max(n_meta,1):.1%})")
+
+        except ImportError:
+            print(f"  [INFO] meta_labeler non disponible, skip meta-labeling")
+        except Exception as e:
+            print(f"  [WARN] Meta-labeling echoue : {e}")
+            print(f"  [WARN] Continuer avec primary uniquement")
+
         result = {
             "symbol": symbol,
             "side": side,
             "model": final_model,
+            "meta_model": meta_model,           # None si fit echoue
+            "meta_features": meta_features,     # [] si fit echoue
             "params": params,
             "threshold": best_threshold,
             "features": features,
@@ -748,7 +808,7 @@ class ModelTrainer:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def save_model(result: dict, config: TrainConfig):
-    """Sauvegarde modele + config + metriques."""
+    """Sauvegarde modele primary + meta (si present) + config + metriques."""
     import pickle
 
     out_dir = Path(config.output_dir)
@@ -758,10 +818,19 @@ def save_model(result: dict, config: TrainConfig):
     side = result["side"]
     prefix = f"{symbol}_{side}"
 
-    # Modele
+    # Modele primary
     model_path = out_dir / f"{prefix}_model.pkl"
     with open(model_path, "wb") as f:
         pickle.dump(result["model"], f)
+
+    # Modele meta (Lopez AFML ch.3) — optionnel
+    meta_model = result.get("meta_model")
+    meta_files = []
+    if meta_model is not None:
+        meta_path = out_dir / f"{prefix}_meta_model.pkl"
+        with open(meta_path, "wb") as f:
+            pickle.dump(meta_model, f)
+        meta_files.append(meta_path.name)
 
     # Config JSON
     config_data = {
@@ -769,6 +838,8 @@ def save_model(result: dict, config: TrainConfig):
         "side": side,
         "threshold": result["threshold"],
         "features": result["features"],
+        "meta_features": result.get("meta_features", []),
+        "has_meta_model": meta_model is not None,
         "params": {k: v for k, v in result["params"].items() if not callable(v)},
         "aggregate_metrics": result.get("aggregate", {}),
         "verdict": result["verdict"],
@@ -792,7 +863,8 @@ def save_model(result: dict, config: TrainConfig):
     with open(folds_path, "w") as f:
         json.dump(result.get("fold_metrics", []), f, indent=2, default=str)
 
-    print(f"  Sauvegarde: {model_path.name}, {config_path.name}, {imp_path.name}")
+    saved = [model_path.name, config_path.name, imp_path.name] + meta_files
+    print(f"  Sauvegarde: {', '.join(saved)}")
 
 
 def load_model(symbol: str, side: str, models_dir: str = "D:/TRADING_SIERRA_CHART_AUTO/DATA/MODELS") -> dict:
@@ -886,16 +958,35 @@ def generate_report(results: List[dict], config: TrainConfig):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_features(df: pd.DataFrame) -> List[str]:
-    """Extrait la liste des features du dataset (exclut meta).
+    """Extrait la liste des features du dataset (exclut meta et features mortes).
 
     IMPORTANT : sample_weight est une META colonne (Lopez AFML ch.4), pas une
     feature. Il est passe au .fit() en parametre `sample_weight`, pas en input X.
+
+    Extension 13/04/2026 Option B :
+    - Exclure les colonnes string (sym, contract, session_id)
+    - Exclure les colonnes 100% NaN (mq_dist_gamma_flip, mq_qscore_*, etc.)
+    - Exclure les colonnes constantes
     """
     meta = {
         "ts", "label", "partial_session", "is_nq",
         "sample_weight",   # Lopez AFML ch.4 — meta, pas feature
+        # Phase 1 Option B : colonnes string non-features
+        "sym", "contract", "session_id", "datetime_utc", "datetime_et",
+        "date", "day", "time_et",
+        # atr est un denominateur, pas une feature directe
+        "atr",
     }
-    return [c for c in df.columns if c not in meta]
+
+    candidates = [c for c in df.columns if c not in meta]
+
+    # Retirer les colonnes non-numeriques (strings residuels)
+    numeric = [c for c in candidates if pd.api.types.is_numeric_dtype(df[c])]
+
+    # Retirer les colonnes 100% NaN (souvent features MenthorQ vides)
+    valid = [c for c in numeric if not df[c].isna().all()]
+
+    return valid
 
 
 class PreflightError(Exception):
