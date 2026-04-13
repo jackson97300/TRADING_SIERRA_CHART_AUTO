@@ -576,8 +576,8 @@ struct DMP_RawData {
     float cvd_ohlc_low;                  // CVD OHLC sg2 — Low CVD
     float swing_high;                    // SWING sg0 — Dernier Swing High validé
     float swing_low;                     // SWING sg1 — Dernier Swing Low validé
-    float delta_div_buy;                 // DELTA_DIV_BUY sg0 — Divergence delta bullish
-    float delta_div_sell;                // DELTA_DIV_SELL sg0 — Divergence delta bearish
+    float delta_div_buy;                 // DELTA_DIV_BUY Extension Lines — Nb zones divergence bullish actives
+    float delta_div_sell;                // DELTA_DIV_SELL Extension Lines — Nb zones divergence bearish actives
     float vp_session_vpoc;               // VP_SESSION sg1 — VPOC session CVD chart
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1758,14 +1758,14 @@ inline void DMP_ReadCVD(SCStudyInterfaceRef sc, DMP_RawData& d) {
     // VPOC session courante (chart CVD) — reference line → SafeReadLast
     d.vp_session_vpoc = DMP_SafeReadLast(sc, chart, vp_id, 1);
 
-    // Divergences Delta — BUG #12 FIX v2 (05/03/2026)
+    // Divergences Delta — FIX v3 (07/04/2026)
     // v1: SumOfAlerts(sg2) → cumulatif, reste ON toute la session = BRUIT
-    // v2: Trigger(sg0) arr[size-1] → pulse ~30min (durée barre source)
-    //     Retourne prix quand fire sur la barre courante du chart source,
-    //     0 quand la barre source suivante n'a pas de fire.
-    //     Fonctionne en cross-timeframe (NQ #29 = 30min, ES #28 = 1min)
-    d.delta_div_buy  = DMP_ReadBN_Trigger(sc, chart, div_buy);
-    d.delta_div_sell = DMP_ReadBN_Trigger(sc, chart, div_sell);
+    // v2: Trigger(sg0) → pulse 1 barre, rate 99% des signaux = MORT
+    // v3: Extension Lines (Extend to Future Intersection activé dans SC)
+    //     Compte les lignes de divergence actives (persistent jusqu'à intersection prix)
+    //     Retourne 0 = aucune divergence, N = nombre de zones actives
+    d.delta_div_buy  = DMP_ReadExtensionLineCount(sc, chart, div_buy);
+    d.delta_div_sell = DMP_ReadExtensionLineCount(sc, chart, div_sell);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1916,8 +1916,9 @@ inline void DMP_ReadAll(SCStudyInterfaceRef sc, DMP_RawData& d, bool is_nq) {
 
         // RTH = 09:30–16:00 ET
         d.is_rth_session = (time_et >= 9 * 60 + 30) && (time_et < 16 * 60);
-        // IB complété après 10:30 ET
-        d.ib_complete    = (time_et >= 10 * 60 + 30);
+        // IB complété après 10:30 ET — SEULEMENT pendant RTH US (fix audit 09/04)
+        // Avant: bug → ib_complete=1 en Asia/London apres 10:30 ET
+        d.ib_complete    = d.is_rth_session && (time_et >= 10 * 60 + 30);
 
         // Session tag : Asia=0, London=1, US=2
         // Ancien dumper (ligne 2716-2723) :

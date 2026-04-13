@@ -761,7 +761,8 @@ DMP_UpdateOpenType(sc, r, f);
 // ═══════════════════════════════════════════════════════════════════════════════
 
 if (quality_min > 0) {
-    const int total_fields  = 168;
+    // Fix audit 09/04 : 262 cols dans schema 3.7.2 (etait 168, quality_filter inactif)
+    const int total_fields  = 262;
     const int valid_pct = (f.n_valid_fields * 100) / total_fields;
     if (valid_pct < quality_min) {
         if (debug_mode) {
@@ -795,7 +796,7 @@ if (debug_mode) {
     static int s_write_count = 0;
     s_write_count++;
     if (s_write_count % 10 == 1) {
-        const int nulls = 168 - f.n_valid_fields;
+        const int nulls = 262 - f.n_valid_fields;
         char msg[384];
         snprintf(msg, sizeof(msg),
             "WRITE OK #%d — %s | bar#%d | prix=%.2f | ts=%lld | session=%.0f(%s) | contract=%s | %s | nulls=%d/%d",
