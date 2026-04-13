@@ -75,6 +75,7 @@
 #include <cstring>
 #include <ctime>
 #include <cfloat>
+#include <cmath>              // std::isfinite (fix audit 09/04)
 #include <sys/stat.h>         // mkdir sur Windows (SierraChart compile avec MSVC)
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -250,71 +251,109 @@ static inline void DMP_WR_BuildPaths(
     snprintf(out_meta, out_meta_size, "%s\\%08d_%s.meta.json", dir_path, date, sym);
 }
 
+// Helper : nombre de jours dans un mois, gère année bissextile (Grégorien).
+static inline int DMP_WR_DaysInMonth(int yy, int mm) {
+    static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (mm == 2) {
+        bool leap = (yy % 4 == 0 && yy % 100 != 0) || (yy % 400 == 0);
+        return leap ? 29 : 28;
+    }
+    return days[mm - 1];
+}
+
 // Obtenir la DATE DE TRADING comme entier YYYYMMDD
-// Règle : la journée de trading commence à 18h00 ET (début Asia).
-//   - Barre à lundi 18:01 ET → fichier du mardi (US session = mardi)
-//   - Barre à lundi 15:30 ET → fichier du lundi (US session = lundi)
-//   - Barre à dimanche 18:00 ET → fichier du lundi (globex ouvre dimanche soir)
+// Règle : la journée de trading commence à 18h00 ET (début Asia Globex).
+//   - Barre lundi 18:01 ET → fichier mardi (trading day = mardi)
+//   - Barre lundi 15:30 ET → fichier lundi (trading day = lundi)
+//   - Barre dimanche 18:00 ET → fichier lundi (Globex ouvre dimanche soir)
 // Utilise l'heure de la BARRE (pas l'horloge PC) pour cohérence avec les données.
 //
 // ⚠️ FIX 04/03/2026 : l'ancien code ajoutait +1 jour à la date UTC, pas ET.
-//  Entre 00:00 et 04:59 UTC (19h-00h ET), la date UTC est DÉJÀ +1 vs ET.
-//  Ajouter encore +1 donnait trading_date = date réelle + 2 jours.
-//  Fix : convertir en OLE ET d'abord, puis appliquer la règle >= 18h sur la date ET.
+// ⚠️ FIX 13/04/2026 : remplacement de l'approche OLE (bar_et_ole + 1.0 puis
+//   GetDateYMD) par un calcul direct depuis tm (approche E). L'ancienne
+//   méthode subissait une imprécision flottante quand bar_et_ole était très
+//   proche d'un entier (cas 23:59:59 ET), ce qui poussait GetDateYMD() à
+//   retourner le jour suivant → offset de +1 jour supplémentaire. Observé :
+//   DATA/ES/20260411_ES.jsonl (samedi) contenait une barre jeudi 09/04
+//   23:59:59 ET qui aurait dû aller dans 20260410 (vendredi).
+//   Validation : tests/test_trading_date_logic.py port Python (13/13 tests).
+//   NOTE : ce fix ne modifie PAS le schéma JSONL (262 cols, formats identiques).
+//   Aucun bump de DMP_SCHEMA_VERSION nécessaire.
 static inline int DMP_WR_GetTradingDateInt(SCStudyInterfaceRef sc) {
     SCDateTime bar_time = sc.BaseDateTimeIn[sc.Index];
 
-    // Convertir en UTC puis en heure ET — même méthode que DMP_Reader.h
-    // On ne fait PAS confiance à GetTimeHMS (dépend du timezone du chart)
+    // Convertir bar_time en UTC via Unix seconds → gmtime_s
+    // bar_time est en UTC (OLE value = jours depuis 1899-12-30 UTC).
+    // On ne fait PAS confiance à GetTimeHMS (dépend du timezone du chart).
     long long ts_ms = (long long)((bar_time.GetAsDouble() - 25569.0) * 86400.0) * 1000LL;
     time_t sec = (time_t)(ts_ms / 1000);
 #ifdef _WIN32
     struct tm gm_val{};
     gmtime_s(&gm_val, &sec);
+    int yy_utc = gm_val.tm_year + 1900;
+    int mo_utc = gm_val.tm_mon + 1;    // tm_mon = 0-11 → 1-12
+    int dy_utc = gm_val.tm_mday;
     int h_utc  = gm_val.tm_hour;
-    int mo     = gm_val.tm_mon + 1;    // tm_mon = 0-11 → 1-12
-    int dy     = gm_val.tm_mday;
-    int wday   = gm_val.tm_wday;       // 0=Sun, 1=Mon, ..., 6=Sat
+    int wday   = gm_val.tm_wday;        // 0=Sun, 1=Mon, ..., 6=Sat
 #else
     struct tm gm_buf{};
     gmtime_r(&sec, &gm_buf);
+    int yy_utc = gm_buf.tm_year + 1900;
+    int mo_utc = gm_buf.tm_mon + 1;
+    int dy_utc = gm_buf.tm_mday;
     int h_utc  = gm_buf.tm_hour;
-    int mo     = gm_buf.tm_mon + 1;
-    int dy     = gm_buf.tm_mday;
     int wday   = gm_buf.tm_wday;
 #endif
 
     // ⚠️ FIX DST 25/03/2026 — UTC → ET (New York)
-    //  Identique à DMP_Reader.h — utilise tm_wday pour détection exacte.
     //  Règle DST US : 2ème dimanche mars → 1er dimanche novembre
     //    EDT (UTC-4) pendant DST, EST (UTC-5) sinon.
     //  prev_sunday = dy - wday → date du dimanche précédent ou actuel.
     //    Mars: prev_sunday >= 8 → 2ème dimanche passé → DST actif
     //    Nov:  prev_sunday < 1  → 1er dimanche pas passé → DST actif
     bool is_dst = false;
-    if (mo >= 4 && mo <= 10)                    is_dst = true;
-    else if (mo == 3 && (dy - wday) >= 8)       is_dst = true;
-    else if (mo == 11 && (dy - wday) < 1)       is_dst = true;
+    if (mo_utc >= 4 && mo_utc <= 10)                    is_dst = true;
+    else if (mo_utc == 3 && (dy_utc - wday) >= 8)       is_dst = true;
+    else if (mo_utc == 11 && (dy_utc - wday) < 1)       is_dst = true;
 
     int utc_offset = is_dst ? 4 : 5;
-    int h_et = (h_utc - utc_offset + 24) % 24;
 
-    // ── Convertir bar_time en date ET (OLE) ───────────────────────────────
-    //  bar_time est en UTC. On soustrait l'offset DST-aware.
-    //  Exemple (EDT): 00:03 UTC le 4 mars → 20:03 ET le 3 mars.
-    //  Exemple (EST): 00:03 UTC le 4 déc  → 19:03 ET le 3 déc.
-    double bar_et_ole = bar_time.GetAsDouble() - ((double)utc_offset / 24.0);
+    // ── Calcul direct UTC → ET en arithmétique ENTIÈRE (approche E) ──────
+    // Pas d'OLE, pas de SCDateTime::GetDateYMD, pas de flottant.
+    int h_et = h_utc - utc_offset;   // peut être négatif
+    int yy = yy_utc;
+    int mm = mo_utc;
+    int dd = dy_utc;
 
-    // Si >= 18h ET → avancer au jour suivant (nouvelle journée de trading)
-    SCDateTime trading_dt;
-    if (h_et >= 18) {
-        trading_dt = bar_et_ole + 1.0;  // +1 jour depuis la date ET
-    } else {
-        trading_dt = bar_et_ole;         // même journée de trading ET
+    // Rollover arrière UTC→ET : si h_et < 0, la date ET est la veille
+    // Exemple : 10/04 00:00 UTC (EDT=-4) → 09/04 20:00 ET
+    if (h_et < 0) {
+        h_et += 24;
+        dd -= 1;
+        if (dd < 1) {
+            mm -= 1;
+            if (mm < 1) {
+                mm = 12;
+                yy -= 1;
+            }
+            dd = DMP_WR_DaysInMonth(yy, mm);
+        }
     }
 
-    int yy = 0, mm = 0, dd = 0;
-    trading_dt.GetDateYMD(yy, mm, dd);
+    // Trading day rule : si h_et >= 18, la barre appartient au trading day suivant
+    if (h_et >= 18) {
+        dd += 1;
+        int max_dd = DMP_WR_DaysInMonth(yy, mm);
+        if (dd > max_dd) {
+            dd = 1;
+            mm += 1;
+            if (mm > 12) {
+                mm = 1;
+                yy += 1;
+            }
+        }
+    }
+
     return yy * 10000 + mm * 100 + dd;
 }
 
@@ -539,9 +578,10 @@ static inline void DMP_WR_WriteMeta(
 //  booléen (0/1)         → "0" ou "1"
 //  entier                → entier
 
-// Vérifier si une valeur float est INVALID
+// Vérifier si une valeur float est INVALID (FLT_MAX, NaN, Inf)
+// Fix audit 09/04 : ajout check isfinite pour detecter NaN/Inf (evite "nan" dans JSONL)
 static inline bool DMP_WR_IsInvalid(float v) {
-    return (v >= FLT_MAX * 0.5f) || (v <= -FLT_MAX * 0.5f);
+    return (v >= FLT_MAX * 0.5f) || (v <= -FLT_MAX * 0.5f) || !std::isfinite(v);
 }
 
 // Écrire un float dans le buffer JSON (null si INVALID)
@@ -1089,7 +1129,9 @@ inline bool DMP_WriteRow(
     st->prev_ts = f.ts;
 
     // ── 4. Formater la ligne JSON ─────────────────────────────────────────────
-    static char s_json_buf[DMP_JSON_BUF_SIZE]; // static = évite stack overflow (16 KB)
+    // Fix audit 09/04 : thread_local au lieu de static pour eviter race condition
+    // entre instances ACSIL ES et NQ (plusieurs threads, 1 buffer partage = corruption)
+    thread_local char s_json_buf[DMP_JSON_BUF_SIZE];
     int len = DMP_FormatJSONL(f, s_json_buf);
 
     if (len <= 2 || len >= DMP_JSON_BUF_SIZE - 1) {
