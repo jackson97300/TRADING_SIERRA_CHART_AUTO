@@ -898,6 +898,180 @@ def get_features(df: pd.DataFrame) -> List[str]:
     return [c for c in df.columns if c not in meta]
 
 
+class PreflightError(Exception):
+    """Leve si le pre-training contract echoue (dataset/labels non conformes)."""
+    pass
+
+
+class ImportanceLeakError(Exception):
+    """Leve si feature_importances_ revele une fuite (une feature domine)."""
+    pass
+
+
+def preflight_check(symbol: str, df: pd.DataFrame, features: List[str],
+                     config: TrainConfig) -> None:
+    """Trou 2 — Pre-training data contract.
+
+    Verifie avant le training que tout est conforme. Leve PreflightError au
+    premier probleme detecte. Ne modifie rien.
+
+    Checks :
+      1. quality_validator passe sur le dataset (pas de fuite features)
+      2. labels presents et non-NaN
+      3. BUY et SELL presents (sinon binary classification impossible)
+      4. sample_weight valide (si present)
+      5. Aucune feature avec NaN > 1%
+      6. Aucune feature constante dans la liste
+      7. Le dataset est trie chronologiquement sur ts (walk-forward)
+    """
+    print(f"\n  [PREFLIGHT] {symbol} — pre-training data contract")
+
+    errors = []
+
+    # 1. Dataset quality (via quality_validator)
+    try:
+        from quality_validator import QualityValidator, QualityViolation
+        other_sym = "NQ" if symbol == "ES" else "ES"
+        other_path = Path(config.dataset_dir) / f"{other_sym}_dataset_v2.parquet"
+        if other_path.exists():
+            df_other = pd.read_parquet(other_path)
+            validator = QualityValidator(strict=False, verbose=False)
+            if symbol == "ES":
+                report = validator.validate(df, df_other)
+            else:
+                report = validator.validate(df_other, df)
+            if not report.passed:
+                errors.append(
+                    f"quality_validator a detecte {len(report.red_flags)} "
+                    f"red flags. Lance /audit-features pour voir le detail."
+                )
+    except ImportError:
+        errors.append("quality_validator.py absent")
+
+    # 2. Labels presents
+    if "label" not in df.columns:
+        errors.append("colonne 'label' absente du dataset")
+    else:
+        n_nan_label = int(df["label"].isna().sum())
+        if n_nan_label > 0:
+            errors.append(f"{n_nan_label} labels NaN dans le dataset")
+        n_buy = int((df["label"] == 1).sum())
+        n_sell = int((df["label"] == -1).sum())
+        if n_buy == 0:
+            errors.append("0 labels BUY — impossible d'entrainer le modele buy")
+        if n_sell == 0:
+            errors.append("0 labels SELL — impossible d'entrainer le modele sell")
+
+    # 3. sample_weight
+    if "sample_weight" in df.columns:
+        sw = df["sample_weight"]
+        if sw.isna().any():
+            errors.append(f"{int(sw.isna().sum())} NaN dans sample_weight")
+        if (sw < 0).any():
+            errors.append(f"{int((sw < 0).sum())} valeurs negatives dans sample_weight")
+        if sw.sum() < 1e-6:
+            errors.append("sum(sample_weight) ~ 0 (fit degenere)")
+
+    # 4. NaN dans les features
+    for feat in features:
+        if feat not in df.columns:
+            errors.append(f"feature '{feat}' absente du dataset")
+            continue
+        nan_pct = df[feat].isna().mean()
+        if nan_pct > 0.01:
+            errors.append(f"feature '{feat}' a {nan_pct:.1%} de NaN (>1%)")
+
+    # 5. Features constantes
+    for feat in features:
+        if feat in df.columns:
+            if df[feat].nunique(dropna=True) <= 1:
+                errors.append(f"feature '{feat}' est constante")
+
+    # 6. Tri chronologique (walk-forward)
+    if "ts" in df.columns:
+        if not df["ts"].is_monotonic_increasing:
+            errors.append("dataset non trie sur 'ts' — walk-forward casse")
+
+    if errors:
+        print(f"  [PREFLIGHT] REFUS ({len(errors)} erreurs) :")
+        for e in errors[:20]:
+            print(f"    - {e}")
+        if len(errors) > 20:
+            print(f"    ... et {len(errors) - 20} autres")
+        raise PreflightError(
+            f"Preflight check {symbol} : {len(errors)} erreurs bloquantes"
+        )
+
+    print(f"  [PREFLIGHT] OK — {len(features)} features, "
+          f"BUY={n_buy}, SELL={n_sell}, "
+          f"sample_weight={'oui' if 'sample_weight' in df.columns else 'non'}")
+
+
+def importance_guard(model, features: List[str], symbol: str, side: str,
+                      max_top1_share: float = 0.40,
+                      max_top5_cumul: float = 0.70,
+                      min_active_features: int = 30) -> None:
+    """Trou 3 — Feature importance guard (anti-fuite post-training).
+
+    Detecte une fuite subtile qui passerait le quality_validator :
+    une feature qui domine l'importance LightGBM = fuite probable.
+
+    Checks :
+      1. Aucune feature ne depasse 40% de l'importance totale
+      2. Top 5 features cumulee < 70%
+      3. Au moins 30 features actives (>1% chacune)
+
+    Leve ImportanceLeakError si un seul critere echoue.
+    """
+    importances = np.array(model.feature_importances_, dtype=float)
+    total = importances.sum()
+    if total < 1e-9:
+        raise ImportanceLeakError(
+            f"{symbol} {side} : feature_importances sum = 0 (modele casse ?)"
+        )
+
+    shares = importances / total
+    order = np.argsort(shares)[::-1]
+    top_names = [features[i] for i in order]
+    top_shares = shares[order]
+
+    top1 = float(top_shares[0])
+    top5_cumul = float(top_shares[:5].sum())
+    n_active = int((shares >= 0.01).sum())
+
+    errors = []
+    if top1 > max_top1_share:
+        errors.append(
+            f"top feature '{top_names[0]}' = {top1:.1%} > {max_top1_share:.0%} "
+            f"(fuite probable)"
+        )
+    if top5_cumul > max_top5_cumul:
+        errors.append(
+            f"top 5 cumulee = {top5_cumul:.1%} > {max_top5_cumul:.0%} "
+            f"(concentration suspecte sur {top_names[:5]})"
+        )
+    if n_active < min_active_features:
+        errors.append(
+            f"seulement {n_active} features actives (>1%) "
+            f"< {min_active_features} minimum"
+        )
+
+    if errors:
+        print(f"\n  [IMPORTANCE GUARD] {symbol} {side} : FUITE DETECTEE")
+        for e in errors:
+            print(f"    - {e}")
+        print(f"  Top 10 importance :")
+        for name, share in list(zip(top_names, top_shares))[:10]:
+            print(f"    {share:6.1%}  {name}")
+        raise ImportanceLeakError(
+            f"{symbol} {side} : {len(errors)} red flags importance. "
+            f"Revoir les features suspectes."
+        )
+
+    print(f"  [IMPORTANCE GUARD] {symbol} {side} OK — "
+          f"top1={top1:.1%}, top5={top5_cumul:.1%}, active={n_active}")
+
+
 def run_training(symbol: str, config: TrainConfig, tune: bool = True) -> List[dict]:
     """Pipeline complet pour un instrument."""
     dataset_path = Path(config.dataset_dir) / f"{symbol}_dataset_v2.parquet"
@@ -913,13 +1087,40 @@ def run_training(symbol: str, config: TrainConfig, tune: bool = True) -> List[di
     print(f"  Labels: BUY={int((df.label==1).sum())} SELL={int((df.label==-1).sum())} HOLD={int((df.label==0).sum())}")
     print(f"{'#'*60}")
 
+    # ═══════════════════════════════════════════════════════════════
+    # PREFLIGHT CHECK — Trou 2 (Jackson 13/04/2026)
+    # Bloque le training si le dataset/labels ne sont pas propres
+    # ═══════════════════════════════════════════════════════════════
+    try:
+        preflight_check(symbol, df, features, config)
+    except PreflightError as e:
+        print(f"[FATAL] Preflight {symbol} : {e}")
+        print(f"[FATAL] Training {symbol} AVORTE.")
+        return []
+
     trainer = ModelTrainer(config)
     results = []
 
     for side in ["buy", "sell"]:
         result = trainer.train_model(symbol, side, df, features, tune=tune)
         if result.get("model") is not None:
-            save_model(result, config)
+            # ═══════════════════════════════════════════════════════════
+            # IMPORTANCE GUARD — Trou 3 (Jackson 13/04/2026)
+            # Detecte une fuite cachee post-training
+            # ═══════════════════════════════════════════════════════════
+            try:
+                importance_guard(
+                    model=result["model"],
+                    features=features,
+                    symbol=symbol,
+                    side=side,
+                )
+                save_model(result, config)
+            except ImportanceLeakError as e:
+                print(f"[FATAL] Importance guard {symbol} {side} : {e}")
+                print(f"[FATAL] Modele NON sauvegarde — revoir les features.")
+                result["saved"] = False
+                result["leak_detected"] = str(e)
         results.append(result)
 
     return results

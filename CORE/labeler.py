@@ -1030,6 +1030,30 @@ def run_all(symbol: str = "ES", cfg: LabelConfig = None):
         "hl_mode", "schema",
         "sample_weight", "exit_offset",   # Lopez AFML ch.4 — uniqueness weights
     ] if c in df_all.columns]
+    # ═══════════════════════════════════════════════════════════════
+    # LABEL VALIDATOR — garde-fou qualite labels (Jackson 13/04/2026)
+    # Refuse la sauvegarde si mode collapse, future leak, RR casse, etc.
+    # ═══════════════════════════════════════════════════════════════
+    try:
+        from label_validator import LabelValidator, LabelViolation
+        print(f"\n{'='*62}")
+        print(f"  LABEL VALIDATOR — {symbol}")
+        print(f"{'='*62}")
+        forward_bars = getattr(cfg, "FORWARD_BARS", 20)
+        validator = LabelValidator(
+            symbol=symbol, forward_bars=forward_bars,
+            strict=True, verbose=True,
+        )
+        validator.validate(df_all[save_cols])
+    except LabelViolation as e:
+        print(f"\n[FATAL] Labels {symbol} REFUSES par label_validator : {e}")
+        print("[FATAL] Le fichier global NE SERA PAS sauvegarde.")
+        print("[FATAL] Action : investiguer les red flags, puis rerun labeler.")
+        import sys
+        sys.exit(2)
+    except ImportError:
+        print("[WARN] label_validator.py absent — saut validation qualite")
+
     df_all[save_cols].to_parquet(out_path, index=True)
     print(f"\n  Global sauvegardé: {out_path}")
 
