@@ -1029,14 +1029,15 @@ static inline void CalcBatailleNavale(const DMP_RawData& r, DMP_MLFeatures& f) {
     // Big Orders : nearest above/below — COMBINÉ TOUS SEUILS (BUG #9)
     // Scan +100 + extra1 + extra2 + extra3, prend le plus proche toutes catégories
     // NQ: +10, +30, +100  |  ES: +100, +150, +400, +1000
+    // FIX 13/04/2026 : arrays etendus de 10 a 20 slots, NearestAboveBelow scanne 20
     {
         // ASK : initialiser avec +100
-        NearestAboveBelow(r.bn_ask100, 10, p, ts, f.dist_big_ask_nearest_up, f.dist_big_ask_nearest_dn);
+        NearestAboveBelow(r.bn_ask100, 20, p, ts, f.dist_big_ask_nearest_up, f.dist_big_ask_nearest_dn);
         // Scanner les seuils supplémentaires et prendre le plus proche
         float tmp_up, tmp_dn;
         const float* ask_extras[] = { r.bn_ask_extra1, r.bn_ask_extra2, r.bn_ask_extra3 };
         for (int e = 0; e < 3; e++) {
-            NearestAboveBelow(ask_extras[e], 10, p, ts, tmp_up, tmp_dn);
+            NearestAboveBelow(ask_extras[e], 20, p, ts, tmp_up, tmp_dn);
             // Plus proche au-dessus = plus petit positif
             if (DMP_IsValid(tmp_up) && (!DMP_IsValid(f.dist_big_ask_nearest_up) || tmp_up < f.dist_big_ask_nearest_up))
                 f.dist_big_ask_nearest_up = tmp_up;
@@ -1046,10 +1047,10 @@ static inline void CalcBatailleNavale(const DMP_RawData& r, DMP_MLFeatures& f) {
         }
 
         // BID : même logique
-        NearestAboveBelow(r.bn_bid100, 10, p, ts, f.dist_big_bid_nearest_up, f.dist_big_bid_nearest_dn);
+        NearestAboveBelow(r.bn_bid100, 20, p, ts, f.dist_big_bid_nearest_up, f.dist_big_bid_nearest_dn);
         const float* bid_extras[] = { r.bn_bid_extra1, r.bn_bid_extra2, r.bn_bid_extra3 };
         for (int e = 0; e < 3; e++) {
-            NearestAboveBelow(bid_extras[e], 10, p, ts, tmp_up, tmp_dn);
+            NearestAboveBelow(bid_extras[e], 20, p, ts, tmp_up, tmp_dn);
             if (DMP_IsValid(tmp_up) && (!DMP_IsValid(f.dist_big_bid_nearest_up) || tmp_up < f.dist_big_bid_nearest_up))
                 f.dist_big_bid_nearest_up = tmp_up;
             if (DMP_IsValid(tmp_dn) && (!DMP_IsValid(f.dist_big_bid_nearest_dn) || tmp_dn > f.dist_big_bid_nearest_dn))
@@ -1091,10 +1092,11 @@ static inline void CalcBatailleNavale(const DMP_RawData& r, DMP_MLFeatures& f) {
             float ask_c20 = 0, ask_c50 = 0;
             float bid_c20 = 0, bid_c50 = 0;
 
+            // FIX 13/04/2026 : arrays etendus 10 → 20 slots
             for (int t = 0; t < 4; t++) {
                 float na = 0, nb = 0;
                 float ac20 = 0, bc20 = 0;
-                for (int i = 0; i < 10; i++) {
+                for (int i = 0; i < 20; i++) {
                     float ap = ask_tiers[t][i];
                     if (DMP_IsPriceValid(ap)) {
                         na += 1.0f;

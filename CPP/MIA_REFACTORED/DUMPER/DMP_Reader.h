@@ -407,16 +407,20 @@ struct DMP_RawData {
     float bn_triple_ask;                 // TRIPLE_ASK sg0 — Triple pression Ask (NQ)
     float bn_triple_bid;                 // TRIPLE_BID sg0 — Triple pression Bid (NQ)
     // Big Orders (10 niveaux, le plus proche sera calculé dans Transform)
-    float bn_ask100[10];                 // ASK_100 sg0..9 — 10 niveaux Ask +100 lots
-    float bn_bid100[10];                 // BID_100 sg0..9 — 10 niveaux Bid +100 lots
+    // FIX 13/04/2026 : buffers etendus 10 → 20 pour eviter la saturation
+    // sur ES (tres liquide, nombreux big orders par tier). Tri par distance
+    // au prix courant dans DMP_ReadBigOrdersFromVAP pour garder les 20 plus
+    // pertinents. Transform.h utilise 20 en taille pour NearestAboveBelow.
+    float bn_ask100[20];                 // ASK_100 — 20 niveaux Ask big orders t1
+    float bn_bid100[20];                 // BID_100 — 20 niveaux Bid big orders t1
     // 🆕 BUG #9 — Tous les seuils Big Orders (04/03/2026)
     // NQ: +10, +30 (fire souvent) | ES: +150, +400, +1000 (seuils progressifs)
-    float bn_ask_extra1[10];             // NQ: ASK+10  | ES: ASK+150
-    float bn_bid_extra1[10];             // NQ: BID+10  | ES: BID+150
-    float bn_ask_extra2[10];             // NQ: ASK+30  | ES: ASK+400
-    float bn_bid_extra2[10];             // NQ: BID+30  | ES: BID+400
-    float bn_ask_extra3[10];             // ES: ASK+1000 | NQ: unused (INVALID)
-    float bn_bid_extra3[10];             // ES: BID+1000 | NQ: unused (INVALID)
+    float bn_ask_extra1[20];             // NQ: ASK+10  | ES: ASK+150
+    float bn_bid_extra1[20];             // NQ: BID+10  | ES: BID+150
+    float bn_ask_extra2[20];             // NQ: ASK+30  | ES: ASK+400
+    float bn_bid_extra2[20];             // NQ: BID+30  | ES: BID+400
+    float bn_ask_extra3[20];             // ES: ASK+1000 | NQ: unused (INVALID)
+    float bn_bid_extra3[20];             // ES: BID+1000 | NQ: unused (INVALID)
 
     // ─────────────────────────────────────────────────────────────────────────
     // C4. VOLUME UP/DOWN + EDGE ZONES FOOTPRINT — BUG #10 (05/03/2026)
@@ -1238,25 +1242,30 @@ inline void DMP_ReadBigOrderThresholdViaExtLines(
     for (int i = bc; i < 10; i++) bid_out[i] = DMP_INVALID;
 }
 
-// ⭐ FIX 13/04/2026 (tentative 2) — Lecture Big Orders directement via VAP cells
+// ⭐ FIX 13/04/2026 (tentative 2 v2) — Lecture Big Orders via VAP direct
 // ─────────────────────────────────────────────────────────────────────────────
-// Les etudes "Volume At Price Threshold Alert V2" colorient les cellules du
-// footprint quand AskVolume ou BidVolume depasse un seuil. On reproduit la meme
-// logique en C++ en scannant directement sc.VolumeAtPriceForBars, sans aucune
-// dependance aux etudes SC.
+// Les etudes "Volume At Price Threshold Alert V2" colorient les cellules VAP
+// quand AskVolume ou BidVolume depasse un seuil. On reproduit la logique en C++
+// en scannant directement sc.VolumeAtPriceForBars.
 //
-// Avantages :
-//   - Pas de dependance a GetNumLinesUntilFutureIntersection (qui ne fonctionne
-//     pas pour cette famille d'etude)
-//   - Pas besoin de l'option "Draw Extension Lines" dans SC
-//   - Seuils hardcodes dans le C++ (coherent avec la config SC)
-//   - Fonctionne tant que VolumeAtPriceForBars est actif (deja le cas pour FPBS)
+// v2 (13/04/2026 apres-midi) :
+//   - Buffer 10 → 20 slots par cote (evite saturation sur ES tres liquide)
+//   - Tri par distance au prix courant : garder les 20 plus proches
+//   - Dedup strict par prix (min_tick_diff / 2)
+//   - Parametre ref_price pour trier (prix courant)
+//
+// Avantages v2 :
+//   - Signal de qualite : les 20 big orders retournes sont les plus pertinents
+//     (proches du prix courant), pas les 20 "premiers trouves"
+//   - Capture les clusters distribues sur plusieurs barres
+//   - Symetrie ES/NQ plus stable (moins de saturation a 10)
 //
 // Algo :
-//   1. Scanner les n_bars_lookback dernieres barres (de la plus recente vers la plus ancienne)
-//   2. Pour chaque cellule VAP : si AskVolume >= ask_threshold → big ask a ce prix
-//   3. Eviter les doublons de prix (une meme cellule peut etre big sur plusieurs barres)
-//   4. Collecter jusqu'a 10 prix par cote, filtrer par min_price
+//   1. Scanner les n_bars_lookback dernieres barres
+//   2. Pour chaque cellule VAP : si AskVolume/BidVolume >= threshold → candidat
+//   3. Inserer dans un buffer de 20 trie par distance au ref_price
+//   4. Si buffer plein, remplacer le plus eloigne si le nouveau est plus proche
+//   5. Dedup : skip si le prix est deja dans le buffer
 //
 // Utilise par DMP_ReadBN_Footprint pour les 7 seuils (ES: 100/150/400/1000, NQ: 10/30/100).
 inline void DMP_ReadBigOrdersFromVAP(
@@ -1264,32 +1273,72 @@ inline void DMP_ReadBigOrdersFromVAP(
     float ask_threshold, float bid_threshold,
     int n_bars_lookback,
     float min_price, float tick_size,
+    float ref_price,           // prix courant — pour tri par distance
     float* ask_out, float* bid_out)
 {
+    constexpr int BUF = 20;
+
     // Init OUT
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < BUF; i++) {
         ask_out[i] = DMP_INVALID;
         bid_out[i] = DMP_INVALID;
     }
 
     if (!sc.VolumeAtPriceForBars) return;
     if (tick_size <= 0.0f) tick_size = 0.25f;
+    if (!std::isfinite(ref_price) || ref_price <= 0.0f) return;
 
-    int ac = 0, bc = 0;
-    // Tracker pour dedupliquer les prix (une meme cellule peut etre vue plusieurs fois)
-    float seen_ask[10] = {0};
-    float seen_bid[10] = {0};
+    // Buffers ordonnes par distance au prix courant (index du max garde en cache)
+    float ask_dist[BUF]; int ask_count = 0;
+    int   ask_max_idx = 0; float ask_max_dist = 0.0f;
+
+    float bid_dist[BUF]; int bid_count = 0;
+    int   bid_max_idx = 0; float bid_max_dist = 0.0f;
 
     const int bar_end = sc.Index;
     const int bar_start = (bar_end - n_bars_lookback + 1 > 0)
                           ? (bar_end - n_bars_lookback + 1) : 0;
 
-    // Scan des plus recentes vers les plus anciennes (priorite aux recents)
-    for (int bar = bar_end; bar >= bar_start && (ac < 10 || bc < 10); bar--) {
+    auto insert_sorted = [&](float price, float* out_arr, float* dist_arr,
+                              int& count, int& max_idx, float& max_dist) {
+        const float d = std::fabs(price - ref_price);
+
+        // Dedup par prix (tolerance 0.5 tick)
+        for (int i = 0; i < count; i++) {
+            if (std::fabs(out_arr[i] - price) < tick_size * 0.5f) return;
+        }
+
+        if (count < BUF) {
+            // Buffer pas plein : ajouter
+            out_arr[count] = price;
+            dist_arr[count] = d;
+            if (d > max_dist) {
+                max_dist = d;
+                max_idx = count;
+            }
+            count++;
+        } else if (d < max_dist) {
+            // Buffer plein : remplacer le plus eloigne
+            out_arr[max_idx] = price;
+            dist_arr[max_idx] = d;
+            // Recalculer le nouveau max
+            max_dist = 0.0f;
+            max_idx = 0;
+            for (int i = 0; i < BUF; i++) {
+                if (dist_arr[i] > max_dist) {
+                    max_dist = dist_arr[i];
+                    max_idx = i;
+                }
+            }
+        }
+    };
+
+    // Scan des plus recentes vers les plus anciennes
+    for (int bar = bar_end; bar >= bar_start; bar--) {
         const int n_levels = sc.VolumeAtPriceForBars->GetSizeAtBarIndex(bar);
         if (n_levels <= 0) continue;
 
-        for (int k = 0; k < n_levels && (ac < 10 || bc < 10); k++) {
+        for (int k = 0; k < n_levels; k++) {
             const s_VolumeAtPriceV2* v = nullptr;
             if (!sc.VolumeAtPriceForBars->GetVAPElementAtIndex(bar, k, &v) || !v)
                 continue;
@@ -1298,34 +1347,13 @@ inline void DMP_ReadBigOrdersFromVAP(
             const float price = (float)v->PriceInTicks * tick_size;
             if (!std::isfinite(price) || price <= min_price) continue;
 
-            // ── BIG ASK ORDER ──────────────────────────────────
-            if (ac < 10 && (float)v->AskVolume >= ask_threshold) {
-                bool dup = false;
-                for (int i = 0; i < ac; i++) {
-                    if (std::fabs(seen_ask[i] - price) < tick_size * 0.5f) {
-                        dup = true;
-                        break;
-                    }
-                }
-                if (!dup) {
-                    seen_ask[ac] = price;
-                    ask_out[ac++] = price;
-                }
+            if ((float)v->AskVolume >= ask_threshold) {
+                insert_sorted(price, ask_out, ask_dist,
+                              ask_count, ask_max_idx, ask_max_dist);
             }
-
-            // ── BIG BID ORDER ──────────────────────────────────
-            if (bc < 10 && (float)v->BidVolume >= bid_threshold) {
-                bool dup = false;
-                for (int i = 0; i < bc; i++) {
-                    if (std::fabs(seen_bid[i] - price) < tick_size * 0.5f) {
-                        dup = true;
-                        break;
-                    }
-                }
-                if (!dup) {
-                    seen_bid[bc] = price;
-                    bid_out[bc++] = price;
-                }
+            if ((float)v->BidVolume >= bid_threshold) {
+                insert_sorted(price, bid_out, bid_dist,
+                              bid_count, bid_max_idx, bid_max_dist);
             }
         }
     }
@@ -1467,34 +1495,35 @@ inline void DMP_ReadBNSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
     {
         const float min_price = d.is_nq ? 15000.0f : 5000.0f;
         const float ts        = d.tick_size > 0.0f ? d.tick_size : 0.25f;
+        const float ref_price = d.price_close;  // tri par distance au prix courant
         constexpr int LOOKBACK_BARS = 60;
 
         // Seuil principal : +100 (les deux symboles)
         DMP_ReadBigOrdersFromVAP(sc,
-            100.0f, 100.0f, LOOKBACK_BARS, min_price, ts,
+            100.0f, 100.0f, LOOKBACK_BARS, min_price, ts, ref_price,
             d.bn_ask100, d.bn_bid100);
 
         // Seuils supplementaires — NQ: +10, +30 | ES: +150, +400, +1000
         if (d.is_nq) {
             DMP_ReadBigOrdersFromVAP(sc,
-                10.0f, 10.0f, LOOKBACK_BARS, min_price, ts,
+                10.0f, 10.0f, LOOKBACK_BARS, min_price, ts, ref_price,
                 d.bn_ask_extra1, d.bn_bid_extra1);
             DMP_ReadBigOrdersFromVAP(sc,
-                30.0f, 30.0f, LOOKBACK_BARS, min_price, ts,
+                30.0f, 30.0f, LOOKBACK_BARS, min_price, ts, ref_price,
                 d.bn_ask_extra2, d.bn_bid_extra2);
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < 20; i++) {
                 d.bn_ask_extra3[i] = DMP_INVALID;
                 d.bn_bid_extra3[i] = DMP_INVALID;
             }
         } else {
             DMP_ReadBigOrdersFromVAP(sc,
-                150.0f, 150.0f, LOOKBACK_BARS, min_price, ts,
+                150.0f, 150.0f, LOOKBACK_BARS, min_price, ts, ref_price,
                 d.bn_ask_extra1, d.bn_bid_extra1);
             DMP_ReadBigOrdersFromVAP(sc,
-                400.0f, 400.0f, LOOKBACK_BARS, min_price, ts,
+                400.0f, 400.0f, LOOKBACK_BARS, min_price, ts, ref_price,
                 d.bn_ask_extra2, d.bn_bid_extra2);
             DMP_ReadBigOrdersFromVAP(sc,
-                1000.0f, 1000.0f, LOOKBACK_BARS, min_price, ts,
+                1000.0f, 1000.0f, LOOKBACK_BARS, min_price, ts, ref_price,
                 d.bn_ask_extra3, d.bn_bid_extra3);
         }
     }
@@ -1991,7 +2020,13 @@ inline void DMP_ReadAll(SCStudyInterfaceRef sc, DMP_RawData& d, bool is_nq) {
     for (int i = 0; i < 10; i++) d.cluster_prices[i] = DMP_INVALID;
     for (int i = 0; i < 10; i++) {
         d.mq_gex[i] = d.mq_blind[i] = DMP_INVALID;
+    }
+    // Big Orders arrays etendus a 20 slots (fix 13/04/2026)
+    for (int i = 0; i < 20; i++) {
         d.bn_ask100[i] = d.bn_bid100[i] = DMP_INVALID;
+        d.bn_ask_extra1[i] = d.bn_bid_extra1[i] = DMP_INVALID;
+        d.bn_ask_extra2[i] = d.bn_bid_extra2[i] = DMP_INVALID;
+        d.bn_ask_extra3[i] = d.bn_bid_extra3[i] = DMP_INVALID;
     }
     // Booléens BN → 0 (BOOL_FALSE) — laissés à 0 par memset, correct.
 
