@@ -511,34 +511,56 @@ if __name__ == "__main__":
         use_derived=True,     # ctx_* + im_* + amd_* + rvol_*
     )
 
-    # ES
+    # ═══════════════════════════════════════════════════════════════
+    # Pass 1 — Build complet ES et NQ pour obtenir les features brutes
+    # ═══════════════════════════════════════════════════════════════
     df_es = builder.build("ES")
     validated_es = builder.screen_spearman(df_es, min_rho=0.02)
-    print(f"\n=== ES: {len(validated_es)} features validees ===")
+    print(f"\n=== ES: {len(validated_es)} features validees (local) ===")
 
-    # Rebuild avec features validees seulement
-    builder_final = DatasetBuilder(
-        data_path=data_path,
-        labels_path=LABELS_PATH,
-        features=validated_es,
-        use_derived=True,
-    )
-    df_es_final = builder_final.build("ES")
-    builder_final.save(df_es_final, f"{OUTPUT_DIR}/ES_dataset_v2.parquet")
-
-    # NQ
     df_nq = builder.build("NQ")
     validated_nq = builder.screen_spearman(df_nq, min_rho=0.02)
-    print(f"\n=== NQ: {len(validated_nq)} features validees ===")
+    print(f"\n=== NQ: {len(validated_nq)} features validees (local) ===")
 
-    builder_nq = DatasetBuilder(
+    # ═══════════════════════════════════════════════════════════════
+    # Symetrie ES/NQ miroir — Union des features validees
+    # ═══════════════════════════════════════════════════════════════
+    # Regle architecturale V2 : ES et NQ sont des miroirs.
+    # Une feature qui a un edge statistique sur un des 2 symboles doit
+    # etre disponible sur les 2 datasets (structure symetrique). Le
+    # screening Spearman est local par symbole → il crée une asymetrie
+    # artificielle (ex: mq_es_nq_gamma_div passe cote NQ mais pas ES).
+    #
+    # Fix 13/04/2026 : faire l'union des 2 validated_* + intersecter avec
+    # les colonnes reellement presentes dans chaque dataset (pour eviter
+    # KeyError si une feature n'existe que d'un cote — ex: cross-specific).
+    union_features = sorted(set(validated_es) | set(validated_nq))
+    validated_union_es = [f for f in union_features if f in df_es.columns]
+    validated_union_nq = [f for f in union_features if f in df_nq.columns]
+    print(f"\n=== Union ES|NQ: {len(union_features)} features totales ===")
+    print(f"    ES: {len(validated_union_es)} presentes (gain +{len(validated_union_es) - len(validated_es)})")
+    print(f"    NQ: {len(validated_union_nq)} presentes (gain +{len(validated_union_nq) - len(validated_nq)})")
+
+    # ═══════════════════════════════════════════════════════════════
+    # Pass 2 — Rebuild avec features unionees (symetrie respectee)
+    # ═══════════════════════════════════════════════════════════════
+    builder_es_final = DatasetBuilder(
         data_path=data_path,
         labels_path=LABELS_PATH,
-        features=validated_nq,
+        features=validated_union_es,
         use_derived=True,
     )
-    df_nq_final = builder_nq.build("NQ")
-    builder_nq.save(df_nq_final, f"{OUTPUT_DIR}/NQ_dataset_v2.parquet")
+    df_es_final = builder_es_final.build("ES")
+    builder_es_final.save(df_es_final, f"{OUTPUT_DIR}/ES_dataset_v2.parquet")
+
+    builder_nq_final = DatasetBuilder(
+        data_path=data_path,
+        labels_path=LABELS_PATH,
+        features=validated_union_nq,
+        use_derived=True,
+    )
+    df_nq_final = builder_nq_final.build("NQ")
+    builder_nq_final.save(df_nq_final, f"{OUTPUT_DIR}/NQ_dataset_v2.parquet")
 
     # Afficher features finales
     for sym, feats in [("ES", validated_es), ("NQ", validated_nq)]:
