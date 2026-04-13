@@ -558,7 +558,6 @@ if __name__ == "__main__":
         use_derived=True,
     )
     df_es_final = builder_es_final.build("ES")
-    builder_es_final.save(df_es_final, f"{OUTPUT_DIR}/ES_dataset_v2.parquet")
 
     builder_nq_final = DatasetBuilder(
         data_path=data_path,
@@ -567,6 +566,28 @@ if __name__ == "__main__":
         use_derived=True,
     )
     df_nq_final = builder_nq_final.build("NQ")
+
+    # ═══════════════════════════════════════════════════════════════
+    # QUALITY VALIDATOR — garde-fou code-level (Jackson 13/04/2026)
+    # Regle souveraine : qualite donnees > symetrie > screening Spearman
+    # En mode strict, leve QualityViolation si red flags detectes
+    # ═══════════════════════════════════════════════════════════════
+    from quality_validator import QualityValidator, QualityViolation
+
+    print("\n" + "=" * 70)
+    print("  QUALITY VALIDATOR — audit final avant sauvegarde")
+    print("=" * 70)
+    validator = QualityValidator(strict=True, verbose=True)
+    try:
+        validator.validate(df_es_final, df_nq_final)
+    except QualityViolation as e:
+        print(f"\n[FATAL] Dataset REFUSE par quality_validator : {e}")
+        print("[FATAL] Les datasets NE SERONT PAS sauvegardes.")
+        print("[FATAL] Action : drop/normalize les features flaggees, puis rerun.")
+        sys.exit(2)
+
+    # Si on arrive ici, le validator a valide les 2 datasets
+    builder_es_final.save(df_es_final, f"{OUTPUT_DIR}/ES_dataset_v2.parquet")
     builder_nq_final.save(df_nq_final, f"{OUTPUT_DIR}/NQ_dataset_v2.parquet")
 
     # Afficher features finales
