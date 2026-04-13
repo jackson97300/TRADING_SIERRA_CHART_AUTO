@@ -73,6 +73,7 @@ class DmpReader:
             return pd.DataFrame()
 
         df = pd.DataFrame(rows)
+        df = self._dedup_and_sort(df)
         df = self._add_datetime_index(df)
         return df
 
@@ -107,7 +108,30 @@ class DmpReader:
         if not rows:
             return pd.DataFrame()
         df = pd.DataFrame(rows)
+        df = self._dedup_and_sort(df)
         df = self._add_datetime_index(df)
+        return df
+
+    # ─── DEDUPLICATION ────────────────────────────────────────────────
+
+    def _dedup_and_sort(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Deduplique par ts + trie chronologiquement.
+
+        FIX 13/04/2026 : certains fichiers JSONL historiques (20260327,
+        20260330, 20260407) contiennent des duplicate timestamps a cause
+        du bug thread_local pre-fix 09/04. Cette fonction retire les
+        lignes dupliquees (keep='first') et garantit l'ordre chronologique
+        strict. Impact negligeable (~6 barres sur 26000) mais propre.
+        """
+        if "ts" not in df.columns:
+            return df
+        before = len(df)
+        df = df.drop_duplicates(subset="ts", keep="first")
+        after = len(df)
+        if before != after:
+            # Note : pas de print pour eviter le bruit, c'est tres rare
+            pass
+        df = df.sort_values("ts", ascending=True, kind="stable").reset_index(drop=True)
         return df
 
     # ─── FILTRES ──────────────────────────────────────────────────────

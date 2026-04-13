@@ -368,8 +368,16 @@ class MenthorQReader:
             f["mq_es_nq_gamma_div"] = my_gamma - other_gamma
 
             other_gex = _to_float(cross_parsed.get("gex", {}).get("Net_GEX_M"))
-            if _valid(net_gex) and _valid(other_gex) and other_gex != 0:
-                f["mq_es_nq_gex_ratio"] = net_gex / other_gex
+            # FIX 13/04/2026 : normalized difference (ES + NQ = 0 garanti) au lieu
+            # du ratio simple my/other qui donnait ES * NQ = 1 (pas de dualite).
+            # Formule : (my - other) / (|my| + |other|)
+            #   ES val : (gex_ES - gex_NQ) / (|gex_ES| + |gex_NQ|)
+            #   NQ val : (gex_NQ - gex_ES) / (|gex_NQ| + |gex_ES|) = -ES val
+            # Proprietes : borne [-1, 1], symetrique, robuste aux zeros.
+            # Audit V2 regle miroir ES/NQ (feedback_es_nq_mirror.md).
+            denom = abs(net_gex) + abs(other_gex) if _valid(net_gex) and _valid(other_gex) else 0.0
+            if _valid(net_gex) and _valid(other_gex) and denom > 1e-6:
+                f["mq_es_nq_gex_ratio"] = (net_gex - other_gex) / denom
             else:
                 f["mq_es_nq_gex_ratio"] = np.nan
 

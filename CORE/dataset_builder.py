@@ -324,7 +324,7 @@ class DatasetBuilder:
         df = self._compute_rvol(df)
 
         # --- AMD (18 amd_*) ---
-        df = self._compute_amd(df)
+        df = self._compute_amd(df, symbol)
 
         # --- Intermarket (10 im_*) ---
         df = self._compute_intermarket(df, symbol, other_symbol)
@@ -421,11 +421,18 @@ class DatasetBuilder:
             print(f"  [WARN] rvol: {e}")
         return df
 
-    def _compute_amd(self, df: pd.DataFrame) -> pd.DataFrame:
-        """AMD ICT Power of 3 features (amd_*)."""
+    def _compute_amd(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        """AMD ICT Power of 3 features (amd_*).
+
+        FIX 13/04/2026 : AmdEngine avait un default symbol='NQ' et etait
+        instancie sans parametre, ce qui faisait que les seuils NQ
+        (SWEEP_MIN_TICKS, ACCUM_MIN_TICKS, JUDAS_REENTRY_TICKS) etaient
+        utilises pour calculer les signaux AMD cote ES → features AMD
+        biaisees. Fix : passer le symbole correct a l'engine.
+        """
         try:
             from mia_amd import AmdEngine
-            engine = AmdEngine()
+            engine = AmdEngine(symbol=symbol)
             df = engine.compute(df)
         except Exception as e:
             print(f"  [WARN] mia_amd: {e}")
