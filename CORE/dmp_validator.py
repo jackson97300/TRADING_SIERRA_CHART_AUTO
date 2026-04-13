@@ -11,7 +11,7 @@ Usage:
 
 Emplacement: D:\\TRADING_SIERRA_CHART_AUTO\\CORE\\dmp_validator.py
 Date: 2026-03-10
-Schema: 3.7.x — 258/260/262 colonnes (3.7.0/3.7.1/3.7.2)
+Schema: 3.7.x — 258/260/262/266 colonnes (3.7.0/3.7.1/3.7.2/3.7.3)
 """
 
 import json, sys, os
@@ -22,10 +22,11 @@ from collections import Counter
 # CONFIGURATION — Schema 3.7.0
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SCHEMA_VERSION = "3.7.x"          # accepte 3.7.0 / 3.7.1 / 3.7.2
+SCHEMA_VERSION = "3.7.x"          # accepte 3.7.0 / 3.7.1 / 3.7.2 / 3.7.3
 EXPECTED_COLS_370 = 258           # schema historique
 EXPECTED_COLS_371 = 260           # +bar_high, +bar_low
 EXPECTED_COLS_372 = 262           # +dist_vwap_d_sd3u, +dist_vwap_d_sd3d
+EXPECTED_COLS_373 = 266           # +dist_cluster_nearest_up/dn, +n_clusters_20t/50t
 EXPECTED_COLS = EXPECTED_COLS_370 # rétrocompatibilité (remplacé dynamiquement)
 
 # ─── NETTOYAGE 2026-04-12 ────────────────────────────────────────────────
@@ -132,7 +133,11 @@ def validate(path):
     # Détection automatique du schema selon le nombre de colonnes
     has_bar_hl  = ("bar_high" in lines[0]) and ("bar_low" in lines[0])
     has_vwap_sd3 = ("dist_vwap_d_sd3u" in lines[0]) and ("dist_vwap_d_sd3d" in lines[0])
-    if ncols == EXPECTED_COLS_372 and has_bar_hl and has_vwap_sd3:
+    has_cluster_vol = ("dist_cluster_nearest_up" in lines[0]) and ("n_clusters_20t" in lines[0])
+    if ncols == EXPECTED_COLS_373 and has_bar_hl and has_vwap_sd3 and has_cluster_vol:
+        detected_schema = "3.7.3"
+        expected = EXPECTED_COLS_373
+    elif ncols == EXPECTED_COLS_372 and has_bar_hl and has_vwap_sd3:
         detected_schema = "3.7.2"
         expected = EXPECTED_COLS_372
     elif ncols == EXPECTED_COLS_371 and has_bar_hl and not has_vwap_sd3:
@@ -145,8 +150,8 @@ def validate(path):
         detected_schema = "INCONNU"
         expected = ncols  # éviter faux positif, on signale quand même
 
-    if ncols not in (EXPECTED_COLS_370, EXPECTED_COLS_371, EXPECTED_COLS_372):
-        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260 ou 262)")
+    if ncols not in (EXPECTED_COLS_370, EXPECTED_COLS_371, EXPECTED_COLS_372, EXPECTED_COLS_373):
+        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260, 262 ou 266)")
     else:
         ok += 1
     print(f"  Schema detecte : {detected_schema}  ({ncols} colonnes)")

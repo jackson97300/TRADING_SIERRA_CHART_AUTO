@@ -7,7 +7,7 @@ Drop tes JSONL dans le même dossier et lance:
 
 Il détecte automatiquement tous les fichiers YYYYMMDD_SYM.jsonl,
 construit le pipeline complet, et produit un rapport avec:
-  1. Tests fonctionnels (parité C++, NaN, sync, schema 262 cols)
+  1. Tests fonctionnels (parité C++, NaN, sync, schema 266 cols)
   2. Ranking global bootstrap avec IC 95%
   3. Stabilité jour/jour et cross-asset
   4. Analyse par régime (session)
@@ -19,7 +19,7 @@ construit le pipeline complet, et produit un rapport avec:
 
 Emplacement: D:\\TRADING_SIERRA_CHART_AUTO\\CORE\\mia_bench.py
 
-Schema: 3.7.2 — 262 colonnes (260 + 2 VWAP SD3)
+Schema: 3.7.3 — 266 colonnes (262 + 4 Cluster Volume via VAP)
 Auteur : MIA Trading System
 Date   : 2026-03-13
 """
@@ -65,10 +65,11 @@ GC_NUMERIC = [
     'open_bias_conf', 'open_direction'
 ]
 REPORT_FILE = "MIA_BENCH_REPORT.txt"
+REPORT_FILE_DATED = f"MIA_BENCH_{datetime.now().strftime('%Y%m%d')}.txt"
 
-# Schema 3.6.0 — 13/03/2026 (244 base + 6 RVOL)
-EXPECTED_SCHEMA_COLS = 262
-SCHEMA_VERSION = "3.7.2"
+# Schema 3.7.3 — 13/04/2026 (262 + 4 Cluster Volume via VAP)
+EXPECTED_SCHEMA_COLS = 266
+SCHEMA_VERSION = "3.7.3"
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -85,6 +86,9 @@ def discover_files(base_dir: str = ".") -> dict:
     for f in sorted(glob.glob(os.path.join(base_dir, "*.jsonl"))):
         m = pattern.search(os.path.basename(f))
         if m:
+            # Exclure les fichiers weekends/incomplets (<10 KB = <50 barres)
+            if os.path.getsize(f) < 10000:
+                continue
             date, sym = m.group(1), m.group(2)
             found.setdefault(date, {})[sym] = f
     return found
@@ -852,8 +856,6 @@ WALL_LEVELS = {
     'dist_session_lvn_below':('SESS_LVN_DN',   'profile',1),
     'dist_ext_edge_buy':     ('EXT_EDGE_BUY',  'ext',    1),
     'dist_ext_edge_sell':    ('EXT_EDGE_SELL',  'ext',    1),
-    'dist_ext_color_up':     ('EXT_COLOR_UP',   'ext',    1),
-    'dist_ext_color_dn':     ('EXT_COLOR_DN',   'ext',    1),
     'dist_sess_high':        ('SESS_HIGH',      'session',1),
     'dist_cur_vah':          ('CUR_VAH',        'cur_va', 2),
     'dist_cur_vpoc':         ('CUR_VPOC',       'cur_va', 2),
@@ -1253,32 +1255,27 @@ def test_verdict(results: list, data: dict, out: list):
 # TEST 13 — DMP HEALTH CHECK (signaux BN vivants/morts)
 # ═════════════════════════════════════════════════════════════════════
 
-# Signaux persistants (Extension Lines) — doivent firer >15% des barres
+# Signaux persistants GARDES (CLAUDE.md liste DROP retirees : bn_color_up/dn, bn_pressure_ask,
+# bar_color_up/dn, bar_pressure_ask, bn_long_up/dn, bn_volume_up/dn)
 BN_MUST_FIRE = [
-    ('bn_color_up',      0.15, 'COLOR UP FP — zone haussière'),
-    ('bn_color_dn',      0.15, 'COLOR DN FP — zone baissière'),
-    ('bn_color_up_2',    0.01, 'COLOR UP 2 — double stacké'),
-    ('bn_color_dn_2',    0.01, 'COLOR DN 2 — double stacké'),
-    ('bn_pressure_ask',  0.10, 'TRIPLE/DOUBLE ASK'),
+    ('bn_color_up_2',    0.01, 'COLOR UP 2 — double stacke'),
+    ('bn_color_dn_2',    0.01, 'COLOR DN 2 — double stacke'),
     ('bn_pressure_bid',  0.10, 'TRIPLE/DOUBLE BID'),
-    ('bar_color_up',     0.15, 'COLOR UP BARRES'),
-    ('bar_color_dn',     0.15, 'COLOR DN BARRES'),
-    ('bar_pressure_ask', 0.10, 'TRIPLE/DOUBLE ASK BARRES'),
     ('bar_pressure_bid', 0.10, 'TRIPLE/DOUBLE BID BARRES'),
+    ('bn_absorb_bid',    0.05, 'ABSORB BID'),
+    ('bn_absorb_ask',    0.05, 'ABSORB ASK'),
 ]
 
-# Signaux per-bar — au moins 1 fire sur 50+ barres
+# Signaux per-bar GARDES — au moins 1 fire sur 50+ barres
 BN_SHOULD_FIRE = [
-    'bn_long_up', 'bn_long_dn', 'bar_edge_buy', 'bar_edge_sell',
-    'fp_edge_buy', 'fp_edge_sell', 'bar_long_up_bar', 'bar_long_dn_bar',
-    'bn_volume_up', 'bn_volume_dn', 'bar_long_dn_up', 'bar_long_up_dn',
+    'bar_edge_buy', 'bar_edge_sell',
+    'fp_edge_buy', 'fp_edge_sell',
     'rvol_buy', 'rvol_sell', 'rvol_absorb_buy', 'rvol_absorb_sell',
+    'delta_divergence',
 ]
 
-# Distances Extension Lines — doivent avoir des non-null
+# Distances Extension Lines GARDEES (dist_ext_color_up/dn retirees du DROP list)
 EXT_MUST_LIVE = [
-    ('dist_ext_color_up',  0.30, 'COLOR UP distance (API CBBAC)'),
-    ('dist_ext_color_dn',  0.30, 'COLOR DN distance'),
     ('dist_ext_edge_buy',  0.03, 'EDGE BUY distance (tracker 6D)'),
     ('dist_ext_edge_sell', 0.03, 'EDGE SELL distance (tracker 6D)'),
     ('dist_ext_long_up',   0.01, 'LONG UP BAR distance (fix 13/03)'),
@@ -2248,7 +2245,12 @@ def main():
     report_path = os.path.join(base, REPORT_FILE)
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report)
+    # Copie datee (jamais ecrasee)
+    dated_path = os.path.join(base, REPORT_FILE_DATED)
+    with open(dated_path, "w", encoding="utf-8") as f:
+        f.write(report)
     print(f"\n  Rapport sauvegardé: {report_path}")
+    print(f"  Rapport daté: {dated_path}")
 
 
 if __name__ == "__main__":

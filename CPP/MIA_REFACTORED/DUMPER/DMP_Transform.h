@@ -320,6 +320,18 @@ struct DMP_MLFeatures {
     float big_bid_cluster_20t_t4;
 
     // ─────────────────────────────────────────────────────────────────────────
+    // SCHEMA 3.7.3 (13/04/2026) — Cluster Volume via VAP direct (+4 champs)
+    // Source : scan direct sc.VolumeAtPriceForBars, seuil total volume
+    //          ES=500 / NQ=50 (config SC "Volume At Price Threshold Alert V2"
+    //          Comparison Method = Total Volume).
+    // Usage trader : support/resistance solide, place stops et tient les trades.
+    // ─────────────────────────────────────────────────────────────────────────
+    float dist_cluster_nearest_up;    // Distance cluster volume le plus proche au-dessus (ticks)
+    float dist_cluster_nearest_dn;    // Distance cluster volume le plus proche en-dessous (ticks, negatif)
+    float n_clusters_20t;             // Nb clusters volume dans +-20 ticks du prix
+    float n_clusters_50t;             // Nb clusters volume dans +-50 ticks du prix
+
+    // ─────────────────────────────────────────────────────────────────────────
     // GROUPE 7B — BN CHART BARRES + EXTENSION LINES (16 champs) — BUG #8
     // Source : Chart 25 (ES) / Chart 23 (NQ) — signaux visuels que le Bot lit
     // ─────────────────────────────────────────────────────────────────────────
@@ -1123,6 +1135,24 @@ static inline void CalcBatailleNavale(const DMP_RawData& r, DMP_MLFeatures& f) {
             f.big_ask_cluster_50t = ask_c50;
             f.big_bid_cluster_50t = bid_c50;
         }
+
+        // ⭐ SCHEMA 3.7.3 — Cluster Volume features (13/04/2026)
+        // Source : r.cluster_prices[20] rempli par DMP_ReadVolumeClustersFromVAP
+        // Calcul : distances nearest + comptes ±20 / ±50 ticks
+        {
+            NearestAboveBelow(r.cluster_prices, 20, p, ts,
+                              f.dist_cluster_nearest_up, f.dist_cluster_nearest_dn);
+
+            float n20 = 0.0f, n50 = 0.0f;
+            for (int i = 0; i < 20; i++) {
+                if (!DMP_IsPriceValid(r.cluster_prices[i])) continue;
+                const float d = std::fabs(r.cluster_prices[i] - p) / ts;
+                if (d <= 20.0f) n20 += 1.0f;
+                if (d <= 50.0f) n50 += 1.0f;
+            }
+            f.n_clusters_20t = n20;
+            f.n_clusters_50t = n50;
+        }
     }
 }
 
@@ -1569,6 +1599,9 @@ inline void DMP_WriteCSVHeader(std::ofstream& file) {
         "big_ask_cluster_20t_t2,big_bid_cluster_20t_t2,"
         "big_ask_cluster_20t_t3,big_bid_cluster_20t_t3,"
         "big_ask_cluster_20t_t4,big_bid_cluster_20t_t4,"
+        // Schema 3.7.3 — Cluster Volume via VAP (+4)
+        "dist_cluster_nearest_up,dist_cluster_nearest_dn,"
+        "n_clusters_20t,n_clusters_50t,"
         // G7B Bar Signals + Extension Lines (16) — BUG #8
         "bar_color_up,bar_color_dn,bar_long_up_bar,bar_long_dn_bar,"
         "bar_long_dn_up,bar_long_up_dn,bar_edge_buy,bar_edge_sell,"

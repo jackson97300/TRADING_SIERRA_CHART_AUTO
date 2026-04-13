@@ -80,6 +80,9 @@ FEATURES_DMP: List[str] = [
     # --- Big Orders ---
     "big_ask_cluster_20t_t2", "big_ask_cluster_20t_t3", "n_big_ask_t3",
     "dist_blind_nearest_up",
+    # --- Schema 3.7.3 : Cluster Volume via VAP (13/04/2026) ---
+    "dist_cluster_nearest_up", "dist_cluster_nearest_dn",
+    "n_clusters_20t", "n_clusters_50t",
     # --- BN (survivants) ---
     "bn_absorb_bid", "bn_absorb_ask", "bn_pressure_bid",
     "bn_score_raw", "bn_score_bear", "bn_color_up_2",

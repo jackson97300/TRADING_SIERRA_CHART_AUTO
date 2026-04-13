@@ -100,7 +100,7 @@ SCSFExport scsf_MIA_DMP_G3(SCStudyInterfaceRef sc)
 
 if (sc.SetDefaults) {
     sc.GraphName             = "MIA Data Dumper G3 — JSONL";
-    sc.StudyDescription      = "Collecte 262 features ML en JSONL (G1-G14, Schema 3.7.2). "
+    sc.StudyDescription      = "Collecte 266 features ML en JSONL (G1-G14, Schema 3.7.3). "
                                "Attacher sur chart 1-min ES ou NQ (footprint requis). "
                                "Source: MIA_REFACTORED\\DUMPER\\";
     sc.AutoLoop              = 1;
@@ -761,8 +761,8 @@ DMP_UpdateOpenType(sc, r, f);
 // ═══════════════════════════════════════════════════════════════════════════════
 
 if (quality_min > 0) {
-    // Fix audit 09/04 : 262 cols dans schema 3.7.2 (etait 168, quality_filter inactif)
-    const int total_fields  = 262;
+    // Fix audit 09/04 : 262 cols dans schema 3.7.2, puis 266 cols en 3.7.3 (+4 cluster volume)
+    const int total_fields  = 266;
     const int valid_pct = (f.n_valid_fields * 100) / total_fields;
     if (valid_pct < quality_min) {
         if (debug_mode) {
@@ -796,7 +796,7 @@ if (debug_mode) {
     static int s_write_count = 0;
     s_write_count++;
     if (s_write_count % 10 == 1) {
-        const int nulls = 262 - f.n_valid_fields;
+        const int nulls = 266 - f.n_valid_fields;
         char msg[384];
         snprintf(msg, sizeof(msg),
             "WRITE OK #%d — %s | bar#%d | prix=%.2f | ts=%lld | session=%.0f(%s) | contract=%s | %s | nulls=%d/%d",

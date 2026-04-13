@@ -3,7 +3,7 @@
 // DMP_Writer.h  —  MIA Data Dumper G3 : Section E — SÉRIALISATION JSONL
 // ═══════════════════════════════════════════════════════════════════════════════
 //
-//  Rôle : Écrire les 262 colonnes de DMP_MLFeatures en format JSONL (Schema 3.7.2).
+//  Rôle : Écrire les 266 colonnes de DMP_MLFeatures en format JSONL (Schema 3.7.3).
 //         Un fichier par jour de trading, rotation automatique à minuit.
 //         FLT_MAX (DMP_INVALID) → "null" JSON pour compatibilité pandas/sklearn.
 //
@@ -464,7 +464,7 @@ static inline void DMP_WR_WriteMeta(
     meta << "  \"sym\": \""    << sym                << "\",\n";
     meta << "  \"date\": \""   << date_str           << "\",\n";
     meta << "  \"tick_size\": "<< tick_size           << ",\n";
-    meta << "  \"n_columns\": " << 262               << ",\n";
+    meta << "  \"n_columns\": " << 266               << ",\n";
     meta << "  \"format\": \"jsonl\",\n";
     meta << "  \"invalid_sentinel\": null,\n";
     meta << "  \"columns\": [\n";
@@ -525,6 +525,9 @@ static inline void DMP_WR_WriteMeta(
     meta << "    \"big_ask_cluster_20t_t2\",\"big_bid_cluster_20t_t2\",\n";
     meta << "    \"big_ask_cluster_20t_t3\",\"big_bid_cluster_20t_t3\",\n";
     meta << "    \"big_ask_cluster_20t_t4\",\"big_bid_cluster_20t_t4\",\n";
+    // Schema 3.7.3 — Cluster Volume via VAP (+4 champs)
+    meta << "    \"dist_cluster_nearest_up\",\"dist_cluster_nearest_dn\",\n";
+    meta << "    \"n_clusters_20t\",\"n_clusters_50t\",\n";
     // G7B Bar Signals + Extension Lines (16 champs) — BUG #8
     meta << "    \"bar_color_up\",\"bar_color_dn\",\"bar_long_up_bar\",\"bar_long_dn_bar\",\n";
     meta << "    \"bar_long_dn_up\",\"bar_long_up_dn\",\"bar_edge_buy\",\"bar_edge_sell\",\n";
@@ -884,6 +887,12 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
     DMP_WR_KV(buf, pos, "big_bid_cluster_20t_t3", f.big_bid_cluster_20t_t3);DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "big_ask_cluster_20t_t4", f.big_ask_cluster_20t_t4);DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "big_bid_cluster_20t_t4", f.big_bid_cluster_20t_t4);DMP_WR_COMMA(buf, pos);
+
+    // ── Schema 3.7.3 — Cluster Volume via VAP (+4 champs) ────────────────────
+    DMP_WR_KV(buf, pos, "dist_cluster_nearest_up", f.dist_cluster_nearest_up); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf, pos, "dist_cluster_nearest_dn", f.dist_cluster_nearest_dn); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf, pos, "n_clusters_20t",          f.n_clusters_20t);          DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf, pos, "n_clusters_50t",          f.n_clusters_50t);          DMP_WR_COMMA(buf, pos);
 
     // ── G7B Bar Signals + Extension Lines (16 champs) — BUG #8 ──────────────
     DMP_WR_KVB(buf, pos, "bar_color_up",       f.bar_color_up);       DMP_WR_COMMA(buf, pos);

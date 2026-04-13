@@ -42,7 +42,7 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 // ── Version du schéma JSONL ───────────────────────────────────────────────────
 // Incrémenté à chaque ajout/suppression de colonne pour détecter les incompatibilités
 // entre fichiers .jsonl collectés à des périodes différentes.
-#define DMP_SCHEMA_VERSION "3.7.2"   // G3-Unifier — 262 colonnes
+#define DMP_SCHEMA_VERSION "3.7.3"   // G3-Unifier — 266 colonnes
 // 3.3.0: BN sg2→sg0 (color/absorb/long per-bar) + 6 colonnes big order cluster
 // 3.4.0: +8 colonnes range trading (range_pos, momentum, touches, bars_in_va)
 // 3.5.0: Big Orders par seuil (n_big_ask/bid → n_big_ask/bid_t1..t4) +6 cols
@@ -57,6 +57,11 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 //        Nécessaire pour labeling TP/SL exact dans le pipeline ML
 // 3.7.2: +2 VWAP SD3 (dist_vwap_d_sd3u, dist_vwap_d_sd3d) — 28/03/2026
 //        sg5/sg6 Chart 26/27 (confirmé chart JSON scan 28/03/2026)
+// 3.7.3: +4 Cluster Volume features — 13/04/2026
+//        dist_cluster_nearest_up, dist_cluster_nearest_dn, n_clusters_20t, n_clusters_50t
+//        Lecture directe VAP cells (seuil total volume ES=500 / NQ=50) via
+//        DMP_ReadVolumeClustersFromVAP (pattern identique a DMP_ReadBigOrdersFromVAP).
+//        Remplace l'ancien code DMP_ReadRotation::cluster_prices (bug 26 jours).
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FIN DMP_Config.h

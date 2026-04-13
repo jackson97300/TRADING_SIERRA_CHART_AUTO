@@ -387,8 +387,11 @@ struct DMP_RawData {
     float rotation_zz_osc;              // sg8  — ZigZag Oscillateur
     float rotation_up_signal;           // ROTATION_UP sg0  — Signal rotation haussière
     float rotation_dn_signal;           // ROTATION_DN sg0  — Signal rotation baissière
-    float cluster_prices[10];            // CLUSTER sg0..9 — 10 prix cluster (0=inactif)
-                                         // BUG #11 : étendu de 2 à 10 + ajout NQ (05/03/2026)
+    // FIX 13/04/2026 : array etendu 10 → 20, lecture via DMP_ReadVolumeClustersFromVAP
+    // (scan direct VAP cells, seuil total volume ES=500 / NQ=50, tri par distance
+    // au prix courant). Remplace l'ancien code buggy qui scannait les subgraphs
+    // de l'etude Cluster Volume (meme bug que big orders — 26 jours de code mort).
+    float cluster_prices[20];            // 20 prix clusters les plus proches du prix courant
 
     // ─────────────────────────────────────────────────────────────────────────
     // C. SIGNAUX BATAILLE NAVALE
@@ -1124,24 +1127,11 @@ inline void DMP_ReadRotation(SCStudyInterfaceRef sc, DMP_RawData& d) {
     d.rotation_up_signal = DMP_ReadBN_SumOfAlerts(sc, chart, rup_id);
     d.rotation_dn_signal = DMP_ReadBN_SumOfAlerts(sc, chart, rdn_id);
 
-    // Cluster Volume — BUG #11 : ajout NQ (ID:12) + étendu à 10 niveaux (05/03/2026)
-    // Même pattern que Big Orders : sg0-59 = prix triggers, arr[size-1] = état courant
-    {
-        const int cluster_id = d.is_nq ? DMP_Studies::NQ_FP::CLUSTER : DMP_Studies::ES_FP::CLUSTER;
-        const float min_price = d.is_nq ? 15000.0f : 5000.0f;
-        int count = 0;
-        for (int sg = 0; sg <= 59 && count < 10; sg++) {
-            SCFloatArray arr;
-            sc.GetStudyArrayFromChartUsingID(chart, cluster_id, sg, arr);
-            int sz = (int)arr.GetArraySize();
-            if (sz > 0) {
-                float v = arr[sz - 1];
-                if (std::isfinite(v) && v > min_price)
-                    d.cluster_prices[count++] = v;
-            }
-        }
-        for (int i = count; i < 10; i++) d.cluster_prices[i] = DMP_INVALID;
-    }
+    // FIX 13/04/2026 : l'ancien code scannait sg0-59 de l'etude Cluster Volume
+    // avec la meme approche buggy que les Big Orders. Bug 26 jours : d.cluster_prices
+    // etait quasi-vide et JAMAIS utilise dans DMP_Transform.h. Code mort supprime.
+    // Remplace par DMP_ReadVolumeClustersFromVAP appele dans DMP_ReadBN_Footprint
+    // avec seuil total volume ES=500 / NQ=50 (config SC screenshot 13/04/2026).
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1359,6 +1349,100 @@ inline void DMP_ReadBigOrdersFromVAP(
     }
 }
 
+// ⭐ FIX 13/04/2026 — Lecture Cluster Volume via VAP direct (schema 3.7.3)
+// ─────────────────────────────────────────────────────────────────────────────
+// Reproduit la logique de l'etude Sierra Chart "Volume At Price Threshold Alert V2"
+// configuree en Comparison Method = "Total Volume" (seuils ES=500 / NQ=50).
+// L'etude colorie les cellules VAP quand v->Volume >= threshold. On reproduit
+// ca directement en C++ via sc.VolumeAtPriceForBars, sans dependance a l'etude.
+//
+// Meme pattern que DMP_ReadBigOrdersFromVAP mais avec v->Volume (total) au lieu
+// de v->AskVolume / v->BidVolume separes. Pas de distinction ask/bid : un cluster
+// volume est une zone d'interet institutionnelle generale (stop/target niveau).
+//
+// Usage trader (Jackson 13/04) : "me permet de mettre mon stop ou de tenir un
+// trade plus longtemps". Signal de support/resistance solide.
+//
+// Parametres :
+//   threshold    : seuil total volume par cellule (500 ES / 50 NQ)
+//   ref_price    : prix courant pour tri par distance
+//   out[20]      : 20 prix clusters les plus proches, dedup stricte
+inline void DMP_ReadVolumeClustersFromVAP(
+    SCStudyInterfaceRef sc,
+    float threshold,
+    int n_bars_lookback,
+    float min_price, float tick_size,
+    float ref_price,
+    float* cluster_out)
+{
+    constexpr int BUF = 20;
+
+    for (int i = 0; i < BUF; i++) cluster_out[i] = DMP_INVALID;
+
+    if (!sc.VolumeAtPriceForBars) return;
+    if (tick_size <= 0.0f) tick_size = 0.25f;
+    if (!std::isfinite(ref_price) || ref_price <= 0.0f) return;
+
+    float cluster_dist[BUF];
+    int   cluster_count = 0;
+    int   cluster_max_idx = 0;
+    float cluster_max_dist = 0.0f;
+
+    const int bar_end = sc.Index;
+    const int bar_start = (bar_end - n_bars_lookback + 1 > 0)
+                          ? (bar_end - n_bars_lookback + 1) : 0;
+
+    for (int bar = bar_end; bar >= bar_start; bar--) {
+        const int n_levels = sc.VolumeAtPriceForBars->GetSizeAtBarIndex(bar);
+        if (n_levels <= 0) continue;
+
+        for (int k = 0; k < n_levels; k++) {
+            const s_VolumeAtPriceV2* v = nullptr;
+            if (!sc.VolumeAtPriceForBars->GetVAPElementAtIndex(bar, k, &v) || !v)
+                continue;
+            if (v->Volume == 0) continue;
+
+            if ((float)v->Volume < threshold) continue;  // filtre cluster
+
+            const float price = (float)v->PriceInTicks * tick_size;
+            if (!std::isfinite(price) || price <= min_price) continue;
+
+            const float d = std::fabs(price - ref_price);
+
+            // Dedup par prix (tolerance 0.5 tick)
+            bool dup = false;
+            for (int i = 0; i < cluster_count; i++) {
+                if (std::fabs(cluster_out[i] - price) < tick_size * 0.5f) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup) continue;
+
+            if (cluster_count < BUF) {
+                cluster_out[cluster_count] = price;
+                cluster_dist[cluster_count] = d;
+                if (d > cluster_max_dist) {
+                    cluster_max_dist = d;
+                    cluster_max_idx = cluster_count;
+                }
+                cluster_count++;
+            } else if (d < cluster_max_dist) {
+                cluster_out[cluster_max_idx] = price;
+                cluster_dist[cluster_max_idx] = d;
+                cluster_max_dist = 0.0f;
+                cluster_max_idx = 0;
+                for (int i = 0; i < BUF; i++) {
+                    if (cluster_dist[i] > cluster_max_dist) {
+                        cluster_max_dist = cluster_dist[i];
+                        cluster_max_idx = i;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Helper: lit sg0 (Trigger per-bar) — retourne prix si condition fire, 0 sinon.
 // Différent de DMP_ReadBN_SumOfAlerts qui lit sg2 (compteur cumulatif).
 // sg0 avec arr[size-1] = état courant de la dernière barre du chart source.
@@ -1526,6 +1610,14 @@ inline void DMP_ReadBNSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
                 1000.0f, 1000.0f, LOOKBACK_BARS, min_price, ts, ref_price,
                 d.bn_ask_extra3, d.bn_bid_extra3);
         }
+
+        // ⭐ SCHEMA 3.7.3 (13/04/2026) — Cluster Volume via VAP direct
+        // Seuil total volume ES=500 / NQ=50 (config SC "Volume At Price Threshold
+        // Alert V2" Comparison Method = Total Volume). Utilise pour stop/target.
+        const float cluster_threshold = d.is_nq ? 50.0f : 500.0f;
+        DMP_ReadVolumeClustersFromVAP(sc,
+            cluster_threshold, LOOKBACK_BARS, min_price, ts, ref_price,
+            d.cluster_prices);
     }
 }
 
@@ -2017,16 +2109,16 @@ inline void DMP_ReadAll(SCStudyInterfaceRef sc, DMP_RawData& d, bool is_nq) {
     d.fpbs_diag_pos_delta = d.fpbs_diag_neg_delta = DMP_INVALID;
     d.fpbs_low_bid_pct = d.fpbs_high_ask_pct = DMP_INVALID;
     d.rotation_value = d.rotation_zz_mid = d.rotation_zz_osc = DMP_INVALID;
-    for (int i = 0; i < 10; i++) d.cluster_prices[i] = DMP_INVALID;
     for (int i = 0; i < 10; i++) {
         d.mq_gex[i] = d.mq_blind[i] = DMP_INVALID;
     }
-    // Big Orders arrays etendus a 20 slots (fix 13/04/2026)
+    // Big Orders + Cluster Volume arrays etendus a 20 slots (fix 13/04/2026)
     for (int i = 0; i < 20; i++) {
         d.bn_ask100[i] = d.bn_bid100[i] = DMP_INVALID;
         d.bn_ask_extra1[i] = d.bn_bid_extra1[i] = DMP_INVALID;
         d.bn_ask_extra2[i] = d.bn_bid_extra2[i] = DMP_INVALID;
         d.bn_ask_extra3[i] = d.bn_bid_extra3[i] = DMP_INVALID;
+        d.cluster_prices[i] = DMP_INVALID;  // schema 3.7.3
     }
     // Booléens BN → 0 (BOOL_FALSE) — laissés à 0 par memset, correct.
 
