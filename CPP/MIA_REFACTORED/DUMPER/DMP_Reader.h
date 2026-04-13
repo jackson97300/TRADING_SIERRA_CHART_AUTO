@@ -1161,6 +1161,12 @@ inline void DMP_ReadRotation(SCStudyInterfaceRef sc, DMP_RawData& d) {
 
 // Helper : lit un seuil Big Orders (sg0-46, arr[size-1]) dans des tableaux de 10 prix.
 // Utilisé pour lire +10/+30/+100 (NQ) et +100/+150/+400/+1000 (ES).
+//
+// ⚠️ DEPRECATED 13/04/2026 : cette fonction scanne les subgraphs sg0-46 mais ceux-ci
+// ne contiennent PAS les prix des triggers big orders (ils contiennent seulement
+// sg0=Trigger pulse 1 barre + sg1-58=Highlight visual props). Résultat : 99% des
+// barres remontent 0. Utiliser DMP_ReadBigOrderThresholdViaExtLines à la place.
+// Conservée pour référence, mais ne plus appeler.
 inline void DMP_ReadBigOrderThreshold(
     SCStudyInterfaceRef sc, int chart,
     int ask_study, int bid_study, float min_price,
@@ -1189,6 +1195,140 @@ inline void DMP_ReadBigOrderThreshold(
     }
     for (int i = ac; i < 10; i++) ask_out[i] = DMP_INVALID;
     for (int i = bc; i < 10; i++) bid_out[i] = DMP_INVALID;
+}
+
+// ⚠️ DEPRECATED 13/04/2026 (tentative 1) — NE FONCTIONNE PAS.
+// Les etudes "Volume At Price Threshold Alert V2" ne dessinent PAS des lignes
+// d'extension avec AddLineUntilFutureIntersection. Elles coloriient les cellules
+// VolumeAtPrice (VAP) directement dans le footprint quand AskVolume/BidVolume
+// depasse un seuil. Cette fonction retourne systematiquement 0.
+// Conservee pour reference. Ne plus appeler.
+inline void DMP_ReadBigOrderThresholdViaExtLines(
+    SCStudyInterfaceRef sc, int chart,
+    int ask_study, int bid_study, float min_price,
+    float* ask_out, float* bid_out)
+{
+    int ac = 0, bc = 0;
+
+    if (ask_study >= 0) {
+        int n_ask = sc.GetNumLinesUntilFutureIntersection(chart, ask_study);
+        for (int i = 0; i < n_ask && ac < 10; i++) {
+            int32_t lineID = 0, startIndex = 0, endIndex = 0;
+            float lineValue = 0.0f;
+            if (sc.GetStudyLineUntilFutureIntersectionByIndex(chart, ask_study, i,
+                    lineID, startIndex, lineValue, endIndex) == 0)
+                continue;
+            if (std::isfinite(lineValue) && lineValue > min_price)
+                ask_out[ac++] = lineValue;
+        }
+    }
+    if (bid_study >= 0) {
+        int n_bid = sc.GetNumLinesUntilFutureIntersection(chart, bid_study);
+        for (int i = 0; i < n_bid && bc < 10; i++) {
+            int32_t lineID = 0, startIndex = 0, endIndex = 0;
+            float lineValue = 0.0f;
+            if (sc.GetStudyLineUntilFutureIntersectionByIndex(chart, bid_study, i,
+                    lineID, startIndex, lineValue, endIndex) == 0)
+                continue;
+            if (std::isfinite(lineValue) && lineValue > min_price)
+                bid_out[bc++] = lineValue;
+        }
+    }
+    for (int i = ac; i < 10; i++) ask_out[i] = DMP_INVALID;
+    for (int i = bc; i < 10; i++) bid_out[i] = DMP_INVALID;
+}
+
+// ⭐ FIX 13/04/2026 (tentative 2) — Lecture Big Orders directement via VAP cells
+// ─────────────────────────────────────────────────────────────────────────────
+// Les etudes "Volume At Price Threshold Alert V2" colorient les cellules du
+// footprint quand AskVolume ou BidVolume depasse un seuil. On reproduit la meme
+// logique en C++ en scannant directement sc.VolumeAtPriceForBars, sans aucune
+// dependance aux etudes SC.
+//
+// Avantages :
+//   - Pas de dependance a GetNumLinesUntilFutureIntersection (qui ne fonctionne
+//     pas pour cette famille d'etude)
+//   - Pas besoin de l'option "Draw Extension Lines" dans SC
+//   - Seuils hardcodes dans le C++ (coherent avec la config SC)
+//   - Fonctionne tant que VolumeAtPriceForBars est actif (deja le cas pour FPBS)
+//
+// Algo :
+//   1. Scanner les n_bars_lookback dernieres barres (de la plus recente vers la plus ancienne)
+//   2. Pour chaque cellule VAP : si AskVolume >= ask_threshold → big ask a ce prix
+//   3. Eviter les doublons de prix (une meme cellule peut etre big sur plusieurs barres)
+//   4. Collecter jusqu'a 10 prix par cote, filtrer par min_price
+//
+// Utilise par DMP_ReadBN_Footprint pour les 7 seuils (ES: 100/150/400/1000, NQ: 10/30/100).
+inline void DMP_ReadBigOrdersFromVAP(
+    SCStudyInterfaceRef sc,
+    float ask_threshold, float bid_threshold,
+    int n_bars_lookback,
+    float min_price, float tick_size,
+    float* ask_out, float* bid_out)
+{
+    // Init OUT
+    for (int i = 0; i < 10; i++) {
+        ask_out[i] = DMP_INVALID;
+        bid_out[i] = DMP_INVALID;
+    }
+
+    if (!sc.VolumeAtPriceForBars) return;
+    if (tick_size <= 0.0f) tick_size = 0.25f;
+
+    int ac = 0, bc = 0;
+    // Tracker pour dedupliquer les prix (une meme cellule peut etre vue plusieurs fois)
+    float seen_ask[10] = {0};
+    float seen_bid[10] = {0};
+
+    const int bar_end = sc.Index;
+    const int bar_start = (bar_end - n_bars_lookback + 1 > 0)
+                          ? (bar_end - n_bars_lookback + 1) : 0;
+
+    // Scan des plus recentes vers les plus anciennes (priorite aux recents)
+    for (int bar = bar_end; bar >= bar_start && (ac < 10 || bc < 10); bar--) {
+        const int n_levels = sc.VolumeAtPriceForBars->GetSizeAtBarIndex(bar);
+        if (n_levels <= 0) continue;
+
+        for (int k = 0; k < n_levels && (ac < 10 || bc < 10); k++) {
+            const s_VolumeAtPriceV2* v = nullptr;
+            if (!sc.VolumeAtPriceForBars->GetVAPElementAtIndex(bar, k, &v) || !v)
+                continue;
+            if (v->Volume == 0) continue;
+
+            const float price = (float)v->PriceInTicks * tick_size;
+            if (!std::isfinite(price) || price <= min_price) continue;
+
+            // ── BIG ASK ORDER ──────────────────────────────────
+            if (ac < 10 && (float)v->AskVolume >= ask_threshold) {
+                bool dup = false;
+                for (int i = 0; i < ac; i++) {
+                    if (std::fabs(seen_ask[i] - price) < tick_size * 0.5f) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) {
+                    seen_ask[ac] = price;
+                    ask_out[ac++] = price;
+                }
+            }
+
+            // ── BIG BID ORDER ──────────────────────────────────
+            if (bc < 10 && (float)v->BidVolume >= bid_threshold) {
+                bool dup = false;
+                for (int i = 0; i < bc; i++) {
+                    if (std::fabs(seen_bid[i] - price) < tick_size * 0.5f) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup) {
+                    seen_bid[bc] = price;
+                    bid_out[bc++] = price;
+                }
+            }
+        }
+    }
 }
 
 // Helper: lit sg0 (Trigger per-bar) — retourne prix si condition fire, 0 sinon.
@@ -1313,36 +1453,49 @@ inline void DMP_ReadBNSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
     }
 
     // Big Orders — TOUS LES SEUILS (BUG #9 : +10/+30/+100 NQ, +100/+150/+400/+1000 ES)
-    // ⚠️ FIX 04/03/2026 BUG #1 : sg0-46, arr[size-1] (même méthode que ancien BN_ReadTriggerPrices)
-    // ⚠️ FIX 05/03/2026 BUG #9 : ajout TOUS les seuils — seul +100 était lu, +10/+30 ignorés
+    // ⚠️ FIX 04/03/2026 BUG #1 : sg0-46, arr[size-1] (ne marche pas, DEPRECATED)
+    // ⚠️ FIX 05/03/2026 BUG #9 : ajout TOUS les seuils — seul +100 était lu (DEPRECATED)
+    // ⚠️ FIX 13/04/2026 tentative 1 : Extension Lines — NE FONCTIONNE PAS
+    //    (les etudes Volume At Price Threshold Alert V2 n'utilisent pas AddLine).
+    // ⭐ FIX 13/04/2026 tentative 2 : scan direct des VAP cells.
+    //    Les etudes colorient les cellules VolumeAtPrice quand Ask/Bid depasse un
+    //    seuil. On reproduit la meme logique en C++ directement via
+    //    sc.VolumeAtPriceForBars, sans aucune dependance aux etudes SC.
+    //    Seuils hardcodes : ES=100/150/400/1000 | NQ=10/30/100.
+    //    Lookback : 60 barres (= 1 heure sur chart 1min).
+    //    Cf. helper DMP_ReadBigOrdersFromVAP.
     {
         const float min_price = d.is_nq ? 15000.0f : 5000.0f;
+        const float ts        = d.tick_size > 0.0f ? d.tick_size : 0.25f;
+        constexpr int LOOKBACK_BARS = 60;
 
         // Seuil principal : +100 (les deux symboles)
-        DMP_ReadBigOrderThreshold(sc, chart,
-            d.is_nq ? DMP_Studies::NQ_FP::ASK_100 : DMP_Studies::ES_FP::ASK_100,
-            d.is_nq ? DMP_Studies::NQ_FP::BID_100 : DMP_Studies::ES_FP::BID_100,
-            min_price, d.bn_ask100, d.bn_bid100);
+        DMP_ReadBigOrdersFromVAP(sc,
+            100.0f, 100.0f, LOOKBACK_BARS, min_price, ts,
+            d.bn_ask100, d.bn_bid100);
 
-        // Seuils supplémentaires — NQ: +10, +30 | ES: +150, +400, +1000
+        // Seuils supplementaires — NQ: +10, +30 | ES: +150, +400, +1000
         if (d.is_nq) {
-            DMP_ReadBigOrderThreshold(sc, chart,
-                DMP_Studies::NQ_FP::ASK_10, DMP_Studies::NQ_FP::BID_10,
-                min_price, d.bn_ask_extra1, d.bn_bid_extra1);
-            DMP_ReadBigOrderThreshold(sc, chart,
-                DMP_Studies::NQ_FP::ASK_30, DMP_Studies::NQ_FP::BID_30,
-                min_price, d.bn_ask_extra2, d.bn_bid_extra2);
-            for (int i = 0; i < 10; i++) { d.bn_ask_extra3[i] = DMP_INVALID; d.bn_bid_extra3[i] = DMP_INVALID; }
+            DMP_ReadBigOrdersFromVAP(sc,
+                10.0f, 10.0f, LOOKBACK_BARS, min_price, ts,
+                d.bn_ask_extra1, d.bn_bid_extra1);
+            DMP_ReadBigOrdersFromVAP(sc,
+                30.0f, 30.0f, LOOKBACK_BARS, min_price, ts,
+                d.bn_ask_extra2, d.bn_bid_extra2);
+            for (int i = 0; i < 10; i++) {
+                d.bn_ask_extra3[i] = DMP_INVALID;
+                d.bn_bid_extra3[i] = DMP_INVALID;
+            }
         } else {
-            DMP_ReadBigOrderThreshold(sc, chart,
-                DMP_Studies::ES_FP::ASK_150, DMP_Studies::ES_FP::BID_150,
-                min_price, d.bn_ask_extra1, d.bn_bid_extra1);
-            DMP_ReadBigOrderThreshold(sc, chart,
-                DMP_Studies::ES_FP::ASK_400, DMP_Studies::ES_FP::BID_400,
-                min_price, d.bn_ask_extra2, d.bn_bid_extra2);
-            DMP_ReadBigOrderThreshold(sc, chart,
-                DMP_Studies::ES_FP::ASK_1000, DMP_Studies::ES_FP::BID_1000,
-                min_price, d.bn_ask_extra3, d.bn_bid_extra3);
+            DMP_ReadBigOrdersFromVAP(sc,
+                150.0f, 150.0f, LOOKBACK_BARS, min_price, ts,
+                d.bn_ask_extra1, d.bn_bid_extra1);
+            DMP_ReadBigOrdersFromVAP(sc,
+                400.0f, 400.0f, LOOKBACK_BARS, min_price, ts,
+                d.bn_ask_extra2, d.bn_bid_extra2);
+            DMP_ReadBigOrdersFromVAP(sc,
+                1000.0f, 1000.0f, LOOKBACK_BARS, min_price, ts,
+                d.bn_ask_extra3, d.bn_bid_extra3);
         }
     }
 }
