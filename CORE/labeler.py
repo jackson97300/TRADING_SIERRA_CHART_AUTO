@@ -958,9 +958,31 @@ def run_all(symbol: str = "ES", cfg: LabelConfig = None):
         if df.empty:
             print(f"  [SKIP] Fichier vide.")
             continue
-        if len(df) < 50:
-            print(f"  [SKIP] Jour incomplet ({len(df)} barres < 50) — weekend ou partiel.")
+
+        # ── Weekend filter solide (triple protection) ────────────────────
+        # Fix 13/04/2026 : l'ancien filtre `len(df) < 50` etait fragile
+        # (un fichier weekend avec >= 50 barres buggees passerait). On
+        # ajoute un check calendaire explicite + un check session US.
+        try:
+            date_obj = datetime.strptime(date_str, "%Y%m%d")
+            dow = date_obj.weekday()  # 0=Mon, 5=Sat, 6=Sun
+            if dow >= 5:
+                print(f"  [SKIP] Weekend ({date_obj.strftime('%A')}) — jour non-trading")
+                continue
+        except ValueError:
+            print(f"  [SKIP] date_str invalide : {date_str}")
             continue
+
+        if len(df) < 50:
+            print(f"  [SKIP] Jour incomplet ({len(df)} barres < 50) — probable jour ferie/halt")
+            continue
+
+        # Session US trop courte = Good Friday, halts, sessions partielles
+        if "session_id" in df.columns:
+            n_us = int((df["session_id"] == "US").sum())
+            if n_us < 100:
+                print(f"  [SKIP] Session US trop courte ({n_us} barres) — ferie/halt probable")
+                continue
 
         n_total = len(df)
         n_us    = (df["session_id"] == "US").sum() if "session_id" in df.columns else 0

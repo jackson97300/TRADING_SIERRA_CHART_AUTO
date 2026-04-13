@@ -344,12 +344,21 @@ class DatasetBuilder:
         return df
 
     def _compute_menthorq(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
-        """Enrichit avec les features macro MenthorQ (Q-Score, GEX, Swing, etc.)."""
+        """Enrichit avec les features macro MenthorQ (Q-Score, GEX, Swing, etc.).
+
+        FIX 13/04/2026 : le chemin MENTHORQ etait calcule a l'envers (parent au
+        lieu de child), ce qui instanciait MenthorQReader avec un dossier
+        inexistant → pas d'exception mais aucune feature mq_* ajoutee (casse
+        silencieuse). Impact : 37 features mq_* absentes du dataset V2 depuis
+        le refactor qui a introduit ce bug.
+        """
         try:
             from mia_menthorq_reader import MenthorQReader
-            mq_path = self.data_path.parent / "MENTHORQ"
+            # DATA/MENTHORQ (meme niveau que DATA/ES et DATA/NQ)
+            mq_path = self.data_path / "MENTHORQ"
             if not mq_path.exists():
-                mq_path = self.data_path / ".." / "MENTHORQ"
+                # Fallback ancien setup : MENTHORQ a cote de DATA (parent)
+                mq_path = self.data_path.parent / "MENTHORQ"
             mq = MenthorQReader(str(mq_path))
 
             # Extraire les dates uniques depuis les timestamps
