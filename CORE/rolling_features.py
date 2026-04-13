@@ -29,7 +29,7 @@ from typing import Optional
 
 
 class RollingFeatures:
-    """Calcule 26 features derivees sur fenetres glissantes."""
+    """Calcule 44 features derivees sur fenetres glissantes."""
 
     def __init__(self, short: int = 3, mid: int = 5, long: int = 10):
         """
@@ -373,9 +373,14 @@ class RollingFeatures:
         #
         #     Sera remplacé par la vraie valeur C++ (PersistentFloat)
         #     quand le patch DMP_Main.cpp est appliqué.
-        if "dist_sess_high" in df.columns:
-            near_high = (df["dist_sess_high"].abs() < 5).astype(float)
-            # Cumul glissant sur 30 barres (approximation session)
+        # FIX 13/04/2026 : seuil hardcode "< 5 ticks" remplace par "/atr < 0.04".
+        # 5 ticks sur ES atr=132 = 0.038 ratio (intention originale).
+        # Sur NQ atr=571, 5 ticks etait ~0.009 → seuil trop strict → feature
+        # quasi-constante a 0.997 sur NQ (bug detecte par quality_validator).
+        # 0.04 donne ~5 ticks ES et ~23 ticks NQ, coherent avec "prix colle au high".
+        if "dist_sess_high" in df.columns and "atr" in df.columns:
+            atr_safe = pd.to_numeric(df["atr"], errors="coerce").replace(0, np.nan)
+            near_high = (df["dist_sess_high"].abs() / atr_safe < 0.04).astype(float)
             df["ctx_excess_high_bars"] = near_high.rolling(
                 60, min_periods=10
             ).sum()
@@ -384,8 +389,9 @@ class RollingFeatures:
             df["ctx_excess_high_bars"] = np.nan
             df["ctx_poor_high"] = 0.0
 
-        if "dist_sess_low" in df.columns:
-            near_low = (df["dist_sess_low"].abs() < 5).astype(float)
+        if "dist_sess_low" in df.columns and "atr" in df.columns:
+            atr_safe = pd.to_numeric(df["atr"], errors="coerce").replace(0, np.nan)
+            near_low = (df["dist_sess_low"].abs() / atr_safe < 0.04).astype(float)
             df["ctx_excess_low_bars"] = near_low.rolling(
                 60, min_periods=10
             ).sum()
@@ -393,6 +399,159 @@ class RollingFeatures:
         else:
             df["ctx_excess_low_bars"] = np.nan
             df["ctx_poor_low"] = 0.0
+
+        # FIX 13/04/2026 : bool_near_level reconstruit en Python
+        # L'original C++ utilisait des seuils PROXIMITY_ES=20, PROXIMITY_NQ=30
+        # mal calibres (ratio 2.3x ES/NQ dans quality_validator).
+        # Formule : min(|dist_vwap_d|, |dist_ib_high|, |dist_sess_high|,
+        #              |dist_swing_high|) / atr < 0.06
+        # 0.06 * atr = ~8 ticks ES, ~34 ticks NQ. Cohérent "zone serree niveau".
+        # Attention : dist_vwap_d est en POINTS (decimales), convertir en ticks.
+        dist_cols_points = {"dist_vwap_d", "dist_vwap_m"}  # POINTS → /0.25
+        dist_cols_all = ["dist_vwap_d", "dist_ib_high", "dist_sess_high", "dist_swing_high"]
+        dist_present = [c for c in dist_cols_all if c in df.columns]
+        if dist_present and "atr" in df.columns:
+            atr_safe = pd.to_numeric(df["atr"], errors="coerce").replace(0, np.nan)
+            abs_ticks = pd.DataFrame(index=df.index)
+            for c in dist_present:
+                v = pd.to_numeric(df[c], errors="coerce").abs()
+                if c in dist_cols_points:
+                    v = v / 0.25  # POINTS → TICKS
+                abs_ticks[c] = v
+            min_dist = abs_ticks.min(axis=1)
+            df["bool_near_level"] = (min_dist / atr_safe < 0.06).astype(float)
+        # else : bool_near_level garde sa valeur C++ (d.bool_near_level de DMP_Transform)
+
+        # ─── DELTA DIVERGENCE (07/04/2026) ───────────────────────────
+        # Extension Lines from Sierra Chart — persistent until price intersection
+        # delta_divergence: +1 = bullish div active, -1 = bearish, 0 = none
+
+        if "delta_divergence" in df.columns:
+            dd = df["delta_divergence"].fillna(0)
+
+            # 33. Barres depuis la derniere divergence (recence)
+            #     Plus c'est recent, plus c'est actionnable
+            #     NaN si aucune divergence dans la session
+            div_fired = (dd != 0).astype(int)
+            cumfire = div_fired.cumsum()
+            last_fire_idx = cumfire.where(div_fired == 1).ffill()
+            df["ctx_bars_since_div"] = cumfire - last_fire_idx
+            df.loc[last_fire_idx.isna(), "ctx_bars_since_div"] = np.nan
+
+            # 34. Nombre de divergences actives sur 20 barres (densite)
+            #     Beaucoup = zone de forte divergence, signal renforce
+            df["ctx_div_density_20"] = div_fired.rolling(
+                20, min_periods=1
+            ).sum()
+
+            # 35. Confluence divergence + niveau cle (swing ou IB)
+            #     Divergence qui fire pres d'un swing high/low = setup classique
+            #     +1 = div buy pres du swing low, -1 = div sell pres du swing high
+            near_swing_low = (df.get("dist_swing_low", pd.Series(np.nan, index=df.index))
+                              .abs().fillna(999) < 15)
+            near_swing_high = (df.get("dist_swing_high", pd.Series(np.nan, index=df.index))
+                               .abs().fillna(999) < 15)
+            df["ctx_div_at_swing"] = np.where(
+                (dd == 1) & near_swing_low, 1.0,
+                np.where(
+                    (dd == -1) & near_swing_high, -1.0,
+                    0.0
+                )
+            )
+        else:
+            df["ctx_bars_since_div"] = np.nan
+            df["ctx_div_density_20"] = 0.0
+            df["ctx_div_at_swing"] = 0.0
+
+        # ─── TRAPPED TRADERS (2) ────────────────────────────────────
+
+        # 39. Double top/bottom trap — signal piege directionnel
+        #     Retest d'un swing avec divergence delta + confirmation macro
+        #     Edge mesure : +10.4t SELL (double top), +7t BUY (double bottom)
+        if all(c in df.columns for c in ["retest_high_delta_div", "bars_since_retest_high",
+                                          "retest_low_delta_div", "bars_since_retest_low",
+                                          "cvd_day_dir", "diag_imbalance"]):
+            rhdv = pd.to_numeric(df["retest_high_delta_div"], errors="coerce").fillna(0)
+            bsrh = pd.to_numeric(df["bars_since_retest_high"], errors="coerce").fillna(999)
+            rldv = pd.to_numeric(df["retest_low_delta_div"], errors="coerce").fillna(0)
+            bsrl = pd.to_numeric(df["bars_since_retest_low"], errors="coerce").fillna(999)
+            cvd_dir = pd.to_numeric(df["cvd_day_dir"], errors="coerce").fillna(0)
+            diag = pd.to_numeric(df["diag_imbalance"], errors="coerce").fillna(0)
+
+            dt_bear = (rhdv == 1) & (bsrh <= 5) & ((cvd_dir == -1) | (diag < 0))
+            dt_bull = (rldv == 1) & (bsrl <= 5) & ((cvd_dir == 1) | (diag > 0))
+            df["ctx_double_top_trap"] = np.where(dt_bear, -1, np.where(dt_bull, 1, 0)).astype(float)
+        else:
+            df["ctx_double_top_trap"] = 0.0
+
+        # 40. Momentum exhaustion — vendeurs/acheteurs pieges par epuisement
+        #     Mouvement fort suivi d'un rejet contradictoire intra-barre
+        #     Edge mesure : +7.0t BUY (bear exhaust, WR=65%)
+        if "momentum_5b" in df.columns and "finish_strength" in df.columns:
+            mom = pd.to_numeric(df["momentum_5b"], errors="coerce").fillna(0)
+            finish = pd.to_numeric(df["finish_strength"], errors="coerce").fillna(0)
+            bear_exhaust = (mom < -8) & (finish > 10)   # vendeurs pieges -> BUY
+            bull_exhaust = (mom > 8) & (finish < -10)    # acheteurs pieges -> SELL
+            df["ctx_momentum_exhaustion"] = np.where(
+                bear_exhaust, 1.0, np.where(bull_exhaust, -1.0, 0.0)
+            )
+        else:
+            df["ctx_momentum_exhaustion"] = 0.0
+
+        # ─── SESSION-SPECIFIC FEATURES (3) ──────────────────────────
+
+        # 36. CVD session — cumul delta depuis le debut de la session courante
+        #     Reset a chaque changement de session (Asia→London→US)
+        if "session" in df.columns and "delta_bar" in df.columns:
+            session = pd.to_numeric(df["session"], errors="coerce").fillna(-1).astype(int)
+            delta = pd.to_numeric(df["delta_bar"], errors="coerce").fillna(0)
+            session_change = session.ne(session.shift()).astype(int)
+            groups = session_change.cumsum()
+            df["ctx_cvd_session"] = delta.groupby(groups).cumsum()
+        else:
+            df["ctx_cvd_session"] = 0.0
+
+        # 37. RVOL session — volume relatif normalise par session
+        #     Compare le volume courant a la moyenne rolling de la meme session
+        if "session" in df.columns and "total_vol" in df.columns:
+            session = pd.to_numeric(df["session"], errors="coerce").fillna(-1).astype(int)
+            vol = pd.to_numeric(df["total_vol"], errors="coerce").fillna(0)
+            session_change = session.ne(session.shift()).astype(int)
+            groups = session_change.cumsum()
+            # Moyenne rolling 30 barres dans la meme session
+            session_avg = vol.groupby(groups).transform(
+                lambda x: x.rolling(30, min_periods=5).mean()
+            )
+            df["ctx_rvol_session"] = np.where(
+                session_avg > 0, vol / session_avg, 1.0
+            )
+        else:
+            df["ctx_rvol_session"] = 1.0
+
+        # 38. Session phase — phase fine de la session
+        #     0=Asia, 1=Asia_Late, 2=London, 3=Pre_Open, 4=IB_Formation,
+        #     5=Mid_AM, 6=Afternoon, 7=Power_Hour
+        if "session" in df.columns and "ts" in df.columns:
+            ts = pd.to_numeric(df["ts"], errors="coerce")
+            session = pd.to_numeric(df["session"], errors="coerce").fillna(0).astype(int)
+            # Extraire l'heure ET depuis le timestamp
+            hour_et = ((ts / 1000) % 86400 / 3600).astype(int)  # approx
+            phase = np.zeros(len(df), dtype=int)
+            # Asia (session=0)
+            phase[session == 0] = 0
+            # Asia Late (session=0, apres minuit = barres tardives)
+            # London (session=1)
+            phase[session == 1] = 2
+            # US (session=2) — subdiviser par heure
+            us_mask = session == 2
+            phase[us_mask] = 4  # default IB_Formation
+            # Utiliser ib_complete pour detecter post-IB
+            if "ib_complete" in df.columns:
+                ib_done = pd.to_numeric(df["ib_complete"], errors="coerce").fillna(0)
+                phase[us_mask & (ib_done == 1)] = 5  # Mid_AM par defaut post-IB
+            df["ctx_session_phase"] = phase
+        else:
+            df["ctx_session_phase"] = 0
 
         return df
 

@@ -41,6 +41,100 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 1 SAVE-OR-DROP (13/04/2026) — Nettoyage des 57 red flags
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Implemente le plan valide par l'agent code-reviewer.
+# Regle souveraine V2 : qualite donnees > symetrie ES/NQ > screening Spearman.
+#
+# CATEGORIES :
+#   A) NORMALIZE /atr : 26 features converties en _atr (via TO_NORMALIZE)
+#   B) DROP cat B : 4 features remplacees par versions _atr deja en C++
+#   C) DROP permanents : 12 features META/absolus/mortes
+#   D) DROP temporaires : 28 big_*/cluster_* (reinject apres 3+ jours 3.7.3)
+#   E) FIX Python : ctx_poor_high + bool_near_level dans rolling_features.py
+#
+# Total : 57 red flags → 0 red flag attendu apres regeneration.
+# Dataset final estime : ~85-90 features propres (vs 129 polluees avant).
+
+TICK_SIZE = 0.25  # ES et NQ
+
+# Features stockees en POINTS (decimales) dans le JSONL C++, pas en ticks.
+# Important : ATR est en TICKS dans le JSONL → il faut convertir POINTS → TICKS
+# avant la division, sinon ratio 4x plus petit (bug).
+POINTS_FEATURES = {
+    "dist_vwap_d", "dist_vwap_d_sd1d", "dist_cur_vwap_vp",
+    # dist_vwap_m est drop (dist_vwap_m_atr existe en C++)
+}
+
+# Features a normaliser par ATR (26 features)
+# Note : bool_near_level et ctx_poor_high sont fixes directement dans
+# rolling_features.py (ratio /atr), pas ici.
+TO_NORMALIZE = [
+    # Priorite 1 (top V1)
+    "dist_swing_high", "swing_range_ticks",
+    "dist_ib_high", "dist_sess_high", "next_wall_dist_ticks",
+    "dist_cur_vpoc", "poc_separation_ticks",
+    # Priorite 2
+    "dist_comp_20d_vah", "dist_comp_50d_vah",
+    "dist_cur_val", "dist_cur_vwap_vp",   # POINTS
+    "dist_vwap_d_sd1d",                    # POINTS
+    "dist_gex_nearest_up",
+    "dist_session_hvn_above", "dist_session_lvn_above",
+    "dist_mq_call_0dte", "dist_mq_put",
+    "dist_ext_edge_buy", "dist_ext_long_up",
+    "mq_dist_1d_max", "mq_dist_1d_min",
+    "amd_asia_range_ticks", "amd_sweep_depth_ticks",
+    "ovn_range_ticks", "ctx_va_width", "poc_bar_dist",
+]
+
+# Features a DROP (ne passent JAMAIS dans le dataset final)
+PROHIBITED_FEATURES = {
+    # ── META (ne devraient pas etre features) ────────────────────────
+    "is_nq", "partial_session", "atr",
+
+    # ── Prix absolus (fuite temporelle/instrument) ───────────────────
+    "amd_asia_high", "amd_asia_low", "mq_top_gex_strike_1",
+
+    # ── Mortes ou quasi-constantes ───────────────────────────────────
+    "amd_sweep_up", "dist_vwap_d_sd3d", "ctx_momentum_exhaustion",
+    "mq_dist_put_sup",      # doublon dist_mq_put
+    "gex_cluster_count",    # seuil instrument-specifique
+    "retest_low_count",     # seuil ticks non normalise
+
+    # ── Bugs C++ backlog (a corriger plus tard) ──────────────────────
+    "fp_edge_buy", "fp_edge_sell",  # bug SG ACSIL ES
+    "bn_pressure_bid",               # NQ 99.7% constant a investiguer
+
+    # ── Versions ticks remplacees par versions _atr en C++ ───────────
+    "dist_vwap_d",        # utiliser dist_vwap_d_atr (C++)
+    "dist_vwap_m",        # utiliser dist_vwap_m_atr (C++)
+    "ib_range_ticks",     # utiliser ib_range_atr (C++)
+    "mq_dist_call_0dte",  # doublon de dist_mq_call_0dte normalise
+
+    # ─────────────────────────────────────────────────────────────────
+    # TEMPORAIRE — REINCORPORER APRES 3+ JOURS SCHEMA 3.7.3 (~16-17/04)
+    # Les JSONL pre-13/04 ont les big_* a 0 (bug 26 jours) et pas cluster_*.
+    # Fix applique 13/04 : DMP_ReadBigOrdersFromVAP + DMP_ReadVolumeClustersFromVAP.
+    # Quand 3+ jours de collecte schema 3.7.3, retirer ces 28 features de
+    # PROHIBITED_FEATURES pour les reinjecter dans le dataset.
+    # ─────────────────────────────────────────────────────────────────
+    # Big orders (24 features)
+    "big_ask_cluster_20t", "big_ask_cluster_20t_t1", "big_ask_cluster_20t_t2",
+    "big_ask_cluster_20t_t3", "big_ask_cluster_20t_t4", "big_ask_cluster_50t",
+    "big_bid_cluster_20t", "big_bid_cluster_20t_t1", "big_bid_cluster_20t_t2",
+    "big_bid_cluster_20t_t3", "big_bid_cluster_20t_t4", "big_bid_cluster_50t",
+    "n_big_ask_t1", "n_big_ask_t2", "n_big_ask_t3", "n_big_ask_t4",
+    "n_big_bid_t1", "n_big_bid_t2", "n_big_bid_t3", "n_big_bid_t4",
+    "dist_big_ask_nearest_up", "dist_big_ask_nearest_dn",
+    "dist_big_bid_nearest_up", "dist_big_bid_nearest_dn",
+    # Cluster volume schema 3.7.3 (4 features)
+    "dist_cluster_nearest_up", "dist_cluster_nearest_dn",
+    "n_clusters_20t", "n_clusters_50t",
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # FEATURES DMP BRUT  (75 validees Spearman v1 sur ES 19-27 mars)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -237,7 +331,18 @@ class DatasetBuilder:
         for col in available:
             result[col] = df_clean[col].values
 
-        print(f"  [OK] Dataset: {len(result)} barres x {len(available)} features")
+        # ═══════════════════════════════════════════════════════════════
+        # PHASE 1 SAVE-OR-DROP (13/04/2026) — normalize /atr + drop PROHIBITED
+        # Applique ici (en fin de build()) pour capturer TOUTES les sources :
+        #   - features JSONL brutes (is_nq, atr, etc.)
+        #   - features derivees Python (_compute_derived)
+        #   - features MenthorQ (_compute_menthorq) : mq_dist_put_sup, etc.
+        #   - features labels (partial_session via merge)
+        # Les colonnes label, sample_weight, ts sont preservees (pas dans PROHIBITED).
+        # ═══════════════════════════════════════════════════════════════
+        result = self._normalize_by_atr(result)
+
+        print(f"  [OK] Dataset: {len(result)} barres x {len(result.columns)} cols")
         print(f"       Labels: BUY={int((result.label==1).sum())}  "
               f"SELL={int((result.label==-1).sum())}  "
               f"HOLD={int((result.label==0).sum())}")
@@ -332,8 +437,55 @@ class DatasetBuilder:
         # --- Intermarket (10 im_*) ---
         df = self._compute_intermarket(df, symbol, other_symbol)
 
+        # NOTE : _normalize_by_atr est appele depuis build() apres le merge
+        # labels + ajout is_nq/partial_session/sample_weight, pour drop toutes
+        # les sources de features en un seul endroit (voir build() ligne ~340).
+
         n_after = len(df.columns)
         print(f"  Features derivees: +{n_after - n_before} colonnes ({n_before} -> {n_after})")
+        return df
+
+    def _normalize_by_atr(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Normalise les features en ticks/points par ATR, puis drop PROHIBITED.
+
+        FIX 13/04/2026 Phase 1 save-or-drop :
+        - Crée les versions _atr de TO_NORMALIZE (conversion POINTS → TICKS pour
+          les features POINTS_FEATURES avant division).
+        - Drop la version originale apres normalisation.
+        - Drop les features PROHIBITED (META, absolus, mortes, temporaires big_*).
+
+        Note : le drop PROHIBITED s'applique meme si atr absent (Pass 2 ou atr
+        a ete filtre par screen_spearman).
+        """
+        normalized = 0
+
+        # ── 1. Normalisation /atr (seulement si atr disponible) ──
+        if "atr" in df.columns:
+            # ATR en TICKS dans le JSONL C++ (verifie 13/04/2026 : ES mean 132, NQ 571)
+            atr_safe = pd.to_numeric(df["atr"], errors="coerce").replace(0, np.nan)
+
+            for col in TO_NORMALIZE:
+                if col not in df.columns:
+                    continue
+                raw = pd.to_numeric(df[col], errors="coerce")
+                # Conversion POINTS → TICKS si necessaire
+                raw_ticks = raw / TICK_SIZE if col in POINTS_FEATURES else raw
+                new_col = col.replace("_ticks", "_atr") if col.endswith("_ticks") else f"{col}_atr"
+                df[new_col] = raw_ticks / atr_safe
+                df = df.drop(columns=[col])
+                normalized += 1
+
+                # Assert anti-bug : la feature ne doit pas etre constante
+                std = df[new_col].std()
+                if pd.notna(std) and std < 1e-6:
+                    print(f"  [WARN] {new_col} constant apres normalisation (std={std:.2e})")
+
+        # ── 2. Drop PROHIBITED (toujours, meme si atr absent) ──
+        to_drop = [c for c in PROHIBITED_FEATURES if c in df.columns]
+        if to_drop:
+            df = df.drop(columns=to_drop)
+
+        print(f"  _normalize_by_atr: +{normalized} features _atr, -{len(to_drop)} prohibited")
         return df
 
     def _compute_ib_recalc(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
