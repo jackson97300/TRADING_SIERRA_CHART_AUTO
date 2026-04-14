@@ -575,6 +575,7 @@ class ModelTrainer:
         # --- Walk-forward evaluation ---
         all_sim_results = []
         fold_metrics = []
+        fold_test_dfs: List[pd.DataFrame] = []  # pour analyse regime GEX post-hoc
 
         for fold_idx, (train_df, test_df) in enumerate(folds):
             X_tr = train_df[features]
@@ -636,6 +637,7 @@ class ModelTrainer:
             }
             fold_metrics.append(fm)
             all_sim_results.append(sim)
+            fold_test_dfs.append(test_df)
 
             print(f"  Fold {fold_idx+1}: {date_range} | "
                   f"thr={threshold:.2f} trades={sim.n_trades} "
@@ -644,6 +646,13 @@ class ModelTrainer:
 
         # --- Aggregate metrics ---
         agg = self._aggregate_metrics(fold_metrics, all_sim_results)
+
+        # --- Regime GEX split analysis (Dim/Eraker/Vilkov SSRN 2024, 2026-04-15) ---
+        # Hypothese peer-reviewed : dealer gamma positif (price > HVL) → mean-reversion,
+        # gamma negatif (price < HVL) → momentum. Test post-hoc : on split les trades
+        # du walk-forward en 2 groupes selon bool_above_mq_hvl au moment de l'entry,
+        # et on compare PF/WR/EV. Si ecart significatif → regime GEX est un bon meta-filter.
+        regime_analysis = self._analyze_regime_gex(fold_test_dfs, all_sim_results, side)
 
         # --- Reality check vs baselines (Aronson + Davey, 2026-04-14) ---
         # Compare la strategie a :
@@ -769,10 +778,160 @@ class ModelTrainer:
             "importance": importance,
             "verdict": verdict,
             "baseline_comparison": baseline_comparison,  # Reality check
+            "regime_gex": regime_analysis,  # Split GEX+ vs GEX- (Dim/Eraker/Vilkov 2024)
         }
 
         self._print_verdict(result)
         return result
+
+    def _analyze_regime_gex(
+        self,
+        fold_test_dfs: List[pd.DataFrame],
+        sim_results: list,
+        side: str,
+    ) -> dict:
+        """Split post-hoc des trades walk-forward par regime GEX (dealer gamma sign).
+
+        Base academique : Dim, Eraker, Vilkov (SSRN 4692190, 2024) — Market Makers'
+        inventory gamma positif renforce le reversal intraday, negatif renforce le
+        momentum. On utilise `bool_above_mq_hvl` comme proxy : price > HVL (= HVL line
+        de MenthorQ = gamma flip) → regime gamma positif, price < HVL → gamma negatif.
+
+        Pour chaque trade on lookup le regime a l'entry_bar dans son test_df, on
+        agrege en 2 groupes et on compare PF, WR, EV, total PnL, Sharpe approx.
+        Si l'ecart PF entre regimes est > 30% et qu'il y a >= 20 trades par groupe,
+        le regime est un meta-filter candidat credible.
+
+        Retourne un dict meme si pas de colonne HVL (status = "skipped").
+        """
+        # Detecter si la feature regime est disponible dans les test_df
+        has_hvl = any(
+            (df is not None) and ("bool_above_mq_hvl" in df.columns)
+            for df in fold_test_dfs
+        )
+        if not has_hvl:
+            print(f"\n  [REGIME GEX] skip — bool_above_mq_hvl absent des folds test")
+            return {"status": "skipped", "reason": "no_bool_above_mq_hvl"}
+
+        # Collecter trades par regime
+        pnl_pos: List[float] = []   # regime GEX positif (price > HVL) — reversal attendu
+        pnl_neg: List[float] = []   # regime GEX negatif (price < HVL) — momentum attendu
+        dates_pos: List[Optional[str]] = []
+        dates_neg: List[Optional[str]] = []
+        n_trades_pos = 0
+        n_trades_neg = 0
+
+        for test_df, sim in zip(fold_test_dfs, sim_results):
+            if "bool_above_mq_hvl" not in test_df.columns:
+                continue
+            regime_vals = test_df["bool_above_mq_hvl"].values
+            for t in sim.trades:
+                if t.entry_bar < 0 or t.entry_bar >= len(regime_vals):
+                    continue
+                r = regime_vals[t.entry_bar]
+                # bool_above_mq_hvl : 1.0 = price > HVL (gamma positif cote dealer)
+                if r >= 0.5:
+                    pnl_pos.append(t.pnl_ticks)
+                    dates_pos.append(t.date)
+                    n_trades_pos += 1
+                else:
+                    pnl_neg.append(t.pnl_ticks)
+                    dates_neg.append(t.date)
+                    n_trades_neg += 1
+
+        def _group_stats(pnls: List[float], dates: List[Optional[str]]) -> dict:
+            if not pnls:
+                return {"n_trades": 0, "win_rate": 0.0, "profit_factor": float("nan"),
+                        "ev_trade": 0.0, "total_pnl": 0.0, "n_days": 0, "sharpe_daily": 0.0}
+            arr = np.array(pnls, dtype=float)
+            wins = arr[arr > 0]
+            losses = arr[arr < 0]
+            gw = float(wins.sum())
+            gl = float(abs(losses.sum()))
+            if gl <= 0:
+                pf = float("inf") if gw > 0 else float("nan")
+            else:
+                pf = gw / gl
+            unique_dates = {d for d in dates if d}
+            # Sharpe daily-returns (Lopez ch.14) si assez de jours
+            sharpe = 0.0
+            if len(unique_dates) >= 5:
+                from collections import defaultdict
+                daily: Dict[str, float] = defaultdict(float)
+                for p, d in zip(pnls, dates):
+                    if d is not None:
+                        daily[d] += p
+                daily_arr = np.array(list(daily.values()), dtype=float)
+                if len(daily_arr) >= 5 and daily_arr.std() > 1e-6:
+                    sharpe = float(daily_arr.mean() / daily_arr.std() * np.sqrt(252.0))
+            return {
+                "n_trades": len(pnls),
+                "win_rate": float((arr > 0).mean()),
+                "profit_factor": pf,
+                "ev_trade": float(arr.mean()),
+                "total_pnl": float(arr.sum()),
+                "n_days": len(unique_dates),
+                "sharpe_daily": sharpe,
+            }
+
+        stats_pos = _group_stats(pnl_pos, dates_pos)
+        stats_neg = _group_stats(pnl_neg, dates_neg)
+
+        total = n_trades_pos + n_trades_neg
+
+        # Verdict filter
+        def _is_exploitable(stats: dict) -> bool:
+            return (stats["n_trades"] >= 20
+                    and np.isfinite(stats["profit_factor"])
+                    and stats["profit_factor"] >= 1.3)
+
+        pos_ok = _is_exploitable(stats_pos)
+        neg_ok = _is_exploitable(stats_neg)
+
+        # Ecart PF entre regimes (detection d'asymetrie > 30%)
+        pf_gap_abs = 0.0
+        if (np.isfinite(stats_pos["profit_factor"]) and np.isfinite(stats_neg["profit_factor"])
+                and min(stats_pos["profit_factor"], stats_neg["profit_factor"]) > 0):
+            pf_gap_abs = abs(stats_pos["profit_factor"] - stats_neg["profit_factor"])
+            base = min(stats_pos["profit_factor"], stats_neg["profit_factor"])
+            pf_gap_rel = pf_gap_abs / base
+        else:
+            pf_gap_rel = 0.0
+
+        # Recommandation
+        if pos_ok and not neg_ok:
+            recommendation = "KEEP_POS_ONLY"  # trader uniquement en GEX positif
+        elif neg_ok and not pos_ok:
+            recommendation = "KEEP_NEG_ONLY"  # trader uniquement en GEX negatif
+        elif pos_ok and neg_ok and pf_gap_rel >= 0.30:
+            recommendation = "SPLIT_RETRAIN"  # 2 modeles distincts justifies
+        elif pos_ok and neg_ok:
+            recommendation = "POOLED_OK"      # 1 seul modele suffit
+        else:
+            recommendation = "NO_EDGE_EITHER"
+
+        # Print synthese
+        print(f"\n  [REGIME GEX] side={side} — split bool_above_mq_hvl")
+        print(f"    GEX+ (price > HVL, reversal expected) : "
+              f"n={stats_pos['n_trades']:>4} WR={stats_pos['win_rate']:.0%} "
+              f"PF={stats_pos['profit_factor']:.2f} EV={stats_pos['ev_trade']:+.1f}t "
+              f"Sharpe={stats_pos['sharpe_daily']:.2f}")
+        print(f"    GEX- (price < HVL, momentum expected) : "
+              f"n={stats_neg['n_trades']:>4} WR={stats_neg['win_rate']:.0%} "
+              f"PF={stats_neg['profit_factor']:.2f} EV={stats_neg['ev_trade']:+.1f}t "
+              f"Sharpe={stats_neg['sharpe_daily']:.2f}")
+        print(f"    PF gap relatif : {pf_gap_rel:+.0%}    → {recommendation}")
+
+        return {
+            "status": "ok",
+            "n_trades_total": total,
+            "n_trades_pos": n_trades_pos,
+            "n_trades_neg": n_trades_neg,
+            "stats_pos": stats_pos,
+            "stats_neg": stats_neg,
+            "pf_gap_rel": pf_gap_rel,
+            "recommendation": recommendation,
+        }
 
     def _aggregate_metrics(self, fold_metrics: list, sim_results: list) -> dict:
         """Agregation des metriques cross-fold + tests statistiques Lopez/Aronson.
