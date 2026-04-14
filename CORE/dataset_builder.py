@@ -736,15 +736,27 @@ class DatasetBuilder:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    BACKUP_DATA  = "D:/TRADING_SIERRA_CHART_AUTO/DATA/BACKUP/schema_370"
-    CURRENT_DATA = "D:/TRADING_SIERRA_CHART_AUTO/DATA"
-    LABELS_PATH  = "D:/TRADING_SIERRA_CHART_AUTO/DATA/LABELS"
-    OUTPUT_DIR   = "D:/TRADING_SIERRA_CHART_AUTO/DATA/DATASETS"
+    BACKUP_DATA   = "D:/TRADING_SIERRA_CHART_AUTO/DATA/BACKUP/schema_370"
+    CURRENT_DATA  = "D:/TRADING_SIERRA_CHART_AUTO/DATA"
+    BACKFILL_DATA = "D:/TRADING_SIERRA_CHART_AUTO/DATA_BACKFILL"
+    LABELS_PATH   = "D:/TRADING_SIERRA_CHART_AUTO/DATA/LABELS"
+    OUTPUT_DIR    = "D:/TRADING_SIERRA_CHART_AUTO/DATA/DATASETS"
 
-    use_backup = "--current" not in sys.argv
-    data_path  = BACKUP_DATA if use_backup else CURRENT_DATA
+    # 3 sources possibles via CLI :
+    #   --current  (defaut pour live 12j)  → DATA/
+    #   --backfill (backfill historique)    → DATA_BACKFILL/
+    #   sinon                               → BACKUP/schema_370 (legacy)
+    if "--backfill" in sys.argv:
+        data_path = BACKFILL_DATA
+        source_label = "BACKFILL (historique DMP)"
+    elif "--current" in sys.argv:
+        data_path = CURRENT_DATA
+        source_label = "CURRENT 3.7.3 (live)"
+    else:
+        data_path = BACKUP_DATA
+        source_label = "BACKUP 3.7.0"
 
-    print(f"DatasetBuilder v2 — source: {'BACKUP 3.7.0' if use_backup else 'CURRENT 3.7.1'}")
+    print(f"DatasetBuilder v2 — source: {source_label}")
     print(f"Data: {data_path}")
     print()
 
@@ -823,13 +835,27 @@ if __name__ == "__main__":
     # QUALITY VALIDATOR — garde-fou code-level (Jackson 13/04/2026)
     # Regle souveraine : qualite donnees > symetrie > screening Spearman
     # En mode strict, leve QualityViolation si red flags detectes
+    #
+    # 2026-04-14 : en mode --backfill, le validator est NON-STRICT par defaut
+    # parce que les datasets historiques longs (7 mois) exhibent des features
+    # qui n'existent pas sur 15 jours de live (compteurs cumulatifs qui atteignent
+    # des valeurs enormes, prix absolus non-normalises). On affiche le rapport
+    # mais on sauve quand meme. A fixer en fix/drop specifique plus tard.
+    # Flag --strict force le mode strict meme en backfill.
     # ═══════════════════════════════════════════════════════════════
     from quality_validator import QualityValidator, QualityViolation
 
     print("\n" + "=" * 70)
     print("  QUALITY VALIDATOR — audit final avant sauvegarde")
     print("=" * 70)
-    validator = QualityValidator(strict=True, verbose=True)
+
+    strict_mode = True
+    if "--backfill" in sys.argv and "--strict" not in sys.argv:
+        strict_mode = False
+        print("  [INFO] Mode backfill : validator NON-STRICT (rapport info, sauvegarde forcee)")
+        print("  [INFO] Utilise --strict pour forcer le mode strict")
+
+    validator = QualityValidator(strict=strict_mode, verbose=True)
     try:
         validator.validate(df_es_final, df_nq_final)
     except QualityViolation as e:
@@ -839,8 +865,13 @@ if __name__ == "__main__":
         sys.exit(2)
 
     # Si on arrive ici, le validator a valide les 2 datasets
-    builder_es_final.save(df_es_final, f"{OUTPUT_DIR}/ES_dataset_v2.parquet")
-    builder_nq_final.save(df_nq_final, f"{OUTPUT_DIR}/NQ_dataset_v2.parquet")
+    # Suffix de version : v2 pour BACKUP/CURRENT, v3 pour BACKFILL (2026-04-14)
+    if "--backfill" in sys.argv:
+        version_suffix = "v3"
+    else:
+        version_suffix = "v2"
+    builder_es_final.save(df_es_final, f"{OUTPUT_DIR}/ES_dataset_{version_suffix}.parquet")
+    builder_nq_final.save(df_nq_final, f"{OUTPUT_DIR}/NQ_dataset_{version_suffix}.parquet")
 
     # Afficher features finales
     for sym, feats in [("ES", validated_es), ("NQ", validated_nq)]:

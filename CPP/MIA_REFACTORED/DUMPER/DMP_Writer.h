@@ -125,10 +125,18 @@ struct DMP_WriterState {
     char           meta_path[512];      // Path meta courant
     long long      prev_ts;             // ⚠️ FIX 04/03/2026 : dedup timestamp per-study
                                         //   (static était PARTAGÉ entre ES et NQ → NQ=0Ko)
+    long long      last_written_ts;     // 🛡️ FIX 2026-04-14 : anti-rejeu global.
+                                        //   Plus grand ts deja ecrit dans le fichier.
+                                        //   Protege contre Full Recalc destructif au
+                                        //   re-attach de la study (PersistentInt reset +
+                                        //   SC rejoue toute la session -> doublons).
+                                        //   Initialise au DMP_WR_Open via lecture du
+                                        //   dernier ts du fichier existant.
 
     DMP_WriterState() :
         file_ready(false), current_day(0), rows_session(0),
-        flush_counter(0), meta_written(false), prev_ts(0)
+        flush_counter(0), meta_written(false), prev_ts(0),
+        last_written_ts(0)
     {
         data_path[0] = '\0';
         meta_path[0] = '\0';
@@ -376,9 +384,23 @@ static inline void DMP_WR_Close(DMP_WriterState* st, SCStudyInterfaceRef sc) {
 }
 
 // Ouvrir le fichier pour un nouveau jour de trading
+//
+// truncate=false (defaut, mode LIVE) : fopen("a") append pur, les lignes
+//   sont ajoutees en fin de fichier (pattern ancien dumper).
+//
+// truncate=true (mode BACKFILL Full Recalc) : fopen("w") pour TRONQUER le
+//   fichier au premier write du jour, puis les appels suivants a DMP_WriteRow
+//   feront des fopen("a") normaux.
+//
+// DOUBLE SAFETY 2026-04-14 : truncate est AUSSI conditionne par la presence
+//   du mot "BACKFILL" dans le path de sortie. Si le path ne contient pas
+//   "BACKFILL" (= on ecrit dans DATA/ live), le truncate est FORCE a false
+//   meme si truncate=true en entree. Cette protection empeche TOUT truncate
+//   accidentel du fichier live, meme en cas de Full Recalc non voulu.
 static inline bool DMP_WR_Open(
     DMP_WriterState* st, SCStudyInterfaceRef sc,
-    const char* base_path, const char* sym, int date)
+    const char* base_path, const char* sym, int date,
+    bool truncate = false)
 {
     // Fermer l'ancien fichier si ouvert
     DMP_WR_Close(st, sc);
@@ -389,21 +411,36 @@ static inline bool DMP_WR_Open(
     st->meta_written  = false;
     st->prev_ts       = 0;       // Reset dedup pour nouvelle session
     st->current_day   = date;
+    st->last_written_ts = 0;     // 🛡️ Reset anti-rejeu, sera initialise depuis fichier
 
     // Construire les chemins
     DMP_WR_BuildPaths(base_path, sym, date,
                       st->data_path, sizeof(st->data_path),
                       st->meta_path, sizeof(st->meta_path));
 
+    // DOUBLE SAFETY : truncate n'est autorise QUE si :
+    //   1. truncate=true en entree (caller le demande)
+    //   2. ET le path de sortie contient "BACKFILL" (ou "backfill")
+    // Le DMP live ecrit dans "...\\DATA\\ES\\..." (pas de BACKFILL) → jamais truncate.
+    // La backfill study ecrit dans "...\\DATA_BACKFILL\\ES\\..." → truncate OK.
+    const bool path_is_backfill =
+        (strstr(st->data_path, "BACKFILL") != nullptr) ||
+        (strstr(st->data_path, "backfill") != nullptr);
+    const bool safe_truncate = truncate && path_is_backfill;
+
     // Valider que le fichier est accessible en écriture (test fopen/fclose)
     // Pattern identique à l'ancien dumper : pas de handle persistant.
     // Chaque DMP_WriteRow fera son propre fopen("a") / fwrite / fclose.
+    //
+    // En mode BACKFILL valide, on ouvre en "w" → tronque le fichier existant.
+    // Sinon, on ouvre en "a" → append (le fichier est cree s'il n'existe pas).
     {
-        FILE* test_fp = fopen(st->data_path, "a");
+        const char* mode = safe_truncate ? "w" : "a";
+        FILE* test_fp = fopen(st->data_path, mode);
         if (!test_fp) {
             char msg[384];
             snprintf(msg, sizeof(msg),
-                "FILE OPEN FAIL — %s (fopen test echoue)", st->data_path);
+                "FILE OPEN FAIL — %s (fopen mode='%s' echoue)", st->data_path, mode);
             DMP_DebugLog(sc, sym, msg);
             st->file_ready = false;
             return false;
@@ -413,9 +450,71 @@ static inline bool DMP_WR_Open(
 
     st->file_ready = true;
 
+    // 🛡️ ANTI-REJEU — Initialiser last_written_ts depuis le fichier existant
+    //  Si on vient d'ouvrir en mode APPEND et que le fichier n'est pas vide,
+    //  on lit la DERNIERE ligne pour extraire son ts. Cela protege contre
+    //  un Full Recalc qui surviendrait juste apres l'ouverture (re-attach study).
+    //
+    //  En mode TRUNCATE (backfill), last_written_ts reste a 0 car le fichier
+    //  a ete vide et on veut tout rejouer.
+    //
+    //  Lecture efficace : on ouvre en mode binary read, seek a la fin - 4KB
+    //  (taille typique d'une ligne JSONL), on cherche le dernier '\n', et on
+    //  parse le ts depuis cette ligne.
+    if (!safe_truncate) {
+        FILE* fp = fopen(st->data_path, "rb");
+        if (fp) {
+            // Taille du fichier
+            fseek(fp, 0, SEEK_END);
+            long fsize = ftell(fp);
+            if (fsize > 0) {
+                // Lire les derniers 8 KB (assez pour 1-2 lignes JSONL completes)
+                const long tail_size = (fsize < 8192) ? fsize : 8192;
+                fseek(fp, fsize - tail_size, SEEK_SET);
+                char tail_buf[8192 + 1];
+                size_t nread = fread(tail_buf, 1, (size_t)tail_size, fp);
+                tail_buf[nread] = '\0';
+
+                // Chercher le dernier '\n' non-final et le suivant = debut derniere ligne
+                char* last_newline = nullptr;
+                for (long i = (long)nread - 2; i >= 0; i--) {  // -2 pour sauter le \n final
+                    if (tail_buf[i] == '\n') {
+                        last_newline = tail_buf + i + 1;
+                        break;
+                    }
+                }
+                const char* last_line = last_newline ? last_newline : tail_buf;
+
+                // Parser le ts : chercher la substring "\"ts\":"
+                const char* ts_marker = strstr(last_line, "\"ts\":");
+                if (ts_marker) {
+                    ts_marker += 5;  // apres "\"ts\":"
+                    while (*ts_marker == ' ' || *ts_marker == '\t') ts_marker++;
+                    long long parsed_ts = 0;
+                    int parsed = sscanf(ts_marker, "%lld", &parsed_ts);
+                    if (parsed == 1 && parsed_ts > 0) {
+                        st->last_written_ts = parsed_ts;
+                    }
+                }
+            }
+            fclose(fp);
+        }
+    }
+
+    // Log clair du mode pour debug
+    const char* mode_label;
+    if (safe_truncate) {
+        mode_label = "TRUNCATE(backfill)";
+    } else if (truncate && !path_is_backfill) {
+        mode_label = "APPEND(safety:path_no_BACKFILL,truncate_refuse)";
+    } else {
+        mode_label = "APPEND(live)";
+    }
+
     char msg[384];
     snprintf(msg, sizeof(msg),
-        "FILE OPEN OK — %s | date=%d | rth_only=voir Input[2]", st->data_path, date);
+        "FILE OPEN OK — %s | date=%d | mode=%s | last_ts=%lld | rth_only=voir Input[2]",
+        st->data_path, date, mode_label, st->last_written_ts);
     DMP_DebugLog(sc, sym, msg);
     return true;
 }
@@ -1079,15 +1178,33 @@ inline bool DMP_WriteRow(
     SCStudyInterfaceRef     sc,
     const DMP_MLFeatures&   f,
     const char*             base_path = DMP_BASE_PATH,
-    bool                    rth_only  = true)
+    bool                    rth_only      = true,
+    bool                    backfill_mode = false)
 {
     // ── 0. Obtenir l'état du writer pour cette étude ──────────────────────────
     DMP_WriterState* st = DMP_WR_GetState(sc.ChartNumber);
 
     // ── 1. Détection rotation de jour ─────────────────────────────────────────
+    //  En mode LIVE (backfill_mode=false, defaut) : fopen("a") append pur.
+    //
+    //  En mode BACKFILL (backfill_mode=true, passe explicitement par
+    //  scsf_MIA_Backfill_Dumper) : fopen("w") au premier write du jour pour
+    //  TRONQUER le fichier existant, puis append normal. Grace au garde
+    //  `today != st->current_day`, la troncation se fait UNE SEULE FOIS par jour.
+    //
+    //  DEFENSE EN PROFONDEUR :
+    //    Niveau 1 : C'EST LE CALLER qui decide via backfill_mode (scsf_Live=false,
+    //               scsf_Backfill=true). Le Writer ne devine plus via IsFullRecalculation.
+    //    Niveau 2 : DMP_WR_Open verifie en plus que st->data_path contient "BACKFILL"
+    //               et refuse le truncate sinon, meme si backfill_mode=true.
+    //    Niveau 3 : Les 2 scsf_ tournent sur des charts differents (ChartNumber
+    //               different → DMP_WriterState different → fichiers independants).
     const int today = DMP_WR_GetTradingDateInt(sc);
     if (today != st->current_day || !st->file_ready) {
-        bool ok = DMP_WR_Open(st, sc, base_path, f.sym, today);
+        // Note : backfill_mode est un HINT du caller. DMP_WR_Open applique un
+        // second check (path contient "BACKFILL") qui peut forcer truncate=false
+        // meme si le caller demande truncate=true.
+        bool ok = DMP_WR_Open(st, sc, base_path, f.sym, today, backfill_mode);
         if (!ok) return false; // Erreur d'ouverture → on n'écrit pas
         sc.GetPersistentInt(DMP_WR_P_DAY) = today;
         // Enregistrer le contrat initial
@@ -1128,7 +1245,7 @@ inline bool DMP_WriteRow(
         return true;
     }
 
-    // ── 3b. Déduplication timestamp ─────────────────────────────────────────
+    // ── 3b. Déduplication timestamp (courte portée) ─────────────────────────
     //  ⚠️ FIX 04/03/2026 : CORRIGÉ — utilise st->prev_ts (per-study via ChartNumber)
     //  au lieu de static (qui était PARTAGÉ entre ES et NQ dans le même DLL,
     //  causant NQ = 0 Ko car ES écrivait en premier avec le même ts 1-min).
@@ -1136,6 +1253,25 @@ inline bool DMP_WriteRow(
         return true;  // Même timestamp que la barre précédente de CE symbole → skip
     }
     st->prev_ts = f.ts;
+
+    // ── 3c. 🛡️ ANTI-REJEU GLOBAL (FIX 2026-04-14) ──────────────────────────
+    //  Protection contre Full Recalc destructif :
+    //  Quand on re-attache une study fresh (PersistentInt reset), SC declenche
+    //  un Full Recalc qui rejoue toute la session. Chaque barre est presentee
+    //  au writer et serait appendee au fichier -> doublons massifs.
+    //
+    //  SOLUTION : tracker le plus grand ts deja ecrit dans ce fichier (initialise
+    //  par lecture du fichier existant au DMP_WR_Open). Si f.ts <= last_written_ts,
+    //  on skip silencieusement. Les barres > last_written_ts passent (nouvelles).
+    //
+    //  AVANTAGE vs prev_ts : prev_ts ne filtre QUE les doublons consecutifs.
+    //  last_written_ts filtre TOUS les ts deja presents, meme desordonnes.
+    //
+    //  IDEMPOTENCE : on peut re-attacher la study N fois, faire N Full Recalc,
+    //  aucune barre ne sera ecrite en doublon.
+    if (f.ts != 0 && f.ts <= st->last_written_ts) {
+        return true;  // Ts deja ecrit (ou plus ancien) -> skip silencieusement
+    }
 
     // ── 4. Formater la ligne JSON ─────────────────────────────────────────────
     // Fix audit 09/04 : thread_local au lieu de static pour eviter race condition
@@ -1188,6 +1324,13 @@ inline bool DMP_WriteRow(
     st->rows_session++;
     sc.GetPersistentInt(DMP_WR_P_ROWS_TODAY) = st->rows_session;
     sc.GetPersistentInt(DMP_WR_P_ROWS_TOTAL)++;
+
+    // 🛡️ Anti-rejeu : tracker le ts max ecrit dans ce fichier
+    //  Permet de rejeter les barres <= ts max lors du prochain Full Recalc,
+    //  meme apres re-attach de la study (ou reload chart, changement Input, etc.)
+    if (f.ts > st->last_written_ts) {
+        st->last_written_ts = f.ts;
+    }
 
     // ── 8. Log stats périodique (toutes les 60 lignes = 1h de session) ────────
     if (st->rows_session % 60 == 0) {

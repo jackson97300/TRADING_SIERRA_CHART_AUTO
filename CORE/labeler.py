@@ -1065,10 +1065,20 @@ def run_all(symbol: str = "ES", cfg: LabelConfig = None):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    import sys
+
     cfg = LabelConfig()
+
+    # Flag --backfill : lire les JSONL depuis DATA_BACKFILL/ES et /NQ
+    # au lieu de DATA/ES et /NQ (live). Les labels generes sont toujours dans
+    # DATA/LABELS (meme dossier, meme format). 2026-04-14.
+    if "--backfill" in sys.argv:
+        cfg.DATA_PATH = Path("D:/TRADING_SIERRA_CHART_AUTO/DATA_BACKFILL")
+        print("[MODE] --backfill : lecture des JSONL depuis DATA_BACKFILL/")
 
     print("=" * 62)
     print("  MIA Labeler v2 -- Simulation TP/SL path-aware")
+    print(f"  Source: {cfg.DATA_PATH}")
     print(f"  ES: TP={cfg.TP_TICKS['ES']}t SL={cfg.SL_TICKS['ES']}t | "
           f"NQ: TP={cfg.TP_TICKS['NQ']}t SL={cfg.SL_TICKS['NQ']}t | "
           f"RR=1.8 | Fwd={cfg.FORWARD_BARS}b")

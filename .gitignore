@@ -9,6 +9,14 @@ DATA/LOGS/
 DATA/JOURNAL/
 DATA/SNAPSHOTS/
 DATA/BACKUP/
+DATA/TMP_RECOVERY/
+DATA/TMP_INJECTOR_TEST/
+DATA/TRAINING_LOGS/
+DATA_BACKFILL/
+# Labels CSV genere par labeler.py (trop nombreux)
+DATA/LABELS/*.csv
+# MenthorQ JSON synced from VPS (regenere au besoin)
+DATA/MENTHORQ/*.json
 
 # === FICHIERS GENERES ===
 DASHBOARD/briefings/*.json
@@ -28,8 +36,12 @@ build/
 # === SECRETS / ENV ===
 .env
 .env.local
+.env.*
 *.key
 *.pem
+BOT/alert_config.json
+DATA/BOT_CONTROL/
+DATA/HEARTBEAT/
 
 # === IDE ===
 .vscode/settings.json
@@ -63,6 +75,10 @@ LOGS/
 V1_ARCHIVE/
 BAKUP/
 SNAPSHOTS/
+DASHBOARD/BACKUP/
+DASHBOARD/AUDIT/
+*.tmp
+*.tmp.*
 
 # === BINAIRES ===
 *.docx
@@ -71,3 +87,9 @@ SNAPSHOTS/
 *.dll
 *.exe
 *.obj
+.jwt_secret
+.brevo_secret
+.google_oauth_secret
+.turnstile_secret
+.turnstile_site_key
+.stripe_webhook_secret
