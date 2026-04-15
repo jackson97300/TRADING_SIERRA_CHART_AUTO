@@ -910,8 +910,8 @@ class ModelTrainer:
         else:
             recommendation = "NO_EDGE_EITHER"
 
-        # Print synthese
-        print(f"\n  [REGIME GEX] side={side} — split bool_above_mq_hvl")
+        # Print synthese AGREGEE
+        print(f"\n  [REGIME GEX] side={side} — split bool_above_mq_hvl (agregeg)")
         print(f"    GEX+ (price > HVL, reversal expected) : "
               f"n={stats_pos['n_trades']:>4} WR={stats_pos['win_rate']:.0%} "
               f"PF={stats_pos['profit_factor']:.2f} EV={stats_pos['ev_trade']:+.1f}t "
@@ -920,7 +920,114 @@ class ModelTrainer:
               f"n={stats_neg['n_trades']:>4} WR={stats_neg['win_rate']:.0%} "
               f"PF={stats_neg['profit_factor']:.2f} EV={stats_neg['ev_trade']:+.1f}t "
               f"Sharpe={stats_neg['sharpe_daily']:.2f}")
-        print(f"    PF gap relatif : {pf_gap_rel:+.0%}    → {recommendation}")
+        print(f"    PF gap relatif aggregate : {pf_gap_rel:+.0%}    → {recommendation}")
+
+        # ═══════════════════════════════════════════════════════════════════
+        # ANALYSE FOLD-PAR-FOLD (15/04/2026, suggestion code-reviewer)
+        # ═══════════════════════════════════════════════════════════════════
+        # Critique : l'analyse aggregate cache la dispersion. Si 1-2 folds portent
+        # 80% de l'ecart PF GEX+/GEX-, c'est du bruit statistique pas un vrai edge.
+        # Pour valider qu'on a un edge stable, on regarde fold par fold :
+        #   - Combien de folds favorisent GEX- > GEX+ (ou vice versa) ?
+        #   - PF mediane / IQR cross-folds par regime
+        #   - Verdict stabilite : >= 6/8 folds dans le meme sens = stable
+        per_fold_breakdown: List[dict] = []
+        for fold_idx, (test_df, sim) in enumerate(zip(fold_test_dfs, sim_results)):
+            if "bool_above_mq_hvl" not in test_df.columns:
+                continue
+            regime_vals = test_df["bool_above_mq_hvl"].values
+            fold_pnl_pos: List[float] = []
+            fold_pnl_neg: List[float] = []
+            fold_dates_pos: List[Optional[str]] = []
+            fold_dates_neg: List[Optional[str]] = []
+            for t in sim.trades:
+                if t.entry_bar < 0 or t.entry_bar >= len(regime_vals):
+                    continue
+                r = regime_vals[t.entry_bar]
+                if r >= 0.5:
+                    fold_pnl_pos.append(t.pnl_ticks)
+                    fold_dates_pos.append(t.date)
+                else:
+                    fold_pnl_neg.append(t.pnl_ticks)
+                    fold_dates_neg.append(t.date)
+
+            sp = _group_stats(fold_pnl_pos, fold_dates_pos)
+            sn = _group_stats(fold_pnl_neg, fold_dates_neg)
+
+            # Indique quel regime favorise dans ce fold (selon PF, +1 = GEX-, -1 = GEX+)
+            favor = 0
+            if (np.isfinite(sp["profit_factor"]) and np.isfinite(sn["profit_factor"])
+                    and sp["n_trades"] >= 3 and sn["n_trades"] >= 3):
+                if sn["profit_factor"] > sp["profit_factor"]:
+                    favor = +1
+                elif sp["profit_factor"] > sn["profit_factor"]:
+                    favor = -1
+
+            per_fold_breakdown.append({
+                "fold": fold_idx + 1,
+                "stats_pos": sp,
+                "stats_neg": sn,
+                "favor": favor,  # +1 = GEX- mieux, -1 = GEX+ mieux, 0 = trop peu de trades
+            })
+
+        # Calcul stabilite : nombre de folds qui favorisent GEX- vs GEX+
+        n_favor_neg = sum(1 for f in per_fold_breakdown if f["favor"] == +1)
+        n_favor_pos = sum(1 for f in per_fold_breakdown if f["favor"] == -1)
+        n_undecided = sum(1 for f in per_fold_breakdown if f["favor"] == 0)
+        n_evaluable = n_favor_neg + n_favor_pos
+        if n_evaluable >= 6:
+            stability_ratio = max(n_favor_neg, n_favor_pos) / n_evaluable
+        else:
+            stability_ratio = 0.0
+        # Verdict stabilite (Lopez ch.14 : edge stable si >=75% des folds dans le meme sens)
+        if stability_ratio >= 0.75 and n_evaluable >= 6:
+            stability_verdict = "STABLE"
+        elif stability_ratio >= 0.62 and n_evaluable >= 6:
+            stability_verdict = "WEAK"
+        else:
+            stability_verdict = "NOISY"
+
+        # Mediane et IQR des PF cross-folds (plus robuste que mean)
+        pf_pos_per_fold = [f["stats_pos"]["profit_factor"] for f in per_fold_breakdown
+                           if np.isfinite(f["stats_pos"]["profit_factor"])
+                           and f["stats_pos"]["n_trades"] >= 3]
+        pf_neg_per_fold = [f["stats_neg"]["profit_factor"] for f in per_fold_breakdown
+                           if np.isfinite(f["stats_neg"]["profit_factor"])
+                           and f["stats_neg"]["n_trades"] >= 3]
+        pf_pos_median = float(np.median(pf_pos_per_fold)) if pf_pos_per_fold else float("nan")
+        pf_neg_median = float(np.median(pf_neg_per_fold)) if pf_neg_per_fold else float("nan")
+        pf_pos_iqr = float(np.percentile(pf_pos_per_fold, 75) - np.percentile(pf_pos_per_fold, 25)) if len(pf_pos_per_fold) >= 4 else 0.0
+        pf_neg_iqr = float(np.percentile(pf_neg_per_fold, 75) - np.percentile(pf_neg_per_fold, 25)) if len(pf_neg_per_fold) >= 4 else 0.0
+
+        # Print tableau fold-par-fold
+        print(f"\n  [REGIME GEX] Fold-par-fold (n_evaluable={n_evaluable}/{len(per_fold_breakdown)}):")
+        print(f"    {'Fold':>4} {'GEX+':>20} {'GEX-':>20} {'Favor':>8}")
+        print(f"    {'----':>4} {'-'*20:>20} {'-'*20:>20} {'-----':>8}")
+        for f in per_fold_breakdown:
+            sp = f["stats_pos"]
+            sn = f["stats_neg"]
+            pos_str = f"n={sp['n_trades']:>2} PF={sp['profit_factor']:>5.2f}" if sp['n_trades'] > 0 else "n=0  -----"
+            neg_str = f"n={sn['n_trades']:>2} PF={sn['profit_factor']:>5.2f}" if sn['n_trades'] > 0 else "n=0  -----"
+            favor_str = "GEX-" if f["favor"] == +1 else ("GEX+" if f["favor"] == -1 else "----")
+            print(f"    {f['fold']:>4} {pos_str:>20} {neg_str:>20} {favor_str:>8}")
+
+        print(f"\n  [REGIME GEX] Stabilite cross-folds : {stability_verdict}")
+        print(f"    folds favorisent GEX-     : {n_favor_neg}/{n_evaluable}")
+        print(f"    folds favorisent GEX+     : {n_favor_pos}/{n_evaluable}")
+        print(f"    folds non-evaluables (<3 trades) : {n_undecided}")
+        print(f"    PF median GEX+ : {pf_pos_median:.2f}  (IQR {pf_pos_iqr:.2f})")
+        print(f"    PF median GEX- : {pf_neg_median:.2f}  (IQR {pf_neg_iqr:.2f})")
+
+        # Verdict combine : agreg + stabilite
+        if recommendation == "SPLIT_RETRAIN" and stability_verdict == "STABLE":
+            final_verdict = "EDGE_VALIDE"  # gap stable + 6+/8 folds dans le meme sens
+        elif recommendation == "SPLIT_RETRAIN" and stability_verdict == "WEAK":
+            final_verdict = "EDGE_FAIBLE"  # gap mais stabilite limite
+        elif recommendation == "SPLIT_RETRAIN" and stability_verdict == "NOISY":
+            final_verdict = "FAUX_POSITIF"  # gap aggregate porte par outliers
+        else:
+            final_verdict = recommendation  # POOLED_OK / KEEP_*_ONLY / NO_EDGE
+        print(f"\n  [REGIME GEX] VERDICT FINAL : {final_verdict}")
 
         return {
             "status": "ok",
@@ -931,6 +1038,18 @@ class ModelTrainer:
             "stats_neg": stats_neg,
             "pf_gap_rel": pf_gap_rel,
             "recommendation": recommendation,
+            # Nouveaux champs fold-par-fold (15/04/2026)
+            "per_fold_breakdown": per_fold_breakdown,
+            "n_favor_neg": n_favor_neg,
+            "n_favor_pos": n_favor_pos,
+            "n_undecided": n_undecided,
+            "stability_ratio": stability_ratio,
+            "stability_verdict": stability_verdict,
+            "pf_pos_median": pf_pos_median,
+            "pf_neg_median": pf_neg_median,
+            "pf_pos_iqr": pf_pos_iqr,
+            "pf_neg_iqr": pf_neg_iqr,
+            "final_verdict": final_verdict,
         }
 
     def _aggregate_metrics(self, fold_metrics: list, sim_results: list) -> dict:
