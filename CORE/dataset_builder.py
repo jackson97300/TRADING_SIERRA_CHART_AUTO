@@ -189,6 +189,38 @@ PROHIBITED_FEATURES = {
     "fp_edge_buy", "fp_edge_sell",  # bug SG ACSIL ES
     "bn_pressure_bid",               # NQ 99.7% constant a investiguer
 
+    # ─────────────────────────────────────────────────────────────────
+    # TODO CRITIQUE 15/04/2026 — Bug systemique DMP_Reader.h arr[sz-1]
+    # Les fonctions DMP_ReadBN_Trigger / DMP_SafeReadLast / DMP_ReadBN_SumOfAlerts
+    # lisent arr[sz-1] (derniere valeur actuelle) au lieu de arr[sc.Index].
+    # Correct en LIVE (sc.Index=sz-1) mais POLLUE en BACKFILL Full Recalc :
+    # toutes les barres historiques recoivent la valeur courante de l'etude SC
+    # source au moment du recalc (constantes 100% ou 0% sur toute la periode).
+    #
+    # Fix C++ Jackson 15/04 (bn_absorb via Trigger sg0 + IDs NQ_BARRES + fp_edge
+    # via Trigger sg0) : marche en LIVE, pollue en BACKFILL.
+    #
+    # Au PROCHAIN RETRAIN avec nouveau backfill, les features suivantes
+    # risquent d'etre actives avec biais temporel massif (mortes sur historique,
+    # vivantes sur 12-14 jours live recents). Les garder HORS du dataset v4
+    # tant que le bug cross-TF arr[sz-1] -> sc.GetContainingIndexForSCDateTime
+    # n'est pas fix architecturalement en C++.
+    #
+    # Cf. feedback_bug_arr_sz_1_systemique.md pour liste complete des fonctions
+    # vulnerables et plan de fix architectural.
+    #
+    # Features a re-blacklister explicitement si elles reviennent dans v4 :
+    #   fp_edge_buy_2, fp_edge_sell_2  (variantes NQ 0DIAG / ES rev1 800%)
+    #   bar_edge_buy, bar_edge_sell    (Chart 25 ES / Chart 23 NQ via IDs fixes)
+    #   bn_color_up, bn_color_dn, bn_color_up_2, bn_color_dn_2
+    #   bn_long_up, bn_long_dn
+    #   bn_double_ask, bn_double_bid, bn_triple_ask, bn_triple_bid
+    #   ext_edge_buy_px, ext_edge_sell_px
+    #   ext_color_up_px, ext_color_dn_px, ext_long_up_px, ext_long_dn_px
+    #   dist_ext_edge_buy/sell, dist_ext_color_up/dn, dist_ext_long_up/dn
+    # Actuellement toutes deja droppees par screening ou autres mecanismes.
+    # ─────────────────────────────────────────────────────────────────
+
     # ── Versions ticks remplacees par versions _atr en C++ ───────────
     "dist_vwap_d",        # utiliser dist_vwap_d_atr (C++)
     "dist_vwap_m",        # utiliser dist_vwap_m_atr (C++)

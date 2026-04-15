@@ -233,8 +233,15 @@ namespace DMP_Studies {
         constexpr static int LONG_DN_BAR  = 17;   // [AV] LONG DOWN BAR (rectangle rouge Edge Zone)
         constexpr static int LONG_DN_UP   = 23;   // [AV] LONG DOWN UP BAR (reversal bull)
         constexpr static int LONG_UP_DN   = 24;   // [AV] LONG UP DOWN BAR (reversal bear)
-        constexpr static int EDGE_BUY     = 32;   // EDGE ZONES IMBALANCE BUY rev8 0DIAG
-        constexpr static int EDGE_SELL    = 33;   // EDGE ZONES IMBALANCE SELL rev8 0DIAG
+        // ⭐ FIX 15/04/2026 : IDs natives au lieu des overlays (bug 26+ jours)
+        //    Ancien : EDGE_BUY=32, EDGE_SELL=33 → overlays "rev8 0DIAG" cassés
+        //             (Study Subgraphs Overlay pointant vers Chart #14, input10_raw=1
+        //             détecté par StudyExplorer 15/04). sg0 Trigger retournait 0.
+        //    Nouveau : 40/16 → études natives "EDGE ZONES IMBALANCE BUY/SELL 0DIAG"
+        //             attachées directement sur Chart #23 (confirmé dump StudyExplorer).
+        //    Cf. mia_studies_dump.txt Chart #23 lignes ID:40 BUY + ID:16 SELL.
+        constexpr static int EDGE_BUY     = 40;   // EDGE ZONES IMBALANCE BUY 0DIAG (native, ex-32 overlay)
+        constexpr static int EDGE_SELL    = 16;   // EDGE ZONES IMBALANCE SELL 0DIAG (native, ex-33 overlay)
         constexpr static int TRIPLE_ASK   = 37;   // [AV] TRIPLE ASK
         constexpr static int TRIPLE_BID   = 38;   // [AV] TRIPLE BID
     };
@@ -1521,11 +1528,27 @@ inline void DMP_ReadBNSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
                         d.is_nq ? DMP_Studies::NQ_FP::COLOR_UP_2 : DMP_Studies::ES_FP::COLOR_UP_2);
     d.bn_color_dn_2 = DMP_ReadExtensionLineCount(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_FP::COLOR_DN_2 : DMP_Studies::ES_FP::COLOR_DN_2);
-    // 🆕 FIX 01/04/2026 : bn_absorb calculé depuis VAP dans DMP_ReadFPBS
-    //   L'ancienne méthode (ExtensionLineCount) retournait 100% car les
-    //   extension lines persistent sur plusieurs barres.
-    //   Le calcul VAP donne un signal per-bar exact : 1=absorption, 0=non.
-    //   d.bn_absorb_ask et d.bn_absorb_bid sont écrits par DMP_ReadFPBS.
+    // ⭐ FIX 15/04/2026 : bn_absorb via sg0 Trigger per-bar
+    //   Historique du bug :
+    //     - Avant 01/04 : ExtensionLineCount → 100% fire rate (lignes persistentes)
+    //     - 01/04 (fix cassé) : calcul VAP custom dans DMP_ReadFPBS
+    //         → manque O>C[-1], utilise max_tick au lieu de sc.High réel
+    //         → 0.1-2.7% fire rate (trop restrictif, max_tick ≠ High)
+    //     - 15/04 : override ici via DMP_ReadBN_Trigger (sg0)
+    //         L'étude "Color Bar Based On Alert Condition" populate sg0 avec le prix
+    //         Input Data (configuré sur High) quand la condition fire, 0 sinon.
+    //         C'est un signal per-bar exact qui suit la formule SC exacte :
+    //           =AND(O>C[-1], AVAP(H,0) > BVAP(H,0)*3, AVAP(H,0) > 50)
+    //         (confirmé par Jackson via Study Settings Chart #1 ID:25 le 15/04).
+    //   Pattern identique à bar_edge_buy/sell ES qui fire ~8% live avec Trigger sg0.
+    //   Note : d.bn_absorb_ask/bid sont aussi écrits par DMP_ReadFPBS (formule VAP
+    //   cassée du 01/04). L'override ci-dessous ÉCRASE ces valeurs — le calcul
+    //   VAP custom reste pour les autres champs fpbs_* mais n'affecte plus bn_absorb.
+    d.bn_absorb_ask = DMP_ReadBN_Trigger(sc, chart,
+                        d.is_nq ? DMP_Studies::NQ_FP::ABSORB_ASK : DMP_Studies::ES_FP::ABSORB_ASK);
+    d.bn_absorb_bid = DMP_ReadBN_Trigger(sc, chart,
+                        d.is_nq ? DMP_Studies::NQ_FP::ABSORB_BID : DMP_Studies::ES_FP::ABSORB_BID);
+
     d.bn_long_up    = DMP_ReadBN_Trigger(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_FP::LONG_UP    : DMP_Studies::ES_FP::LONG_UP);
     d.bn_long_dn    = DMP_ReadBN_Trigger(sc, chart,
@@ -1546,22 +1569,29 @@ inline void DMP_ReadBNSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
 
     // 🆕 BUG #10 — Volume UP/DOWN + Edge Zones Footprint (05/03/2026)
     // 🆕 FIX 12/03/2026 — ES VOLUME UP/DOWN ajoutés (ID:2, ID:4)
+    // ⭐ FIX 15/04/2026 : fp_edge_* via sg0 Trigger per-bar (ex-SumOfAlerts sg2 cassé)
+    //   Bug : DMP_ReadBN_SumOfAlerts lit sg2 "Sum of Alerts" qui n'est PAS populé
+    //   pour les études "Color Bar Based On Alert Condition" (retourne 0 ou valeur
+    //   indéfinie). Fire rate ES 0.1% live 20260415 au lieu du ~8% attendu.
+    //   Fix : utiliser DMP_ReadBN_Trigger (sg0) qui populate le prix Output (High)
+    //   quand la condition fire, 0 sinon. Pattern identique à bar_edge_* qui
+    //   fire ~8% avec Trigger sg0 sur les études Edge Zones 600%DIAG.
     if (!d.is_nq) {
         d.bn_volume_up   = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::ES_FP::VOLUME_UP);
         d.bn_volume_dn   = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::ES_FP::VOLUME_DN);
-        d.fp_edge_buy    = DMP_ReadBN_SumOfAlerts(sc, chart, DMP_Studies::ES_FP::EDGE_BUY);
-        d.fp_edge_sell   = DMP_ReadBN_SumOfAlerts(sc, chart, DMP_Studies::ES_FP::EDGE_SELL);
-        d.fp_edge_buy_2  = DMP_ReadBN_SumOfAlerts(sc, chart, DMP_Studies::ES_FP::EDGE_BUY_R1);
-        d.fp_edge_sell_2 = DMP_ReadBN_SumOfAlerts(sc, chart, DMP_Studies::ES_FP::EDGE_SELL_R1);
+        d.fp_edge_buy    = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::ES_FP::EDGE_BUY);
+        d.fp_edge_sell   = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::ES_FP::EDGE_SELL);
+        d.fp_edge_buy_2  = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::ES_FP::EDGE_BUY_R1);
+        d.fp_edge_sell_2 = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::ES_FP::EDGE_SELL_R1);
     } else {
         // 🆕 FIX : Trigger(sg0) au lieu de SumOfAlerts(sg2)
         // Volume spike = événement ponctuel, pas zone permanente
         d.bn_volume_up   = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::NQ_FP::VOLUME_UP);
         d.bn_volume_dn   = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::NQ_FP::VOLUME_DN);
-        d.fp_edge_buy    = DMP_ReadBN_SumOfAlerts(sc, chart, DMP_Studies::NQ_FP::EDGE_BUY);
-        d.fp_edge_sell   = DMP_ReadBN_SumOfAlerts(sc, chart, DMP_Studies::NQ_FP::EDGE_SELL);
-        d.fp_edge_buy_2  = DMP_ReadBN_SumOfAlerts(sc, chart, DMP_Studies::NQ_FP::EDGE_BUY_2);
-        d.fp_edge_sell_2 = DMP_ReadBN_SumOfAlerts(sc, chart, DMP_Studies::NQ_FP::EDGE_SELL_2);
+        d.fp_edge_buy    = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::NQ_FP::EDGE_BUY);
+        d.fp_edge_sell   = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::NQ_FP::EDGE_SELL);
+        d.fp_edge_buy_2  = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::NQ_FP::EDGE_BUY_2);
+        d.fp_edge_sell_2 = DMP_ReadBN_Trigger(sc, chart, DMP_Studies::NQ_FP::EDGE_SELL_2);
     }
 
     // Big Orders — TOUS LES SEUILS (BUG #9 : +10/+30/+100 NQ, +100/+150/+400/+1000 ES)
