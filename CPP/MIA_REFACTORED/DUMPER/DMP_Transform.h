@@ -99,7 +99,7 @@ struct DMP_MLFeatures {
     float dist_cur_vah;               // Distance au VAH courant (ticks)
     float dist_cur_val;               // Distance au VAL courant (ticks)
     float dist_cur_vwap_vp;           // Distance au VWAP VP session (ticks) — ajouté 02/03/2026
-    float va_position_pct;            // Position dans VA : 0.0=VAL, 1.0=VAH (-1=hors range)
+    float va_position_pct;            // Position dans VA : 0.0=VAL, 1.0=VAH (null=hors range, fix 16/04/2026)
     float inside_cur_va;              // 1=dans la VA courante, 0=hors VA
 
     // 🆕 FIX 07/03/2026 — Range Trading features
@@ -179,7 +179,7 @@ struct DMP_MLFeatures {
     float ib_range_atr;              // IB range / ATR (contexte type de journée)
     float ib_is_narrow;               // 1=IB étroite (<40% ATR) → breakout probable
     float ib_is_wide;                 // 1=IB large   (>80% ATR) → journée normale
-    float ib_position_pct;            // Position dans IB : 0.0=bas, 1.0=haut
+    float ib_position_pct;            // Position dans IB : 0.0=bas, 1.0=haut (null=hors IB/RTH, fix 16/04/2026)
     float ib_broken_up;               // 1=IB High cassé vers haut
     float ib_broken_down;             // 1=IB Low cassé vers bas
     float ib_complete;                // 1=IB formée (>=10h30 ET)
@@ -520,12 +520,19 @@ static inline float SafeBool(float condition_val) {
     return (DMP_IsValid(condition_val) && condition_val > 0.0f) ? 1.0f : 0.0f;
 }
 
-// Position dans un range [low, high] → [0.0, 1.0], -1.0 si hors range
+// Position dans un range [low, high] → [0.0, 1.0], DMP_INVALID si hors range.
+// FIX 2026-04-16 : retournait -1.0f comme sentinel, ce qui polluait le ML car
+// -1 est une valeur numerique que LightGBM traite comme information valide.
+// Sur ES v3 parquet : ib_position_pct 66% = -1, va_position_pct 98% = -1.
+// Maintenant retourne DMP_INVALID (= FLT_MAX) qui est filtre par DMP_WR_IsInvalid
+// et ecrit comme "null" dans le JSONL.
+// Les callers qui font "PosInRange(...) >= 0.0f" doivent etre modifies en
+// "DMP_IsValid(PosInRange(...))" car FLT_MAX >= 0 est true.
 static inline float PosInRange(float price, float low, float high) {
     if (!DMP_IsPriceValid(price) || !DMP_IsPriceValid(low) || !DMP_IsPriceValid(high))
-        return -1.0f;
-    if (high <= low) return -1.0f;
-    if (price < low || price > high) return -1.0f;
+        return DMP_INVALID;
+    if (high <= low) return DMP_INVALID;
+    if (price < low || price > high) return DMP_INVALID;
     return (price - low) / (high - low);
 }
 
@@ -560,7 +567,9 @@ static void NearestAboveBelow(
 
 static inline void CalcVWAP(const DMP_RawData& r, DMP_MLFeatures& f) {
     const float ts = r.tick_size;
-    const float atr_ticks = r.atr_daily / ts;
+    // FIX 2026-04-15 : r.atr_daily est deja en TICKS (etude SC ATR sur chart ES en mode ticks).
+    // Avant ce fix, division par ts produisait atr_ticks 4x trop grand => dist_*_atr 4x trop petit.
+    const float atr_ticks = r.atr_daily;
 
     // Journalier
     float d_d = CalcDistTicks(r.vwap_day, r.price_close, ts);
@@ -593,7 +602,8 @@ static inline void CalcVWAP(const DMP_RawData& r, DMP_MLFeatures& f) {
 
 static inline void CalcVolumeProfile(const DMP_RawData& r, DMP_MLFeatures& f) {
     const float ts        = r.tick_size;
-    const float atr_ticks = r.atr_daily / ts;
+    // FIX 2026-04-15 : r.atr_daily deja en ticks (cf. CalcVWAP)
+    const float atr_ticks = r.atr_daily;
     const float p         = r.price_close;
 
     // VP courant
@@ -604,7 +614,9 @@ static inline void CalcVolumeProfile(const DMP_RawData& r, DMP_MLFeatures& f) {
 
     // Position dans VA courante
     f.va_position_pct = PosInRange(p, r.cur_val, r.cur_vah);
-    f.inside_cur_va   = (f.va_position_pct >= 0.0f) ? 1.0f : 0.0f;
+    // FIX 2026-04-16 : PosInRange retourne DMP_INVALID (FLT_MAX) hors range, pas -1.
+    // FLT_MAX >= 0.0f est TRUE, donc utiliser DMP_IsValid pour detecter "dans VA".
+    f.inside_cur_va   = DMP_IsValid(f.va_position_pct) ? 1.0f : 0.0f;
 
     // 🆕 FIX 07/03/2026 — Range features
     // range_pos = 0-100% (clampé, pas -1 hors range comme va_position_pct)
@@ -636,12 +648,14 @@ static inline void CalcVolumeProfile(const DMP_RawData& r, DMP_MLFeatures& f) {
     f.dist_prev_vwap_sd1d = CalcDistTicks(r.prev_vwap_sd1d, p, ts);
 
     // Dans la VA précédente ?
+    // FIX 2026-04-16 : PosInRange retourne DMP_INVALID (FLT_MAX) hors range, pas -1.
+    // DMP_IsValid check remplace le >= 0.0f.
     float prev_va_pos = PosInRange(p, r.prev_val, r.prev_vah);
-    f.inside_prev_va = (prev_va_pos >= 0.0f) ? 1.0f : 0.0f;
+    f.inside_prev_va = DMP_IsValid(prev_va_pos) ? 1.0f : 0.0f;
 
     // Open cash était-il dans la VA précédente ?
     float open_in = PosInRange(r.open_cash, r.prev_val, r.prev_vah);
-    f.open_in_prev_va = (open_in >= 0.0f) ? 1.0f : 0.0f;
+    f.open_in_prev_va = DMP_IsValid(open_in) ? 1.0f : 0.0f;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -757,8 +771,27 @@ static inline void CalcMenthorQ(const DMP_RawData& r, DMP_MLFeatures& f) {
     f.dist_vix_hvl_0dte  = (vix_ok && DMP_IsValid(r.vix_hvl_0dte))
                            ? (r.vix_hvl_0dte  - r.vix_level) : DMP_INVALID;
 
-    f.vix_above_hvl_0dte = (vix_ok && DMP_IsValid(r.vix_hvl_0dte)
-                            && r.vix_level > r.vix_hvl_0dte) ? 1.0f : 0.0f;
+    // FIX 2026-04-16 : Fallback VIX 0DTE sur sg1/sg2 (niveaux combines).
+    // L'etude MenthorQ Gamma Levels sur chart VIX combine les niveaux 0DTE
+    // avec les niveaux standards quand ils sont identiques :
+    //   sg1 = "Put Support & Put Support 0DTE"   val=18.0  (fusionnes)
+    //   sg2 = "HVL & HVL 0DTE"                   val=21.5  (fusionnes)
+    //   sg6 = "Put Support 0DTE"                 val=0.0   (vide si fusionne)
+    //   sg7 = "HVL 0DTE"                         val=0.0   (vide si fusionne)
+    // Quand VIX est calme et les 0DTE = normaux, sg6/sg7 restent a 0 -> INVALID
+    // via le sanity check 5-80 dans DMP_ReadVIX. Meme pattern que le fallback
+    // MQ 0DTE ES/NQ (fix 31/03/2026 lignes 665-680 ci-dessus).
+    if (vix_ok && !DMP_IsValid(f.dist_vix_put_0dte) && DMP_IsValid(r.vix_put)) {
+        f.dist_vix_put_0dte = r.vix_put - r.vix_level;
+    }
+    if (vix_ok && !DMP_IsValid(f.dist_vix_hvl_0dte) && DMP_IsValid(r.vix_hvl)) {
+        f.dist_vix_hvl_0dte = r.vix_hvl - r.vix_level;
+    }
+
+    // vix_above_hvl_0dte : utilise hvl_0dte en priorite, fallback sur hvl standard
+    float hvl_eff = DMP_IsValid(r.vix_hvl_0dte) ? r.vix_hvl_0dte : r.vix_hvl;
+    f.vix_above_hvl_0dte = (vix_ok && DMP_IsValid(hvl_eff)
+                            && r.vix_level > hvl_eff) ? 1.0f : 0.0f;
 
     // VIX GEX nearest up/dn — même logique que GEX ES/NQ
     float vgex_above = DMP_INVALID;
@@ -796,7 +829,8 @@ static inline void CalcSession(const DMP_RawData& r, DMP_MLFeatures& f) {
     f.dist_ib_low     = CalcDistTicks(r.ib_low,  p, ts);
     f.ib_range_ticks  = DMP_IsValid(ib_range) ? ib_range : 0.0f;
 
-    float atr_ticks = r.atr_daily / ts;
+    // FIX 2026-04-15 : r.atr_daily deja en ticks (cf. CalcVWAP)
+    float atr_ticks = r.atr_daily;
     f.ib_range_atr = (DMP_IsValid(ib_range) && atr_ticks > 0.0f)
                      ? ib_range / atr_ticks : DMP_INVALID;
 
@@ -860,7 +894,8 @@ static inline void CalcSession(const DMP_RawData& r, DMP_MLFeatures& f) {
 
 static inline void CalcComposite(const DMP_RawData& r, DMP_MLFeatures& f) {
     const float ts        = r.tick_size;
-    const float atr_ticks = r.atr_daily / ts;
+    // FIX 2026-04-15 : r.atr_daily deja en ticks (cf. CalcVWAP)
+    const float atr_ticks = r.atr_daily;
     const float p         = r.price_close;
 
     float d20 = CalcDistTicks(r.comp_20d_vpoc, p, ts);
@@ -878,8 +913,9 @@ static inline void CalcComposite(const DMP_RawData& r, DMP_MLFeatures& f) {
     f.dist_comp_50d_vwap     = CalcDistTicks(r.comp_50d_vwap, p, ts);  // VWAP Composite 50J
 
     // Dans la VA composite ?
-    f.inside_comp_20d_va = (PosInRange(p, r.comp_20d_val, r.comp_20d_vah) >= 0.0f) ? 1.0f : 0.0f;
-    f.inside_comp_50d_va = (PosInRange(p, r.comp_50d_val, r.comp_50d_vah) >= 0.0f) ? 1.0f : 0.0f;
+    // FIX 2026-04-16 : PosInRange retourne DMP_INVALID hors range, utiliser DMP_IsValid
+    f.inside_comp_20d_va = DMP_IsValid(PosInRange(p, r.comp_20d_val, r.comp_20d_vah)) ? 1.0f : 0.0f;
+    f.inside_comp_50d_va = DMP_IsValid(PosInRange(p, r.comp_50d_val, r.comp_50d_vah)) ? 1.0f : 0.0f;
 
     // Confluence VPOC
     f.comp_vpoc_align_20_50 = (DMP_IsPriceValid(r.comp_20d_vpoc) && DMP_IsPriceValid(r.comp_50d_vpoc)
@@ -1025,18 +1061,26 @@ static inline void CalcBatailleNavale(const DMP_RawData& r, DMP_MLFeatures& f) {
     f.bn_pressure_ask = SafeBool(r.is_nq ? r.bn_triple_ask : r.bn_double_ask);
     f.bn_pressure_bid = SafeBool(r.is_nq ? r.bn_triple_bid : r.bn_double_bid);
 
-    // Score BN composite [-1, +1]
-    // Poids : Color=0.3 / Absorb=0.3 / LongBar=0.2 / Pressure=0.2 / Color2=0.2 (bonus)
-    float bull = f.bn_color_up  * 0.30f + f.bn_absorb_ask  * 0.30f
-               + f.bn_long_up   * 0.20f + f.bn_pressure_ask * 0.20f
-               + f.bn_color_up_2 * 0.20f;   // double stacké = bonus continuation
-    float bear = f.bn_color_dn  * 0.30f + f.bn_absorb_bid  * 0.30f
-               + f.bn_long_dn   * 0.20f + f.bn_pressure_bid * 0.20f
-               + f.bn_color_dn_2 * 0.20f;   // double stacké = bonus continuation
-
-    f.bn_score_bull = std::fmin(1.0f, bull);
-    f.bn_score_bear = std::fmin(1.0f, bear);
-    f.bn_score_raw  = f.bn_score_bull - f.bn_score_bear;   // [-1, +1]
+    // Score BN composite [-1, +1] — DESACTIVE 18/04/2026 (audit code-reviewer)
+    //
+    // Motif : 4/5 composants sont deja dans PROHIBITED_FEATURES cote Python
+    // (dataset_builder.py) a cause de pollution historique backfill pre-fix 3.7.6
+    // ou distributions cassees. Le score composite devient donc structurellement
+    // non-interpretable (sum de features saturees/mortes/temp-polluees).
+    //
+    // Avant fix 3.7.6 : composants satures a 1 -> score eleve (mean 0.55-0.67)
+    // Apres fix 3.7.6 : composants events propres -> score s'effondre (0.02-0.06)
+    //
+    // Reactivation : REEVALUER POST-PURGE v4 (~02/05/2026) quand les composants
+    // auront 15j de data post-3.7.7 propre et pourront sortir de PROHIBITED.
+    // Si reactivation, il faudra recalibrer les poids (0.30/0.30/0.20/0.20/0.20)
+    // sur la nouvelle distribution events-based (au lieu de saturation-based).
+    //
+    // Pour l'instant : output 0.0 pour alleger JSONL (3 floats x 262K bars/mois
+    // inutiles) et eviter le leakage ML accidentel si PROHIBITED relache par erreur.
+    f.bn_score_bull = 0.0f;
+    f.bn_score_bear = 0.0f;
+    f.bn_score_raw  = 0.0f;
 
     // Big Orders : nearest above/below — COMBINÉ TOUS SEUILS (BUG #9)
     // Scan +100 + extra1 + extra2 + extra3, prend le plus proche toutes catégories

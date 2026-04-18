@@ -335,11 +335,16 @@ static inline float DMP_CheckODF(
 // SECTION 7 — DAY TYPE (5 valeurs)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-static inline float DMP_CalcIBRangeATR(float ib_high, float ib_low, float atr) {
-    if (!DMP_IsPriceValid(ib_high) || !DMP_IsPriceValid(ib_low)) return DMP_INVALID;
-    if (!DMP_IsValid(atr) || atr <= 0.0f)                         return DMP_INVALID;
-    if (ib_high <= ib_low)                                         return DMP_INVALID;
-    return (ib_high - ib_low) / atr;
+static inline float DMP_CalcIBRangeATR(float ib_high, float ib_low, float atr_ticks, float tick_size) {
+    // FIX 2026-04-15 : atr_ticks est en TICKS, ib_high/ib_low en POINTS.
+    // Avant fix : (ib_high - ib_low) / atr retournait pts/ticks = ratio 4x trop petit.
+    // Apres fix : conversion ib_range en ticks via tick_size, puis division homogene.
+    if (!DMP_IsPriceValid(ib_high) || !DMP_IsPriceValid(ib_low))       return DMP_INVALID;
+    if (!DMP_IsValid(atr_ticks) || atr_ticks <= 0.0f)                  return DMP_INVALID;
+    if (!DMP_IsValid(tick_size) || tick_size <= 0.0f)                  return DMP_INVALID;
+    if (ib_high <= ib_low)                                              return DMP_INVALID;
+    const float ib_range_ticks = (ib_high - ib_low) / tick_size;
+    return ib_range_ticks / atr_ticks;
 }
 
 static inline int DMP_ClassifyDayType(
@@ -627,7 +632,7 @@ inline void DMP_UpdateOpenType(
         // Mettre à jour si IB formée (10h30), 14h00, ou 15h30
         // En pratique : chaque barre après 10h30 (day_type affiné en continu)
         // Mais on log seulement sur changement
-        float ib_atr = DMP_CalcIBRangeATR(r.ib_high, r.ib_low, r.atr_daily);
+        float ib_atr = DMP_CalcIBRangeATR(r.ib_high, r.ib_low, r.atr_daily, r.tick_size);
         int dt = DMP_ClassifyDayType(ib_atr, r.sess_high, r.sess_low,
                                       r.price_close, r.ib_high, r.ib_low);
         if ((float)dt != cached_dt) {

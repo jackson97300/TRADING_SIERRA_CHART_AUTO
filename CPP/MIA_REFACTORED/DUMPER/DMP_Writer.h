@@ -560,9 +560,17 @@ static inline void DMP_WR_WriteMeta(
 
     meta << "{\n";
     meta << "  \"version\": "  << DMP_FORMAT_VERSION << ",\n";
+    // FIX 2026-04-16 : ajout de schema_version pour tracer les fix semantiques
+    // qui ne changent pas le nombre de colonnes (ex: 3.7.4 PosInRange -1 -> null).
+    // Permet au dataset_builder et quality_validator de filtrer par version.
+    meta << "  \"schema_version\": \"" << DMP_SCHEMA_VERSION << "\",\n";
     meta << "  \"sym\": \""    << sym                << "\",\n";
     meta << "  \"date\": \""   << date_str           << "\",\n";
     meta << "  \"tick_size\": "<< tick_size           << ",\n";
+    // FIX 2026-04-15 : ATR est stocke en TICKS (pas en points) dans le champ "atr".
+    // Les features dist_*_atr, ib_range_atr, sess_range_atr sont calculees en
+    // ratio ticks/ticks. Cf. fix DMP_Transform.h + DMP_OpenType.h du 15/04/2026.
+    meta << "  \"atr_convention\": \"ticks\",\n";
     meta << "  \"n_columns\": " << 266               << ",\n";
     meta << "  \"format\": \"jsonl\",\n";
     meta << "  \"invalid_sentinel\": null,\n";

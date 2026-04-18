@@ -1119,6 +1119,10 @@ inline float DMP_ReadBN_SumOfAlerts(SCStudyInterfaceRef sc, int chart, int study
 // ROTATION & CLUSTER
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Forward declaration (definition complete dans la section BN signals plus bas).
+// Necessaire car DMP_ReadRotation (ci-dessous) appelle DMP_ReadBN_Event.
+inline float DMP_ReadBN_Event(SCStudyInterfaceRef sc, int chart, int study);
+
 inline void DMP_ReadRotation(SCStudyInterfaceRef sc, DMP_RawData& d) {
     const int chart   = d.is_nq ? DMP_Charts::NQ_FP : DMP_Charts::ES_FP;
     const int rot_id  = d.is_nq ? DMP_Studies::NQ_FP::ROTATION    : DMP_Studies::ES_FP::ROTATION;
@@ -1131,8 +1135,13 @@ inline void DMP_ReadRotation(SCStudyInterfaceRef sc, DMP_RawData& d) {
     // ⚠️ FIX 04/03/2026 : Rotation UP/DN = mêmes études [AV] que BN → sg2 "Sum of Alerts"
     //  Ancien code (bot ligne 1483) : ReadStudyValue(sc, chart, ES_FP_ROTATION_UP, 2)
     //  avec arr[size-1]. Même pattern que Color/Absorb.
-    d.rotation_up_signal = DMP_ReadBN_SumOfAlerts(sc, chart, rup_id);
-    d.rotation_dn_signal = DMP_ReadBN_SumOfAlerts(sc, chart, rdn_id);
+    // FIX 18/04/2026 : rotation via SG0 evenementiel (pas SumOfAlerts)
+    // ROTATION UP/DN n'ont PAS d'Extension Lines dessinees (Draw=None dans SC)
+    // -> SumOfAlerts sg2 est VIDE/non-populate par l'etude (pas saturation,
+    //    mais feature morte a 0% systematique dans JSONL 15/04).
+    // -> SG0 (Color Bar Background Transparent) = vraie detection ponctuelle.
+    d.rotation_up_signal = DMP_ReadBN_Event(sc, chart, rup_id);
+    d.rotation_dn_signal = DMP_ReadBN_Event(sc, chart, rdn_id);
 
     // FIX 13/04/2026 : l'ancien code scannait sg0-59 de l'etude Cluster Volume
     // avec la meme approche buggy que les Big Orders. Bug 26 jours : d.cluster_prices
@@ -1481,6 +1490,66 @@ inline float DMP_ReadExtensionLineCount(SCStudyInterfaceRef sc, int chart, int s
     return (float)(n > 0 ? n : 0);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX 18/04/2026 — Lecture SG0 evenementielle pour etudes BN Battle Navale
+//
+// Probleme 1 (saturation ExtensionLineCount) :
+//   DMP_ReadExtensionLineCount lit le NOMBRE de lignes d'extension actives
+//   (GetNumLinesUntilFutureIntersection). Sur marche trending, les lignes
+//   s'accumulent et ne sont jamais intersectees -> compteur >0 permanent
+//   -> bn_color_up/dn, bn_double_*, bar_color_up/dn, bar_pressure_* saturent
+//   a 1 sur 90% des barres NQ 15/04 (confirme empirique) = features mortes ML.
+//
+// Probleme 2 (SumOfAlerts vide) :
+//   rotation_up/dn lus via DMP_ReadBN_SumOfAlerts (sg2 compteur session).
+//   ROTATION UP/DN n'ont PAS d'Extension Lines (Draw=None dans SC) et sg2
+//   Sum of Alerts n'est jamais populate par ces etudes -> lit toujours 0
+//   -> rotation_up/dn_signal a 0% dans JSONL (feature morte autrement).
+//
+// Solution unifiee : lire SG0 (Color Bar = prix quand condition TRUE, 0 sinon)
+// directement a arr[sz-1] (meme index que DMP_ReadBN_Trigger existant qui
+// fonctionne deja pour bn_absorb, bn_long, bar_edge). Convertir en bool 0/1
+// (DMP_ReadBN_Trigger renvoie la valeur brute = prix, on veut un flag).
+//
+// Choix sz-2 (CORRECTION 17/04/2026) :
+//   Les etudes [AV] COLOR UP/DN utilisent O[1] dans leur formule ACSIL
+//   (= barre SUIVANTE). Sur arr[sz-1] (derniere barre = live en formation),
+//   [1] n'existe pas encore -> formule retourne 0/NaN -> 0 fire permanent.
+//   Confirmation empirique : 650 barres ES+NQ post-deploy sz-1 = 0.0% color
+//   partout. Switch sz-2 (avant-derniere barre fermee, stable car [1] existe).
+//   Divergence volontaire avec DMP_ReadBN_Trigger (sz-1) qui est OK pour les
+//   etudes sans [1] dans la formule (absorb, long, edge).
+//
+// Visuel Sierra Chart :
+//   SG1 UI = ACSIL sg0 = Color Bar (Point On Low / Background Transparent)
+//     = le POINT VERT / FOND COLORE que Jackson voit et trade manuellement
+//   SG2 UI = ACSIL sg1 = Extension Lines (horizontales, persistent)
+//     = NE PAS utiliser pour detection evenementielle
+//   SG3 UI = ACSIL sg2 = Sum of Alerts (compteur cumul session)
+//     = NE PAS utiliser pour detection evenementielle
+//
+// Compatible toutes etudes "Color Bar Based On Alert Condition" :
+//   [AV] COLOR UP / DN (ID:26/25 NQ, ID:24/25 ES)
+//   [AV] COLOR UP 2 / DN 2 (double stackees)
+//   [AV] ROTATION UP / DN (ID:21/22 NQ, ID:19/20 ES) - pas d'Ext Lines mais SG0 OK
+//   [AV] DOUBLE ASK / BID (ID:41/42 ES FP)
+//   [AV] TRIPLE ASK / BID (ID:37/38 NQ FP)
+//
+// Difference avec DMP_ReadBN_Trigger :
+//   Trigger renvoie la valeur raw (= prix LOW/HIGH selon Input Data) pour
+//   usage "est-ce un prix valide", ici on veut un bool 0/1 pour feature ML.
+// ─────────────────────────────────────────────────────────────────────────────
+inline float DMP_ReadBN_Event(SCStudyInterfaceRef sc, int chart, int study) {
+    if (study < 0) return 0.0f;
+    SCFloatArray arr;
+    sc.GetStudyArrayFromChartUsingID(chart, study, 0, arr);  // sg0 = Color Bar
+    int sz = (int)arr.GetArraySize();
+    if (sz < 2) return 0.0f;
+    float v = arr[sz - 2];   // avant-derniere : formule [1] stable (fix 17/04)
+    if (!std::isfinite(v) || v >= 1e37f) return 0.0f;
+    return (v > 0.0f) ? 1.0f : 0.0f;
+}
+
 // Retourne le prix de l'Extension Line la plus proche du prix courant.
 // Utile pour calculer la distance à la zone COLOR UP/DN la plus proche.
 // Retourne DMP_INVALID si aucune extension line active.
@@ -1519,14 +1588,17 @@ inline void DMP_ReadBNSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
     //  LONG UP/DN = signal per-bar → sg0 correct (43/98 fires confirmé).
     //  ABSORB, TRIPLE, DOUBLE = Extension Lines activées → ExtensionLineCount.
     //  Si l'étude fire rarement (formule stricte), sg0[last]=0 mais Extension Lines persistent.
-    d.bn_color_up   = DMP_ReadExtensionLineCount(sc, chart,
+    // FIX 18/04/2026 : COLOR via SG0 evenementiel (pas ExtensionLineCount)
+    // Les boules vertes/rouges visibles = SG1 UI = ACSIL sg0 Color Bar (Point On Low)
+    // Ancien code lisait Extension Lines count = sature 99% sur trending.
+    d.bn_color_up   = DMP_ReadBN_Event(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_FP::COLOR_UP   : DMP_Studies::ES_FP::COLOR_UP);
-    d.bn_color_dn   = DMP_ReadExtensionLineCount(sc, chart,
+    d.bn_color_dn   = DMP_ReadBN_Event(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_FP::COLOR_DN   : DMP_Studies::ES_FP::COLOR_DN);
-    // 🆕 10/03/2026 : COLOR_UP_2 = double stacké (continuation), séparé de COLOR simple
-    d.bn_color_up_2 = DMP_ReadExtensionLineCount(sc, chart,
+    // 10/03/2026 : COLOR_UP_2 = double stacké (continuation), séparé de COLOR simple
+    d.bn_color_up_2 = DMP_ReadBN_Event(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_FP::COLOR_UP_2 : DMP_Studies::ES_FP::COLOR_UP_2);
-    d.bn_color_dn_2 = DMP_ReadExtensionLineCount(sc, chart,
+    d.bn_color_dn_2 = DMP_ReadBN_Event(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_FP::COLOR_DN_2 : DMP_Studies::ES_FP::COLOR_DN_2);
     // ⭐ FIX 15/04/2026 : bn_absorb via sg0 Trigger per-bar
     //   Historique du bug :
@@ -1556,15 +1628,17 @@ inline void DMP_ReadBNSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
 
     // ES = Double Ask/Bid — NQ = Triple Ask/Bid → Extension Lines
     if (!d.is_nq) {
-        d.bn_double_ask  = DMP_ReadExtensionLineCount(sc, chart, DMP_Studies::ES_FP::DOUBLE_ASK);
-        d.bn_double_bid  = DMP_ReadExtensionLineCount(sc, chart, DMP_Studies::ES_FP::DOUBLE_BID);
+        // FIX 18/04/2026 : DOUBLE via SG0 evenementiel (pas ExtensionLineCount)
+        d.bn_double_ask  = DMP_ReadBN_Event(sc, chart, DMP_Studies::ES_FP::DOUBLE_ASK);
+        d.bn_double_bid  = DMP_ReadBN_Event(sc, chart, DMP_Studies::ES_FP::DOUBLE_BID);
         d.bn_triple_ask  = DMP_BOOL_FALSE;
         d.bn_triple_bid  = DMP_BOOL_FALSE;
     } else {
         d.bn_double_ask  = DMP_BOOL_FALSE;
         d.bn_double_bid  = DMP_BOOL_FALSE;
-        d.bn_triple_ask  = DMP_ReadExtensionLineCount(sc, chart, DMP_Studies::NQ_FP::TRIPLE_ASK);
-        d.bn_triple_bid  = DMP_ReadExtensionLineCount(sc, chart, DMP_Studies::NQ_FP::TRIPLE_BID);
+        // FIX 18/04/2026 : TRIPLE via SG0 evenementiel (pas ExtensionLineCount)
+        d.bn_triple_ask  = DMP_ReadBN_Event(sc, chart, DMP_Studies::NQ_FP::TRIPLE_ASK);
+        d.bn_triple_bid  = DMP_ReadBN_Event(sc, chart, DMP_Studies::NQ_FP::TRIPLE_BID);
     }
 
     // 🆕 BUG #10 — Volume UP/DOWN + Edge Zones Footprint (05/03/2026)
@@ -1668,12 +1742,12 @@ inline void DMP_ReadBarSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
     const int chart = d.is_nq ? DMP_Charts::NQ_BARRES : DMP_Charts::ES_BARRES;
 
     // ── A. Signaux booléens ─────────────────────────────────────────────
-    // COLOR = Extension Lines (même fix que FP)
-    // LONG/EDGE = per-bar → sg0 correct
-    // PRESSURE (DOUBLE/TRIPLE) = Extension Lines
-    d.bar_color_up    = DMP_ReadExtensionLineCount(sc, chart,
+    // FIX 18/04/2026 : COLOR via SG0 evenementiel (pas ExtensionLineCount)
+    // LONG/EDGE = per-bar → sg0 correct (deja)
+    // PRESSURE (DOUBLE/TRIPLE) = SG0 evenementiel (fix)
+    d.bar_color_up    = DMP_ReadBN_Event(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_BARRES::COLOR_UP    : DMP_Studies::ES_BARRES::COLOR_UP);
-    d.bar_color_dn    = DMP_ReadExtensionLineCount(sc, chart,
+    d.bar_color_dn    = DMP_ReadBN_Event(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_BARRES::COLOR_DN    : DMP_Studies::ES_BARRES::COLOR_DN);
     d.bar_long_up_bar = DMP_ReadBN_Trigger(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_BARRES::LONG_UP_BAR : DMP_Studies::ES_BARRES::LONG_UP_BAR);
@@ -1688,13 +1762,13 @@ inline void DMP_ReadBarSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
     d.bar_edge_sell   = DMP_ReadBN_Trigger(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_BARRES::EDGE_SELL   : DMP_Studies::ES_BARRES::EDGE_SELL);
 
-    // ES = Double Ask/Bid, NQ = Triple Ask/Bid → Extension Lines
+    // FIX 18/04/2026 : DOUBLE/TRIPLE via SG0 evenementiel (pas ExtensionLineCount)
     if (!d.is_nq) {
-        d.bar_pressure_ask = DMP_ReadExtensionLineCount(sc, chart, DMP_Studies::ES_BARRES::DOUBLE_ASK);
-        d.bar_pressure_bid = DMP_ReadExtensionLineCount(sc, chart, DMP_Studies::ES_BARRES::DOUBLE_BID);
+        d.bar_pressure_ask = DMP_ReadBN_Event(sc, chart, DMP_Studies::ES_BARRES::DOUBLE_ASK);
+        d.bar_pressure_bid = DMP_ReadBN_Event(sc, chart, DMP_Studies::ES_BARRES::DOUBLE_BID);
     } else {
-        d.bar_pressure_ask = DMP_ReadExtensionLineCount(sc, chart, DMP_Studies::NQ_BARRES::TRIPLE_ASK);
-        d.bar_pressure_bid = DMP_ReadExtensionLineCount(sc, chart, DMP_Studies::NQ_BARRES::TRIPLE_BID);
+        d.bar_pressure_ask = DMP_ReadBN_Event(sc, chart, DMP_Studies::NQ_BARRES::TRIPLE_ASK);
+        d.bar_pressure_bid = DMP_ReadBN_Event(sc, chart, DMP_Studies::NQ_BARRES::TRIPLE_BID);
     }
 
     // ── B. Extension Lines prix — via sc.GetStudyLineUntilFutureIntersection ──
@@ -2028,6 +2102,127 @@ inline void DMP_ReadOVN(SCStudyInterfaceRef sc, DMP_RawData& d) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DELTA DIVERGENCE — reconstruction fidele Sierra Chart Daily OHLC (17/04/2026)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Remplace le bug DMP_ReadExtensionLineCount (v3 07/04) qui retourne 100% a 1
+// permanent sur marche trending (confirme empiriquement 20260416 ES+NQ
+// 910 barres = 100% a 1). Cause : ExtensionLines persistent jusqu'a intersection
+// prix -> jamais intersectees en trending -> count > 0 permanent.
+//
+// Formule SC identifiee (captures Jackson 17/04) :
+//   Etude ID33 "LINKED TO DELTA DIVERGENCE" = "Daily OHLC" (SierraChartStudies_64)
+//   SG2 (ACSIL sg1) = Daily High cumulatif (running max du jour)
+//   SG3 (ACSIL sg2) = Daily Low  cumulatif (running min du jour)
+//
+//   DELTA DIV BUY  : AND(SG3 < SG3[-1], AV-BV >= 0)
+//                  = nouveau Daily Low + delta bullish
+//                  = new session low + buyers en embuscade -> rejection/bounce
+//
+//   DELTA DIV SELL : AND(SG2 > SG2[-1], AV-BV <= 0)
+//                  = nouveau Daily High + delta bearish
+//                  = new session high + sellers en embuscade -> false breakout
+//
+// AV-BV = ask_volume - bid_volume = fpbs_delta (= delta_bar feature en sortie).
+// Verifie empiriquement : delta_bar == buy_vol - sell_vol exact match ES + NQ.
+//
+// Trading date CME : reset a 18:00 ET (session evening open).
+// Validation Python 20260416 NQ : 2 triggers SELL (06:07, 06:10 UTC) matchent
+// exactement les 2 triangles visibles sur Sierra Chart (confirme par Jackson).
+// Fire rate empirique : 0.44% NQ / 0.22% ES = evenement rare et fort.
+//
+// PersistVars per-study-instance : chaque chart (ES, NQ) a son etat isole,
+// donc pas besoin de separer _ES / _NQ. Indices 200-202 libres (scan exhaustif
+// codebase : 50-74 HVN/LVN, 80-92 Writer/OpenType, 100-192 divers).
+// ─────────────────────────────────────────────────────────────────────────────
+
+constexpr int DMP_PERSIST_DIV_DAILY_HIGH  = 200;
+constexpr int DMP_PERSIST_DIV_DAILY_LOW   = 201;
+constexpr int DMP_PERSIST_DIV_SESSION_DAY = 202;
+
+inline void DMP_ReadDeltaDivergenceClean(SCStudyInterfaceRef sc, DMP_RawData& d) {
+    float& daily_high = sc.GetPersistentFloat(DMP_PERSIST_DIV_DAILY_HIGH);
+    float& daily_low  = sc.GetPersistentFloat(DMP_PERSIST_DIV_DAILY_LOW);
+    int&   last_day   = sc.GetPersistentInt(DMP_PERSIST_DIV_SESSION_DAY);
+
+    // Reset explicite au debut d'un Full Recalc pour eviter toute pollution
+    // d'etat persistant entre reloads DLL ou entre sessions.
+    if (sc.IsFullRecalculation && sc.Index == 0) {
+        daily_high = -1e30f;
+        daily_low  = 1e30f;
+        last_day   = 0;
+    }
+
+    // Calcul trading date CME (YYYYMMDD) en reutilisant la conversion ET
+    // DST-aware deja presente dans DMP_ReadAll (lignes 2190-2243).
+    time_t sec = (time_t)(d.timestamp_ms / 1000);
+#ifdef _WIN32
+    struct tm gm_val{};
+    gmtime_s(&gm_val, &sec);
+    struct tm* gm = &gm_val;
+#else
+    struct tm gm_buf{};
+    struct tm* gm = gmtime_r(&sec, &gm_buf);
+#endif
+    int mo = gm->tm_mon + 1;
+    int dy = gm->tm_mday;
+    bool is_dst = false;
+    if      (mo >= 4 && mo <= 10)    is_dst = true;
+    else if (mo == 3 && dy >= 8)     is_dst = true;
+    else if (mo == 11 && dy <= 7)    is_dst = true;
+    int utc_offset = is_dst ? 4 : 5;
+    int h_et = (gm->tm_hour - utc_offset + 24) % 24;
+
+    // Trading date : si hour_ET >= 18, la session du LENDEMAIN a demarre
+    time_t trading_sec = sec - (long)utc_offset * 3600L;  // local ET
+    if (h_et >= 18) trading_sec += 86400L;                 // shift +1 day
+
+#ifdef _WIN32
+    struct tm tr_val{};
+    gmtime_s(&tr_val, &trading_sec);
+    struct tm* tr = &tr_val;
+#else
+    struct tm tr_buf{};
+    struct tm* tr = gmtime_r(&trading_sec, &tr_buf);
+#endif
+    int trading_day = (tr->tm_year + 1900) * 10000
+                    + (tr->tm_mon + 1) * 100
+                    +  tr->tm_mday;
+
+    // Reset session ?
+    if (trading_day != last_day) {
+        daily_high = -1e30f;
+        daily_low  = 1e30f;
+        last_day   = trading_day;
+    }
+
+    // Sauvegarder prev AVANT update
+    const float prev_high = daily_high;
+    const float prev_low  = daily_low;
+
+    // Update running high/low avec fallback price_close si price_high/low invalides
+    // (cas edge backfill pre-3.7.1 qui n'avait pas ces champs).
+    // NOTE: struct DMP_RawData utilise price_high/price_low (cf ligne 343-344).
+    // Transform.h ecrit ensuite bar_high/bar_low dans DMP_Features (JSONL output).
+    const float bh = DMP_IsPriceValid(d.price_high) ? d.price_high : d.price_close;
+    const float bl = DMP_IsPriceValid(d.price_low)  ? d.price_low  : d.price_close;
+    if (DMP_IsPriceValid(bh) && bh > daily_high) daily_high = bh;
+    if (DMP_IsPriceValid(bl) && bl < daily_low)  daily_low  = bl;
+
+    // Formule SC exacte
+    // fpbs_delta est le raw (AV-BV). Transform le copie dans f.delta_bar.
+    const float db = DMP_IsValid(d.fpbs_delta) ? d.fpbs_delta : 0.0f;
+
+    // Guard init_ok : skip la 1ere barre de session (prev encore a sentinel)
+    const bool init_ok = (prev_high > -1e29f) && (prev_low < 1e29f);
+    const bool buy_div  = init_ok && (daily_low  < prev_low)  && (db >= 0.0f);
+    const bool sell_div = init_ok && (daily_high > prev_high) && (db <= 0.0f);
+
+    d.delta_div_buy  = buy_div  ? 1.0f : 0.0f;
+    d.delta_div_sell = sell_div ? 1.0f : 0.0f;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CVD & SWING HIGH/LOW
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2062,14 +2257,19 @@ inline void DMP_ReadCVD(SCStudyInterfaceRef sc, DMP_RawData& d) {
     // VPOC session courante (chart CVD) — reference line → SafeReadLast
     d.vp_session_vpoc = DMP_SafeReadLast(sc, chart, vp_id, 1);
 
-    // Divergences Delta — FIX v3 (07/04/2026)
+    // Divergences Delta — FIX v4 (17/04/2026)
     // v1: SumOfAlerts(sg2) → cumulatif, reste ON toute la session = BRUIT
-    // v2: Trigger(sg0) → pulse 1 barre, rate 99% des signaux = MORT
-    // v3: Extension Lines (Extend to Future Intersection activé dans SC)
-    //     Compte les lignes de divergence actives (persistent jusqu'à intersection prix)
-    //     Retourne 0 = aucune divergence, N = nombre de zones actives
-    d.delta_div_buy  = DMP_ReadExtensionLineCount(sc, chart, div_buy);
-    d.delta_div_sell = DMP_ReadExtensionLineCount(sc, chart, div_sell);
+    // v2: Trigger(sg0) → pulse 1 barre, considere "rate 99% des signaux"
+    //     mais c'etait en fait le comportement attendu (evenement rare).
+    // v3: Extension Lines → 100% a 1 permanent sur trending (jamais intersectees).
+    // v4: Reconstruction Daily OHLC fidele a ID33 "LINKED TO DELTA DIVERGENCE"
+    //     BUY : new daily_low + delta >= 0
+    //     SELL: new daily_high + delta <= 0
+    //     Fire rate empirique ~0.4% = evenement rare et fort au session extreme.
+    //     Valide par match exact avec triangles Sierra Chart sur 20260416.
+    (void)div_buy;   // studies ID ne sont plus lues (calcul C++ custom via PersistVars)
+    (void)div_sell;
+    DMP_ReadDeltaDivergenceClean(sc, d);  // ecrit d.delta_div_buy / d.delta_div_sell
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
