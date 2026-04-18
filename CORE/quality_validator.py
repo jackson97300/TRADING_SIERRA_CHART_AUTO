@@ -82,6 +82,37 @@ SHARED_FEATURES = [
     "im_open_type_agreement", "im_rolling_correlation_10",
 ]
 
+# Features event-based par design : rares (fire rate < 1%) car elles ne
+# declenchent qu'a des moments specifiques (divergence, rvol extreme, etc.).
+# Le check CONSTANT (top_value_freq > 95%) est une fausse alerte pour elles.
+# Ces features sont EXEMPTEES du check top_freq mais gardent le check std.
+# Ajoute 17/04/2026 pour les features div.
+EVENT_BASED_FEATURES = [
+    "delta_divergence_clean",
+    "delta_div_buy_clean",
+    "delta_div_sell_clean",
+    "delta_div_strength",
+    "div_at_key_level_ticks",
+    "div_confluence_dmp",
+    "div_confluence_with_regime",
+    "div_forward_return_20b",
+    "div_regime_proxy_ok",
+    "ctx_double_top_trap",
+    "ctx_momentum_exhaustion",
+    "rvol_buy_strong",
+    "rvol_sell_strong",
+    "rvol_absorb_buy",
+    "rvol_absorb_sell",
+    # Ajout 18/04/2026 suite audit empirique :
+    # - ctx_instant_absorption : feature calculee Python (rolling_features.py:187)
+    #   rare event stable, non affectee par pollution backfill C++. Reste EVENT_BASED.
+    # - bar_long_dn_bar / bar_long_up_bar RETIRES (pollution historique backfill
+    #   confirmee : NQ aggregate mean 0.737 vs 11% fire rate post-fix 17/04).
+    #   Deplaces vers PROHIBITED temporaire (dataset_builder.py), retour prevu a
+    #   la purge v4 02/05/2026 apres rebuild backfill DMP 3.7.7.
+    "ctx_instant_absorption",
+]
+
 # Features legitimement differenciees par instrument (% ou ratios naturels)
 # — IV/HV d'un instrument est par nature differente entre ES et NQ
 # — les ratios macroeconomiques (PC ratio, GEX ratio) sont differents par marche
@@ -123,6 +154,23 @@ NATURALLY_DIFFERENT = [
     "dist_mq_put_atr",
     "dist_mq_hvl_atr",
     "dist_mq_call_0dte_atr",
+    # Features div (17/04/2026) : naturellement differentes par instrument
+    # (ATR, tick scale, fire rate distincts ES/NQ par design)
+    "div_at_key_level_ticks",
+    "div_forward_return_20b",
+    # Features naturellement differenciees 18/04/2026 :
+    # - bars_since_retest_low : compteur bars, NQ plus volatil = plus de bars entre retests
+    # - ctx_va_developing_10 : VA width scale ES vs NQ pure (points natifs)
+    # - open_in_prev_va : biais session {ES,NQ} distinct par horaire de trading
+    # RESERVE 3 code-reviewer : bn_score_bear RETIRE. Audit empirique DMP_Transform.h:1069
+    # montre qu'il s'agit d'un COMPOSITE de features PROHIBITED (bn_color_dn, bn_absorb_bid,
+    # bn_pressure_bid, bn_color_dn_2) + bn_long_dn. Avant fix 3.7.6 : composants satures
+    # a 1 -> score eleve (mean 0.55 ES / 0.67 NQ). Apres fix : events propres -> score
+    # s'effondre (0.02 ES / 0.06 NQ). Pas un biais naturel = composite casse.
+    # bn_score_bear + bn_score_raw -> PROHIBITED (dataset_builder.py).
+    "bars_since_retest_low",
+    "ctx_va_developing_10",
+    "open_in_prev_va",
 ]
 
 # Meta columns a ignorer dans l'audit (pas des features)
@@ -335,6 +383,7 @@ class QualityValidator:
     def _check_constant(self, feat, s_es, s_nq, mean_es, mean_nq,
                          std_es, std_nq) -> Optional[FeatureViolation]:
         """Regle 4 : feature constante ou quasi-constante."""
+        is_event_based = feat in EVENT_BASED_FEATURES
         for sym, s, std in [("ES", s_es, std_es), ("NQ", s_nq, std_nq)]:
             if std < CONSTANT_STD_THRESHOLD:
                 return FeatureViolation(
@@ -344,6 +393,9 @@ class QualityValidator:
                     detail=f"{sym} std={std:.2e} < {CONSTANT_STD_THRESHOLD}",
                     severity="RED",
                 )
+            # Skip top_freq check for event-based features (rare by design)
+            if is_event_based:
+                continue
             top_freq = s.value_counts(normalize=True).iloc[0]
             if top_freq > CONSTANT_TOP_FREQ_THRESHOLD:
                 return FeatureViolation(
@@ -434,7 +486,26 @@ class QualityValidator:
 
     def _check_outlier(self, feat, s_es, s_nq, mean_es, mean_nq,
                         std_es, std_nq) -> Optional[FeatureViolation]:
-        """Regle 3 : outlier explosion (max / |p99| > 100)."""
+        """Regle 3 : outlier explosion (max / |p99| > 100).
+
+        Exemption (18/04/2026) : EVENT_BASED_FEATURES sont rare events par design.
+        Leur ratio max/p99 peut exploser naturellement (division par ~0 sur
+        fire rate < 1%) sans etre un bug. Ex : delta_div_strength = delta/magnitude
+        de la divergence → petits deltas rare → ratio explosif.
+
+        Garde-fou (reserve 2 code-reviewer) : meme en exemption, on refuse les
+        valeurs non-finite (NaN/Inf/overflow) qui passeraient silencieusement.
+        """
+        if feat in EVENT_BASED_FEATURES:
+            if not np.isfinite(s_es).all() or not np.isfinite(s_nq).all():
+                return FeatureViolation(
+                    feature=feat, rule="FINITE",
+                    mean_es=mean_es, mean_nq=mean_nq,
+                    std_es=std_es, std_nq=std_nq,
+                    detail=f"EVENT_BASED exempt outlier mais contient NaN/Inf/overflow",
+                    severity="RED",
+                )
+            return None
         for sym, s in [("ES", s_es), ("NQ", s_nq)]:
             if len(s) < 100:
                 continue

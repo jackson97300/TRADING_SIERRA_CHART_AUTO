@@ -108,6 +108,10 @@ TO_NORMALIZE = [
     "open_gap_ticks",
     "range_size_ticks", "sess_range_ticks",
     "dist_ext_edge_sell", "dist_ext_long_dn",
+    # ── Ajout 18/04/2026 : fuites PRICE_LEVEL flaggees par quality_validator ──
+    # Valeurs brutes en POINTS (dist_vwap_d_sd2d) ou en ticks non-normalises
+    # → ratio ES/NQ pur (NQ 4.6x ES). Apres atr_normalize : ratio proche 1.
+    "dist_sess_low", "dist_swing_low", "dist_vwap_d_sd2d",
 ]
 
 # Features WHITELIST : forcees dans le dataset final meme si rho Spearman < 0.02.
@@ -189,6 +193,60 @@ PROHIBITED_FEATURES = {
     "fp_edge_buy", "fp_edge_sell",  # bug SG ACSIL ES
     "bn_pressure_bid",               # NQ 99.7% constant a investiguer
 
+    # ── SumOfAlerts cumul pattern — bug conceptuel 16/04/2026 ────────
+    # rotation_up / rotation_dn sont lus via DMP_ReadBN_SumOfAlerts qui
+    # retourne le subgraph sg2 "Sum of Alerts" = COMPTEUR CUMULATIF depuis
+    # le debut de la session. Des qu'il y a eu au moins 1 alerte up et 1
+    # alerte dn dans la session (ce qui arrive quasi toujours apres les
+    # premieres minutes), les 2 compteurs sont > 0 -> SafeBool(cumul>0)=1
+    # pour les 2 -> 90.1% les 2 a 1 sur ES 14/04 live.
+    # Meme effet que le bug Extension Line Count mais mecanique differente.
+    # Fix C++ future : lire le DELTA (sg2[t] - sg2[t-1]) > 0 = alerte
+    # fraiche cette barre = trigger per-bar. En attendant, blacklistees.
+    "rotation_up", "rotation_dn",
+
+    # ── Extension Line Count pattern — bug conceptuel 16/04/2026 ─────
+    # Toutes ces features sont lues en C++ via DMP_ReadExtensionLineCount puis
+    # converties en booleen via SafeBool(count > 0). Probleme : l'etude SC a
+    # quasi toujours des zones bullish ET bearish actives quelque part (marche
+    # en balance normale), donc les 2 booleens sont a 1 simultanement :
+    #   bar_color_up/dn : 100% les 2 a 1 (feature morte totale)
+    #   bar_pressure_ask/bid : 100% les 2 a 1 (feature morte totale)
+    #   bn_color_up/dn : 90% les 2 a 1
+    #   bn_color_up_2/dn_2 : 75% les 2 a 1
+    #   bn_pressure_ask : 36% les 2 a 1 (moins pire mais meme pattern)
+    # Verification empirique sur DATA/ES/20260414_ES.jsonl (1382 lignes live).
+    # Fix C++ future : remplacer par DMP_ReadNearestExtensionLine + logique
+    # directionnelle (compare up vs dn et retourne score +1/-1/0 selon quelle
+    # zone est la plus proche du prix courant). En attendant, blacklistees.
+    # Les features dist_ext_color_up/dn, dist_ext_long_up/dn, dist_ext_edge_buy/sell
+    # contiennent la vraie info directionnelle et doivent etre gardees.
+    "bar_color_up", "bar_color_dn",
+    "bar_pressure_ask", "bar_pressure_bid",
+    "bn_color_up", "bn_color_dn",
+    "bn_color_up_2", "bn_color_dn_2",
+    "bn_pressure_ask",
+    # FIX 2026-04-17 : delta_divergence C++ pollue par bug Extension Line Count.
+    # Verifie empiriquement sur collecte propre 20260416 (455 lignes ES + 455 NQ) :
+    # 100% des 910 barres ont delta_divergence=1 cote C++. Cause :
+    #   d.delta_div_buy  = DMP_ReadExtensionLineCount(chart, DELTA_DIV_BUY)
+    #   d.delta_div_sell = DMP_ReadExtensionLineCount(chart, DELTA_DIV_SELL)
+    # Les extension lines persistent jusqu'a intersection price (trending market
+    # -> jamais intersectees -> count > 0 permanent -> SafeBool = 1 toujours).
+    # Formule SC reelle identifiee (captures Jackson 17/04) :
+    #   ID33 = "LINKED TO DELTA DIVERGENCE" = Daily OHLC study
+    #   SG2 = Daily High cumulatif, SG3 = Daily Low cumulatif
+    #   BUY  : AND(daily_low  < daily_low[-1],  AV-BV >= 0)
+    #   SELL : AND(daily_high > daily_high[-1], AV-BV <= 0)
+    # Reconstruction Python fidele dans CORE/rolling_features.py :
+    #   delta_divergence_clean, delta_div_buy/sell_clean, delta_div_strength
+    # Validation 20260416 NQ : 2 triggers 06:07/06:10 UTC matchent les 2
+    # triangles visibles sur la capture Sierra Chart de Jackson.
+    # Fire rate empirique : 0.44% (NQ) / 0.22% (ES) = evenement rare et fort.
+    # delta_divergence raw C++ reste blacklistee. Le ML utilisera les 4 features
+    # derivees *_clean calculees en Python (rolling_features ligne ~425).
+    "delta_divergence",
+
     # ─────────────────────────────────────────────────────────────────
     # TODO CRITIQUE 15/04/2026 — Bug systemique DMP_Reader.h arr[sz-1]
     # Les fonctions DMP_ReadBN_Trigger / DMP_SafeReadLast / DMP_ReadBN_SumOfAlerts
@@ -246,6 +304,36 @@ PROHIBITED_FEATURES = {
     # Cluster volume schema 3.7.3 (4 features)
     "dist_cluster_nearest_up", "dist_cluster_nearest_dn",
     "n_clusters_20t", "n_clusters_50t",
+
+    # ─────────────────────────────────────────────────────────────────
+    # AJOUT 18/04/2026 — suite audit code-reviewer (GO-avec-reserves)
+    # ─────────────────────────────────────────────────────────────────
+    # RESERVE 1 RESOLUE : bar_long_dn_bar/up_bar + ctx_instant_absorption migres
+    # vers EVENT_BASED_FEATURES (quality_validator.py) au lieu de PROHIBITED.
+    # Raison : rare events fire rate 1-2% exploitables par LightGBM via splits.
+    # Pattern 11 evite (pas de drop par biais completion).
+
+    # RESERVE 4 CORRIGE 18/04 : dist_ext_edge_sell_atr GARDE en PROHIBITED.
+    # Erreur precedente : argument "MDA feature-engineer filtrera" est faux
+    # temporellement -> le validator bloque AVANT feature-engineer. Biais
+    # ES 1.6 / NQ 5.6 persiste malgre /atr = semantic C++ non-resolue.
+    # TODO : investiguer code C++ dist_ext_edge_sell (calcul different ES/NQ ?).
+    "dist_ext_edge_sell_atr",
+
+    # RE-AJOUT 18/04 (purge v4 02/05) : bar_long_dn_bar + bar_long_up_bar
+    # pollution historique backfill (pre-fix DMP 3.7.6). NQ aggregate mean 0.737
+    # vs fire rate 11% post-fix 17/04 -> incompatible "rare event par design".
+    # Temporaire : reviennent post-rebuild v4 debut mai.
+    "bar_long_dn_bar", "bar_long_up_bar",
+
+    # RESERVE 3 RESOLUE : bn_score_bear + bn_score_raw = composites casses.
+    # Audit DMP_Transform.h:1069-1075 : score_bear = sum(bn_color_dn, bn_absorb_bid,
+    # bn_pressure_bid, bn_color_dn_2, bn_long_dn) ponderes. 4/5 composants sont
+    # PROHIBITED. Avant fix 3.7.6 = satures -> score eleve. Apres fix = events
+    # propres -> score s'effondre (ES 0.02 / NQ 0.06 au 17/04). Le score n'est plus
+    # interpretable : ce n'est pas un vrai signal bearish, c'est un reliquat de bugs.
+    # Prefer composer un score derive post-fix depuis les events propres au besoin.
+    "bn_score_bear", "bn_score_raw",
 }
 
 
@@ -905,7 +993,17 @@ if __name__ == "__main__":
     builder_es_final.save(df_es_final, f"{OUTPUT_DIR}/ES_dataset_{version_suffix}.parquet")
     builder_nq_final.save(df_nq_final, f"{OUTPUT_DIR}/NQ_dataset_{version_suffix}.parquet")
 
-    # Afficher features finales
+    # Afficher features finales (reconstruit depuis les dataframes finaux apres fix 18/04)
+    validated_es = [c for c in df_es_final.columns
+                    if c not in {"ts", "sym", "label", "label_buy", "label_sell",
+                                  "sample_weight", "price", "bar_high", "bar_low",
+                                  "valid_bar", "is_nq", "partial_session", "atr",
+                                  "datetime_utc", "datetime_et", "session", "session_id"}]
+    validated_nq = [c for c in df_nq_final.columns
+                    if c not in {"ts", "sym", "label", "label_buy", "label_sell",
+                                  "sample_weight", "price", "bar_high", "bar_low",
+                                  "valid_bar", "is_nq", "partial_session", "atr",
+                                  "datetime_utc", "datetime_et", "session", "session_id"}]
     for sym, feats in [("ES", validated_es), ("NQ", validated_nq)]:
         print(f"\n=== FEATURES {sym} ({len(feats)}) ===")
         for i, f in enumerate(feats, 1):

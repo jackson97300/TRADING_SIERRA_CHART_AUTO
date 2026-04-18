@@ -27,6 +27,8 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 
+from constants import INSTANT_ABSORPTION_DELTA_K, INSTANT_ABSORPTION_WINDOW
+
 
 class RollingFeatures:
     """Calcule 44 features derivees sur fenetres glissantes."""
@@ -181,13 +183,21 @@ class RollingFeatures:
 
         # 18. Absorption instantanée bar-by-bar signée
         #     Delta fort mais prix oppose = signal institutionnel immédiat
-        #     Corrige le problème de ctx_price_delta_div_3 qui rate les
-        #     absorptions post-climax (fenêtre contaminée par le climax)
+        #     FIX 18/04/2026 (code-reviewer audit) : seuil dynamique base sur
+        #     rolling_std(delta_bar, 50) au lieu d'un seuil absolu 30 (arbitraire).
+        #     Probleme seuil absolu : NQ Asia/pre-FOMC delta_bar median ~10-15,
+        #     seuil 30 inatteignable -> feature morte 30% des sessions.
+        #     Apres fix : k*std = s'adapte au regime volatilite local.
+        #     Constantes : CORE/constants.py (INSTANT_ABSORPTION_DELTA_K / _WINDOW).
         price_diff = df["price"].diff()
+        delta_std = df["delta_bar"].rolling(
+            INSTANT_ABSORPTION_WINDOW, min_periods=10
+        ).std()
+        threshold = delta_std * INSTANT_ABSORPTION_DELTA_K
         df["ctx_instant_absorption"] = np.where(
-            (df["delta_bar"] > 30) & (price_diff < 0), -1.0,   # bear absorption
+            (df["delta_bar"] > threshold) & (price_diff < 0), -1.0,   # bear absorption
             np.where(
-                (df["delta_bar"] < -30) & (price_diff > 0), +1.0,  # bull absorption
+                (df["delta_bar"] < -threshold) & (price_diff > 0), +1.0,  # bull absorption
                 0.0
             )
         )
@@ -422,46 +432,100 @@ class RollingFeatures:
             df["bool_near_level"] = (min_dist / atr_safe < 0.06).astype(float)
         # else : bool_near_level garde sa valeur C++ (d.bool_near_level de DMP_Transform)
 
-        # ─── DELTA DIVERGENCE (07/04/2026) ───────────────────────────
-        # Extension Lines from Sierra Chart — persistent until price intersection
-        # delta_divergence: +1 = bullish div active, -1 = bearish, 0 = none
+        # ─── DELTA DIVERGENCE — Reconstruction Python (17/04/2026) ─────────
+        # Le C++ delta_divergence est POLLUE (bug Extension Line Count = 100%
+        # a 1 sur marche trending, cf feedback_elc_pattern).
+        # Reconstruction fidele a Sierra Chart ID33 "LINKED TO DELTA DIVERGENCE"
+        # qui est l'etude "Daily OHLC" (SG2=High cumulatif, SG3=Low cumulatif).
+        # Formule SC exacte :
+        #   BUY  : AND(daily_low  < daily_low[-1],  AV-BV >= 0)
+        #          = new session low + buyers en embuscade -> rejection/bounce
+        #   SELL : AND(daily_high > daily_high[-1], AV-BV <= 0)
+        #          = new session high + sellers en embuscade -> false breakout
+        # AV-BV = ask_volume - bid_volume = delta_bar (verifie empiriquement
+        # exact match sur ES et NQ 20260416).
+        # Validation 20260416 NQ : 2 triggers SELL (06:07, 06:10 UTC) matchent
+        # les 2 triangles visibles sur la capture Jackson.
 
-        if "delta_divergence" in df.columns:
-            dd = df["delta_divergence"].fillna(0)
+        if all(c in df.columns for c in ["bar_high", "bar_low", "delta_bar", "ts"]):
+            # Trading date CME (reset session a 18:00 ET = 22:00 UTC)
+            ts_ms = pd.to_numeric(df["ts"], errors="coerce")
+            dt_utc = pd.to_datetime(ts_ms, unit="ms", utc=True)
+            dt_et = dt_utc.dt.tz_convert("America/New_York")
+            # Si hour_ET >= 18, la trading date est le jour suivant
+            shift_day = (dt_et.dt.hour >= 18).astype(int)
+            trading_date_base = dt_et.dt.normalize()
+            trading_date = trading_date_base + pd.to_timedelta(shift_day, unit="D")
 
-            # 33. Barres depuis la derniere divergence (recence)
-            #     Plus c'est recent, plus c'est actionnable
-            #     NaN si aucune divergence dans la session
-            div_fired = (dd != 0).astype(int)
-            cumfire = div_fired.cumsum()
-            last_fire_idx = cumfire.where(div_fired == 1).ffill()
-            df["ctx_bars_since_div"] = cumfire - last_fire_idx
-            df.loc[last_fire_idx.isna(), "ctx_bars_since_div"] = np.nan
+            # Running Daily High/Low par trading date (reset a chaque session CME)
+            bar_high_num = pd.to_numeric(df["bar_high"], errors="coerce")
+            bar_low_num  = pd.to_numeric(df["bar_low"],  errors="coerce")
+            daily_high = bar_high_num.groupby(trading_date).cummax()
+            daily_low  = bar_low_num.groupby(trading_date).cummin()
 
-            # 34. Nombre de divergences actives sur 20 barres (densite)
-            #     Beaucoup = zone de forte divergence, signal renforce
-            df["ctx_div_density_20"] = div_fired.rolling(
-                20, min_periods=1
-            ).sum()
+            # Formule SC
+            dh_prev = daily_high.shift(1)
+            dl_prev = daily_low.shift(1)
+            delta_b = pd.to_numeric(df["delta_bar"], errors="coerce").fillna(0)
 
-            # 35. Confluence divergence + niveau cle (swing ou IB)
-            #     Divergence qui fire pres d'un swing high/low = setup classique
-            #     +1 = div buy pres du swing low, -1 = div sell pres du swing high
-            near_swing_low = (df.get("dist_swing_low", pd.Series(np.nan, index=df.index))
-                              .abs().fillna(999) < 15)
-            near_swing_high = (df.get("dist_swing_high", pd.Series(np.nan, index=df.index))
-                               .abs().fillna(999) < 15)
-            df["ctx_div_at_swing"] = np.where(
-                (dd == 1) & near_swing_low, 1.0,
-                np.where(
-                    (dd == -1) & near_swing_high, -1.0,
-                    0.0
-                )
-            )
+            # Ne trigger que si on est dans la meme trading date que la barre
+            # precedente (sinon passage de session = false positive au reset)
+            same_session = (trading_date == trading_date.shift(1))
+
+            div_buy_raw  = (daily_low  < dl_prev) & (delta_b >= 0) & same_session
+            div_sell_raw = (daily_high > dh_prev) & (delta_b <= 0) & same_session
+
+            df["delta_div_buy_clean"]    = div_buy_raw.astype(int)
+            df["delta_div_sell_clean"]   = div_sell_raw.astype(int)
+            df["delta_divergence_clean"] = df["delta_div_buy_clean"] - df["delta_div_sell_clean"]
+
+            # Intensite (magnitude delta quand divergence active, 0 sinon)
+            # Utile pour le ML : differencier div faible vs div forte
+            # Winsorization p99.5 : evite outlier explosion (delta spike rare)
+            raw_strength = delta_b.abs() * (div_buy_raw | div_sell_raw).astype(int)
+            active_vals = raw_strength[raw_strength > 0]
+            if len(active_vals) > 20:
+                clip_high = float(active_vals.quantile(0.995))
+                df["delta_div_strength"] = raw_strength.clip(upper=clip_high)
+            else:
+                df["delta_div_strength"] = raw_strength
         else:
-            df["ctx_bars_since_div"] = np.nan
-            df["ctx_div_density_20"] = 0.0
-            df["ctx_div_at_swing"] = 0.0
+            df["delta_div_buy_clean"]    = 0
+            df["delta_div_sell_clean"]   = 0
+            df["delta_divergence_clean"] = 0
+            df["delta_div_strength"]     = 0.0
+
+        # Features derivees : on utilise delta_divergence_clean (Python) au lieu
+        # de delta_divergence (C++ pollue). Meme semantique, vraies valeurs.
+        dd = df["delta_divergence_clean"].fillna(0)
+
+        # 33. Barres depuis la derniere divergence (recence)
+        #     Plus c'est recent, plus c'est actionnable
+        #     NaN si aucune divergence dans la session
+        div_fired = (dd != 0).astype(int)
+        cumfire = div_fired.cumsum()
+        last_fire_idx = cumfire.where(div_fired == 1).ffill()
+        df["ctx_bars_since_div"] = cumfire - last_fire_idx
+        df.loc[last_fire_idx.isna(), "ctx_bars_since_div"] = np.nan
+
+        # 34. Nombre de divergences actives sur 20 barres (densite)
+        #     Beaucoup = zone de forte divergence, signal renforce
+        df["ctx_div_density_20"] = div_fired.rolling(20, min_periods=1).sum()
+
+        # 35. Confluence divergence + niveau cle (swing ou IB)
+        #     Divergence qui fire pres d'un swing high/low = setup classique
+        #     +1 = div buy pres du swing low, -1 = div sell pres du swing high
+        near_swing_low = (df.get("dist_swing_low", pd.Series(np.nan, index=df.index))
+                          .abs().fillna(999) < 15)
+        near_swing_high = (df.get("dist_swing_high", pd.Series(np.nan, index=df.index))
+                           .abs().fillna(999) < 15)
+        df["ctx_div_at_swing"] = np.where(
+            (dd == 1) & near_swing_low, 1.0,
+            np.where(
+                (dd == -1) & near_swing_high, -1.0,
+                0.0
+            )
+        )
 
         # ─── TRAPPED TRADERS (2) ────────────────────────────────────
 
@@ -552,6 +616,90 @@ class RollingFeatures:
             df["ctx_session_phase"] = phase
         else:
             df["ctx_session_phase"] = 0
+
+        # ═══════════════════════════════════════════════════════════════════
+        # DIVERGENCE CONFLUENCE (17/04/2026) - Strategie div pro
+        # Testable A (DMP pur) vs B (DMP + proxies regime) pour uplift marginal
+        # ═══════════════════════════════════════════════════════════════════
+
+        # 41. div_at_key_level_ticks - distance min aux niveaux cles au bar div
+        #     NaN si pas de div active. Seuil < 20t = "div sur niveau" (setup pro)
+        dist_cols = [
+            "dist_mq_call", "dist_mq_put", "dist_mq_hvl",
+            "dist_mq_call_0dte", "dist_mq_put_0dte",
+            "dist_swing_high", "dist_swing_low",
+            "dist_cur_vah", "dist_cur_val",
+            "dist_ib_high", "dist_ib_low",
+            "dist_blind_nearest_up", "dist_blind_nearest_dn",
+            "next_wall_dist_ticks",
+        ]
+        available_dist = [c for c in dist_cols if c in df.columns]
+        if available_dist:
+            dist_mat = df[available_dist].apply(pd.to_numeric, errors="coerce").abs()
+            min_dist = dist_mat.min(axis=1, skipna=True)
+            df["div_at_key_level_ticks"] = np.where(dd != 0, min_dist, np.nan)
+        else:
+            df["div_at_key_level_ticks"] = np.nan
+
+        # 42. div_confluence_dmp - score 0-4 (DMP pur, zero dependance MenthorQ JSON)
+        #     Composantes: div_active + at_level<20t + absorb_aligned + rvol_extreme
+        div_active = (dd != 0).astype(int)
+
+        at_level_series = pd.to_numeric(df["div_at_key_level_ticks"], errors="coerce")
+        at_level = ((at_level_series < 20) & (dd != 0)).astype(int)
+
+        if "bn_absorb_bid" in df.columns and "bn_absorb_ask" in df.columns:
+            absorb_bid = pd.to_numeric(df["bn_absorb_bid"], errors="coerce").fillna(0)
+            absorb_ask = pd.to_numeric(df["bn_absorb_ask"], errors="coerce").fillna(0)
+            absorb_buy = (dd == 1) & (absorb_bid > 0)
+            absorb_sell = (dd == -1) & (absorb_ask > 0)
+            absorb_score = (absorb_buy | absorb_sell).astype(int)
+        else:
+            absorb_score = pd.Series(0, index=df.index)
+
+        if "rvol_zscore" in df.columns:
+            rvz = pd.to_numeric(df["rvol_zscore"], errors="coerce").fillna(0)
+            rvol_score = ((rvz.abs() >= 2.0) & (dd != 0)).astype(int)
+        elif "rvol" in df.columns:
+            rv = pd.to_numeric(df["rvol"], errors="coerce").fillna(0)
+            rvol_score = ((rv >= 2.0) & (dd != 0)).astype(int)
+        else:
+            rvol_score = pd.Series(0, index=df.index)
+
+        df["div_confluence_dmp"] = (
+            div_active + at_level + absorb_score + rvol_score
+        ).astype(int)
+
+        # 43. div_forward_return_20b - forward return 20 barres, normalise par ATR
+        #     Signe aligne sur le sens de la div : positif = div a fonctionne
+        #     div buy (dd=+1) -> on veut price[t+20]>price[t] -> signe positif
+        #     div sell (dd=-1) -> on veut price[t+20]<price[t] -> * -1 -> positif
+        if "price" in df.columns and "atr" in df.columns:
+            price_col = pd.to_numeric(df["price"], errors="coerce")
+            atr_col = pd.to_numeric(df["atr"], errors="coerce").replace(0, np.nan)
+            fwd_20 = price_col.shift(-20) - price_col
+            fwd_norm = fwd_20 / atr_col
+            df["div_forward_return_20b"] = np.where(
+                dd != 0, fwd_norm * dd, np.nan
+            )
+        else:
+            df["div_forward_return_20b"] = np.nan
+
+        # 44. div_regime_proxy_ok - regime favorable reversal (proxies DMP)
+        #     1 si vix_regime>=1 (pas low-vix) ET NOT gex_flip_zone (pas transition)
+        #     Proxy substitut pour GEX+ / mean-revert sans CTA/Vol Model scrape
+        if "vix_regime" in df.columns and "bool_gex_flip_zone" in df.columns:
+            vr = pd.to_numeric(df["vix_regime"], errors="coerce").fillna(0)
+            gf = pd.to_numeric(df["bool_gex_flip_zone"], errors="coerce").fillna(0)
+            df["div_regime_proxy_ok"] = ((vr >= 1) & (gf == 0)).astype(int)
+        else:
+            df["div_regime_proxy_ok"] = 0
+
+        # 45. div_confluence_with_regime - score 0-5 (DMP + proxies)
+        #     Uplift marginal du regime vs DMP pur
+        df["div_confluence_with_regime"] = (
+            df["div_confluence_dmp"] + df["div_regime_proxy_ok"]
+        ).astype(int)
 
         return df
 
