@@ -46,10 +46,15 @@ EXPECTED_COLS = EXPECTED_COLS_370 # rétrocompatibilité (remplacé dynamiquemen
 
 # Signaux qui DOIVENT firer (Extension Lines persistantes, toujours actives)
 # (colonne, seuil_min_pct, description)
+# Baseline 17/04 data propre journee complete : ES 0.15-0.4%, NQ 3.8-4.7%
+# Seuil 0.05% : au-dessus de ES bar_pressure_ask 0.15% (2/1378), detecte vraie mort
+# TODO [R2 code-reviewer 20/04]: seuil actuel detecte 0% mais manque regression partielle
+# (ex: NQ 4%->0.1% reste GREEN). Evoluer vers seuil tiered (WARN <50% baseline)
+# ou seuil par symbole (ES 0.001, NQ 0.01) en S1 semaine QA.
 MUST_FIRE = [
-    ("bn_pressure_bid",  0.15, "TRIPLE/DOUBLE BID FP"),
-    ("bar_pressure_ask", 0.15, "TRIPLE/DOUBLE ASK BARRES"),
-    ("bar_pressure_bid", 0.15, "TRIPLE/DOUBLE BID BARRES"),
+    ("bn_pressure_bid",  0.0005, "TRIPLE/DOUBLE BID FP"),
+    ("bar_pressure_ask", 0.0005, "TRIPLE/DOUBLE ASK BARRES"),
+    ("bar_pressure_bid", 0.0005, "TRIPLE/DOUBLE BID BARRES"),
 ]
 
 # Signaux qui DEVRAIENT firer (au moins 1 fois sur 50+ barres)
@@ -86,7 +91,14 @@ BOUNDS = [
     ("price",             1000,  50000),
     ("atr",               10,    5000),
     ("range_pos",         0,     100.01),
-    ("va_position_pct",   -5,    5),
+    # FIX 2026-04-16 : va_position_pct est maintenant [0, 1] ou null hors range
+    # (ancien sentinel -1 corrige dans DMP_Transform.h:531 PosInRange).
+    # Bornes strictes [0, 1.01] au lieu de [-5, 5] laxiste.
+    ("va_position_pct",   0,     1.01),
+    # FIX 2026-04-16 : ib_position_pct meme convention que va_position_pct.
+    # Bornes strictes pour detecter toute regression future (reintroduction du
+    # sentinel -1, ou passage accidentel en echelle [0, 100] via ib_recalc.py).
+    ("ib_position_pct",   0,     1.01),
     ("ask_pct",           0,     1.01),
     ("bid_pct",           0,     1.01),
     ("delta_bar_vol_norm",-1.01, 1.01),
@@ -182,17 +194,23 @@ def validate(path):
         warnings.append(f"GAPS: {len(gaps)} trous > 5min")
 
     # ─── 3. SIGNAUX MUST_FIRE ────────────────────────────────────────────
+    # Seuil min 200 barres : signaux rares (baseline 0.1-4.7%) non-evaluables sur
+    # echantillon trop petit (32 barres Asia = 1 fire attendu = bruit statistique)
+    # TODO [R3 code-reviewer 20/04]: si n<200 ET has_rth, emettre warning explicite
+    # au resume final (pas juste print noye) pour flagger jours feries / coupures RTH.
     print("  ── Signaux persistants (doivent firer) ──")
     for col, min_pct, desc in MUST_FIRE:
         vals = [l.get(col, 0) for l in lines]
         nz = sum(1 for v in vals if v and v != 0)
         pct = nz / n if n > 0 else 0
-        if pct < min_pct and n >= 30:
-            errors.append(f"{col}: {nz}/{n} ({pct:.0%}) < {min_pct:.0%} — {desc}")
-            print(f"  ❌ {col:25s} {nz:>3d}/{n} ({pct:>5.0%}) — MORT")
+        if n < 200:
+            print(f"  · {col:25s} {nz:>3d}/{n} ({pct:>5.2%}) — n<200, eval skip")
+        elif pct < min_pct:
+            errors.append(f"{col}: {nz}/{n} ({pct:.2%}) < {min_pct:.1%} — {desc}")
+            print(f"  ❌ {col:25s} {nz:>3d}/{n} ({pct:>5.2%}) — MORT")
         else:
             ok += 1
-            print(f"  ✅ {col:25s} {nz:>3d}/{n} ({pct:>5.0%})")
+            print(f"  ✅ {col:25s} {nz:>3d}/{n} ({pct:>5.2%})")
 
     # ─── 4. SIGNAUX SHOULD_FIRE ──────────────────────────────────────────
     print(f"\n  ── Signaux per-bar (devraient firer) ──")
@@ -265,10 +283,20 @@ def validate(path):
         bull, bear = l.get('bn_score_bull', 0), l.get('bn_score_bear', 0)
         if abs(raw - (bull - bear)) <= 0.01: checks["score=bull-bear"] += 1
         
+        # FIX 2026-04-16 : apres fix PosInRange -1 -> null, va_position_pct vaut :
+        #   - dans [0, 1] quand prix dans VA (inside_cur_va = 1)
+        #   - null (None en Python) quand hors VA (inside_cur_va = 0)
+        # Ancien comportement : -1 hors VA (sentinel chiffre polluant le ML).
         iva = l.get('inside_cur_va', 0)
-        vap = l.get('va_position_pct', 0.5)
-        if (iva == 1 and 0 <= vap <= 1) or (iva == 0 and (vap < 0 or vap > 1)):
-            checks["inside_va↔va_pct"] += 1
+        vap = l.get('va_position_pct', None)
+        if vap is None:
+            # Nouveau format : hors VA -> null coherent avec iva=0
+            if iva == 0:
+                checks["inside_va↔va_pct"] += 1
+        else:
+            # Ancien format retro-compat (JSONL pre-16/04) OU nouveau format valide
+            if (iva == 1 and 0 <= vap <= 1) or (iva == 0 and (vap < 0 or vap > 1)):
+                checks["inside_va↔va_pct"] += 1
     
     for name, count in checks.items():
         if count == n:
@@ -334,6 +362,14 @@ def validate(path):
                      # sg6 (Put Support 0DTE séparé) = 0.0 → guard invalide → null systématique
                      # Identique à dist_mq_put_0dte ES (même architecture MenthorQ)
                      'dist_vix_put_0dte'}
+
+    # Features IB : non-null seulement en RTH. Si fichier ne contient aucune barre RTH
+    # (Asia/London only), dist_ib_* null = OK (IB etabli a partir de 09:30 ET).
+    # Convention DMP C++ (DMP_Main.cpp:798) : session=0 Asia, 1 London, 2 US/RTH
+    has_rth = any(l.get('session') == 2 for l in lines)
+    if not has_rth:
+        expected_null |= {'dist_ib_high', 'dist_ib_low',
+                          'ib_range_atr', 'ib_position_pct'}
     
     unexpected_null = [c for c in all_null if c not in expected_null]
     
