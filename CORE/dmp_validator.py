@@ -15,8 +15,135 @@ Schema: 3.7.x — 258/260/262/266 colonnes (3.7.0/3.7.1/3.7.2/3.7.3)
 """
 
 import json, sys, os
+from dataclasses import dataclass, field
+from pathlib import Path
+
 import numpy as np
 from collections import Counter
+
+# Import local (meme dossier)
+sys.path.insert(0, str(Path(__file__).parent))
+import validator_baseline as vb  # noqa: E402
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VERSIONING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+VALIDATOR_VERSION = "2.0"
+# V2.0 (20/04/2026) : ajout 5 checks critiques + baseline rolling + enum domain
+# V1.1 (20/04/2026) : fix session==2 (bug Claude) + seuils tiered + IB null RTH
+# V1.0 : validator historique (MUST_FIRE 15%, BOUNDS, coherence logique)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION V2 — Nouveaux checks critiques (Plan agent 20/04 GO-AVEC-MODIFS)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class ValidationRule:
+    """Regle de validation typee pour architecture modulaire V2.
+    Registre minimal pour les 5 nouveaux checks. Les 50+ checks existants
+    restent en forme procedurale (migration progressive S2-S5 si besoin)."""
+    name: str
+    kind: str          # "outlier" | "saturation" | "tiered" | "enum" | "regression"
+    severity: str      # "error" | "warning"
+    params: dict = field(default_factory=dict)
+
+# CHECK 1 — OUTLIER EXPLOSION (trou majeur quality-auditor R3)
+# max(|x|) / p99(|x|) > 100 = explosion (division par zero C++, bug unit scale)
+# quality-auditor R2 20/04 : ajout dist_cluster_* schema 3.7.3
+OUTLIER_FEATURES = [
+    "dist_swing_high", "dist_swing_low", "swing_range_ticks",
+    "dist_vwap_d", "dist_vwap_w", "dist_vwap_m",
+    "dist_cur_vpoc", "dist_cur_vah", "dist_cur_val",
+    "dist_prev_vpoc", "dist_prev_vwap",
+    "dist_mq_call", "dist_mq_put", "dist_mq_hvl",
+    "delta_bar", "delta_day", "cvd_day",
+    "momentum_3b", "momentum_5b", "total_vol",
+    # Schema 3.7.3 additions (ajout quality-auditor R2 20/04)
+    "dist_cluster_nearest_up", "dist_cluster_nearest_dn",
+]
+OUTLIER_RATIO_THRESHOLD = 100.0
+
+# CHECK 2 — SATURATION CEILING (retour bug bar_color_up pre-17/04)
+# Features bool qui ne doivent JAMAIS saturer >95% (sinon bug arr[sz-1] ou Extension Line)
+SATURATION_FEATURES = [
+    "bar_color_up", "bar_color_dn",
+    "bar_long_up_bar", "bar_long_dn_bar",
+    "bar_long_dn_up", "bar_long_up_dn",
+    "bar_edge_buy", "bar_edge_sell",
+    "bn_color_up", "bn_color_dn",
+    "bn_color_up_2", "bn_color_dn_2",
+    "bn_absorb_ask", "bn_absorb_bid",
+    "bn_long_up", "bn_long_dn",
+    "bn_volume_up", "bn_volume_dn",
+    "fp_edge_buy", "fp_edge_sell",
+    "delta_divergence",
+]
+SATURATION_CEILING = 0.95  # fire_rate > 95% = bug
+
+# CHECK 3 — SEUIL TIERED ES/NQ (remplace MUST_FIRE global laxiste)
+# Baseline 17/04 data propre complete :
+#   ES bar_pressure_ask 0.15%, NQ bar_pressure_ask 4.1%
+# Seuils tiered par instrument pour detecter regression legere.
+TIERED_THRESHOLDS = {
+    "ES": {
+        "bn_pressure_bid":  0.001,  # 0.1% (baseline 0.3%)
+        "bar_pressure_ask": 0.001,  # 0.1% (baseline 0.15%)
+        "bar_pressure_bid": 0.001,  # 0.1% (baseline 0.4%)
+    },
+    "NQ": {
+        "bn_pressure_bid":  0.01,   # 1% (baseline 3.8%)
+        "bar_pressure_ask": 0.01,   # 1% (baseline 4.1%)
+        "bar_pressure_bid": 0.01,   # 1% (baseline 3.8%)
+    },
+}
+TIERED_MIN_BARS = 200  # skip tiered sur echantillon trop petit
+
+# CHECK 4 — ENUM DOMAIN (couvre bug Claude session==3)
+# Colonnes categorielles : valeurs autorisees strictes
+ENUM_DOMAINS = {
+    "session":    {0, 1, 2},                  # DMP_Main.cpp:798
+    "session_id": {"Asia", "London", "US"},
+    "sym":        {"ES", "NQ"},
+    "vwap_d_side":    {-1, 0, 1},
+    "vwap_w_side":    {-1, 0, 1},
+    "vwap_m_side":    {-1, 0, 1},
+    "cvd_day_dir":    {-1, 0, 1},
+    "delta_day_dir":  {-1, 0, 1},
+    "vwap_slope_10_dir": {-1, 0, 1},
+    "ma_trend":       {-1, 0, 1},
+    "next_wall_is_call": {0, 1, None},        # None hors US
+}
+
+# CHECK 5 — REGRESSION PARTIELLE via baseline rolling
+# Utilise CORE/validator_baseline.py + DATA/BASELINE/baseline.json
+# Features tracked par baseline (les plus critiques)
+# quality-auditor R1 20/04 : ajout bn_pressure_*, bar_pressure_* pour fermer
+# le trou "regression graduelle 4%->1.5% reste GREEN car seuil tiered 1%"
+BASELINE_TRACKED_FEATURES = (
+    SATURATION_FEATURES  # tous les evenements bool
+    + ["rvol_absorb_buy", "rvol_absorb_sell",
+       "big_ask_cluster_20t", "big_bid_cluster_20t",
+       "big_ask_cluster_50t", "big_bid_cluster_50t",
+       # Tiered features (quality-auditor R1 20/04)
+       "bn_pressure_bid", "bn_pressure_ask",
+       "bar_pressure_bid", "bar_pressure_ask"]
+)
+
+# Registre declaratif des 5 regles V2 (pour traceabilite + docs)
+V2_RULES = [
+    ValidationRule("outlier_explosion",    "outlier",    "error",
+                   {"features": OUTLIER_FEATURES, "ratio": OUTLIER_RATIO_THRESHOLD}),
+    ValidationRule("saturation_ceiling",   "saturation", "error",
+                   {"features": SATURATION_FEATURES, "ceiling": SATURATION_CEILING}),
+    ValidationRule("tiered_fire_rate",     "tiered",     "error",
+                   {"thresholds": TIERED_THRESHOLDS, "min_bars": TIERED_MIN_BARS}),
+    ValidationRule("enum_domain",          "enum",       "error",
+                   {"domains": ENUM_DOMAINS}),
+    ValidationRule("regression_partielle", "regression", "warning",
+                   {"features": BASELINE_TRACKED_FEATURES,
+                    "ratio": vb.REGRESSION_RATIO}),
+]
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION — Schema 3.7.0
@@ -116,8 +243,33 @@ US_ONLY_SIGNALS = [
 
 
 def load_jsonl(path):
-    with open(path) as f:
-        return [json.loads(l) for l in f]
+    """Charge JSONL avec gestion robuste lignes malformees.
+
+    R3 code-reviewer 20/04 : loguer les lignes malformees et continuer avec les valides.
+    Si > 10% des lignes sont malformees, lever exception (fichier probablement corrompu).
+    """
+    valid_lines = []
+    malformed = 0
+    with open(path, encoding="utf-8") as f:
+        for i, raw in enumerate(f, 1):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                valid_lines.append(json.loads(raw))
+            except json.JSONDecodeError as e:
+                malformed += 1
+                if malformed <= 3:  # loguer les 3 premieres, eviter spam
+                    print(f"  ⚠ Ligne {i} malformee: {e} (skip)")
+    if malformed > 0:
+        total = len(valid_lines) + malformed
+        ratio = malformed / total if total > 0 else 1.0
+        print(f"  ⚠ {malformed}/{total} lignes malformees ({ratio:.1%})")
+        if ratio > 0.1:
+            raise ValueError(
+                f"Fichier {path.name if hasattr(path, 'name') else path} : "
+                f"{ratio:.1%} lignes malformees (> 10% = fichier corrompu)")
+    return valid_lines
 
 
 def validate(path):
@@ -574,11 +726,114 @@ def validate(path):
             print(f"  -- IB: seulement {n_us} barres US — skip")
 
     # ═══════════════════════════════════════════════════════════════════
+    # V2 CHECKS — 5 checks critiques (Plan agent 20/04 GO-AVEC-MODIFICATIONS)
+    # ═══════════════════════════════════════════════════════════════════
+
+    # ─── 11. ENUM DOMAIN — couvre bug Claude session==3 ──────────────────
+    print(f"\n  ── V2.11 Enum domain (valeurs categorielles) ──")
+    enum_violations = 0
+    for col, allowed in ENUM_DOMAINS.items():
+        vals = [l.get(col) for l in lines]
+        bad = [v for v in vals if v not in allowed]
+        if bad:
+            enum_violations += 1
+            unique_bad = sorted(set(str(b) for b in bad))[:3]
+            errors.append(f"ENUM {col}: {len(bad)}/{n} valeurs hors {allowed} ({unique_bad})")
+            print(f"  ❌ {col:20s} {len(bad)}/{n} hors domaine (ex: {unique_bad})")
+        else:
+            ok += 1
+    if enum_violations == 0:
+        print(f"  ✅ 11/11 colonnes enum dans leur domaine")
+
+    # ─── 12. SATURATION CEILING — retour bug bar_color_up pre-17/04 ─────
+    print(f"\n  ── V2.12 Saturation ceiling (bool fire_rate > 95% = bug) ──")
+    sat_violations = 0
+    for col in SATURATION_FEATURES:
+        vals = [l.get(col, 0) for l in lines]
+        nz = sum(1 for v in vals if v and v != 0)
+        if n > 0 and nz / n > SATURATION_CEILING:
+            sat_violations += 1
+            errors.append(f"SATURATION {col}: {nz}/{n} ({nz/n:.1%}) > {SATURATION_CEILING:.0%}")
+            print(f"  ❌ {col:25s} {nz:>4d}/{n} ({nz/n:>5.1%}) — SATURE")
+        else:
+            ok += 1
+    if sat_violations == 0:
+        print(f"  ✅ {len(SATURATION_FEATURES)}/{len(SATURATION_FEATURES)} features bool sous le ceiling 95%")
+
+    # ─── 13. OUTLIER EXPLOSION — max/p99 > 100 ──────────────────────────
+    print(f"\n  ── V2.13 Outlier explosion (max/p99 > 100) ──")
+    outlier_violations = 0
+    for col in OUTLIER_FEATURES:
+        vals = [abs(l[col]) for l in lines
+                if l.get(col) is not None and isinstance(l.get(col), (int, float))
+                and not (isinstance(l.get(col), float) and (l[col] != l[col]))]  # skip NaN
+        if len(vals) < 10:
+            continue  # insuffisant
+        sorted_vals = sorted(vals)
+        p99_idx = max(0, int(len(sorted_vals) * 0.99) - 1)
+        p99 = sorted_vals[p99_idx]
+        mx = max(sorted_vals)
+        if p99 > 0 and mx / p99 > OUTLIER_RATIO_THRESHOLD:
+            outlier_violations += 1
+            errors.append(f"OUTLIER {col}: max={mx:.1f} / p99={p99:.1f} ratio={mx/p99:.0f}")
+            print(f"  ❌ {col:25s} max={mx:>10.1f} / p99={p99:>8.1f} = {mx/p99:>6.0f}x")
+        else:
+            ok += 1
+    if outlier_violations == 0:
+        print(f"  ✅ {len(OUTLIER_FEATURES)}/{len(OUTLIER_FEATURES)} features sous ratio {OUTLIER_RATIO_THRESHOLD}x")
+
+    # ─── 14. TIERED FIRE RATE ES/NQ ─────────────────────────────────────
+    print(f"\n  ── V2.14 Tiered fire rate (seuil par symbole) ──")
+    tiered_thresholds = TIERED_THRESHOLDS.get(sym, {})
+    if not tiered_thresholds:
+        print(f"  · sym={sym} pas de tiered config")
+    elif n < TIERED_MIN_BARS:
+        # Warning HARD au lieu de skip silencieux (couvre TODO R3)
+        warnings.append(f"TIERED: {n} barres < {TIERED_MIN_BARS} — fire rate eval skip ({sym})")
+        print(f"  ⚠️  n={n} < {TIERED_MIN_BARS} : skip avec warning HARD (signal rare non-evaluable)")
+    else:
+        for col, min_pct in tiered_thresholds.items():
+            vals = [l.get(col, 0) for l in lines]
+            nz = sum(1 for v in vals if v and v != 0)
+            pct = nz / n
+            if pct < min_pct:
+                errors.append(f"TIERED {sym}.{col}: {nz}/{n} ({pct:.3%}) < {min_pct:.2%}")
+                print(f"  ❌ {col:25s} {nz:>4d}/{n} ({pct:>6.3%}) < {min_pct:.2%} ({sym})")
+            else:
+                ok += 1
+                print(f"  ✅ {col:25s} {nz:>4d}/{n} ({pct:>6.3%}) >= {min_pct:.2%} ({sym})")
+
+    # ─── 15. REGRESSION PARTIELLE via baseline rolling ──────────────────
+    print(f"\n  ── V2.15 Regression vs baseline rolling 7j ──")
+    baseline_path = vb.default_baseline_path()
+    baseline = vb.load_baseline(baseline_path)
+    fire_rates = vb.compute_fire_rates(lines, BASELINE_TRACKED_FEATURES)
+    reg_violations = 0
+    reg_checks_done = 0
+    for sess_name, feat_rates in fire_rates.items():
+        for feat, rate in feat_rates.items():
+            result = vb.check_regression(baseline, sym, sess_name, feat, rate)
+            if result.is_regression:
+                reg_violations += 1
+                warnings.append(f"REGRESSION {sym}.{sess_name}.{feat}: {result.reason}")
+                print(f"  ⚠️  {sess_name:6s} {feat:25s} {result.reason}")
+            elif result.baseline_median is not None:
+                reg_checks_done += 1
+    if reg_checks_done == 0 and reg_violations == 0:
+        print(f"  · Baseline insuffisant (< {vb.MIN_SAMPLES_FOR_BASELINE} samples) — pas d'eval")
+    elif reg_violations == 0:
+        ok += 1
+        print(f"  ✅ {reg_checks_done} comparaisons OK vs baseline")
+    # Update baseline si aucune erreur detectee jusqu'ici (fichier GREEN)
+    # NB : decision de persister deplacee apres verdict (seulement si GREEN)
+
+    # ═══════════════════════════════════════════════════════════════════
     # VERDICT
     # ═══════════════════════════════════════════════════════════════════
     print(f"\n{'='*70}")
+    print(f"  Validator v{VALIDATOR_VERSION}")
     if errors:
-        print(f"  {len(errors)} ERREUR(S) — {'🔴' * len(errors)}")
+        print(f"  {len(errors)} ERREUR(S) — {'🔴' * min(len(errors), 10)}")
         for e in errors:
             print(f"    ❌ {e}")
     if warnings:
@@ -588,8 +843,22 @@ def validate(path):
     if not errors:
         print(f"  ✅ DONNÉES PROPRES — {ok} checks passent")
         print(f"     Schema {detected_schema}, {ncols} colonnes, {n} barres")
+        # Update baseline SEULEMENT si fichier GREEN (pas d'erreur)
+        # ET sans warning REGRESSION (sinon pollution auto-amplifiante — R1 code-reviewer 20/04).
+        # Le warning REGRESSION indique une degradation : l'injecter dans baseline = definir
+        # la degradation comme nouveau normal. Skip update dans ce cas.
+        has_regression_warning = any("REGRESSION" in w for w in warnings)
+        if has_regression_warning:
+            print(f"     ⚠ Baseline NOT updated (REGRESSION warning present)")
+        else:
+            try:
+                vb.update_baseline(baseline, sym, fire_rates)
+                vb.save_baseline(baseline, baseline_path)
+                print(f"     Baseline mis a jour ({sym}, {len(fire_rates)} sessions)")
+            except Exception as e:
+                print(f"     ⚠ Baseline update skipped: {e}")
     print(f"{'='*70}\n")
-    
+
     return len(errors)
 
 
