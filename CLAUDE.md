@@ -1,5 +1,30 @@
 # CLAUDE.md — MIA Trading System V2
 
+## PROTOCOLE OBLIGATOIRE DEBUT DE SESSION (21/04/2026)
+
+**AVANT toute reponse substantive a Jackson** (nouvelle session ou apres `/compact`) :
+
+1. **Lire `DOCS/INCIDENT_LOG.md`** integralement (ordre anti-chronologique, dernier incident en haut)
+2. Identifier categories d'incidents recents : `CONTEXT_MISS`, `VALIDATION_MISS`, `AGENT_MISUSE`, `PATTERN_11`, `COMMENT_FALSE`, `SCOPE_CREEP`, `OVER_ENGINEERING`, `DEPLOY_UNSAFE`
+3. Mentalement flagger : "si Jackson demande X aujourd'hui → consulter Y AVANT d'agir"
+
+**Actions critiques declencheurs** du protocole (avant de les faire, consulter INCIDENT_LOG) :
+- Fix C++ (DMP_*, CPP/*)
+- Fix Python pipeline ML (dataset_builder, train_lightgbm, validator, risk_manager, ib_recalc)
+- Dispatch agent (Agent tool)
+- Design doc / spec architecture
+- Deploy VPS (scp)
+- Affirmation existence code/feature ("X n'existe pas", "Y est deja gere")
+- Creation nouvelle infra (agent, rule, script, schema bump)
+
+**Si j'omets la lecture et commets une erreur**, Jackson peut dire **"INCIDENT_LOG !"** :
+→ stop + lire + documenter mon oubli comme `CONTEXT_MISS` + reprendre la tache.
+
+**Escalation automatique** : categorie atteint 3+ occurrences → promouvoir en memoire dediee auto-chargee.
+
+**Protocole complet** : `.claude/rules/incident-protocol.md`.
+**Trace factuelle** : `DOCS/INCIDENT_LOG.md` (jamais supprimer entrees).
+
 ## Role
 Tu es mon mentor impitoyable et mon partenaire de reflexion. Ton role est de trouver la verite et de me la dire franchement, meme si cela doit blesser mes sentiments.
 - Ne sois JAMAIS d'accord juste pour etre agreable. Si j'ai tort, dis-le directement.
@@ -112,7 +137,9 @@ Schema actif : **3.7.2 — 262 colonnes**
 | Parametre | Decision |
 |-----------|----------|
 | Architecture ML | 2 modeles (score_buy + score_sell) par instrument |
-| TP/SL | ATR-based : SL = ATR * 0.08, TP = SL * 2.0 (R:R fixe 2:1) |
+| TP/SL Labeler (ML training) | Ticks fixes calibres : ES SL=5t TP=9t, NQ SL=20t TP=36t (R:R 1.8) |
+| TP/SL Bot live | ATR-based : SL = ATR_ticks * 0.08, TP = SL * 2.0 (R:R 2.0) |
+| NOTE | Labeler utilise ticks fixes calibres sur donnees reelles. Bot utilise ATR adaptatif. Les deux divergent volontairement. |
 | Exit strategy | Phase 1 : TP/SL fixe. Phase 2 : trailing stop |
 | Tuning | Optuna 100 trials |
 | Min trades/jour | 3 |
@@ -142,6 +169,35 @@ GARDER : bn_absorb_bid (-0.060), bn_score_bear (-0.060), bn_absorb_ask (-0.050),
 | Win Rate | >= 45% |
 | Trades/jour | >= 3 |
 | Max Drawdown | <= 500 ticks |
+
+## Controle par agent OBLIGATOIRE pour taches critiques (19/04/2026)
+
+**Regle souveraine** : toute tache critique DOIT etre validee par un agent specialiste
+avant commit. Protocol detaille : `.claude/rules/critical-tasks-review.md`.
+
+**8 criteres de criticalite** (1 suffit) :
+1. Trading/Risk (risk_manager, order_manager, bot_main, kill_switch, DTC)
+2. ML Pipeline (train_lightgbm, meta_labeler, dataset_builder, quality_validator)
+3. C++ DMP (DMP_*.h re-compile + deploye VPS)
+4. Concept methodologique (Lopez AFML, regime-switching)
+5. Fix bug historique V1 reproduit en V2
+6. Cross-module (>3 fichiers OU >100 LOC)
+7. Irreversible/couteux (deploy VPS, retrain ML, migration schema)
+8. Backtest (code ET resultats — un backtest bugue = decision sur donnees fausses)
+
+**Matrice agent** :
+- code-reviewer : qualite code, anti-patterns
+- ml-trainer : GO/NO-GO ML (PSR/DSR)
+- market-analyst : strategies, edges empiriques
+- quality-auditor : dataset parquet (5 criteres V2)
+- schema-auditor : coherence C++/Python
+- Plan : design, roadmap
+- backtest-runner : validation backtest
+
+**Protocol strict** : code → pytest → test empirique log visible → agent (GO/RESERVES/NOGO)
+→ corriger si RESERVES → commit avec `reviewed-by: {agent-type}`.
+
+**Anti-patterns interdits** : "simple, pas besoin", review APRES commit, silent fallback.
 
 ## Bot DTC — Architecture validee (02/04/2026)
 
@@ -303,6 +359,27 @@ python CORE/dataset_builder.py
 python CORE/train_lightgbm.py
 ```
 
+## Procedure MenthorQ — Quand Jackson envoie les donnees CTA/Options
+
+Quand Jackson colle un JSON avec des donnees CTA/MenthorQ dans le chat :
+1. Creer `DATA/MENTHORQ/YYYYMMDD_cta.json` (CTA seul)
+2. Creer `DATA/MENTHORQ/YYYYMMDD_menthorq_complete.json` (CTA + key_levels + vol_model)
+3. Copier les 2 fichiers sur le VPS via SCP :
+   ```bash
+   scp DATA/MENTHORQ/YYYYMMDD_cta.json Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DATA/MENTHORQ/"
+   scp DATA/MENTHORQ/YYYYMMDD_menthorq_complete.json Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DATA/MENTHORQ/"
+   ```
+4. Verifier que `/api/cta` retourne la bonne date
+
+**Format des fichiers** :
+- `_cta.json` : `{ date, source, CTA: { ES, NQ, GOLD, TREASURY_10Y, TREASURY_2Y, BRENT, EUR_USD, CHF_USD, GSCI_COMMODITY, US_TREASURY_BOND } }`
+- `_menthorq_complete.json` : meme chose + `key_levels: { ES, NQ }` + `vol_model: { ES, NQ }` (avec top_gex_strikes, bl_levels, gamma_wall_0dte)
+- Chaque instrument CTA : `{ position_today, position_yesterday, position_1m_ago, percentile_1m, percentile_3m, percentile_1y, zscore_3m }`
+- key_levels : call_resistance, put_support, hvl, 0dte, 1d_max, 1d_min, iv_30d, gamma_condition, pc_oi, total_gex, net_gex, pc_gex, total_dex, net_dex, pc_dex
+- vol_model : iv_30d, GEX/DEX, top_gex_strikes (10 strikes), bl_levels (10 Break Levels), gamma_wall_0dte
+
+**NE PAS demander confirmation** — faire les 4 etapes automatiquement.
+
 ## Infos techniques
 
 | Parametre | Valeur |
@@ -325,6 +402,183 @@ Dossiers VPS (TOUJOURS les 2):
 Workflow:
   Claude modifie sur PC -> /audit-cpp -> deploy-manager envoie via SCP
   -> Jackson compile dans Sierra Chart (5 sec) -> Reload Charts 30/31
+```
+
+## Site Web & Dashboard — Architecture CRITIQUE (ne pas oublier !)
+
+### 2 produits distincts et COMPLEMENTAIRES
+
+| Produit | URL | Repo | Heberge sur | Type |
+|---------|-----|------|-------------|------|
+| **Site marketing** | https://mia-ia-system.com | `jackson97300/mia-website` (PUBLIC) | Vercel | Build statique Next.js (export) |
+| **Dashboard app** | https://dashboard.mia-ia-system.com | `jackson97300/TRADING_SIERRA_CHART_AUTO` (PRIVE) | VPS Windows via Cloudflare Tunnel | FastAPI/Uvicorn port 8503 |
+
+### Site marketing mia-ia-system.com
+
+**Repo local** : `D:\mia-website\` (git remote = jackson97300/mia-website)
+**Push via** : GitHub Desktop → Vercel auto-deploy sur push main
+**Framework Vercel** : "Other" (Build Command vide, Output Directory ".")
+**IMPORTANT** : Vercel **ne build PAS** — il sert les fichiers statiques tels quels
+
+**Contenu du repo `D:\mia-website\`** :
+- Seulement le **BUILD statique** (dossier `_next/`, pas de `package.json`, pas de `src/`)
+- Pages : `/`, `/register`, `/login`, `/calendar`, `/education`, `/legal`, `/privacy`, `/terms`, `/forgot-password`, `/risk`, `/coming-soon`
+- `mia-fixes.js` : **patch JavaScript critique** qui modifie le site apres chargement React (hide Google OAuth button, redirect submit, add footer links, etc.)
+- `mia-fixes.css` : fixes CSS (header opaque, body padding, ticker)
+- `ticker.js` : ticker SPY/QQQ/IWM + Mag 7
+- `vercel.json` : framework "Other"
+- `robots.txt`, `sitemap.xml`
+
+**Le SOURCE Next.js est PERDU ou INTROUVABLE** (verifie 09/04/2026).
+Les dossiers `D:\MIA_IA_system\website-nextjs\` et `website_nextjs\` contiennent un source **incomplet** (layout.tsx + page.tsx seulement, pas de register/login).
+Un source complet existe peut-etre dans `D:\$RECYCLE.BIN\S-1-5-21-...\$RJQSX6F\` (corbeille Windows).
+
+**Ce que fait `mia-fixes.js` (patches a froid sur le build)** :
+```js
+// Variables globales
+var DASHBOARD_URL = 'https://dashboard.mia-ia-system.com';
+
+// 1. Hide Google OAuth button (qui etait un placeholder "A implementer")
+function hideGoogleOAuth() { ... }
+
+// 2. Intercept form submit sur /register et /login → redirect vers dashboard
+function fixLoginRegister() {
+  if (path.indexOf('/register') !== -1 && loginForm) {
+    loginForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+      window.location.href = DASHBOARD_URL + '/register';
+    });
+  }
+}
+
+// 3. Add footer links Dashboard + Discord
+function fixFooterDashboard() { ... }
+
+// 4. Redirect buttons pointing to localhost → DASHBOARD_URL
+// 5. Header opaque force (backdrop shield div)
+// 6. Pricing 3 tiers (hide+insert anti-React)
+// 7. Ticker retry 1s/3s/5s (anti React hydration)
+// 8. Section Resultats Verifies ($19,880 payouts, 3 prop firms)
+// 9. SEO meta descriptions
+```
+
+**Flow actuel signup (casse, a reparer)** :
+```
+User → mia-ia-system.com/register
+     → Next.js affiche form UI (mockup, pas de fetch natif)
+     → mia-fixes.js intercept submit event
+     → window.location = dashboard.mia-ia-system.com/register
+     → Dashboard n'a PAS de page /register dediee
+     → Dashboard home affiche le formulaire sidebar trial
+     → User doit RE-REMPLIR le form (mauvaise UX)
+```
+
+**Flow cible (a coder)** :
+```
+User → mia-ia-system.com/register
+     → Next.js affiche form (patche par mia-fixes.js)
+     → mia-fixes.js intercept submit + fait fetch cross-origin vers
+       https://dashboard.mia-ia-system.com/api/auth/trial
+     → Backend cree user, retourne JWT
+     → mia-fixes.js stocke token dans localStorage cross-domain (via iframe ou cookie .mia-ia-system.com)
+     → Redirect vers dashboard.mia-ia-system.com deja loggue
+```
+
+**CORS** : dashboard.mia-ia-system.com doit autoriser l'origine `https://mia-ia-system.com` dans les headers.
+
+### Dashboard dashboard.mia-ia-system.com
+
+**Repo** : `D:\TRADING_SIERRA_CHART_AUTO\` (sous-dossier `DASHBOARD/`)
+**Stack** : FastAPI + Uvicorn + HTML/JS/CSS statique (lightweight-charts, pas de framework)
+**Port VPS** : 8503 (Uvicorn --workers 1)
+**Tunnel** : Cloudflare Tunnel "tableau de bord Mia" → dashboard.mia-ia-system.com
+**users.json** : `DASHBOARD/users.json` (hors git — contient owner + trial users)
+**JWT secret** : `.jwt_secret` (hors git, persistant)
+
+**Endpoints auth** (DASHBOARD/api/auth.py) :
+- `POST /api/auth/register` — signup classique
+- `POST /api/auth/login` — login avec downgrade auto trial expire + tracking last_login
+- `POST /api/auth/trial` — signup trial 7j + capture IP/pays/langue/UA/UTM/RGPD + notif Discord
+- `GET /api/auth/verify?token=...` — confirme email (trial classique)
+- `POST /api/auth/resend-verification` — renvoie email verification (rate limit 60s)
+- `POST /api/auth/google` — OAuth Google (verifie ID token server-side + cree/login user)
+- `POST /api/auth/promo` — code promo
+
+**Endpoints admin (owner only)** :
+- `/api/bot/stop`, `/api/bot/start`, `/api/bot/status` — kill switch
+- `/api/admin/users/stats` — stats users par tier
+- `/api/admin/bot/health` — heartbeat bot
+- `/api/admin/bot/recent_trades`, `/api/admin/bot/rejections`
+- `/api/admin/discord/test`
+- `/api/admin/logs/tail`
+
+**Tiers users** :
+```
+TIER_LEVELS = {"free": 0, "starter": 1, "trial": 2, "pro": 2, "admin": 3, "owner": 3}
+```
+- **FREE** : chart OHLC sans niveaux, banner prix, pas de 4-big-boxes, pas de jauges, pas de MTF, pas de pages dediees
+- **STARTER (19$/mois)** : Overview complet + Niveaux & VWAP + Alertes (pas de pages PRO)
+- **PRO (49$/mois)** : tout accessible
+- **TRIAL** : acces PRO 7 jours
+- **OWNER (jackson)** : PRO + Admin Tools
+
+**Pattern UI tier gating (Pattern D - TradingView style)** :
+- Floutage leger 3px + badge coin discret "🔒 STARTER" / "🔒 PRO"
+- CTA global en bas d'Overview (FREE only)
+- Modal au click sur page PRO bloquee (pas d'overlay permanent)
+- Bandeau dore en haut (FREE only)
+- Navigation grise + badge PRO pour pages bloquees
+
+### Stack auth cible (en cours 09/04/2026)
+
+| Composant | Provider | Statut |
+|-----------|----------|--------|
+| Signup/Login classique | FastAPI + PBKDF2 + JWT | ✅ Fonctionnel |
+| Google OAuth | Google Identity Services | Backend ✅ / Frontend ⏳ / Client ID ⏳ |
+| Email verification | Brevo SMTP API (300/jour gratuit) | Module ✅ / API key ⏳ |
+| Captcha anti-bot | Cloudflare Turnstile | Non implemente ⏳ |
+| 2FA TOTP | - | BACKLOG (Jackson : "plus tard") |
+
+**Fichiers de secrets (tous dans .gitignore)** :
+- `.jwt_secret` : secret HMAC pour JWT
+- `.brevo_secret` : API key Brevo (format xkeysib-...)
+- `.google_oauth_secret` : Client ID Google OAuth
+- `.turnstile_secret` : site key + secret key Cloudflare Turnstile
+- `BOT/alert_config.json` : 12 webhooks Discord V1
+
+### Deploiement dashboard sur VPS
+
+```bash
+# Fichiers backend
+scp DASHBOARD/api/*.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/api/"
+
+# Fichiers frontend (statiques servis par FastAPI)
+scp DASHBOARD/static/index.html Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/static/"
+scp DASHBOARD/static/js/dashboard.js Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/static/js/"
+scp DASHBOARD/static/css/dashboard.css Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/static/css/"
+
+# Bump version dans index.html (dashboard.js?v=XX + dashboard.css?v=XX) pour casser le cache
+# Restart uvicorn uniquement si app.py ou auth.py modifie :
+ssh Administrator@212.28.179.199 'powershell -Command "Get-CimInstance Win32_Process -Filter \"Name like '\''python%'\''\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"'
+ssh Administrator@212.28.179.199 'cd C:/TRADING_SIERRA_CHART_AUTO && "C:/Program Files/Python311/python.exe" -m uvicorn DASHBOARD.api.app:app --host 0.0.0.0 --port 8503 --workers 1' &
+```
+
+**Le dashboard uvicorn n'est PAS persistant** — meurt quand la session SSH ferme. A rendre persistant avec nssm ou Task Scheduler (backlog).
+
+### Workflow modification site marketing
+
+```
+1. Si modification simple (patch CSS/JS) :
+   - Modifier D:\mia-website\mia-fixes.js ou mia-fixes.css
+   - GitHub Desktop : commit + push
+   - Vercel auto-deploy en 30-60s
+
+2. Si modification profonde (nouvelle page, formulaire) :
+   - PROBLEME : source Next.js perdu/introuvable
+   - Solution temporaire : patch via mia-fixes.js
+   - Solution propre : reconstruire source Next.js OU migrer vers du HTML statique simple
+
+3. NE JAMAIS push d'infos sensibles dans ce repo (il est PUBLIC)
 ```
 
 ## Feuille de route

@@ -1,0 +1,131 @@
+# INCIDENT LOG — MIA Trading System
+
+**USAGE** : ce fichier est lu par Claude au DEBUT de chaque session (nouvelle ou continuation apres `/compact`). Chaque incident documente ici doit guider Claude pour eviter sa repetition.
+
+## Protocole de consultation
+
+**AVANT toute action critique** (fix C++, dispatch agent, affirmation existence code/feature, design, deploy) :
+1. Grep ce fichier pour la categorie concernee
+2. Si match trouve, relire l'entree et appliquer la prevention
+3. Si incident nouveau detecte : ajout immediat en haut du fichier (ordre anti-chronologique)
+
+**Categories autorisees** :
+- `CONTEXT_MISS` — non-consultation d'info disponible (memoire, rule, code existant)
+- `PATTERN_11` — logique hardcoded au lieu de laisser ML apprendre (V1 reborn)
+- `AGENT_MISUSE` — mauvais agent pour la tache OU agent non consulte quand requis
+- `OVER_ENGINEERING` — solution trop complexe pour le probleme
+- `VALIDATION_MISS` — affirmer sans preuve empirique
+- `COMMENT_FALSE` — commentaire/doc dit X alors que realite = Y
+- `SCOPE_CREEP` — depassement perimetre demande
+- `DEPLOY_UNSAFE` — deploy sans confirmation/validation
+
+## Regles de maintenance
+
+1. **JAMAIS supprimer** une entree (meme ancienne/resolue)
+2. **Ordre anti-chronologique** : dernier incident en haut
+3. **Une entree = 10 lignes max** (sinon linker vers fichier dedie)
+4. **Escalation** : si une categorie atteint 3+ occurrences, promouvoir en memoire dediee auto-chargee
+5. **Cross-reference** avec `.claude/rules/lessons.md` + memoires `feedback_*`
+
+## Format d'entree
+
+```
+### YYYY-MM-DD HH:MM — [CATEGORIE] — Titre court
+
+**Contexte** : 2 phrases max (tache + etat projet)
+**Ce qui a mal tourne** : description factuelle
+**Cause racine** : source manquee (memoire/rule/fichier non lu)
+**Lecon** : regle imperative generalisee
+**Trigger prevention** : signal concret pour detection future
+**Reviewed** : Jackson / agent-name / self
+```
+
+---
+
+## Incidents (anti-chronologique)
+
+### 2026-04-20 21:XX — [AGENT_MISUSE] — 3 agents dispatch mal adaptes pour JSONL multi-barres
+
+**Contexte** : Jackson demande audit exhaustif 266 features multi-barres. J'ai dispatche quality-auditor + schema-auditor + code-reviewer + market-analyst.
+**Ce qui a mal tourne** : quality-auditor est specialise **parquet V2** (5 criteres fuite/vol/outlier/constant), pas JSONL temporel multi-barres. code-reviewer generique pas arme pour VIX/open_type specifiques.
+**Cause racine** : dispatche sans verifier `.claude/agents/*.md` definitions vs exigences de la tache. Plan agent l'a detecte au round suivant.
+**Lecon** : **VERIFIER la definition de chaque agent AVANT dispatch** quand la tache differe du use-case standard.
+**Trigger prevention** : si tache = nouvelle modalite (JSONL vs parquet, multi-barres vs snapshot), grep `.claude/agents/*.md` avant Agent dispatch.
+**Reviewed** : Plan agent
+
+### 2026-04-20 20:XX — [SCOPE_CREEP] — Proposition 2 agents a creer inutile
+
+**Contexte** : Plan agent suggere `feature-distribution-auditor` + `audit-coordinator` comme solution ideale. J'ai presente a Jackson comme necessaire.
+**Ce qui a mal tourne** : creer 2 agents = 2 fichiers .md + 2 prompts + maintenance pour UN audit ponctuel.
+**Cause racine** : acceptation aveugle recommandation Plan agent sans pragmatic filter. Jackson a dit "on peut utiliser existants".
+**Lecon** : **Avant de creer un nouvel agent, epuiser les possibilites de re-brief des agents existants**.
+**Trigger prevention** : si ma solution necessite creer infra (agent/rule/script), d'abord demander "peut-on y arriver avec l'existant + prompt plus precis ?".
+**Reviewed** : self (Jackson pragmatique l'a implicitement valide)
+
+### 2026-04-20 19:XX — [VALIDATION_MISS] — Fix C++ deploy sans verifier ib_recalc.py Python
+
+**Contexte** : Fix C++ DMP_Transform.h:848 pour bug IB position_pct. Deploy propose apres 1 round code-reviewer GO.
+**Ce qui a mal tourne** : code-reviewer 2e round (audit complet) a trouve que `CORE/ib_recalc.py:195-201` **recalcule** `ib_position_pct` sans guard `ib_complete`. Le fix C++ serait annule cote pipeline ML. 17083/17083 barres polluees confirmees empiriquement.
+**Cause racine** : n'ai pas mappe toutes les surfaces d'ecriture de la feature avant de fixer. C++ seul = insuffisant.
+**Lecon** : **Avant tout fix feature, grep TOUT le pipeline** (C++ ET Python) pour tous les points d'ecriture/recalcul de cette feature.
+**Trigger prevention** : fix C++ sur feature F → grep `F` sur CORE/*.py + BOT/*.py + V2CLEAN/*.py avant deploy.
+**Reviewed** : code-reviewer (RESERVE #1 CRITIQUE)
+
+### 2026-04-20 18:XX — [VALIDATION_MISS] — V2-bis design v1.4 : 10 reserves declare appliquees, 5 residus
+
+**Contexte** : 4e review Plan agent sur design V2-bis. J'annonce 10 corrections appliquees → bump v1.4.
+**Ce qui a mal tourne** : Plan agent re-audit v1.4 detecte 5 residus (78 tests vs 79 dans 4 endroits, "717 LOC" vs 716, refs cross brisees, timeline 7.5-8.5 vs 6 sem, v1.3 vs v1.4 tags).
+**Cause racine** : correction faite dans une section mais pas propagee aux autres sections qui citent la meme valeur. Discipline editoriale de propagation faiblarde.
+**Lecon** : **Apres chaque correction numerique/textuelle, grep le chiffre/texte AVANT et APRES correction dans tout le fichier**.
+**Trigger prevention** : si Edit change "X" en "Y" → grep "X" dans meme fichier → fix toutes autres occurrences.
+**Reviewed** : Plan agent
+
+### 2026-04-20 16:XX — [CONTEXT_MISS] — Audit single_print_mid flagge comme bug alors que deja PROHIBITED
+
+**Contexte** : Audit multi-barres 266 features. market-analyst flagge `single_print_mid` + `profile_hvn_dominant` = prix absolus → violation data-quality.md.
+**Ce qui a mal tourne** : ces 2 features sont **deja dans `dataset_builder.py:185 PROHIBITED_FEATURES`** depuis longtemps. Drop auto au niveau parquet. Pas un "bug actif".
+**Cause racine** : brief agent sans lui donner le contenu PROHIBITED_FEATURES. Agent a flagge ce qui etait deja gere.
+**Lecon** : **Avant audit features, briefer l'agent avec la liste des features deja droppees/exemptees** pour eviter faux positifs.
+**Trigger prevention** : audit qualite features → include `PROHIBITED_FEATURES` + `EXEMPT_FEATURES` dans brief.
+**Reviewed** : self (investigation empirique post-audit)
+
+### 2026-04-20 16:XX — [CONTEXT_MISS] — Collinearite 4 features signalee, deja documentee
+
+**Contexte** : Audit detecte `ask_bid_imbalance = delta_pct = buy_sell_ratio = ask_pct` collineaires corr=1.0.
+**Ce qui a mal tourne** : `dataset_builder.py:412` documente deja ces 3 redondances avec commentaire explicite `# ask_pct == buy_sell_ratio, delta_pct == ask_bid_imbalance` et drop auto.
+**Cause racine** : pas lu dataset_builder.py avant de dispatcher audit. Aurait evite faux positif.
+**Lecon** : **Quand audit ML features, lire d'abord dataset_builder.py PROHIBITED + commentaires explicatifs**.
+**Trigger prevention** : tache = "audit features X" → Read `CORE/dataset_builder.py` PROHIBITED_FEATURES section AVANT tout.
+**Reviewed** : self
+
+### 2026-04-20 15:XX — [CONTEXT_MISS] — Convention DMP dist mal codee dans Phase 0
+
+**Contexte** : Script audit_phase0.py, check derivation `bool_above_X == (dist_X > 0)`.
+**Ce qui a mal tourne** : 7 faux positifs sur ES + 7 sur NQ (99-100% barres). La convention reelle = `bool_above_X == (dist_X < 0)` (DMP_Transform.h:531 `PosInRange`).
+**Cause racine** : ecrit le check sans lire la formule C++ source. Intuition naturelle "dist > 0 = above" inversee dans DMP.
+**Lecon** : **Pour coder un check sur feature DMP, TOUJOURS lire la formule C++ source avant d'affirmer la semantique**.
+**Trigger prevention** : avant ecrire `check(feature_X)` → Read `CPP/.../DMP_Transform.h` section qui calcule X.
+**Reviewed** : self (empirique : `price=26684, dist_cur_vpoc=-3, bool_above=1` a revele la convention)
+
+### 2026-04-20 13:XX — [COMMENT_FALSE] — "60 LOC critiques lignes 545-564" reel = 20 LOC
+
+**Contexte** : Design V2-bis P0 section V2_StatePersistence, justifie port Python.
+**Ce qui a mal tourne** : j'ai ecrit "20 LOC critiques" puis Plan agent a corrige, j'ai revise en "60 LOC" ... faux aussi. Realite = `_write_snapshot_atomic` est 20 lignes exactes (545-564).
+**Cause racine** : repete chiffre de Plan agent review sans verifier empiriquement. Plan agent lui-meme avait donne chiffre faux.
+**Lecon** : **Tout chiffre cite (LOC, %, count) DOIT etre verifie empiriquement par Read/Grep avant ecriture dans doc**.
+**Trigger prevention** : si je m'apprete a ecrire "N LOC", "X%", "K tests" → verifier avec Bash/Read avant.
+**Reviewed** : code-reviewer
+
+---
+
+## Statistiques par categorie (auto-update si manuel)
+
+| Categorie | Occurrences | Promoted en memoire ? |
+|---|---|---|
+| CONTEXT_MISS | 3 | **OUI** `feedback_context_miss.md` (seuil 3+ atteint) |
+| VALIDATION_MISS | 2 | Pas encore (seuil 3+) |
+| AGENT_MISUSE | 1 | Pas encore |
+| SCOPE_CREEP | 1 | Pas encore |
+| COMMENT_FALSE | 1 | Pas encore |
+
+**Escalation auto** : quand categorie = 3+ → creer memoire dediee auto-chargee.
