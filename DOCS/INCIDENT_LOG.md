@@ -44,6 +44,15 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-04-21 14:XX — [CONTEXT_MISS] — Ajout feature absolue violant data-quality.md
+
+**Contexte** : Jackson demande derivation `mq_gamma_condition` dans `menthorq_backfill_injector.py`.
+**Ce qui a mal tourne** : ajout initial de 6 features dont `mq_net_gex` (113M ES) + `mq_total_gex` (485M ES). Valeurs absolues non-normalisees, incomparables ES/NQ (ratio 25x+). Violation directe `data-quality.md` regle souveraine "NE JAMAIS stocker d'absolus de prix/volume".
+**Cause racine** : n'ai pas consulte `.claude/rules/data-quality.md` AVANT d'ecrire code. Memoire `feedback_data_quality_first.md` est auto-chargee mais j'ai ajoute quand meme feature absolue.
+**Lecon** : **Avant d'ajouter feature numerique ML, verifier mentalement : ES vs NQ comparable ? Si non (dollars/volumes absolus), normaliser par ratio ou drop**.
+**Trigger prevention** : si je m'apprete a ecrire `result["mq_<quelque_chose>"] = _parse_suffix_number(...)` ou valeur $M/$B → **stop**, normaliser d'abord.
+**Reviewed** : code-reviewer (attrape via protocol critical-tasks-review). Correction : DROP `mq_net_gex`/`mq_total_gex`, ADD `mq_net_gex_norm = net/total` (ratio). Temps perdu : 10 min.
+
 ### 2026-04-20 21:XX — [AGENT_MISUSE] — 3 agents dispatch mal adaptes pour JSONL multi-barres
 
 **Contexte** : Jackson demande audit exhaustif 266 features multi-barres. J'ai dispatche quality-auditor + schema-auditor + code-reviewer + market-analyst.
@@ -122,9 +131,9 @@
 
 | Categorie | Occurrences | Promoted en memoire ? |
 |---|---|---|
-| CONTEXT_MISS | 3 | **OUI** `feedback_context_miss.md` (seuil 3+ atteint) |
+| CONTEXT_MISS | **4** | **OUI** `feedback_context_miss.md` (deja promu, renforce) |
 | VALIDATION_MISS | 2 | Pas encore (seuil 3+) |
-| AGENT_MISUSE | 1 | Pas encore |
+| AGENT_MISUSE | 1 | **OUI preventivement** `feedback_agent_brief_verify.md` |
 | SCOPE_CREEP | 1 | Pas encore |
 | COMMENT_FALSE | 1 | Pas encore |
 

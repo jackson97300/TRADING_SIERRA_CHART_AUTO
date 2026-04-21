@@ -103,20 +103,71 @@ def parse_menthorq_json(json_path: Path, symbol: str) -> Optional[dict]:
         }
         return result
 
-    # Format nouveau : vol_model.ES/NQ
+    # Format nouveau : vol_model.ES/NQ (et key_levels.ES/NQ pour Claude extension format)
     if "vol_model" in data and symbol in data["vol_model"]:
         vm = data["vol_model"][symbol]
+        kl = data.get("key_levels", {}).get(symbol, {}) if isinstance(data.get("key_levels"), dict) else {}
+
+        # Normalize bl_levels : accepte liste de floats OU liste de dicts {"level": X, ...}
+        bl_raw = vm.get("bl_levels") or []
+        bl_levels_norm: list[float] = []
+        for item in bl_raw:
+            if isinstance(item, dict):
+                lvl = item.get("level")
+                if isinstance(lvl, (int, float)):
+                    bl_levels_norm.append(float(lvl))
+            elif isinstance(item, (int, float)):
+                bl_levels_norm.append(float(item))
+
+        # [21/04/2026] Derivation mq_gamma_condition + features regime (review code-reviewer).
+        # Regle : gamma_condition = 1 si net_gex > 0 (dealer long gamma, stabilisant),
+        #                           0 si net_gex <= 0 (dealer short gamma, amplifiant).
+        # Finding 15/04 (feedback_regime_gex_finding.md) : +56% PF gap ES SELL
+        # GEX- (3.68) vs GEX+ (2.36). Critique pour regime switching ML.
+        #
+        # data-quality.md compliance : net_gex/total_gex ABSOLUS (113M ES vs 3.9M NQ)
+        # violent la regle souveraine "pas d'absolus non normalises". Donc :
+        #   - DROP net_gex / total_gex bruts
+        #   - ADD net_gex_norm = net_gex / total_gex (ratio ES=NQ comparable)
+        # gamma_condition binaire 0/1 = normalise par nature (ES/NQ comparable).
+        #
+        # Null handling : seuil bruit 1M pour eviter flip pres de zero (signal faible).
+        import math
+        mq_net_gex_raw = _parse_suffix_number(vm.get("net_gex"))
+        mq_total_gex_raw = _parse_suffix_number(vm.get("total_gex"))
+
+        # Guard NaN (edge case : JSON "NaN" → float('nan') qui passe isinstance check)
+        if mq_net_gex_raw is not None and math.isnan(mq_net_gex_raw):
+            mq_net_gex_raw = None
+        if mq_total_gex_raw is not None and math.isnan(mq_total_gex_raw):
+            mq_total_gex_raw = None
+
+        if mq_net_gex_raw is None or abs(mq_net_gex_raw) < 1e6:
+            mq_gamma_condition = None
+        else:
+            mq_gamma_condition = 1 if mq_net_gex_raw > 0 else 0
+
+        if mq_net_gex_raw is not None and mq_total_gex_raw is not None and mq_total_gex_raw > 0:
+            mq_net_gex_norm = mq_net_gex_raw / mq_total_gex_raw
+        else:
+            mq_net_gex_norm = None
+
         result = {
-            "mq_call": None,  # pas directement dans le nouveau format
-            "mq_put": None,
-            "mq_hvl": None,
-            "mq_call_0dte": None,
-            "mq_put_0dte": None,
-            "mq_1d_max": None,
-            "mq_1d_min": None,
-            "bl_levels": vm.get("bl_levels") or [],
-            # On ajoute le gamma_wall_0dte comme proxy de call/put 0dte
+            "mq_call": _to_float(kl.get("call_resistance")),
+            "mq_put": _to_float(kl.get("put_support")),
+            "mq_hvl": _to_float(kl.get("hvl")),
+            "mq_call_0dte": _to_float(kl.get("call_resistance_0dte")),
+            "mq_put_0dte": _to_float(kl.get("put_support_0dte")),
+            "mq_1d_max": _to_float(kl.get("1d_max")),
+            "mq_1d_min": _to_float(kl.get("1d_min")),
+            "bl_levels": bl_levels_norm,
             "gamma_wall_0dte": _to_float(vm.get("gamma_wall_0dte")),
+            # [NEW 21/04] Regime switching features (NORMALISEES, post review)
+            "mq_gamma_condition": mq_gamma_condition,   # binaire 0/1
+            "mq_net_gex_norm": mq_net_gex_norm,         # net/total [-1, 1] ratio
+            "mq_iv_30d": _to_float(vm.get("iv_30d")),   # exempter NATURALLY_DIFFERENT
+            "mq_pc_gex": _to_float(vm.get("pc_gex")),   # ratio [0, ~5]
+            "mq_pc_dex": _to_float(vm.get("pc_dex")),   # ratio [0, ~5]
         }
         return result
 
@@ -138,6 +189,39 @@ def _to_float(v) -> Optional[float]:
         except ValueError:
             return None
     return None
+
+
+def _parse_suffix_number(v) -> Optional[float]:
+    """Parse '523.99M' -> 523990000.0, '-12.5B' -> -1.25e10, '100K' -> 100000.0.
+
+    Gere les suffixes M/B/K (multiplicateurs 1e6/1e9/1e3). Le signe est dans
+    la partie numerique (ex: '-214.04M'). Retourne None si invalid.
+    """
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    mult = 1.0
+    if s.endswith("M"):
+        mult = 1e6
+        s = s[:-1]
+    elif s.endswith("B"):
+        mult = 1e9
+        s = s[:-1]
+    elif s.endswith("K"):
+        mult = 1e3
+        s = s[:-1]
+    elif s.endswith("%"):
+        return None
+    try:
+        return float(s) * mult
+    except ValueError:
+        return None
 
 
 def _parse_bl_levels(text_data: str) -> list[float]:
@@ -216,6 +300,15 @@ def inject_levels_into_row(row: dict, levels: dict) -> dict:
             row["next_wall_dist_ticks"] = round(dp / TICK_SIZE, 1)
             row["next_wall_is_call"] = 0
 
+    # [NEW 21/04] Scalaires regime daily (post review code-reviewer)
+    # Ces features sont NORMALISEES (ratios ou binaires) donc ES/NQ comparables.
+    # Injection directe sans transformation (pas de distances/ticks).
+    for scalar_feat in ["mq_gamma_condition", "mq_net_gex_norm", "mq_iv_30d",
+                        "mq_pc_gex", "mq_pc_dex"]:
+        val = levels.get(scalar_feat)
+        if val is not None:
+            row[scalar_feat] = val
+
     # Blind spots (BL1-10) : plus proche au-dessus et en-dessous
     # Convention DMP C++ (DMP_Transform.h NearestAboveBelow + CalcDistTicks) :
     #   dist en TICKS signes (positif au-dessus, negatif en-dessous)
@@ -273,6 +366,12 @@ MENTHORQ_FEATURES_TO_NULLIFY = [
     # GEX nearest (derive de top_gex_strikes) - garder si existait deja mais pas
     # touche par l'injector car on n'a pas les 10 strikes pour tous les formats
     # "dist_gex_nearest_up", "dist_gex_nearest_dn", "gex_cluster_count",
+    # [NEW 21/04] Regime switching scalaires daily
+    "mq_gamma_condition",
+    "mq_net_gex_norm",
+    "mq_iv_30d",
+    "mq_pc_gex",
+    "mq_pc_dex",
 ]
 
 
