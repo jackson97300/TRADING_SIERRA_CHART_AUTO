@@ -1,0 +1,38 @@
+======================================================================
+AUDIT PHASE 0 DETERMINISTE — Snapshots 20260420 ES+NQ
+======================================================================
+
+Snapshots : ES 1090 barres | NQ 1144 barres
+
+
+### ES ###
+
+[1] Propriete arithmetique : 0 violations
+
+[2] Saturation bilaterale : 0 violations
+
+[3] Derivations bool : 0 violations
+
+[4] Enum domains : 0 violations
+
+[5] Coherence temporelle RTH : 0 warnings
+
+### NQ ###
+
+[1] Propriete arithmetique : 0 violations
+
+[2] Saturation bilaterale : 0 violations
+
+[3] Derivations bool : 0 violations
+
+[4] Enum domains : 0 violations
+
+[5] Coherence temporelle RTH : 0 warnings
+
+### Cross-instrument ###
+[6] Cross-instrument : 1 violations
+  vix_level differe entre ES/NQ sur 15/1090 ts communs
+
+======================================================================
+VERDICT : 1 violations detectees. Investigation requise avant Phase 1.
+======================================================================
