@@ -185,13 +185,21 @@ class IBRecalc:
             1.0, 0.0
         )
 
-        # Position dans l'IB (0% = IB low, 100% = IB high, -1 si hors range)
-        ib_pos = np.full(len(df), -1.0)
+        # Position dans l'IB : [0.0, 1.0] ou NaN si hors range OU IB non-complete.
+        # FIX 2026-04-16 : alignement sur C++ DMP_Transform.h:531 PosInRange post-fix.
+        #   - Avant : sentinel -1 + echelle x100 (produit [0, 100], -1 hors)
+        #   - Apres : NaN hors range + echelle [0, 1] (coherent avec va_position_pct)
+        # FIX 2026-04-20 (schema-auditor + code-reviewer) : alignement avec fix C++
+        # DMP_Transform.h:848 post-2026-04-20. IB partielle (ib_complete=0) = range
+        # non-significatif. Sans ce guard, ib_recalc.py pollue 100% des barres
+        # 9:30-10:30 ET du dataset ML (ib_pos calcule sur range en formation),
+        # annulant le fix C++ cote JSONL. Coherence C++/Python critique.
+        ib_pos = np.full(len(df), np.nan)
         valid_range = np.isfinite(ib_h) & np.isfinite(ib_l) & (ib_h > ib_l)
-        in_range = valid_range & (price >= ib_l) & (price <= ib_h)
+        in_range = valid_range & (price >= ib_l) & (price <= ib_h) & (ib_complete == 1.0)
         ib_pos[in_range] = (
             (price[in_range] - ib_l[in_range]) /
-            (ib_h[in_range] - ib_l[in_range]) * 100.0
+            (ib_h[in_range] - ib_l[in_range])
         )
 
         # Ecrire les colonnes

@@ -827,6 +827,49 @@ def validate(path):
     # Update baseline si aucune erreur detectee jusqu'ici (fichier GREEN)
     # NB : decision de persister deplacee apres verdict (seulement si GREEN)
 
+    # ─── 16. COHERENCE IB (schema-auditor 20/04) ─────────────────────────
+    # Detection Bug #2 : ib_position_pct non-null quand ib_complete=0
+    # Design attendu (post fix C++ DMP_Transform.h:848) :
+    # ib_complete=0 → ib_position_pct=null (IB partielle non-significatif)
+    print(f"\n  ── V2.16 Coherence IB (ib_complete vs ib_position_pct) ──")
+    incoh_partial = 0
+    incoh_count = 0
+    for r in lines:
+        if r.get('ib_complete') == 0 and r.get('ib_position_pct') is not None:
+            incoh_partial += 1
+        incoh_count += 1
+    if incoh_count > 0 and incoh_partial > 0:
+        pct = incoh_partial / incoh_count
+        # Pre-fix C++ : 60-80% incoherence attendu. Warning > 1% = design viole post-fix.
+        if pct > 0.01:
+            warnings.append(f"IB_COHERENCE: {incoh_partial}/{incoh_count} ({pct:.1%}) barres avec ib_complete=0 mais ib_position_pct non-null — fix C++ DMP_Transform.h:848 manquant")
+            print(f"  ⚠️  {incoh_partial}/{incoh_count} ({pct:.1%}) barres IB partielle avec position_pct non-null")
+        else:
+            ok += 1
+            print(f"  ✅ Coherence IB OK ({pct:.2%} residuel)")
+    else:
+        ok += 1
+        print(f"  ✅ Coherence IB parfaite (0 barre incoherente)")
+
+    # ─── 17. OPEN_TYPE CLASSIFICATION BLOQUEE (schema-auditor 20/04) ────
+    # Detection Bug #3 : open_direction=0 sur > 95% barres RTH post-IB-complete
+    # = DMP_ClassifyOpenType() bloque (input invalide prev_vah/val/ib_complete/price_at_1030)
+    print(f"\n  ── V2.17 Open_type classification (bloquee si > 95% unknown) ──")
+    rth_complete = [r for r in lines
+                    if r.get('session') == 2 and r.get('ib_complete') == 1]
+    if len(rth_complete) >= 30:
+        unknown = sum(1 for r in rth_complete if r.get('open_direction') == 0
+                      and r.get('open_type') == 0)
+        pct_unknown = unknown / len(rth_complete)
+        if pct_unknown > 0.95:
+            warnings.append(f"OPEN_TYPE_BLOCKED: {sym} open_direction=0 sur {pct_unknown:.0%} RTH post-IB ({unknown}/{len(rth_complete)}) — classification probablement bloquee (prev_vah/val ou price_at_1030 invalide), check log SC [DMP_OpenType] ⚠️ BLOCKED")
+            print(f"  ⚠️  {sym} open_type UNKNOWN sur {pct_unknown:.0%} RTH ({unknown}/{len(rth_complete)}) — investigation log SC requise")
+        else:
+            ok += 1
+            print(f"  ✅ Open_type classification OK ({100*(1-pct_unknown):.0f}% RTH classifie)")
+    else:
+        print(f"  · RTH post-IB-complete insuffisant ({len(rth_complete)} < 30) — skip")
+
     # ═══════════════════════════════════════════════════════════════════
     # VERDICT
     # ═══════════════════════════════════════════════════════════════════

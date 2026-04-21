@@ -42,7 +42,7 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 // ── Version du schéma JSONL ───────────────────────────────────────────────────
 // Incrémenté à chaque ajout/suppression de colonne pour détecter les incompatibilités
 // entre fichiers .jsonl collectés à des périodes différentes.
-#define DMP_SCHEMA_VERSION "3.7.7"   // G3-Unifier — 266 colonnes
+#define DMP_SCHEMA_VERSION "3.7.8"   // Fix ib_position_pct guard ib_complete — 266 colonnes
 // 3.3.0: BN sg2→sg0 (color/absorb/long per-bar) + 6 colonnes big order cluster
 // 3.4.0: +8 colonnes range trading (range_pos, momentum, touches, bars_in_va)
 // 3.5.0: Big Orders par seuil (n_big_ask/bid → n_big_ask/bid_t1..t4) +6 cols
@@ -80,6 +80,17 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 //        le ML. Fix DMP_Transform.h:531 PosInRange + 5 callers inside_*_va.
 //        Pipeline Python synchronise (rule_engine, dmp_validator, ib_recalc).
 //        Fix ATR x4: lignes de code corrigees dans la meme nuit (3 deploys C++).
+//
+// 3.7.8: Fix ib_position_pct guard ib_complete — 20/04/2026
+//        Bug detecte par schema-auditor : pendant formation IB (9:30-10:30 ET),
+//        ib_position_pct calcule sur range PARTIEL malgre ib_complete=0.
+//        ~61 barres/jour (ES et NQ) avec ambiguite ML : ib_complete=0 + ib_position_pct=0.47.
+//        Fix : DMP_Transform.h:848 guard `r.ib_complete ? PosInRange(...) : DMP_INVALID`.
+//        Synchronise CORE/ib_recalc.py:197 (meme guard Python).
+//        Changement SEMANTIQUE (pas colonne ajoutee). Post-fix : ib_position_pct null
+//        tant que IB pas complete. Coherent avec ib_complete/ib_broken_*.
+//        Validator V2.16 detecte < 1% post-deploy (4.4% pre-fix sur 17/04 empirique).
+//        Reviewed by schema-auditor + 2 code-reviewer agents.
 //
 // 3.7.7: CORRECTION fix 3.7.6 : arr[sz-2] au lieu de arr[sz-1] — 17/04/2026
 //        Audit empirique post-deploy 3.7.6 : 650 barres ES+NQ fresh = 0.0% color

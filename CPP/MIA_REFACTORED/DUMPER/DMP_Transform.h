@@ -839,7 +839,13 @@ static inline void CalcSession(const DMP_RawData& r, DMP_MLFeatures& f) {
     f.ib_complete  = r.ib_complete ? 1.0f : 0.0f;
 
     // Position dans IB (0=IB_Low, 1=IB_High)
-    f.ib_position_pct = PosInRange(p, r.ib_low, r.ib_high);
+    // FIX 2026-04-20 (schema-auditor) : IB partielle (ib_complete=0) → range non-significatif.
+    // Une position dans un IB a 50% formation n'a aucune valeur predictive.
+    // Avant fix : valeur calculee sur range partiel (ambiguite ML avec ib_complete=0).
+    // Apres fix : null tant que IB pas complete.
+    // NOTE : ib_is_narrow/ib_is_wide (lignes 837-838) continuent a etre calcules pendant
+    // formation si ib_range_atr est valide. Meme logique pourrait s'appliquer (backlog 3.7.8).
+    f.ib_position_pct = r.ib_complete ? PosInRange(p, r.ib_low, r.ib_high) : DMP_INVALID;
 
     // IB Breakout
     f.ib_broken_up   = (DMP_IsPriceValid(r.ib_high) && p > r.ib_high) ? 1.0f : 0.0f;
