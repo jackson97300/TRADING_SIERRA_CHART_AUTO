@@ -784,6 +784,13 @@ class MIABot:
         except Exception as e:
             logger.error(f"risk.on_trade_close error: {e}")
 
+        # v1.5 : register close dans signal_engine (cooldown post-close anti re-entry)
+        # Fix Jackson 22/04 : evite rentrer trade contre-sens apres SL si signal persiste
+        try:
+            self.signal_engine.register_trade_close(symbol)
+        except Exception:
+            pass
+
         # 2. Journal — enregistrer le trade complet
         try:
             now = datetime.now(timezone.utc)
@@ -886,11 +893,19 @@ class MIABot:
                     f"score={signal.score:.3f} conf={signal.confidence} "
                     f"size={position_size} SL={sl_ticks:.0f}t TP={tp_ticks:.0f}t")
         logger.info(f"  -> {signal.reason[:100]}")
-        # V2 log structure : signal recu + trade open
+        # V2 log structure : signal recu + trade open avec signal_id correlation
         if _v2log:
-            _v2log.emit("SIGNAL_RECEIVED", sym=symbol, direction=dir_str, score=signal.score)
+            _v2log.emit("SIGNAL_RECEIVED", sym=symbol, direction=dir_str,
+                        score=signal.score, signal_id=signal.signal_id)
             _v2log.emit("TRADE_OPEN", sym=symbol, direction=dir_str,
-                        size=position_size, price=0.0)  # price fill callback later
+                        size=position_size, price=0.0, signal_id=signal.signal_id)
+
+        # v1.5 : marque le signal_id comme trade (dedup state machine signal_engine)
+        # Evite re-entry sur meme signal persistant (fix Jackson 22/04)
+        try:
+            self.signal_engine.register_signal_traded(symbol, signal.signal_id)
+        except Exception:
+            pass
 
         # Sauvegarder le snapshot (TOUTES les features DMP de la barre)
         features = self._pending_snapshot.pop(symbol, {})

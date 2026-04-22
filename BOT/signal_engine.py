@@ -40,6 +40,8 @@ except Exception:
 
 _INFERENCE_SLOW_MS = 50.0  # seuil ML_INFERENCE_SLOW (review agent, LightGBM ~100 features)
 _NAN_RATIO_THRESHOLD = 0.20  # seuil DMP_FEATURE_NAN (>20% features NaN/None)
+_MAX_SIGNAL_AGE_BARS = 2  # seuil expiration state machine (22/04 fix Jackson)
+_POST_CLOSE_COOLDOWN_SEC = 180  # 3 min cooldown post close anti re-entry meme signal
 
 
 @dataclass
@@ -50,6 +52,10 @@ class Signal:
     confidence: str = ""        # "HIGH" / "MEDIUM" / "LOW"
     reason: str = ""            # Explication
     features_used: int = 0
+    # v1.5 (22/04 fix state machine)
+    signal_id: Optional[str] = None      # UUID unique par transition (correlation logs)
+    freshness: str = "IDLE"              # NEW | PERSISTENT | EXPIRED | IDLE | COUNTER_TREND_FLIP
+    age_bars: int = 0                    # barres depuis first fire
 
 
 class SignalEngine:
@@ -59,6 +65,28 @@ class SignalEngine:
         self.cfg = config.signal
         self.model_path = Path(config.model_path)
         self.models: Dict[str, dict] = {}  # {symbol_side: {model, features, threshold}}
+        # v1.5 (22/04 fix state machine) : track transitions par symbol
+        # Fix Jackson : evite re-entry sur signal persistant + detecte flips BUY/SELL.
+        self._signal_state: Dict[str, dict] = {}  # sym → {'direction', 'signal_id', 'first_bar_ts'}
+        self._last_traded_signal_id: Dict[str, str] = {}  # sym → signal_id deja trade (dedup)
+        self._last_close_ts: Dict[str, float] = {}  # sym → timestamp close (cooldown post-close)
+
+    def register_trade_close(self, symbol: str) -> None:
+        """Appele par bot_main._on_trade_close pour enregistrer cooldown.
+
+        Evite re-entry immediate sur meme signal_id apres SL/TP (3 min par defaut).
+        Jackson fix : "evite de prendre trades contre-sens" quand marche flip.
+        """
+        import time as _t
+        self._last_close_ts[symbol] = _t.time()
+
+    def register_signal_traded(self, symbol: str, signal_id: str) -> None:
+        """Appele par bot_main quand un signal_id est consomme pour un trade.
+
+        Empeche re-trade du meme signal_id en persistance (FOMO fix).
+        """
+        if signal_id:
+            self._last_traded_signal_id[symbol] = signal_id
 
     def load_models(self, symbol: str) -> bool:
         """Charge les modeles buy et sell pour un symbole."""
@@ -126,42 +154,95 @@ class SignalEngine:
         # Score SELL
         sell_score = self._score(self.models[sell_key], features_row, symbol=symbol)
 
-        # Decision
+        # Decision raw
         if buy_score >= self.cfg.min_score_buy and buy_score > sell_score:
-            conf = self._confidence(buy_score)
-            # V2 log : signal BUY genere (direction=1, avant gates post-predict)
-            # Pattern 11 safe : ctx uniquement primitifs (sym, score) — pas features_row
-            if _v2log:
-                _v2log.emit("ML_PREDICT", sym=symbol,
-                            score=buy_score, p_primary=buy_score)
-            return Signal(
-                direction=1,
-                score=buy_score,
-                confidence=conf,
-                reason=f"BUY score={buy_score:.3f} > seuil {self.cfg.min_score_buy}",
-                features_used=len(self.models[buy_key].get("features", [])),
-            )
-
+            raw_direction = 1
+            raw_score = buy_score
+            raw_reason = f"BUY score={buy_score:.3f} > seuil {self.cfg.min_score_buy}"
+            feat_count = len(self.models[buy_key].get("features", []))
         elif sell_score >= self.cfg.min_score_sell and sell_score > buy_score:
-            conf = self._confidence(sell_score)
-            # V2 log : signal SELL genere
-            if _v2log:
-                _v2log.emit("ML_PREDICT", sym=symbol,
-                            score=sell_score, p_primary=sell_score)
-            return Signal(
-                direction=-1,
-                score=sell_score,
-                confidence=conf,
-                reason=f"SELL score={sell_score:.3f} > seuil {self.cfg.min_score_sell}",
-                features_used=len(self.models[sell_key].get("features", [])),
-            )
+            raw_direction = -1
+            raw_score = sell_score
+            raw_reason = f"SELL score={sell_score:.3f} > seuil {self.cfg.min_score_sell}"
+            feat_count = len(self.models[sell_key].get("features", []))
+        else:
+            raw_direction = 0
+            raw_score = max(buy_score, sell_score)
+            raw_reason = f"HOLD (buy={buy_score:.3f} sell={sell_score:.3f})"
+            feat_count = 0
 
-        # HOLD : pas de log (400 HOLD/jour/instrument = bruit pur, review agent)
+        # v1.5 (22/04 Jackson fix) State machine transition vs persistance
+        state = self._evaluate_state(symbol, raw_direction, features_row)
+
+        # EXPIRED / COOLDOWN / ALREADY_TRADED → effective_direction=0 (non tradable)
+        effective_direction = raw_direction
+        if state["freshness"] in ("EXPIRED", "COOLDOWN", "ALREADY_TRADED"):
+            effective_direction = 0
+            raw_reason = f"{state['freshness']} age={state['age_bars']}b — {raw_reason}"
+
+        # V2 log : ML_PREDICT uniquement pour NEW (transitions tradable — anti-verbose)
+        if _v2log and state["freshness"] == "NEW" and raw_direction != 0:
+            _v2log.emit("ML_PREDICT", sym=symbol,
+                        score=raw_score, p_primary=raw_score)
+
         return Signal(
-            direction=0,
-            score=max(buy_score, sell_score),
-            reason=f"HOLD (buy={buy_score:.3f} sell={sell_score:.3f}, seuils={self.cfg.min_score_buy}/{self.cfg.min_score_sell})",
+            direction=effective_direction,
+            score=raw_score,
+            confidence=self._confidence(raw_score) if raw_direction != 0 else "",
+            reason=raw_reason,
+            features_used=feat_count,
+            signal_id=state["signal_id"],
+            freshness=state["freshness"],
+            age_bars=state["age_bars"],
         )
+
+    def _evaluate_state(self, symbol: str, raw_direction: int, features_row: dict) -> dict:
+        """State machine transition vs persistance (fix 22/04 Jackson).
+
+        Retourne {freshness, signal_id, age_bars}.
+        Niveaux :
+          NEW             transition 0→±1 OU flip BUY↔SELL. Tradable.
+          PERSISTENT      meme signal continue, 1-MAX barres. Deja trade (peut etre trade
+                          la 1ere fois si pas encore traite, sinon ALREADY_TRADED).
+          EXPIRED         meme signal > MAX_AGE barres. Force HOLD.
+          COOLDOWN        position vient de fermer < POST_CLOSE_SEC. Force HOLD (anti
+                          re-entry contre-sens Jackson).
+          ALREADY_TRADED  signal_id deja consomme. Force HOLD.
+          IDLE            direction=0 (HOLD nominal).
+        """
+        import uuid as _uuid
+        import time as _t
+        prev = self._signal_state.get(symbol, {"direction": 0, "signal_id": None, "first_bar_ts": 0})
+        bar_ts_ms = int(features_row.get("ts", int(_t.time() * 1000)))
+
+        if raw_direction == 0:
+            self._signal_state[symbol] = {"direction": 0, "signal_id": None, "first_bar_ts": 0}
+            return {"freshness": "IDLE", "signal_id": None, "age_bars": 0}
+
+        # COOLDOWN post-close (anti re-entry contre-sens apres SL/TP)
+        last_close = self._last_close_ts.get(symbol, 0)
+        if _t.time() - last_close < _POST_CLOSE_COOLDOWN_SEC:
+            return {"freshness": "COOLDOWN", "signal_id": prev.get("signal_id"), "age_bars": 0}
+
+        # Transition : direction=0→±1 OU flip BUY↔SELL
+        if raw_direction != prev["direction"]:
+            new_id = _uuid.uuid4().hex[:8]
+            self._signal_state[symbol] = {
+                "direction": raw_direction, "signal_id": new_id, "first_bar_ts": bar_ts_ms,
+            }
+            return {"freshness": "NEW", "signal_id": new_id, "age_bars": 0}
+
+        # Persistance
+        age_bars = int((bar_ts_ms - prev["first_bar_ts"]) / 60000) if prev["first_bar_ts"] else 0
+
+        # Signal deja trade → ALREADY_TRADED (dedup)
+        last_traded = self._last_traded_signal_id.get(symbol)
+        if last_traded and last_traded == prev["signal_id"]:
+            return {"freshness": "ALREADY_TRADED", "signal_id": prev["signal_id"], "age_bars": age_bars}
+
+        if age_bars > _MAX_SIGNAL_AGE_BARS:
+            return {"freshness": "EXPIRED", "signal_id": prev["signal_id"], "age_bars": age_bars}
+        return {"freshness": "PERSISTENT", "signal_id": prev["signal_id"], "age_bars": age_bars}
 
     def check_menthorq_gate(self, direction: int,
                               gamma_condition: float) -> tuple:
