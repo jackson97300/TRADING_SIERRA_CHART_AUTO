@@ -73,6 +73,7 @@ LOG_CODES = {
     "ML_INFERENCE_SLOW":       (LogLevel.ALERTE,   "ml", "Inference lente : {ms}ms > seuil {limit_ms}ms"),
     "ML_META_LABELER_LOAD":    (LogLevel.INFO,     "ml", "Meta-labeler charge : {version}"),
     "ML_DRIFT_DETECTED":       (LogLevel.MAJEUR,   "ml", "Model drift detecte : {feature} {metric}={value}"),
+    "ML_PREDICT_FAIL":         (LogLevel.MAJEUR,   "ml", "Echec predict_proba {sym} : {err}"),
 
     "DMP_JSONL_VALID":         (LogLevel.INFO,     "data", "JSONL valide : {file} ({n_bars} barres)"),
     "DMP_SCHEMA_MISMATCH":     (LogLevel.MAJEUR,   "data", "Schema mismatch : attendu {expected} trouve {found}"),

@@ -16,6 +16,7 @@ import hashlib
 import os
 import pickle
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict
@@ -26,6 +27,19 @@ import pandas as pd
 from bot_config import BotConfig, SignalConfig
 
 logger = logging.getLogger(__name__)
+
+# Systeme logs V2 (22/04/2026) : pattern 11 safe — uniquement primitifs dans ctx
+# (jamais features_row complet ni valeurs brutes ML)
+try:
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from CORE.logging_v2 import get_logger as _get_v2_logger
+    _v2log = _get_v2_logger("signal_engine", process="bot_legacy")
+except Exception:
+    _v2log = None
+
+_INFERENCE_SLOW_MS = 50.0  # seuil ML_INFERENCE_SLOW (review agent, LightGBM ~100 features)
+_NAN_RATIO_THRESHOLD = 0.20  # seuil DMP_FEATURE_NAN (>20% features NaN/None)
 
 
 @dataclass
@@ -61,14 +75,26 @@ class SignalEngine:
                 actual_hash = hashlib.sha256(model_file.read_bytes()).hexdigest()
                 if actual_hash != expected_hash:
                     logger.error(f"Hash mismatch pour {model_file.name} — fichier corrompu ou modifie")
+                    # V2 log : hash mismatch = alerte securite CRITIQUE (tampering possible)
+                    if _v2log:
+                        _v2log.emit("ML_MODEL_LOAD_FAIL",
+                                    path=str(model_file), err="hash_mismatch_SHA256")
                     return False
 
             try:
                 with open(model_file, "rb") as f:
                     model_dict = pickle.load(f)
                 self.models[f"{symbol}_{side}"] = model_dict
+                # V2 log : succes par modele (granularite buy/sell)
+                if _v2log:
+                    n_feat = len(model_dict.get("features", []))
+                    _v2log.emit("ML_MODEL_LOADED",
+                                version=f"{symbol}_{side}", n_features=n_feat)
             except Exception as e:
                 logger.error(f"Erreur chargement modele {model_file}: {e}")
+                if _v2log:
+                    _v2log.emit("ML_MODEL_LOAD_FAIL",
+                                path=str(model_file), err=str(e)[:100])
                 return False
 
         return True
@@ -88,17 +114,26 @@ class SignalEngine:
         sell_key = f"{symbol}_sell"
 
         if buy_key not in self.models or sell_key not in self.models:
+            # V2 log : predict appele sans models charges en memoire
+            if _v2log:
+                _v2log.emit("ML_MODEL_LOAD_FAIL",
+                            path=f"{symbol}_buy/sell", err="not_loaded_in_memory")
             return Signal(reason="Modeles non charges")
 
         # Score BUY
-        buy_score = self._score(self.models[buy_key], features_row)
+        buy_score = self._score(self.models[buy_key], features_row, symbol=symbol)
 
         # Score SELL
-        sell_score = self._score(self.models[sell_key], features_row)
+        sell_score = self._score(self.models[sell_key], features_row, symbol=symbol)
 
         # Decision
         if buy_score >= self.cfg.min_score_buy and buy_score > sell_score:
             conf = self._confidence(buy_score)
+            # V2 log : signal BUY genere (direction=1, avant gates post-predict)
+            # Pattern 11 safe : ctx uniquement primitifs (sym, score) — pas features_row
+            if _v2log:
+                _v2log.emit("ML_PREDICT", sym=symbol,
+                            score=buy_score, p_primary=buy_score)
             return Signal(
                 direction=1,
                 score=buy_score,
@@ -109,6 +144,10 @@ class SignalEngine:
 
         elif sell_score >= self.cfg.min_score_sell and sell_score > buy_score:
             conf = self._confidence(sell_score)
+            # V2 log : signal SELL genere
+            if _v2log:
+                _v2log.emit("ML_PREDICT", sym=symbol,
+                            score=sell_score, p_primary=sell_score)
             return Signal(
                 direction=-1,
                 score=sell_score,
@@ -117,6 +156,7 @@ class SignalEngine:
                 features_used=len(self.models[sell_key].get("features", [])),
             )
 
+        # HOLD : pas de log (400 HOLD/jour/instrument = bruit pur, review agent)
         return Signal(
             direction=0,
             score=max(buy_score, sell_score),
@@ -133,36 +173,68 @@ class SignalEngine:
         """
         if direction == 1 and gamma_condition < 0:
             if self.cfg.block_long_if_gamma_negative:
+                # V2 log : gate MQ bloque long en gamma negatif
+                if _v2log:
+                    _v2log.emit("GATE_RISK_BLOCK",
+                                reason="mq_long_blocked_gamma_negative")
                 return False, "BLOCKED: Long interdit en gamma negatif"
 
         if direction == -1 and gamma_condition > 0:
             if self.cfg.block_short_if_gamma_positive:
+                # V2 log : gate MQ bloque short en gamma positif
+                if _v2log:
+                    _v2log.emit("GATE_RISK_BLOCK",
+                                reason="mq_short_blocked_gamma_positive")
                 return False, "BLOCKED: Short interdit en gamma positif"
 
         return True, "OK"
 
-    def _score(self, model_dict: dict, features_row: dict) -> float:
+    def _score(self, model_dict: dict, features_row: dict, symbol: str = "") -> float:
         """Calcule le score de probabilite pour un modele."""
         features = model_dict.get("features", [])
         model = model_dict.get("model")
 
         if model is None:
+            # V2 log : model dict corrompu (present dans self.models mais model=None)
+            if _v2log:
+                _v2log.emit("ML_MODEL_LOAD_FAIL",
+                            path=f"{symbol}_dict", err="model_none_in_dict")
             return 0.0
 
-        # Construire le vecteur de features
+        # Construire le vecteur de features + compter NaN/None pour data quality
         X = []
+        n_nan = 0
         for f in features:
             val = features_row.get(f, 0.0)
             if val is None or (isinstance(val, float) and np.isnan(val)):
                 val = 0.0
+                n_nan += 1
             X.append(float(val))
+
+        # V2 log : features degradees au-dela du seuil (data quality signal)
+        n_total = max(1, len(features))
+        if _v2log and (n_nan / n_total) > _NAN_RATIO_THRESHOLD:
+            _v2log.emit("DMP_FEATURE_NAN",
+                        feature=f"predict_{symbol}", n=n_nan)
 
         X = np.array([X])
 
+        # V2 : timer predict_proba pour detecter inference lente
+        t_start = time.perf_counter()
         try:
             proba = model.predict_proba(X)
+            elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+            # Emit ML_INFERENCE_SLOW si depasse seuil (degradation modele ou VPS)
+            if _v2log and elapsed_ms > _INFERENCE_SLOW_MS:
+                _v2log.emit("ML_INFERENCE_SLOW",
+                            ms=int(elapsed_ms), limit_ms=int(_INFERENCE_SLOW_MS))
             return float(proba[0, 1])  # P(signal=1)
-        except Exception:
+        except Exception as e:
+            # V2 log : exception silencieuse = BUG cache (bug latent detecte par review agent)
+            # Pattern 11 safe : pas de features dans ctx
+            if _v2log:
+                _v2log.emit("ML_PREDICT_FAIL",
+                            sym=symbol, err=f"{e.__class__.__name__}: {str(e)[:80]}", exc=e)
             return 0.0
 
     def _confidence(self, score: float) -> str:
