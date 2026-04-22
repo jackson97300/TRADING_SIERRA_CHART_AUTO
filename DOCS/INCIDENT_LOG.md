@@ -18,6 +18,7 @@
 - `COMMENT_FALSE` — commentaire/doc dit X alors que realite = Y
 - `SCOPE_CREEP` — depassement perimetre demande
 - `DEPLOY_UNSAFE` — deploy sans confirmation/validation
+- `LAZY_DELEGATION` — saute STEP 1-3 d'analyse manuelle, delegue tout aux agents (cf `.claude/rules/module-review-protocol.md`)
 
 ## Regles de maintenance
 
@@ -43,6 +44,45 @@
 ---
 
 ## Incidents (anti-chronologique)
+
+### 2026-04-22 XX:XX — [VALIDATION_MISS] — `risk.on_bar()` defini mais jamais appele dispatcher
+
+**Contexte** : session V2-BIS 22/04 review 4 modules Tier 1 (V2_Main, V2_OrderExec, V2_RiskManager, V2_HealthCheck, V2_SessionGuard). 8 agents reviews individuels ont approuve chaque module.
+**Ce qui a mal tourne** : V2_RiskManager.h ligne 64-72 definit `on_bar(double mtm_pnl_usd)` avec commentaire "CRITIQUE : update peak + check_intraday_dd (sinon INTRADAY_DD trop tard)". MAIS `V2_Main.cpp on_bar_close_dispatcher` ne l'appelait JAMAIS. Methode = **dead code de bonne intention**. Classic : methode definie + test reference (peak_drop_intraday_dd) + impl P1 existera, mais cablage dispatcher manque → INTRADAY_DD ne peut PAS trigger pendant trade ouvert.
+**Cause racine** : les 8 agents reviews individuels valident CHAQUE module en silo, sans tracer le flow cross-module. La review SYNTHESE GLOBALE (validateur tiers, 9eme agent) a detecte via grep multi-fichiers "qui appelle risk.on_bar ?" → vide.
+**Lecon** : **Apres batch de reviews individuels modules, OBLIGATION dispatcher 1 agent SYNTHESE** qui valide :
+  1. Chaque methode publique definie est appelee quelque part
+  2. Chaque interface ajoutee est implementee ET injectee
+  3. Chaque test cible a son cablage dispatcher
+**Trigger prevention** : module-review-protocol.md STEP 5 Tier 1 → ajouter STEP 5b "synthesis review global" apres tous modules batches. Validator agent au lieu de 2 cross-checks individuels.
+**Reviewed** : code-reviewer synthesis (22/04) detecte C1+C2, fix applique immediatement V2_Main.cpp.
+
+### 2026-04-22 XX:XX — [CONTEXT_MISS] — Proposition doublon EventType::ORDER_ERROR
+
+**Contexte** : application reco Plan V2_HealthCheck STEP 5 Q4 failure modes. Ajout 4 nouveaux EventType dans V2_Types.h enum (V2CLEAN_HEARTBEAT_MISSING, V2CLEAN_CLOCK_SKEW, HEARTBEAT_IO_ERROR, ORDER_ERROR).
+**Ce qui a mal tourne** : `ORDER_ERROR` existait deja ligne 182 de V2_Types.h. J'ai ajoute un doublon ligne 193. Grep immediat apres ajout a detecte. Suppression dans la foulee.
+**Cause racine** : j'ai lu la fin de l'enum (L167-170) pour positionner mes ajouts, mais pas grep exhaustivement avant. Le trigger prevention ajoute le 22/04 XX:XX (incident precedent KILL_SWITCH_TRIGGERED) etait precisement cette regle — mais applique au moment ADD, pas a l'ADD suivant quelques minutes plus tard.
+**Lecon** : **Quand bundle plusieurs ajouts a un enum dans une meme edition, grep CHAQUE nouveau nom individuellement**, pas seulement le premier.
+**Trigger prevention** : batch add enum = boucle `for each new_val: grep -n "new_val\b" file`.
+**Reviewed** : self (detecte par grep immediat post-edit).
+
+### 2026-04-22 XX:XX — [CONTEXT_MISS] — Proposition doublon EventType::KILL_SWITCH_TRIGGERED
+
+**Contexte** : review V2_Main.cpp STEP 1 walk-through Gap #5 (spam journal kill-switch). Je propose d'ajouter `EventType::KILL_SWITCH_TRIGGERED` comme nouvelle entree enum.
+**Ce qui a mal tourne** : `EventType::KILL_SWITCH_TRIGGER` (au singulier, sans D final) existe deja `V2_Types.h:154`. Mon design aurait cree doublon evitable. Code-reviewer a detecte l'angle mort lors STEP 4.
+**Cause racine** : j'ai suivi STEP 1 (walk-through) et STEP 2 (grep design doc) MAIS pas STEP complementaire critique : grep EXHAUSTIF de l'enum EventType pour savoir ce qui existe deja. Mon grep STEP 2 a cible "V2_Main / dispatcher / chain.of.gates" sans verifier `V2_Types.h`.
+**Lecon** : **Avant proposer AJOUT a un enum/struct C++, grep le type dans V2_Types.h (ou equivalent header types) pour lister les entrees existantes**. Specialement quand le design parle de "journal event X" ou "new enum value".
+**Trigger prevention** : quand design proposition contient "ajouter EventType::X" ou "ajouter enum value", faire grep `grep -n "X\|equivalent\|similar" V2_Types.h` AVANT de valider le design.
+**Reviewed** : code-reviewer (agent market-analyst agent_a2a08927c03d2bfd6 section "Angle mort detecte").
+
+### 2026-04-21 16:XX — [LAZY_DELEGATION] — V2_JSONLBridge review sans STEP 1-3 manuel
+
+**Contexte** : walkthrough stubs V2-bis module par module. Module 2/13 V2_JSONLBridge.h.
+**Ce qui a mal tourne** : j'ai directement dispatche code-reviewer sans walk-through scenarios reels ni grep design doc. Code-reviewer a rendu 10 recommandations dont R2 (ajouter `is_v2clean_zombie()` a ISignalSource) qui viole SRP. Si applique directement, j'aurais pollue l'interface.
+**Cause racine** : paresse methodologique - deleguer tout aux agents au lieu de faire STEP 1-3 manuel d'abord.
+**Lecon** : **Avant dispatch agent sur module, appliquer STEP 1-3 du `module-review-protocol.md`** (walk-through scenarios + grep doc + 2 tests stubs). ~60% des issues sont detectables manuellement.
+**Trigger prevention** : avant `Agent` tool sur module V2-bis, grep `.claude/rules/module-review-protocol.md` + appliquer STEPS.
+**Reviewed** : Plan agent (cross-check) a detecte R2 faux positif + R11 trou additionnel.
 
 ### 2026-04-21 14:XX — [CONTEXT_MISS] — Ajout feature absolue violant data-quality.md
 
@@ -131,10 +171,11 @@
 
 | Categorie | Occurrences | Promoted en memoire ? |
 |---|---|---|
-| CONTEXT_MISS | **4** | **OUI** `feedback_context_miss.md` (deja promu, renforce) |
-| VALIDATION_MISS | 2 | Pas encore (seuil 3+) |
+| CONTEXT_MISS | **6** | **OUI** `feedback_context_miss.md` (deja promu, renforce 22/04 avec trigger "grep enum existant" + "batch add = grep chaque nouveau nom") |
+| VALIDATION_MISS | **3** | **OUI** (seuil atteint) — a promouvoir : "apres batch reviews modules individuels, OBLIGATION synthesis review cross-module" |
 | AGENT_MISUSE | 1 | **OUI preventivement** `feedback_agent_brief_verify.md` |
 | SCOPE_CREEP | 1 | Pas encore |
 | COMMENT_FALSE | 1 | Pas encore |
+| **LAZY_DELEGATION** | **1** | **OUI preventivement** `.claude/rules/module-review-protocol.md` (6 STEPS) |
 
 **Escalation auto** : quand categorie = 3+ → creer memoire dediee auto-chargee.

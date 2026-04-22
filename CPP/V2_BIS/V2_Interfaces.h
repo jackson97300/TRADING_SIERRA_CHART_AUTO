@@ -65,12 +65,31 @@ public:
 };
 
 // ─── ITimeProvider : horloge (pour time-travel tests) ──────────────
+// v1.4.3 (22/04) CONTRAT DST :
+//   hour_et() MUST return wall-clock heure ET DST-adjusted automatiquement.
+//   Consumers (V2_SessionGuard, V2_HealthCheck) sont DST-agnostic.
+//   Impl concrete utilise std::chrono::zoned_time("America/New_York") C++20.
+//   Test : dst_transition_handled avec FakeTimeProvider simulant 2026-03-08
+//   02:59 ET → 04:00 ET (spring forward gap) et 2026-11-01 02:00 ET → 01:00 ET.
+//
+// ISP : PAS de day_of_week_et(). Weekend/holiday = fait calendaire calcule
+// en interne SessionGuard via std::chrono::weekday from now_ms() (Plan Q2).
 class ITimeProvider {
 public:
     virtual ~ITimeProvider() = default;
     virtual int64_t now_ms() const = 0;
-    virtual int     hour_et() const = 0;
+    virtual int     hour_et() const = 0;     // DST-adjusted ET wall-clock hour
     virtual int     minute_et() const = 0;
+};
+
+// ─── ISessionWindow : abstraction RTH pour V2_HealthCheck (v1.4.3) ──
+// Injecte dans V2_HealthCheck pour eviter couplage concret V2_SessionGuard.
+// Exposee par V2_SessionGuard qui implemente is_rth_active().
+// Permet mock testable (zombie detection RTH sans dependance SessionGuard prod).
+class ISessionWindow {
+public:
+    virtual ~ISessionWindow() = default;
+    virtual bool is_rth_active() const = 0;  // true si clock dans fenetre US RTH 09:30-16:00 ET
 };
 
 // ─── ISignalSource : lecture signal JSONL ──────────────────────────
@@ -119,10 +138,12 @@ struct RiskConfig {
 };
 
 struct SessionConfig {
-    int    london_start_hm_et;  // 800
-    int    london_end_hm_et;    // 915
-    int    opr_pause_end_et;    // 1000
-    int    us_rth_end_et;       // 1600
+    // v1.4.3 (22/04 Plan V2_SessionGuard Q1) : US RTH ONLY pour P0+P1.
+    // London/Asia skip (edge negatif, spreads x3 — cf memory project_v2clean_multi_session.md).
+    // Retrait london_start_hm_et / london_end_hm_et pour eviter dead code + pattern 11 risk.
+    // Si besoin futur : reintroduire avec test dedie.
+    int    us_rth_start_et;     // 930 (09:30 ET)
+    int    us_rth_end_et;       // 1600 (16:00 ET)
     int    flatten_window_min;  // 5 (= 15:55)
 };
 

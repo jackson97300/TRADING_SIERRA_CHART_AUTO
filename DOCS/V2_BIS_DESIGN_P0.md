@@ -254,9 +254,21 @@ void on_bar_close() {
   }
 
   // 4. Risk (RiskSignal subset, pas de score_* visible)
+  // v1.4.3 (22/04) : Gap #5+#6 fix
+  //   - KILL_SWITCH_TRIGGER logge UNE FOIS dans V2_RiskManager.trigger_kill()
+  //     (transition), jamais re-logge par dispatcher (evite spam 330+/session)
+  //   - update_on_bar() appele AVANT return : positions ouvertes conservent
+  //     leur trailing SL/TP (kill = bloquer nouveaux trades, pas abandonner
+  //     positions existantes). Trailing SL qui bouge = reduction risque.
   RiskSignal rs = strip_to_risk_signal(signal);
   if (!risk.allow_trade(rs)) {
-    journal.log(EventType::SIGNAL_REJECTED, {"reason": risk.reason()});
+    if (risk.reason() == KillReason::NONE) {
+      // Rejet ponctuel (cooldown, ATR bounds, max_trades_future) : log normal
+      journal.log(EventType::TRADE_REJECT, {"reason": "pre_trade_check"});
+    }
+    // Kill-switch : deja logge par trigger_kill() → ne rien relog ici
+    order_exec.update_on_bar(SymbolId::ES);  // maintenance positions
+    order_exec.update_on_bar(SymbolId::NQ);
     return;
   }
 
@@ -270,6 +282,9 @@ void on_bar_close() {
 - Session AVANT Risk : rejet fast-path (0 LOC risk state touche) si hors heures
 - Risk APRES Session : evite de consumer budget risk si on n'aurait pas trade anyway
 - Execute DERNIER : seule action irreversible (ordre envoye broker)
+
+**Gap #7 identifie (report P1+)** : race pending order ACK broker > 30s vs kill-switch transition.
+Position LONG ouvert bar N-1, broker n'a pas encore ACK, bar N declenche kill → orpheline en attente. Mitigation prevue : `V2OrderExec::update_on_bar()` ajoute check "pending orders sans ACK > 30s → auto-cancel" en P1. Hors scope v1.4.3 (Gap #5+#6).
 
 ---
 
@@ -376,6 +391,13 @@ public:
 (test statique CI : `grep "score_combined\|p_primary\|p_meta" V2_RiskManager.h` doit retourner vide).
 
 **Persistance** : via `V2_StatePersistence` (atomic write) vers `V2_BIS_STATE/risk_state.json`.
+
+**INVARIANT v1.4.3 (22/04 Plan STEP 5 Q5)** : `trigger_kill(reason)` DOIT executer
+`journal_.log_event(EventType::KILL_SWITCH_TRIGGER, ...)` **AVANT** `persist_atomic()`.
+Raison : si crash processus entre journal write et state persist → kill persiste
+mais trace event absente → au restore, kill re-applique sans contexte. Ordre
+obligatoire `journal → state` = kill peut etre re-logge si journal pas flushe,
+mais kill persiste = safe. Priorite : trace > redondance.
 
 **Dependencies** : Python risk_manager.py comme reference, port C++ strict 1-to-1. V2_StatePersistence,
 V2_EventJournal. Split interne en `V2_KillSwitch` reporte a P1 (R8 section 14).

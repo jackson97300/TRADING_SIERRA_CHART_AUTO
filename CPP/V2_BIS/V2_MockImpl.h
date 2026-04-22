@@ -131,6 +131,14 @@ public:
     int  count_events(EventType type) const;
 };
 
+// ─── MockSessionWindow (v1.4.3 22/04) ───────────────────────────────
+// Mock minimal pour tests V2_HealthCheck sans dependance V2_SessionGuard concret.
+class MockSessionWindow : public ISessionWindow {
+public:
+    bool rth_active_override{true};
+    bool is_rth_active() const override { return rth_active_override; }
+};
+
 // ─── MockConfigProvider (NEW v1.1) ──────────────────────────────────
 class MockConfigProvider : public IConfigProvider {
 public:
