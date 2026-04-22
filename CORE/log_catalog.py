@@ -107,6 +107,12 @@ LOG_CODES = {
     "DISCORD_SEND_OK":         (LogLevel.INFO,     "events", "Discord envoye : channel={channel}"),
     "DISCORD_SEND_FAIL":       (LogLevel.MAJEUR,   "events", "Discord echec : {err}"),
     "DISCORD_RATE_LIMIT":      (LogLevel.ALERTE,   "events", "Discord rate limit : retry {retry_in}s"),
+
+    "GENERIC_INFO":            (LogLevel.INFO,     "events", "{msg}"),
+    "GENERIC_ALERTE":          (LogLevel.ALERTE,   "events", "{msg}"),
+    "GENERIC_MAJEUR":          (LogLevel.MAJEUR,   "events", "{msg}"),
+    "GENERIC_CRITIQUE":        (LogLevel.CRITIQUE, "events", "{msg}"),
+    "GENERIC_DEBUG":           (LogLevel.INFO,     "events", "[DEBUG] {msg}"),
 }
 
 

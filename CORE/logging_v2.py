@@ -149,6 +149,65 @@ def get_logger(module: str, *, process: str = "v2clean") -> Logger:
     return _LOGGERS[key]
 
 
+class CompatLogger:
+    """Bridge stdlib logging API → logging_v2 codes generiques.
+
+    Permet migration progressive : remplacer `logger = logging.getLogger()` par
+    `logger = get_compat_logger(...)` sans changer les appels .info/.warning/.error.
+    Messages routes via codes GENERIC_* (categorie events).
+    """
+
+    def __init__(self, module: str, process: str):
+        self._log = get_logger(module, process=process)
+
+    def info(self, msg: str, *args, **kwargs) -> None:
+        if args:
+            msg = msg % args
+        self._log.emit("GENERIC_INFO", msg=str(msg))
+
+    def warning(self, msg: str, *args, **kwargs) -> None:
+        if args:
+            msg = msg % args
+        self._log.emit("GENERIC_ALERTE", msg=str(msg))
+
+    def error(self, msg: str, *args, exc_info: bool = False, **kwargs) -> None:
+        if args:
+            msg = msg % args
+        exc = sys.exc_info()[1] if exc_info else None
+        self._log.emit("GENERIC_MAJEUR", msg=str(msg), exc=exc)
+
+    def critical(self, msg: str, *args, exc_info: bool = False, **kwargs) -> None:
+        if args:
+            msg = msg % args
+        exc = sys.exc_info()[1] if exc_info else None
+        self._log.emit("GENERIC_CRITIQUE", msg=str(msg), exc=exc)
+
+    def debug(self, msg: str, *args, **kwargs) -> None:
+        if args:
+            msg = msg % args
+        self._log.emit("GENERIC_DEBUG", msg=str(msg))
+
+    def emit(self, code: str, **ctx) -> None:
+        """Pass-through vers logger.emit() pour les migrations avec codes stables."""
+        self._log.emit(code, **ctx)
+
+
+_COMPAT_LOGGERS: dict[tuple[str, str], CompatLogger] = {}
+
+
+def get_compat_logger(module: str, *, process: str = "v2clean") -> CompatLogger:
+    """Retourne un CompatLogger cache par (module, process).
+
+    Utile pour migration bot_main.py / dtc_connector.py etc. qui utilisent
+    stdlib logging API. Preserve les appels .info/.warning/.error existants
+    tout en routant vers le systeme V2.
+    """
+    key = (module, process)
+    if key not in _COMPAT_LOGGERS:
+        _COMPAT_LOGGERS[key] = CompatLogger(module, process=process)
+    return _COMPAT_LOGGERS[key]
+
+
 def write_snapshot(name: str, data: dict) -> None:
     """Ecrit snapshot permanent (PAS rotation) dans LOGS/snapshots/."""
     path = LOG_BASE_DIR / "snapshots" / f"{name}_{_today_utc()}.jsonl"

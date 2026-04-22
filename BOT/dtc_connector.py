@@ -26,6 +26,16 @@ from bot_config import DTCConfig
 
 logger = logging.getLogger(__name__)
 
+# Systeme logs V2 (22/04/2026) : codes stables cross-process
+try:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from CORE.logging_v2 import get_logger as _get_v2_logger
+    _v2log = _get_v2_logger("dtc_connector", process="bot_legacy")
+except Exception:
+    _v2log = None
+
 
 # DTC Message Types
 DTC_LOGON_REQUEST = 1
@@ -83,6 +93,9 @@ class DTCConnector:
         self._oco_processed: set = set() # Ordres déjà traités
         self._server_order_ids: dict = {} # {client_order_id: server_order_id}
 
+        # P0-6 : Events pour attendre fill parent avant TP/SL
+        self._parent_fill_events: dict = {}  # {parent_id: threading.Event}
+
         # Market data — prix temps reel par symbole
         self._last_prices: dict = {}    # {symbol: {"bid": 0, "ask": 0, "last": 0, "ts": 0}}
         self._md_request_ids: dict = {} # {request_id: symbol}
@@ -116,9 +129,15 @@ class DTCConnector:
                 if response.get("Result") == 1:  # Success
                     self.connected = True
                     self._running = True
-                    self._recv_thread = threading.Thread(
-                        target=self._recv_loop, daemon=True)
-                    self._recv_thread.start()
+                    # P0-3 : init heartbeat pour eviter is_alive=False au demarrage
+                    self._last_heartbeat = time.time()
+                    # Reset OCO state pour nouvelle session
+                    self._oco_processed.clear()
+                    # Thread recv
+                    if self._recv_thread is None or not self._recv_thread.is_alive():
+                        self._recv_thread = threading.Thread(
+                            target=self._recv_loop, daemon=True)
+                        self._recv_thread.start()
                     return True
 
             return False
@@ -156,6 +175,10 @@ class DTCConnector:
         parent_id = f"MIA_P_{uuid.uuid4().hex[:8]}"
         child_side = SELL if side == BUY else BUY
 
+        # P0-6 : creer event pour attendre fill parent
+        parent_event = threading.Event()
+        self._parent_fill_events[parent_id] = parent_event
+
         # 1. Parent MARKET
         self._send({
             "Type": DTC_MARKET_ORDER,
@@ -175,8 +198,21 @@ class DTCConnector:
             tp_cid = f"MIA_TP_{uuid.uuid4().hex[:8]}"
             sl_cid = f"MIA_SL_{uuid.uuid4().hex[:8]}"
 
-            # Delai pour que le parent soit traite
-            time.sleep(0.3)
+            # P0-6 : attendre que le parent soit Filled (status=7) avec timeout 2s
+            if not parent_event.wait(timeout=2.0):
+                logger.warning(f"[DTC] Parent {parent_id} NOT FILLED in 2s — abort bracket")
+                self._parent_fill_events.pop(parent_id, None)
+                # Tenter de cancel le parent au cas ou
+                sid = self._server_order_ids.get(parent_id)
+                if sid:
+                    self._send({
+                        "Type": DTC_CANCEL_ORDER,
+                        "ClientOrderID": parent_id,
+                        "ServerOrderID": sid,
+                        "TradeAccount": trade_account,
+                    })
+                return ("", "", "")
+            self._parent_fill_events.pop(parent_id, None)
 
             # TP LIMIT (pas d'OCOGroup1 — ne marche pas)
             self._send({
@@ -342,20 +378,82 @@ class DTCConnector:
             return None
 
     def _recv_loop(self):
-        """Boucle de reception en arriere-plan (ne doit JAMAIS crasher)."""
+        """Boucle de reception en arriere-plan avec reconnexion auto."""
+        reconnect_attempts = 0
         while self._running:
             try:
                 msg = self._recv()
             except Exception as e:
                 logger.error(f"DTC recv_loop error: {e}")
+                with self.lock:
+                    self.connected = False
                 time.sleep(self.cfg.reconnect_delay_seconds)
                 continue
+
             if msg is None:
                 if not self._running:
                     break
-                # Reconnexion
-                time.sleep(self.cfg.reconnect_delay_seconds)
+                # Socket mort — tenter reconnexion
+                with self.lock:
+                    was_connected = self.connected
+                    self.connected = False
+
+                if was_connected:
+                    logger.warning("[DTC] Connexion perdue — tentative de reconnexion")
+                    # V2 log : DTC deconnecte (niveau ALERTE si reconnect possible,
+                    # CRITIQUE si pendant session — caller peut distinguer)
+                    if _v2log:
+                        _v2log.emit("DTC_DISCONNECT", reason="socket_dead_trying_reconnect")
+                    reconnect_attempts = 0
+
+                if reconnect_attempts < 10:
+                    reconnect_attempts += 1
+                    # Fermer l'ancien socket
+                    try:
+                        if self.sock:
+                            self.sock.close()
+                    except Exception:
+                        pass
+                    self.sock = None
+
+                    delay = min(self.cfg.reconnect_delay_seconds * reconnect_attempts, 30)
+                    logger.info(f"[DTC] Reconnect tentative {reconnect_attempts} dans {delay}s")
+                    time.sleep(delay)
+
+                    # Reconnect (sans recreer le thread)
+                    try:
+                        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        self.sock.settimeout(self.cfg.timeout_seconds)
+                        self.sock.connect((self.cfg.host, self.cfg.port))
+                        logon = {
+                            "Type": DTC_LOGON_REQUEST,
+                            "ProtocolVersion": 8,
+                            "Username": "", "Password": "",
+                            "HeartbeatIntervalInSeconds": self.cfg.heartbeat_interval_seconds,
+                            "ClientName": "MIA_Bot_V2",
+                        }
+                        self._send(logon)
+                        response = self._recv()
+                        if response and response.get("Type") == DTC_LOGON_RESPONSE and response.get("Result") == 1:
+                            with self.lock:
+                                self.connected = True
+                            self._last_heartbeat = time.time()
+                            # V2 log : reconnect succes
+                            if _v2log:
+                                _v2log.emit("DTC_RECONNECT", attempts=reconnect_attempts)
+                            reconnect_attempts = 0
+                            logger.info("[DTC] Reconnecte avec succes")
+                    except Exception as e:
+                        logger.error(f"[DTC] Reconnect echec: {e}")
+                else:
+                    logger.error("[DTC] Max reconnect atteint — abandon")
+                    # V2 log : deconnexion pendant session trading = CRITIQUE
+                    if _v2log:
+                        _v2log.emit("DTC_DISCONNECT_SESSION", reason="max_reconnect_attempts")
+                    break
                 continue
+            else:
+                reconnect_attempts = 0  # reset sur message valide
 
             msg_type = msg.get("Type", 0)
 
@@ -403,6 +501,10 @@ class DTCConnector:
                           order_status not in (2, "Open")))
 
             if is_filled and fill_price and fill_price > 100:
+                # P0-6 : signaler l'event parent si c'est un parent order
+                if client_order_id.startswith("MIA_P_") and client_order_id in self._parent_fill_events:
+                    self._parent_fill_events[client_order_id].set()
+
                 # Notifier le bot du fill
                 if self.on_fill:
                     fill = OrderFill(

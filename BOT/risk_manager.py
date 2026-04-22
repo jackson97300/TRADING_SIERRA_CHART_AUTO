@@ -27,6 +27,16 @@ except ImportError:
 
 from bot_config import BotConfig, InstrumentConfig
 
+# Systeme logs V2 (22/04/2026)
+try:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from CORE.logging_v2 import get_logger as _get_v2_logger
+    _v2log = _get_v2_logger("risk_manager", process="bot_legacy")
+except Exception:
+    _v2log = None
+
 
 @dataclass
 class RiskState:
@@ -233,6 +243,20 @@ class RiskManager:
         """Active le kill switch — plus aucun trade possible."""
         self.state.is_killed = True
         self.state.kill_reason = reason
+        # V2 log structure : kill-switch event UNIQUE (transition). Code selon reason.
+        if _v2log:
+            if "Daily loss" in reason:
+                _v2log.emit("KILL_DD_DAILY", pnl=self.state.daily_pnl,
+                            limit=-self.cfg.max_daily_loss_usd)
+            elif "Intraday drawdown" in reason or "Davey kill" in reason:
+                _v2log.emit("KILL_INTRADAY_DD",
+                            dd=self.state.daily_peak_pnl - self.state.daily_pnl,
+                            limit=self.cfg.max_daily_loss_usd)
+            elif "Max trades" in reason or "max_daily_trades" in reason:
+                _v2log.emit("KILL_MAX_TRADES", n=self.state.daily_trades,
+                            limit=self.cfg.max_daily_trades)
+            else:
+                _v2log.emit("KILL_CATASTROPHE", pnl=self.state.daily_pnl)
 
     def reset_daily(self):
         """Reset l'etat pour une nouvelle journee."""

@@ -25,20 +25,30 @@ from pathlib import Path
 # Ajouter BOT et CORE au path
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "CORE"))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # Pour CORE.logging_v2
 
 from bot_config import BotConfig, CONFIG
 from risk_manager import RiskManager
 from signal_engine import SignalEngine, Signal
 from order_manager import OrderManager
 from position_monitor import PositionMonitor
-from trade_journal import TradeJournal
+from trade_journal import TradeJournal, TradeRecord
 from dtc_connector import DTCConnector
+from discord_alerter import DiscordAlerter
+from heartbeat_writer import HeartbeatWriter
 
 # Modules CORE pour features
 from dmp_reader import DmpReader
 from rolling_features import RollingFeatures
 from intermarket_features import IntermarketFeatures
 from rule_engine import RuleEngine
+
+# Systeme logs V2 (22/04/2026) : structure par categorie + codes stables
+try:
+    from CORE.logging_v2 import get_logger as _get_v2_logger
+    _v2log = _get_v2_logger("bot_main", process="bot_legacy")
+except Exception:
+    _v2log = None
 
 logger = logging.getLogger("MIA")
 
@@ -106,8 +116,18 @@ class MIABot:
         self.orders = None  # Initialise au start
         self.monitor = None
 
+        # Monitoring V2 : Discord alerts + heartbeat (repris du V1)
+        self.alerter = DiscordAlerter()
+        self.heartbeat = HeartbeatWriter(
+            interval_seconds=30,
+            stats_provider=self._get_heartbeat_stats,
+        )
+
         self._running = False
         self._symbols = []
+        self._stats_start_time = time.time()
+        self._trades_today_count = 0
+        self._pnl_today_usd = 0.0
 
         # RuleEngine — utilise quand pas de modele ML
         self.rule_engine = RuleEngine()
@@ -145,34 +165,62 @@ class MIABot:
         logger.info(f"  Position max: {self.cfg.risk.max_positions_total}")
         logger.info(f"{'='*60}")
 
+        # V2 log structure : boot signal
+        if _v2log:
+            _v2log.emit("BOOT_START", component=f"MIA_BOT_{mode}", version="V2", pid=os.getpid())
+
         # Charger les modeles ML
         for sym in self._symbols:
             if self.signal_engine.load_models(sym):
                 logger.info(f"[ML] {sym}: modeles charges")
+                if _v2log:
+                    _v2log.emit("ML_MODEL_LOADED", version=sym, n_features=0)
             else:
                 logger.info(f"[ML] {sym}: pas de modele -> RuleEngine actif")
+                if _v2log:
+                    _v2log.emit("ML_MODEL_LOAD_FAIL", path=sym, err="fallback_rule_engine")
 
         # Connexion DTC
         if not self.dry_run:
             logger.info("[DTC] Connexion a Sierra Chart...")
             if self.dtc.connect():
                 logger.info("[DTC] Connecte")
+                if _v2log:
+                    _v2log.emit("DTC_CONNECT", host=self.cfg.dtc.host, port=self.cfg.dtc.port)
                 self.orders = OrderManager(self.cfg, self.dtc)
                 self.monitor = PositionMonitor(self.cfg, self.orders, self.journal)
+
+                # CRITIQUE : brancher le callback de fermeture pour journal + risk
+                self.orders.on_trade_close = self._on_trade_close
 
                 # Prix via JSONL (DTC market data non supporte par SC serveur)
                 logger.info("[PRIX] Via derniere barre JSONL (fallback DTC)")
             else:
                 logger.info("[DTC] ECHEC — passage en dry-run")
+                if _v2log:
+                    _v2log.emit("DTC_DISCONNECT", reason="connect_failed_fallback_dry_run")
                 self.dry_run = True
 
         self.journal.log_event("BOT_START", f"symbols={self._symbols} dry_run={self.dry_run}")
+
+        # Demarre le heartbeat writer (thread daemon)
+        self._stats_start_time = time.time()
+        self.heartbeat.start()
+
+        # Alerte Discord : bot demarre
+        self.alerter.send_bot_start({
+            "pid": os.getpid(),
+            "version": "V2",
+            "mode": mode,
+            "symbols": ",".join(self._symbols),
+            "session": "SIM3" if self.cfg.paper_trading else "LIVE",
+        })
 
         # Boucle principale
         self._running = True
         self._main_loop()
 
-    def stop(self):
+    def stop(self, reason: str = "manual"):
         """Arrete le bot proprement."""
         self._running = False
 
@@ -185,9 +233,22 @@ class MIABot:
         if self.dtc:
             self.dtc.disconnect()
 
+        # Arret heartbeat
+        try:
+            self.heartbeat.stop()
+        except Exception:
+            pass
+
         # Rapport
-        logger.info(self.journal.daily_summary())
-        self.journal.log_event("BOT_STOP", self.journal.daily_summary())
+        summary = self.journal.daily_summary()
+        logger.info(summary)
+        self.journal.log_event("BOT_STOP", summary)
+
+        # Alerte Discord : bot arrete
+        try:
+            self.alerter.send_bot_stop(reason)
+        except Exception:
+            pass
 
         logger.info("=" * 60)
         logger.info("  MIA BOT V2 ARRETE")
@@ -199,9 +260,43 @@ class MIABot:
         self._tick_count = 0
         self._last_status_log = 0
 
+        # Kill switch flag file (check chaque tick)
+        self._stop_flag_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "DATA", "BOT_CONTROL", "STOP.flag"
+        )
+
         consecutive_errors = 0
         try:
             while self._running:
+                # Kill switch check — prioritaire sur tout
+                if os.path.exists(self._stop_flag_file):
+                    reason = "unknown"
+                    try:
+                        with open(self._stop_flag_file, "r", encoding="utf-8") as f:
+                            info = json.loads(f.read())
+                            reason = info.get("reason", "manual")
+                    except Exception:
+                        pass
+                    logger.warning(f"[KILL_SWITCH] STOP.flag detecte (reason={reason}) — flatten + arret")
+                    # V2 log structure : kill-switch manuel
+                    if _v2log:
+                        _v2log.emit("KILL_DD_DAILY", pnl=0.0, limit=0.0,
+                                    signal_id=f"manual_stop_{reason}")
+                    self.journal.log_event("KILL_SWITCH", f"STOP.flag reason={reason}")
+                    positions_before = 0
+                    if self.orders:
+                        positions_before = self.orders.total_positions
+                        if positions_before > 0:
+                            logger.info("[KILL_SWITCH] Flatten toutes positions...")
+                            self.orders.flatten_all("KILL_SWITCH")
+                            time.sleep(3)  # laisser le temps aux cancels
+                    try:
+                        self.alerter.send_kill_switch(reason, positions_before)
+                    except Exception:
+                        pass
+                    break  # sort de la boucle
+
                 try:
                     self._tick()
                     consecutive_errors = 0
@@ -210,6 +305,9 @@ class MIABot:
                     logger.error(f"[TICK_ERROR] {e}")
                     if consecutive_errors >= 10:
                         logger.error(f"[FATAL] {consecutive_errors} erreurs consecutives — arret")
+                        if _v2log:
+                            _v2log.emit("BOT_CRASH", exc_type="ConsecutiveErrors",
+                                        exc_msg=f"{consecutive_errors} erreurs consecutives")
                         break
                     time.sleep(5)  # Pause avant retry
                     continue
@@ -229,15 +327,27 @@ class MIABot:
 
         except KeyboardInterrupt:
             logger.info("[CTRL+C] Arret demande...")
+            self._stop_reason = "KeyboardInterrupt"
+            if _v2log:
+                _v2log.emit("BOT_SHUTDOWN", reason="KeyboardInterrupt")
         except Exception as e:
             logger.error(f"[CRASH] Exception non geree: {e}", exc_info=True)
+            # V2 log structure : crash avec stacktrace capturee
+            if _v2log:
+                _v2log.emit("BOT_CRASH", exc_type=e.__class__.__name__,
+                            exc_msg=str(e)[:200], exc=e)
             self.journal.log_event("CRASH", str(e))
+            try:
+                self.alerter.send_crash("bot_main._main_loop", str(e))
+            except Exception:
+                pass
+            self._stop_reason = f"crash: {str(e)[:200]}"
         finally:
             # TOUJOURS fermer les positions, meme en cas de crash
             if self.orders and self.orders.total_positions > 0:
                 logger.info("[SAFETY] Flatten d'urgence...")
                 self.orders.flatten_all("CRASH_FLATTEN")
-            self.stop()
+            self.stop(reason=getattr(self, "_stop_reason", "manual"))
 
     def _log_status(self):
         """Log periodique de l'etat du bot."""
@@ -423,6 +533,12 @@ class MIABot:
             if not allowed:
                 continue
 
+            # P0-4 : Check fraicheur de la derniere barre DMP (< 90s)
+            last_bar_age = time.time() - self._last_bar_time.get(sym, 0)
+            if last_bar_age > 90:
+                self.journal.log_rejection(sym, f"Barre DMP stale ({last_bar_age:.0f}s)", 0)
+                continue
+
             # En dry-run, pas de signaux ni d'execution
             if self.dry_run:
                 continue
@@ -431,10 +547,12 @@ class MIABot:
             if signal.direction == 0:
                 continue
 
-            # ── 4. MenthorQ gate ──
-            # Gamma condition depuis les features MQ enrichies
+            # ── 4. MenthorQ gate — FAIL-CLOSED si pas de donnee ──
             features = self._features_cache.get(sym, {})
-            gamma = features.get("mq_gamma_condition", 0.0)
+            if "mq_gamma_condition" not in features or features.get("mq_gamma_condition") is None:
+                self.journal.log_rejection(sym, "Pas de donnee gamma MQ (fail-closed)", signal.score)
+                continue
+            gamma = float(features["mq_gamma_condition"])
             mq_ok, mq_reason = self.signal_engine.check_menthorq_gate(
                 signal.direction, gamma)
             if not mq_ok:
@@ -452,9 +570,11 @@ class MIABot:
                 sl_ticks, tp_ticks = self._rule_sltp_cache.pop(sym)
             else:
                 features = self._features_cache.get(sym, {})
-                atr_value = features.get("atr_14", 0)
-                if atr_value > 0:
-                    sl_ticks = max(10, atr_value / instrument.tick_size * instrument.atr_sl_mult)
+                # ATR dans le JSONL = atr_daily en TICKS (verifie 09/04)
+                atr_ticks = features.get("atr", 0) or features.get("atr_14", 0)
+                if atr_ticks > 0:
+                    # SL = ATR_ticks * 0.08 (coherent paper trader + ML labeler)
+                    sl_ticks = max(10, atr_ticks * instrument.atr_sl_mult)
                 else:
                     sl_ticks = 20
                 tp_ticks = sl_ticks * instrument.rr_ratio
@@ -634,6 +754,118 @@ class MIABot:
 
         return last_row
 
+    def _on_trade_close(self, symbol: str, exit_type: str, exit_price: float,
+                         pnl_ticks: float, pnl_usd: float, position):
+        """Callback critique appele quand un trade se ferme (TP/SL/manuel).
+
+        - Decremente open_positions dans le risk manager
+        - Met a jour consecutive_losses / daily_pnl
+        - Ecrit un TradeRecord complet dans le journal
+        """
+        from datetime import datetime, timezone
+
+        logger.info(f"[TRADE_CLOSE] {symbol} {exit_type} @ {exit_price:.2f} "
+                    f"PnL={pnl_ticks:+.0f}t ${pnl_usd:+.2f}")
+        # V2 log structure : trade close avec code selon exit_type
+        if _v2log:
+            code_map = {"TP": "TRADE_CLOSE_TP", "SL": "TRADE_CLOSE_SL",
+                         "TRAIL": "TRADE_CLOSE_TRAIL", "BE": "TRADE_CLOSE_BE",
+                         "MANUAL": "TRADE_CLOSE_MANUAL", "KILL_SWITCH": "TRADE_CLOSE_KILL",
+                         "TIMEOUT": "TRADE_CLOSE_TIMEOUT"}
+            v2_code = code_map.get(exit_type, "TRADE_CLOSE_MANUAL")
+            if v2_code == "TRADE_CLOSE_MANUAL":
+                _v2log.emit(v2_code, sym=symbol, reason=exit_type)
+            else:
+                _v2log.emit(v2_code, sym=symbol, pnl=pnl_ticks)
+
+        # 1. Risk manager — decrementer open_positions
+        try:
+            self.risk.on_trade_close(symbol, pnl_usd)
+        except Exception as e:
+            logger.error(f"risk.on_trade_close error: {e}")
+
+        # 2. Journal — enregistrer le trade complet
+        try:
+            now = datetime.now(timezone.utc)
+            entry_time_str = datetime.fromtimestamp(position.entry_time, tz=timezone.utc).isoformat() if position.entry_time else ""
+            duration = (now.timestamp() - position.entry_time) if position.entry_time else 0.0
+
+            trade = TradeRecord(
+                symbol=symbol,
+                date=now.strftime("%Y%m%d"),
+                direction=position.direction,
+                entry_price=position.entry_price,
+                entry_time=entry_time_str,
+                exit_price=exit_price,
+                exit_time=now.isoformat(),
+                exit_reason=exit_type,
+                sl_price=position.sl_price,
+                tp_price=position.tp_price,
+                position_size=position.quantity,
+                pnl_ticks=pnl_ticks,
+                pnl_usd=pnl_usd,
+                duration_seconds=duration,
+                is_winner=pnl_usd > 0,
+                paper_trade=self.dry_run,
+            )
+            self.journal.log_trade(trade)
+        except Exception as e:
+            logger.error(f"journal.log_trade error: {e}")
+
+        # 3. Mise a jour stats globales + heartbeat
+        self._trades_today_count += 1
+        self._pnl_today_usd += pnl_usd
+
+        # 4. Alerte Discord : trade ferme
+        try:
+            direction_str = "LONG" if position.direction == 1 else "SHORT"
+            self.alerter.send_trade_closed(
+                symbol=symbol,
+                direction=direction_str,
+                exit_reason=exit_type,
+                pnl_ticks=pnl_ticks,
+                pnl_usd=pnl_usd,
+            )
+        except Exception as e:
+            logger.debug(f"alerter.send_trade_closed: {e}")
+
+    def _get_heartbeat_stats(self) -> dict:
+        """Callback pour le HeartbeatWriter — retourne l'etat courant du bot."""
+        dtc_ok = None
+        try:
+            if self.dtc is not None:
+                dtc_ok = bool(getattr(self.dtc, "connected", False)) and (
+                    self.dtc.is_alive() if hasattr(self.dtc, "is_alive") else True
+                )
+        except Exception:
+            dtc_ok = None
+
+        # Age de la derniere barre (max sur symbols)
+        last_bar_age = None
+        if self._last_bar_time:
+            now = time.time()
+            ages = [now - t for t in self._last_bar_time.values()]
+            last_bar_age = round(max(ages), 1) if ages else None
+
+        positions_open = 0
+        if self.orders:
+            try:
+                positions_open = self.orders.total_positions
+            except Exception:
+                pass
+
+        return {
+            "status": "running" if self._running else "stopped",
+            "cycles": getattr(self, "_tick_count", 0),
+            "trades_today": self._trades_today_count,
+            "pnl_today": self._pnl_today_usd,
+            "positions_open": positions_open,
+            "last_bar_age": last_bar_age,
+            "dtc_connected": dtc_ok,
+            "symbols": list(self._symbols),
+            "start_time": self._stats_start_time,
+        }
+
     def _check_position(self, symbol: str, instrument):
         """Verifie une position ouverte — P&L et time exit."""
         if not self.monitor:
@@ -654,6 +886,11 @@ class MIABot:
                     f"score={signal.score:.3f} conf={signal.confidence} "
                     f"size={position_size} SL={sl_ticks:.0f}t TP={tp_ticks:.0f}t")
         logger.info(f"  -> {signal.reason[:100]}")
+        # V2 log structure : signal recu + trade open
+        if _v2log:
+            _v2log.emit("SIGNAL_RECEIVED", sym=symbol, direction=dir_str, score=signal.score)
+            _v2log.emit("TRADE_OPEN", sym=symbol, direction=dir_str,
+                        size=position_size, price=0.0)  # price fill callback later
 
         # Sauvegarder le snapshot (TOUTES les features DMP de la barre)
         features = self._pending_snapshot.pop(symbol, {})
