@@ -16,10 +16,21 @@ from DASHBOARD.api.readers import (
     dist_to_price,
     get_field,
     get_int_field,
+    get_nullable_field,
     get_str_field,
     rvol_to_regime,
     vix_dist_to_price,
 )
+
+
+def _nullable_round(val, ndigits=4):
+    """Round si val est numerique, sinon retourne None (pour features nullable)."""
+    if val is None:
+        return None
+    try:
+        return round(float(val), ndigits)
+    except (ValueError, TypeError):
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -340,16 +351,24 @@ def build_regime_context(bar: dict) -> dict:
     # Si ib_range == 0, l'IB n'est pas encore formee — pas de vote
 
     # 2. Day Type (Market Profile)
+    # FIX 22/04/2026 : mapping corrige vs readers.py DAY_TYPE_LABELS
+    # Bug detecte : code 3=NEUTRAL, 2=NORM_VARIATION (42% des jours).
+    # Auparavant 3 etait classe "Normal Variation" (faux) et 2 "Neutral" (faux).
+    # DMP enum : 0=NonTrend, 1=Normal, 2=NormVariation, 3=Neutral, 4=Trend
     day_type = get_int_field(bar, "day_type", 0)
-    if day_type == 4:  # Trend Day
+    if day_type == 4:  # Trend Day (19%)
         trend_votes += 2
         regime_details.append("Day Type: Trend")
-    elif day_type == 3:  # Normal Variation
+    elif day_type == 2:  # Norm Variation (42%, ext 1 cote = directionnel)
         trend_votes += 1
-        regime_details.append("Day Type: Normal Variation")
-    elif day_type in (1, 2):  # Normal ou Neutral
+        regime_details.append("Day Type: Norm Variation")
+    elif day_type == 1:  # Normal (respect IB, range 2%)
         range_votes += 1
-        regime_details.append("Day Type: " + ("Normal" if day_type == 1 else "Neutral"))
+        regime_details.append("Day Type: Normal")
+    elif day_type == 3:  # Neutral (ext 2 cotes + close milieu, 30% whipsaw)
+        range_votes += 1
+        regime_details.append("Day Type: Neutral")
+    # day_type == 0 (NonTrend, 7%) : pas de vote, marche comprime
 
     # 3. Single Prints — empreinte de conviction
     single_prints = get_int_field(bar, "single_print_count", 0)
@@ -745,7 +764,10 @@ def build_market_profile(bar: dict) -> dict:
         "cur_val_price": dist_to_price(bar, "dist_cur_val"),
         "cur_vwap_vp_price": dist_to_price(bar, "dist_cur_vwap_vp"),
         "inside_cur_va": get_int_field(bar, "inside_cur_va", 0),
-        "va_position_pct": round(get_field(bar, "va_position_pct", 0.5), 4),
+        # FIX 2026-04-16 : va_position_pct est null hors VA (pas 0.5 default).
+        # Sinon le dashboard affichait "VA Position 50%" en meme temps que
+        # "Dans VA : non" -> contradiction visuelle. Le JS fmtPct(null) -> "--".
+        "va_position_pct": _nullable_round(get_nullable_field(bar, "va_position_pct"), 4),
         "bars_in_va": get_field(bar, "bars_in_va", 0.0),
         "vah_touches_20b": get_field(bar, "vah_touches_20b", 0.0),
         "val_touches_20b": get_field(bar, "val_touches_20b", 0.0),
@@ -815,7 +837,10 @@ def build_initial_balance(bar: dict) -> dict:
         "ib_broken_down": get_int_field(bar, "ib_broken_down", 0),
         "ib_is_narrow": get_int_field(bar, "ib_is_narrow", 0),
         "ib_is_wide": get_int_field(bar, "ib_is_wide", 0),
-        "ib_position_pct": get_field(bar, "ib_position_pct", 0.0),
+        # FIX 2026-04-16 : ib_position_pct est null hors IB/RTH (pas 0.0 default).
+        # Sinon le dashboard affichait "ib_position 0%" en pre-IB (09:30-10:30 ET)
+        # et hors RTH, suggerant "au plus bas de l'IB" (trompeur).
+        "ib_position_pct": get_nullable_field(bar, "ib_position_pct"),
         "bool_ib_inside": get_int_field(bar, "bool_ib_inside", 0),
         "ib_extension_ratio": ib_ext,
     }
@@ -1308,6 +1333,46 @@ def _gamma_gate_check(
 # ═══════════════════════════════════════════════════════════════
 
 
+# ═══════════════════════════════════════════════════════════════
+# Signal State Tracker — fix bug critique signal persistance (22/04)
+# ═══════════════════════════════════════════════════════════════
+# Bug identifie par Jackson : signal ACHAT emis a 9h00 affiche "ACHAT"
+# pendant plusieurs barres (9h05, 9h15 etc) car conditions toujours
+# vraies. Humain croit voir nouveau signal → FOMO trade late = perdant.
+# Fix : distinguer EVENEMENT (transition False→True) de ETAT (persistance).
+_SIGNAL_STATE = {}  # {symbol: {"action": str, "first_bar_ts": int, "signal_id": str, "last_seen_ts": int}}
+_MAX_SIGNAL_AGE_BARS = 2  # barres max avant EXPIRED (timeframe 1min)
+
+
+def _evaluate_signal_freshness(symbol: str, action: str, bar_ts_ms: int) -> dict:
+    """State machine transition vs persistance.
+
+    Retourne {freshness: NEW|PERSISTENT|EXPIRED|IDLE, age_bars: int, signal_id: str}.
+    NEW       = transition ATTENDRE/autre → signal actif (evenement tradable)
+    PERSISTENT = meme signal, age 1-MAX → encore affichable mais pas tradable
+    EXPIRED   = meme signal, age > MAX → action forcee ATTENDRE, pas tradable
+    IDLE      = pas de signal (ATTENDRE/CONFLIT)
+    """
+    import uuid as _uuid
+    prev = _SIGNAL_STATE.get(symbol, {"action": "ATTENDRE", "first_bar_ts": 0, "signal_id": None, "last_seen_ts": 0})
+
+    is_active = action in ("ACHAT", "VENTE", "ACHAT PRUDENT", "VENTE PRUDENTE")
+
+    if not is_active:
+        _SIGNAL_STATE[symbol] = {"action": action, "first_bar_ts": 0, "signal_id": None, "last_seen_ts": bar_ts_ms}
+        return {"freshness": "IDLE", "age_bars": 0, "signal_id": None}
+
+    if action != prev["action"]:
+        new_id = _uuid.uuid4().hex[:8]
+        _SIGNAL_STATE[symbol] = {"action": action, "first_bar_ts": bar_ts_ms, "signal_id": new_id, "last_seen_ts": bar_ts_ms}
+        return {"freshness": "NEW", "age_bars": 0, "signal_id": new_id}
+
+    age_bars = int((bar_ts_ms - prev["first_bar_ts"]) / 60000)
+    freshness = "NEW" if age_bars == 0 else ("PERSISTENT" if age_bars <= _MAX_SIGNAL_AGE_BARS else "EXPIRED")
+    _SIGNAL_STATE[symbol] = {**prev, "last_seen_ts": bar_ts_ms}
+    return {"freshness": freshness, "age_bars": age_bars, "signal_id": prev["signal_id"]}
+
+
 def build_conseil_global(
     bar: dict,
     regime: dict,
@@ -1319,9 +1384,14 @@ def build_conseil_global(
     options != None et qu'un mur MQ est proche (voir `_gamma_gate_check`).
     Le parametre `options` est optionnel pour retro-compatibilite — les
     anciens appelants continueront de fonctionner sans gamma gate.
+
+    v1.5 (22/04) : ajoute freshness (NEW/PERSISTENT/EXPIRED/IDLE) + signal_id
+    + age_bars pour distinguer evenement (transition) de etat (persistance).
+    Fix bug signal ACHAT affiche pendant 15 min (Jackson directive).
     """
     if not bar or not regime:
-        return {"action": "ATTENDRE", "bull_points": 0, "bear_points": 0, "reason": "pas de donnees"}
+        return {"action": "ATTENDRE", "bull_points": 0, "bear_points": 0, "reason": "pas de donnees",
+                "freshness": "IDLE", "age_bars": 0, "signal_id": None}
 
     bull_pts = 0
     bear_pts = 0
@@ -1385,6 +1455,28 @@ def build_conseil_global(
         bear_pts = min(bear_pts, _GAMMA_CAP_BULL_BEAR)
     checks.extend(gamma_warnings)
 
+    # PATCH 22/04/2026 : Ajout BN footprint events aux checks (visibilite trader)
+    # Ne modifie PAS bull_pts/bear_pts (pour eviter pattern 11 hardcoded).
+    # Audit market-analyst 22/04 : v2 enrichi degrade PF -> on garde v1 pondere,
+    # on ajoute juste les events BN comme CONTEXTE dans la deroulante.
+    bn_color_up = get_int_field(bar, "bn_color_up", 0)
+    bn_color_dn = get_int_field(bar, "bn_color_dn", 0)
+    bn_long_up = get_int_field(bar, "bn_long_up", 0)
+    bn_long_dn = get_int_field(bar, "bn_long_dn", 0)
+    bn_absorb_bid = get_int_field(bar, "bn_absorb_bid", 0)
+    bn_absorb_ask = get_int_field(bar, "bn_absorb_ask", 0)
+    bn_bull = bn_color_up + bn_long_up + bn_absorb_bid
+    bn_bear = bn_color_dn + bn_long_dn + bn_absorb_ask
+    if bn_bull > 0 or bn_bear > 0:
+        bn_parts = []
+        if bn_color_up: bn_parts.append("color_up")
+        if bn_long_up: bn_parts.append("long_up")
+        if bn_absorb_bid: bn_parts.append("absorb_bid")
+        if bn_color_dn: bn_parts.append("color_dn")
+        if bn_long_dn: bn_parts.append("long_dn")
+        if bn_absorb_ask: bn_parts.append("absorb_ask")
+        checks.append(f"BN events ({bn_bull}+/{bn_bear}-): {' '.join(bn_parts)}")
+
     # Verdict
     conflict = bull_pts >= 3 and bear_pts >= 3
     if conflict:
@@ -1400,14 +1492,42 @@ def build_conseil_global(
     else:
         action = "ATTENDRE"
 
+    # PATCH 22/04/2026 : BLOCK SELL signals
+    # Audit market-analyst 22/04 : SELL PF=0.00 sur ES (0/6 wins), PF=0.60 NQ.
+    # Jackson a bust son compte Topstep sur SELL trade (news imprevue).
+    # Revalidation obligatoire sur v4 propre mi-mai avant re-activation.
+    if action in ("VENTE", "VENTE PRUDENTE"):
+        original_action = action
+        action = "ATTENDRE"
+        checks.append(f"SELL DISABLED (audit 22/04 : PF=0.00 ES / PF=0.60 NQ)")
+        checks.append(f"  Signal original : {original_action} ({bear_pts} bear pts)")
+        checks.append(f"  Re-activation apres validation v4 propre")
+
+    # v1.5 (22/04) State machine transition vs persistance
+    symbol_key = str(bar.get("sym", "UNKNOWN")).upper()
+    bar_ts_ms = int(bar.get("ts", 0))
+    state = _evaluate_signal_freshness(symbol_key, action, bar_ts_ms)
+
+    # EXPIRED : force action → ATTENDRE (signal perime, plus tradable)
+    if state["freshness"] == "EXPIRED":
+        checks.append(f"SIGNAL EXPIRE apres {state['age_bars']} barres (max {_MAX_SIGNAL_AGE_BARS})")
+        checks.append(f"  Action forcee → ATTENDRE (signal non tradable, conditions persistantes)")
+        display_action = "ATTENDRE"
+    else:
+        display_action = action
+
     return {
-        "action": action,
+        "action": display_action,
         "bull_points": bull_pts,
         "bear_points": bear_pts,
         "reason": f"{bull_pts} bull / {bear_pts} bear",
         "checks": checks,
         "gamma_block_long": block_long,
         "gamma_block_short": block_short,
+        "freshness": state["freshness"],
+        "age_bars": state["age_bars"],
+        "signal_id": state["signal_id"],
+        "raw_action": action,  # action avant expiration (pour debug)
     }
 
 

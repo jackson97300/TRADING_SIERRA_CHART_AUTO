@@ -4,504 +4,915 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard MIA IA SYSTEM — Trading IA Temps Reel ES NQ</title>
-    <meta name="description" content="Dashboard live de trading automatise MIA. 6 panels temps reel : bot status, contexte marche, order flow, options gamma, intermarket, signaux. ES et NQ futures.">
+    <meta name="description" content="Dashboard pro MIA. 262 features temps reel : options gamma, order flow, market profile, niveaux VWAP, signaux. ES et NQ futures.">
     <meta name="robots" content="noindex, nofollow">
     <link rel="icon" href="/static/images/favicon.ico" type="image/x-icon">
+    <!-- Preconnect CDN externes -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="preconnect" href="https://unpkg.com" crossorigin>
+    <link rel="dns-prefetch" href="https://s3.tradingview.com">
+    <!-- Fonts Google async (pattern preload + swap) — non-blocking LCP -->
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"></noscript>
+    <link rel="stylesheet" href="/static/css/dashboard.css?v=63">
+    <!-- Driver.js — Onboarding tour -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css">
+    <script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js" defer></script>
+    <!-- Google Identity Services SDK -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <!-- Cloudflare Turnstile -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
-<body class="has-banner">
-    <h1 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;">Dashboard MIA IA SYSTEM — Trading Automatise ES NQ Futures</h1>
+<body>
+    <!-- Ticker TradingView -->
+    <div id="tv-ticker"></div>
 
-    <!-- ========== Ticker TradingView ========== -->
-    <div id="tv-ticker" style="position:fixed;top:0;left:0;right:0;height:46px;z-index:9999;background:#0a0e17;"></div>
+    <!-- Warnings banner -->
+    <div id="warnings-banner" class="warnings-banner hidden"></div>
+    <!-- Edu tooltip global -->
+    <div id="edu-tooltip-global"></div>
+    <!-- Connection error -->
+    <div id="conn-error" class="conn-error hidden">Connexion perdue — tentative de reconnexion...</div>
 
-    <!-- ========== Navbar ========== -->
-    <nav class="navbar">
-        <a href="https://mia-ia-system.com" class="navbar-brand" style="text-decoration:none;">
-            <img src="/static/images/logo-dark.jpg" alt="MIA Logo" class="navbar-logo" width="36" height="36">
-            <span class="navbar-name">MIA Dashboard</span>
-        </a>
+    <!-- Hamburger mobile — EN DEHORS du layout pour z-index fiable -->
+    <button id="hamburger-btn" class="hamburger-btn" aria-label="Menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <!-- Overlay mobile -->
+    <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
 
-        <div class="navbar-links">
-            <a href="/" class="navbar-link navbar-link-active">Dashboard</a>
-            <a href="/briefing" class="navbar-link navbar-link-gold">Briefing</a>
-            <a href="/calendar" class="navbar-link">Calendrier</a>
-            <a href="https://mia-ia-system.com/education/" class="navbar-link" target="_blank" rel="noopener">Education</a>
-        </div>
+    <div class="layout">
+        <!-- ════════ SIDEBAR ════════ -->
+        <aside class="sidebar" id="sidebar">
+            <a onclick="window.open('https://mia-ia-system.com','_blank')" class="sidebar-brand" style="cursor:pointer;">
+                <img src="/static/images/logo-dark.jpg" alt="MIA" width="36" height="36">
+                <span>MIA Dashboard</span>
+            </a>
 
-        <div class="navbar-right">
-            <div class="navbar-live">
-                <span class="badge badge-green"><span class="dot dot-green"></span> LIVE</span>
-                <span id="navbar-time" class="navbar-time">--:--:--</span>
+            <div class="sidebar-section">
+                <div class="sidebar-label">Instrument</div>
+                <div class="instrument-selector">
+                    <button class="instrument-btn active" data-instrument="ES">ES</button>
+                    <button class="instrument-btn" data-instrument="NQ">NQ</button>
+                    <button class="instrument-btn" data-instrument="BOTH">Les 2</button>
+                </div>
             </div>
-            <a href="https://discord.gg/mia-ia-system" class="badge badge-purple" target="_blank" rel="noopener">Discord</a>
-            <a href="https://buy.stripe.com/14AdR16ky5jtc89a036AM00" target="_blank" class="navbar-btn-premium">Premium &#9733;</a>
-        </div>
-    </nav>
 
-    <!-- ========== Bandeau CTA ========== -->
-    <div class="cta-banner" id="cta-banner">
-        <span class="cta-banner-text">
-            Briefing du <strong id="banner-date">--/--/----</strong> &mdash; Niveaux cles ES/NQ &rarr;
-            <a href="/briefing" class="cta-banner-link">Lire</a>
-        </span>
-        <button class="cta-banner-close" id="cta-banner-close" aria-label="Fermer le bandeau">&times;</button>
-    </div>
+            <div class="sidebar-section">
+                <div class="sidebar-label">Navigation</div>
+                <ul class="sidebar-nav">
+                    <li><a data-page="overview" class="active">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                        Overview
+                    </a></li>
+                    <li><a data-page="options" data-tier-min="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                        Options & Gamma <span class="tier-lock-icon" style="display:none;float:right;opacity:0.5;">PRO</span>
+                    </a></li>
+                    <li><a data-page="orderflow" data-tier-min="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                        Order Flow <span class="tier-lock-icon" style="display:none;float:right;opacity:0.5;">PRO</span>
+                    </a></li>
+                    <li><a data-page="profile" data-tier-min="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 5 5-6"/></svg>
+                        Market Profile <span class="tier-lock-icon" style="display:none;float:right;opacity:0.5;">PRO</span>
+                    </a></li>
+                    <li><a data-page="levels" data-tier-min="1">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9h16M4 15h16M9 3v18M15 3v18"/></svg>
+                        Niveaux & VWAP
+                    </a></li>
+                    <li><a data-page="signals" data-tier-min="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        Signaux & Journal <span class="tier-lock-icon" style="display:none;float:right;opacity:0.5;">PRO</span>
+                    </a></li>
+                    <li><a data-page="cta" data-tier-min="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                        CTA Positioning <span class="tier-lock-icon" style="display:none;float:right;opacity:0.5;">PRO</span>
+                    </a></li>
+                    <li><a data-page="menthorq" data-tier-min="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                        MenthorQ Detail <span class="tier-lock-icon" style="display:none;float:right;opacity:0.5;">PRO</span>
+                    </a></li>
+                    <li><a data-page="performance" data-tier-min="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+                        Performance <span class="tier-lock-icon" style="display:none;float:right;opacity:0.5;">PRO</span>
+                    </a></li>
+                    <li><a data-page="alerts" data-tier-min="1">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        Alertes <span id="alerts-badge" class="badge badge-red" style="font-size:0.6rem;padding:1px 5px;display:none;">0</span>
+                    </a></li>
+                </ul>
+            </div>
 
-    <!-- ========== NEWS ALERT BANNER (style prop firm — fixe sous le bandeau briefing) ========== -->
-    <div id="news-alert-banner" style="display:none;position:fixed;top:calc(var(--ticker-height) + var(--navbar-height) + 40px);left:0;right:0;height:36px;z-index:88;align-items:center;justify-content:center;gap:0.75rem;font-size:0.8125rem;font-weight:600;transition:all 0.3s ease;">
-        <span id="news-alert-icon" style="font-size:1rem;"></span>
-        <span id="news-alert-text" style="font-family:'JetBrains Mono',monospace;"></span>
-        <a href="/calendar" id="news-alert-link" style="font-size:0.7rem;color:inherit;opacity:0.8;text-decoration:underline;">Voir calendrier</a>
-    </div>
+            <div class="sidebar-section">
+                <div class="sidebar-label">Outils</div>
+                <ul class="sidebar-nav">
+                    <li><a onclick="window.open('/briefing','_blank')" style="cursor:pointer;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        Briefing
+                    </a></li>
+                    <li><a onclick="window.open('/calendar','_blank')" style="cursor:pointer;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        Calendrier Eco
+                    </a></li>
+                    <li><a href="/lexique" target="_blank">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                        Lexique
+                    </a></li>
+                </ul>
+            </div>
 
-    <!-- ========== Dashboard Layout ========== -->
-    <div class="dashboard-container">
-        <div class="dashboard-layout">
+            <div class="sidebar-section" style="margin-top:8px;">
+                <div class="sidebar-label">Mode</div>
+                <div style="padding:0 12px;">
+                    <label class="edu-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+                        <input type="checkbox" id="edu-mode-toggle" style="display:none;">
+                        <span class="edu-switch"></span>
+                        <span style="font-size:0.75rem;color:var(--text-secondary);">Mode Educatif</span>
+                    </label>
+                    <button id="btn-tour-guide" type="button" style="margin-top:6px;width:100%;padding:5px 8px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--text-secondary);font-size:0.6875rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;" title="Relancer le guide du dashboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        Guide du dashboard
+                    </button>
+                </div>
+            </div>
 
-            <!-- ===== Main Grid (6 panels) ===== -->
-            <main class="dashboard-main">
+            <div class="sidebar-section" style="margin-top:8px;">
+                <div class="sidebar-label">Statut</div>
+                <div style="padding:0 12px;">
+                    <div class="kv-row"><span class="kv-key">Data Feed</span><span id="health-feed" class="badge badge-gray">--</span></div>
+                    <div class="kv-row"><span class="kv-key">Bot</span><span id="health-bot" class="badge badge-gray">--</span></div>
+                    <div class="kv-row"><span class="kv-key">MAJ</span><span id="last-update" class="kv-value" style="font-size:0.6875rem;">--:--</span></div>
+                </div>
+            </div>
 
-                <!-- Panel 1 : Bot Status -->
-                <section id="panel-bot-status" class="glass">
-                    <div class="panel-header">
-                        <span class="panel-title">Bot Status</span>
-                        <span id="bot-running-badge" class="badge badge-green"><span class="dot dot-green"></span> Running</span>
+            <div class="sidebar-section" id="killswitch-section" style="margin-top:8px;display:none;">
+                <div class="sidebar-label" style="color:#ff6b00;">Admin Tools (Owner)</div>
+
+                <!-- Kill Switch -->
+                <div style="padding:0 12px;">
+                    <div id="killswitch-status" class="kv-row" style="margin-bottom:6px;">
+                        <span class="kv-key">Kill Switch</span>
+                        <span id="killswitch-state" class="badge badge-gray">--</span>
                     </div>
+                    <button id="btn-bot-stop" type="button"
+                        style="width:100%;padding:10px;background:linear-gradient(135deg,#c62828,#8b0000);color:#fff;border:1px solid #ff5252;border-radius:6px;font-weight:700;font-size:0.8125rem;cursor:pointer;letter-spacing:0.5px;box-shadow:0 2px 8px rgba(198,40,40,0.3);">
+                        STOP BOT
+                    </button>
+                    <button id="btn-bot-start" type="button"
+                        style="width:100%;margin-top:6px;padding:8px;background:rgba(76,175,80,0.15);color:#4caf50;border:1px solid #4caf50;border-radius:6px;font-weight:600;font-size:0.75rem;cursor:pointer;display:none;">
+                        REDEMARRER
+                    </button>
+                    <div id="killswitch-msg" style="font-size:0.625rem;margin-top:6px;text-align:center;min-height:14px;color:var(--text-secondary);"></div>
+                </div>
 
-                    <div class="kv-row">
-                        <span class="kv-key">Statut global</span>
-                        <span id="bot-global-status" class="kv-value text-green">Actif</span>
-                    </div>
-                    <div class="kv-row">
-                        <span class="kv-key">Dernier heartbeat</span>
-                        <span id="bot-heartbeat" class="kv-value">--:--:--</span>
-                    </div>
+                <!-- Bot Health -->
+                <div id="admin-panel" style="display:none;padding:8px 12px 0 12px;border-top:1px solid var(--border);margin-top:10px;">
+                    <div style="font-size:0.6875rem;color:var(--text-disabled);text-transform:uppercase;letter-spacing:0.5px;margin:4px 0 6px 0;">Bot Health</div>
+                    <div class="kv-row"><span class="kv-key">Etat</span><span id="admin-bot-state" class="badge badge-gray">--</span></div>
+                    <div class="kv-row"><span class="kv-key">DTC</span><span id="admin-bot-dtc" class="badge badge-gray">--</span></div>
+                    <div class="kv-row"><span class="kv-key">PID</span><span id="admin-bot-pid" class="kv-value">--</span></div>
+                    <div class="kv-row"><span class="kv-key">Uptime</span><span id="admin-bot-uptime" class="kv-value">--</span></div>
+                    <div class="kv-row"><span class="kv-key">HB age</span><span id="admin-bot-age" class="kv-value">--</span></div>
+                    <div class="kv-row"><span class="kv-key">Cycles</span><span id="admin-bot-cycles" class="kv-value">0</span></div>
+                    <div class="kv-row"><span class="kv-key">Trades</span><span id="admin-bot-trades" class="kv-value">0</span></div>
+                    <div class="kv-row"><span class="kv-key">PnL jour</span><span id="admin-bot-pnl" class="kv-value">0.00$</span></div>
+                    <div class="kv-row"><span class="kv-key">Positions</span><span id="admin-bot-positions" class="kv-value">0</span></div>
 
-                    <hr class="section-divider">
+                    <!-- Users Stats -->
+                    <div style="font-size:0.6875rem;color:var(--text-disabled);text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px 0;">Utilisateurs</div>
+                    <div class="kv-row"><span class="kv-key">Total</span><span id="admin-users-total" class="kv-value">0</span></div>
+                    <div class="kv-row"><span class="kv-key">Free</span><span id="admin-users-free" class="kv-value">0</span></div>
+                    <div class="kv-row"><span class="kv-key">Premium</span><span id="admin-users-premium" class="kv-value">0</span></div>
+                    <div class="kv-row"><span class="kv-key">Owner</span><span id="admin-users-owner" class="kv-value">0</span></div>
+                    <div class="kv-row"><span class="kv-key">+ 7 jours</span><span id="admin-users-7d" class="kv-value">0</span></div>
+                    <div class="kv-row"><span class="kv-key">+ 30 jours</span><span id="admin-users-30d" class="kv-value">0</span></div>
 
-                    <!-- ES -->
-                    <div class="instrument-section">
-                        <div class="instrument-header">
-                            <span class="instrument-label">ES</span>
-                            <span id="es-position" class="badge badge-cyan">FLAT</span>
+                    <!-- Actions -->
+                    <button id="btn-discord-test" type="button"
+                        style="width:100%;margin-top:10px;padding:7px;background:rgba(41,98,255,0.15);color:#2962ff;border:1px solid #2962ff;border-radius:6px;font-weight:600;font-size:0.7rem;cursor:pointer;">
+                        Test Discord
+                    </button>
+                    <div id="admin-discord-msg" style="font-size:0.625rem;margin-top:4px;text-align:center;min-height:14px;color:var(--text-secondary);"></div>
+
+                    <button id="btn-admin-refresh" type="button"
+                        style="width:100%;margin-top:4px;padding:6px;background:rgba(255,255,255,0.05);color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;font-weight:500;font-size:0.6875rem;cursor:pointer;">
+                        Rafraichir
+                    </button>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <div id="tier-indicator" style="text-align:center;margin-bottom:8px;"></div>
+
+                <!-- Trial 7 jours EN PREMIER (visible si FREE) — la priorite visuelle n°1 -->
+                <div id="trial-section" style="margin-bottom:10px;padding:10px;border:1px solid rgba(0,180,220,0.3);border-radius:8px;background:linear-gradient(135deg,rgba(0,180,220,0.05),rgba(0,144,176,0.03));">
+                    <div style="text-align:center;font-weight:800;font-size:0.75rem;color:#00B4DC;margin-bottom:6px;letter-spacing:0.5px;">ESSAI GRATUIT 7 JOURS</div>
+                    <div style="font-size:0.625rem;color:var(--text-secondary);text-align:center;margin-bottom:8px;">Acces PRO complet — Sans carte bancaire</div>
+
+                    <!-- Bouton Google OAuth (prominent) -->
+                    <button id="google-signin-btn" type="button" style="width:100%;padding:8px;background:#fff;color:#3c4043;border:1px solid #dadce0;border-radius:6px;font-weight:600;font-size:0.75rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px;">
+                        <svg width="16" height="16" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84c-.21 1.12-.84 2.07-1.8 2.71v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.61z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.81 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.95v2.33A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.71A5.41 5.41 0 0 1 3.68 9c0-.59.1-1.17.29-1.71V4.96H.95A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.04l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3.01 2.33C4.68 5.17 6.66 3.58 9 3.58z"/></svg>
+                        Continuer avec Google
+                    </button>
+
+                    <div style="text-align:center;font-size:0.625rem;color:var(--text-disabled);margin:4px 0;">— ou —</div>
+
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                        <div style="display:flex;gap:4px;">
+                            <input id="trial-firstname" type="text" placeholder="Prenom" style="flex:1;padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:0.75rem;outline:none;">
+                            <input id="trial-lastname" type="text" placeholder="Nom" style="flex:1;padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:0.75rem;outline:none;">
                         </div>
-                        <div class="kv-row">
-                            <span class="kv-key">P&amp;L session</span>
-                            <span id="es-pnl" class="kv-value stat-neutral">0.00</span>
-                        </div>
-                        <div class="kv-row">
-                            <span class="kv-key">Trades (W/L)</span>
-                            <span id="es-trades" class="kv-value">0 / 0</span>
-                        </div>
-                    </div>
+                        <input id="trial-email" type="email" placeholder="Email" autocomplete="email" style="padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:0.75rem;outline:none;">
+                        <input id="trial-password" type="password" placeholder="Mot de passe (6+ car.)" autocomplete="new-password" style="padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:0.75rem;outline:none;">
 
-                    <hr class="section-divider">
+                        <!-- Turnstile captcha (sera injecte par JS) -->
+                        <div id="turnstile-container" style="margin:4px 0;"></div>
 
-                    <!-- NQ -->
-                    <div class="instrument-section">
-                        <div class="instrument-header">
-                            <span class="instrument-label">NQ</span>
-                            <span id="nq-position" class="badge badge-cyan">FLAT</span>
-                        </div>
-                        <div class="kv-row">
-                            <span class="kv-key">P&amp;L session</span>
-                            <span id="nq-pnl" class="kv-value stat-neutral">0.00</span>
-                        </div>
-                        <div class="kv-row">
-                            <span class="kv-key">Trades (W/L)</span>
-                            <span id="nq-trades" class="kv-value">0 / 0</span>
-                        </div>
-                    </div>
-                </section>
+                        <!-- RGPD consent obligatoire -->
+                        <label style="display:flex;align-items:flex-start;gap:6px;font-size:0.625rem;color:var(--text-secondary);line-height:1.4;cursor:pointer;padding:4px 0;">
+                            <input id="trial-rgpd" type="checkbox" style="margin-top:2px;flex-shrink:0;">
+                            <span>J'accepte les <a href="/cgu" target="_blank" style="color:#00B4DC;text-decoration:underline;">CGU</a> et la <a href="/privacy" target="_blank" style="color:#00B4DC;text-decoration:underline;">politique de confidentialite</a></span>
+                        </label>
 
-                <!-- Panel 2 : Market Context -->
-                <section id="panel-market-context" class="glass">
-                    <div class="panel-header">
-                        <span class="panel-title">Contexte Marche</span>
-                        <span id="session-badge" class="badge badge-cyan">PRE-MARKET</span>
+                        <button id="trial-btn" type="button" style="padding:8px 12px;background:linear-gradient(135deg,#00B4DC,#0090B0);color:#0A0E17;border:none;border-radius:6px;font-weight:800;font-size:0.75rem;cursor:pointer;letter-spacing:0.5px;">DEMARRER L'ESSAI</button>
                     </div>
+                    <div id="trial-msg" style="font-size:0.625rem;margin-top:4px;text-align:center;min-height:14px;"></div>
+                </div>
 
-                    <!-- Donnees gratuites -->
-                    <div class="kv-row">
-                        <span class="kv-key">VIX</span>
-                        <span id="mc-vix" class="kv-value">--</span>
+                <!-- Login form (visible si pas loggue — pour les users qui ont deja un compte) -->
+                <div id="login-section" style="margin-bottom:8px;">
+                    <div style="font-size:0.625rem;text-align:center;color:var(--text-disabled);margin-bottom:4px;">— Deja inscrit ? —</div>
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                        <input id="login-email" type="email" placeholder="Email" autocomplete="username" style="padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:0.75rem;outline:none;">
+                        <input id="login-password" type="password" placeholder="Mot de passe" autocomplete="current-password" style="padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:0.75rem;outline:none;">
+                        <button id="login-btn" type="button" style="padding:6px 12px;background:rgba(41,98,255,0.2);color:#2962ff;border:1px solid #2962ff;border-radius:6px;font-weight:700;font-size:0.75rem;cursor:pointer;">SE CONNECTER</button>
                     </div>
-                    <div class="kv-row">
-                        <span class="kv-key">Regime VIX</span>
-                        <span id="mc-vix-regime" class="kv-value">--</span>
-                    </div>
-                    <div class="kv-row">
-                        <span class="kv-key">ATR ES / NQ</span>
-                        <span id="mc-atr" class="kv-value">-- / --</span>
-                    </div>
-                    <div class="kv-row">
-                        <span class="kv-key">VWAP Slope ES / NQ</span>
-                        <span id="mc-vwap-slope" class="kv-value">-- / --</span>
-                    </div>
+                    <div id="login-msg" style="font-size:0.625rem;margin-top:4px;text-align:center;min-height:14px;"></div>
+                </div>
 
-                    <!-- Section premium -->
-                    <!-- Ceci est un outil d'aide a la decision, PAS un conseil en investissement. -->
-                    <div class="premium-locked">
-                        <div class="premium-content">
-                            <div class="kv-row">
-                                <span class="kv-key">Open Type</span>
-                                <span id="mc-open-type" class="kv-value">OD</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Day Type</span>
-                                <span id="mc-day-type" class="kv-value">Normal</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">IB Range</span>
-                                <span id="mc-ib-range" class="kv-value">12.5</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Profile Shape</span>
-                                <span id="mc-profile" class="kv-value">P-shape</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Trend Day Prob</span>
-                                <span id="mc-trend-prob" class="kv-value">35%</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">VWAP Triple Align</span>
-                                <span id="mc-triple-align" class="kv-value">Oui</span>
-                            </div>
-                        </div>
-                        <div class="premium-overlay">
-                            <span class="premium-lock-icon">&#128274;</span>
-                            <span class="premium-label">Premium</span>
-                            <a href="/pricing" class="premium-cta">Debloquer</a>
-                        </div>
-                    </div>
-                </section>
+                <!-- Logout button (visible si loggue) -->
+                <div id="logout-section" style="margin-bottom:8px;display:none;">
+                    <button id="logout-btn" type="button" style="width:100%;padding:6px;background:rgba(255,255,255,0.05);color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;font-weight:500;font-size:0.6875rem;cursor:pointer;">
+                        Deconnexion
+                    </button>
+                </div>
 
-                <!-- Panel 3 : Order Flow (entierement premium) -->
-                <!-- Ceci est un outil d'aide a la decision, PAS un conseil en investissement. -->
-                <section id="panel-order-flow" class="glass">
-                    <div class="panel-header">
-                        <span class="panel-title">Order Flow</span>
-                        <span class="badge badge-cyan">ES + NQ</span>
+                <div id="promo-section">
+                    <div style="display:flex;gap:4px;">
+                        <input id="promo-input" type="text" placeholder="Code promo" style="flex:1;padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono);font-size:0.75rem;outline:none;">
+                        <button id="promo-btn" style="padding:6px 12px;background:rgba(0,180,220,0.2);color:#00B4DC;border:1px solid #00B4DC;border-radius:6px;font-weight:700;font-size:0.75rem;cursor:pointer;">OK</button>
                     </div>
+                    <div id="promo-msg" style="font-size:0.625rem;margin-top:4px;text-align:center;min-height:14px;"></div>
+                </div>
+                <button onclick="window.location.href='/billing'" style="margin-top:6px;width:100%;text-align:center;color:var(--text-secondary);font-size:0.6875rem;padding:6px;border:1px solid var(--border);border-radius:6px;background:transparent;cursor:pointer;">Voir les tarifs →</button>
+            </div>
+        </aside>
 
-                    <div class="premium-locked">
-                        <div class="premium-content">
-                            <div class="kv-row">
-                                <span class="kv-key">Delta Bar</span>
-                                <span id="of-delta" class="kv-value">+1240</span>
+        <!-- ════════ MAIN ════════ -->
+        <div class="main">
+            <!-- Upgrade Banner (visible uniquement si tier FREE) -->
+            <div id="upgrade-banner" style="display:none;background:linear-gradient(90deg,#ffd700,#ff6b00);color:#000;padding:10px 20px;text-align:center;font-weight:700;font-size:0.8125rem;cursor:pointer;box-shadow:0 2px 8px rgba(255,107,0,0.3);">
+                <span style="letter-spacing:0.5px;">ESSAI GRATUIT 7 JOURS — Debloquer tout le dashboard PRO sans carte bancaire</span>
+                <span style="margin-left:12px;padding:4px 14px;background:#000;color:#ffd700;border-radius:4px;font-size:0.75rem;">DEMARRER MAINTENANT →</span>
+            </div>
+
+            <!-- Price Banner -->
+            <div class="price-banner">
+                <div class="price-instrument">
+                    <span class="price-symbol">ES</span>
+                    <span id="banner-es-price" class="price-value price-es">--</span>
+                    <span id="banner-es-atr" class="price-tag" style="color:var(--text-disabled);">ATR --</span>
+                </div>
+                <div class="price-instrument">
+                    <span class="price-symbol">NQ</span>
+                    <span id="banner-nq-price" class="price-value price-nq">--</span>
+                    <span id="banner-nq-atr" class="price-tag" style="color:var(--text-disabled);">ATR --</span>
+                </div>
+                <div class="price-meta">
+                    <span id="banner-session" class="price-tag price-tag-session">--</span>
+                    <span id="banner-time" class="price-tag price-tag-time">--:--:--</span>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: OVERVIEW ════════ -->
+            <div class="page-content" id="page-overview">
+
+                <!-- Chart avec bougies + niveaux -->
+                <div class="card" style="padding:0;overflow:hidden;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);">
+                        <div class="card-title" style="margin:0;">Chart Live + Niveaux</div>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <span id="chart-symbol-label" class="badge badge-green">ES</span>
+                            <div class="instrument-selector" style="margin:0;padding:2px;gap:2px;">
+                                <button class="instrument-btn tf-btn active" data-tf="1" style="padding:4px 8px;font-size:0.6875rem;">1m</button>
+                                <button class="instrument-btn tf-btn" data-tf="5" style="padding:4px 8px;font-size:0.6875rem;">5m</button>
+                                <button class="instrument-btn tf-btn" data-tf="15" style="padding:4px 8px;font-size:0.6875rem;">15m</button>
+                                <button class="instrument-btn tf-btn" data-tf="60" style="padding:4px 8px;font-size:0.6875rem;">1h</button>
                             </div>
-                            <div class="kv-row">
-                                <span class="kv-key">CVD Day</span>
-                                <span id="of-cvd" class="kv-value">+8.2K</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">RVOL</span>
-                                <span id="of-rvol" class="kv-value">1.32</span>
-                            </div>
-                            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
-                                <div class="gauge gauge-cyan" style="flex:1;">
-                                    <div id="of-rvol-gauge" class="gauge-fill" style="width:66%;"></div>
+                            <!-- Dropdown niveaux -->
+                            <div class="levels-dropdown-wrap" style="position:relative;">
+                                <button id="levels-dropdown-btn" class="instrument-btn tf-btn" style="padding:4px 8px;font-size:0.6875rem;" title="Filtrer les niveaux">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="vertical-align:middle;margin-right:2px;"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Niveaux
+                                </button>
+                                <div id="levels-dropdown" class="levels-dropdown hidden">
+                                    <div class="levels-dd-presets">
+                                        <button class="levels-dd-preset active" data-preset="essential">Essentiel</button>
+                                        <button class="levels-dd-preset" data-preset="all">Tout</button>
+                                        <button class="levels-dd-preset" data-preset="none">Aucun</button>
+                                    </div>
+                                    <div class="levels-dd-groups">
+                                        <label><input type="checkbox" data-grp="options" checked> Options (Call/Put/HVL)</label>
+                                        <label><input type="checkbox" data-grp="0dte"> 0DTE (Call/Put)</label>
+                                        <label><input type="checkbox" data-grp="gex"> GEX (Up/Dn)</label>
+                                        <label><input type="checkbox" data-grp="vwap" checked> VWAP Daily</label>
+                                        <label><input type="checkbox" data-grp="sd12"> SD1 &amp; SD2</label>
+                                        <label><input type="checkbox" data-grp="sd3"> SD3</label>
+                                        <label><input type="checkbox" data-grp="profile" checked> Profile (VPOC/VAH/VAL)</label>
+                                        <label><input type="checkbox" data-grp="prev"> Prev (pVPOC/pVAH/pVAL)</label>
+                                        <label><input type="checkbox" data-grp="swing" checked> Swing H/L</label>
+                                        <label><input type="checkbox" data-grp="session"> Session H/L</label>
+                                        <label><input type="checkbox" data-grp="ib"> IB H/L</label>
+                                        <label><input type="checkbox" data-grp="ovn"> OVN / Open</label>
+                                    </div>
                                 </div>
-                                <span id="of-rvol-badge" class="badge badge-green">Eleve</span>
                             </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Absorption Score</span>
-                                <span id="of-absorption" class="kv-value">0.78</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Divergence Prix/Delta</span>
-                                <span id="of-divergence" class="kv-value">Non</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Climax Signal</span>
-                                <span id="of-climax" class="kv-value">--</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Large Trader Ratio</span>
-                                <span id="of-ltr" class="kv-value">0.61</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Ask/Bid Imbalance</span>
-                                <span id="of-imbalance" class="kv-value">1.15</span>
-                            </div>
-                        </div>
-                        <div class="premium-overlay">
-                            <span class="premium-lock-icon">&#128274;</span>
-                            <span class="premium-label">Premium</span>
-                            <a href="/pricing" class="premium-cta">Debloquer</a>
+                            <button id="chart-fullscreen-btn" class="fullscreen-btn" title="Plein ecran">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                            </button>
                         </div>
                     </div>
-                </section>
-
-                <!-- Panel 4 : Options & Gamma (entierement premium) -->
-                <!-- Ceci est un outil d'aide a la decision, PAS un conseil en investissement. -->
-                <section id="panel-options-gamma" class="glass">
-                    <div class="panel-header">
-                        <span class="panel-title">Options &amp; Gamma</span>
-                        <span class="badge badge-gold">GAMMA</span>
-                    </div>
-
-                    <div class="premium-locked">
-                        <div class="premium-content">
-                            <div class="kv-row">
-                                <span class="kv-key">Call Wall</span>
-                                <span id="og-call" class="kv-value">5650</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Put Wall</span>
-                                <span id="og-put" class="kv-value">5500</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">HVL</span>
-                                <span id="og-hvl" class="kv-value">5580</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">0DTE Call</span>
-                                <span id="og-0dte-call" class="kv-value">5620</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">0DTE Put</span>
-                                <span id="og-0dte-put" class="kv-value">5540</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">GEX Nearest Up</span>
-                                <span id="og-gex-up" class="kv-value">5600</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">GEX Nearest Down</span>
-                                <span id="og-gex-dn" class="kv-value">5560</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">GEX Clusters</span>
-                                <span id="og-gex-count" class="kv-value">3</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">GEX Flip Zone</span>
-                                <span id="og-gex-flip" class="kv-value">5575</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">VIX Level</span>
-                                <span id="og-vix" class="kv-value">18.5</span>
-                            </div>
-                        </div>
-                        <div class="premium-overlay">
-                            <span class="premium-lock-icon">&#128274;</span>
-                            <span class="premium-label">Premium</span>
-                            <a href="/pricing" class="premium-cta">Debloquer</a>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Panel 5 : Intermarket + AMD -->
-                <section id="panel-intermarket" class="glass">
-                    <div class="panel-header">
-                        <span class="panel-title">Intermarket ES/NQ + AMD</span>
-                        <span id="amd-phase-badge" class="badge badge-yellow">Accumulation</span>
-                    </div>
-
-                    <!-- Donnees gratuites -->
-                    <div class="kv-row">
-                        <span class="kv-key">Correlation ES/NQ</span>
-                        <span id="im-corr" class="kv-value">0.94</span>
-                    </div>
-                    <div class="kv-row">
-                        <span class="kv-key">Delta Agreement</span>
-                        <span id="im-delta-agree" class="kv-value">72%</span>
-                    </div>
-                    <div class="gauge gauge-cyan" style="margin-bottom:0.375rem;">
-                        <div id="im-agree-gauge" class="gauge-fill" style="width:72%;"></div>
-                    </div>
-                    <div class="kv-row">
-                        <span class="kv-key">SMT Divergence</span>
-                        <span id="im-smt" class="kv-value">Non</span>
-                    </div>
-
-                    <!-- Section premium -->
-                    <!-- Ceci est un outil d'aide a la decision, PAS un conseil en investissement. -->
-                    <div class="premium-locked">
-                        <div class="premium-content">
-                            <div class="kv-row">
-                                <span class="kv-key">AMD Phase</span>
-                                <span id="im-amd-phase" class="kv-value">Accumulation</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Session Bias</span>
-                                <span id="im-bias" class="kv-value">Neutre</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">PO3 Score</span>
-                                <span id="im-po3" class="kv-value">0.65</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Judas Swing</span>
-                                <span id="im-judas" class="kv-value">Non</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Manip Score</span>
-                                <span id="im-manip" class="kv-value">0.32</span>
-                            </div>
-                        </div>
-                        <div class="premium-overlay">
-                            <span class="premium-lock-icon">&#128274;</span>
-                            <span class="premium-label">Premium</span>
-                            <a href="/pricing" class="premium-cta">Debloquer</a>
-                        </div>
-                    </div>
-                </section>
-
-                <!-- Panel 6 : Signaux & Journal (entierement premium) -->
-                <!-- Ceci est un outil d'aide a la decision, PAS un conseil en investissement. -->
-                <section id="panel-signals" class="glass">
-                    <div class="panel-header">
-                        <span class="panel-title">Signaux &amp; Journal</span>
-                        <span class="badge badge-green"><span class="dot dot-green"></span> LIVE</span>
-                    </div>
-
-                    <div class="premium-locked">
-                        <div class="premium-content">
-                            <div class="kv-row">
-                                <span class="kv-key">Signal actuel</span>
-                                <span id="sig-current" class="kv-value">HOLD</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Score</span>
-                                <span id="sig-score" class="kv-value">0.42</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">SL / TP</span>
-                                <span id="sig-sltp" class="kv-value">-- / --</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">R:R</span>
-                                <span id="sig-rr" class="kv-value">--</span>
-                            </div>
-                            <div class="kv-row">
-                                <span class="kv-key">Raison</span>
-                                <span id="sig-reason" class="kv-value">--</span>
-                            </div>
-
-                            <hr class="section-divider">
-
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Heure</th>
-                                        <th>Sym</th>
-                                        <th>Dir</th>
-                                        <th>P&amp;L</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="sig-trades-body">
-                                    <tr class="empty-row">
-                                        <td colspan="4">Aucun trade</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                        <div class="premium-overlay">
-                            <span class="premium-lock-icon">&#128274;</span>
-                            <span class="premium-label">Premium</span>
-                            <a href="/pricing" class="premium-cta">Debloquer</a>
-                        </div>
-                    </div>
-                </section>
-
-            </main>
-
-            <!-- ===== Sidebar ===== -->
-            <aside class="sidebar">
-
-                <!-- Briefing MIA -->
-                <div class="sidebar-card">
-                    <div class="sidebar-card-title">
-                        <span class="badge badge-cyan">Analyse du jour</span>
-                    </div>
-                    <p id="briefing-preview" class="briefing-preview">
-                        Le briefing du jour sera disponible a l'ouverture de la session US. Niveaux cles, contexte gamma, regime VIX et biais directionnel.
-                    </p>
-                    <a href="/briefing" class="briefing-btn">Lire l'analyse &rarr;</a>
+                    <div id="chart-container" style="width:100%;height:450px;background:#0a0e17;"></div>
+                    <!-- Signal Feed -->
+                    <div id="signal-feed" style="max-height:120px;overflow-y:auto;padding:6px 12px;border-top:1px solid var(--border);font-size:0.75rem;background:rgba(0,0,0,0.3);"></div>
                 </div>
 
-                <!-- Discord -->
-                <a href="https://discord.gg/mia-ia-system" class="sidebar-cta" target="_blank" rel="noopener">
-                    <div class="sidebar-cta-icon sidebar-cta-icon-discord">
-                        <svg viewBox="0 0 24 24" fill="#5865F2">
-                            <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.947 2.418-2.157 2.418z"/>
-                        </svg>
+                <!-- 4 Big Boxes -->
+                <div class="grid-4" id="big-boxes" data-tier-min="1">
+                    <div class="big-box neutral" id="box-bias">
+                        <div class="big-box-label">BIAS</div>
+                        <div class="big-box-value" id="bias-value">--</div>
+                        <div class="big-box-sub" id="bias-score">Score: --</div>
                     </div>
-                    <div class="sidebar-cta-info">
-                        <span class="sidebar-cta-name">Discord MIA</span>
-                        <span class="sidebar-cta-desc">Communaute de traders</span>
+                    <div class="big-box neutral" id="box-mode">
+                        <div class="big-box-label">MODE</div>
+                        <div class="big-box-value" id="mode-value">--</div>
+                        <div class="big-box-sub" id="mode-sub">--</div>
                     </div>
-                </a>
-
-                <!-- YouTube -->
-                <a href="https://youtube.com/@mia-ia-system" class="sidebar-cta" target="_blank" rel="noopener">
-                    <div class="sidebar-cta-icon sidebar-cta-icon-youtube">
-                        <svg viewBox="0 0 24 24" fill="#FF0000">
-                            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-                        </svg>
+                    <div class="big-box neutral" id="box-favor">
+                        <div class="big-box-label">FAVORISER</div>
+                        <div class="big-box-value" id="favor-value">--</div>
+                        <div class="big-box-sub" id="favor-sub">--</div>
                     </div>
-                    <div class="sidebar-cta-info">
-                        <span class="sidebar-cta-name">YouTube</span>
-                        <span class="sidebar-cta-desc">Videos trading gratuites</span>
+                    <div class="big-box neutral" id="box-vol">
+                        <div class="big-box-label">VOLATILITE</div>
+                        <div class="big-box-value" id="vol-value">--</div>
+                        <div class="big-box-sub" id="vol-sub">ATR: --</div>
                     </div>
-                </a>
-
-                <!-- Lucid Trading (affiliation) -->
-                <a href="#" class="sidebar-cta">
-                    <div class="sidebar-cta-icon sidebar-cta-icon-affiliate">
-                        <svg viewBox="0 0 24 24" fill="#00C853">
-                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-.98 2.4-1.59 0-.83-.44-1.61-2.67-2.14-2.48-.6-4.18-1.62-4.18-3.67 0-1.72 1.39-2.84 3.11-3.21V4h2.67v1.95c1.86.45 2.79 1.86 2.85 3.39H14.3c-.05-1.11-.64-1.87-2.22-1.87-1.5 0-2.4.68-2.4 1.64 0 .84.65 1.39 2.67 1.94s4.18 1.36 4.18 3.85c0 1.89-1.44 2.98-3.12 3.19z"/>
-                        </svg>
-                    </div>
-                    <div class="sidebar-cta-info">
-                        <span class="sidebar-cta-name">Lucid Trading</span>
-                        <span class="sidebar-cta-desc">Ouvrir un compte prop firm</span>
-                    </div>
-                </a>
-
-                <!-- Newsletter -->
-                <div class="sidebar-card">
-                    <div class="sidebar-card-title">Newsletter</div>
-                    <p style="font-size:0.8125rem;color:var(--text-secondary);margin-bottom:0.75rem;">
-                        Recevez le briefing MIA chaque matin avant l'ouverture US.
-                    </p>
-                    <input type="email" id="newsletter-email" class="newsletter-input" placeholder="votre@email.com" autocomplete="email">
-                    <button class="newsletter-btn" id="newsletter-btn">S'inscrire</button>
-                    <div id="newsletter-msg" class="newsletter-msg"></div>
                 </div>
 
-            </aside>
+                <!-- Jauges visuelles -->
+                <div class="card" data-tier-min="1">
+                    <div id="gauges-row" style="display:flex;justify-content:space-around;align-items:center;flex-wrap:wrap;gap:8px;"></div>
+                </div>
 
+                <!-- MTF Bias Confluence -->
+                <div class="card" style="border-color:rgba(0,180,220,0.15);" data-tier-min="1">
+                    <div class="card-title" style="color:var(--cyan);">Confluence Multi-Timeframe</div>
+                    <div id="mtf-verdict" style="text-align:center;font-size:1.5rem;font-weight:800;padding:8px 0;">--</div>
+                    <div id="mtf-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px;"></div>
+                </div>
+
+                <!-- Confluence + Conseil Global -->
+                <div class="grid-2">
+                    <div class="card" style="border-color:rgba(124,58,237,0.2);" data-tier-min="1">
+                        <div class="card-title" style="color:var(--purple);">Zones de Confluence</div>
+                        <div id="confluence-zones"></div>
+                    </div>
+                    <div class="card" id="global-card" style="border-color:rgba(212,175,55,0.2);">
+                        <div class="card-title" style="color:var(--gold);">Conseil Global</div>
+                        <div id="global-verdict" style="text-align:center;padding:12px 0;">
+                            <div id="global-action" style="font-size:2rem;font-weight:800;">--</div>
+                            <div id="global-reason" style="font-size:0.8125rem;color:var(--text-secondary);margin-top:6px;"></div>
+                            <div id="global-checklist" style="margin-top:10px;text-align:left;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Patterns Multi-Session (Double Bottom / Double Top) -->
+                <div class="card" style="border-color:rgba(0,180,220,0.15);" data-tier-min="2">
+                    <div class="card-title" style="color:var(--cyan);">Patterns Multi-Session <span class="badge badge-cyan">HTF</span></div>
+                    <div id="patterns-section"></div>
+                </div>
+
+                <!-- Qui a la main + Conseils -->
+                <div class="grid-2">
+                    <div class="card" data-tier-min="1">
+                        <div class="card-title">Qui a la main ?</div>
+                        <div style="text-align:center;padding:12px 0;">
+                            <div id="hand-who" style="font-size:1.75rem;font-weight:800;">--</div>
+                            <div id="hand-force" class="badge badge-gray" style="margin-top:6px;">--</div>
+                        </div>
+                        <div id="bias-factors"></div>
+                        <!-- Divergence Quality -->
+                        <div id="div-section" style="margin-top:10px;"></div>
+                    </div>
+                    <div class="card" data-tier-min="1">
+                        <div class="card-title">Conseils</div>
+                        <div id="conseils-list"></div>
+                    </div>
+                </div>
+
+                <!-- Narration du marche -->
+                <div class="card" style="border-color:rgba(212,175,55,0.15);" data-tier-min="2">
+                    <div class="card-title" style="color:var(--gold);" id="narrative-title">Narration du Marche <span class="badge badge-gold">LIVE</span></div>
+                    <div id="narrative-content" style="font-size:0.8125rem;line-height:1.7;color:var(--text-secondary);"></div>
+                </div>
+
+                <!-- Health + Regime -->
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title">Sante Systeme</div>
+                        <div id="health-checks"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Regime & VWAP</div>
+                        <div id="regime-details"></div>
+                    </div>
+                </div>
+
+                <!-- Session & Open -->
+                <div class="card" data-tier-min="1">
+                    <div class="card-title">Session & Open Type</div>
+                    <div class="grid-3" id="session-grid"></div>
+                </div>
+
+                <!-- CTA Global Overview (visible uniquement en FREE) -->
+                <div id="overview-cta-global" class="overview-cta-global">
+                    <div class="overview-cta-global-title">Debloquer l'Overview complet</div>
+                    <div class="overview-cta-global-sub">BIAS, MODE, FAVORISER, Confluence MTF, Zones de confluence, jauges, narration du marche — et 9 pages dediees (Options & Gamma, Order Flow, Market Profile, MenthorQ Detail...)</div>
+                    <a class="overview-cta-global-btn" href="#" data-action="trial">DEMARRER L'ESSAI 7 JOURS GRATUIT</a>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: OPTIONS & GAMMA ════════ -->
+            <div class="page-content hidden" id="page-options">
+                <div class="page-title">Options & Gamma <span class="badge badge-gold">GAMMA</span></div>
+
+                <!-- Next Wall Big -->
+                <div class="next-wall" id="next-wall-box">
+                    <div class="next-wall-label">NEXT WALL</div>
+                    <div class="next-wall-price" id="nw-price">--</div>
+                    <div class="next-wall-meta">
+                        <span id="nw-side" class="badge badge-gray">--</span>
+                        <span id="nw-dist">-- ticks</span>
+                    </div>
+                </div>
+
+                <!-- Corridor visuel -->
+                <div class="card">
+                    <div class="card-title">Ou est le prix dans le corridor gamma ?</div>
+                    <div id="corridor-es" style="margin-bottom:16px;"></div>
+                    <div id="corridor-nq"></div>
+                </div>
+
+                <div class="grid-2">
+                    <!-- MQ Walls ES -->
+                    <div class="card" id="options-es">
+                        <div class="card-title">ES — Murs Options <span class="badge badge-green">PRIX</span></div>
+                        <div id="options-es-rows"></div>
+                    </div>
+                    <!-- MQ Walls NQ -->
+                    <div class="card" id="options-nq">
+                        <div class="card-title">NQ — Murs Options <span class="badge badge-cyan">PRIX</span></div>
+                        <div id="options-nq-rows"></div>
+                    </div>
+                </div>
+
+                <!-- VIX Gamma -->
+                <div class="card">
+                    <div class="card-title">VIX Gamma <span class="badge badge-orange">VIX</span></div>
+                    <div class="grid-2" id="vix-gamma-grid"></div>
+                </div>
+
+                <!-- GEX Distribution visuelle -->
+                <div class="card" style="padding:0;overflow:hidden;">
+                    <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+                        <div class="card-title" style="margin:0;">GEX Distribution (Strike Map)</div>
+                    </div>
+                    <canvas id="gex-canvas" style="width:100%;height:300px;"></canvas>
+                </div>
+
+                <!-- GEX Levels detail -->
+                <div class="card">
+                    <div class="card-title">GEX Levels</div>
+                    <div class="grid-2" id="gex-grid"></div>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: ORDER FLOW ════════ -->
+            <div class="page-content hidden" id="page-orderflow">
+                <div class="page-title">Order Flow <span class="badge badge-cyan">LIVE</span></div>
+
+                <!-- DOM Pressure -->
+                <div class="card">
+                    <div class="card-title">Qui domine ? (DOM Pressure)</div>
+                    <div class="dom-grid" id="dom-grid"></div>
+                </div>
+
+                <!-- Delta & CVD -->
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title">Delta & CVD</div>
+                        <div id="delta-rows"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">RVOL & Volume</div>
+                        <div id="rvol-rows"></div>
+                    </div>
+                </div>
+
+                <!-- DOM Ladder -->
+                <div class="card" style="padding:0;overflow:hidden;">
+                    <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+                        <div class="card-title" style="margin:0;">DOM Ladder</div>
+                    </div>
+                    <canvas id="dom-ladder-canvas" style="width:100%;height:350px;"></canvas>
+                </div>
+
+                <!-- Battle Navale -->
+                <div class="card">
+                    <div class="card-title">Battle Navale (BN Score)</div>
+                    <div class="grid-2" id="bn-grid"></div>
+                </div>
+
+                <!-- Big Orders -->
+                <div class="card">
+                    <div class="card-title">Ordres Institutionnels (Big Orders)</div>
+                    <div id="big-orders-content"></div>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: MARKET PROFILE ════════ -->
+            <div class="page-content hidden" id="page-profile">
+                <div class="page-title">Market Profile</div>
+
+                <!-- Volume Profile visuel (Canvas interactif — zoom molette + drag) -->
+                <div class="grid-2">
+                    <div class="card" style="padding:0;overflow:hidden;">
+                        <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+                            <div class="card-title" style="margin:0;">Volume Profile — Aujourd'hui</div>
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <button class="instrument-btn vp-zoom-btn" data-target="vp-today-canvas" data-action="in" style="padding:2px 8px;font-size:0.75rem;">+</button>
+                                <button class="instrument-btn vp-zoom-btn" data-target="vp-today-canvas" data-action="out" style="padding:2px 8px;font-size:0.75rem;">-</button>
+                                <button class="instrument-btn vp-zoom-btn" data-target="vp-today-canvas" data-action="fit" style="padding:2px 8px;font-size:0.625rem;">FIT</button>
+                                <span class="badge badge-cyan">LIVE</span>
+                            </div>
+                        </div>
+                        <canvas id="vp-today-canvas" style="width:100%;height:500px;cursor:grab;"></canvas>
+                    </div>
+                    <div class="card" style="padding:0;overflow:hidden;">
+                        <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+                            <div class="card-title" style="margin:0;">Volume Profile — Hier</div>
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <button class="instrument-btn vp-zoom-btn" data-target="vp-yesterday-canvas" data-action="in" style="padding:2px 8px;font-size:0.75rem;">+</button>
+                                <button class="instrument-btn vp-zoom-btn" data-target="vp-yesterday-canvas" data-action="out" style="padding:2px 8px;font-size:0.75rem;">-</button>
+                                <button class="instrument-btn vp-zoom-btn" data-target="vp-yesterday-canvas" data-action="fit" style="padding:2px 8px;font-size:0.625rem;">FIT</button>
+                                <span class="badge badge-gold">J-1</span>
+                            </div>
+                        </div>
+                        <canvas id="vp-yesterday-canvas" style="width:100%;height:500px;cursor:grab;"></canvas>
+                    </div>
+                </div>
+
+                <!-- Position dans range -->
+                <div class="card">
+                    <div class="card-title">Position dans le Range 1D</div>
+                    <div id="range-position"></div>
+                </div>
+
+                <div class="grid-2">
+                    <!-- Profil du jour -->
+                    <div class="card">
+                        <div class="card-title">Profil du Jour</div>
+                        <div id="profile-day"></div>
+                    </div>
+                    <!-- Initial Balance visuel -->
+                    <div class="card" style="padding:0;overflow:hidden;">
+                        <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+                            <div class="card-title" style="margin:0;">Initial Balance (IB) <span id="ib-status-badge" class="badge badge-gray">--</span></div>
+                        </div>
+                        <!-- Mini-chart bougies IB (30 premieres min US) -->
+                        <div id="ib-chart-container" style="width:100%;height:220px;background:#0a0e17;"></div>
+                        <!-- Schema IB range/extension -->
+                        <canvas id="ib-canvas" style="width:100%;height:180px;"></canvas>
+                        <div id="ib-content" style="padding:8px 16px;"></div>
+                    </div>
+                </div>
+
+                <!-- Value Area -->
+                <div class="card">
+                    <div class="card-title">Value Area & VPOC</div>
+                    <div class="grid-3" id="va-grid"></div>
+                </div>
+
+                <!-- HVN/LVN -->
+                <div class="card">
+                    <div class="card-title">HVN / LVN</div>
+                    <div id="hvn-lvn-content"></div>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: NIVEAUX & VWAP ════════ -->
+            <div class="page-content hidden" id="page-levels">
+                <div class="page-title">Niveaux & VWAP <span class="badge badge-cyan">PRIX ABSOLUS</span></div>
+
+                <!-- VWAP Echelle visuelle -->
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title">ES — Echelle VWAP</div>
+                        <div id="vwap-ladder-es"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">NQ — Echelle VWAP</div>
+                        <div id="vwap-ladder-nq"></div>
+                    </div>
+                </div>
+
+                <!-- VWAP Bands detail -->
+                <div class="card">
+                    <div class="card-title">VWAP SD Bands (Daily)</div>
+                    <div id="vwap-bands"></div>
+                </div>
+
+                <!-- Tableau niveaux -->
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+                        <div class="card-title" style="margin:0;">Tous les Niveaux</div>
+                        <div id="level-filter-btns" style="display:flex;gap:4px;flex-wrap:wrap;">
+                            <button class="instrument-btn tf-btn active" data-filter="ALL">Tous</button>
+                            <button class="instrument-btn tf-btn" data-filter="Options">Options</button>
+                            <button class="instrument-btn tf-btn" data-filter="VWAP">VWAP</button>
+                            <button class="instrument-btn tf-btn" data-filter="Profile">Profile</button>
+                            <button class="instrument-btn tf-btn" data-filter="Session">Session</button>
+                            <button class="instrument-btn tf-btn" data-filter="Swing">Swing</button>
+                            <button class="instrument-btn tf-btn" data-filter="OVN">OVN</button>
+                        </div>
+                    </div>
+                    <table class="data-table" id="levels-table">
+                        <thead>
+                            <tr>
+                                <th>Niveau</th>
+                                <th>Prix</th>
+                                <th>Distance</th>
+                                <th>Type</th>
+                            </tr>
+                        </thead>
+                        <tbody id="levels-tbody"></tbody>
+                    </table>
+                </div>
+
+                <!-- Correlation chart ES vs NQ -->
+                <div class="card" style="padding:0;overflow:hidden;">
+                    <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+                        <div class="card-title" style="margin:0;">Correlation ES vs NQ <span class="badge badge-cyan">OVERLAY</span></div>
+                    </div>
+                    <div id="corr-chart-container" style="width:100%;height:250px;background:#0a0e17;"></div>
+                </div>
+
+                <!-- Intermarket -->
+                <div class="card">
+                    <div class="card-title">Intermarket ES / NQ</div>
+                    <div id="intermarket-content"></div>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: SIGNAUX & JOURNAL ════════ -->
+            <div class="page-content hidden" id="page-signals">
+                <div class="page-title">Signaux & Journal</div>
+
+                <!-- Mini chart avec SL/TP -->
+                <div class="card" style="padding:0;overflow:hidden;">
+                    <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+                        <div class="card-title" style="margin:0;">Setup Visuel (Entry / SL / TP)</div>
+                    </div>
+                    <div id="signal-chart-container" style="width:100%;height:250px;background:#0a0e17;"></div>
+                </div>
+
+                <!-- Suggestion -->
+                <div class="card" id="suggestion-card">
+                    <div class="card-title">Suggestion Trade</div>
+                    <div id="suggestion-content"></div>
+                </div>
+
+                <!-- Checklist -->
+                <div class="card">
+                    <div class="card-title">Checklist Pre-Trade</div>
+                    <div id="checklist-content"></div>
+                </div>
+
+                <!-- Bot Status -->
+                <div class="card">
+                    <div class="card-title">Bot Status</div>
+                    <div id="bot-status-content"></div>
+                </div>
+
+                <!-- Journal des trades -->
+                <div class="card">
+                    <div class="card-title">Journal des Trades</div>
+                    <div id="journal-content"></div>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: CTA POSITIONING ════════ -->
+            <div class="page-content hidden" id="page-cta">
+                <div class="page-title">CTA Positioning <span class="badge badge-gold">INSTITUTIONAL</span></div>
+
+                <!-- Conclusion / Decryptage -->
+                <div class="card" style="border-color:rgba(212,175,55,0.2);">
+                    <div class="card-title" style="color:var(--gold);">Decryptage — Que font les gros ?</div>
+                    <div id="cta-conclusion"></div>
+                </div>
+
+                <!-- CTA Positions : Jour vs Veille -->
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title">Positions CTA — Aujourd'hui <span class="badge badge-cyan">LATEST</span></div>
+                        <div id="cta-today"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Positions CTA — Hier <span class="badge badge-gray">J-1</span></div>
+                        <div id="cta-yesterday"></div>
+                    </div>
+                </div>
+
+                <!-- Changements cles -->
+                <div class="card">
+                    <div class="card-title">Changements cles (Jour vs Veille)</div>
+                    <div id="cta-changes"></div>
+                </div>
+
+                <!-- Visuels CTA -->
+                <div class="card" style="padding:0;overflow:hidden;">
+                    <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+                        <div class="card-title" style="margin:0;">Carte des Positions (Heatmap)</div>
+                    </div>
+                    <canvas id="cta-heatmap-canvas" style="width:100%;height:350px;"></canvas>
+                </div>
+
+                <!-- Conseils -->
+                <div class="card" style="border-color:rgba(0,180,220,0.2);">
+                    <div class="card-title" style="color:var(--cyan);">Conseils Trading (basee sur le positionnement CTA)</div>
+                    <div id="cta-advice"></div>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: MENTHORQ DETAIL ════════ -->
+            <div class="page-content hidden" id="page-menthorq">
+                <div class="page-title">MenthorQ Detail <span class="badge badge-purple">GAMMA</span></div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title" style="color:var(--cyan);">ES — Key Levels</div>
+                        <div id="mq-es-keylevels"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title" style="color:#4a9eff;">NQ — Key Levels</div>
+                        <div id="mq-nq-keylevels"></div>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title">ES — Break Levels (BL)</div>
+                        <div id="mq-es-bl"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">NQ — Break Levels (BL)</div>
+                        <div id="mq-nq-bl"></div>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title">ES — Top GEX Strikes</div>
+                        <div id="mq-es-gex"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">NQ — Top GEX Strikes</div>
+                        <div id="mq-nq-gex"></div>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title">ES — QScores</div>
+                        <div id="mq-es-qscores"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">NQ — QScores</div>
+                        <div id="mq-nq-qscores"></div>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-title">ES — Blind Spots</div>
+                        <div id="mq-es-blindspots"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">NQ — Blind Spots</div>
+                        <div id="mq-nq-blindspots"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: PERFORMANCE ════════ -->
+            <div class="page-content hidden" id="page-performance">
+                <div class="page-title">Performance <span class="badge badge-green">P&L</span></div>
+
+                <div class="grid-4">
+                    <div class="card" id="perf-pnl-today" style="text-align:center;">
+                        <div class="kv-key">PnL Aujourd'hui</div>
+                        <div class="big-box neutral" id="perf-pnl-value">--</div>
+                    </div>
+                    <div class="card" id="perf-trades-today" style="text-align:center;">
+                        <div class="kv-key">Trades</div>
+                        <div class="big-box neutral" id="perf-trades-value">--</div>
+                    </div>
+                    <div class="card" style="text-align:center;">
+                        <div class="kv-key">Win Rate</div>
+                        <div class="big-box neutral" id="perf-wr-value">--</div>
+                    </div>
+                    <div class="card" style="text-align:center;">
+                        <div class="kv-key">Profit Factor</div>
+                        <div class="big-box neutral" id="perf-pf-value">--</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Statut Bot & Instruments</div>
+                    <div id="perf-bot-detail"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Historique Trades Recents</div>
+                    <div id="perf-trades-table"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Signaux Rejetes</div>
+                    <div id="perf-rejections"></div>
+                </div>
+            </div>
+
+            <!-- ════════ PAGE: ALERTES ════════ -->
+            <div class="page-content hidden" id="page-alerts">
+                <div class="page-title">Alertes <span class="badge badge-orange">LIVE</span></div>
+
+                <div class="card" style="border-color:rgba(255,152,0,0.2);">
+                    <div class="card-title" style="color:var(--orange);">Alertes Actives</div>
+                    <div id="alerts-active"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Proximite Niveaux Cles</div>
+                    <div id="alerts-proximity"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Conditions de Marche</div>
+                    <div id="alerts-conditions"></div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <footer class="dashboard-footer">
+                <p>&copy; 2026 MIA IA SYSTEM. Tous droits reserves.</p>
+                <p>262 features &middot; Schema DMP 3.7.2 &middot; Rafraichissement 5s</p>
+                <p style="margin-top:4px;font-size:0.6875rem;color:var(--text-disabled);">
+                    Ceci est un outil d'aide a la decision, PAS un conseil en investissement.
+                </p>
+            </footer>
         </div>
     </div>
 
-    <!-- ========== Toast Container ========== -->
-    <div id="toast-container" class="toast-container"></div>
-
-    <!-- ========== Footer ========== -->
-    <footer class="dashboard-footer">
-        <div class="footer-links">
-            <a href="/cgu">CGU</a>
-            <a href="/confidentialite">Confidentialite</a>
-            <a href="/risques">Risques</a>
-            <a href="/contact">Contact</a>
+    <!-- Bandeau cookies RGPD -->
+    <div id="cookie-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#0D1321;border-top:1px solid rgba(255,255,255,0.08);padding:12px 20px;z-index:9999;font-size:0.75rem;color:#94a3b8;display:none;">
+        <div style="max-width:1200px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+            <span>Ce site utilise des cookies techniques necessaires (authentification, securite) et des services tiers (Google, Cloudflare). <a href="/privacy" style="color:#00B4DC;text-decoration:underline;">En savoir plus</a></span>
+            <div style="display:flex;gap:8px;flex-shrink:0;">
+                <button onclick="document.getElementById('cookie-banner').style.display='none';localStorage.setItem('mia_cookies_accepted','true')" style="padding:6px 16px;background:#00B4DC;color:#0A0E17;border:none;border-radius:6px;font-weight:700;font-size:0.75rem;cursor:pointer;">Accepter</button>
+                <button onclick="document.getElementById('cookie-banner').style.display='none';localStorage.setItem('mia_cookies_accepted','refused')" style="padding:6px 16px;background:transparent;color:#64748B;border:1px solid rgba(255,255,255,0.1);border-radius:6px;font-size:0.75rem;cursor:pointer;">Refuser</button>
+            </div>
         </div>
-        <p>&copy; 2026 MIA IA SYSTEM. Tous droits reserves.</p>
-        <p class="footer-tech">377 features &middot; Schema DMP 3.7.2 &middot; Rafraichissement 5s</p>
-        <p id="refresh-status" style="font-size:0.6875rem;color:var(--text-disabled);margin-top:0.25rem;">
-            Derniere MAJ : <span id="last-update">--:--:--</span>
-        </p>
-    </footer>
+    </div>
+    <script>if(!localStorage.getItem('mia_cookies_accepted')){document.getElementById('cookie-banner').style.display='block';}</script>
 
-    <!-- ========== Scripts ========== -->
-    <script src="/static/js/ticker-widget.js"></script>
-    <script src="/static/js/dashboard.js"></script>
-
+    <script defer src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script defer src="/static/js/ticker-widget.js?v=52"></script>
+    <script defer src="/static/js/dashboard.js?v=75"></script>
 </body>
 </html>
