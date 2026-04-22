@@ -84,6 +84,9 @@ LOG_CODES = {
     "VALIDATOR_VIOLATION":     (LogLevel.MAJEUR,   "data", "Quality validator violation : {feature} type={type}"),
     "PARQUET_BUILD_OK":        (LogLevel.INFO,     "data", "Parquet build OK : {file} shape=({n},{c})"),
     "PARQUET_BUILD_FAIL":      (LogLevel.MAJEUR,   "data", "Parquet build echec : {err}"),
+    "BAR_PROCESSING_ERROR":    (LogLevel.ALERTE,   "data", "Erreur processing bar {sym} : {err}"),
+    "BAR_SKIPPED_KILL":        (LogLevel.ALERTE,   "data", "Bar {sym} skippe (kill-switch actif) : {reason}"),
+    "FUNDED_FLATTEN":          (LogLevel.MAJEUR,   "risk", "Flatten prop firm force : {reason}"),
 
     "BOOT_START":              (LogLevel.INFO,     "events", "Boot V2 {component} v{version} pid={pid}"),
     "BOOT_READY":              (LogLevel.INFO,     "events", "Boot pret : DTC={dtc} model={model} data={data}"),
