@@ -62,11 +62,34 @@ ENTRY_RULES = {
 }
 
 
+# Fix CRITIQUE (22/04 soir) : sans auth, /api/dashboard retourne tier=free
+# avec conseil_global.action toujours ATTENDRE → paper trader jamais ne trade.
+# Solution : generer JWT owner interne (meme JWT_SECRET que le serveur, car
+# meme process VPS/meme fichier .jwt_secret). Token regenere toutes les 13 min
+# (access expiry 15 min, marge 2 min).
+_SERVICE_TOKEN: str | None = None
+_SERVICE_TOKEN_EXPIRY: float = 0.0
+
+
+def _get_service_token() -> str:
+    """JWT owner service pour fetch dashboard sans etre tier-gated."""
+    global _SERVICE_TOKEN, _SERVICE_TOKEN_EXPIRY
+    now = time.time()
+    if _SERVICE_TOKEN is None or now >= _SERVICE_TOKEN_EXPIRY - 120:
+        from DASHBOARD.api.auth import _create_token, ACCESS_EXPIRY
+        _SERVICE_TOKEN = _create_token("paper_service@internal", "owner", "access")
+        _SERVICE_TOKEN_EXPIRY = now + ACCESS_EXPIRY
+    return _SERVICE_TOKEN
+
+
 def get_dashboard():
-    """Fetch le dashboard API."""
+    """Fetch le dashboard API avec JWT owner (bypass tier filter)."""
     import urllib.request
     try:
-        r = urllib.request.urlopen(DASHBOARD_URL, timeout=10)
+        token = _get_service_token()
+        req = urllib.request.Request(DASHBOARD_URL)
+        req.add_header("Authorization", f"Bearer {token}")
+        r = urllib.request.urlopen(req, timeout=10)
         return json.loads(r.read())
     except Exception as e:
         print(f"  Erreur fetch dashboard: {e}")
