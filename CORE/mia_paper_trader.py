@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import pandas as pd
 
@@ -164,6 +165,9 @@ class PaperTrader:
         # Mapping order CID -> symbol pour callback fill
         # {parent_id: "ES", tp_cid: "ES", sl_cid: "ES", ...}
         self._order_to_symbol: dict = {}
+        # Cache dernier payload dashboard pour exit_context (close appele depuis
+        # callback DTC n'a pas data en param, on utilise ce cache).
+        self._last_dashboard_data: Optional[dict] = None
 
         # DTC connector (None si MIA_DTC_ENABLE=0 ou import failed)
         self.dtc = None
@@ -392,6 +396,12 @@ class PaperTrader:
             "sl_wall": sltp_result.sl_wall,
             "sl_tier": sltp_result.sl_wall_tier,
             "sl_reason": sltp_result.sl_reason,
+            # Snapshot V2 ML-ready (22/04 soir Jackson) : full DMP bar + meta SLTP
+            # pour permettre entrainement meta-labeler / primary avec la MEME vue
+            # que le modele ML. Sans ca, snapshot = subset dashboard, ML aveugle.
+            "dmp_bar": bar_row_dict,  # 266 features JSONL live
+            "wr_dynamic_used": wr,
+            "sltp_reject_reason": sltp_result.reject_reason if hasattr(sltp_result, "reject_reason") else None,
             "tp_wall": sltp_result.tp1_wall,
             "tp_reason": sltp_result.tp1_reason,
             "rr_ratio": sltp_result.rr_ratio,
@@ -506,25 +516,36 @@ class PaperTrader:
                 pos = self.positions.get(symbol)
 
                 if is_parent and pos:
-                    # Update entry_price avec slippage reel broker
+                    # Update entry_price avec slippage reel broker + stocker slip_entry
                     old_entry = pos["entry_price"]
                     pos["entry_price"] = fill_price
-                    slip = (fill_price - old_entry) / TICK_SIZE
-                    print(f"  >>> DTC FILL PARENT {symbol} @ {fill_price:.2f} (slip={slip:+.1f}t vs dashboard)")
+                    # Signe oriente par direction : slip favorable (>0 gain) ou defavorable (<0)
+                    dir_sign = 1 if pos["direction"] == "LONG" else -1
+                    slip_ticks = round((fill_price - old_entry) / TICK_SIZE * dir_sign, 2)
+                    pos["slip_entry_ticks"] = slip_ticks  # capture pour trade record ML
+                    print(f"  >>> DTC FILL PARENT {symbol} @ {fill_price:.2f} (slip={slip_ticks:+.1f}t)")
                     if _v2log:
                         try:
                             _v2log.emit("ORDER_FILL", sym=symbol,
-                                        fill_price=fill_price, slip_ticks=slip)
+                                        fill_price=fill_price, slip_ticks=slip_ticks)
                         except Exception:
                             pass
                     return
 
                 if (is_tp or is_sl) and pos:
-                    # TP ou SL fill = close trade
+                    # TP ou SL fill = close trade — capturer slip_exit + exit_order_id
                     outcome = "TP" if is_tp else "SL"
-                    print(f"  >>> DTC FILL {outcome} {symbol} @ {fill_price:.2f} (broker-truth)")
-                    # Relacher le lock avant _close_trade (qui reprend le lock)
-                    # -> mais RLock permet reacquisition par meme thread
+                    expected = pos.get("tp_price") if is_tp else pos.get("sl_price")
+                    if expected:
+                        # Pour LONG TP : fill >= tp_price = favorable positif
+                        # Pour LONG SL : fill <= sl_price = bruit/slippage defavorable
+                        dir_sign = 1 if pos["direction"] == "LONG" else -1
+                        slip_exit = round((fill_price - expected) / TICK_SIZE * dir_sign, 2)
+                    else:
+                        slip_exit = 0.0
+                    pos["slip_exit_ticks"] = slip_exit
+                    pos["exit_order_id"] = order_id
+                    print(f"  >>> DTC FILL {outcome} {symbol} @ {fill_price:.2f} (slip_exit={slip_exit:+.1f}t)")
                     self._close_trade(symbol, fill_price, outcome, from_dtc_callback=True)
                     return
 
@@ -645,51 +666,74 @@ class PaperTrader:
             except OSError:
                 pass
 
-        # Snapshot complet au moment de l'entree
+        # Snapshot V2 ML-ready (22/04 soir) : contient TOUT ce qu'il faut pour
+        # entrainer primary/meta/filter ML a posteriori. Jackson : "crucial pour
+        # amelioration bot". Taille ~15-20 KB / trade, ~30 MB / mois = negligeable.
+        dmp_bar = signal.get("dmp_bar") or {}  # 266 features JSONL live
         snapshot = {
+            "schema_version": "snapshot_v2_ml_2026_04_22",
             "trade_id": f"{self.date_str}_{self.trade_count + 1}",
+            "signal_id": signal.get("signal_id"),
             "symbol": symbol,
             "direction": signal["direction"],
             "entry_price": signal["entry_price"],
             "entry_time": now.isoformat(),
+            "entry_ts": now.timestamp(),
+            "bar_ts_ms": dmp_bar.get("ts"),
             "sl_price": signal["sl_price"],
             "tp_price": signal["tp_price"],
-            # Dashboard state
+            "sl_ticks": signal["sl_ticks"],
+            "tp_ticks": signal["tp_ticks"],
+            "n_micros": ENTRY_RULES["n_micros"],
+            # SLTPEngine meta (walls + reason)
+            "sl_wall": signal.get("sl_wall", ""),
+            "sl_tier": signal.get("sl_tier", 0),
+            "sl_reason": signal.get("sl_reason", ""),
+            "tp_wall": signal.get("tp_wall", ""),
+            "tp_reason": signal.get("tp_reason", ""),
+            "rr_ratio": signal.get("rr_ratio", 0.0),
+            "sl_usd": signal.get("sl_usd", 0.0),
+            "sltp_reject_reason": signal.get("sltp_reject_reason"),
+            # Decision meta
+            "expected_payoff_usd": signal.get("expected_payoff_usd", 0.0),
+            "wr_dynamic_used": signal.get("wr_dynamic_used"),
+            "min_confidence_required": 0.40 if "PRUDENT" in signal.get("conseil_action", "") else ENTRY_RULES["min_confidence"],
             "confidence": signal["confidence"],
             "freshness": signal["freshness"],
-            "bias": reg.get("bias"),
-            "bias_score": reg.get("bias_score"),
-            "mode": reg.get("mode"),
-            "favor": reg.get("favor"),
-            "favor_reason": reg.get("favor_reason"),
-            "mtf_verdict": reg.get("mtf_verdict"),
             "mtf_bulls": signal["mtf_bulls"],
             "mtf_bears": signal["mtf_bears"],
-            "div_grade": reg.get("div_grade"),
-            "div_quality": reg.get("div_quality"),
-            "range_pos": reg.get("range_pos"),
-            "vol_regime": reg.get("vol_regime"),
-            "mode_trend_votes": reg.get("mode_trend_votes"),
-            "mode_range_votes": reg.get("mode_range_votes"),
-            # Donnees brutes
-            "vix": reg.get("vix"),
-            "atr": reg.get("atr"),
-            "sess_range_atr": reg.get("sess_range_atr"),
-            # Order flow
-            "rvol": instr.get("order_flow", {}).get("rvol"),
-            "delta_day": instr.get("order_flow", {}).get("delta_day"),
-            "cvd_day": instr.get("order_flow", {}).get("cvd_day"),
-            "delta_pct": instr.get("order_flow", {}).get("delta_pct"),
-            # Intermarket
-            "smt_divergence": data.get("intermarket", {}).get("smt_divergence"),
-            "smt_direction": data.get("intermarket", {}).get("smt_direction"),
-            # Patterns
-            "patterns_daily": bool(data.get("patterns", {}).get(sym, {}).get("detected")),
-            "patterns_intraday": bool(data.get("patterns_intraday", {}).get(sym, {}).get("detected")),
             # Conseil Global
             "conseil_action": signal.get("conseil_action"),
             "conseil_bull_pts": signal.get("conseil_bull_pts"),
             "conseil_bear_pts": signal.get("conseil_bear_pts"),
+            # DTC tracking
+            "parent_id": parent_id,
+            "tp_cid": tp_cid,
+            "sl_cid": sl_cid,
+            "dtc_enabled": self.dtc is not None,
+            "trade_account": self.trade_account if self.dtc else None,
+            # Full DMP bar (266 features — meme vue que le modele ML)
+            "dmp_bar": dmp_bar,
+            # Full instrument dashboard (regime, options, order_flow, battle_navale,
+            # market_profile, initial_balance, levels, big_orders, suggestion, vix_gamma)
+            "dashboard_instrument": instr,
+            # Intermarket + narrative (contexte macro)
+            "intermarket": data.get("intermarket", {}),
+            "narrative": data.get("narrative", {}),
+            # Patterns detail (pas juste bool)
+            "patterns_daily": data.get("patterns", {}).get(sym, {}),
+            "patterns_intraday": data.get("patterns_intraday", {}).get(sym, {}),
+            # Fix P0-A ml-trainer (22/04 soir) : bloc ml_scores vide pour schema
+            # stable. Permet au futur paper_trader Phase 2 (primary + meta models)
+            # de remplir sans changer le format parquet. Snapshots pre-ML vs post-ML
+            # identifiables par `ml_scores.model_version == None` OR pas None.
+            "ml_scores": {
+                "p_primary": None,
+                "p_meta": None,
+                "score_combined": None,
+                "model_version": None,
+                "kelly_f": None,
+            },
         }
 
         # Thread-safe update : positions + order_to_symbol mapping
@@ -858,7 +902,41 @@ class PaperTrader:
         entry_ts_val = pos.get("entry_ts", 0) or now.timestamp()
         exit_ts_val = now.timestamp()
         duration_sec = round(max(0.0, exit_ts_val - entry_ts_val), 1)
+
+        # Snapshot V2 ML-ready (22/04 soir) : exit_context minimal pour meta-labeler
+        # timing + ML post-hoc analysis. Prend le cache dashboard (dernier payload).
+        exit_context = None
+        data_cache = self._last_dashboard_data or {}
+        sym_lc = symbol.lower()
+        instr_cache = data_cache.get(sym_lc, {}) or {}
+        reg_cache = instr_cache.get("regime", {}) or {}
+        flow_cache = instr_cache.get("order_flow", {}) or {}
+        if data_cache:
+            exit_context = {
+                "bar_ts_ms": data_cache.get("banner", {}).get(sym_lc, {}).get("ts"),
+                "price": data_cache.get("banner", {}).get(sym_lc, {}).get("price"),
+                "vix": reg_cache.get("vix"),
+                "atr": reg_cache.get("atr"),
+                "rvol": flow_cache.get("rvol"),
+                "delta_day_dir": flow_cache.get("delta_day_dir"),
+                "regime_bias": reg_cache.get("bias"),
+                "regime_mode": reg_cache.get("mode"),
+                "regime_favor": reg_cache.get("favor"),
+                "conseil_action": data_cache.get("conseil_global", {}).get(sym_lc, {}).get("action"),
+            }
+
+        # Fix P0-B ml-trainer (22/04 soir) : FULL snapshot au close pour meta-labeler
+        # exit timing (Lopez ch.3 triple-barrier). Sans dmp_bar_at_exit + dashboard
+        # complet, impossible d'entrainer "faut-il tenir malgre TP approchant" ou
+        # "faut-il sortir avant SL sur divergence". +30 MB/mois acceptable.
+        dmp_bar_at_exit = self._read_last_jsonl_bar(symbol) or {}
+        intermarket_at_exit = data_cache.get("intermarket", {}) or {}
+
+        expected_payoff = pos.get("expected_payoff_usd", 0.0)
+        realized_vs_expected_pct = round(pnl_usd / expected_payoff * 100, 1) if expected_payoff else None
+
         trade = {
+            "schema_version": "trade_v2_ml_2026_04_22",
             "trade_id": f"{self.date_str}_{len(self.today_trades) + 1}",
             "symbol": symbol,
             "direction": pos["direction"],
@@ -868,8 +946,7 @@ class PaperTrader:
             "exit_price": exit_price,
             "exit_time": now.isoformat(),
             "exit_ts": exit_ts_val,
-            # Fix B2 (code-reviewer 22/04) : expose `exit_reason` pour frontend legacy,
-            # en plus de `outcome` (mot historique backend)
+            # Fix B2 (code-reviewer 22/04) : expose `exit_reason` + `outcome`
             "outcome": outcome,
             "exit_reason": outcome,
             "pnl_ticks": pnl_ticks,
@@ -877,14 +954,38 @@ class PaperTrader:
             "mae": pos["mae"],
             "mfe": pos["mfe"],
             "bars_held": pos["bars_held"],
-            "duration_sec": duration_sec,       # Fix B3 : frontend timer
-            # v2 enrichissement
+            "duration_sec": duration_sec,
+            # v2 enrichissement SL/TP
             "sl_wall": pos.get("sl_wall", ""),
             "sl_tier": pos.get("sl_tier", 0),
             "tp_wall": pos.get("tp_wall", ""),
             "rr_ratio": pos.get("rr_ratio", 0.0),
             "n_micros": n_mic,
             "signal_id": pos.get("signal_id"),
+            # Snapshot V2 ML-ready : slippage + DTC link + expected vs realized
+            "slip_entry_ticks": pos.get("slip_entry_ticks", 0.0),
+            "slip_exit_ticks": pos.get("slip_exit_ticks", 0.0),
+            "parent_id": pos.get("parent_id", ""),
+            "tp_cid": pos.get("tp_cid", ""),
+            "sl_cid": pos.get("sl_cid", ""),
+            "exit_order_id": pos.get("exit_order_id", ""),
+            "dtc_enabled": pos.get("dtc_enabled", False),
+            "expected_payoff_usd": expected_payoff,
+            "realized_vs_expected_pct": realized_vs_expected_pct,
+            # Exit context (marche au moment du close) pour meta-labeler
+            "exit_context": exit_context,
+            # Fix P0-B ml-trainer (22/04 soir) : FULL snapshot close pour
+            # meta-labeler exit timing. Contient les 266 features DMP + dashboard
+            # complet au moment exact du close.
+            "dmp_bar_at_exit": dmp_bar_at_exit,
+            "dashboard_instrument_at_exit": instr_cache,
+            "intermarket_at_exit": intermarket_at_exit,
+            # Bloc ml_scores symetrique a entry (Phase 2 : exit model scoring)
+            "ml_scores_exit": {
+                "p_exit_early": None,
+                "p_hold_longer": None,
+                "exit_model_version": None,
+            },
         }
 
         self.today_trades.append(trade)
@@ -1054,6 +1155,9 @@ class PaperTrader:
                 if not data:
                     time.sleep(POLL_INTERVAL)
                     continue
+                # Cache pour exit_context snapshot V2 (utilise par _close_trade
+                # quand declenche depuis callback DTC sans data en param)
+                self._last_dashboard_data = data
 
                 now = datetime.now(timezone.utc).strftime("%H:%M:%S")
 
