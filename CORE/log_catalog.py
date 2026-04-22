@@ -100,6 +100,15 @@ LOG_CODES = {
     "DLL_RELOAD":              (LogLevel.ALERTE,   "events", "DLL Sierra Chart reloadee"),
     "CONFIG_RELOAD":           (LogLevel.INFO,     "events", "Config reloadee depuis disque"),
 
+    "WATCHDOG_START":          (LogLevel.INFO,     "events", "Watchdog demarre : auto_restart={auto_restart} interval={interval}s"),
+    "WATCHDOG_RESTART":        (LogLevel.MAJEUR,   "events", "Restart bot dans {delay}s : raison={reason}"),
+    "WATCHDOG_MAX_RESTARTS":   (LogLevel.CRITIQUE, "events", "Max restarts atteint ({limit}/h) — intervention manuelle requise"),
+    "WATCHDOG_RECOVERED":      (LogLevel.INFO,     "events", "Bot revenu en bonne sante apres incident ({duration}s unhealthy)"),
+    "BOT_HEARTBEAT_STALE":     (LogLevel.MAJEUR,   "events", "Bot heartbeat stale : PID={pid} age={age}s > {limit}s"),
+    "BOT_HEARTBEAT_MISSING":   (LogLevel.MAJEUR,   "events", "Heartbeat absent : fichier inexistant"),
+    "BOT_PROCESS_DEAD":        (LogLevel.CRITIQUE, "events", "Bot process mort : PID={pid}"),
+    "BOT_KILLED_BY_WATCHDOG":  (LogLevel.MAJEUR,   "events", "Bot tue par watchdog : PID={pid}"),
+
     "GATE_PASSED_ALL":         (LogLevel.INFO,     "decisions", "Chain of gates OK : {sym} all 5 passed"),
     "GATE_HEALTH_BLOCK":       (LogLevel.ALERTE,   "decisions", "Gate Health block : V2CLEAN status={status}"),
     "GATE_SESSION_BLOCK":      (LogLevel.INFO,     "decisions", "Gate Session block : phase={phase}"),
