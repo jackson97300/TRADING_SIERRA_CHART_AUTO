@@ -30,6 +30,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))  # Pour CORE.logging_v2
 from bot_config import BotConfig, CONFIG
 from risk_manager import RiskManager
 from signal_engine import SignalEngine, Signal
+
+# Volatility Spike Gate (22/04 fix bust compte Topstep sur news imprevue)
+try:
+    from CORE.volatility_gate import VolatilitySpikeGate
+except ImportError:
+    VolatilitySpikeGate = None
 from order_manager import OrderManager
 from position_monitor import PositionMonitor
 from trade_journal import TradeJournal, TradeRecord
@@ -106,6 +112,9 @@ class MIABot:
         self.journal = TradeJournal(self.cfg.trade_journal_path)
         self.risk = RiskManager(self.cfg)
         self.signal_engine = SignalEngine(self.cfg)
+        # Volatility Spike Gate (22/04 fix) : bloque trades si range/ATR > 3x
+        # + cooldown 10 bars post-spike. Critique news imprevues (FOMC surprise, etc.)
+        self.vol_gate = VolatilitySpikeGate(threshold_ratio=3.0, cooldown_bars=10) if VolatilitySpikeGate else None
 
         # DTC (desactive en dry-run)
         if not self.dry_run:
@@ -558,6 +567,20 @@ class MIABot:
             if not mq_ok:
                 self.journal.log_rejection(sym, mq_reason, signal.score)
                 continue
+
+            # ── 4.5. Volatility Spike Gate (22/04 fix news imprevue) ──
+            # Proxy spread widening via range/ATR ratio. VETO si > 3x + cooldown 10b.
+            # Critique : Jackson bust compte Topstep sur news imprevue sans cette gate.
+            if self.vol_gate is not None:
+                vol_ok, vol_reason = self.vol_gate.check(sym, features, self._tick_count)
+                if not vol_ok:
+                    self.journal.log_rejection(sym, f"volatility_spike: {vol_reason}", signal.score)
+                    # V2 log structure : spike detecte ou cooldown actif
+                    if _v2log:
+                        ratio = self.vol_gate.last_ratio(sym) or 0.0
+                        _v2log.emit("VOLATILITY_SPIKE",
+                                    ratio=ratio, limit=self.vol_gate.threshold)
+                    continue
 
             # ── 5. Risk check final ──
             allowed, reason = self.risk.can_trade(sym, signal.direction, instrument)
