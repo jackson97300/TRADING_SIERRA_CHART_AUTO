@@ -217,13 +217,26 @@ class OrderManager:
         pending = self._pending_opens.get(fill.order_id)
         if pending:
             pos = pending["position"]
+            # Fix audit logs V2 22/04 : calculer vrai slip (fill vs expected)
+            # pos.entry_price est le expected_price au submit (current_price),
+            # on le sauve AVANT de l'ecraser avec le fill.
+            expected_entry = pos.entry_price
             pos.entry_price = fill.fill_price
+            ts = 0.25  # tick size futures ES/NQ
+            slip_ticks = round((fill.fill_price - expected_entry) / ts * pos.direction, 2)
+            # Alerte si slippage anormal (>= 4t = 1 pt ES = $1.25 sur 1 micro)
+            if abs(slip_ticks) >= 4:
+                if _v2log:
+                    _v2log.emit("GENERIC_ALERTE",
+                                msg=f"slippage_high_{pending['symbol']}",
+                                slip_ticks=slip_ticks,
+                                expected=expected_entry,
+                                filled=fill.fill_price)
             del self._pending_opens[fill.order_id]
-            log.info(f"[FILL] Ouverture {pending['symbol']} @ {fill.fill_price}")
-            # V2 log : fill parent order
+            log.info(f"[FILL] Ouverture {pending['symbol']} @ {fill.fill_price} (slip={slip_ticks:+.1f}t)")
             if _v2log:
                 _v2log.emit("ORDER_FILL", order_id=fill.order_id,
-                            price=fill.fill_price, slip=0.0)
+                            price=fill.fill_price, slip=slip_ticks)
             return
 
         # Fill de fermeture manuelle (close_position)
@@ -260,12 +273,29 @@ class OrderManager:
                 pnl_ticks = (fill.fill_price - pos.entry_price) / 0.25 * pos.direction
                 tick_value = 1.25 if symbol == "ES" else 0.50
                 pnl_usd = pnl_ticks * tick_value * pos.quantity
+            # Fix audit logs V2 22/04 : calculer slip sur fill TP/SL
+            # TP LIMIT : filled == expected (pas de slip normalement)
+            # SL STOP : peut slip car triggered puis filled "at market"
+            slip_ticks = 0.0
+            if pos:
+                expected = pos.tp_price if is_tp else pos.sl_price
+                if expected:
+                    # Pour SELL TP le fill doit etre >= expected (favorable)
+                    # Pour BUY SL le fill peut etre < expected (slippage defavorable)
+                    slip_ticks = round((fill.fill_price - expected) / 0.25, 2)
+                    # Alerte SL slippage > 3 ticks (normal attendu <= 2t, tres mauvais >= 4t)
+                    if not is_tp and abs(slip_ticks) >= 3:
+                        if _v2log:
+                            _v2log.emit("GENERIC_ALERTE",
+                                        msg=f"sl_slippage_high_{symbol}",
+                                        slip_ticks=slip_ticks,
+                                        expected=expected,
+                                        filled=fill.fill_price)
             log.info(f"[FILL] {exit_type} {symbol} @ {fill.fill_price} "
-                     f"PnL={pnl_ticks:+.0f}t ${pnl_usd:+.2f}")
-            # V2 log : fill TP/SL bracket (le trade_close sera emis par bot_main callback)
+                     f"PnL={pnl_ticks:+.0f}t ${pnl_usd:+.2f} slip={slip_ticks:+.1f}t")
             if _v2log:
                 _v2log.emit("ORDER_FILL", order_id=fill.order_id,
-                            price=fill.fill_price, slip=0.0)
+                            price=fill.fill_price, slip=slip_ticks)
 
             # Retirer la position
             self.positions.pop(symbol, None)

@@ -66,6 +66,9 @@ LOG_CODES = {
     "VOLATILITY_SPIKE":        (LogLevel.ALERTE,   "risk", "Volatility spike : bar_range/atr={ratio:.1f}x > {limit:.1f}x, veto"),
     "DAILY_RESET":             (LogLevel.INFO,     "risk", "Daily reset effectue : nouvelle session"),
     "CIRCUIT_BREAKER_TRIP":    (LogLevel.MAJEUR,   "risk", "Circuit breaker {sym} : {consec_losses} pertes consecutives, pause {pause_min} min"),
+    "ORDER_PARTIAL_FILL":      (LogLevel.MAJEUR,   "execution", "Fill partiel {sym} : {filled}/{expected} ({pct:.0f}%), SL/TP places pour qty originale"),
+    "PARENT_FILL_TIMEOUT":     (LogLevel.MAJEUR,   "execution", "Parent {order_id} NOT FILLED in {timeout}s, bracket abort"),
+    "CANCEL_FAILED_RETRY":     (LogLevel.MAJEUR,   "execution", "Cancel {order_id} echoue apres {retry_count} tentatives, re-cancel lance"),
 
     "ML_MODEL_LOADED":         (LogLevel.INFO,     "ml", "Modele LightGBM charge : {version} ({n_features} features)"),
     "ML_MODEL_LOAD_FAIL":      (LogLevel.CRITIQUE, "ml", "Echec chargement modele : {path} {err}"),

@@ -201,6 +201,13 @@ class DTCConnector:
             # P0-6 : attendre que le parent soit Filled (status=7) avec timeout 2s
             if not parent_event.wait(timeout=2.0):
                 logger.warning(f"[DTC] Parent {parent_id} NOT FILLED in 2s — abort bracket")
+                # Fix audit logs V2 22/04 : emit PARENT_FILL_TIMEOUT (avant silencieux)
+                if _v2log:
+                    try:
+                        _v2log.emit("PARENT_FILL_TIMEOUT",
+                                    order_id=parent_id, timeout=2.0)
+                    except Exception:
+                        pass
                 self._parent_fill_events.pop(parent_id, None)
                 # Tenter de cancel le parent au cas ou
                 sid = self._server_order_ids.get(parent_id)
@@ -500,6 +507,26 @@ class DTCConnector:
                          (msg.get("FilledQuantity", 0) > 0 and
                           order_status not in (2, "Open")))
 
+            # Fix audit logs V2 22/04 : detecter fill partiel (status != 7 MAIS
+            # FilledQuantity > 0 ET < OrderQuantity). Bug silencieux classique
+            # — si broker file 2/3 micros, bot place SL/TP pour 3 lots alors
+            # que position = 2 → SL hit partiel → orphan.
+            filled_qty = msg.get("FilledQuantity", 0)
+            expected_qty = msg.get("OrderQuantity", 0)
+            if (filled_qty > 0 and expected_qty > 0 and
+                    filled_qty < expected_qty and not is_filled):
+                if _v2log:
+                    try:
+                        pct = 100.0 * filled_qty / expected_qty
+                        _v2log.emit("ORDER_PARTIAL_FILL",
+                                    sym=msg.get("Symbol", ""),
+                                    filled=filled_qty,
+                                    expected=expected_qty,
+                                    pct=pct,
+                                    order_id=client_order_id)
+                    except Exception:
+                        pass
+
             if is_filled and fill_price and fill_price > 100:
                 # P0-6 : signaler l'event parent si c'est un parent order
                 if client_order_id.startswith("MIA_P_") and client_order_id in self._parent_fill_events:
@@ -565,6 +592,10 @@ class DTCConnector:
             logger.info(f"Verify cancel (securite): {order_id} SID={server_id}")
             # V2 log : cancel incertain, signal de vigilance operateur
             if _v2log:
+                # CANCEL_FAILED_RETRY : re-cancel lance car cancel initial incertain
+                _v2log.emit("CANCEL_FAILED_RETRY",
+                            order_id=order_id, retry_count=2)
+                # OCO_ORPHAN_DETECTED conserve pour compat traceabilite cascade
                 _v2log.emit("OCO_ORPHAN_DETECTED", order_id=order_id)
 
     def _handle_market_data(self, msg: dict):
