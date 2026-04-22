@@ -78,6 +78,9 @@ public:
 };
 
 // ─── MockTimeProvider ───────────────────────────────────────────────
+// v1.4.3 (22/04 Plan R2) : ajout set_datetime_utc() pour tests DST/weekend/holiday.
+// Sans cela, tests `weekend_always_closed` + `dst_transition_handled` impossibles
+// (now_ms_override=0 = 1970-01-01 jeudi, toujours).
 class MockTimeProvider : public ITimeProvider {
 public:
     int64_t now_ms_override{0};
@@ -91,6 +94,12 @@ public:
     // Time travel deterministe
     void advance_ms(int64_t delta_ms);
     void set_et_time(int hour, int minute);
+
+    // v1.4.3 : set date complete (year, month, day, hour_et, minute_et).
+    // Update now_ms_override coherent avec hour_et_override/minute_et_override.
+    // Permet tests std::chrono::weekday (weekend) + holidays (2026-04-03 Good Friday).
+    // Test usage : mock.set_datetime_utc(2026, 4, 3, 14, 30); // Vendredi Good Friday
+    void set_datetime_utc(int year, int month, int day, int hour_et, int minute_et);
 };
 
 // ─── MockSignalSource ───────────────────────────────────────────────
@@ -105,30 +114,42 @@ public:
     int  seconds_since_v2clean_hb() const override;
 };
 
-// ─── MockPersistence (NEW v1.1) ─────────────────────────────────────
+// ─── MockPersistence (v1.4.3 22/04 Plan D1+D2) ──────────────────────
+// In-memory, signatures alignees sur IPersistence nlohmann::json + Result<T>.
+// storage map key=path canonical, value=JSON serialize (string pour simplicite test).
 class MockPersistence : public IPersistence {
 public:
-    // In-memory storage (pas I/O reel)
     std::unordered_map<std::string, std::string> storage;
+    std::unordered_map<std::string, int>         schema_versions;  // v1.4.3 Plan R4
+
+    // Simulators pour tests destructifs
     bool simulate_corruption{false};
     bool simulate_crash_mid_write{false};
+    bool simulate_disk_full{false};
+    bool simulate_permission_denied{false};
 
-    bool write_json(const std::filesystem::path& target, const void* data_ptr) override;
-    bool read_json(const std::filesystem::path& target, void* out_ptr) override;
-    bool backup_before_migration(const std::filesystem::path& target) override;
+    Result<void>           write_json(const std::filesystem::path& target,
+                                      const nlohmann::json& data) override;
+    Result<nlohmann::json> read_json(const std::filesystem::path& target) override;
+    Result<void>           backup_before_migration(const std::filesystem::path& target) override;
+    Result<int>            read_schema_version(const std::filesystem::path& target) override;
 };
 
-// ─── MockEventJournal (NEW v1.1) ────────────────────────────────────
+// ─── MockEventJournal (v1.4.3 22/04 Plan D1) ────────────────────────
+// Signature alignee IEventJournal nlohmann::json (pas string).
+// events vector stocke payload serialise en string pour assertion helpers simples.
 class MockEventJournal : public IEventJournal {
 public:
     std::vector<std::pair<EventType, std::string>> events;
+    int flush_count{0};  // v1.4.3 Plan R5 : tester que flush() appele aux moments clefs
 
-    void log_event(EventType type, const std::string& payload_json) override;
+    void log_event(EventType type, const nlohmann::json& payload) override;
     void flush() override;
 
     // Assertion helpers
     bool has_event(EventType type) const;
     int  count_events(EventType type) const;
+    bool was_flushed() const { return flush_count > 0; }
 };
 
 // ─── MockSessionWindow (v1.4.3 22/04) ───────────────────────────────

@@ -45,6 +45,15 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-04-22 XX:XX — [COMMENT_FALSE] — V2_StatePersistence header cite code Python inexistant
+
+**Contexte** : review STEP 4 Tier 2 V2_StatePersistence.h par agent code-reviewer. Le header L6-7 disait "Port Python : risk_manager.py:545-564 (_write_snapshot_atomic, 20 LOC) + logique restore + backup".
+**Ce qui a mal tourne** : l'agent a grep `BOT/risk_manager.py` pour verifier → **0 match pour `_write_snapshot_atomic`**. La reference etait inventee ou periumee. C'est exactement le pattern COMMENT_FALSE du 20/04 (chiffres LOC non-verifies empiriquement, section 4.6 cite ligne qui n'existe pas dans file Python).
+**Cause racine** : au moment ou j'ai ecrit le stub V2_StatePersistence.h (session precedente), j'ai probablement copie une reference d'un autre stub ou l'ai inventee sans grep. **Pattern 2eme occurrence memoire COMMENT_FALSE depuis 20/04**.
+**Lecon** : **AUCUNE reference file:line citee dans un header ou doc DOIT passer sans grep de verification empirique.** Meme pour les references "port de Python".
+**Trigger prevention** : quand header C++ mentionne "port Python <file>:<lines>" → grep exact `grep -n "symbol" <file>` AVANT commit. Si 0 match = reference fausse, corriger ou retirer.
+**Reviewed** : code-reviewer Tier 2 V2_StatePersistence (22/04) detecte. Correction appliquee : header reformule "ref exacte a confirmer P1".
+
 ### 2026-04-22 XX:XX — [VALIDATION_MISS] — `risk.on_bar()` defini mais jamais appele dispatcher
 
 **Contexte** : session V2-BIS 22/04 review 4 modules Tier 1 (V2_Main, V2_OrderExec, V2_RiskManager, V2_HealthCheck, V2_SessionGuard). 8 agents reviews individuels ont approuve chaque module.
@@ -175,7 +184,7 @@
 | VALIDATION_MISS | **3** | **OUI** (seuil atteint) — a promouvoir : "apres batch reviews modules individuels, OBLIGATION synthesis review cross-module" |
 | AGENT_MISUSE | 1 | **OUI preventivement** `feedback_agent_brief_verify.md` |
 | SCOPE_CREEP | 1 | Pas encore |
-| COMMENT_FALSE | 1 | Pas encore |
+| COMMENT_FALSE | **2** | Pas encore (seuil 3+) — trigger nouveau 22/04 : "grep empirique toute reference file:line header" |
 | **LAZY_DELEGATION** | **1** | **OUI preventivement** `.claude/rules/module-review-protocol.md` (6 STEPS) |
 
 **Escalation auto** : quand categorie = 3+ → creer memoire dediee auto-chargee.

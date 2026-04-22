@@ -6,8 +6,71 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <ostream>
 
 namespace v2bis {
+
+// ─── LogOnlyDouble : wrapper pattern 11 compile-time safety (v1.4.3 22/04) ──
+// GARDE-FOU ABSOLU : valeurs score_combined/p_primary/p_meta lues pour logging
+// MAIS IMPOSSIBLE de brancher dessus (pas d'operators <, >, ==, !=).
+// Plan V2_SnapshotWriter D3 (22/04) : suffixe _LOG_ONLY insuffisant, compile-time wrapper obligatoire.
+// Usage :
+//   LogOnlyDouble score{0.85};
+//   double s = score.value_for_log();              // OK pour serialize JSON
+//   if (score < 0.5) { ... }                       // COMPILE ERROR — pas d'operator<
+//   if (score.value_for_log() < 0.5) { ... }       // DELIBERE : visible dans diff review
+// Test statique CI : grep "value_for_log\(\)" V2_RiskManager.h → doit etre vide.
+class LogOnlyDouble {
+public:
+    explicit LogOnlyDouble(double v) : value_(v) {}
+    LogOnlyDouble() : value_(0.0) {}
+    double value_for_log() const { return value_; }
+    // DELIBERE PAS : operator<, operator>, operator==, operator!=, operator<=, operator>=
+    friend std::ostream& operator<<(std::ostream& os, const LogOnlyDouble& v) {
+        return os << v.value_;
+    }
+private:
+    double value_;
+};
+
+// ─── PersistenceError : granularite 5 etats (v1.4.3 22/04 Plan D2) ─────
+// 5 etats (pas 7 — YAGNI : DiskFull/PermDenied/RenameFailed partagent reponse ops).
+// Reponse operationnelle distincte par etat :
+//   Ok             : success
+//   IoError        : retry (disk full/perm/rename transient) — alerter si recurrent
+//   Corrupted      : fallback .bak
+//   SchemaMismatch : migration requise (backup_before_migration + parse vN)
+//   BackupUsed    : success degrade (restore depuis .bak) — log WARN
+enum class PersistenceError {
+    Ok,
+    IoError,
+    Corrupted,
+    SchemaMismatch,
+    BackupUsed,
+};
+
+// ─── Result<T> : pattern monadic pour IPersistence (v1.4.3 22/04 Plan D1+D2) ──
+// Design doc L460 : Result<nlohmann::json>. Harmonise retour void/nlohmann::json.
+// awesome-error-handling.md "Include context in errors" → champ detail string.
+template<typename T>
+struct Result {
+    T                   value;
+    PersistenceError    error;
+    std::string         detail;  // contexte human-readable ("disk full /V2_BIS_STATE/")
+
+    bool ok() const { return error == PersistenceError::Ok; }
+    explicit operator bool() const { return ok(); }
+};
+
+// Specialisation void (operations sans retour typed)
+template<>
+struct Result<void> {
+    PersistenceError    error;
+    std::string         detail;
+
+    bool ok() const { return error == PersistenceError::Ok; }
+    explicit operator bool() const { return ok(); }
+};
 
 // ─── Enums ──────────────────────────────────────────────────────────
 

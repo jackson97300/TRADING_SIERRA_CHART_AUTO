@@ -11,8 +11,10 @@
 #include <string>
 #include <vector>
 
-// Note : inclure nlohmann/json via ACSIL standard include path P1
-namespace nlohmann { class json; }
+// v1.4.3 (22/04 Plan D1) : nlohmann::json utilise comme payload pour I/O
+// (IPersistence, IEventJournal) — type-safe, serialize centralise, zero malformed.
+// ACSIL P1 : include path standard nlohmann/json.hpp (header-only).
+#include <nlohmann/json_fwd.hpp>
 
 namespace v2bis {
 
@@ -103,19 +105,28 @@ public:
 };
 
 // ─── IPersistence : atomic file I/O (pour mock tests) ──────────────
+// v1.4.3 (22/04 Plan D1+D2) : nlohmann::json + Result<T> pattern monadic.
+// Design doc section 4.6 L460-463. Remplace `void*` type-erased unsafe.
+// THREAD-SAFETY : NOT thread-safe by design. Caller responsable serialization
+// (Named Kernel Mutex Windows ES+NQ, cf section 7.9). Atomic rename garantit
+// absence fichier partiel, pas last-writer-wins ordering.
 class IPersistence {
 public:
     virtual ~IPersistence() = default;
-    virtual bool write_json(const std::filesystem::path& target, const void* data_ptr) = 0;
-    virtual bool read_json(const std::filesystem::path& target, void* out_ptr) = 0;
-    virtual bool backup_before_migration(const std::filesystem::path& target) = 0;
+    virtual Result<void>           write_json(const std::filesystem::path& target, const nlohmann::json& data) = 0;
+    virtual Result<nlohmann::json> read_json(const std::filesystem::path& target) = 0;
+    virtual Result<void>           backup_before_migration(const std::filesystem::path& target) = 0;
+    // v1.4.3 Plan R4 : schema version API exposee (garantie L44 header StatePersistence)
+    virtual Result<int>            read_schema_version(const std::filesystem::path& target) = 0;
 };
 
 // ─── IEventJournal : tracer events ─────────────────────────────────
+// v1.4.3 (22/04 Plan D1) : nlohmann::json payload (design L535). Zero malformed
+// JSON possible, zero double-escape. Serialize centralise dans V2_EventJournal.
 class IEventJournal {
 public:
     virtual ~IEventJournal() = default;
-    virtual void log_event(EventType type, const std::string& payload_json) = 0;
+    virtual void log_event(EventType type, const nlohmann::json& payload) = 0;
     virtual void flush() = 0;
 };
 
