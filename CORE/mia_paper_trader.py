@@ -182,13 +182,11 @@ class PaperTrader:
                 self.dtc.on_fill = self._handle_dtc_fill
                 if not self.dtc.connect():
                     raise RuntimeError("DTC connect() returned False")
-                # Subscribe market data ES + NQ (utile pour futur check_exit trust-broker)
-                for sym in ("ES", "NQ"):
-                    try:
-                        contract = DTC_INSTRUMENTS[sym].contract
-                        self.dtc.subscribe_market_data(contract)
-                    except Exception as e:
-                        print(f"  warn subscribe {sym}: {e}")
+                # NOTE (22/04 soir) : pas de subscribe_market_data ici — Sierra Chart
+                # DTC server refuse ("Market data request not allowed"). Le bot lit
+                # les prix via dashboard API (/api/dashboard banner) qui vient du
+                # JSONL DMP, pas du DTC. send_market_order fonctionne sans subscribe
+                # (le serveur utilise le dernier prix marche cote SC automatiquement).
                 print(f"  DTC connected OK (host={self.dtc.cfg.host}:{self.dtc.cfg.port})")
                 if _v2log:
                     try:
