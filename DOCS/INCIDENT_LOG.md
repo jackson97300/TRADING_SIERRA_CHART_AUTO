@@ -45,6 +45,15 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-04-22 XX:XX — [VALIDATION_MISS] — Migration order_manager.py missed OCO_ORPHAN_DETECTED emit
+
+**Contexte** : migration BOT/order_manager.py vers systeme logs V2 (5 emits ajoutes). Review code-reviewer post-commit a detecte gap critique.
+**Ce qui a mal tourne** : le log `OCO_ORPHAN_DETECTED` n'etait PAS emis. Pourtant ce scenario est EXACTEMENT le bug DNA V1 (02/04) qui a motive tout l'OCO manuel. Sans ce log, un orphan en prod serait invisible — position ghost avec SL actif = risque perte non-trackee.
+**Cause racine** : j'ai migre les emits "happy path" (submit/fill/cancel) mais pas les "failure modes" (orphan = cancel echoue). Pattern inverse du VALIDATION_MISS 22/04 precedent (`risk.on_bar` methode definie mais pas cablee dans dispatcher) — cette fois code defini dans catalog mais pas emis dans code reel.
+**Lecon** : **Apres migration logging, verifier que TOUS les codes catalog pertinents au fichier sont effectivement emis**. Grep cross-reference : `codes definis pour categorie X` vs `codes emis dans fichiers de categorie X`.
+**Trigger prevention** : script check `catalog_coverage.py` qui grep LOG_CODES["X_CATEGORY_*"] vs "emit(\"X_" dans codebase, flag missing.
+**Reviewed** : code-reviewer BOT/order_manager (22/04) — 3 actions correctives identifiees. Fix applique : emit ajoute dans `_verify_cancel` (dtc_connector.py L566). Note : detection orphan REEL (via Open Orders Request Type 300) reportee P3 — actuellement emit ALERTE indicatif.
+
 ### 2026-04-22 XX:XX — [COMMENT_FALSE] — V2_StatePersistence header cite code Python inexistant
 
 **Contexte** : review STEP 4 Tier 2 V2_StatePersistence.h par agent code-reviewer. Le header L6-7 disait "Port Python : risk_manager.py:545-564 (_write_snapshot_atomic, 20 LOC) + logique restore + backup".
@@ -181,7 +190,7 @@
 | Categorie | Occurrences | Promoted en memoire ? |
 |---|---|---|
 | CONTEXT_MISS | **6** | **OUI** `feedback_context_miss.md` (deja promu, renforce 22/04 avec trigger "grep enum existant" + "batch add = grep chaque nouveau nom") |
-| VALIDATION_MISS | **3** | **OUI** (seuil atteint) — a promouvoir : "apres batch reviews modules individuels, OBLIGATION synthesis review cross-module" |
+| VALIDATION_MISS | **4** | **OUI** (4+ occurrences) — promu `feedback_validation_miss_patterns.md` : synthesis review obligatoire + catalog_coverage apres migration |
 | AGENT_MISUSE | 1 | **OUI preventivement** `feedback_agent_brief_verify.md` |
 | SCOPE_CREEP | 1 | Pas encore |
 | COMMENT_FALSE | **2** | Pas encore (seuil 3+) — trigger nouveau 22/04 : "grep empirique toute reference file:line header" |

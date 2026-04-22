@@ -540,7 +540,18 @@ class DTCConnector:
             logger.error(f"DTC order update error: {e}")
 
     def _verify_cancel(self, order_id: str):
-        """Verifie qu'un ordre a bien ete annule, re-cancel sinon."""
+        """Verifie qu'un ordre a bien ete annule, re-cancel sinon.
+
+        v1.4.3 (22/04) R2 code-reviewer : ce re-cancel est le dernier rempart
+        contre orphan OCO (DNA V1 02/04 bug). Si malgre 2 cancels + verify
+        un fill arrive pour cet order_id plus tard, c'est un orphan reel.
+
+        [TODO P3] Vraie detection orphan necessite :
+          1. Apres cancel, demander Open Orders (Type 300) au broker
+          2. Si order_id present dans response → cancel has not worked
+          3. Emettre OCO_ORPHAN_DETECTED CRITIQUE + retry N fois
+        Pour l'instant : emit ALERTE "cancel incertain" (re-cancel en cours).
+        """
         server_id = self._server_order_ids.get(order_id, "")
         if server_id:
             # Re-envoyer le cancel par securite
@@ -552,6 +563,9 @@ class DTCConnector:
             }
             self._send(msg)
             logger.info(f"Verify cancel (securite): {order_id} SID={server_id}")
+            # V2 log : cancel incertain, signal de vigilance operateur
+            if _v2log:
+                _v2log.emit("OCO_ORPHAN_DETECTED", order_id=order_id)
 
     def _handle_market_data(self, msg: dict):
         """Traite un snapshot ou update de market data."""
