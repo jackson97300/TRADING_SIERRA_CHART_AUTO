@@ -16,6 +16,16 @@ from typing import Optional, List, Dict
 from bot_config import BotConfig, InstrumentConfig
 from dtc_connector import DTCConnector, OrderFill, BUY, SELL
 
+# Systeme logs V2 (22/04/2026)
+try:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from CORE.logging_v2 import get_logger as _get_v2_logger
+    _v2log = _get_v2_logger("order_manager", process="bot_legacy")
+except Exception:
+    _v2log = None
+
 
 @dataclass
 class Position:
@@ -46,6 +56,10 @@ class OrderManager:
         self._pending_closes: Dict[str, str] = {}    # order_id → symbol
         self._confirmed_closes: Dict[str, float] = {}  # symbol → fill_price
         self._bracket_orders: Dict[str, str] = {}  # tp_cid/sl_cid → symbol
+
+        # Callback externe quand un trade se ferme (TP/SL/manuel)
+        # Signature : on_trade_close(symbol, exit_type, exit_price, pnl_ticks, pnl_usd, position)
+        self.on_trade_close: Optional[callable] = None
 
         # Callback fills
         self.dtc.on_fill = self._on_fill
@@ -95,7 +109,17 @@ class OrderManager:
         parent_id, tp_cid, sl_cid = result
 
         if not parent_id:
+            # V2 log : ordre refuse par broker au submit
+            if _v2log:
+                _v2log.emit("ORDER_REJECT", sym=symbol, err_code=0,
+                            err_msg="no_parent_id_returned")
             return None
+
+        # V2 log : ordre envoye (bracket parent + SL + TP)
+        if _v2log:
+            dir_str = "BUY" if direction == 1 else "SELL"
+            _v2log.emit("ORDER_SUBMIT", sym=symbol, type="MARKET_BRACKET",
+                        direction=dir_str, qty=quantity)
 
         # Creer la position (sera confirmee au fill)
         pos = Position(
@@ -196,15 +220,31 @@ class OrderManager:
             pos.entry_price = fill.fill_price
             del self._pending_opens[fill.order_id]
             log.info(f"[FILL] Ouverture {pending['symbol']} @ {fill.fill_price}")
+            # V2 log : fill parent order
+            if _v2log:
+                _v2log.emit("ORDER_FILL", order_id=fill.order_id,
+                            price=fill.fill_price, slip=0.0)
             return
 
         # Fill de fermeture manuelle (close_position)
         symbol = self._pending_closes.get(fill.order_id)
         if symbol:
             self._confirmed_closes[symbol] = fill.fill_price
-            if symbol in self.positions:
+            pos = self.positions.get(symbol)
+            if pos:
+                pnl_ticks = (fill.fill_price - pos.entry_price) / 0.25 * pos.direction
+                tick_value = 1.25 if symbol == "ES" else 0.50
+                pnl_usd = pnl_ticks * tick_value * pos.quantity
                 self.positions.pop(symbol)
-                log.info(f"[FILL] Fermeture manuelle {symbol} @ {fill.fill_price}")
+                log.info(f"[FILL] Fermeture manuelle {symbol} @ {fill.fill_price} "
+                         f"PnL={pnl_ticks:+.0f}t ${pnl_usd:+.2f}")
+                # Callback externe (journal + risk)
+                if self.on_trade_close:
+                    try:
+                        self.on_trade_close(symbol, "MANUAL", fill.fill_price,
+                                            pnl_ticks, pnl_usd, pos)
+                    except Exception as e:
+                        log.error(f"on_trade_close callback error: {e}")
             del self._pending_closes[fill.order_id]
             return
 
@@ -214,20 +254,38 @@ class OrderManager:
             is_tp = "_TP_" in fill.order_id
             exit_type = "TP" if is_tp else "SL"
             pos = self.positions.get(symbol)
-            pnl_ticks = 0
+            pnl_ticks = 0.0
+            pnl_usd = 0.0
             if pos:
                 pnl_ticks = (fill.fill_price - pos.entry_price) / 0.25 * pos.direction
+                tick_value = 1.25 if symbol == "ES" else 0.50
+                pnl_usd = pnl_ticks * tick_value * pos.quantity
             log.info(f"[FILL] {exit_type} {symbol} @ {fill.fill_price} "
-                     f"PnL={pnl_ticks:+.0f}t")
+                     f"PnL={pnl_ticks:+.0f}t ${pnl_usd:+.2f}")
+            # V2 log : fill TP/SL bracket (le trade_close sera emis par bot_main callback)
+            if _v2log:
+                _v2log.emit("ORDER_FILL", order_id=fill.order_id,
+                            price=fill.fill_price, slip=0.0)
 
             # Retirer la position
             self.positions.pop(symbol, None)
             self._bracket_orders.pop(fill.order_id, None)
 
-            # Nettoyer l'autre bracket ID aussi
+            # Nettoyer l'autre bracket ID aussi (cancel oppose OCO manuel)
             for cid, sym in list(self._bracket_orders.items()):
                 if sym == symbol:
                     self._bracket_orders.pop(cid, None)
+                    # V2 log : OCO cancel oppose (TP fill → cancel SL ou SL fill → cancel TP)
+                    if _v2log:
+                        _v2log.emit("OCO_CANCEL_OPPOSITE", order_id=cid)
+
+            # CRITIQUE : Callback externe pour journal + risk manager
+            if self.on_trade_close and pos:
+                try:
+                    self.on_trade_close(symbol, exit_type, fill.fill_price,
+                                        pnl_ticks, pnl_usd, pos)
+                except Exception as e:
+                    log.error(f"on_trade_close callback error: {e}")
 
             return
 
