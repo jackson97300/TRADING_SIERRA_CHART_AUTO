@@ -357,6 +357,18 @@ async def profile(request: Request, symbol: str):
     return read_volume_profile(sym)
 
 
+@app.get("/api/paper_trades")
+async def paper_trades_endpoint(request: Request):
+    """Paper trades state + stats (v2 22/04).
+
+    Lit `DATA/PAPER_TRADES/state.json` ecrit par `CORE/mia_paper_trader.py`.
+    Retourne : state live (open/closed/stats today) + stats_7d + stats_30d.
+    """
+    from DASHBOARD.api.paper_tracker import get_paper_trades_payload
+    _require_tier(request, 1)  # STARTER+
+    return get_paper_trades_payload()
+
+
 # ═══════════════════════════════════════════════════════════════
 # Endpoint principal — /api/dashboard
 # ═══════════════════════════════════════════════════════════════
