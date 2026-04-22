@@ -57,7 +57,8 @@ ENTRY_RULES = {
     "cooldown_post_close_sec": 900,         # 15 min
     "circuit_breaker_losses": 3,            # 3 SL consec
     "circuit_breaker_pause_sec": 3600,      # 60 min pause
-    "estimated_wr": 0.52,                   # pour calcul expected_payoff (audit moyen 22/04)
+    "estimated_wr_initial": 0.45,           # conservateur avant 30 trades empiriques (review R4)
+    "estimated_wr_rolling_min": 30,         # apres N trades, switch vers WR rolling reel
 }
 
 
@@ -93,13 +94,23 @@ class PaperTrader:
         self._consec_losses = {"ES": 0, "NQ": 0}
         self._circuit_pause_until = {}          # sym -> timestamp fin pause
 
-        # v2 (22/04) : tracker signal_ids deja consommes (dedup) — signal_id du dashboard
+        # v2 (22/04) : tracker signal_ids deja consommes (dedup cross-restart VPS)
+        # Persiste sur disque (review R3 : sinon restart = re-entry meme signal_id)
+        self._traded_signals_file = os.path.join(DATA_DIR, f"{self.date_str}_traded_signals.txt")
         self._traded_signal_ids = set()
+
+        # Cleanup state.json.tmp orphelin si crash mi-write (review R5)
+        tmp_state = STATE_FILE + ".tmp"
+        if os.path.exists(tmp_state):
+            try:
+                os.remove(tmp_state)
+            except OSError:
+                pass
 
         self._load_existing()
 
     def _load_existing(self):
-        """Charge les trades existants du jour."""
+        """Charge les trades + signal_ids existants du jour (robuste post-restart)."""
         if os.path.exists(self.log_file):
             with open(self.log_file, "r") as f:
                 for line in f:
@@ -110,6 +121,24 @@ class PaperTrader:
                         except json.JSONDecodeError:
                             pass
             self.trade_count = len(self.today_trades)
+
+        # v2 (review R3) : reload signal_ids deja trades (cross-restart VPS)
+        if os.path.exists(self._traded_signals_file):
+            try:
+                with open(self._traded_signals_file, "r") as f:
+                    for line in f:
+                        sid = line.strip()
+                        if sid:
+                            self._traded_signal_ids.add(sid)
+            except OSError:
+                pass
+
+        # v2 (review R5) : reset consec_losses si changement de date
+        # (si on relance a J+1, les SL de J ne comptent pas)
+        current_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+        if current_date != self.date_str:
+            self._consec_losses = {"ES": 0, "NQ": 0}
+            self._circuit_pause_until = {}
 
     def check_entry(self, data, symbol):
         """Verifie si les conditions d'entree sont remplies (v2 22/04).
@@ -184,18 +213,22 @@ class PaperTrader:
             return None
 
         # 7. SLTPEngine — calcul intelligent Tier 1/2 murs + TP1
-        # On a besoin de la bar row DMP complete → lue depuis bot_data (heartbeat)
+        # Bar DMP complete OBLIGATOIRE (review agent R2 : reconstruct dashboard omet
+        # ~30 murs MenthorQ/gamma/BL → SL biaise, verdict paper invalide). Si absent,
+        # lire directement le dernier JSONL DMP (last line).
         bot_data = data.get("bot", {})
         bar_row_dict = bot_data.get("last_bars", {}).get(sym, {})
         if not bar_row_dict:
-            # Fallback : utiliser le regime + order_flow pour reconstruire un bar minimal
-            bar_row_dict = self._reconstruct_bar_from_dashboard(data, symbol, price)
+            bar_row_dict = self._read_last_jsonl_bar(symbol)
         if not bar_row_dict:
+            # Pas de bar complete → skip trade (pas de fallback reconstruction biaise)
+            if _v2log:
+                _v2log.emit("GENERIC_ALERTE",
+                            msg=f"paper: skip {symbol} — bar DMP complete absente (bot.last_bars vide + JSONL unreadable)")
             return None
 
-        row = pd.Series(bar_row_dict)
         engine = self.sltp_engines[symbol]
-        sltp_result = engine._evaluate(row, direction_int)
+        sltp_result = engine.evaluate_single(bar_row_dict, direction_int)
 
         if not sltp_result.valid:
             # Rejete par SLTPEngine (pas de mur Tier 1/2, budget depasse, R:R insuffisant...)
@@ -204,9 +237,9 @@ class PaperTrader:
         sl_ticks = sltp_result.sl_ticks
         tp_ticks = sltp_result.tp1_ticks  # Jackson choix : UN SEUL TP (pas trailing/runner)
 
-        # 8. Filtre expected_payoff_$ (audit ES vs NQ 22/04)
+        # 8. Filtre expected_payoff_$ (audit ES vs NQ 22/04) avec WR dynamique
         tv = TICK_VALUE[symbol]
-        wr = ENTRY_RULES["estimated_wr"]
+        wr = self._get_dynamic_wr()   # 0.45 conservateur < 30 trades, puis rolling reel
         expected_payoff_usd = (wr * tp_ticks - (1 - wr) * sl_ticks) * tv * ENTRY_RULES["n_micros"]
         if expected_payoff_usd < ENTRY_RULES["min_expected_payoff_usd"]:
             return None
@@ -244,44 +277,76 @@ class PaperTrader:
             "conseil_bear_pts": conseil.get("bear_points", 0),
         }
 
-    def _reconstruct_bar_from_dashboard(self, data, symbol, price):
-        """Fallback si bot_data.last_bars absent : reconstruit bar minimal depuis dashboard.
+    def _get_dynamic_wr(self) -> float:
+        """WR conservateur 0.45 avant N trades, sinon WR rolling empirique (review R4).
 
-        SLTPEngine a besoin de dist_* features. On utilise les levels/profile du dashboard.
+        Evite biais initialisation : sans historique, assume setup peu performant
+        (0.45) ce qui force filtre expected_payoff strict. Quand N >= 30 trades,
+        switch vers WR reel des 30 derniers trades (adaptatif edge reel).
         """
-        sym = symbol.lower()
-        instr = data.get(sym, {})
-        levels = instr.get("levels", {})
-        profile = instr.get("profile", {})
-        reg = instr.get("regime", {})
+        min_n = ENTRY_RULES["estimated_wr_rolling_min"]
+        if len(self.today_trades) < min_n:
+            # Charger trades historiques globaux pour accelerer convergence
+            from glob import glob
+            all_files = sorted(glob(os.path.join(DATA_DIR, "*_trades.jsonl")))
+            all_trades = []
+            for fp in all_files[-10:]:  # max 10 derniers jours
+                try:
+                    with open(fp, "r") as f:
+                        for line in f:
+                            s = line.strip()
+                            if s:
+                                try:
+                                    all_trades.append(json.loads(s))
+                                except json.JSONDecodeError:
+                                    pass
+                except OSError:
+                    continue
+            if len(all_trades) >= min_n:
+                recent = all_trades[-min_n:]
+                wins = sum(1 for t in recent if t.get("pnl_ticks", 0) > 0)
+                return wins / len(recent)
+            # Pas assez d'historique → conservateur
+            return ENTRY_RULES["estimated_wr_initial"]
 
-        bar = {"atr": reg.get("atr", 100)}
-        # Mapping dashboard levels → dist_* ticks
-        tick = TICK_SIZE
-        for dash_key, dmp_key in [
-            ("sess_high", "dist_sess_high"),
-            ("sess_low", "dist_sess_low"),
-            ("vwap_d", "dist_vwap_d"),
-            ("swing_high", "dist_swing_high"),
-            ("swing_low", "dist_swing_low"),
-        ]:
-            val = levels.get(dash_key)
-            if val:
-                bar[dmp_key] = (val - price) / tick
+        # Rolling WR des 30 derniers trades du jour
+        recent = self.today_trades[-min_n:]
+        wins = sum(1 for t in recent if t.get("pnl_ticks", 0) > 0)
+        return wins / len(recent)
 
-        # Profile dist
-        for dash_key, dmp_key in [
-            ("cur_vah", "dist_cur_vah"),
-            ("cur_vpoc", "dist_cur_vpoc"),
-            ("cur_val", "dist_cur_val"),
-            ("prev_vah", "dist_prev_vah"),
-            ("prev_val", "dist_prev_val"),
-        ]:
-            val = profile.get(dash_key)
-            if val:
-                bar[dmp_key] = (val - price) / tick
+    def _read_last_jsonl_bar(self, symbol):
+        """Lit la derniere ligne du JSONL DMP pour avoir bar complete (40+ features dist_*).
 
-        return bar
+        Necessaire car dashboard expose seulement un sous-ensemble des features.
+        SLTPEngine a besoin de tous les murs Tier 1/2/3 pour verdict fiable.
+        """
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DATA", symbol)
+        if not os.path.isdir(data_dir):
+            return None
+        # Dernier JSONL par mtime
+        try:
+            files = sorted(
+                (f for f in os.listdir(data_dir) if f.endswith(".jsonl")),
+                key=lambda n: os.path.getmtime(os.path.join(data_dir, n)),
+                reverse=True,
+            )
+            if not files:
+                return None
+            latest = os.path.join(data_dir, files[0])
+            # Lire derniere ligne (efficacement en scannant depuis la fin)
+            with open(latest, "rb") as f:
+                try:
+                    f.seek(-2, os.SEEK_END)
+                    while f.read(1) != b"\n":
+                        f.seek(-2, os.SEEK_CUR)
+                except OSError:
+                    f.seek(0)
+                last_line = f.readline().decode("utf-8")
+            if last_line.strip():
+                return json.loads(last_line)
+        except (OSError, json.JSONDecodeError):
+            pass
+        return None
 
     def enter_trade(self, data, symbol, signal):
         """Ouvre une position paper."""
@@ -319,9 +384,15 @@ class PaperTrader:
             "unrealized_pnl_usd": 0.0,
         }
 
-        # Dedup signal_id consomme
+        # Dedup signal_id consomme (in-memory + persiste disque cross-restart)
         if signal.get("signal_id"):
-            self._traded_signal_ids.add(signal["signal_id"])
+            sid = signal["signal_id"]
+            self._traded_signal_ids.add(sid)
+            try:
+                with open(self._traded_signals_file, "a", encoding="utf-8") as f:
+                    f.write(f"{sid}\n")
+            except OSError:
+                pass
 
         # Snapshot complet au moment de l'entree
         snapshot = {
@@ -625,7 +696,11 @@ class PaperTrader:
     def run(self):
         """Boucle principale du paper trader."""
         print(f"MIA Paper Trader - {self.date_str}")
-        print(f"Regles: conf>{ENTRY_RULES['min_confidence']*100:.0f}% MTF>={ENTRY_RULES['min_mtf_bears']}/4 SL=ATR*{ENTRY_RULES['sl_atr_mult']} R:R={ENTRY_RULES['tp_rr']}")
+        print(f"Regles v2: conf>{ENTRY_RULES['min_confidence']*100:.0f}% MTF>={ENTRY_RULES['min_mtf_bears']}/4 "
+              f"freshness={ENTRY_RULES['freshness_required']} n_micros={ENTRY_RULES['n_micros']} "
+              f"min_exp=${ENTRY_RULES['min_expected_payoff_usd']} "
+              f"cooldown={ENTRY_RULES['cooldown_post_close_sec']//60}min "
+              f"circuit_breaker={ENTRY_RULES['circuit_breaker_losses']}SL/{ENTRY_RULES['circuit_breaker_pause_sec']//60}min")
         print(f"Log: {self.log_file}")
         print(f"Poll: {POLL_INTERVAL}s")
         print("-" * 60)

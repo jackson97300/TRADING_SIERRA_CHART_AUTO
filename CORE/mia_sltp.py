@@ -251,7 +251,19 @@ class SLTPEngine:
 
         return df
 
-    # ─── ÉVALUATION PAR BARRE ─────────────────────────────────────
+    # ─── API PUBLIQUE LIVE (v2 22/04 review code-reviewer R5) ─────
+
+    def evaluate_single(self, row, direction: int) -> SLTPResult:
+        """API publique stable pour calcul SL/TP sur une barre unique (mode live).
+
+        Wrapper autour de _evaluate() pour usage externe (paper_trader, bot live).
+        Accepte dict ou pd.Series, retourne SLTPResult.
+        """
+        if isinstance(row, dict):
+            row = pd.Series(row)
+        return self._evaluate(row, direction)
+
+    # ─── ÉVALUATION PAR BARRE (interne) ────────────────────────────
 
     def _evaluate(self, row: pd.Series, direction: int) -> SLTPResult:
         """Calcule SL/TP pour une barre avec signal."""
