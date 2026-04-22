@@ -18,6 +18,7 @@ Usage :
 import json
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -33,6 +34,24 @@ try:
     _v2log = _get_v2_logger("paper_trader", process="paper")
 except Exception:
     _v2log = None
+
+# Integration DTC Sim3 (22/04 soir - Jackson : visibilite Sierra Chart +
+# test pipeline bout-en-bout). Feature flag MIA_DTC_ENABLE=1 pour activer.
+# Sinon comportement paper pur memoire (inchange).
+DTC_ENABLED = os.environ.get("MIA_DTC_ENABLE", "0") == "1"
+_DTC_IMPORT_OK = False
+if DTC_ENABLED:
+    try:
+        # BOT/ contient le dtc_connector eprouve (teste 02/04/2026 OCO manuel)
+        _BOT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "BOT")
+        if _BOT_DIR not in sys.path:
+            sys.path.insert(0, _BOT_DIR)
+        from dtc_connector import DTCConnector, OrderFill, BUY as DTC_BUY, SELL as DTC_SELL
+        from bot_config import DTCConfig, INSTRUMENTS as DTC_INSTRUMENTS
+        _DTC_IMPORT_OK = True
+    except Exception as _e:
+        print(f"  !!! DTC import failed : {_e} — fallback paper pur memoire")
+        _DTC_IMPORT_OK = False
 
 # Config
 DASHBOARD_URL = "http://localhost:8503/api/dashboard"
@@ -53,13 +72,20 @@ ENTRY_RULES = {
     "max_positions_per_symbol": 1,
     "n_micros": 3,                          # 3 micros (realistic bot live futur)
     "min_expected_payoff_usd": 2.0,         # filtre audit ES vs NQ (22/04)
-    "max_trades_per_day": 10,
+    # 22/04 soir Jackson : PAS de limite trades/jour en paper (collecte max
+    # de donnees). Cooldown 15min post-close + circuit breaker 3 SL gardent
+    # la safety. Reactivation cap en mode LIVE capital reel plus tard.
+    "max_trades_per_day": 9999,
     "cooldown_post_close_sec": 900,         # 15 min
     "circuit_breaker_losses": 3,            # 3 SL consec
     "circuit_breaker_pause_sec": 3600,      # 60 min pause
     "estimated_wr_initial": 0.45,           # conservateur avant 30 trades empiriques (review R4)
     "estimated_wr_rolling_min": 30,         # apres N trades, switch vers WR rolling reel
 }
+
+# Config DTC (valide Phase 1 paper uniquement, pas de compte LIVE)
+TRADE_ACCOUNT = os.environ.get("MIA_TRADE_ACCOUNT", "Sim3")
+_SIM_WHITELIST_PREFIX = ("SIM", "Sim", "sim")
 
 
 # Fix CRITIQUE (22/04 soir) : sans auth, /api/dashboard retourne tier=free
@@ -129,6 +155,59 @@ class PaperTrader:
                 os.remove(tmp_state)
             except OSError:
                 pass
+
+        # Integration DTC Sim3 (22/04 soir) : thread safety + mapping orders
+        # `_pos_lock` : RLock protege positions / cooldown / consec_losses /
+        # _order_to_symbol car `_recv_loop` DTC (daemon thread) peut toucher
+        # ces structures via `_handle_dtc_fill` pendant que main fait check_exit.
+        self._pos_lock = threading.RLock()
+        # Mapping order CID -> symbol pour callback fill
+        # {parent_id: "ES", tp_cid: "ES", sl_cid: "ES", ...}
+        self._order_to_symbol: dict = {}
+
+        # DTC connector (None si MIA_DTC_ENABLE=0 ou import failed)
+        self.dtc = None
+        self.trade_account = TRADE_ACCOUNT
+        if DTC_ENABLED and _DTC_IMPORT_OK:
+            # Hard check whitelist : refuse comptes live accidentels
+            if not self.trade_account.lower().startswith("sim"):
+                raise RuntimeError(
+                    f"MIA_TRADE_ACCOUNT={self.trade_account!r} non autorise. "
+                    f"Paper trader accepte uniquement Sim1/Sim2/Sim3 (safety Phase 1). "
+                    f"Set MIA_TRADE_ACCOUNT=Sim3 ou similaire."
+                )
+            print(f"  DTC enabled -> account={self.trade_account}")
+            try:
+                self.dtc = DTCConnector(DTCConfig())
+                self.dtc.on_fill = self._handle_dtc_fill
+                if not self.dtc.connect():
+                    raise RuntimeError("DTC connect() returned False")
+                # Subscribe market data ES + NQ (utile pour futur check_exit trust-broker)
+                for sym in ("ES", "NQ"):
+                    try:
+                        contract = DTC_INSTRUMENTS[sym].contract
+                        self.dtc.subscribe_market_data(contract)
+                    except Exception as e:
+                        print(f"  warn subscribe {sym}: {e}")
+                print(f"  DTC connected OK (host={self.dtc.cfg.host}:{self.dtc.cfg.port})")
+                if _v2log:
+                    try:
+                        _v2log.emit("BOOT_READY",
+                                    dtc="connected",
+                                    model="paper",
+                                    data=self.trade_account)
+                    except Exception:
+                        pass
+            except Exception as e:
+                # Fail-loud au boot : si DTC_ENABLE=1 mais connect echoue,
+                # on crash plutot que silencieusement fallback (ambiguite dangereuse)
+                print(f"  !!! DTC connect FAILED : {e}")
+                raise
+        else:
+            if DTC_ENABLED and not _DTC_IMPORT_OK:
+                print(f"  !!! DTC_ENABLE=1 mais import KO -> fallback simu pure")
+            else:
+                print(f"  DTC desactive (simu pure memoire)")
 
         self._load_existing()
 
@@ -401,12 +480,128 @@ class PaperTrader:
             pass
         return None
 
+    def _handle_dtc_fill(self, fill):
+        """Callback DTC quand un ordre est Filled (status=7).
+
+        Thread : daemon `_recv_loop` du DTCConnector. DOIT prendre le lock.
+
+        3 cas :
+          1. Fill parent : update position.entry_price avec vrai fill (slippage)
+          2. Fill TP ou SL : close trade avec vrai exit price (broker-truth)
+          3. CID inconnu : log, ignore
+        """
+        try:
+            order_id = getattr(fill, "order_id", "")
+            fill_price = getattr(fill, "fill_price", 0.0)
+            if not order_id or not fill_price:
+                return
+            with self._pos_lock:
+                symbol = self._order_to_symbol.get(order_id)
+                if not symbol:
+                    # CID inconnu (autre bot, anciens brackets, etc.)
+                    return
+                # Determiner le type de fill depuis le CID prefix
+                is_parent = order_id.startswith("MIA_P_")
+                is_tp = order_id.startswith("MIA_TP_")
+                is_sl = order_id.startswith("MIA_SL_")
+
+                pos = self.positions.get(symbol)
+
+                if is_parent and pos:
+                    # Update entry_price avec slippage reel broker
+                    old_entry = pos["entry_price"]
+                    pos["entry_price"] = fill_price
+                    slip = (fill_price - old_entry) / TICK_SIZE
+                    print(f"  >>> DTC FILL PARENT {symbol} @ {fill_price:.2f} (slip={slip:+.1f}t vs dashboard)")
+                    if _v2log:
+                        try:
+                            _v2log.emit("ORDER_FILL", sym=symbol,
+                                        fill_price=fill_price, slip_ticks=slip)
+                        except Exception:
+                            pass
+                    return
+
+                if (is_tp or is_sl) and pos:
+                    # TP ou SL fill = close trade
+                    outcome = "TP" if is_tp else "SL"
+                    print(f"  >>> DTC FILL {outcome} {symbol} @ {fill_price:.2f} (broker-truth)")
+                    # Relacher le lock avant _close_trade (qui reprend le lock)
+                    # -> mais RLock permet reacquisition par meme thread
+                    self._close_trade(symbol, fill_price, outcome, from_dtc_callback=True)
+                    return
+
+                # Fill pour symbol qui n'est plus en position (ex: close simu apres race)
+                if (is_tp or is_sl) and not pos:
+                    # Fix B3 (code-reviewer 22/04) : `outcome` pas defini si pos is None
+                    outcome_dbg = "TP" if is_tp else "SL"
+                    print(f"  !!! DTC fill {outcome_dbg} {symbol} "
+                          f"mais position deja closed en simu — OK (OCO a deja tout nettoye)")
+                    if _v2log:
+                        try:
+                            _v2log.emit("GENERIC_ALERTE",
+                                        msg=f"desync_simu_broker_fill_{symbol}",
+                                        order_id=order_id)
+                        except Exception:
+                            pass
+        except Exception as e:
+            import traceback
+            print(f"  !!! _handle_dtc_fill error: {e}\n{traceback.format_exc()}")
+
     def enter_trade(self, data, symbol, signal):
-        """Ouvre une position paper."""
+        """Ouvre une position paper.
+
+        Si DTC actif : envoie bracket Sim3 (sync, attend fill parent <2s).
+        Si bracket echoue : abort, aucune position memoire (coherence stricte).
+        """
         sym = symbol.lower()
         instr = data.get(sym, {})
         reg = instr.get("regime", {})
         now = datetime.now(timezone.utc)
+
+        # Integration DTC (22/04) : envoi bracket Sim3 AVANT creation position memoire
+        parent_id = ""
+        tp_cid = ""
+        sl_cid = ""
+        if self.dtc is not None:
+            # Fix B1 (code-reviewer 22/04) : is_alive est @property dans dtc_connector,
+            # pas une methode. Appel sans parentheses.
+            if not self.dtc.is_alive:
+                print(f"  !!! DTC disconnected -> skip {symbol} (retry next poll)")
+                if _v2log:
+                    try:
+                        _v2log.emit("DTC_DISCONNECT_SESSION",
+                                    sym=symbol, reason="is_alive=False")
+                    except Exception:
+                        pass
+                return
+            try:
+                contract = DTC_INSTRUMENTS[symbol].contract
+            except KeyError:
+                print(f"  !!! contract inconnu pour {symbol} -> skip")
+                return
+            dtc_side = DTC_BUY if signal["direction"] == "LONG" else DTC_SELL
+            print(f"  >>> DTC SUBMIT {symbol} {signal['direction']} qty={ENTRY_RULES['n_micros']} "
+                  f"SL={signal['sl_price']:.2f} TP={signal['tp_price']:.2f} contract={contract}")
+            parent_id, tp_cid, sl_cid = self.dtc.send_market_order(
+                symbol=contract,
+                side=dtc_side,
+                quantity=ENTRY_RULES["n_micros"],
+                sl_price=signal["sl_price"],
+                tp_price=signal["tp_price"],
+                trade_account=self.trade_account,
+            )
+            if not parent_id:
+                print(f"  !!! DTC bracket FAIL {symbol} (parent timeout ou reject)")
+                if _v2log:
+                    try:
+                        _v2log.emit("ORDER_REJECT",
+                                    sym=symbol,
+                                    reason="bracket_fail_parent_timeout_or_reject",
+                                    signal_id=signal.get("signal_id"))
+                    except Exception:
+                        pass
+                return
+            print(f"  >>> DTC BRACKET OK parent={parent_id} tp={tp_cid} sl={sl_cid}")
 
         position = {
             "symbol": symbol,
@@ -435,6 +630,11 @@ class PaperTrader:
             "current_price": signal["entry_price"],
             "unrealized_pnl_ticks": 0.0,
             "unrealized_pnl_usd": 0.0,
+            # DTC bracket tracking
+            "parent_id": parent_id,
+            "tp_cid": tp_cid,
+            "sl_cid": sl_cid,
+            "dtc_enabled": self.dtc is not None,
         }
 
         # Dedup signal_id consomme (in-memory + persiste disque cross-restart)
@@ -494,8 +694,14 @@ class PaperTrader:
             "conseil_bear_pts": signal.get("conseil_bear_pts"),
         }
 
-        self.positions[symbol] = position
-        self.trade_count += 1
+        # Thread-safe update : positions + order_to_symbol mapping
+        with self._pos_lock:
+            self.positions[symbol] = position
+            self.trade_count += 1
+            # Mapping CID -> symbol pour callback _handle_dtc_fill
+            for cid in (parent_id, tp_cid, sl_cid):
+                if cid:
+                    self._order_to_symbol[cid] = symbol
 
         # Ecrire le snapshot
         with open(self.snapshot_file, "a", encoding="utf-8") as f:
@@ -567,9 +773,78 @@ class PaperTrader:
         if hit_tp or hit_sl or timeout:
             self._close_trade(symbol, price, "TP" if hit_tp else "SL" if hit_sl else "TIMEOUT")
 
-    def _close_trade(self, symbol, exit_price, outcome):
-        """Ferme et enregistre le trade (v2 22/04 avec cooldown + circuit breaker)."""
-        pos = self.positions.pop(symbol)
+    def _close_trade(self, symbol, exit_price, outcome, from_dtc_callback=False):
+        """Ferme et enregistre le trade (v2 22/04 avec cooldown + circuit breaker).
+
+        Si from_dtc_callback=True : fill broker deja recu, les brackets OCO sont
+        deja canceled par DTCConnector._handle_order_update. On fait juste la
+        comptabilite memoire + state.json.
+
+        Si from_dtc_callback=False : fermeture declenchee par simu (check_exit
+        detecte hit_sl/hit_tp/timeout). Il faut cancel les brackets Sim3 + envoyer
+        un close market sinon position reste ouverte cote Sierra Chart.
+        """
+        with self._pos_lock:
+            if symbol not in self.positions:
+                # Deja close (idempotent)
+                return
+            pos = self.positions.pop(symbol)
+            # Cleanup mapping order_to_symbol
+            for cid_key in ("parent_id", "tp_cid", "sl_cid"):
+                cid = pos.get(cid_key)
+                if cid:
+                    self._order_to_symbol.pop(cid, None)
+
+        # Fix B2 (code-reviewer 22/04) : race destructrice si simu declenche close
+        # avant que le callback broker fill n'arrive → reverse market creait une
+        # position inverse fantome si les brackets etaient deja fill.
+        # Solution retenue (Option C) : TRUST OCO BROKER. Quand la simu detecte un
+        # hit (banner price), on cancel les 2 brackets (idempotent si deja fill).
+        # Si les brackets sont encore live → OCO cancel le oppose au prochain fill.
+        # Si les brackets sont deja fill → cancel = no-op silencieux, rien d'envoye.
+        # Aucun "reverse market" : on ne cree JAMAIS une position inverse Sim3.
+        # La seule source de verite pour la sortie Sim3 = fill broker via on_fill.
+        # Exception : outcome=TIMEOUT → on force fermeture via close market (no SL/TP)
+        # car aucun bracket n'aurait declenche naturellement.
+        if not from_dtc_callback and self.dtc is not None and pos.get("dtc_enabled"):
+            try:
+                # Cancel TP + SL (idempotent si deja fill broker)
+                for cid_key in ("tp_cid", "sl_cid"):
+                    cid = pos.get(cid_key)
+                    if cid:
+                        try:
+                            self.dtc.cancel_order(cid, trade_account=self.trade_account)
+                        except Exception as e:
+                            print(f"  warn cancel {cid}: {e}")
+
+                # SEULEMENT pour TIMEOUT : broker n'a rien fill, on force close market
+                if outcome == "TIMEOUT":
+                    try:
+                        contract = DTC_INSTRUMENTS[symbol].contract
+                        reverse_side = DTC_SELL if pos["direction"] == "LONG" else DTC_BUY
+                        close_id, _, _ = self.dtc.send_market_order(
+                            symbol=contract,
+                            side=reverse_side,
+                            quantity=pos.get("n_micros", 3),
+                            sl_price=0, tp_price=0,
+                            trade_account=self.trade_account,
+                        )
+                        print(f"  >>> DTC CLOSE TIMEOUT {symbol} market cid={close_id}")
+                        if not close_id and _v2log:
+                            try:
+                                _v2log.emit("ORDER_REJECT",
+                                            sym=symbol, reason="timeout_close_market_fail")
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        print(f"  !!! DTC TIMEOUT close FAIL {symbol}: {e}")
+                else:
+                    # TP/SL declenche par simu : on fait confiance au broker.
+                    # Log descriptif pour traceabilite analyse desync ex-post.
+                    print(f"  >>> DTC {outcome} simu-triggered {symbol}, brackets canceled, trust broker fill via on_fill")
+            except Exception as e:
+                print(f"  !!! DTC cleanup FAIL {symbol}: {e}")
+
         now = datetime.now(timezone.utc)
 
         if pos["direction"] == "LONG":
@@ -812,6 +1087,14 @@ class PaperTrader:
             except KeyboardInterrupt:
                 print("\nArret du paper trader.")
                 self._print_stats()
+                # Shutdown gracieux DTC (ne flatte PAS les positions Sim3 --
+                # Jackson veut les garder visibles pour review visuelle)
+                if self.dtc is not None:
+                    try:
+                        self.dtc.disconnect()
+                        print("  DTC disconnected (positions Sim3 preservees)")
+                    except Exception as e:
+                        print(f"  warn DTC disconnect: {e}")
                 break
             except Exception as e:
                 # Fix B5 (code-reviewer 22/04) : cascade protection VPS 24/7
