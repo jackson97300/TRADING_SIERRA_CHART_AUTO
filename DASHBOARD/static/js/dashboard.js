@@ -765,6 +765,7 @@
                 updateSignalFeed();
                 updateChartBar();
                 injectEduIcons();
+                fetchPaperTrades();
                 // Reset caches avec TTL
                 if (Date.now() - ctaLastLoad > 300000) { ctaLoaded = false; }
                 if (Date.now() - vpLastLoad > 60000) { vpLoaded = false; }
@@ -851,6 +852,9 @@
                 break;
             case "alerts":
                 renderAlerts();
+                break;
+            case "paper":
+                renderPaperPage();
                 break;
         }
     }
@@ -3670,9 +3674,276 @@
         $("perf-rejections").innerHTML = rHtml;
     }
 
-    // ════��═════════════════════════════════════════════════════��════
+    // ═══════════════════════════════════════════════════════════════
+    // PAGE: PAPER TRADING (bridge mia_paper_trader.py via /api/paper_trades)
+    // ═══════════════════════════════════════════════════════════════
+
+    var paperData = null;
+    var paperFetchErrors = 0;
+
+    // Fix B1 (code-reviewer 22/04) : backend ecrit "LONG"/"SHORT" (string),
+    // frontend historiquement teste === 1. Helper accepte les 2 formats.
+    function _isLong(d) { return d === 1 || d === "LONG"; }
+    function _isShort(d) { return d === -1 || d === "SHORT"; }
+
+    function fetchPaperTrades() {
+        fetchWithAuth(API_BASE + "/api/paper_trades", { method: "GET" })
+            .then(function (r) {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.json();
+            })
+            .then(function (d) {
+                paperFetchErrors = 0;
+                paperData = d;
+                renderPaperBadge();
+                if (currentPage === "paper") renderPaperPage();
+            })
+            .catch(function (err) {
+                paperFetchErrors++;
+                if (paperFetchErrors < 5) console.warn("Paper fetch error:", err);
+            });
+    }
+
+    function _paperStatBox(label, value, sub, color) {
+        color = color || 'var(--text-primary)';
+        return '<div style="border:1px solid var(--border);border-radius:6px;padding:10px;text-align:center;background:rgba(255,255,255,0.02);">' +
+            '<div style="color:var(--text-secondary);font-size:0.75rem;">' + label + '</div>' +
+            '<div style="font-size:1.25rem;font-weight:700;color:' + color + ';margin-top:3px;">' + value + '</div>' +
+            (sub ? '<div style="font-size:0.7rem;color:var(--text-disabled);margin-top:2px;">' + sub + '</div>' : '') +
+            '</div>';
+    }
+
+    function _renderPaperStatsPeriod(el, stats) {
+        if (!el) return;
+        if (!stats || stats.trades === 0) {
+            el.innerHTML = '<div style="color:var(--text-disabled);font-size:0.8125rem;padding:8px;">Pas de donnees historiques</div>';
+            return;
+        }
+        var pnl = stats.pnl_usd || 0;
+        var pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+        var html = '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;font-size:0.8125rem;">' +
+            '<div>Trades : <strong>' + (stats.trades || 0) + '</strong></div>' +
+            '<div>WR : <strong>' + (stats.wr || 0) + '%</strong></div>' +
+            '<div>PF : <strong>' + (stats.pf !== null && stats.pf !== undefined ? stats.pf : '—') + '</strong></div>' +
+            '<div>PnL : <strong style="color:' + pnlColor + ';">' + (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2) + '</strong></div>' +
+            '</div>';
+        if (stats.by_symbol) {
+            html += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-size:0.75rem;">';
+            ['ES', 'NQ'].forEach(function (sym) {
+                var s = stats.by_symbol[sym] || {};
+                var p = s.pnl_usd || 0;
+                var c = p >= 0 ? 'var(--green)' : 'var(--red)';
+                html += '<div style="display:flex;justify-content:space-between;margin-top:4px;">' +
+                    '<span>' + sym + ' : ' + (s.trades || 0) + ' · ' + (s.wr || 0) + '% · PF ' + (s.pf !== null && s.pf !== undefined ? s.pf : '—') + '</span>' +
+                    '<span style="color:' + c + ';font-weight:700;">' + (p >= 0 ? '+$' : '-$') + Math.abs(p).toFixed(2) + '</span>' +
+                    '</div>';
+            });
+            html += '</div>';
+        }
+        el.innerHTML = html;
+    }
+
+    function renderPaperBadge() {
+        var nav = $("paper-nav-badge");
+        var badge = $("paper-trade-badge");
+        if (!paperData) return;
+
+        var state = paperData.state || {};
+        var openBySymbol = state.open_by_symbol || {};
+        var openKeys = Object.keys(openBySymbol);
+        var hasOpen = openKeys.length > 0;
+        var statsToday = state.stats_today || {};
+        var pnlToday = statsToday.pnl_usd || 0;
+        var tradesToday = statsToday.trades || 0;
+
+        // Badge nav sidebar
+        if (nav) {
+            if (hasOpen) {
+                nav.style.display = 'inline-block';
+                nav.style.background = 'var(--green)';
+                nav.style.color = '#000';
+                nav.textContent = openKeys.length + ' OPEN';
+            } else if (tradesToday > 0) {
+                nav.style.display = 'inline-block';
+                nav.style.background = pnlToday >= 0 ? 'rgba(0,200,83,0.15)' : 'rgba(255,82,82,0.15)';
+                nav.style.color = pnlToday >= 0 ? 'var(--green)' : 'var(--red)';
+                nav.textContent = (pnlToday >= 0 ? '+$' : '-$') + Math.abs(Math.round(pnlToday));
+            } else {
+                nav.style.display = 'none';
+            }
+        }
+
+        // Badge Conseil Global
+        if (badge) {
+            if (hasOpen) {
+                var sym = openKeys[0];
+                var pos = openBySymbol[sym];
+                var unrealized = (pos.unrealized_pnl_usd !== undefined && pos.unrealized_pnl_usd !== null) ? pos.unrealized_pnl_usd : 0;
+                var positive = unrealized >= 0;
+                var dir = _isLong(pos.direction) ? 'BUY' : 'SELL';
+                badge.style.display = 'inline-block';
+                badge.style.background = positive ? 'rgba(0,200,83,0.2)' : 'rgba(255,82,82,0.2)';
+                badge.style.color = positive ? 'var(--green)' : 'var(--red)';
+                badge.style.border = '1px solid ' + (positive ? 'var(--green)' : 'var(--red)');
+                badge.textContent = (positive ? '🟢 ' : '🔴 ') + sym + ' ' + dir + ' ' + (positive ? '+$' : '-$') + Math.abs(unrealized).toFixed(0);
+            } else if (tradesToday > 0) {
+                var positiveT = pnlToday >= 0;
+                badge.style.display = 'inline-block';
+                badge.style.background = positiveT ? 'rgba(0,200,83,0.15)' : 'rgba(255,82,82,0.15)';
+                badge.style.color = positiveT ? 'var(--green)' : 'var(--red)';
+                badge.style.border = '1px solid ' + (positiveT ? 'var(--green)' : 'var(--red)');
+                badge.textContent = '📊 ' + tradesToday + ' trades · ' + (positiveT ? '+$' : '-$') + Math.abs(pnlToday).toFixed(0);
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+    }
+
+    function renderPaperPage() {
+        if (!paperData) return;
+        var state = paperData.state || {};
+
+        // ── Statut trader
+        var statusEl = $("paper-trader-status");
+        if (statusEl) {
+            var alive = paperData.paper_trader_alive;
+            var age = paperData.state_age_sec;
+            if (alive) {
+                statusEl.innerHTML = '<span style="color:var(--green);">● Trader actif</span>' +
+                    (age !== null && age !== undefined ? ' · maj il y a ' + Math.round(age) + 's' : '');
+            } else if (age !== null && age !== undefined) {
+                statusEl.innerHTML = '<span style="color:var(--red);">● Trader DOWN</span> · derniere maj il y a ' + Math.round(age) + 's';
+            } else {
+                statusEl.innerHTML = '<span style="color:var(--text-disabled);">Aucune donnee (trader jamais demarre)</span>';
+            }
+        }
+
+        // ── Positions ouvertes
+        var openEl = $("paper-open-positions");
+        var openBySymbol = state.open_by_symbol || {};
+        var openKeys = Object.keys(openBySymbol);
+        if (openEl) {
+            if (openKeys.length === 0) {
+                openEl.innerHTML = '<div style="color:var(--text-disabled);grid-column:1/-1;padding:16px;text-align:center;">Aucune position ouverte</div>';
+            } else {
+                var html = '';
+                openKeys.forEach(function (sym) {
+                    var p = openBySymbol[sym];
+                    var dir = _isLong(p.direction) ? 'BUY' : 'SELL';
+                    var dirColor = _isLong(p.direction) ? 'var(--green)' : 'var(--red)';
+                    var unrealized = (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null) ? p.unrealized_pnl_usd : 0;
+                    var upnlColor = unrealized >= 0 ? 'var(--green)' : 'var(--red)';
+                    html += '<div style="border:1px solid ' + dirColor + ';border-radius:8px;padding:12px;background:rgba(255,255,255,0.02);">' +
+                        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+                        '<span style="font-weight:800;font-size:1rem;color:' + dirColor + ';">' + sym + ' ' + dir + '</span>' +
+                        '<span style="color:' + upnlColor + ';font-weight:700;font-size:1.1rem;">' + (unrealized >= 0 ? '+$' : '-$') + Math.abs(unrealized).toFixed(2) + '</span>' +
+                        '</div>' +
+                        '<div style="font-size:0.8125rem;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;">' +
+                        '<div>Entry : <strong>' + fmtPrice(p.entry_price) + '</strong></div>' +
+                        '<div>Taille : <strong>' + (p.n_micros || 3) + ' micros</strong></div>' +
+                        '<div>SL : <strong style="color:var(--red);">' + fmtPrice(p.sl_price) + '</strong>' + (p.sl_ticks ? ' (' + p.sl_ticks + 't)' : '') + '</div>' +
+                        '<div>TP : <strong style="color:var(--green);">' + fmtPrice(p.tp_price) + '</strong>' + (p.tp_ticks ? ' (' + p.tp_ticks + 't)' : '') + '</div>' +
+                        (p.sl_wall ? '<div style="grid-column:1/-1;color:var(--text-secondary);">Wall SL : <strong>' + p.sl_wall + '</strong>' + (p.sl_tier ? ' (' + p.sl_tier + ')' : '') + '</div>' : '') +
+                        (p.rr_ratio ? '<div style="grid-column:1/-1;color:var(--text-secondary);">R:R : <strong>' + p.rr_ratio.toFixed(2) + '</strong>' + (p.expected_payoff_usd !== undefined ? ' · E[$] : <strong>$' + p.expected_payoff_usd.toFixed(2) + '</strong>' : '') + '</div>' : '') +
+                        (p.entry_time ? '<div style="grid-column:1/-1;color:var(--text-disabled);font-size:0.75rem;margin-top:4px;">Ouvert : ' + p.entry_time + '</div>' : '') +
+                        '</div>' +
+                        '</div>';
+                });
+                openEl.innerHTML = html;
+            }
+        }
+
+        // ── Stats today
+        var statsEl = $("paper-stats-today");
+        if (statsEl) {
+            var st = state.stats_today || {};
+            var pnl = st.pnl_usd || 0;
+            var pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+            statsEl.innerHTML =
+                _paperStatBox('Trades', st.trades || 0, (state.trade_count_today || 0) + ' / ' + (state.max_trades_per_day || 10)) +
+                _paperStatBox('Win Rate', (st.wr || 0) + '%', (st.wins || 0) + 'W / ' + (st.losses || 0) + 'L') +
+                _paperStatBox('Profit Factor', (st.pf !== null && st.pf !== undefined) ? st.pf : '—', '') +
+                _paperStatBox('PnL', (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2), (st.pnl_ticks || 0) + ' ticks', pnlColor);
+        }
+
+        // ── Closed today
+        var closedEl = $("paper-closed-today");
+        var closedToday = state.closed_today || [];
+        if (closedEl) {
+            if (closedToday.length === 0) {
+                closedEl.innerHTML = '<div style="color:var(--text-disabled);padding:8px;">Aucun trade ferme aujourd\'hui</div>';
+            } else {
+                var html = '<table style="width:100%;font-size:0.8125rem;border-collapse:collapse;">' +
+                    '<thead><tr style="color:var(--text-secondary);border-bottom:1px solid var(--border);">' +
+                    '<th style="text-align:left;padding:6px 4px;">Heure</th><th>Sym</th><th>Dir</th><th>Entry</th><th>Exit</th><th>Exit</th><th>Ticks</th><th>PnL</th><th>Duree</th>' +
+                    '</tr></thead><tbody>';
+                closedToday.slice().reverse().forEach(function (t) {
+                    var dirTxt = _isLong(t.direction) ? 'BUY' : 'SELL';
+                    var dirColor = _isLong(t.direction) ? 'var(--green)' : 'var(--red)';
+                    var pnl = t.pnl_usd || 0;
+                    var pnlC = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                    var reason = t.exit_reason || '?';
+                    var reasonColor = reason === 'TP' ? 'var(--green)' : (reason === 'SL' ? 'var(--red)' : 'var(--text-secondary)');
+                    var exitTime = t.exit_time ? (t.exit_time.substring(11, 19)) : '?';
+                    html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">' +
+                        '<td style="padding:5px 4px;color:var(--text-disabled);">' + exitTime + '</td>' +
+                        '<td style="text-align:center;font-weight:700;">' + t.symbol + '</td>' +
+                        '<td style="text-align:center;color:' + dirColor + ';">' + dirTxt + '</td>' +
+                        '<td style="text-align:center;">' + fmtPrice(t.entry_price) + '</td>' +
+                        '<td style="text-align:center;">' + fmtPrice(t.exit_price) + '</td>' +
+                        '<td style="text-align:center;color:' + reasonColor + ';font-weight:700;">' + reason + '</td>' +
+                        '<td style="text-align:center;">' + (t.pnl_ticks || 0) + '</td>' +
+                        '<td style="text-align:center;color:' + pnlC + ';font-weight:700;">' + (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2) + '</td>' +
+                        '<td style="text-align:center;color:var(--text-disabled);">' + (t.duration_sec ? Math.round(t.duration_sec / 60) + 'min' : '?') + '</td>' +
+                        '</tr>';
+                });
+                html += '</tbody></table>';
+                closedEl.innerHTML = html;
+            }
+        }
+
+        // ── Stats 7d / 30d
+        _renderPaperStatsPeriod($("paper-stats-7d"), paperData.stats_7d);
+        _renderPaperStatsPeriod($("paper-stats-30d"), paperData.stats_30d);
+
+        // ── Protections (cooldown / circuit breaker)
+        var protEl = $("paper-protections");
+        if (protEl) {
+            var cooldown = state.cooldown_status || {};
+            var count = state.trade_count_today || 0;
+            var maxTrades = state.max_trades_per_day || 10;
+            var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">';
+            html += '<div style="padding:8px;border:1px solid var(--border);border-radius:6px;">' +
+                '<div style="color:var(--text-secondary);font-size:0.75rem;">Trades du jour</div>' +
+                '<div style="font-size:1.125rem;font-weight:700;margin-top:3px;">' + count + ' / ' + maxTrades + '</div>' +
+                (count >= maxTrades ? '<div style="color:var(--red);font-size:0.75rem;margin-top:2px;">Max atteint</div>' : '') +
+                '</div>';
+            ['ES', 'NQ'].forEach(function (sym) {
+                var cs = cooldown[sym] || {};
+                var cd = cs.cooldown_remaining_sec || 0;
+                var cb = cs.circuit_breaker_remaining_sec || 0;
+                var losses = cs.consec_losses || 0;
+                html += '<div style="padding:8px;border:1px solid var(--border);border-radius:6px;">' +
+                    '<div style="color:var(--text-secondary);font-size:0.75rem;">' + sym + '</div>';
+                if (cb > 0) {
+                    html += '<div style="color:var(--red);font-weight:700;margin-top:3px;">⛔ Circuit ' + Math.round(cb / 60) + ' min</div>' +
+                        '<div style="font-size:0.75rem;color:var(--text-disabled);">' + losses + ' pertes consec.</div>';
+                } else if (cd > 0) {
+                    html += '<div style="color:#ff9800;font-weight:700;margin-top:3px;">⏳ Cooldown ' + Math.round(cd / 60) + ' min</div>';
+                } else {
+                    html += '<div style="color:var(--green);margin-top:3px;">✓ Pret</div>' +
+                        (losses > 0 ? '<div style="font-size:0.75rem;color:var(--text-disabled);">' + losses + ' pertes consec.</div>' : '');
+                }
+                html += '</div>';
+            });
+            html += '</div>';
+            protEl.innerHTML = html;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // PAGE: ALERTES
-    // ══════════════���═════════════════════════════���══════════════════
+    // ═══════════════════════════════════════════════════════════════
 
     function renderAlerts() {
         if (!data) return;
@@ -3814,6 +4085,127 @@
         });
         cHtml += '</div>';
         $("alerts-conditions").innerHTML = cHtml;
+
+        // ── Signaux recents (reuse signalFeedHistory populated by updateSignalFeed)
+        var feedEl = $("alerts-signals-feed");
+        if (feedEl) {
+            if (!signalFeedHistory || signalFeedHistory.length === 0) {
+                feedEl.innerHTML = '<div style="color:var(--text-disabled);padding:10px;text-align:center;">Aucun signal recent</div>';
+            } else {
+                var fHtml = '<div style="max-height:380px;overflow-y:auto;">';
+                signalFeedHistory.slice(0, 20).forEach(function (s) {
+                    fHtml += '<div style="display:flex;gap:10px;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,0.04);align-items:flex-start;">' +
+                        '<span style="color:var(--text-disabled);font-size:0.7rem;min-width:38px;font-family:monospace;">' + (s.time || '--') + '</span>' +
+                        '<span style="color:' + (s.color || 'var(--text-primary)') + ';font-weight:700;min-width:16px;text-align:center;">' + (s.icon || '') + '</span>' +
+                        '<div style="flex:1;font-size:0.8125rem;">' +
+                        '<div style="color:' + (s.color || 'var(--text-primary)') + ';font-weight:600;">' + (s.text || '') + '</div>' +
+                        (s.freshness ? '<div style="font-size:0.7rem;color:var(--text-disabled);margin-top:1px;">' + s.freshness + '</div>' : '') +
+                        '</div>' +
+                        '</div>';
+                });
+                fHtml += '</div>';
+                feedEl.innerHTML = fHtml;
+            }
+        }
+
+        // ── Paper Events (ouvertures + fermetures du jour + protections actives)
+        var peEl = $("alerts-paper-events");
+        var peSummary = $("alerts-paper-summary");
+        if (peEl) {
+            if (!paperData || !paperData.state) {
+                peEl.innerHTML = '<div style="color:var(--text-disabled);padding:10px;text-align:center;">Paper trader non demarre</div>';
+                if (peSummary) peSummary.textContent = '';
+            } else {
+                var pState = paperData.state;
+                var openSyms = Object.keys(pState.open_by_symbol || {});
+                var closed = pState.closed_today || [];
+                var events = [];
+
+                // Event : positions ouvertes actives
+                openSyms.forEach(function (sym) {
+                    var p = pState.open_by_symbol[sym];
+                    var dir = _isLong(p.direction) ? 'BUY' : 'SELL';
+                    var color = _isLong(p.direction) ? 'var(--green)' : 'var(--red)';
+                    var upnl = (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null) ? p.unrealized_pnl_usd : 0;
+                    var timeStr = p.entry_time ? p.entry_time.substring(11, 19) : '--';
+                    events.push({
+                        ts: p.entry_ts || 0,
+                        time: timeStr,
+                        icon: '►',
+                        color: color,
+                        text: 'OUVERT ' + sym + ' ' + dir + ' @ ' + fmtPrice(p.entry_price),
+                        sub: 'SL ' + fmtPrice(p.sl_price) + ' · TP ' + fmtPrice(p.tp_price) + ' · unrealized ' + (upnl >= 0 ? '+$' : '-$') + Math.abs(upnl).toFixed(2),
+                        status: 'EN COURS',
+                        statusColor: color,
+                    });
+                });
+
+                // Event : trades fermes du jour
+                closed.forEach(function (t) {
+                    var dir = _isLong(t.direction) ? 'BUY' : 'SELL';
+                    var pnl = t.pnl_usd || 0;
+                    var pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                    var reason = t.exit_reason || '?';
+                    var reasonColor = reason === 'TP' ? 'var(--green)' : (reason === 'SL' ? 'var(--red)' : 'var(--text-secondary)');
+                    var timeStr = t.exit_time ? t.exit_time.substring(11, 19) : '--';
+                    events.push({
+                        ts: t.exit_ts || 0,
+                        time: timeStr,
+                        icon: reason === 'TP' ? '✓' : (reason === 'SL' ? '✗' : '●'),
+                        color: pnlColor,
+                        text: 'FERME ' + t.symbol + ' ' + dir + ' · ' + reason,
+                        sub: 'Entry ' + fmtPrice(t.entry_price) + ' → Exit ' + fmtPrice(t.exit_price) + ' · ' + (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2) + ' (' + (t.pnl_ticks || 0) + 't)',
+                        status: reason,
+                        statusColor: reasonColor,
+                    });
+                });
+
+                // Tri anti-chronologique
+                events.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+
+                var eHtml = '<div style="max-height:380px;overflow-y:auto;">';
+                if (events.length === 0) {
+                    eHtml = '<div style="color:var(--text-disabled);padding:10px;text-align:center;">Aucune activite aujourd\'hui</div>';
+                } else {
+                    events.forEach(function (e) {
+                        eHtml += '<div style="padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.04);">' +
+                            '<div style="display:flex;gap:10px;align-items:baseline;">' +
+                            '<span style="color:var(--text-disabled);font-size:0.7rem;min-width:55px;font-family:monospace;">' + e.time + '</span>' +
+                            '<span style="color:' + e.color + ';font-weight:800;min-width:16px;text-align:center;">' + e.icon + '</span>' +
+                            '<span style="flex:1;color:' + e.color + ';font-size:0.8125rem;font-weight:600;">' + e.text + '</span>' +
+                            '<span style="font-size:0.65rem;padding:1px 6px;border-radius:3px;background:rgba(255,255,255,0.05);color:' + e.statusColor + ';font-weight:700;">' + e.status + '</span>' +
+                            '</div>' +
+                            '<div style="font-size:0.7rem;color:var(--text-disabled);margin-left:81px;margin-top:2px;">' + e.sub + '</div>' +
+                            '</div>';
+                    });
+                }
+
+                // Protections actives en bas (cooldown/circuit breaker)
+                var cooldown = pState.cooldown_status || {};
+                var protMsgs = [];
+                ['ES', 'NQ'].forEach(function (sym) {
+                    var cs = cooldown[sym] || {};
+                    var cb = cs.circuit_breaker_remaining_sec || 0;
+                    var cd = cs.cooldown_remaining_sec || 0;
+                    if (cb > 0) protMsgs.push('<span style="color:var(--red);font-weight:700;">⛔ ' + sym + ' Circuit ' + Math.round(cb / 60) + ' min</span>');
+                    else if (cd > 0) protMsgs.push('<span style="color:#ff9800;font-weight:700;">⏳ ' + sym + ' Cooldown ' + Math.round(cd / 60) + ' min</span>');
+                });
+                if (protMsgs.length > 0) {
+                    eHtml += '<div style="margin-top:10px;padding:8px;background:rgba(255,255,255,0.03);border-radius:4px;font-size:0.8125rem;display:flex;gap:12px;flex-wrap:wrap;">' + protMsgs.join(' · ') + '</div>';
+                }
+                eHtml += '</div>';
+                peEl.innerHTML = eHtml;
+
+                if (peSummary) {
+                    var st = pState.stats_today || {};
+                    var pnl = st.pnl_usd || 0;
+                    var pnlC = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                    peSummary.innerHTML = (st.trades || 0) + ' trades · ' +
+                        (openSyms.length > 0 ? '<span style="color:var(--cyan);">' + openSyms.length + ' open</span> · ' : '') +
+                        '<span style="color:' + pnlC + ';font-weight:700;">' + (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(0) + '</span>';
+                }
+            }
+        }
 
         // Badge compteur sidebar
         var badge = $("alerts-badge");

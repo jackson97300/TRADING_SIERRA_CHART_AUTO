@@ -133,12 +133,42 @@ class PaperTrader:
             except OSError:
                 pass
 
-        # v2 (review R5) : reset consec_losses si changement de date
-        # (si on relance a J+1, les SL de J ne comptent pas)
+    def _rotate_day_if_needed(self):
+        """Fix B4 (code-reviewer 22/04) : rollover quotidien pour bot VPS 24/7.
+
+        Si UTC date change depuis init, reset tout ce qui est quotidien :
+          - trade_count_today, today_trades (nouveau fichier log)
+          - consec_losses, circuit_pause_until (fresh start)
+          - traded_signal_ids (nouveau fichier dedup)
+          - log_file, snapshot_file, _traded_signals_file paths
+
+        Appele en tete de boucle `run()` avant toute autre logique.
+        """
         current_date = datetime.now(timezone.utc).strftime("%Y%m%d")
-        if current_date != self.date_str:
-            self._consec_losses = {"ES": 0, "NQ": 0}
-            self._circuit_pause_until = {}
+        if current_date == self.date_str:
+            return
+        prev_date = self.date_str
+        print(f"  === ROLLOVER DATE {prev_date} -> {current_date} ===")
+        # Reset quotidien
+        self.today_trades = []
+        self.trade_count = 0
+        self.date_str = current_date
+        self.log_file = os.path.join(DATA_DIR, f"{self.date_str}_trades.jsonl")
+        self.snapshot_file = os.path.join(DATA_DIR, f"{self.date_str}_snapshots.jsonl")
+        self._traded_signals_file = os.path.join(DATA_DIR, f"{self.date_str}_traded_signals.txt")
+        self._traded_signal_ids = set()
+        # Fix mineur #2 (code-reviewer 22/04) : ne PAS reset _last_close_ts ni
+        # _circuit_pause_until — ce sont des timestamps absolus, le cooldown
+        # expire naturellement sans devoir traverser la frontiere UTC. Seul
+        # _consec_losses doit etre reset (compteur quotidien non-persistant).
+        self._consec_losses = {"ES": 0, "NQ": 0}
+        # NE PAS toucher aux positions ouvertes (overnight possible) — on flatten eventuel EOD ailleurs
+        if _v2log:
+            try:
+                _v2log.emit("SESSION_OPEN", component="paper_trader",
+                            prev_date=prev_date, new_date=current_date)
+            except Exception:
+                pass
 
     def check_entry(self, data, symbol):
         """Verifie si les conditions d'entree sont remplies (v2 22/04).
@@ -529,20 +559,29 @@ class PaperTrader:
         n_mic = pos.get("n_micros", 3)
         pnl_usd = round(pnl_ticks * tv * n_mic, 2)
 
+        entry_ts_val = pos.get("entry_ts", 0) or now.timestamp()
+        exit_ts_val = now.timestamp()
+        duration_sec = round(max(0.0, exit_ts_val - entry_ts_val), 1)
         trade = {
             "trade_id": f"{self.date_str}_{len(self.today_trades) + 1}",
             "symbol": symbol,
             "direction": pos["direction"],
             "entry_price": pos["entry_price"],
             "entry_time": pos["entry_time"],
+            "entry_ts": entry_ts_val,
             "exit_price": exit_price,
             "exit_time": now.isoformat(),
+            "exit_ts": exit_ts_val,
+            # Fix B2 (code-reviewer 22/04) : expose `exit_reason` pour frontend legacy,
+            # en plus de `outcome` (mot historique backend)
             "outcome": outcome,
+            "exit_reason": outcome,
             "pnl_ticks": pnl_ticks,
             "pnl_usd": pnl_usd,
             "mae": pos["mae"],
             "mfe": pos["mfe"],
             "bars_held": pos["bars_held"],
+            "duration_sec": duration_sec,       # Fix B3 : frontend timer
             # v2 enrichissement
             "sl_wall": pos.get("sl_wall", ""),
             "sl_tier": pos.get("sl_tier", 0),
@@ -550,7 +589,6 @@ class PaperTrader:
             "rr_ratio": pos.get("rr_ratio", 0.0),
             "n_micros": n_mic,
             "signal_id": pos.get("signal_id"),
-            "duration_min": round(pos["bars_held"], 1),  # 1 bar = 1 min
         }
 
         self.today_trades.append(trade)
@@ -579,7 +617,10 @@ class PaperTrader:
                 self._circuit_pause_until[symbol] = time.time() + ENTRY_RULES["circuit_breaker_pause_sec"]
                 print(f"  !!! CIRCUIT BREAKER {symbol} : 3 SL consec → pause 60 min")
                 if _v2log:
-                    _v2log.emit("VOLATILITY_SPIKE", ratio=999, limit=3)  # generic critique
+                    _v2log.emit("CIRCUIT_BREAKER_TRIP",
+                                sym=symbol,
+                                consec_losses=ENTRY_RULES["circuit_breaker_losses"],
+                                pause_min=ENTRY_RULES["circuit_breaker_pause_sec"] // 60)
                 self._consec_losses[symbol] = 0  # reset
         else:
             self._consec_losses[symbol] = 0  # win = reset
@@ -705,8 +746,14 @@ class PaperTrader:
         print(f"Poll: {POLL_INTERVAL}s")
         print("-" * 60)
 
+        self._last_status_minute = -1  # Fix R7 : anti-spam prints
+        consec_errors = 0
+
         while True:
             try:
+                # Fix B4 (code-reviewer 22/04) : rollover date UTC si bot tourne > 24h
+                self._rotate_day_if_needed()
+
                 data = get_dashboard()
                 if not data:
                     time.sleep(POLL_INTERVAL)
@@ -726,21 +773,47 @@ class PaperTrader:
                 # Write state.json pour dashboard (chaque tick, live PnL unrealized)
                 self._write_state()
 
-                # Status toutes les 5 min
+                # Status toutes les 5 min (anti-spam via _last_status_minute)
                 minute = datetime.now(timezone.utc).minute
-                if minute % 5 == 0:
+                if minute % 5 == 0 and minute != self._last_status_minute:
+                    self._last_status_minute = minute
                     wins = sum(1 for t in self.today_trades if t["pnl_ticks"] > 0)
                     losses = sum(1 for t in self.today_trades if t["pnl_ticks"] <= 0)
                     total_pnl = sum(t["pnl_ticks"] for t in self.today_trades)
                     open_pos = ", ".join(f"{s} {p['direction']}" for s, p in self.positions.items()) or "aucune"
                     print(f"  [{now}] Trades: {len(self.today_trades)} ({wins}W/{losses}L) PnL: {total_pnl:+.1f}t | Positions: {open_pos}")
 
+                consec_errors = 0  # reset sur tick OK
                 time.sleep(POLL_INTERVAL)
 
             except KeyboardInterrupt:
                 print("\nArret du paper trader.")
                 self._print_stats()
                 break
+            except Exception as e:
+                # Fix B5 (code-reviewer 22/04) : cascade protection VPS 24/7
+                consec_errors += 1
+                import traceback
+                print(f"  !!! ERREUR paper_trader (#{consec_errors}) : {type(e).__name__}: {e}")
+                print(traceback.format_exc())
+                if _v2log:
+                    try:
+                        _v2log.emit("GENERIC_MAJEUR",
+                                    component="paper_trader",
+                                    error_type=type(e).__name__,
+                                    error_msg=str(e)[:200],
+                                    consec=consec_errors)
+                    except Exception:
+                        pass
+                if consec_errors >= 10:
+                    print(f"  !!! 10 erreurs consecutives — arret paper_trader (watchdog nssm relance)")
+                    if _v2log:
+                        try:
+                            _v2log.emit("BOT_CRASH", component="paper_trader", consec=consec_errors)
+                        except Exception:
+                            pass
+                    raise
+                time.sleep(POLL_INTERVAL)
 
     def _print_stats(self):
         """Affiche les stats de la session."""
@@ -748,9 +821,11 @@ class PaperTrader:
             print("Aucun trade aujourd'hui.")
             return
 
-        wins = [t for t in self.today_trades if t["outcome"] == "TP"]
-        losses = [t for t in self.today_trades if t["outcome"] == "SL"]
-        timeouts = [t for t in self.today_trades if t["outcome"] == "TIMEOUT"]
+        # Fix mineur #3 (code-reviewer 22/04) : tolerance trades legacy sans `outcome`
+        def _oc(t): return t.get("outcome") or t.get("exit_reason") or "?"
+        wins = [t for t in self.today_trades if _oc(t) == "TP"]
+        losses = [t for t in self.today_trades if _oc(t) == "SL"]
+        timeouts = [t for t in self.today_trades if _oc(t) == "TIMEOUT"]
         total_pnl = sum(t["pnl_ticks"] for t in self.today_trades)
         win_pnl = sum(t["pnl_ticks"] for t in wins)
         loss_pnl = sum(abs(t["pnl_ticks"]) for t in losses)
@@ -776,7 +851,7 @@ class PaperTrader:
         for sym in ("ES", "NQ"):
             subset = [t for t in self.today_trades if t["symbol"] == sym]
             if subset:
-                w = sum(1 for t in subset if t["outcome"] == "TP")
+                w = sum(1 for t in subset if _oc(t) == "TP")
                 pnl = sum(t["pnl_ticks"] for t in subset)
                 print(f"  {sym}: {len(subset)} trades, WR={w/len(subset)*100:.0f}%, PnL={pnl:+.1f}t")
 
@@ -807,8 +882,10 @@ def show_stats(symbol=None):
         print(f"Aucun trade{' pour ' + symbol if symbol else ''}.")
         return
 
-    wins = [t for t in all_trades if t["outcome"] == "TP"]
-    losses = [t for t in all_trades if t["outcome"] == "SL"]
+    # Fix mineur #3 (code-reviewer 22/04) : tolerance trades legacy
+    def _oc(t): return t.get("outcome") or t.get("exit_reason") or "?"
+    wins = [t for t in all_trades if _oc(t) == "TP"]
+    losses = [t for t in all_trades if _oc(t) == "SL"]
     total_pnl = sum(t["pnl_ticks"] for t in all_trades)
     win_pnl = sum(t["pnl_ticks"] for t in wins)
     loss_pnl = sum(abs(t["pnl_ticks"]) for t in losses)

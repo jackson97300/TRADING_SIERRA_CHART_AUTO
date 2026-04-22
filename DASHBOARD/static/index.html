@@ -103,6 +103,10 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                         Alertes <span id="alerts-badge" class="badge badge-red" style="font-size:0.6rem;padding:1px 5px;display:none;">0</span>
                     </a></li>
+                    <li><a data-page="paper" data-tier-min="1">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></svg>
+                        Paper Trading <span id="paper-nav-badge" style="font-size:0.65rem;padding:1px 6px;display:none;margin-left:4px;border-radius:4px;"></span>
+                    </a></li>
                 </ul>
             </div>
 
@@ -392,7 +396,10 @@
                         <div id="confluence-zones"></div>
                     </div>
                     <div class="card" id="global-card" style="border-color:rgba(212,175,55,0.2);">
-                        <div class="card-title" style="color:var(--gold);">Conseil Global</div>
+                        <div class="card-title" style="color:var(--gold);display:flex;justify-content:space-between;align-items:center;">
+                            <span>Conseil Global</span>
+                            <span id="paper-trade-badge" onclick="document.querySelector('[data-page=paper]').click()" style="display:none;cursor:pointer;font-size:0.75rem;padding:3px 10px;border-radius:6px;font-weight:700;"></span>
+                        </div>
                         <div id="global-verdict" style="text-align:center;padding:12px 0;">
                             <div id="global-action" style="font-size:2rem;font-weight:800;">--</div>
                             <div id="global-reason" style="font-size:0.8125rem;color:var(--text-secondary);margin-top:6px;"></div>
@@ -886,6 +893,66 @@
                     <div class="card-title">Conditions de Marche</div>
                     <div id="alerts-conditions"></div>
                 </div>
+
+                <div class="grid-2" style="gap:12px;">
+                    <div class="card" style="border-color:rgba(0,200,83,0.15);">
+                        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="color:var(--green);">Signaux recents</span>
+                            <span style="font-size:0.7rem;color:var(--text-disabled);">Last 20</span>
+                        </div>
+                        <div id="alerts-signals-feed"></div>
+                    </div>
+                    <div class="card" style="border-color:rgba(0,176,255,0.15);">
+                        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+                            <span style="color:var(--cyan);">Paper Events</span>
+                            <span id="alerts-paper-summary" style="font-size:0.7rem;color:var(--text-disabled);"></span>
+                        </div>
+                        <div id="alerts-paper-events"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page Paper Trading (v2 22/04) -->
+            <div class="page-content hidden" id="page-paper">
+                <div class="page-title">Paper Trading <span class="badge badge-cyan">LIVE</span>
+                    <span id="paper-trader-status" style="font-size:0.75rem;margin-left:12px;color:var(--text-secondary);"></span>
+                </div>
+
+                <!-- Trades en cours -->
+                <div class="card">
+                    <div class="card-title">Trades en cours</div>
+                    <div id="paper-open-positions" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:12px;"></div>
+                </div>
+
+                <!-- Stats Today -->
+                <div class="card">
+                    <div class="card-title">Stats aujourd'hui</div>
+                    <div id="paper-stats-today" class="grid-4" style="gap:12px;"></div>
+                </div>
+
+                <!-- Fermés aujourd'hui -->
+                <div class="card">
+                    <div class="card-title">Fermes aujourd'hui</div>
+                    <div id="paper-closed-today"></div>
+                </div>
+
+                <!-- Stats 7j / 30j -->
+                <div class="grid-2" style="gap:12px;">
+                    <div class="card">
+                        <div class="card-title">7 derniers jours</div>
+                        <div id="paper-stats-7d"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">30 derniers jours</div>
+                        <div id="paper-stats-30d"></div>
+                    </div>
+                </div>
+
+                <!-- Cooldown / Circuit Breaker -->
+                <div class="card">
+                    <div class="card-title">Protections actives</div>
+                    <div id="paper-protections"></div>
+                </div>
             </div>
 
             <!-- Footer -->
@@ -913,6 +980,6 @@
 
     <script defer src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script defer src="/static/js/ticker-widget.js?v=52"></script>
-    <script defer src="/static/js/dashboard.js?v=75"></script>
+    <script defer src="/static/js/dashboard.js?v=78"></script>
 </body>
 </html>
