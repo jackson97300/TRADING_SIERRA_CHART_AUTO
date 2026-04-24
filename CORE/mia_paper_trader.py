@@ -27,7 +27,9 @@ import pandas as pd
 
 # Import SLTPEngine (audit Tier1/2/3 sur 1349 barres, 07/03/2026)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from CORE.mia_sltp import SLTPEngine
+from CORE.mia_sltp import SLTPEngine, SL_BUDGET  # SL_BUDGET pour kill-switch SELL asymetrique (R3 review 24/04)
+from CORE.bias_calculator import compute_bias  # 3.7.9 (24/04) gate directionnel
+from CORE.cross_instrument import compute_cross_bonus  # 24/04 mode OBSERVATION (log-only)
 
 # Systeme logs V2 (22/04 session)
 try:
@@ -59,6 +61,12 @@ DASHBOARD_URL = "http://localhost:8503/api/dashboard"
 POLL_INTERVAL = 10  # secondes entre chaque check
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DATA", "PAPER_TRADES")
 STATE_FILE = os.path.join(DATA_DIR, "state.json")  # bridge pour dashboard endpoint
+MENTHORQ_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DATA", "MENTHORQ")
+# Kill-switch admin : cree/supprime par POST /api/bot/{stop,start} (admin_routes.py)
+# Meme chemin que BOT/bot_main.py pour compat, mais seul paper_trader ecoute en prod.
+STOP_FLAG_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "DATA", "BOT_CONTROL", "STOP.flag"
+)
 TICK_SIZE = 0.25
 
 # Ticks values par instrument
@@ -69,7 +77,13 @@ ENTRY_RULES = {
     "min_confidence": 0.50,
     "min_mtf_bears": 3,
     "min_mtf_bulls": 3,
-    "freshness_required": "NEW",            # state machine v1.5 : NEW uniquement (pas PERSISTENT/EXPIRED)
+    # 🆕 FIX 24/04 : accepter NEW + PERSISTENT (avant : NEW uniquement)
+    #   Raison : 46 rejets `freshness_not_new` / 4026 polls sur 23/04. Cause :
+    #   `_MAX_SIGNAL_AGE_BARS=2` dans builders.py → signal EXPIRED apres 2min.
+    #   Dedup via signal_id (STEP 5) protege contre trade multiple meme signal.
+    #   Permet au bot de rattraper si premier poll NEW etait rejete pour autre
+    #   cause (SLTP temps reel, bias borderline), ou si bot restart mi-signal.
+    "freshness_required": ("NEW", "PERSISTENT"),
     "max_positions_per_symbol": 1,
     "n_micros": 3,                          # 3 micros (realistic bot live futur)
     "min_expected_payoff_usd": 2.0,         # filtre audit ES vs NQ (22/04)
@@ -82,11 +96,54 @@ ENTRY_RULES = {
     "circuit_breaker_pause_sec": 3600,      # 60 min pause
     "estimated_wr_initial": 0.45,           # conservateur avant 30 trades empiriques (review R4)
     "estimated_wr_rolling_min": 30,         # apres N trades, switch vers WR rolling reel
+    # 3.7.9 (24/04) — gate directionnel bias_calculator STEP 6bis
+    # 🆕 24/04 soir (B.1) : `min_bias_clarity` utilise UNIQUEMENT comme seuil
+    #   pour le soft-flag `bias_weak_but_aligned` (observabilite V2 log).
+    #   Le gate strict ne rejette plus sur clarity, seulement sur opposite_direction.
+    #   Cf. feedback_lightgbm_no_composite_indicators.md + audit market-analyst 24/04.
+    "min_bias_clarity": 0.30,               # seuil soft-flag observabilite uniquement
+    "enforce_bias_gate": True,              # si False, bias calcule mais gate desactive (observabilite only)
 }
 
 # Config DTC (valide Phase 1 paper uniquement, pas de compte LIVE)
 TRADE_ACCOUNT = os.environ.get("MIA_TRADE_ACCOUNT", "Sim3")
 _SIM_WHITELIST_PREFIX = ("SIM", "Sim", "sim")
+
+
+# Funnel check_entry (23/04 Jackson) : mix compteurs bruts + funnel macro 8 STEPs.
+# Expose `entry_funnel_today` dans state.json + snapshot EOD LOGS/funnel/funnel_YYYYMMDD.json.
+# But : diagnostiquer "pourquoi bot 0 trade" en un coup d'oeil (V1 feature que Jackson kiffait).
+#
+# STEP 7 split (23/04 soir) : 4 sous-raisons pour savoir si mur absent, R:R faible, ou budget dep.
+FUNNEL_STEPS = [
+    ("1_position_day",  "Position+MaxDay",  ["already_position", "max_trades_day"]),
+    ("2_cooldown_cb",   "Cooldown+Circuit", ["cooldown_active", "circuit_breaker"]),
+    ("3_conseil",       "Conseil Global",   ["conseil_attendre", "conseil_conflit", "sell_auto_disabled"]),
+    ("4_freshness",     "Freshness NEW",    ["freshness_not_new"]),
+    ("5_dedup",         "Dedup signal_id",  ["signal_already_traded"]),
+    ("6_conf_mtf",      "Conf+MTF",         ["confidence_too_low", "mtf_insufficient"]),
+    ("6bis_bias",       "Prereq bar DMP (bias=soft-flag only)",
+     ["bar_dmp_missing"]),  # 🆕 FIX 24/04 soir (B.1 audit market-analyst #2) :
+     # `bias_opposite_direction` RETIRE (quasi-tautologie : conseil_global utilise deja
+     # compute_bias sur meme bar). STEP 6bis garde uniquement check prereq bar DMP.
+     # Soft-flag `bias_weak_but_aligned` continue d'etre loggue V2 pour observabilite.
+    ("7_sltp",          "SLTP murs+budget",
+     ["sltp_no_wall", "sltp_rr_low", "sltp_budget_exceeded", "sltp_out_of_range"]),
+    ("8_payoff",        "Expected payoff",  ["expected_payoff_low"]),
+]
+FUNNEL_STEP_KEYS = [s[0] for s in FUNNEL_STEPS]
+FUNNEL_REASONS = [r for (_, _, reasons) in FUNNEL_STEPS for r in reasons]
+# Step 4+ : ce qu'on appelle "actionable" = polls ayant passe 1+2+3 (vrais signaux live).
+# Permet % discriminants : 42% freshness_not_new sur ACTIONABLES, pas sur tous les polls (dont 85% ATTENDRE).
+FUNNEL_ACTIONABLE_FROM_STEP = "3_conseil"
+FUNNEL_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "LOGS", "funnel")
+
+# Logs rejet enrichis (23/04 soir) — diagnostic "pourquoi cette raison exacte".
+# STEP 1-3 = bruit (cooldown/ATTENDRE), pas de log detaille, juste counter funnel.
+# STEP 4-8 = logs JSONL avec contexte metier. Rate limit 60s par (symbol, reason) anti-spam.
+REJECTIONS_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "LOGS", "rejections")
+REJECT_LOG_STEPS = {"4_freshness", "5_dedup", "6_conf_mtf", "6bis_bias", "7_sltp", "8_payoff"}
+REJECT_LOG_RATE_LIMIT_SEC = 60
 
 
 # Fix CRITIQUE (22/04 soir) : sans auth, /api/dashboard retourne tier=free
@@ -156,6 +213,44 @@ class PaperTrader:
                 os.remove(tmp_state)
             except OSError:
                 pass
+
+        # Funnel check_entry (23/04) : diagnostic "pourquoi 0 trade"
+        os.makedirs(FUNNEL_LOG_DIR, exist_ok=True)
+        self._funnel = self._funnel_blank(self.date_str)
+        # Logs rejet enrichis (23/04 soir) : rate limit 60s par (sym, reason)
+        os.makedirs(REJECTIONS_LOG_DIR, exist_ok=True)
+        self._reject_log_last_ts: dict = {}  # (sym, reason) -> last_emit_ts
+
+        # Cross-instrument observation (24/04 mode log-only, pre-integration Option 2)
+        # Stocke le dernier compute_cross_bonus pour expose dans state.json + logs V2
+        self._last_cross_context: Optional[dict] = None
+
+        # 🆕 FIX 24/04 : kill-switch auto SELL (re-activation SELL ce soir).
+        # 🆕 FIX 24/04 soir (audit market-analyst #4) : par SYMBOLE, seuil DD
+        #   asymetrique `max_sl_ticks[sym] * 1.5` (NQ 120t / ES 60t). Evite :
+        #   - NQ : 1 seul SL plein (80t) ne doit PAS declencher kill
+        #   - ES : 60t = 1.5 trades, equilibre safety
+        # Reset EOD : _rotate_day_if_needed remet les compteurs a 0 par symbole.
+        self._sell_trades_today: Dict[str, List[dict]] = {"ES": [], "NQ": []}
+        self._sell_dd_intraday_ticks: Dict[str, float] = {"ES": 0.0, "NQ": 0.0}
+        self._sell_disabled: Dict[str, bool] = {"ES": False, "NQ": False}
+        self._sell_disable_reason: Dict[str, Optional[str]] = {"ES": None, "NQ": None}
+
+        # Kill-switch admin (fix 24/04) : etat transition ACTIF <-> PAUSE via STOP.flag
+        # Cree/supprime par POST /api/bot/{stop,start}. Lu dans la boucle run().
+        self._stop_flag_active = False
+        self._stop_flag_activated_at = 0.0   # epoch, pour alerte flatten pending
+        self._stop_flag_stale_alerted = False  # evite spam log alerte stale
+
+        # 24/04 : regime GEX MenthorQ — contexte daily (log + state.json, PAS gate)
+        # Finding 15/04 : SELL -56% PF gap GEX+ vs GEX-. On log pour diagnostic,
+        # pas pour bloquer (anti pattern 11 V1).
+        # Thread safety : `_menthorq_regime` est REASSIGNE en bloc (atomique sous GIL
+        # via `self._menthorq_regime = out`). NE JAMAIS muter in-place depuis un autre
+        # thread (ex: `self._menthorq_regime["ES"]["regime"] = ...`) — casserait
+        # l'atomicite pour le main thread qui lit dans `_build_state`.
+        self._menthorq_regime: Optional[dict] = None
+        self._load_menthorq_regime()
 
         # Integration DTC Sim3 (22/04 soir) : thread safety + mapping orders
         # `_pos_lock` : RLock protege positions / cooldown / consec_losses /
@@ -253,6 +348,8 @@ class PaperTrader:
             return
         prev_date = self.date_str
         print(f"  === ROLLOVER DATE {prev_date} -> {current_date} ===")
+        # Snapshot EOD funnel avant reset (23/04) — historique diagnostic par jour
+        self._funnel_save_eod(prev_date)
         # Reset quotidien
         self.today_trades = []
         self.trade_count = 0
@@ -261,11 +358,18 @@ class PaperTrader:
         self.snapshot_file = os.path.join(DATA_DIR, f"{self.date_str}_snapshots.jsonl")
         self._traded_signals_file = os.path.join(DATA_DIR, f"{self.date_str}_traded_signals.txt")
         self._traded_signal_ids = set()
+        self._funnel = self._funnel_blank(current_date)
         # Fix mineur #2 (code-reviewer 22/04) : ne PAS reset _last_close_ts ni
         # _circuit_pause_until — ce sont des timestamps absolus, le cooldown
         # expire naturellement sans devoir traverser la frontiere UTC. Seul
         # _consec_losses doit etre reset (compteur quotidien non-persistant).
         self._consec_losses = {"ES": 0, "NQ": 0}
+        # 🆕 FIX 24/04 soir (audit #4) : reset EOD kill-switch SELL par symbole.
+        # Chaque nouvelle journee UTC = compteurs DD/trades repartent a 0.
+        self._sell_trades_today = {"ES": [], "NQ": []}
+        self._sell_dd_intraday_ticks = {"ES": 0.0, "NQ": 0.0}
+        self._sell_disabled = {"ES": False, "NQ": False}
+        self._sell_disable_reason = {"ES": None, "NQ": None}
         # NE PAS toucher aux positions ouvertes (overnight possible) — on flatten eventuel EOD ailleurs
         if _v2log:
             try:
@@ -273,6 +377,250 @@ class PaperTrader:
                             prev_date=prev_date, new_date=current_date)
             except Exception:
                 pass
+        # 24/04 : reload regime MenthorQ apres rollover (JSON du nouveau jour)
+        self._load_menthorq_regime()
+
+    # --- Regime MenthorQ (24/04) -----------------------------------------
+    def _load_menthorq_regime(self) -> None:
+        """Charge le regime GEX+/GEX- par symbole depuis le JSON MenthorQ du jour.
+
+        Lit `DATA/MENTHORQ/YYYYMMDD_menthorq_complete.json`, extrait
+        `key_levels.{ES,NQ}` (net_gex, total_gex, iv_30d, gamma_condition) et
+        derive `regime = "GEX+" if net_gex > 0 else "GEX-"` + ratio normalise.
+
+        Si JSON absent → regime = "UNKNOWN", pas d'echec.
+
+        Stocke dans `self._menthorq_regime` (expose state.json + logs V2).
+
+        IMPORTANT : ne touche PAS aux decisions du bot (pas de gate).
+        C'est du contexte pour diagnostic + dashboard. Edge empirique
+        documente (finding 15/04) : SELL -56% PF gap en GEX+ vs GEX-.
+        """
+        json_path = os.path.join(MENTHORQ_DIR, f"{self.date_str}_menthorq_complete.json")
+        out = {
+            "date": self.date_str,
+            "json_path": json_path,
+            "loaded": False,
+            "loaded_ts": time.time(),
+            "ES": {"regime": "UNKNOWN"},
+            "NQ": {"regime": "UNKNOWN"},
+        }
+        if not os.path.exists(json_path):
+            self._menthorq_regime = out
+            if _v2log:
+                try:
+                    _v2log.emit("MQ_REGIME_MISSING", date=self.date_str, sym="ES+NQ")
+                except Exception:
+                    pass
+            return
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            self._menthorq_regime = out
+            if _v2log:
+                try:
+                    _v2log.emit("MQ_INGESTION_FAIL", source=json_path, err=str(e))
+                except Exception:
+                    pass
+            return
+
+        kl = data.get("key_levels", {}) or {}
+        for sym in ("ES", "NQ"):
+            kls = kl.get(sym)
+            # Partial load : on emit MQ_REGIME_MISSING cible par symbole manquant
+            # au lieu de fallback silencieux (review code-reviewer 24/04 point #3).
+            if not isinstance(kls, dict):
+                if _v2log:
+                    try:
+                        _v2log.emit("MQ_REGIME_MISSING", date=self.date_str, sym=sym)
+                    except Exception:
+                        pass
+                continue
+            net_gex = kls.get("net_gex")
+            total_gex = kls.get("total_gex")
+            if net_gex is None:
+                if _v2log:
+                    try:
+                        _v2log.emit("MQ_REGIME_MISSING", date=self.date_str, sym=sym)
+                    except Exception:
+                        pass
+                continue
+            # Strict 2 etats : on collapse 0 -> GEX- (review code-reviewer 24/04
+            # point #2 : evite 3e voie "NEUTRAL" non geree cote dashboard).
+            try:
+                net_gex_f = float(net_gex)
+            except (TypeError, ValueError):
+                if _v2log:
+                    try:
+                        _v2log.emit("MQ_INGESTION_FAIL", source=json_path,
+                                    err=f"net_gex non numerique pour {sym}: {net_gex!r}")
+                    except Exception:
+                        pass
+                continue
+            regime = "GEX+" if net_gex_f > 0 else "GEX-"
+            ratio = None
+            if total_gex not in (None, 0):
+                try:
+                    ratio = round(net_gex_f / float(total_gex), 4)
+                except (TypeError, ValueError, ZeroDivisionError):
+                    ratio = None
+            out[sym] = {
+                "regime": regime,
+                "net_gex": net_gex_f,
+                "total_gex": float(total_gex) if total_gex is not None else None,
+                "ratio": ratio,  # net/total : comparable ES vs NQ
+                "iv_30d": kls.get("iv_30d"),
+                "gamma_condition": kls.get("gamma_condition"),
+                "gamma_wall_0dte": kls.get("gamma_wall_0dte"),
+                "pc_gex": kls.get("pc_gex"),
+            }
+            if _v2log:
+                try:
+                    _v2log.emit("MQ_REGIME_LOADED", sym=sym, regime=regime,
+                                net_gex=f"{net_gex_f:.2f}",
+                                ratio=f"{ratio:.3f}" if ratio is not None else "nan")
+                except Exception:
+                    pass
+        out["loaded"] = (out["ES"].get("regime") != "UNKNOWN"
+                        or out["NQ"].get("regime") != "UNKNOWN")
+        self._menthorq_regime = out
+
+    # --- Funnel diagnostic (23/04) ---------------------------------------
+    @staticmethod
+    def _funnel_blank(date_str: str) -> dict:
+        return {
+            "date": date_str,
+            "polls_total": 0,
+            "steps": {k: {"passed": 0, "rejected": 0} for k in FUNNEL_STEP_KEYS},
+            "reject_detail": {r: 0 for r in FUNNEL_REASONS},
+        }
+
+    def _funnel_new_poll(self) -> None:
+        self._funnel["polls_total"] += 1
+
+    def _funnel_pass(self, step_key: str) -> None:
+        self._funnel["steps"][step_key]["passed"] += 1
+
+    def _funnel_reject(self, step_key: str, reason: str, symbol: str = None, **ctx) -> None:
+        """Incremente compteur funnel + emit log detaille (STEP 4-8 uniquement, rate limite 60s).
+
+        STEP 1-3 = bruit (cooldown/ATTENDRE), on garde juste le counter.
+        STEP 4-8 = signaux actionables qui meurent : log enrichi essentiel pour diagnostic.
+        """
+        self._funnel["steps"][step_key]["rejected"] += 1
+        self._funnel["reject_detail"][reason] = self._funnel["reject_detail"].get(reason, 0) + 1
+        if step_key in REJECT_LOG_STEPS and symbol:
+            self._log_rejection_detailed(step_key, reason, symbol, ctx)
+
+    def _log_rejection_detailed(self, step: str, reason: str, symbol: str, ctx: dict) -> None:
+        """Log JSONL enrichi pour diagnostic. Rate limit 60s par (sym, reason).
+
+        Fichier rotatif : LOGS/rejections/rejections_YYYYMMDD_paper.jsonl
+        """
+        now_ts = time.time()
+        key = (symbol, reason)
+        last_ts = self._reject_log_last_ts.get(key, 0)
+        if now_ts - last_ts < REJECT_LOG_RATE_LIMIT_SEC:
+            return  # anti-spam, counter deja incremente
+        self._reject_log_last_ts[key] = now_ts
+
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "sym": symbol,
+            "step": step,
+            "reason": reason,
+            **ctx,
+        }
+        fp = os.path.join(REJECTIONS_LOG_DIR, f"rejections_{self.date_str}_paper.jsonl")
+        try:
+            with open(fp, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+        except OSError as e:
+            if _v2log:
+                try:
+                    _v2log.emit("GENERIC_ALERTE", msg=f"rejection_log write failed: {e}")
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _classify_sltp_reject(raw_reason: str) -> str:
+        """Mappe le reject_reason SLTPResult vers une raison funnel granulaire.
+
+        SLTPEngine emet 5 familles de rejets (mia_sltp.py:278-312) :
+          - "Aucun mur T1/T2 derriere le prix"           -> sltp_no_wall
+          - "T1 X trop loin (Yt > Zt)"                   -> sltp_no_wall (mur inaccessible)
+          - "T2 X seul (pas de confluence)"              -> sltp_no_wall (manque confluence)
+          - "SL hors limites (A-Bt)"                     -> sltp_out_of_range
+          - "SL $X > budget $Y"                          -> sltp_budget_exceeded
+          - "R:R X.XX < 0.8 (wall trop proche)"          -> sltp_rr_low
+        """
+        if not raw_reason:
+            return "sltp_no_wall"
+        up = raw_reason.upper()
+        if "R:R" in up or "RR" in up.split() or "TROP PROCHE" in up:
+            return "sltp_rr_low"
+        if "BUDGET" in up:
+            return "sltp_budget_exceeded"
+        if "HORS LIMITES" in up:
+            return "sltp_out_of_range"
+        # Defaults : "aucun mur" / "T1 trop loin" / "T2 seul" / autre
+        return "sltp_no_wall"
+
+    def _funnel_snapshot(self) -> dict:
+        """Serialise le funnel avec calculs % + drop + actionable pour state.json/dashboard."""
+        polls = self._funnel["polls_total"]
+        # Actionable = ce qui a passe le STEP 3 (conseil != ATTENDRE/CONFLIT)
+        actionable = self._funnel["steps"].get(FUNNEL_ACTIONABLE_FROM_STEP, {}).get("passed", 0)
+        steps_out = []
+        for key, label, _ in FUNNEL_STEPS:
+            s = self._funnel["steps"][key]
+            passed = s["passed"]
+            rejected = s["rejected"]
+            attempted = passed + rejected
+            drop_pct = round(rejected / polls * 100, 2) if polls else 0.0
+            # rej_pct_of_actionable : valable uniquement pour STEP 4+ (post-actionable filter)
+            rej_pct_act = None
+            if key not in ("1_position_day", "2_cooldown_cb", "3_conseil") and actionable:
+                rej_pct_act = round(rejected / actionable * 100, 2)
+            # local_reject_rate : rejet / tentatives a ce step (utile pour regle isolee)
+            local_reject_rate = round(rejected / attempted * 100, 2) if attempted else 0.0
+            steps_out.append({
+                "step": key,
+                "label": label,
+                "attempted": attempted,
+                "passed": passed,
+                "rejected": rejected,
+                "drop_pct_of_polls": drop_pct,
+                "local_reject_rate_pct": local_reject_rate,
+                "rej_pct_of_actionable": rej_pct_act,
+            })
+        trades_taken = self._funnel["steps"]["8_payoff"]["passed"]
+        conv = round(trades_taken / polls * 100, 3) if polls else 0.0
+        return {
+            "date": self._funnel["date"],
+            "polls_total": polls,
+            "actionable": actionable,
+            "trades_taken": trades_taken,
+            "conversion_rate_pct": conv,
+            "steps": steps_out,
+            "reject_detail": dict(self._funnel["reject_detail"]),
+        }
+
+    def _funnel_save_eod(self, date_str: str) -> None:
+        """Ecrit un snapshot journalier avant rollover pour historique."""
+        try:
+            snap = self._funnel_snapshot()
+            snap["saved_iso"] = datetime.now(timezone.utc).isoformat()
+            fp = os.path.join(FUNNEL_LOG_DIR, f"funnel_{date_str}.json")
+            with open(fp, "w", encoding="utf-8") as f:
+                json.dump(snap, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            if _v2log:
+                try:
+                    _v2log.emit("GENERIC_ALERTE", msg=f"funnel_save_eod failed: {e}")
+                except Exception:
+                    pass
 
     def check_entry(self, data, symbol):
         """Verifie si les conditions d'entree sont remplies (v2 22/04).
@@ -298,55 +646,145 @@ class PaperTrader:
         if not price:
             return None
 
+        # Funnel : a partir d'ici on a un poll valide (data dashboard coherente).
+        # On ne compte PAS les ticks sans prix/instrument car ce sont des erreurs
+        # infra (dashboard down, symbol off), pas des rejets de regle metier.
+        self._funnel_new_poll()
+
         # 1. Deja en position ? + max trades jour
         if symbol in self.positions:
+            self._funnel_reject("1_position_day", "already_position")
             return None
         if self.trade_count >= ENTRY_RULES["max_trades_per_day"]:
+            self._funnel_reject("1_position_day", "max_trades_day")
             return None
+        self._funnel_pass("1_position_day")
 
         # 2. Cooldown post-close (anti re-entry contre-sens)
         now_ts = time.time()
         last_close = self._last_close_ts.get(symbol)
         if last_close and (now_ts - last_close) < ENTRY_RULES["cooldown_post_close_sec"]:
+            self._funnel_reject("2_cooldown_cb", "cooldown_active")
             return None
 
         # 2bis. Circuit breaker (3 SL consec → pause 60min)
         pause_until = self._circuit_pause_until.get(symbol)
         if pause_until and now_ts < pause_until:
+            self._funnel_reject("2_cooldown_cb", "circuit_breaker")
             return None
+        self._funnel_pass("2_cooldown_cb")
 
         # 3. Conseil Global action
         conseil = data.get("conseil_global", {}).get(sym, {})
         action = conseil.get("action", "ATTENDRE")
-        if action in ("ATTENDRE", "CONFLIT"):
+        if action == "ATTENDRE":
+            self._funnel_reject("3_conseil", "conseil_attendre")
             return None
+        if action == "CONFLIT":
+            self._funnel_reject("3_conseil", "conseil_conflit")
+            return None
+        self._funnel_pass("3_conseil")
         direction_int = 1 if "ACHAT" in action else -1
         direction = "LONG" if direction_int == 1 else "SHORT"
         prudent = "PRUDENT" in action
 
-        # 4. freshness state machine v1.5 — NEW uniquement
-        freshness_v15 = conseil.get("freshness", "IDLE")
-        if freshness_v15 != ENTRY_RULES["freshness_required"]:
+        # 🆕 FIX 24/04 : kill-switch auto SELL par symbole (audit #4 market-analyst)
+        # Re-injection du blocage SELL si auto-disable declenche pour CE symbole.
+        if direction == "SHORT" and self._sell_disabled.get(symbol, False):
+            self._funnel_reject("3_conseil", "sell_auto_disabled",
+                                symbol=symbol,
+                                action=action,
+                                reason=self._sell_disable_reason.get(symbol),
+                                signal_id=conseil.get("signal_id"))
             return None
+
+        # 4. freshness state machine v1.5 — NEW ou PERSISTENT (fix 24/04)
+        # Dedup (STEP 5) protege contre trade multiple meme signal_id.
+        freshness_v15 = conseil.get("freshness", "IDLE")
+        required = ENTRY_RULES["freshness_required"]
+        # Support backward compat : string (ancien format) ou tuple/list (nouveau).
+        if isinstance(required, str):
+            required = (required,)
+        if freshness_v15 not in required:
+            self._funnel_reject("4_freshness", "freshness_not_new",
+                                symbol=symbol,
+                                freshness_seen=freshness_v15,
+                                required=list(required),
+                                action=action,
+                                signal_id=conseil.get("signal_id"))
+            return None
+        self._funnel_pass("4_freshness")
 
         # 5. Dedup via signal_id
         signal_id = conseil.get("signal_id")
         if signal_id and signal_id in self._traded_signal_ids:
+            self._funnel_reject("5_dedup", "signal_already_traded",
+                                symbol=symbol,
+                                signal_id=signal_id,
+                                action=action)
             return None
+        self._funnel_pass("5_dedup")
 
         # 6. Confidence + MTF
         confidence = reg.get("bias_confidence", 0)
         min_conf = 0.40 if prudent else ENTRY_RULES["min_confidence"]
         if confidence < min_conf:
+            self._funnel_reject("6_conf_mtf", "confidence_too_low",
+                                symbol=symbol,
+                                confidence=round(confidence, 3),
+                                min_conf_required=min_conf,
+                                action=action,
+                                prudent=prudent)
             return None
         mtf_bulls = reg.get("mtf_bulls", 0)
         mtf_bears = reg.get("mtf_bears", 0)
-        if direction == "LONG" and mtf_bulls < ENTRY_RULES["min_mtf_bulls"]:
-            return None
-        if direction == "SHORT" and mtf_bears < ENTRY_RULES["min_mtf_bears"]:
+
+        # 🆕 GATE MTF_BULL_DESERT (25/04 - cf DOCS/BOT_CHANGELOG.md 25/04)
+        # Downside-only protection : SHORT dans "desert MTF" = ni bull clair ni bear clair
+        # CONDITION : mtf_bulls<=1 ET mtf_bears<3 (sinon MTF est aligne bearish, SHORT legitime)
+        # Backtest 24/04 : 18 trades mtf<=1 ET mtf_bears<3, WR 11%, PnL -372t (PF 0.23)
+        # Fix regression : preserve SHORT execute 18:18 (mtf=0/3, MTF bearish aligne)
+        # Market-analyst R2 confidence 4/5.
+        # REDONDANCE : fonctionnellement redondant avec gate min_mtf_bears>=3 ci-dessous
+        # (tout rejet ici serait aussi rejete par le gate suivant). Conserve pour :
+        # (a) observabilite funnel — separe sous-bucket "desert" (18/j) du bucket
+        #     generique "mtf_insufficient" (89/j sur jour 24/04)
+        # (b) defense en profondeur si ENTRY_RULES['min_mtf_bears'] est relaxe un jour
+        # REVERT : si backtest multi-jours (>=5j) montre WR>=40% sur bucket
+        # mtf_bulls<=1 AND mtf_bears<3, retirer ce filtre (cf suivi post-deploy).
+        if direction == "SHORT" and mtf_bulls <= 1 and mtf_bears < 3:
+            self._funnel_reject("6_conf_mtf", "mtf_bull_desert",
+                                symbol=symbol,
+                                direction=direction,
+                                mtf_bulls=mtf_bulls,
+                                mtf_bears=mtf_bears,
+                                confidence=round(confidence, 3),
+                                action=action)
             return None
 
-        # 7. SLTPEngine — calcul intelligent Tier 1/2 murs + TP1
+        if direction == "LONG" and mtf_bulls < ENTRY_RULES["min_mtf_bulls"]:
+            self._funnel_reject("6_conf_mtf", "mtf_insufficient",
+                                symbol=symbol,
+                                direction=direction,
+                                mtf_bulls=mtf_bulls,
+                                mtf_bears=mtf_bears,
+                                min_required=ENTRY_RULES["min_mtf_bulls"],
+                                confidence=round(confidence, 3),
+                                action=action)
+            return None
+        if direction == "SHORT" and mtf_bears < ENTRY_RULES["min_mtf_bears"]:
+            self._funnel_reject("6_conf_mtf", "mtf_insufficient",
+                                symbol=symbol,
+                                direction=direction,
+                                mtf_bulls=mtf_bulls,
+                                mtf_bears=mtf_bears,
+                                min_required=ENTRY_RULES["min_mtf_bears"],
+                                confidence=round(confidence, 3),
+                                action=action)
+            return None
+        self._funnel_pass("6_conf_mtf")
+
+        # ─── Prerequis commun STEP 6bis + 7 : lecture bar DMP ────────────
         # Bar DMP complete OBLIGATOIRE (review agent R2 : reconstruct dashboard omet
         # ~30 murs MenthorQ/gamma/BL → SL biaise, verdict paper invalide). Si absent,
         # lire directement le dernier JSONL DMP (last line).
@@ -356,17 +794,107 @@ class PaperTrader:
             bar_row_dict = self._read_last_jsonl_bar(symbol)
         if not bar_row_dict:
             # Pas de bar complete → skip trade (pas de fallback reconstruction biaise)
+            # Attribue a STEP 6bis car bar est prereq commun pour bias + sltp (24/04)
             if _v2log:
                 _v2log.emit("GENERIC_ALERTE",
                             msg=f"paper: skip {symbol} — bar DMP complete absente (bot.last_bars vide + JSONL unreadable)")
+            self._funnel_reject("6bis_bias", "bar_dmp_missing",
+                                symbol=symbol,
+                                direction=direction,
+                                action=action)
             return None
 
+        # 6bis. BIAS GATE directionnel (3.7.9 — 24/04/2026 Jackson validation)
+        # 🆕 FIX 24/04 soir (audit market-analyst Finding #2) : STEP 6bis supprimee
+        # comme gate - bias devient soft-flag observabilite uniquement.
+        #
+        # Raison : `conseil_global.bias` (regime.get("bias") dans builders.py:151)
+        # utilise deja compute_bias(bar) sur meme input. Rejet `bias_opposite_direction`
+        # etait quasi-tautologique (meme fonction, meme bar → meme output).
+        # Le scoring conseil_global integre deja bias comme 1/6 facteurs (poids 2/8).
+        #
+        # STEP 6bis conserve uniquement :
+        #   - Prereq bar DMP (bar_row_dict non vide)
+        #   - Soft-flag V2 log `bias_weak_but_aligned` pour observabilite
+        bias = compute_bias(bar_row_dict)
+        # Soft-flag observabilite : tracker performance des "weak but aligned"
+        # pour decider post-N>=50 trades si on reintroduit un seuil empirique.
+        if bias.bias_clarity < ENTRY_RULES["min_bias_clarity"]:
+            if _v2log:
+                try:
+                    _v2log.emit("GENERIC_INFO",
+                                msg=(f"bias_weak sym={symbol} dir={direction} "
+                                     f"clarity={bias.bias_clarity:.2f} "
+                                     f"bias={bias.direction} signal_id={signal_id}"))
+                except Exception:
+                    pass
+        self._funnel_pass("6bis_bias")
+
+        # ─── OBSERVATION cross-instrument (24/04 pre-Option 2, log-only) ───
+        # Calcule le bonus/malus cross-instrument ES/NQ SANS IMPACTER la decision.
+        # Objectif : collecter des stats empiriques sur 24-48h pour calibrer les
+        # seuils (CONFIRM_BONUS=+2, CONFLICT_PENALTY=-4) avant integration dans
+        # Phase Option 2 (confluence_score composite).
+        # Anti-pattern 11 V1 : pas de gate bloquant, juste observation.
+        try:
+            other_sym = "ES" if symbol == "NQ" else "NQ"
+            other_bar = self._read_last_jsonl_bar(other_sym)
+            nq_bar_cross, es_bar_cross = (
+                (bar_row_dict, other_bar)
+                if symbol == "NQ"
+                else (other_bar, bar_row_dict)
+            )
+            cross_result = compute_cross_bonus(nq_bar_cross, es_bar_cross)
+            self._last_cross_context = {
+                "ts_ms": int(time.time() * 1000),
+                "triggered_by": symbol,
+                "score_delta": cross_result.score_delta,
+                "confirmed": cross_result.confirmed,
+                "conflict": cross_result.conflict,
+                "nq_direction": cross_result.nq_direction,
+                "nq_clarity": round(cross_result.nq_clarity, 3),
+                "es_direction": cross_result.es_direction,
+                "es_clarity": round(cross_result.es_clarity, 3),
+                "reasons": cross_result.reasons,
+            }
+            if _v2log:
+                _v2log.emit(
+                    "GENERIC_INFO",
+                    msg=(
+                        f"cross_obs {symbol}: delta={cross_result.score_delta:+d} "
+                        f"NQ={cross_result.nq_direction}(cl={cross_result.nq_clarity:.2f}) "
+                        f"ES={cross_result.es_direction}(cl={cross_result.es_clarity:.2f}) "
+                        f"conf={cross_result.confirmed} confl={cross_result.conflict}"
+                    ),
+                )
+        except Exception as e:
+            # Mode observation ne doit JAMAIS faire echouer un trade
+            if _v2log:
+                _v2log.emit("GENERIC_ALERTE", msg=f"cross_obs failed: {e}")
+
+        # 7. SLTPEngine — calcul intelligent Tier 1/2 murs + TP1
         engine = self.sltp_engines[symbol]
         sltp_result = engine.evaluate_single(bar_row_dict, direction_int)
 
         if not sltp_result.valid:
-            # Rejete par SLTPEngine (pas de mur Tier 1/2, budget depasse, R:R insuffisant...)
+            # Granularite fine : classify reject_reason brut en 4 sous-raisons.
+            sltp_rej = getattr(sltp_result, "reject_reason", "") or ""
+            reason_fine = self._classify_sltp_reject(sltp_rej)
+            self._funnel_reject("7_sltp", reason_fine,
+                                symbol=symbol,
+                                direction=direction,
+                                price=price,
+                                sltp_raw=sltp_rej,
+                                sl_ticks_calc=getattr(sltp_result, "sl_ticks", 0),
+                                sl_wall=getattr(sltp_result, "sl_wall", ""),
+                                sl_n_walls=getattr(sltp_result, "sl_n_walls", 0),
+                                tp1_ticks_calc=getattr(sltp_result, "tp1_ticks", 0),
+                                tp1_wall=getattr(sltp_result, "tp1_wall", ""),
+                                rr_calc=getattr(sltp_result, "rr_ratio", 0),
+                                action=action,
+                                signal_id=signal_id)
             return None
+        self._funnel_pass("7_sltp")
 
         sl_ticks = sltp_result.sl_ticks
         tp_ticks = sltp_result.tp1_ticks  # Jackson choix : UN SEUL TP (pas trailing/runner)
@@ -376,7 +904,21 @@ class PaperTrader:
         wr = self._get_dynamic_wr()   # 0.45 conservateur < 30 trades, puis rolling reel
         expected_payoff_usd = (wr * tp_ticks - (1 - wr) * sl_ticks) * tv * ENTRY_RULES["n_micros"]
         if expected_payoff_usd < ENTRY_RULES["min_expected_payoff_usd"]:
+            self._funnel_reject("8_payoff", "expected_payoff_low",
+                                symbol=symbol,
+                                direction=direction,
+                                sl_ticks=sl_ticks,
+                                tp_ticks=tp_ticks,
+                                rr=round(tp_ticks / sl_ticks, 2) if sl_ticks else 0,
+                                wr_dynamic=round(wr, 3),
+                                expected_payoff_usd=round(expected_payoff_usd, 2),
+                                min_required_usd=ENTRY_RULES["min_expected_payoff_usd"],
+                                sl_wall=sltp_result.sl_wall,
+                                tp_wall=sltp_result.tp1_wall,
+                                action=action,
+                                signal_id=signal_id)
             return None
+        self._funnel_pass("8_payoff")
 
         # Calcul prix
         if direction == "LONG":
@@ -990,6 +1532,48 @@ class PaperTrader:
 
         self.today_trades.append(trade)
 
+        # 🆕 FIX 24/04 : kill-switch auto SELL par symbole (audit #4 market-analyst).
+        # 🆕 FIX 24/04 soir (R1 code-reviewer) : sous _pos_lock car close_position
+        #   peut etre appelee depuis thread DTC (_handle_dtc_fill daemon).
+        # Seuil DD = max_sl_ticks[symbol] * 1.5 pour etre symmetrique :
+        #   NQ max_sl=80 → kill DD > 120t (1.5 trades plein)
+        #   ES max_sl=40 → kill DD > 60t (1.5 trades plein)
+        if pos.get("direction") == "SHORT":
+            with self._pos_lock:
+                sym_list = self._sell_trades_today.setdefault(symbol, [])
+                sym_list.append(trade)
+                if pnl_ticks < 0:
+                    self._sell_dd_intraday_ticks[symbol] = (
+                        self._sell_dd_intraday_ticks.get(symbol, 0.0) + abs(pnl_ticks)
+                    )
+                n_sell = len(sym_list)
+                sell_wins = sum(1 for t in sym_list if t.get("pnl_ticks", 0) > 0)
+                sell_wr = sell_wins / n_sell if n_sell else 0
+                # Seuil DD asymmetrique par symbole (SL_BUDGET importe top-level).
+                max_sl_sym = SL_BUDGET.get(symbol, {}).get("max_ticks", 50)
+                dd_threshold = max_sl_sym * 1.5
+                dd_intra = self._sell_dd_intraday_ticks.get(symbol, 0.0)
+                if dd_intra > dd_threshold:
+                    self._sell_disabled[symbol] = True
+                    self._sell_disable_reason[symbol] = (
+                        f"SELL auto-disabled {symbol}: DD intraday {dd_intra:.0f}t > "
+                        f"{dd_threshold:.0f}t threshold (max_sl {max_sl_sym}t × 1.5)"
+                    )
+                elif n_sell >= 20 and sell_wr < 0.25:
+                    self._sell_disabled[symbol] = True
+                    self._sell_disable_reason[symbol] = (
+                        f"SELL auto-disabled {symbol}: N={n_sell} trades "
+                        f"WR={sell_wr:.2%} < 25% threshold"
+                    )
+                disabled_now = self._sell_disabled.get(symbol, False)
+                reason_now = self._sell_disable_reason.get(symbol)
+            # Emit V2 log hors lock (I/O potentiellement lent)
+            if disabled_now and _v2log and reason_now:
+                try:
+                    _v2log.emit("GENERIC_MAJEUR", msg=reason_now)
+                except Exception:
+                    pass
+
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(trade, ensure_ascii=False) + "\n")
 
@@ -1120,6 +1704,22 @@ class PaperTrader:
             "cooldown_status": cooldown_status,
             "trade_count_today": self.trade_count,
             "max_trades_per_day": ENTRY_RULES["max_trades_per_day"],
+            # Funnel check_entry (23/04 Jackson) — diagnostic "pourquoi 0 trade"
+            "entry_funnel_today": self._funnel_snapshot(),
+            # 24/04 observation cross-instrument (mode log-only, pre Option 2)
+            "last_cross_context": self._last_cross_context,
+            # 24/04 regime GEX MenthorQ (daily, PAS un gate — diagnostic + dashboard)
+            "menthorq_regime": self._menthorq_regime,
+            # 24/04 kill-switch admin (reserve #2 code-reviewer : expose etat au front)
+            # Quand True : dashboard masque metriques stale + badge "KILL_SWITCH ACTIVE"
+            "kill_switch": {
+                "active": self._stop_flag_active,
+                "activated_at": self._stop_flag_activated_at if self._stop_flag_active else None,
+                "pending_flatten_sec": (
+                    int(now_ts - self._stop_flag_activated_at)
+                    if self._stop_flag_active and self.positions else 0
+                ),
+            },
         }
 
         try:
@@ -1160,6 +1760,63 @@ class PaperTrader:
                 self._last_dashboard_data = data
 
                 now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+                # ==================== Kill-switch admin STOP.flag (24/04) ====================
+                # POST /api/bot/stop cree le flag → on flatten + pause.
+                # POST /api/bot/start supprime le flag → on reprend.
+                # En pause : pas de check_entry/exit, juste _write_state + sleep + poll flag.
+                # Resolve reserve #1 code-reviewer : retry flatten a CHAQUE tick pause
+                # tant que positions ouvertes (couvre case banner price=0 transitoire).
+                # Alerte MAJEUR si flatten pending > 30s.
+                if os.path.exists(STOP_FLAG_FILE):
+                    if not self._stop_flag_active:
+                        self._stop_flag_active = True
+                        self._stop_flag_activated_at = time.time()
+                        self._stop_flag_stale_alerted = False
+                        print(f"  [{now}] [KILL_SWITCH] STOP.flag detecte -> flatten + pause")
+                        if _v2log:
+                            _v2log.emit("BOT_KILL_SWITCH_ACTIVATED", n_closed=0)
+
+                    # Retry flatten a chaque tick pause tant que positions ouvertes
+                    with self._pos_lock:
+                        symbols_open = list(self.positions.keys())
+                    for sym in symbols_open:
+                        banner = data.get("banner", {}).get(sym.lower(), {})
+                        flatten_price = banner.get("price", 0)
+                        if flatten_price > 0:
+                            try:
+                                self._close_trade(sym, flatten_price, "KILL_SWITCH")
+                                print(f"  [{now}] [KILL_SWITCH] flatten {sym} @ {flatten_price}")
+                            except Exception as exc:
+                                print(f"  [{now}] [KILL_SWITCH] flatten {sym} fail: {exc}")
+                                if _v2log:
+                                    _v2log.emit("GENERIC_MAJEUR",
+                                                msg=f"kill_switch flatten {sym} failed: {exc}")
+
+                    # Alerte si flatten pending > 30s (banner price=0 persistant)
+                    with self._pos_lock:
+                        still_open = list(self.positions.keys())
+                    pending_sec = time.time() - self._stop_flag_activated_at
+                    if still_open and pending_sec > 30 and not self._stop_flag_stale_alerted:
+                        self._stop_flag_stale_alerted = True
+                        print(f"  [{now}] [KILL_SWITCH] ALERTE : flatten pending {pending_sec:.0f}s positions={still_open}")
+                        if _v2log:
+                            _v2log.emit("GENERIC_MAJEUR",
+                                        msg=f"kill_switch flatten pending {pending_sec:.0f}s : {still_open} (banner price absent)")
+
+                    self._write_state()
+                    consec_errors = 0
+                    time.sleep(5)
+                    continue
+                elif self._stop_flag_active:
+                    # Transition PAUSE → ACTIF : flag supprime via /api/bot/start
+                    self._stop_flag_active = False
+                    self._stop_flag_activated_at = 0.0
+                    self._stop_flag_stale_alerted = False
+                    print(f"  [{now}] [KILL_SWITCH] STOP.flag supprime -> reprise trading")
+                    if _v2log:
+                        _v2log.emit("BOT_KILL_SWITCH_RELEASED")
+                # ==============================================================================
 
                 for symbol in ("ES", "NQ"):
                     # Check exit sur positions ouvertes

@@ -85,6 +85,8 @@ LOG_CODES = {
     "DMP_FEATURE_NAN":         (LogLevel.ALERTE,   "data", "Feature NaN detecte : {feature} sur {n} barres"),
     "MQ_INGESTION_FAIL":       (LogLevel.MAJEUR,   "data", "Echec ingestion MenthorQ : {source} {err}"),
     "MQ_LEVELS_STALE":         (LogLevel.ALERTE,   "data", "MQ levels perimees : age {hours}h"),
+    "MQ_REGIME_LOADED":        (LogLevel.INFO,     "data", "Regime MenthorQ charge {sym} : {regime} net_gex={net_gex} ratio={ratio}"),
+    "MQ_REGIME_MISSING":       (LogLevel.ALERTE,   "data", "JSON MenthorQ absent pour {date} — regime inconnu ({sym})"),
     "VALIDATOR_VIOLATION":     (LogLevel.MAJEUR,   "data", "Quality validator violation : {feature} type={type}"),
     "PARQUET_BUILD_OK":        (LogLevel.INFO,     "data", "Parquet build OK : {file} shape=({n},{c})"),
     "PARQUET_BUILD_FAIL":      (LogLevel.MAJEUR,   "data", "Parquet build echec : {err}"),
@@ -104,6 +106,9 @@ LOG_CODES = {
     "HEARTBEAT_V2CLEAN_ZOMBIE": (LogLevel.CRITIQUE, "events", "V2CLEAN ZOMBIE : process alive mais muet {min}min"),
     "BOT_SHUTDOWN":            (LogLevel.INFO,     "events", "Bot arret propre : {reason}"),
     "BOT_CRASH":               (LogLevel.CRITIQUE, "events", "Bot crash : {exc_type} {exc_msg}"),
+    "BOT_KILL_SWITCH_ACTIVATED": (LogLevel.MAJEUR, "events", "STOP.flag detecte : flatten + pause (positions closed: {n_closed})"),
+    "BOT_KILL_SWITCH_RELEASED": (LogLevel.INFO,    "events", "STOP.flag supprime : reprise trading"),
+    "GATE_MTF_BULL_DESERT":     (LogLevel.INFO,    "decisions", "SHORT reject : mtf_bulls<=1 ({mtf_bulls}/4) edge negatif prouve"),
     "DLL_RELOAD":              (LogLevel.ALERTE,   "events", "DLL Sierra Chart reloadee"),
     "CONFIG_RELOAD":           (LogLevel.INFO,     "events", "Config reloadee depuis disque"),
 

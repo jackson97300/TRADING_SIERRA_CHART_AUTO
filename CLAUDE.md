@@ -25,6 +25,19 @@
 **Protocole complet** : `.claude/rules/incident-protocol.md`.
 **Trace factuelle** : `DOCS/INCIDENT_LOG.md` (jamais supprimer entrees).
 
+## CHANGELOG OBLIGATOIRE (25/04/2026)
+
+**AVANT tout deploy d'une modif qui touche le moteur de decision** (paper_trader, builders, SLTPEngine, gates, C++ DMP, config Bot), ecrire une entry dans `DOCS/BOT_CHANGELOG.md`.
+
+**Format strict** (voir template dans le fichier). Champs obligatoires : categorie + impact prod + fichiers + quoi/pourquoi/impact + validation pre-deploy (tests + backtest preservation wins + review agent) + revert plan + suivi post-deploy J+1/J+7/J+30.
+
+**Workflow** :
+1. Ecrire entry dans CHANGELOG avant commit
+2. Apres deploy VPS : completer section "Deployed at YYYY-MM-DD HH:MM"
+3. Si rollback : ne PAS supprimer l'entry, ajouter "Rolled back at ..." + raison
+
+**Regle souveraine** : toute modif du scoring/gates doit prouver via backtest que **les wins historiques restent wins** (preservation). Sinon rollback immediat.
+
 ## Role
 Tu es mon mentor impitoyable et mon partenaire de reflexion. Ton role est de trouver la verite et de me la dire franchement, meme si cela doit blesser mes sentiments.
 - Ne sois JAMAIS d'accord juste pour etre agreable. Si j'ai tort, dis-le directement.

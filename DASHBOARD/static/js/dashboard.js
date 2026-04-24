@@ -3686,6 +3686,131 @@
     function _isLong(d) { return d === 1 || d === "LONG"; }
     function _isShort(d) { return d === -1 || d === "SHORT"; }
 
+    // ════════ SOUNDS (Paper Trading events — 24/04) ════════
+    var _soundOpen = null, _soundTP = null, _soundSL = null;
+    var _soundEnabled = localStorage.getItem("mia_sound_enabled") !== "off";  // default ON
+    var _soundVolume = parseInt(localStorage.getItem("mia_sound_volume") || "70", 10) / 100;
+    var _soundOpenIds = null;    // null = premier fetch (skip detection)
+    var _soundClosedIds = null;
+
+    function _initSoundsAudio() {
+        if (_soundOpen) return;
+        _soundOpen = new Audio("/static/sounds/trade_open.wav");
+        _soundTP   = new Audio("/static/sounds/trade_tp.wav");
+        _soundSL   = new Audio("/static/sounds/trade_sl.wav");
+        [_soundOpen, _soundTP, _soundSL].forEach(function (a) {
+            a.preload = "auto";
+            a.volume = _soundVolume;
+        });
+    }
+
+    function _playSound(audio) {
+        if (!_soundEnabled || !audio) return;
+        try {
+            audio.currentTime = 0;
+            audio.volume = _soundVolume;
+            var p = audio.play();
+            if (p && p.catch) p.catch(function () {
+                if (!window._soundAutoplayWarned) {
+                    console.warn("Son bloque (autoplay policy) — clique TEST pour debloquer");
+                    window._soundAutoplayWarned = true;
+                }
+            });
+        } catch (_e) {}
+    }
+
+    function _detectTradeEvents(state) {
+        if (!state) return;
+        _initSoundsAudio();
+        var openBySym = state.open_by_symbol || {};
+        var closedList = state.closed_today || [];
+        var curOpen = {};
+        for (var sym in openBySym) {
+            var tid = openBySym[sym] && openBySym[sym].trade_id;
+            if (tid) curOpen[tid] = true;
+        }
+        var curClosed = {};
+        for (var i = 0; i < closedList.length; i++) {
+            var t = closedList[i];
+            if (t && t.trade_id) curClosed[t.trade_id] = t.outcome || "UNKNOWN";
+        }
+        // Premier fetch : init sans jouer (evite rejeu historique au load)
+        if (_soundOpenIds === null) {
+            _soundOpenIds = curOpen;
+            _soundClosedIds = curClosed;
+            return;
+        }
+        // Nouveaux opens
+        for (var id in curOpen) {
+            if (!_soundOpenIds[id]) _playSound(_soundOpen);
+        }
+        // Nouveaux closes
+        for (var id2 in curClosed) {
+            if (!(id2 in _soundClosedIds)) {
+                var outc = curClosed[id2];
+                if (outc === "TP") _playSound(_soundTP);
+                else if (outc === "SL") _playSound(_soundSL);
+                // TIMEOUT / KILL_SWITCH / autre = silencieux (evite fatigue)
+            }
+        }
+        _soundOpenIds = curOpen;
+        _soundClosedIds = curClosed;
+    }
+
+    function _updateSoundToggleUI() {
+        var btn = document.getElementById("btn-sound-toggle");
+        if (!btn) return;
+        if (_soundEnabled) {
+            btn.textContent = "ACTIF";
+            btn.style.background = "rgba(76,175,80,0.15)";
+            btn.style.color = "#4caf50";
+            btn.style.borderColor = "#4caf50";
+        } else {
+            btn.textContent = "MUET";
+            btn.style.background = "rgba(158,158,158,0.15)";
+            btn.style.color = "#9e9e9e";
+            btn.style.borderColor = "#9e9e9e";
+        }
+    }
+
+    function initPaperSounds() {
+        _initSoundsAudio();
+        var btnToggle = document.getElementById("btn-sound-toggle");
+        var btnTest = document.getElementById("btn-sound-test");
+        var slider = document.getElementById("sound-volume");
+        var label = document.getElementById("sound-volume-label");
+        if (btnToggle && !btnToggle._bound) {
+            btnToggle._bound = true;
+            btnToggle.addEventListener("click", function () {
+                _soundEnabled = !_soundEnabled;
+                localStorage.setItem("mia_sound_enabled", _soundEnabled ? "on" : "off");
+                _updateSoundToggleUI();
+            });
+        }
+        if (btnTest && !btnTest._bound) {
+            btnTest._bound = true;
+            btnTest.addEventListener("click", function () {
+                // Joue meme si mute (= test / debloque autoplay Chrome)
+                var wasEnabled = _soundEnabled;
+                _soundEnabled = true;
+                _playSound(_soundOpen);
+                _soundEnabled = wasEnabled;
+            });
+        }
+        if (slider && label && !slider._bound) {
+            slider._bound = true;
+            slider.value = Math.round(_soundVolume * 100);
+            label.textContent = Math.round(_soundVolume * 100) + "%";
+            slider.addEventListener("input", function () {
+                _soundVolume = parseInt(slider.value, 10) / 100;
+                localStorage.setItem("mia_sound_volume", String(Math.round(_soundVolume * 100)));
+                label.textContent = Math.round(_soundVolume * 100) + "%";
+                [_soundOpen, _soundTP, _soundSL].forEach(function (a) { if (a) a.volume = _soundVolume; });
+            });
+        }
+        _updateSoundToggleUI();
+    }
+
     function fetchPaperTrades() {
         fetchWithAuth(API_BASE + "/api/paper_trades", { method: "GET" })
             .then(function (r) {
@@ -3695,6 +3820,7 @@
             .then(function (d) {
                 paperFetchErrors = 0;
                 paperData = d;
+                _detectTradeEvents(d && d.state);
                 renderPaperBadge();
                 if (currentPage === "paper") renderPaperPage();
             })
@@ -5132,12 +5258,14 @@
             return;
         }
 
-        // Verifier que le token est encore valide (expire = redirect welcome)
-        fetch(API_BASE + "/api/auth/me", {
-            headers: { "Authorization": "Bearer " + authToken },
-        }).then(function (r) {
+        // Verifier que le token est encore valide. fetchWithAuth gere le refresh
+        // automatique sur 401 via cookie mia_session (7j). Si le refresh echoue
+        // (cookie absent/expire), _doRefresh redirige deja vers /welcome.
+        // Fix 24/04 : avant, fetch brut clearait localStorage + redirect sans
+        // jamais tenter le refresh → deco forcee toutes les 15min (access expiry).
+        fetchWithAuth(API_BASE + "/api/auth/me").then(function (r) {
             if (!r.ok) {
-                // Token expire ou invalide — nettoyer et rediriger
+                // Refresh a echoue (cookie expire/absent) — nettoyer + redirect
                 localStorage.removeItem("mia_token");
                 localStorage.removeItem("mia_tier");
                 localStorage.removeItem("mia_trial_expires");
@@ -5443,6 +5571,9 @@
 
         // Init du panel admin complet (health, users, trades, discord test)
         initAdminPanel();
+
+        // Init sons Paper Trading (24/04) — visible admin section
+        initPaperSounds();
 
         var btnStop = $("btn-bot-stop");
         var btnStart = $("btn-bot-start");

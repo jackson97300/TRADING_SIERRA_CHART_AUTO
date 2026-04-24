@@ -172,6 +172,26 @@
                     <div id="killswitch-msg" style="font-size:0.625rem;margin-top:6px;text-align:center;min-height:14px;color:var(--text-secondary);"></div>
                 </div>
 
+                <!-- Sons Paper Trading (owner only, persiste localStorage) -->
+                <div style="padding:8px 12px 0 12px;border-top:1px solid var(--border);margin-top:10px;">
+                    <div style="font-size:0.6875rem;color:var(--text-disabled);text-transform:uppercase;letter-spacing:0.5px;margin:4px 0 6px 0;">Sons Paper</div>
+                    <div style="display:flex;gap:6px;margin-bottom:6px;">
+                        <button id="btn-sound-toggle" type="button"
+                            style="flex:1;padding:8px;background:rgba(76,175,80,0.15);color:#4caf50;border:1px solid #4caf50;border-radius:6px;font-weight:600;font-size:0.75rem;cursor:pointer;">
+                            ACTIF
+                        </button>
+                        <button id="btn-sound-test" type="button" title="Tester le son (debloque autoplay Chrome)"
+                            style="padding:8px 10px;background:transparent;color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;font-size:0.7rem;cursor:pointer;">
+                            TEST
+                        </button>
+                    </div>
+                    <div class="kv-row" style="align-items:center;">
+                        <span class="kv-key" style="font-size:0.65rem;">Volume</span>
+                        <input id="sound-volume" type="range" min="0" max="100" value="70" style="flex:1;margin-left:8px;" />
+                        <span id="sound-volume-label" style="font-size:0.65rem;color:var(--text-secondary);min-width:28px;text-align:right;">70%</span>
+                    </div>
+                </div>
+
                 <!-- Bot Health -->
                 <div id="admin-panel" style="display:none;padding:8px 12px 0 12px;border-top:1px solid var(--border);margin-top:10px;">
                     <div style="font-size:0.6875rem;color:var(--text-disabled);text-transform:uppercase;letter-spacing:0.5px;margin:4px 0 6px 0;">Bot Health</div>
@@ -980,6 +1000,6 @@
 
     <script defer src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script defer src="/static/js/ticker-widget.js?v=52"></script>
-    <script defer src="/static/js/dashboard.js?v=78"></script>
+    <script defer src="/static/js/dashboard.js?v=80"></script>
 </body>
 </html>
