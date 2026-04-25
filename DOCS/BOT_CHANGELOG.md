@@ -62,6 +62,193 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-04-25 — [Enrichissement log V2 systeme decisions paper_trader]
+
+**Categorie** : FEATURE (observabilite, pas de scoring/gate change)
+**Impact prod** : PAPER
+**Fichier(s)** :
+  - `CORE/log_catalog.py:112-121` (+10 codes GATE_*)
+  - `CORE/mia_paper_trader.py:145-162` (REJECT_LOG_STEPS + REJECT_TO_V2_CODE)
+  - `CORE/mia_paper_trader.py:605` (emit V2 dans _log_rejection_detailed)
+  - `CORE/mia_paper_trader.py:765-785` (context enrichi step 3)
+**Schema/version** : -
+**Reviewer(s) agent** : market-analyst (GO log + garde-fou 10j avant fix ES)
+
+### Quoi
+Enrichissement du systeme de logs V2 existant pour tracer le funnel paper_trader :
+
+1. **10 codes catalog `GATE_*`** ajoutes (categorie `decisions/`) :
+   - `GATE_CONSEIL_ATTENDRE` — conseil = ATTENDRE (avec bull/bear pts, bias, MTF, range_pos)
+   - `GATE_CONSEIL_CONFLIT`
+   - `GATE_SELL_AUTO_DISABLED`
+   - `GATE_FRESHNESS_EXPIRED`
+   - `GATE_SIGNAL_DEDUPED`
+   - `GATE_CONF_TOO_LOW`
+   - `GATE_MTF_INSUFFICIENT`
+   - `GATE_BAR_DMP_MISSING`
+   - `GATE_SLTP_REJECT`
+   - `GATE_PAYOFF_TOO_LOW`
+
+2. **REJECT_LOG_STEPS etendu** : inclut `3_conseil` (avant : bruit skip).
+
+3. **Mapping `REJECT_TO_V2_CODE`** : chaque reason funnel → code catalog V2.
+
+4. **`_log_rejection_detailed`** : emit V2 supplementaire vers `LOGS/decisions/decisions_YYYYMMDD_paper.jsonl` APRES ecriture rejections/ (rate limite existant 60s/sym/reason conserve, pas de spam).
+
+5. **Context enrichi step 3** : capture `bull_pts`, `bear_pts`, `bias`, `mtf_bulls`, `mtf_bears`, `confidence`, `range_pos`, `signal_id` au moment du reject `conseil_attendre`/`conseil_conflit`.
+
+### Pourquoi
+Audit ES 0 trade 24/04 : impossible de diagnostiquer sans trace continue. `conseil_global` ES etait en ATTENDRE 100% du temps US RTH mais **aucun log** des valeurs `bull_pts`/`bear_pts`/MTF au moment des rejets step 3 (previously skipped comme "bruit").
+
+Market-analyst R2 demande : log empirique obligatoire AVANT tout fix scoring/gate ES (garde-fou pattern 11 : aucun fix avant N>=10 jours de data).
+
+### Impact attendu
+- Post-deploy : chaque reject step 3-8 est trace dans `LOGS/decisions/`
+- Permet diagnostic "pourquoi pas de trade ES" avec data empirique
+- Rate limite 60s/sym/reason → ~10-20 entries par jour par gate (pas de spam)
+- Zero impact sur decisions trade (pur observabilite)
+- Zero impact perf (emit V2 async JSONL append)
+
+### Validation pre-deploy
+- [x] Syntax check paper_trader + log_catalog OK
+- [x] pytest 137/137 non-regressed
+- [x] Review market-analyst R2 : GO log + 10j garde-fou
+- [x] Rate limit 60s conserve (pas de spam)
+
+### Revert plan
+```bash
+# Retirer les codes GATE_* du catalog + retirer REJECT_TO_V2_CODE + retirer emit V2 block + retirer step3_ctx
+git revert <commit>
+scp CORE/mia_paper_trader.py CORE/log_catalog.py VPS
+Restart-Service MIA-Paper
+```
+
+### Deployed at 2026-04-25 00:02 UTC puis enrichi 00:11 UTC
+- **v1 (00:02)** : step 3 enrichi (bull/bear_pts, mtf, bias, conf, range_pos) + emit V2 decisions/ pour tous les steps
+- **v2 (00:11)** : market_ctx injecte a TOUS les rejets step 3-8 — 10 champs additionnels :
+  - `dist_vwap_atr`, `atr`, `session`, `vix_regime` (context volatilite/session)
+  - `mq_dist_call_t`, `mq_dist_put_t`, `mq_dist_hvl_t` (distances murs majeurs en ticks)
+  - `mq_next_wall_t`, `mq_next_wall_side` (prochain mur + side)
+  - `above_hvl` (position vs HVL)
+- SCP paper_trader.py → VPS (2 restarts successifs)
+- **Total : 19 champs loggues dans chaque reject vs 8 avant**
+
+### Finding immediat du log
+**Paradoxe NQ detecte au premier sample** : `bull_pts=4, bear_pts=2, bias=BULLISH, mtf=4/0` devrait donner action=ACHAT PRUDENT (builders.py:1322). Log dit action=ATTENDRE. Anomalie inexpliquee par la logique de scoring seule (stabilizer ? freshness ?). **Sans ce log enrichi, invisible.** A investiguer lundi 27/04 session US.
+
+### Suivi post-deploy
+- J+1 (lundi 27/04) : verifier `LOGS/decisions/decisions_*.jsonl` contient entries `GATE_*`
+- J+5 : aggreger distribution par symbol/reason, identifier pattern ES
+- **J+10 (05/05)** : critere GO/NOGO fix ES selon market-analyst :
+  - Si bull_pts>=4 atteint 0 fois sur ES → calibration NQ inadaptee → fix justifie
+  - Sinon ES = instrument plus selectif → statu quo
+
+### Liens
+- Audit ES 0 trade : `CORE/research/reconstruct_mtf_es_25042026.py`
+- Regle log-debug-protocol : `.claude/rules/log-debug-protocol.md`
+- Memory : `feedback_log_debug_protocol.md`
+- Review market-analyst : GO + 10j garde-fou
+
+---
+
+## 2026-04-25 — [O3 Notification API browser pour trade events]
+
+**Categorie** : FEATURE
+**Impact prod** : DASHBOARD
+**Fichier(s)** : `DASHBOARD/static/js/dashboard.js:3707-3811` (+ cache bust v=80 → v=81)
+**Schema/version** : -
+**Reviewer(s) agent** : aucune (feature UX pure, pas de scoring/gate)
+
+### Quoi
+Ajout Notification API browser en complement des sons Audio :
+- Demande permission au 1er clic bouton TEST (user gesture requis Chrome)
+- Envoie notif native pour chaque trade OPEN/TP/SL avec titre + body contextualise
+- Replace notif precedente via `tag: "mia-trade"` (evite spam superpose)
+- Auto-close 8s + click = focus dashboard tab
+- Respecte le toggle ACTIF/MUET (meme etat que sons)
+
+### Pourquoi
+Limitation Audio API Chrome : autoplay bloque quand onglet inactif (background tab) → Jackson a rapporte "Ordre servi entendu mais pas Target servi" car il etait sur Sierra Chart au moment du TP. Notification API fonctionne TOUJOURS, meme onglet inactif.
+
+### Impact attendu
+- Jackson peut etre alerte des trades meme en travaillant sur Sierra Chart ou autre app
+- Notif se stack pas : tag="mia-trade" remplace la precedente
+- Aucun impact performance (native browser API)
+
+### Validation pre-deploy
+- [x] Syntax check `node --check` OK
+- [x] Respecte toggle MUET (si muet → pas de son NI notif)
+- [x] Auto-dismiss 8s evite spam
+- [x] Click notif = focus tab dashboard
+
+### Revert plan
+```bash
+# Retirer _sendNotif calls + function, bump cache bust
+```
+
+### Deployed at 2026-04-25 (minuit approx)
+- SCP dashboard.js v81 + index.html → VPS
+- Pas de restart requis (static files)
+- Jackson doit faire **Ctrl+F5** sur dashboard, puis **clic TEST** pour autoriser permission
+
+### Suivi post-deploy
+- Au prochain trade : Jackson doit voir notif native dans coin ecran meme si onglet dashboard minimise
+- Si permission refusee : revenir proposer plus tard
+
+---
+
+## 2026-04-25 — [Fix B2 MenthorQ regime fallback sur dernier fichier disponible]
+
+**Categorie** : FIX
+**Impact prod** : PAPER / DASHBOARD
+**Fichier(s)** : `CORE/mia_paper_trader.py:398-460` (`_load_menthorq_regime`)
+**Schema/version** : -
+**Reviewer(s) agent** : aucune (modif non scoring/gates, pure infra)
+
+### Quoi
+Si `DATA/MENTHORQ/{today}_menthorq_complete.json` absent, fallback automatique sur le dernier fichier disponible (max 7j). Expose dans state.json `fallback_used: bool` + `fallback_date: str` pour transparence dashboard.
+
+### Pourquoi
+MenthorQ data extraite post-close jour J par Jackson, utilisable jour J+1. Si pas encore extrait (weekend, delay Jackson), bot avait `regime = UNKNOWN` sur dashboard. Inutile. Les donnees MQ sont valides plusieurs jours (levels statiques).
+
+### Impact attendu
+- Dashboard regime ES/NQ affiche le dernier regime connu au lieu de UNKNOWN
+- Decisions trade : **ZERO impact** (features mq_* viennent du DMP JSONL live, pas de ce fichier)
+- Log visible : `mq_regime fallback : today=20260425 absent, loaded 20260423`
+
+### Validation pre-deploy
+- [x] Syntax check OK
+- [x] Test fallback logic : 20260425 (today absent) → 20260423 (age 2j, < 7j) used correctly
+- [x] Aucun impact sur scoring/gates (lecture read-only)
+
+### Revert plan
+```bash
+# Retirer le bloc fallback (~45 LOC), restaurer comportement MQ_REGIME_MISSING
+git revert <commit>
+scp CORE/mia_paper_trader.py VPS
+Restart-Service MIA-Paper
+```
+
+### Deployed at 2026-04-24 23:30 UTC (samedi 25/04 01:30 FR)
+- SCP `CORE/mia_paper_trader.py` → VPS
+- `Restart-Service MIA-Paper` OK
+- Verif state.json : `menthorq_regime.fallback_used=true, fallback_date="20260419"`
+  (ES=GEX+ net_gex=132040000, NQ=GEX+ net_gex=4890000)
+
+### Bug orthogonal decouvert (backlog)
+Le scraper auto `mia_menthorq_scraper.py` ECRASE les fichiers manuels Jackson quand
+il execute. Exemple 24/04 : mon SCP matin de `20260423_menthorq_complete.json`
+(source="extraction manuelle", key_levels valides) → ecrase par scraper auto
+14:18 qui a genere un fichier avec echecs 422 (raw_ajax only, pas de key_levels).
+Fix B2 le CONTOURNE (fallback saute les fichiers invalides), mais le bug reste.
+TODO : modifier scraper pour SKIP si fichier existant a source="extraction manuelle".
+
+### Suivi post-deploy
+- J+1 : verifier fallback actif sans regression
+- Pas de suivi long terme necessaire (infra cosmetique)
+
+---
+
 ## 2026-04-25 — [MTF_BULL_DESERT filter SHORT sur `mtf_bulls <= 1`]
 
 **Categorie** : GATE

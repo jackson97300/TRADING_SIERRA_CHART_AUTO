@@ -142,7 +142,26 @@ FUNNEL_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "LOGS"
 # STEP 1-3 = bruit (cooldown/ATTENDRE), pas de log detaille, juste counter funnel.
 # STEP 4-8 = logs JSONL avec contexte metier. Rate limit 60s par (symbol, reason) anti-spam.
 REJECTIONS_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "LOGS", "rejections")
-REJECT_LOG_STEPS = {"4_freshness", "5_dedup", "6_conf_mtf", "6bis_bias", "7_sltp", "8_payoff"}
+REJECT_LOG_STEPS = {"3_conseil", "4_freshness", "5_dedup", "6_conf_mtf", "6bis_bias", "7_sltp", "8_payoff"}
+
+# Mapping reason -> code catalog V2 pour emission unified LOGS/decisions/
+# (cf DOCS/BOT_CHANGELOG.md 25/04 - enrichissement log systeme V2)
+REJECT_TO_V2_CODE = {
+    "conseil_attendre":      "GATE_CONSEIL_ATTENDRE",
+    "conseil_conflit":       "GATE_CONSEIL_CONFLIT",
+    "sell_auto_disabled":    "GATE_SELL_AUTO_DISABLED",
+    "freshness_not_new":     "GATE_FRESHNESS_EXPIRED",
+    "signal_already_traded": "GATE_SIGNAL_DEDUPED",
+    "confidence_too_low":    "GATE_CONF_TOO_LOW",
+    "mtf_insufficient":      "GATE_MTF_INSUFFICIENT",
+    "mtf_bull_desert":       "GATE_MTF_BULL_DESERT",
+    "bar_dmp_missing":       "GATE_BAR_DMP_MISSING",
+    "sltp_no_wall":          "GATE_SLTP_REJECT",
+    "sltp_out_of_range":     "GATE_SLTP_REJECT",
+    "sltp_budget_exceeded":  "GATE_SLTP_REJECT",
+    "sltp_rr_low":           "GATE_SLTP_REJECT",
+    "payoff_too_low":        "GATE_PAYOFF_TOO_LOW",
+}
 REJECT_LOG_RATE_LIMIT_SEC = 60
 
 
@@ -396,31 +415,90 @@ class PaperTrader:
         C'est du contexte pour diagnostic + dashboard. Edge empirique
         documente (finding 15/04) : SELL -56% PF gap en GEX+ vs GEX-.
         """
-        json_path = os.path.join(MENTHORQ_DIR, f"{self.date_str}_menthorq_complete.json")
+        today_path = os.path.join(MENTHORQ_DIR, f"{self.date_str}_menthorq_complete.json")
         out = {
             "date": self.date_str,
-            "json_path": json_path,
+            "json_path": today_path,
             "loaded": False,
             "loaded_ts": time.time(),
+            "fallback_used": False,
+            "fallback_date": None,
             "ES": {"regime": "UNKNOWN"},
             "NQ": {"regime": "UNKNOWN"},
         }
-        if not os.path.exists(json_path):
+        # 🆕 Fix B2 (25/04 - cf DOCS/BOT_CHANGELOG.md) : fallback sur dernier
+        # fichier MenthorQ VALIDE si today absent OU invalide. Un fichier peut
+        # exister mais etre un echec scraper (raw_ajax + success:false, pas de
+        # key_levels). On detecte et on fallback sur dernier fichier valide.
+        # Max 7j pour eviter data trop stale.
+        # Impact decisions trade : ZERO (features mq_* viennent DMP JSONL live).
+        def _try_load_and_validate(path: str):
+            """Retourne data si fichier valide (key_levels.ES/NQ dict present),
+            None sinon. Un fichier scraper echoue (raw_ajax only) = None."""
+            if not os.path.exists(path):
+                return None
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    d = json.load(f)
+            except Exception as e:
+                if _v2log:
+                    try:
+                        _v2log.emit("MQ_INGESTION_FAIL", source=path, err=str(e))
+                    except Exception:
+                        pass
+                return None
+            kl = d.get("key_levels", {}) or {}
+            has_es = isinstance(kl.get("ES"), dict) and kl.get("ES")
+            has_nq = isinstance(kl.get("NQ"), dict) and kl.get("NQ")
+            if not (has_es or has_nq):
+                return None  # fichier present mais pas de key_levels valides
+            return d
+
+        # Build candidates list : today first, then fallbacks by recency <= 7j
+        candidates = [(self.date_str, today_path, False)]  # (date, path, is_fallback)
+        try:
+            import glob as _glob
+            pattern = os.path.join(MENTHORQ_DIR, "*_menthorq_complete.json")
+            dated_fallback = []
+            for p in _glob.glob(pattern):
+                name = os.path.basename(p)
+                date_prefix = name.split("_")[0]
+                if (len(date_prefix) == 8 and date_prefix.isdigit()
+                        and date_prefix != self.date_str):
+                    dated_fallback.append((date_prefix, p))
+            dated_fallback.sort(reverse=True)
+            today_int = int(self.date_str)
+            for d_str, p in dated_fallback:
+                age = today_int - int(d_str)
+                if 0 < age <= 7:
+                    candidates.append((d_str, p, True))
+        except Exception:
+            pass
+
+        # Try each candidate, stop at first VALID
+        data = None
+        for d_str, path, is_fallback in candidates:
+            d = _try_load_and_validate(path)
+            if d is not None:
+                data = d
+                out["json_path"] = path
+                if is_fallback:
+                    out["fallback_used"] = True
+                    out["fallback_date"] = d_str
+                    print(f"  [MQ] fallback : {self.date_str} absent/invalide, utilise {d_str}")
+                    if _v2log:
+                        try:
+                            _v2log.emit("GENERIC_INFO",
+                                        msg=f"mq_regime fallback : today={self.date_str} absent/invalide, loaded {d_str}")
+                        except Exception:
+                            pass
+                break
+
+        if data is None:
             self._menthorq_regime = out
             if _v2log:
                 try:
                     _v2log.emit("MQ_REGIME_MISSING", date=self.date_str, sym="ES+NQ")
-                except Exception:
-                    pass
-            return
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception as e:
-            self._menthorq_regime = out
-            if _v2log:
-                try:
-                    _v2log.emit("MQ_INGESTION_FAIL", source=json_path, err=str(e))
                 except Exception:
                     pass
             return
@@ -543,6 +621,16 @@ class PaperTrader:
                 except Exception:
                     pass
 
+        # 🆕 25/04 - Emit V2 vers LOGS/decisions/ pour tracage unified systeme V2
+        # Rate limite deja applique ci-dessus (60s par sym+reason) -> pas de spam.
+        # Cf DOCS/BOT_CHANGELOG.md 25/04 + .claude/rules/log-debug-protocol.md
+        v2_code = REJECT_TO_V2_CODE.get(reason)
+        if v2_code and _v2log:
+            try:
+                _v2log.emit(v2_code, sym=symbol, **ctx)
+            except Exception:
+                pass  # fail-safe : log V2 ne doit jamais bloquer le bot
+
     @staticmethod
     def _classify_sltp_reject(raw_reason: str) -> str:
         """Mappe le reject_reason SLTPResult vers une raison funnel granulaire.
@@ -646,6 +734,23 @@ class PaperTrader:
         if not price:
             return None
 
+        # 🆕 25/04 - Enrichissement log V2 complet : market_ctx injecte dans TOUS les
+        # rejets step 3-8 pour diagnostic pourquoi un poll meurt. Rate limite 60s
+        # par (sym, reason) conserve (pas de spam).
+        options = instr.get("options", {}) or {}
+        market_ctx = {
+            "dist_vwap_atr": round(reg.get("dist_vwap_atr", 0) or 0, 3),
+            "atr": round(reg.get("atr", 0) or 0, 1),
+            "session": reg.get("session_id") or "?",
+            "vix_regime": reg.get("vix_regime"),
+            "mq_dist_call_t": round(options.get("dist_mq_call", 0) or 0, 0),
+            "mq_dist_put_t": round(options.get("dist_mq_put", 0) or 0, 0),
+            "mq_dist_hvl_t": round(options.get("dist_mq_hvl", 0) or 0, 0),
+            "mq_next_wall_t": round(options.get("next_wall_dist", 0) or 0, 0),
+            "mq_next_wall_side": options.get("next_wall_side", "?"),
+            "above_hvl": options.get("bool_above_mq_hvl", 0),
+        }
+
         # Funnel : a partir d'ici on a un poll valide (data dashboard coherente).
         # On ne compte PAS les ticks sans prix/instrument car ce sont des erreurs
         # infra (dashboard down, symbol off), pas des rejets de regle metier.
@@ -677,11 +782,29 @@ class PaperTrader:
         # 3. Conseil Global action
         conseil = data.get("conseil_global", {}).get(sym, {})
         action = conseil.get("action", "ATTENDRE")
+        # 🆕 25/04 - context enrichi step 3 pour log V2 (audit ES 0 trade)
+        # Capture les signaux qui auraient pu expliquer ATTENDRE : bull/bear pts,
+        # MTF, bias, confidence, range_pos, dist_vwap. Rate limite 60s/sym/reason.
+        bull_pts = conseil.get("bull_points", 0)
+        bear_pts = conseil.get("bear_points", 0)
+        step3_ctx = dict(
+            action=action,
+            bull_pts=bull_pts,
+            bear_pts=bear_pts,
+            bias=reg.get("bias", "?"),
+            mtf_bulls=reg.get("mtf_bulls", 0),
+            mtf_bears=reg.get("mtf_bears", 0),
+            confidence=round(reg.get("bias_confidence", 0) or 0, 3),
+            range_pos=reg.get("range_pos"),
+            signal_id=conseil.get("signal_id"),
+        )
         if action == "ATTENDRE":
-            self._funnel_reject("3_conseil", "conseil_attendre")
+            self._funnel_reject("3_conseil", "conseil_attendre",
+                                symbol=symbol, **step3_ctx, **market_ctx)
             return None
         if action == "CONFLIT":
-            self._funnel_reject("3_conseil", "conseil_conflit")
+            self._funnel_reject("3_conseil", "conseil_conflit",
+                                symbol=symbol, **step3_ctx, **market_ctx)
             return None
         self._funnel_pass("3_conseil")
         direction_int = 1 if "ACHAT" in action else -1
@@ -695,7 +818,8 @@ class PaperTrader:
                                 symbol=symbol,
                                 action=action,
                                 reason=self._sell_disable_reason.get(symbol),
-                                signal_id=conseil.get("signal_id"))
+                                signal_id=conseil.get("signal_id"),
+                                **market_ctx)
             return None
 
         # 4. freshness state machine v1.5 — NEW ou PERSISTENT (fix 24/04)
@@ -711,7 +835,8 @@ class PaperTrader:
                                 freshness_seen=freshness_v15,
                                 required=list(required),
                                 action=action,
-                                signal_id=conseil.get("signal_id"))
+                                signal_id=conseil.get("signal_id"),
+                                **market_ctx)
             return None
         self._funnel_pass("4_freshness")
 
@@ -721,7 +846,8 @@ class PaperTrader:
             self._funnel_reject("5_dedup", "signal_already_traded",
                                 symbol=symbol,
                                 signal_id=signal_id,
-                                action=action)
+                                action=action,
+                                **market_ctx)
             return None
         self._funnel_pass("5_dedup")
 
@@ -734,7 +860,8 @@ class PaperTrader:
                                 confidence=round(confidence, 3),
                                 min_conf_required=min_conf,
                                 action=action,
-                                prudent=prudent)
+                                prudent=prudent,
+                                **market_ctx)
             return None
         mtf_bulls = reg.get("mtf_bulls", 0)
         mtf_bears = reg.get("mtf_bears", 0)
@@ -759,7 +886,8 @@ class PaperTrader:
                                 mtf_bulls=mtf_bulls,
                                 mtf_bears=mtf_bears,
                                 confidence=round(confidence, 3),
-                                action=action)
+                                action=action,
+                                **market_ctx)
             return None
 
         if direction == "LONG" and mtf_bulls < ENTRY_RULES["min_mtf_bulls"]:
@@ -770,7 +898,8 @@ class PaperTrader:
                                 mtf_bears=mtf_bears,
                                 min_required=ENTRY_RULES["min_mtf_bulls"],
                                 confidence=round(confidence, 3),
-                                action=action)
+                                action=action,
+                                **market_ctx)
             return None
         if direction == "SHORT" and mtf_bears < ENTRY_RULES["min_mtf_bears"]:
             self._funnel_reject("6_conf_mtf", "mtf_insufficient",
@@ -780,7 +909,8 @@ class PaperTrader:
                                 mtf_bears=mtf_bears,
                                 min_required=ENTRY_RULES["min_mtf_bears"],
                                 confidence=round(confidence, 3),
-                                action=action)
+                                action=action,
+                                **market_ctx)
             return None
         self._funnel_pass("6_conf_mtf")
 
@@ -801,7 +931,8 @@ class PaperTrader:
             self._funnel_reject("6bis_bias", "bar_dmp_missing",
                                 symbol=symbol,
                                 direction=direction,
-                                action=action)
+                                action=action,
+                                **market_ctx)
             return None
 
         # 6bis. BIAS GATE directionnel (3.7.9 — 24/04/2026 Jackson validation)
@@ -892,7 +1023,8 @@ class PaperTrader:
                                 tp1_wall=getattr(sltp_result, "tp1_wall", ""),
                                 rr_calc=getattr(sltp_result, "rr_ratio", 0),
                                 action=action,
-                                signal_id=signal_id)
+                                signal_id=signal_id,
+                                **market_ctx)
             return None
         self._funnel_pass("7_sltp")
 
@@ -916,7 +1048,8 @@ class PaperTrader:
                                 sl_wall=sltp_result.sl_wall,
                                 tp_wall=sltp_result.tp1_wall,
                                 action=action,
-                                signal_id=signal_id)
+                                signal_id=signal_id,
+                                **market_ctx)
             return None
         self._funnel_pass("8_payoff")
 

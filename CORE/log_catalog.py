@@ -109,6 +109,17 @@ LOG_CODES = {
     "BOT_KILL_SWITCH_ACTIVATED": (LogLevel.MAJEUR, "events", "STOP.flag detecte : flatten + pause (positions closed: {n_closed})"),
     "BOT_KILL_SWITCH_RELEASED": (LogLevel.INFO,    "events", "STOP.flag supprime : reprise trading"),
     "GATE_MTF_BULL_DESERT":     (LogLevel.INFO,    "decisions", "SHORT reject : mtf_bulls<=1 ({mtf_bulls}/4) edge negatif prouve"),
+    # --- Paper trader gates funnel (enrichissement log V2 - 25/04) ---
+    "GATE_CONSEIL_ATTENDRE":    (LogLevel.INFO,    "decisions", "Conseil ATTENDRE : {sym} bull={bull_pts} bear={bear_pts} bias={bias} mtf={mtf_bulls}/{mtf_bears} rangepos={range_pos}%"),
+    "GATE_CONSEIL_CONFLIT":     (LogLevel.INFO,    "decisions", "Conseil CONFLIT : {sym} bull={bull_pts} bear={bear_pts}"),
+    "GATE_SELL_AUTO_DISABLED":  (LogLevel.ALERTE,  "decisions", "SELL auto-disabled : {sym} reason={reason}"),
+    "GATE_FRESHNESS_EXPIRED":   (LogLevel.INFO,    "decisions", "Freshness expire : {sym} state={freshness}"),
+    "GATE_SIGNAL_DEDUPED":      (LogLevel.INFO,    "decisions", "Signal dedup : {sym} signal_id={signal_id}"),
+    "GATE_CONF_TOO_LOW":        (LogLevel.INFO,    "decisions", "Confidence too low : {sym} conf={confidence} < {min_conf_required}"),
+    "GATE_MTF_INSUFFICIENT":    (LogLevel.INFO,    "decisions", "MTF insuffisant : {sym} dir={direction} bulls={mtf_bulls}/{mtf_bears} need>={min_required}"),
+    "GATE_BAR_DMP_MISSING":     (LogLevel.ALERTE,  "decisions", "Bar DMP absente : {sym} dir={direction}"),
+    "GATE_SLTP_REJECT":         (LogLevel.INFO,    "decisions", "SLTP reject : {sym} dir={direction} raison={reason_fine}"),
+    "GATE_PAYOFF_TOO_LOW":      (LogLevel.INFO,    "decisions", "Payoff insuffisant : {sym} expected=${expected_payoff_usd} < min=${min_required}"),
     "DLL_RELOAD":              (LogLevel.ALERTE,   "events", "DLL Sierra Chart reloadee"),
     "CONFIG_RELOAD":           (LogLevel.INFO,     "events", "Config reloadee depuis disque"),
 
