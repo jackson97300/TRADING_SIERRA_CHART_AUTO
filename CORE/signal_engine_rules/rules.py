@@ -57,6 +57,11 @@ def _zero_tag(features: dict) -> RuleTag:
 COLOR_PROXIMITY_THRESHOLD_PCT = 0.0005  # 0.05% threshold for color_up/dn proximity
 IB_CLOSE_MINS_ET = 630  # IB window 09:30-10:30 ET → 630 = 10:30 ET
 
+# Strength constants per rule (for ML traceability + tunable in V2)
+STRENGTH_COLOR_BREAK = 0.7    # rule_color_zone_break
+STRENGTH_FAILED_IB = 0.7      # rule_failed_ib_poor_high
+STRENGTH_CLUSTER = 0.8        # rule_cluster_at_high / rule_cluster_at_low
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Rule 1 — long_up_bar (Acosta long bar continuation)
@@ -159,11 +164,11 @@ def rule_color_zone_break(features: dict) -> RuleTag:
     d_dn = _safe_get_nullable(features, "dist_color_dn_nearest_pct")
     delta_dir = _safe_get(features, "delta_day_dir", 0)
 
-    # BUY break : just above color_up + delta up
+    # BUY break : just above color_up + delta up (priority over SELL if both fire)
     if d_up is not None and -0.0005 < d_up < 0 and delta_dir > 0:
         return RuleTag(
             direction=+1,
-            strength=0.7,
+            strength=STRENGTH_COLOR_BREAK,
             version=RULES_SCHEMA_VERSION,
             fired_at=features.get("ts_event"),
             meta={"dist_color_up_pct": float(d_up), "side": "break_up"},
@@ -172,7 +177,7 @@ def rule_color_zone_break(features: dict) -> RuleTag:
     if d_dn is not None and 0 < d_dn < 0.0005 and delta_dir < 0:
         return RuleTag(
             direction=-1,
-            strength=0.7,
+            strength=STRENGTH_COLOR_BREAK,
             version=RULES_SCHEMA_VERSION,
             fired_at=features.get("ts_event"),
             meta={"dist_color_dn_pct": float(d_dn), "side": "break_dn"},
@@ -193,7 +198,7 @@ def rule_cluster_at_high(features: dict) -> RuleTag:
         return _zero_tag(features)
     return RuleTag(
         direction=-1,
-        strength=0.8,
+        strength=STRENGTH_CLUSTER,
         version=RULES_SCHEMA_VERSION,
         fired_at=features.get("ts_event"),
         meta={"cluster_at_high": 1, "delta_day_dir": int(delta_dir)},
@@ -213,7 +218,7 @@ def rule_cluster_at_low(features: dict) -> RuleTag:
         return _zero_tag(features)
     return RuleTag(
         direction=+1,
-        strength=0.8,
+        strength=STRENGTH_CLUSTER,
         version=RULES_SCHEMA_VERSION,
         fired_at=features.get("ts_event"),
         meta={"cluster_at_low": 1, "delta_day_dir": int(delta_dir)},
@@ -246,7 +251,7 @@ def rule_failed_ib_poor_high(features: dict) -> RuleTag:
     if br_up == 1 and -0.5 < pos < 0.5:
         return RuleTag(
             direction=-1,
-            strength=0.7,
+            strength=STRENGTH_FAILED_IB,
             version=RULES_SCHEMA_VERSION,
             fired_at=features.get("ts_event"),
             meta={"side": "poor_high", "ib_position_pct": float(pos)},
@@ -254,7 +259,7 @@ def rule_failed_ib_poor_high(features: dict) -> RuleTag:
     if br_dn == 1 and -0.5 < pos < 0.5:
         return RuleTag(
             direction=+1,
-            strength=0.7,
+            strength=STRENGTH_FAILED_IB,
             version=RULES_SCHEMA_VERSION,
             fired_at=features.get("ts_event"),
             meta={"side": "poor_low", "ib_position_pct": float(pos)},

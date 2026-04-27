@@ -147,6 +147,24 @@ def test_color_zone_break_does_not_fire_when_no_break():
     assert tag.direction == 0
 
 
+def test_color_zone_break_buy_priority_when_both_break():
+    """Edge case (C2 code-reviewer): if d_up AND d_dn both in trigger zone with
+    aligned delta, BUY priority (deterministic order)."""
+    bar = make_bar_base()
+    bar["dist_color_up_nearest_pct"] = -0.0001  # break up
+    bar["dist_color_dn_nearest_pct"] = 0.0001   # break dn
+    bar["delta_day_dir"] = 1  # delta up favors BUY check first
+    tag = rule_color_zone_break(bar)
+    assert tag.direction == 1, "BUY break should take priority when both fire"
+
+
+def test_color_zone_break_handles_nan():
+    """S2 code-reviewer: rule must not crash on NaN dist_color_up/dn."""
+    bar = make_bar_with_nan("dist_color_up_nearest_pct")
+    tag = rule_color_zone_break(bar)
+    assert tag.direction == 0  # cannot break NaN, no fire
+
+
 # ─── Rule 6 : cluster_at_high ─────────────────────────────────────────
 
 def test_cluster_at_high_fires_sell_with_delta_down():
@@ -236,3 +254,22 @@ def test_edge_zone_buy_priority_when_both_fire():
     bar["bar_edge_sell_fire"] = 1
     tag = rule_edge_zone_fire(bar)
     assert tag.direction == 1
+
+
+# ─── apply_all_rules contract (I5 code-reviewer) ─────────────────────
+
+def test_apply_all_rules_returns_9_keys():
+    """Contract test: apply_all_rules returns dict with exactly 9 RuleTag entries."""
+    from CORE.signal_engine_rules.rules import apply_all_rules
+    from CORE.signal_engine_rules.schema import RuleTag
+    bar = make_bar_base()
+    tags = apply_all_rules(bar)
+    expected_keys = {
+        "long_up_bar", "long_dn_bar", "color_up_proximity",
+        "color_dn_proximity", "color_zone_break", "cluster_at_high",
+        "cluster_at_low", "failed_ib_poor_high", "edge_zone_fire",
+    }
+    assert set(tags.keys()) == expected_keys, f"Missing/extra rules: {set(tags.keys()) ^ expected_keys}"
+    for name, tag in tags.items():
+        assert isinstance(tag, RuleTag), f"{name} returned {type(tag).__name__}, expected RuleTag"
+        assert tag.direction in (-1, 0, 1), f"{name} invalid direction {tag.direction}"

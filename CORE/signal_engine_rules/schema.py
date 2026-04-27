@@ -22,7 +22,10 @@ class RuleTag:
 
     Fields:
         direction: -1 SELL, 0 nothing, +1 BUY
-        strength: [0, 1] normalized distance to threshold (0 = at threshold, 1 = far inside)
+        strength: [0, 1] confidence/intensity of the fire. 1.0 = signal strongest
+                 (right at trigger condition center), 0.0 = at threshold limit (weak).
+                 For binary-fire rules (long_up_bar, edge_zone_fire), strength=1.0
+                 when fired (no gradient).
         version: schema version string ("1.0" for V1)
         fired_at: pd.Timestamp of the bar the rule was evaluated on (ts_event)
         meta: free-form dict for traceability (e.g. {"dist_color_up_pct": 0.0003})

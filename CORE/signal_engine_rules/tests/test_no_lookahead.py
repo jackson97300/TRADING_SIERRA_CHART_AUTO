@@ -110,21 +110,30 @@ def test_no_rule_uses_blacklisted_leaky_features():
     Blacklist :
       - dist_ovn_high_pct, dist_ovn_low_pct (pre-fix v5b)
       - above_open_830, above_open_930 (pre-fix)
+      - dist_ib_high_pct, dist_ib_low_pct, dist_ib_mid_pct (pre-fix unmasked)
 
-    Note: dist_ib_high_pct / dist_ib_low_pct are present in v5b post-fix (NaN
-    masked pre-10:30) so safe to use ONLY if rule itself adds time guard. None
-    of the V1 rules use these features.
+    EXEMPTION : rule_failed_ib_poor_high uses ib_broken_up/down + ib_position_pct
+    WITH a mins_et < 630 hard guard (anti-leak verified by separate test
+    test_failed_ib_anti_leak_pre_close_remains_zero). These features ARE leaky
+    pre-fix but the rule's time guard prevents reading them in the leaky window.
+
+    If a future rule needs dist_ib_*, it MUST add the same mins_et guard.
     """
     from pathlib import Path
     rules_src = (Path(__file__).resolve().parents[1] / "rules.py").read_text(encoding="utf-8")
-    blacklist = [
+    # Hard blacklist: features that MUST NEVER appear, no exemption possible
+    hard_blacklist = [
         "dist_ovn_high_pct",
         "dist_ovn_low_pct",
         "above_open_830",
         "above_open_930",
+        "dist_ib_high_pct",
+        "dist_ib_low_pct",
+        "dist_ib_mid_pct",
     ]
-    for feat in blacklist:
+    for feat in hard_blacklist:
         assert feat not in rules_src, (
-            f"BLACKLIST BREACH: rules.py references leaky feature '{feat}'. "
-            f"Use a non-leaky alternative or apply mask in feature dict."
+            f"HARD BLACKLIST BREACH: rules.py references leaky feature '{feat}'. "
+            f"Use a non-leaky alternative or apply mask in feature dict. "
+            f"If this is intentional with anti-leak guard, exempt via comment + new test."
         )
