@@ -154,30 +154,40 @@ def rule_color_dn_proximity(features: dict) -> RuleTag:
 # ═══════════════════════════════════════════════════════════════════════
 
 def rule_color_zone_break(features: dict) -> RuleTag:
-    """BUY si cassure au-dessus zone color_up confirmée par delta dir up.
-    SELL si cassure sous zone color_dn confirmée par delta dir down.
+    """BUY si cassure récente au-dessus zone color_up confirmée par delta dir up.
+    SELL si cassure récente sous zone color_dn confirmée par delta dir down.
 
-    Convention v5b : dist_color_up_nearest_pct < 0 = price ABOVE color_up zone.
-                     dist_color_dn_nearest_pct > 0 = price BELOW color_dn zone.
+    Convention REELLE v5b (validée empiriquement 27/04) :
+      dist_color_up_nearest_pct < 0 = color_up zone AU-DESSUS du close (prix sous zone)
+      dist_color_up_nearest_pct > 0 = price AU-DESSUS de color_up zone (cassure)
+      dist_color_dn_nearest_pct > 0 = color_dn zone SOUS le close (prix au-dessus)
+      dist_color_dn_nearest_pct < 0 = price SOUS color_dn zone (cassure dn)
+
+    Cassure récente = price vient de franchir la zone, dist faible mais non nulle.
+    Threshold : 0.001 (0.1%) pour capturer une cassure de 0 à 0.1% (~10 ticks ES).
     """
     d_up = _safe_get_nullable(features, "dist_color_up_nearest_pct")
     d_dn = _safe_get_nullable(features, "dist_color_dn_nearest_pct")
     delta_dir = _safe_get(features, "delta_day_dir", 0)
 
-    # BUY break : just above color_up + delta up (priority over SELL if both fire)
-    if d_up is not None and -0.0005 < d_up < 0 and delta_dir > 0:
+    # BUY break : price ABOVE color_up zone (d_up > 0, rare ~0.8% ES) + delta up
+    # Strength inversely proportional to distance (1.0 = right at zone, 0 = far above)
+    if d_up is not None and d_up > 0 and delta_dir > 0:
+        # Strength : 1.0 at zone, decaying to 0.5 at 0.5% above, 0 at 1.0% above
+        strength = max(0.0, min(1.0, 1.0 - d_up / 1.0))
         return RuleTag(
             direction=+1,
-            strength=STRENGTH_COLOR_BREAK,
+            strength=float(strength) if strength > 0 else STRENGTH_COLOR_BREAK,
             version=RULES_SCHEMA_VERSION,
             fired_at=features.get("ts_event"),
             meta={"dist_color_up_pct": float(d_up), "side": "break_up"},
         )
-    # SELL break : just below color_dn + delta dn
-    if d_dn is not None and 0 < d_dn < 0.0005 and delta_dir < 0:
+    # SELL break : price BELOW color_dn zone (d_dn < 0) + delta dn
+    if d_dn is not None and d_dn < 0 and delta_dir < 0:
+        strength = max(0.0, min(1.0, 1.0 - abs(d_dn) / 1.0))
         return RuleTag(
             direction=-1,
-            strength=STRENGTH_COLOR_BREAK,
+            strength=float(strength) if strength > 0 else STRENGTH_COLOR_BREAK,
             version=RULES_SCHEMA_VERSION,
             fired_at=features.get("ts_event"),
             meta={"dist_color_dn_pct": float(d_dn), "side": "break_dn"},
@@ -230,12 +240,20 @@ def rule_cluster_at_low(features: dict) -> RuleTag:
 # ═══════════════════════════════════════════════════════════════════════
 
 def rule_failed_ib_poor_high(features: dict) -> RuleTag:
-    """Failed IB break = poor high → reversal (Crabel 1990, H3 PF 1.18 NQ).
+    """Failed IB break = poor high/low → reversal (Crabel 1990, H3 PF 1.18 NQ).
 
     ANTI-LEAK GUARD : returns 0 if mins_et < 630 (IB not closed yet).
-    Logic:
-      - Broke UP and back inside IB (-0.5 < ib_position_pct < 0.5) → SHORT poor high
-      - Broke DN and back inside IB → LONG poor low
+
+    Logic (corrected 27/04 post-empirical analysis):
+      Convention v5b : ib_broken_up persistent flag (= ever broke this day).
+                       ib_position_pct : 1.0 = at IB high, 0.0 = at IB low,
+                                         > 1.0 = above IB high, < 0.0 = below IB low.
+
+      - Broke UP (br_up=1) and price RETOMBE sous IB high (pos < 1.0) → SHORT poor high
+        Le price a cassé up puis retombé = false breakout = reversal expected.
+      - Broke DN (br_dn=1) and price RETOMBE au-dessus IB low (pos > 0.0) → LONG poor low
+
+      Anti double-fire : si pos in (0, 1) ET les 2 sides broken, BUY priority arbitraire.
     """
     # ANTI-LEAK : refuse to fire pre-IB-close
     mins_et = int(_safe_get(features, "mins_et", 0))
@@ -243,26 +261,29 @@ def rule_failed_ib_poor_high(features: dict) -> RuleTag:
         return _zero_tag(features)
 
     br_up = int(_safe_get(features, "ib_broken_up", 0))
-    br_dn = int(_safe_get(features, "ib_broken_down", 0))
+    # Support both ib_broken_dn (DMP/v5b native) and ib_broken_down (compat)
+    br_dn = int(_safe_get(features, "ib_broken_dn", 0)) or int(_safe_get(features, "ib_broken_down", 0))
     pos = _safe_get_nullable(features, "ib_position_pct")
     if pos is None:
         return _zero_tag(features)
 
-    if br_up == 1 and -0.5 < pos < 0.5:
-        return RuleTag(
-            direction=-1,
-            strength=STRENGTH_FAILED_IB,
-            version=RULES_SCHEMA_VERSION,
-            fired_at=features.get("ts_event"),
-            meta={"side": "poor_high", "ib_position_pct": float(pos)},
-        )
-    if br_dn == 1 and -0.5 < pos < 0.5:
+    # Poor LOW first (BUY) — priority deterministic if both br_up and br_dn
+    if br_dn == 1 and pos > 0.0:
         return RuleTag(
             direction=+1,
             strength=STRENGTH_FAILED_IB,
             version=RULES_SCHEMA_VERSION,
             fired_at=features.get("ts_event"),
             meta={"side": "poor_low", "ib_position_pct": float(pos)},
+        )
+    # Poor HIGH (SHORT) : broken up but price back below IB high
+    if br_up == 1 and pos < 1.0:
+        return RuleTag(
+            direction=-1,
+            strength=STRENGTH_FAILED_IB,
+            version=RULES_SCHEMA_VERSION,
+            fired_at=features.get("ts_event"),
+            meta={"side": "poor_high", "ib_position_pct": float(pos)},
         )
     return _zero_tag(features)
 

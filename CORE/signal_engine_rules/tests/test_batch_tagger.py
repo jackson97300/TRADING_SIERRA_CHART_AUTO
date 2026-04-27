@@ -60,3 +60,27 @@ def test_apply_rules_handles_empty_dataframe():
     assert len(df_out) == 0
     # Still has new rule columns
     assert "rule_long_up_bar_dir" in df_out.columns
+
+
+def test_apply_rules_computes_mins_et_when_absent():
+    """Anomaly fix 27/04: parquet v5b has no mins_et col. batch_tagger must
+    compute it from ts_event for failed_ib_poor_high anti-leak guard."""
+    bars = [{
+        "ts_event": pd.Timestamp("2026-04-27 14:30:00", tz="UTC"),  # 10:30 ET = 630
+        "high": 4500.0, "low": 4499.0, "close": 4499.5, "open": 4499.5, "atr": 5.0,
+        "is_in_us_cash": 1, "delta_day_dir": 1,
+        "long_up_bar": 0, "long_dn_bar": 0,
+        "dist_color_up_nearest_pct": -0.5, "dist_color_dn_nearest_pct": 0.5,
+        "cluster_at_high": 0, "cluster_at_low": 0,
+        "ib_broken_up": 1, "ib_broken_dn": 0, "ib_position_pct": 0.5,
+        "bar_edge_buy_fire": 0, "bar_edge_sell_fire": 0,
+    }]
+    df = pd.DataFrame(bars)
+    assert "mins_et" not in df.columns  # ensure absent in input
+
+    df_out = apply_rules_to_dataframe(df)
+    # Should compute mins_et and trigger failed_ib_poor_high (br_up + pos < 1.0 + post-IB)
+    assert "mins_et" in df_out.columns, "batch_tagger must compute mins_et from ts_event"
+    assert df_out.iloc[0]["mins_et"] == 630, f"Expected 630 (10:30 ET), got {df_out.iloc[0]['mins_et']}"
+    assert df_out.iloc[0]["rule_failed_ib_poor_high_dir"] == -1, \
+        "failed_ib_poor_high should fire SHORT (broken_up + pos<1)"

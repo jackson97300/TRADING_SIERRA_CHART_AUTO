@@ -122,18 +122,19 @@ def test_color_dn_proximity_does_not_fire_when_delta_up():
 # ─── Rule 5 : color_zone_break ────────────────────────────────────────
 
 def test_color_zone_break_fires_buy_when_above_color_up():
+    """Convention v5b : dist_color_up_pct > 0 = price ABOVE color_up zone (broken up)."""
     bar = make_bar_base()
-    # dist_color_up_nearest_pct < 0 means price ABOVE color_up zone (= broke up)
-    bar["dist_color_up_nearest_pct"] = -0.0001
+    bar["dist_color_up_nearest_pct"] = 0.05  # 0.05% above zone
     bar["delta_day_dir"] = 1
     tag = rule_color_zone_break(bar)
     assert tag.direction == 1
+    assert 0 < tag.strength <= 1.0
 
 
 def test_color_zone_break_fires_sell_when_below_color_dn():
+    """Convention v5b : dist_color_dn_pct < 0 = price BELOW color_dn zone (broken dn)."""
     bar = make_bar_base()
-    # dist_color_dn_nearest_pct > 0 means price BELOW color_dn (= broke down)
-    bar["dist_color_dn_nearest_pct"] = 0.0001
+    bar["dist_color_dn_nearest_pct"] = -0.05
     bar["delta_day_dir"] = -1
     tag = rule_color_zone_break(bar)
     assert tag.direction == -1
@@ -141,18 +142,17 @@ def test_color_zone_break_fires_sell_when_below_color_dn():
 
 def test_color_zone_break_does_not_fire_when_no_break():
     bar = make_bar_base()
-    bar["dist_color_up_nearest_pct"] = 0.5  # far from color_up
-    bar["dist_color_dn_nearest_pct"] = -0.5  # far from color_dn
+    bar["dist_color_up_nearest_pct"] = -0.5  # color_up zone WAY above (not broken)
+    bar["dist_color_dn_nearest_pct"] = 0.5   # color_dn zone WAY below (not broken)
     tag = rule_color_zone_break(bar)
     assert tag.direction == 0
 
 
 def test_color_zone_break_buy_priority_when_both_break():
-    """Edge case (C2 code-reviewer): if d_up AND d_dn both in trigger zone with
-    aligned delta, BUY priority (deterministic order)."""
+    """Edge case (C2 code-reviewer): if d_up AND d_dn both in trigger condition, BUY priority."""
     bar = make_bar_base()
-    bar["dist_color_up_nearest_pct"] = -0.0001  # break up
-    bar["dist_color_dn_nearest_pct"] = 0.0001   # break dn
+    bar["dist_color_up_nearest_pct"] = 0.05   # break up
+    bar["dist_color_dn_nearest_pct"] = -0.05  # break dn (rare conjonction)
     bar["delta_day_dir"] = 1  # delta up favors BUY check first
     tag = rule_color_zone_break(bar)
     assert tag.direction == 1, "BUY break should take priority when both fire"
@@ -208,11 +208,11 @@ def test_failed_ib_fires_short_post_1030():
 
 
 def test_failed_ib_fires_long_when_broken_dn_back_inside():
-    """Post-IB, broken_down + back inside IB → LONG (poor low)."""
+    """Post-IB, broken_dn + price recovered above IB low (pos > 0) → LONG (poor low)."""
     bar = make_bar_base()
     bar["mins_et"] = 700
-    bar["ib_broken_down"] = 1
-    bar["ib_position_pct"] = 0.0
+    bar["ib_broken_dn"] = 1
+    bar["ib_position_pct"] = 0.5  # back above IB low, in IB middle
     tag = rule_failed_ib_poor_high(bar)
     assert tag.direction == 1
 

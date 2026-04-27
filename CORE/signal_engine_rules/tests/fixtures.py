@@ -73,16 +73,20 @@ def make_bar_failed_ib_pre_close() -> dict:
     bar = make_bar_base()
     bar["mins_et"] = 600  # 10:00 ET, before 10:30
     bar["ib_broken_up"] = 1
-    bar["ib_position_pct"] = 0.0  # back inside IB
+    bar["ib_position_pct"] = 0.5  # would fire if not for anti-leak
     return bar
 
 
 def make_bar_failed_ib_post_close() -> dict:
-    """Failed IB pattern AFTER 10:30 ET (fires SHORT)."""
+    """Failed IB pattern AFTER 10:30 ET (fires SHORT poor high).
+
+    Convention v5b : ib_position_pct in [0, 1] = inside IB.
+    Poor high = broken_up=1 + price retombé sous IB high (pos < 1.0).
+    """
     bar = make_bar_base()
     bar["mins_et"] = 700  # 11:40 ET, post-IB
     bar["ib_broken_up"] = 1
-    bar["ib_position_pct"] = 0.0  # back inside IB
+    bar["ib_position_pct"] = 0.5  # back inside IB middle
     return bar
 
 
