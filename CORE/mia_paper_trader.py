@@ -1146,7 +1146,10 @@ class PaperTrader:
             Returns {} if parquet absent or no bars in window.
         """
         from pathlib import Path
-        parquet_path = Path("DATA/datasets") / f"{symbol}_dataset_v5c.parquet"
+        # v5d = v5b + 12 rules (9 V1 + 3 V2 pullback). Fallback v5c if missing.
+        parquet_path = Path("DATA/datasets") / f"{symbol}_dataset_v5d.parquet"
+        if not parquet_path.exists():
+            parquet_path = Path("DATA/datasets") / f"{symbol}_dataset_v5c.parquet"
         if not parquet_path.exists():
             return {}
         try:
@@ -1166,9 +1169,13 @@ class PaperTrader:
             ts_close = _to_ts(ts_event_close)
 
             rule_names = [
+                # V1 (9 rules)
                 "long_up_bar", "long_dn_bar", "color_up_proximity",
                 "color_dn_proximity", "color_zone_break", "cluster_at_high",
                 "cluster_at_low", "failed_ib_poor_high", "edge_zone_fire",
+                # V2 pullback (3 rules added 27/04)
+                "pullback_continuation_buy", "pullback_continuation_sell",
+                "pullback_mq_hvl_buy",
             ]
             cols_to_read = ["ts_event"] + [f"rule_{n}_dir" for n in rule_names] \
                 + [f"rule_{n}_strength" for n in rule_names]

@@ -128,7 +128,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("symbol", choices=["ES", "NQ"])
     parser.add_argument("--input-suffix", default="v5b")
-    parser.add_argument("--output-suffix", default="v5c")
+    parser.add_argument("--output-suffix", default="v5d")  # v5d = v5b + 12 rules (V1 + V2 pullback)
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[2]

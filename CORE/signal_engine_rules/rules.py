@@ -61,6 +61,12 @@ IB_CLOSE_MINS_ET = 630  # IB window 09:30-10:30 ET → 630 = 10:30 ET
 STRENGTH_COLOR_BREAK = 0.7    # rule_color_zone_break
 STRENGTH_FAILED_IB = 0.7      # rule_failed_ib_poor_high
 STRENGTH_CLUSTER = 0.8        # rule_cluster_at_high / rule_cluster_at_low
+STRENGTH_PULLBACK = 0.85      # rule_pullback_continuation_buy/sell (validated PF 1.33-1.46)
+STRENGTH_PULLBACK_MQ = 0.95   # rule_pullback_mq_hvl_buy (NQ best confluence PF 1.49)
+
+# Pullback pattern thresholds (validated empirically 27/04 confluence_battery_pullback)
+PULLBACK_COLOR_THRESHOLD_PCT = 0.1   # 0.1% proximity to color zone
+PULLBACK_MQ_HVL_THRESHOLD_PCT = 0.5  # 0.5% proximity to MQ HVL
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -319,19 +325,148 @@ def rule_edge_zone_fire(features: dict) -> RuleTag:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Rule 10 — pullback_continuation_buy (P01 backtest PF 1.33 ES, 180 trades)
+# ═══════════════════════════════════════════════════════════════════════
+
+def rule_pullback_continuation_buy(features: dict) -> RuleTag:
+    """BUY pullback continuation in uptrend — pattern empiriquement validé.
+
+    Setup Jackson observé visuellement, validé sur 24m (P01 backtest) :
+      - Marché en uptrend (delta_day_dir > 0)
+      - Pullback léger proche zone color_up (|dist_color_up_nearest_pct| < 0.1%)
+      - long_dn_up_pattern fire (rejection wick down→up sur la bar)
+      - RTH only (is_in_us_cash == 1)
+
+    Stats backtest 24m ES (confluence_battery_pullback 27/04) :
+      170 trades, WR 46.1%, PF 1.33, EV +5.2t, Sharpe 3.03
+      Robustness 3 tiers : PF 1.39/1.46/1.43 (stable temporellement)
+
+    Live confirmation 27/04 NQ : +60 ticks TP atteint avec confluence niveaux.
+    """
+    delta = _safe_get(features, "delta_day_dir", 0)
+    if delta <= 0:
+        return _zero_tag(features)
+    d_color_up = _safe_get_nullable(features, "dist_color_up_nearest_pct")
+    if d_color_up is None or abs(d_color_up) >= PULLBACK_COLOR_THRESHOLD_PCT:
+        return _zero_tag(features)
+    pattern = _safe_get(features, "long_dn_up_pattern", 0)
+    if int(pattern) != 1:
+        return _zero_tag(features)
+    if int(_safe_get(features, "is_in_us_cash", 0)) != 1:
+        return _zero_tag(features)
+    return RuleTag(
+        direction=+1,
+        strength=STRENGTH_PULLBACK,
+        version=RULES_SCHEMA_VERSION,
+        fired_at=features.get("ts_event"),
+        meta={
+            "setup": "pullback_buy",
+            "dist_color_up_pct": float(d_color_up),
+            "delta_day_dir": int(delta),
+        },
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Rule 11 — pullback_continuation_sell (P05 backtest PF 1.31 ES, 118 trades)
+# ═══════════════════════════════════════════════════════════════════════
+
+def rule_pullback_continuation_sell(features: dict) -> RuleTag:
+    """SELL pullback continuation in downtrend (symmetric P05).
+
+    Setup symétrique Jackson : downtrend + retracement vers zone color_dn +
+    long_up_dn rejection bar + below VWAP_d daily.
+
+    Stats backtest 24m ES : 118 trades, WR 45.8%, PF 1.31, EV +4.8t, Sharpe 2.87.
+    """
+    delta = _safe_get(features, "delta_day_dir", 0)
+    if delta >= 0:
+        return _zero_tag(features)
+    d_vwap = _safe_get(features, "dist_vwap_d_atr", 0)
+    if d_vwap >= 0:  # need below VWAP daily
+        return _zero_tag(features)
+    d_color_dn = _safe_get_nullable(features, "dist_color_dn_nearest_pct")
+    if d_color_dn is None or abs(d_color_dn) >= PULLBACK_COLOR_THRESHOLD_PCT:
+        return _zero_tag(features)
+    pattern = _safe_get(features, "long_up_dn_pattern", 0)
+    if int(pattern) != 1:
+        return _zero_tag(features)
+    if int(_safe_get(features, "is_in_us_cash", 0)) != 1:
+        return _zero_tag(features)
+    return RuleTag(
+        direction=-1,
+        strength=STRENGTH_PULLBACK,
+        version=RULES_SCHEMA_VERSION,
+        fired_at=features.get("ts_event"),
+        meta={
+            "setup": "pullback_sell",
+            "dist_color_dn_pct": float(d_color_dn),
+            "delta_day_dir": int(delta),
+        },
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Rule 12 — pullback_mq_hvl_buy (P03 backtest PF 1.49 NQ + LIVE +60t 27/04)
+# ═══════════════════════════════════════════════════════════════════════
+
+def rule_pullback_mq_hvl_buy(features: dict) -> RuleTag:
+    """BUY pullback + MQ HVL confluence — TOP setup confluence (NQ).
+
+    Setup Jackson "confluence niveaux" : pullback color_up + proximité HVL 0DTE.
+    Validé EN LIVE par Jackson le 27/04 (NQ +60t TP atteint avec ce setup exact).
+
+    Stats backtest 24m NQ (confluence_battery_pullback 27/04) :
+      66 trades, WR 42.4%, PF 1.49, EV +35.4t, Sharpe 3.92.
+
+    Plus rare que P01 mais EV plus élevé. Setup haute conviction.
+    """
+    delta = _safe_get(features, "delta_day_dir", 0)
+    if delta <= 0:
+        return _zero_tag(features)
+    d_color_up = _safe_get_nullable(features, "dist_color_up_nearest_pct")
+    if d_color_up is None or abs(d_color_up) >= PULLBACK_COLOR_THRESHOLD_PCT:
+        return _zero_tag(features)
+    d_hvl = _safe_get_nullable(features, "dist_mq_hvl_pct")
+    if d_hvl is None or abs(d_hvl) >= PULLBACK_MQ_HVL_THRESHOLD_PCT:
+        return _zero_tag(features)
+    pattern = _safe_get(features, "long_dn_up_pattern", 0)
+    if int(pattern) != 1:
+        return _zero_tag(features)
+    if int(_safe_get(features, "is_in_us_cash", 0)) != 1:
+        return _zero_tag(features)
+    return RuleTag(
+        direction=+1,
+        strength=STRENGTH_PULLBACK_MQ,
+        version=RULES_SCHEMA_VERSION,
+        fired_at=features.get("ts_event"),
+        meta={
+            "setup": "pullback_mq_hvl_buy",
+            "dist_color_up_pct": float(d_color_up),
+            "dist_mq_hvl_pct": float(d_hvl),
+            "delta_day_dir": int(delta),
+        },
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # RULES registry — public API
 # ═══════════════════════════════════════════════════════════════════════
 
 RULES_V1 = {
-    "long_up_bar":          rule_long_up_bar,
-    "long_dn_bar":          rule_long_dn_bar,
-    "color_up_proximity":   rule_color_up_proximity,
-    "color_dn_proximity":   rule_color_dn_proximity,
-    "color_zone_break":     rule_color_zone_break,
-    "cluster_at_high":      rule_cluster_at_high,
-    "cluster_at_low":       rule_cluster_at_low,
-    "failed_ib_poor_high":  rule_failed_ib_poor_high,
-    "edge_zone_fire":       rule_edge_zone_fire,
+    "long_up_bar":              rule_long_up_bar,
+    "long_dn_bar":              rule_long_dn_bar,
+    "color_up_proximity":       rule_color_up_proximity,
+    "color_dn_proximity":       rule_color_dn_proximity,
+    "color_zone_break":         rule_color_zone_break,
+    "cluster_at_high":          rule_cluster_at_high,
+    "cluster_at_low":           rule_cluster_at_low,
+    "failed_ib_poor_high":      rule_failed_ib_poor_high,
+    "edge_zone_fire":           rule_edge_zone_fire,
+    # V2 pullback rules (added 27/04 evening, validated PF 1.33-1.49 + LIVE)
+    "pullback_continuation_buy":  rule_pullback_continuation_buy,
+    "pullback_continuation_sell": rule_pullback_continuation_sell,
+    "pullback_mq_hvl_buy":        rule_pullback_mq_hvl_buy,
 }
 
 

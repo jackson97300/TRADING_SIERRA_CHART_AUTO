@@ -62,6 +62,76 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-04-28 00:30 — [FEAT signal_engine_rules V2 — 3 rules pullback continuation validees]
+
+**Categorie** : FEAT
+**Impact prod** : OFFLINE batch + paper_trader snapshot enrichi (PAS de change decision logic)
+**Fichier(s)** :
+- `CORE/signal_engine_rules/rules.py` : +3 rules V2 (pullback_continuation_buy/sell + pullback_mq_hvl_buy)
+- `CORE/signal_engine_rules/batch_tagger.py` : default output v5c -> v5d
+- `CORE/signal_engine_rules/tests/test_rules.py` : +14 tests V2
+- `CORE/mia_paper_trader.py` : `_lookup_rules_tags` mis a jour 12 rules + parquet v5d
+
+**Quoi** : 3 nouvelles rules V2 ajoutees au RULES_V1 registry suite empirical validation :
+- `rule_pullback_continuation_buy` (P01 ES) : delta>0 + color_up<0.1% + long_dn_up=1 + RTH
+- `rule_pullback_continuation_sell` (P05 ES) : SELL symetrique + filter below VWAP_d
+- `rule_pullback_mq_hvl_buy` (P03 NQ) : pullback + MQ HVL confluence (TOP setup live valide)
+
+**Pourquoi** : pattern Jackson visuel "prix monte → pullback color_up + long_dn_up bar → repart"
+valide empiriquement par 2 batteries de tests :
+- confluence_battery_prevdaily_mq (20 confluences) : plafond PF 1.42
+- confluence_battery_pullback (8 variantes) : P03 NQ best PF 1.49
++ Robustness 3 tiers chronologiques P01 ES : PF 1.39/1.46/1.43 (stable 24m)
++ LIVE CONFIRMATION 27/04 : Jackson +60 ticks NQ avec setup P03 confluence exact
+
+**Stats backtest 24m :**
+| Rule | Sym | Trades | WR | PF | EV | Sharpe |
+|---|---|---|---|---|---|---|
+| pullback_continuation_buy (P01) | ES | 180 | 46.1% | 1.33 | +5.2t | 3.03 |
+| pullback_mq_hvl_buy (P03) | NQ | 66 | 42.4% | 1.49 | +35.4t | 3.92 |
+| pullback_continuation_sell (P05) | ES | 118 | 45.8% | 1.31 | +4.8t | 2.87 |
+
+**Stats batch v5d (fires per 24m) :**
+- ES : pullback_buy 181 / pullback_sell 135 / pullback_mq_hvl_buy 12
+- NQ : pullback_buy 1236 / pullback_sell 348 / pullback_mq_hvl_buy 86
+
+**Validation pre-deploy** :
+- Tests : 67/67 PASS (53 V1 + 14 V2 ajoutes : 4 fires + 6 no-fire conditions + 4 anti-leak parametrize V2)
+- Anti-leak : 15/15 PASS (parametrize cover les 12 rules dont 3 V2)
+- Batch ES + NQ v5d : 53s chacun, 24 cols rules ajoutees
+- Live confirmation 27/04 : P03 NQ +60 ticks TP atteint
+
+**Note ML strategy** : NE PAS migrer vers PPO/SAC/Transformer. Plafond PF 1.4 vient des
+DONNEES (24m bars 1m sans microstructure HF, sans cross-asset, sans options flow) PAS du
+modele. LightGBM + meta-labeling Lopez ch.3 + sizing dynamique Half-Kelly = bonne strategie.
+Pour pousser au-dela : ajouter MBO Databento, options flow temps reel, news flow.
+
+**Reviews agents** :
+- Plan agent ULTRATHINK migration Databento Live : NOGO immediat + Sprint 0 prerequis (3 verifs)
+  obligatoires avant tout code prod. Architecture Option D (interface MarketDataReader env var).
+- Battery confluences : 28 setups testes (20 PD+MQ + 8 pullback), plafond empirique PF 1.49
+
+**Spec** : `DOCS/specs/2026-04-27-signal-engine-rules-design.md`
+**Plan V1** : `DOCS/plans/2026-04-27-signal-engine-rules-implementation.md`
+**Battery V2** :
+- `DOCS/CONFLUENCE_BATTERY_PREVDAILY_MQ.md`
+- `DOCS/CONFLUENCE_BATTERY_PULLBACK.md`
+
+**Revert plan** : si rules V2 instables en live → revert rules.py, batch_tagger sortie v5d
+revient automatiquement a 9 cols V1 (les 3 V2 disparaissent du registry).
+
+**Suivi post-deploy** :
+- J+1 : verifier que paper_trader snapshot inclut bien `pullback_*_dir/strength` dans rules_fired
+- J+7 : compter fires des 3 V2 sur 5 derniers jours, comparer avec backtest distribution
+- J+30 : Re-evaluer PF V2 sur 30 trades live (P01 ES + P03 NQ + P05 ES)
+- J+90 : Re-train ML v6 avec rules V2 comme features composites Lopez meta-labeling
+
+**Cross-references** :
+- INCIDENT_LOG 27/04 21:30 (leak resolu V5b)
+- Memory `feedback_ml_features.md` (top SHAP v5b documente)
+
+---
+
 ## 2026-04-27 22:00 — [FEAT signal_engine_rules V1 deployed + paper_trader integration]
 
 **Categorie** : FEAT

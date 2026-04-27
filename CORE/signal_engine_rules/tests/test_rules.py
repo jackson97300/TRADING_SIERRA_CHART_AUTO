@@ -258,18 +258,132 @@ def test_edge_zone_buy_priority_when_both_fire():
 
 # ─── apply_all_rules contract (I5 code-reviewer) ─────────────────────
 
-def test_apply_all_rules_returns_9_keys():
-    """Contract test: apply_all_rules returns dict with exactly 9 RuleTag entries."""
+def test_apply_all_rules_returns_12_keys():
+    """Contract test: apply_all_rules returns dict with 12 RuleTag entries (9 V1 + 3 V2 pullback)."""
     from CORE.signal_engine_rules.rules import apply_all_rules
     from CORE.signal_engine_rules.schema import RuleTag
     bar = make_bar_base()
     tags = apply_all_rules(bar)
     expected_keys = {
+        # V1 (9 rules)
         "long_up_bar", "long_dn_bar", "color_up_proximity",
         "color_dn_proximity", "color_zone_break", "cluster_at_high",
         "cluster_at_low", "failed_ib_poor_high", "edge_zone_fire",
+        # V2 pullback (3 rules added 27/04)
+        "pullback_continuation_buy", "pullback_continuation_sell",
+        "pullback_mq_hvl_buy",
     }
     assert set(tags.keys()) == expected_keys, f"Missing/extra rules: {set(tags.keys()) ^ expected_keys}"
     for name, tag in tags.items():
         assert isinstance(tag, RuleTag), f"{name} returned {type(tag).__name__}, expected RuleTag"
         assert tag.direction in (-1, 0, 1), f"{name} invalid direction {tag.direction}"
+
+
+# ─── V2 Pullback Rules (P01 + P05 + P03) ───────────────────────────────
+
+from CORE.signal_engine_rules.rules import (
+    rule_pullback_continuation_buy, rule_pullback_continuation_sell,
+    rule_pullback_mq_hvl_buy,
+)
+
+
+def make_bar_pullback_buy() -> dict:
+    """Bar that should fire pullback_continuation_buy : delta>0 + color_up<0.1% +
+    long_dn_up=1 + RTH."""
+    bar = make_bar_base()
+    bar["delta_day_dir"] = 1                       # uptrend
+    bar["dist_color_up_nearest_pct"] = 0.05        # 0.05% close to color_up
+    bar["long_dn_up_pattern"] = 1                  # rejection wick
+    bar["is_in_us_cash"] = 1                       # RTH
+    return bar
+
+
+def test_pullback_continuation_buy_fires():
+    bar = make_bar_pullback_buy()
+    tag = rule_pullback_continuation_buy(bar)
+    assert tag.direction == 1
+    assert tag.strength > 0
+
+
+def test_pullback_continuation_buy_no_fire_outside_rth():
+    bar = make_bar_pullback_buy()
+    bar["is_in_us_cash"] = 0
+    tag = rule_pullback_continuation_buy(bar)
+    assert tag.direction == 0
+
+
+def test_pullback_continuation_buy_no_fire_when_delta_negative():
+    bar = make_bar_pullback_buy()
+    bar["delta_day_dir"] = -1  # downtrend
+    tag = rule_pullback_continuation_buy(bar)
+    assert tag.direction == 0
+
+
+def test_pullback_continuation_buy_no_fire_when_no_pattern():
+    bar = make_bar_pullback_buy()
+    bar["long_dn_up_pattern"] = 0  # no rejection bar
+    tag = rule_pullback_continuation_buy(bar)
+    assert tag.direction == 0
+
+
+def test_pullback_continuation_buy_no_fire_when_color_far():
+    bar = make_bar_pullback_buy()
+    bar["dist_color_up_nearest_pct"] = 0.5  # too far from zone
+    tag = rule_pullback_continuation_buy(bar)
+    assert tag.direction == 0
+
+
+def test_pullback_continuation_buy_handles_nan():
+    bar = make_bar_pullback_buy()
+    bar["dist_color_up_nearest_pct"] = np.nan
+    tag = rule_pullback_continuation_buy(bar)
+    assert tag.direction == 0
+
+
+def test_pullback_continuation_sell_fires():
+    """SELL symmetric : delta<0 + color_dn<0.1% + long_up_dn=1 + below VWAP_d + RTH."""
+    bar = make_bar_base()
+    bar["delta_day_dir"] = -1
+    bar["dist_vwap_d_atr"] = -0.5  # below VWAP daily
+    bar["dist_color_dn_nearest_pct"] = -0.05
+    bar["long_up_dn_pattern"] = 1
+    bar["is_in_us_cash"] = 1
+    tag = rule_pullback_continuation_sell(bar)
+    assert tag.direction == -1
+
+
+def test_pullback_continuation_sell_no_fire_above_vwap():
+    """SELL needs below VWAP_d (filter trend strict)."""
+    bar = make_bar_base()
+    bar["delta_day_dir"] = -1
+    bar["dist_vwap_d_atr"] = 0.5  # ABOVE VWAP daily — no fire
+    bar["dist_color_dn_nearest_pct"] = -0.05
+    bar["long_up_dn_pattern"] = 1
+    bar["is_in_us_cash"] = 1
+    tag = rule_pullback_continuation_sell(bar)
+    assert tag.direction == 0
+
+
+def test_pullback_mq_hvl_buy_fires():
+    """P03 NQ confluence : delta>0 + color_up + HVL proximity + long_dn_up + RTH."""
+    bar = make_bar_pullback_buy()
+    bar["dist_mq_hvl_pct"] = 0.2  # within 0.5% threshold
+    tag = rule_pullback_mq_hvl_buy(bar)
+    assert tag.direction == 1
+    assert tag.strength == 0.95  # STRENGTH_PULLBACK_MQ
+
+
+def test_pullback_mq_hvl_buy_no_fire_when_hvl_far():
+    """No HVL confluence → no fire (degenerates to pullback simple)."""
+    bar = make_bar_pullback_buy()
+    bar["dist_mq_hvl_pct"] = 2.0  # far from HVL
+    tag = rule_pullback_mq_hvl_buy(bar)
+    assert tag.direction == 0
+
+
+def test_pullback_mq_hvl_buy_handles_hvl_nan():
+    """If HVL data missing (NaN), rule must not fire."""
+    bar = make_bar_pullback_buy()
+    bar["dist_mq_hvl_pct"] = np.nan
+    tag = rule_pullback_mq_hvl_buy(bar)
+    assert tag.direction == 0
