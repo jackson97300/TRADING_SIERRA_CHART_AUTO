@@ -62,6 +62,252 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-04-27 22:00 — [FEAT signal_engine_rules V1 deployed + paper_trader integration]
+
+**Categorie** : FEAT
+**Impact prod** : OFFLINE batch + paper_trader snapshot enrichi (PAS de change decision logic)
+**Fichier(s)** :
+- `CORE/signal_engine_rules/__init__.py` (nouveau)
+- `CORE/signal_engine_rules/schema.py` (nouveau, RuleTag dataclass)
+- `CORE/signal_engine_rules/rules.py` (nouveau, 9 pure functions + RULES_V1 + apply_all_rules)
+- `CORE/signal_engine_rules/batch_tagger.py` (nouveau, parquet v5b -> v5c)
+- `CORE/signal_engine_rules/tests/*.py` (52/52 tests PASS)
+- `CORE/mia_paper_trader.py` : `_lookup_rules_tags` + `rules_fired` field au close snapshot
+
+**Quoi** : middleware tagger 9 regles (long_up/dn_bar, color_up/dn_proximity, color_zone_break, cluster_at_high/low, failed_ib_poor_high, edge_zone_fire). Format RuleTag(direction, strength, version, fired_at, meta). Batch ES/NQ_dataset_v5b -> v5c (18 cols ajoutees, 53s chacun). Paper_trader logge `rules_fired` au close trade pour analyse comportementale + dataset re-training ML futur.
+
+**Pourquoi** : Plan B Jackson 27/04 soir suite NO-GO ML PF 1.09 marginal. Edge live trader (Topstep +$665 22/04) pas reproductible avec features 24m statiques. Solution : trader rules-only + collecter dataset comportemental sur 100-300 trades avant re-training ML.
+
+**Impact** :
+- AUCUN changement logique entry (toujours via `conseil_global` dashboard)
+- Snapshot trade enrichi avec `rules_fired: {<rule_name>: {direction, strength}}` + `rules_schema_version: "1.0"`
+- Parquet v5c disponible pour Phase 1 Winner Cluster + Phase 3 Aronson + Phase 5 CPCV mega battery
+
+**Validation pre-deploy** :
+- Tests : 52/52 PASS (6 schema + 26 rules + 12 anti-leak + 5 batch + 3 corrections post-review)
+- Anti-leak : test_no_lookahead.py NON-NEGOTIABLE par spec section 5.2 + incident leak 27/04 21:30
+- Smoke ES + NQ batch_tagger : 53s chacun, 18 cols ajoutees, distribution coherente
+- Smoke `_lookup_rules_tags` sur trade window 31 bars : long_up_bar +1 + edge_zone_fire -1 fire correctement
+
+**Reviews agents** :
+- Plan agent (design) : GO-AVEC-RESERVES + 5 corrections appliquees (JL2 sortie V1, dataclass RuleTag, batch-only V1, anti-leak guards, tests obligatoires)
+- code-reviewer (implementation) : GO-AVEC-RESERVES + 6 corrections appliquees (C1 docstring strength, C2 test color_zone_break BUY priority, I1 hard blacklist dist_ib_*, I5 contract test apply_all_rules, S2 NaN test color_zone_break, S3 strength constants)
+- ml-trainer Phase 2 (SHAP v5b) : top 10 features propres confirmees, top SHAP utilise comme prior pour rules
+
+**Spec** : `DOCS/specs/2026-04-27-signal-engine-rules-design.md`
+**Plan** : `DOCS/plans/2026-04-27-signal-engine-rules-implementation.md` (12 tasks TDD)
+
+**Anomalies non-bloquantes a investiguer post-deploy** :
+1. `color_zone_break` 0 fires sur 351K bars ES + NQ → seuil 0.05% probablement trop strict, a re-calibrer
+2. `failed_ib_poor_high` 0 fires sur 24m → conjonction conditions IB rare, a verifier si bug ou feature naturelle
+
+**Revert plan** : si snapshot trade KO ou regression paper_trader → comment ligne `_lookup_rules_tags` call. Parquet v5c reste utilisable pour analyse manuelle.
+
+**Suivi post-deploy** :
+- J+1 : compter `rules_fired` non-empty dans 5 derniers trades paper, verifier coherence
+- J+7 : agreger 30+ trades, comparer fire_counts live vs backtest battery
+- J+30 : Re-train ML Phase 2 sur dataset comportemental 100+ trades (re-evaluer JL2)
+
+**Cross-references** :
+- INCIDENT_LOG 2026-04-27 21:30 (leak resolu) + 20:30 (3 leaks structurels detectes)
+- Memory `feedback_ml_features.md` (top SHAP v5b documente + features leaky blacklistees)
+
+---
+
+## 2026-04-25 23:30 — [REFACTO data source : Migration DMP -> Databento + dataset v4 enrichi]
+
+**Categorie** : REFACTO
+**Impact prod** : OFFLINE (data backfill + future ML training)
+**Fichier(s)** : `CORE/databento_download.py`, `CORE/databento_backfill_batch.py`, `CORE/databento_backfill_full_free.py`, `CORE/build_dataset_v4_dmp_databento.py`, `CORE/research/compare_close_hlv*.py`
+**Schema/version** : DMP custom -> Databento GLBX.MDP3 (source officielle CME)
+**Reviewer(s) agent** : code-reviewer + quality-auditor + Plan agent (3 audits convergents)
+
+### Quoi
+Migration source data primaire DMP custom Sierra Chart (boite noire SC subgraphs) -> Databento (source officielle CME). Architecture HYBRIDE : DMP continue forward sur VPS pour MQ features (95 jours archive existante). Build dataset v4 enrichi (700k bars × 48 cols, 30 MB Parquet) merging Databento OHLCV + Trades + DMP MQ features.
+
+### Pourquoi (validation empirique)
+- DMP confirme buggy historique : 13/04/2026 perd 7h data (London + cash open NY) puis triple-compte 16h-20h UTC (180 bars/h vs 60). Vol diff 53% vs Databento. Bug silencieux non detecte pendant des MOIS.
+- Databento Standard $179/mois inclut 15 ans OHLCV + 12 mois Trades + 1 mois MBP-10 GRATUIT.
+- Comparaison 10 jours empirique (compare_close_hlv_10days.py) : ES close mismatch 0.057%, NQ 0.142% — sous seuil Plan agent 0.15%.
+- Achat Trades 5 ans aurait coute $1374 (verifie portail) — DECISION : reste sur 12 mois gratuit + DMP archive 95 jours pour MQ.
+
+### Impact attendu
+- ML training Lopez compliant : 350k bars/symbole × 48 cols
+- Primary model : OHLCV + Trades agg (12 mois exact aggressor)
+- Meta-labeler : MQ features (95 jours overlap avec data Databento)
+- Effet de bord : 4 scripts nouveaux + 1 dataset Parquet partitionne
+
+### Validation pre-deploy
+- [x] Tests empiriques : 4 dry-runs sur 1 mois mars 2026 (5 bugs API runtime fixes)
+- [x] Comparaison 10 jours DMP vs Databento (0.057% ES / 0.142% NQ mismatch)
+- [x] Backfill 4 runs : Run 3 Trades 195M records OK, Runs 1+2 partial OK (data ecrite), Run 4 FAIL safety threshold
+- [x] Audit 3 agents (code-reviewer 6.5/10, quality-auditor BLOCKED, Plan agent GO-RESERVES)
+- [ ] **8 BUGS A CORRIGER avant ML training** — voir INCIDENT_LOG 2026-04-25 23:30
+
+### Bugs detectes par audit (must-fix avant ML)
+1. `bars_since_roll` accumule cross-mois (cumcount group bug)
+2. CVD reset 22:00 UTC FAUX en hiver (DST = 23:00 UTC)
+3. `dist_mq_*_atr` clip ±10 ATR detruit info (3 features mortes 88-99% clipped)
+4. Fuite instrument 13 features (atr_14m + ticks bruts NQ vs ES)
+5. `dist_mq_hvl_0dte` 99.6% null
+6. Non-idempotence sub-period (warm-up perdu)
+7. Documentation manquee (cet entry corrige)
+8. MQ filled biais temporel (12% global, 56-59% mois recents seulement)
+
+### Revert plan
+```bash
+# Si Databento non concluant apres N jours :
+# 1. Cancel subscription Databento (databento.com/portal/billing)
+# 2. Continue DMP (jamais arrete) comme source primaire
+# 3. Garder dataset v4 archive pour analyses comparatives
+# Aucun rollback code car DMP n'a jamais ete debranche
+```
+
+### Deployed at 2026-04-25 22:30 (backfill termine)
+
+### Suivi post-deploy
+- J+1 : applique 8 fix bugs identifies + REBUILD dataset
+- J+7 : monitoring DMP vs Databento divergence quotidienne
+- J+30 : decision achat Trades 5 ans selon paper trading edge
+
+### Liens
+- INCIDENT_LOG : 2026-04-25 23:30 (8 bugs detectes) + 2026-04-25 21:00 (bug DMP 13/04)
+- Memory : `project_data_v3.md` (a creer pour v4)
+- Review agents : code-reviewer 6.5/10 + quality-auditor 15 red flags + Plan agent 8 angles morts
+- Cout : $54 paye Databento (proratise) + $179/mois recurrent
+
+---
+
+## 2026-04-25 — [ROLLBACK fix bn_absorb + finding strategique replay/Full Recalc]
+
+**Categorie** : ROLLBACK
+**Impact prod** : LIVE (collecte features)
+**Fichier(s)** : `CPP/MIA_REFACTORED/DUMPER/DMP_Reader.h:1655-1665`, `DMP_Config.h:60`
+**Schema/version** : 3.7.15 → **rollback 3.7.14**
+
+### Quoi
+Rollback du fix bn_absorb_ask/bid via ExtensionLineCount. Restauration DMP_ReadBN_Trigger original.
+
+### Pourquoi (validation empirique via replay)
+Test replay 24/04 (Reload All Charts + Full Recalc) :
+- ES bn_absorb_ask : 3.31% (PRE) → **100% saturation** (POST) — ExtensionLineCount accumule en trending
+- NQ bn_absorb_ask : 0.73% (PRE) → **0% regression** (POST) — Extension Lines pas active sur Chart 2
+- Memoire `feedback_lessons.md` avait predit la saturation : confirme empiriquement.
+
+**100% saturation = feature MORTE pour ML (pas de variance) = pire que rare 3.31%**.
+
+### FINDING STRATEGIQUE MAJEUR (validee meme test)
+
+Replay/Full Recalc **AJOUTE des bars manquantes** sans en perdre :
+- ES + NQ : **+139 bars Asia early** par instrument (23/04 22:01-00:19 UTC)
+- 0 bar perdue
+- Features toutes valides (price, atr, vwap, delta, rvol = 100% non-zero)
+
+**Le DMP live rate des bars en transition de jour UTC** (probable rollover bug). Le Full Recalc les recupere proprement.
+
+**Implication strategique** : la strategie Jackson "reconstituer 6 mois data via replay" est **EMPIRIQUEMENT VALIDEE**. Sur 120 jours, gain potentiel +10-15% data = milliers de bars supplementaires pour ML.
+
+### Backlog — vraie solution bn_absorb
+- Tentative #1 (Extension Lines) : echec (saturation/regression)
+- A explorer :
+  - Option A : delta ExtensionLineCount entre 2 polls (+1 line = nouveau event)
+  - Option B : verifier timing sg0 sz-1 vs sz-2
+  - Option C : autre subgraph (sg2 SumOfAlerts ?)
+- **Pas de retry tonight** — necessite analyse code C++ + visuel chart Jackson
+
+### Validation pre-deploy
+- [x] Code rollback fait
+- [x] Schema 3.7.14 restaure
+- [x] Backups in place (PRE_FIX, PRE_REPLAY)
+- [ ] Recompile DLL — Jackson required
+- [ ] Verif live Asia 23h ET dimanche soir
+
+### Suivi post-deploy
+- J+1 (lundi 27/04) : verifier `bn_absorb_ask` retourne au comportement PRE_FIX (3.31% ES, 0.73% NQ)
+- Strategie reconstituer 6 mois data : a planifier en chantier post-paper validation
+
+### Lecon (memoire a ajouter)
+**Avant de fix une feature soupconnee morte, MESURER PRE_FIX baseline empirique** (pas presumer 0% sans data). Le fix peut paraitre justifie sur audit faulty mais detruire un comportement qui marchait deja partiellement.
+
+---
+
+## 2026-04-25 — [DMP_Reader fix bn_absorb_ask/bid via Extension Lines]
+
+**Categorie** : FIX (bug C++ DMP critique)
+**Impact prod** : LIVE (collecte features → ML → bot)
+**Fichier(s)** : `CPP/MIA_REFACTORED/DUMPER/DMP_Reader.h:1655-1670`
+**Schema/version** : 3.7.10 → **3.7.11** (comportemental, 268 cols inchange — MAIS lecture features change : bn_absorb_ask/bid passent de "100% zero" a "actif quand event")
+**Reviewer(s) agent** : (a faire) schema-auditor + code-reviewer
+
+### Quoi
+Remplacement lecture `bn_absorb_ask` et `bn_absorb_bid` :
+- AVANT : `DMP_ReadBN_Trigger(sc, chart, study)` lit ACSIL sg0 = SG1 UI = **Color Bar (pulse 1 bar)** → rate 99% des events
+- APRES : `DMP_ReadExtensionLineCount(sc, chart, study) > 0 ? 1.0f : 0.0f` lit les **Extension Lines** (persistent jusqu'a intersection prix)
+
+### Pourquoi
+**Bug confirme visuellement par Jackson 25/04** :
+- Capture Sierra Chart 1 ID 25 (ABSORB_ASK ES) : events visibles (chiffres jaunes affiches)
+- JSONL DMP `bn_absorb_ask` : **100% zero** sur 985 bars 23/04 ES + 982 NQ + 1239 24/04 ES + 1059 NQ
+- Pattern identique fix delta_divergence 07/04 (Famille A "AddLineUntilFutureIntersection")
+
+Code C++ ligne 1539 confirme structure :
+- SG1 (UI) = ACSIL sg0 = Color Bar = pulse 1 bar (= ce que le DMP lisait)
+- SG2 (UI) = ACSIL sg1 = Extension Lines = persistent (= ce qu'il fallait lire)
+
+### Impact attendu
+- **bn_absorb_ask** : passe de 100% zero a ~5-15% non-zero (events absorb sur trends)
+- **bn_absorb_bid** : idem
+- **Decision bot** : ZERO impact (bn_absorb_* loggue mais 0 pts au scoring conseil_global, cf builders.py:1300)
+- **Future ML** : feature redevient utilisable → top features ML potentiellement reordered
+
+### Prerequis Sierra Chart (a faire avant compile)
+Verifier sur les 4 etudes ABSORB que **"Draw Extension Lines at Color Bar Value = Extend to Future Intersection"** est active :
+- Chart 1 ID 25 (ES ABSORB_ASK) — confirme 25/04 capture
+- Chart 1 ID 26 (ES ABSORB_BID) — a verifier
+- Chart 2 ID 29 (NQ ABSORB_ASK) — a verifier
+- Chart 2 ID 30 (NQ ABSORB_BID) — a verifier
+
+**A noter** : Number of Bars to Calculate = 20 sur ces etudes. Pas critique pour ce fix (Extension Lines persistent au-dela de 20 bars une fois cree), mais a augmenter a 2000 pour robustesse backfill.
+
+### Validation pre-deploy
+- [x] Code modifie (4 lignes)
+- [x] Syntax check (commentaires + structure C++ valides)
+- [ ] Review schema-auditor : a faire avant deploy
+- [ ] Review code-reviewer : a faire avant deploy
+- [ ] Recompile dans Sierra Chart (Jackson required)
+- [ ] Test empirique JSONL post-deploy : bn_absorb_ask >0 quand events visuels visibles
+
+### Revert plan
+```bash
+# Restorer DMP_ReadBN_Trigger pour bn_absorb_ask/bid (4 lignes)
+git revert <commit>
+scp DMP_Reader.h Administrator@VPS:"C:/SIERRA CHART TRADING/ACS_Source/"
+scp DMP_Reader.h Administrator@VPS:"C:/TRADING_SIERRA_CHART_AUTO/CPP/MIA_REFACTORED/DUMPER/"
+# Recompiler dans Sierra Chart + Reload Charts 30/31
+```
+
+### Deployed at (a remplir post-recompile Jackson)
+
+### Suivi post-deploy
+- J+1 : verifier `bn_absorb_ask` > 0 sur quelques bars dans JSONL frais
+- J+5 : audit features avec `dmp_features_health_check.py` (a creer) → confirme regression evitee
+- J+30 : feature dans top 10 ML importance ?
+
+### Liens
+- INCIDENT_LOG : 2026-04-25 (entry a creer pour pattern recurrent)
+- Memoire : `feedback_lessons.md` Famille A (delta_divergence fix 07/04 = meme pattern)
+- Memoire : `feedback_validation_miss_patterns.md` (6eme occurrence pattern)
+
+### TODO connexes (meme bug, autres features)
+A appliquer apres validation visuelle Jackson :
+1. `bn_long_up`, `bn_long_dn` (ligne 1661-1664)
+2. `bn_volume_up`, `bn_volume_dn` (ligne 1691-1701)
+3. `fp_edge_buy`, `fp_edge_sell`, `fp_edge_buy_2`, `fp_edge_sell_2` (ligne 1693-1705)
+
+**NE PAS** appliquer aveuglement : chaque feature doit etre confirmee visuellement par Jackson AVANT modif (anti-pattern 11 — eviter de casser ce qui marche peut-etre).
+
+---
+
 ## 2026-04-25 — [Enrichissement log V2 systeme decisions paper_trader]
 
 **Categorie** : FEATURE (observabilite, pas de scoring/gate change)

@@ -1129,6 +1129,74 @@ class PaperTrader:
         wins = sum(1 for t in recent if t.get("pnl_ticks", 0) > 0)
         return wins / len(recent)
 
+    def _lookup_rules_tags(self, symbol: str, ts_event_open, ts_event_close) -> dict:
+        """Lookup rules tags from parquet v5c for the given trade window.
+
+        signal_engine_rules V1 integration (Plan B Jackson 27/04 soir).
+        Reads parquet v5c (built nightly by batch_tagger), filters bars in trade
+        window, returns max-strength fire per rule.
+
+        Args:
+            symbol: 'ES' or 'NQ'
+            ts_event_open: open timestamp (epoch seconds, ms, or pd.Timestamp)
+            ts_event_close: close timestamp (same)
+
+        Returns:
+            dict {rule_name: {'direction': int, 'strength': float}} per rule.
+            Returns {} if parquet absent or no bars in window.
+        """
+        from pathlib import Path
+        parquet_path = Path("DATA/datasets") / f"{symbol}_dataset_v5c.parquet"
+        if not parquet_path.exists():
+            return {}
+        try:
+            import pandas as pd
+            # Convert timestamps to UTC-aware
+            def _to_ts(x):
+                if isinstance(x, pd.Timestamp):
+                    return x.tz_convert("UTC") if x.tz else x.tz_localize("UTC")
+                if isinstance(x, (int, float)):
+                    # Heuristic: if >= 1e12, treat as ms; else seconds
+                    if x >= 1e12:
+                        return pd.Timestamp(int(x), unit="ms", tz="UTC")
+                    return pd.Timestamp(float(x), unit="s", tz="UTC")
+                return pd.Timestamp(x).tz_localize("UTC")
+
+            ts_open = _to_ts(ts_event_open)
+            ts_close = _to_ts(ts_event_close)
+
+            rule_names = [
+                "long_up_bar", "long_dn_bar", "color_up_proximity",
+                "color_dn_proximity", "color_zone_break", "cluster_at_high",
+                "cluster_at_low", "failed_ib_poor_high", "edge_zone_fire",
+            ]
+            cols_to_read = ["ts_event"] + [f"rule_{n}_dir" for n in rule_names] \
+                + [f"rule_{n}_strength" for n in rule_names]
+            df = pd.read_parquet(parquet_path, columns=cols_to_read)
+
+            mask = (df["ts_event"] >= ts_open) & (df["ts_event"] <= ts_close)
+            df_window = df[mask]
+            if len(df_window) == 0:
+                return {}
+
+            result = {}
+            for name in rule_names:
+                dir_col = f"rule_{name}_dir"
+                str_col = f"rule_{name}_strength"
+                mask_fire = df_window[dir_col] != 0
+                if mask_fire.any():
+                    idx_max = df_window[mask_fire][str_col].idxmax()
+                    result[name] = {
+                        "direction": int(df_window.loc[idx_max, dir_col]),
+                        "strength": float(df_window.loc[idx_max, str_col]),
+                    }
+                else:
+                    result[name] = {"direction": 0, "strength": 0.0}
+            return result
+        except Exception as e:
+            print(f"[WARN] _lookup_rules_tags failed: {type(e).__name__}: {e}")
+            return {}
+
     def _read_last_jsonl_bar(self, symbol):
         """Lit la derniere ligne du JSONL DMP pour avoir bar complete (40+ features dist_*).
 
@@ -1661,6 +1729,15 @@ class PaperTrader:
                 "p_hold_longer": None,
                 "exit_model_version": None,
             },
+            # signal_engine_rules V1 integration (Plan B Jackson 27/04 soir).
+            # Tags des 9 regles fired pendant la fenetre du trade (lookup parquet v5c).
+            # Utile pour analyse comportementale + dataset re-training ML futur.
+            "rules_fired": self._lookup_rules_tags(
+                symbol=symbol,
+                ts_event_open=entry_ts_val,
+                ts_event_close=exit_ts_val,
+            ),
+            "rules_schema_version": "1.0",
         }
 
         self.today_trades.append(trade)
