@@ -62,6 +62,81 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-01 04:15 UTC — [Bot 2 MAX_TRADES illimite + fix cooldown restore au boot]
+
+**Categorie** : FEATURE (alignement Bot 1) + FIX (bug safety cooldown bypass)
+**Impact prod** : Bot 2 (MIA-DataBento-Paper Sim2) + dashboard
+**Fichier(s)** :
+- Modif : `CORE/databento_paper_trader.py:117` — MAX_TRADES_PER_DAY 5 → 9999 (illimite paper, alignement Bot 1)
+- Modif : `CORE/databento_paper_trader.py:556-562` — appel `_restore_cooldown_state()` au boot
+- Modif : `CORE/databento_paper_trader.py:818-880` — methode `_restore_cooldown_state()` NEW
+- Modif : `DASHBOARD/api/paper_tracker.py:116` — fallback 10 → 9999 (coherence dashboard)
+- Cree : `tests/test_bot2_cooldown_restore.py` — 4 tests regression
+
+**Reviewer(s)** : 4/4 tests PASS (fixtures empty / nominal / invalid / cooldown calc)
+
+### Quoi
+
+**1. Bot 2 MAX_TRADES_PER_DAY = 9999 (alignement Bot 1)**
+
+Avant : Bot 2 limite a 5 trades/jour, Bot 1 illimite (9999). Asymetrie.
+Dashboard affichait "10" via fallback hardcoded (mensonge).
+
+Apres : Bot 2 = 9999 (illimite paper, comme Bot 1 depuis 22/04). Cooldown
+15min post-close + circuit breaker 3 SL gardent la safety.
+
+**2. Fix bug cooldown bypass au restart bot**
+
+Bug observe trades.jsonl 30/04 : NQ exit 14:39:02 → restart bot 14:40
+(deploy CAS 4 v3) → NQ entry 14:48:40 = **9min < 15min cooldown**.
+
+Cause : `RiskManager.last_close_time` est in-memory only. Restart =
+reset → `can_trade()` voit `last=None` → cooldown 15min ignore.
+
+Fix `_restore_cooldown_state()` :
+- Au boot, scanne `_databento_trades.jsonl` du day CME courant
+- Pour chaque symbole, prend le DERNIER `exit_time` ISO
+- Set `risk.last_close_time[sym] = datetime.fromisoformat(exit_time)`
+- Cooldown 15min applique correctement post-restart
+
+Validation prod : log `[BOT] cooldown restore : NQ last_close=14:50:07
+(elapsed=23.6min, cooldown_remaining=0.0min)` + ES last_close=12:11
+(elapsed=182.7min). Cooldown reactif sur tous les futurs restarts.
+
+### Pourquoi (Jackson directives 30/04)
+
+1. **MAX_TRADES** : "JE VOUDRAIS FAIRE LA MEME CHOSE POUR LE BOT 2 — comme
+   Bot 1 = 9999 illimite". Decision 22/04 paper = collecte max donnees.
+
+2. **Cooldown** : "BOT 2 IL A PAS ATTENDU IL A REPRIS UN TRADE TOUT DE
+   SUITE APRES AVOIR CLOS UN TRADE". Bug safety net casse sur restart.
+
+### Validation pre-deploy
+
+- [x] Tests : 4/4 PASS (cooldown restore)
+- [x] Validation empirique : log `cooldown restore` confirme NQ + ES restaures
+- [x] Service restart OK : MIA-DataBento-Paper + MIA-Dashboard Running
+
+### Revert plan
+```bash
+git revert <commit-sha>
+scp CORE/databento_paper_trader.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+scp DASHBOARD/api/paper_tracker.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/api/"
+ssh Administrator@212.28.179.199 'powershell -Command "nssm.exe restart MIA-DataBento-Paper; nssm.exe restart MIA-Dashboard"'
+```
+
+### Deployed at 2026-05-01 04:15 UTC
+
+### Suivi post-deploy
+- J+1 : grep `cooldown restore` LOGS Bot 2 → confirme appel a chaque boot
+- J+7 : verif zero trade entry < 15min apres exit (cooldown applique)
+
+### Liens
+- Memories : `feedback_pre_deploy_3_questions.md`
+- Code : `RiskManager.can_trade()` ligne 411-423
+
+---
+
 ## 2026-05-01 03:30 UTC — [Bot 2 metrics dashboard + CAS 4 v3 T1 mutation + T2 observability]
 
 **Categorie** : FEATURE (UX dashboard) + FIX (CAS 4 elargissement)

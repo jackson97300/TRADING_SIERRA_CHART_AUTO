@@ -560,6 +560,12 @@ class DatabentoPaperTrader:
                 # du state.json. Couvre le cas state.json clean + archives
                 # <24h avec CIDs residuels (manual flatten + restart propre).
                 self._scan_recent_archives_for_orphan_cancel()
+                # FIX 30/04 v3 (Jackson "BOT 2 IL A PAS ATTENDU LE COOLDOWN") :
+                # restaurer last_close_time depuis trades.jsonl au boot, sinon
+                # restart bot reset in-memory `risk.last_close_time` → cooldown
+                # 15min bypass. Cas observe : NQ 14:39:02 close → restart 14:40
+                # → NQ 14:48:40 entry = 9min < 15min cooldown.
+                self._restore_cooldown_state()
 
     def _reload_active_positions_or_cancel_orphans(self):
         """FIX #3 (29/04) — OCO recovery au boot.
@@ -808,6 +814,76 @@ class DatabentoPaperTrader:
                 print(f"[BOT] cleanup cancel {cid} failed (probable already closed): {e}")
         print(f"[BOT] cleanup defensif : {n_sent}/{len(cids_to_cancel)} cancels envoyes")
         _emit("CLEANUP_DEFENSIVE_DONE", n_sent=n_sent, n_total=len(cids_to_cancel))
+
+    def _restore_cooldown_state(self):
+        """FIX 30/04 v3 (Jackson "BOT 2 IL A PAS ATTENDU LE COOLDOWN") :
+        restaurer `risk.last_close_time` depuis le DERNIER trade close de
+        chaque symbole dans `_databento_trades.jsonl` du jour CME courant.
+
+        Cause bug : `RiskManager.last_close_time` est in-memory only. Restart
+        bot → reset → cooldown 15min bypass. Cas observe 30/04 : NQ exit
+        14:39:02 → restart bot 14:40 (deploy fix) → NQ entry 14:48:40 = 9min
+        < 15min cooldown. La safety net (cooldown post-close) etait cassee
+        sur tout restart.
+
+        Solution : au boot, scanner le JSONL trades du day CME courant, prendre
+        le dernier exit_ts par symbole, set `risk.last_close_time[sym]` =
+        datetime parse iso. Le `can_trade()` calculera `now - last < 15min`
+        correctement meme apres restart.
+
+        Idempotence : si pas de trades.jsonl ou symbole absent, no-op (laisse
+        last_close_time vide → pas de cooldown applique = comportement normal
+        au demarrage frais).
+        """
+        try:
+            today = get_cme_trading_day()
+        except Exception as e:
+            print(f"[BOT] cooldown restore : get_cme_trading_day failed ({e}) — skip")
+            return
+        fp = SNAPSHOTS_DIR / f"{today}_databento_trades.jsonl"
+        if not fp.exists():
+            print(f"[BOT] cooldown restore : pas de trades aujourd'hui ({today})")
+            return
+
+        last_exit_per_sym: dict[str, datetime] = {}
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    sym = rec.get("symbol")
+                    exit_iso = rec.get("exit_time")
+                    if not sym or not exit_iso:
+                        continue
+                    try:
+                        exit_dt = datetime.fromisoformat(exit_iso)
+                    except (ValueError, TypeError):
+                        continue
+                    prev = last_exit_per_sym.get(sym)
+                    if prev is None or exit_dt > prev:
+                        last_exit_per_sym[sym] = exit_dt
+        except OSError as e:
+            print(f"[BOT] cooldown restore : read failed ({e}) — skip")
+            return
+
+        if not last_exit_per_sym:
+            print(f"[BOT] cooldown restore : aucun exit_time trouve dans {fp.name}")
+            return
+
+        # Set risk.last_close_time uniquement si plus recent que ce qu'on a deja
+        # (fresh start = vide donc tous les trades sont applique)
+        for sym, exit_dt in last_exit_per_sym.items():
+            self.risk.last_close_time[sym] = exit_dt
+            now = datetime.now(timezone.utc)
+            elapsed_min = (now - exit_dt).total_seconds() / 60.0
+            cooldown_remaining = max(0, COOLDOWN_MIN - elapsed_min)
+            print(f"[BOT] cooldown restore : {sym} last_close={exit_dt.isoformat()} "
+                  f"(elapsed={elapsed_min:.1f}min, cooldown_remaining={cooldown_remaining:.1f}min)")
 
     def _check_stale_positions(self):
         """Detecte positions ouvertes > N min sans aucun fill = potential orphan.
