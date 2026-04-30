@@ -357,5 +357,111 @@ class TestCas4AntiTpBehindWall:
                 f"tp3 {result.tp3_ticks}t < tp1 {result.tp1_ticks}t (incoherent)"
 
 
+# ── Tests CAS 4 v2 — garde universelle (mur scan, pas que TP_STANDARD) ────
+
+
+class TestCas4V2UniversalGuard:
+    """CAS 4 v2 (30/04 apres-midi, screen Bot 1) : garde universelle anti-
+    traversee mur T1, peu importe la SOURCE du TP (TP_STANDARD ou mur scanne).
+
+    Bug observe Bot 1 ES SHORT 7160.50 : SLTPEngine SKIP HVL_0DTE @ 18t
+    (R:R 0.8 < 1.5) puis prend GEX_DN @ 78t (R:R 3.9). TP placement DERRIERE
+    HVL_0DTE = trade rebond sur HVL_0DTE = SL hit -57t.
+    """
+
+    def test_bot1_screen_es_short_capote_au_hvl_0dte(self):
+        """Reproduction screen Bot 1 ES SHORT 7160.50, SL=20t.
+        Avant fix v2 : TP @ GEX_DN -78t (passait derriere HVL_0DTE @ -18t).
+        Apres fix v2 : capote au HVL_0DTE → R:R = 16/20 = 0.8 = MIN_RR_RATIO
+        → trade soit accepte (R:R = MIN_RR_RATIO) soit reject (selon arrondi).
+        L'important : TP NE PASSE PAS DERRIERE HVL_0DTE."""
+        engine = SLTPEngine(symbol="ES")
+        TICK = 0.25
+        entry = 7160.50
+
+        row = _build_row_with_mq(
+            direction=-1,
+            dist_mq_hvl_0dte=-18.0,    # T1 a 18t (PRES) — celui qu'on doit capoter
+            dist_gex_nearest_dn=-78.0,  # T1 a 78t (LOIN) — TP ambitieux
+        )
+        row["dist_gex_nearest_up"] = 16.0  # SL = 16+4 buffer = 20t
+
+        result = engine.evaluate_single(row, direction=-1)
+
+        # Si trade valide, le TP doit etre AU MAX au HVL_0DTE - tp_buffer
+        # (pas derriere a 78t comme avant fix v2)
+        if result.valid:
+            # tp <= floor(18 - 2) = 16t
+            assert result.tp1_ticks <= 16.0, \
+                f"TP {result.tp1_ticks}t doit etre <= 16t (devant HVL_0DTE @ 18t)"
+            # CAS 4 v2 doit avoir trigger sur le PREMIER mur T1 (HVL_0DTE)
+            if result.cas4_triggered:
+                assert result.cas4_blocked_wall == "MQ_HVL_0DTE", \
+                    f"Doit capoter MQ_HVL_0DTE, got {result.cas4_blocked_wall}"
+                # source_pre = wall que le scan avait choisi (GEX_DN)
+                assert result.cas4_source_pre == "GEX_DN", \
+                    f"source_pre doit etre GEX_DN (mur scan), got {result.cas4_source_pre}"
+
+    def test_cas4_v2_idempotent_when_already_at_first_t1(self):
+        """Idempotence : si tp1_wall est deja le 1er T1 (ex: scan a pris
+        GEX_DN @ 30t directement), CAS 4 v2 ne doit PAS re-capoter."""
+        engine = SLTPEngine(symbol="ES")
+        # SL=12t, GEX_DN @ 30t (T1, R:R 2.5 OK direct)
+        # Scan prend GEX_DN → cas4 ne doit pas trigger
+        row = _build_row_with_mq(
+            direction=-1,
+            dist_gex_nearest_dn=-30.0,
+        )
+        row["dist_gex_nearest_up"] = 8.0  # SL = 8+4 = 12t
+        result = engine.evaluate_single(row, direction=-1)
+        if result.valid:
+            # Le trade prend GEX_DN direct (R:R 2.4) → pas de capot CAS 4 v2
+            # (idempotence : le mur T1 EST deja le tp_wall)
+            assert "GEX_DN" in result.tp1_wall, \
+                f"TP doit utiliser GEX_DN direct, got {result.tp1_wall}"
+            assert not result.cas4_triggered, \
+                "CAS 4 v2 ne doit pas trigger quand tp_wall = first_t1 (idempotence)"
+
+    def test_cas4_v2_does_not_capote_t2_walls_in_path(self):
+        """CAS 4 v2 ne capote QUE sur TIER 1 (pas T2). Permet de traverser
+        des T2 acceptables pour atteindre un T1 plus loin."""
+        engine = SLTPEngine(symbol="NQ")
+        # SL=38t, T2 @ 30t, T1 @ 80t → scan prend T1 @ 80t (R:R 2.0)
+        # T2 sur le chemin ne doit PAS capoter (T2 = traversable)
+        row = _build_row_with_mq(
+            direction=1,
+            dist_gex_nearest_dn=-30.0,
+            dist_ext_edge_buy=-30.0,
+            dist_cur_vah=+30.0,         # T2 a 30t (sur chemin)
+            dist_sess_high=+80.0,       # T1 a 80t (TP)
+        )
+        result = engine.evaluate_single(row, direction=1)
+        if result.valid:
+            # TP doit etre @ SESS_HIGH (T1, 80-4=76t), PAS capote au CUR_VAH (T2)
+            assert "SESS_HIGH" in result.tp1_wall, \
+                f"T2 sur chemin ne doit pas capoter, got {result.tp1_wall}"
+            assert not result.cas4_triggered, \
+                "CAS 4 v2 ne doit pas trigger sur T2 (only T1)"
+
+    def test_cas4_v2_observability_source_pre_set(self):
+        """cas4_source_pre expose le tp1_wall AVANT capot (pour distinguer
+        CAS 4 v1 'TP_STANDARD' vs v2 'mur scanne')."""
+        engine = SLTPEngine(symbol="ES")
+        row = _build_row_with_mq(
+            direction=-1,
+            dist_mq_hvl_0dte=-18.0,    # T1 PRES (capotera)
+            dist_gex_nearest_dn=-78.0,  # T1 LOIN (scan choisira)
+        )
+        row["dist_gex_nearest_up"] = 16.0
+        result = engine.evaluate_single(row, direction=-1)
+        if result.valid and result.cas4_triggered:
+            # source_pre = nom du mur scanne (GEX_DN ici)
+            assert result.cas4_source_pre != "", \
+                "cas4_source_pre doit etre rempli quand CAS 4 trigger"
+            # Pas TP_STANDARD car le scan a trouve un mur (GEX_DN R:R 3.7)
+            assert "TP_STANDARD" not in result.cas4_source_pre, \
+                f"source_pre ne doit pas etre TP_STANDARD ici, got {result.cas4_source_pre}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

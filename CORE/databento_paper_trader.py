@@ -562,12 +562,29 @@ class DatabentoPaperTrader:
                 self._scan_recent_archives_for_orphan_cancel()
 
     def _reload_active_positions_or_cancel_orphans(self):
-        """FIX #3 — OCO recovery au boot.
+        """FIX #3 (29/04) — OCO recovery au boot.
+        FIX 30/04 v2 (Jackson "ORDRE ORPHELIN BOT 2") — query broker AVANT cancel.
 
-        Si state.json contient positions actives au previous run, cancel les
-        TP/SL pending pour eviter orphelins (le _recv_loop est mort entre
-        2 restarts → fill non capte → ordre oppose reste pending → orphelin).
-        Reset state apres pour repartir propre.
+        Probleme detecte 30/04 : OCO recovery annulait les brackets de TOUTES
+        les positions du state.json en supposant que le _recv_loop a rate un
+        fill. MAIS si le fill n'a PAS eu lieu (position toujours active broker),
+        on annule les brackets d'une position vivante → orphelin TOTAL :
+        - Position broker active sans tracking cote bot
+        - Pas de TP/SL → exposition non protegee jusqu'a flatten manuel
+
+        Cas observe : ES SHORT @ 7206.50 ouvert avant 13:19 UTC, 3 restarts
+        successifs dans la journee → 3x cancel brackets + archive state.json
+        → position broker reste short sans bracket ni tracking.
+
+        Fix architectural : pour CHAQUE position pending, query broker via
+        DTC Type 305 (request_position_blocking, ~3s timeout) :
+        - broker_qty != 0 → position TOUJOURS ACTIVE → restaurer tracking
+          dans active_positions, ne PAS cancel brackets, ne PAS archiver state
+        - broker_qty == 0 → fill VRAIMENT eu lieu → vrais orphelins potentiels
+          (oppose reste pending) → cancel + archive (comportement original)
+        - broker_qty None (timeout DTC) → conservateur : NE PAS cancel + alerte
+          (attendre prochain restart pour decider, ne pas detruire des brackets
+          de position qu'on ne sait pas si active)
         """
         if not self._active_positions_state_file.exists():
             return
@@ -589,11 +606,13 @@ class DatabentoPaperTrader:
         _emit("OCO_RECOVERY_BOOT", n_positions=len(prev_positions),
               symbols=list(prev_positions.keys()))
 
-        # FIX B2 (audit code-reviewer 28/04 NOGO) : `cancel_order` requiert
-        # ServerOrderID sinon SC ignore silencieusement (cf fix_oco_orphan.md
-        # 02/04). Le dict `_server_order_ids` est in-memory only — au boot il
-        # est vide. On doit donc le repopuler depuis le state.json AVANT
-        # d'envoyer les cancel.
+        # ─── R1 (code-reviewer 30/04 v2) — Repopuler SIDs AVANT query broker ──
+        # Le `_recv_loop` thread est ACTIF des `connect()` (BOT/dtc_connector.py:138).
+        # Si un fill ORDER_UPDATE arrive pendant la query broker (3s timeout par
+        # position), `_handle_order_update` tente cancel oppose via
+        # `_server_order_ids[oppose_cid]` qui sinon serait vide → cancel sans SID
+        # = ignore silencieux SC + orphelin (cf fix_oco_orphan.md 02/04).
+        # Repopule INCONDITIONNELLEMENT pour eviter cette fenetre de race.
         for sym, pos in prev_positions.items():
             for cid_field, sid_field in (("tp_cid", "tp_sid"), ("sl_cid", "sl_sid")):
                 cid = pos.get(cid_field)
@@ -601,40 +620,123 @@ class DatabentoPaperTrader:
                 if cid and sid:
                     self.dtc._server_order_ids[cid] = sid
 
+        # ─── FIX 30/04 v2 — Query broker AVANT cancel pour distinguer
+        # position-active vs orphelin-vrai ───────────────────────────
+        positions_active_broker = {}      # sym -> pos (a restaurer)
+        positions_orphan_real = {}        # sym -> pos (a cancel)
+        positions_unknown = {}            # sym -> pos (timeout DTC)
+
         for sym, pos in prev_positions.items():
-            for cid_field in ("tp_cid", "sl_cid"):
-                cid = pos.get(cid_field)
-                if not cid:
-                    continue
+            sc_contract = BOT_INSTRUMENTS.get(sym)
+            sc_contract = sc_contract.contract if sc_contract else None
+            if not sc_contract:
+                # Pas de contract pour ce sym → fallback comportement legacy
+                positions_orphan_real[sym] = pos
+                continue
+            try:
+                broker_qty = self.dtc.request_position_blocking(
+                    symbol_contract=sc_contract,
+                    trade_account=self.cfg.trade_account,
+                    timeout=3.0,
+                )
+            except Exception as e:
+                print(f"[BOT] query broker {sym} EXCEPTION: {e} — conservateur (skip)")
+                positions_unknown[sym] = pos
+                continue
+
+            if broker_qty is None:
+                print(f"[BOT] query broker {sym} TIMEOUT → conservateur (skip cancel)")
+                _emit("STATE_VS_BROKER_MISMATCH", sym=sym,
+                      state_pos=pos.get("side"), broker_pos="TIMEOUT")
+                positions_unknown[sym] = pos
+            elif broker_qty == 0:
+                print(f"[BOT] query broker {sym} = FLAT → vraie orphelin → cancel brackets")
+                positions_orphan_real[sym] = pos
+            else:
+                expected_qty_signed = -self.cfg.quantity if pos.get("side") == "SELL" else self.cfg.quantity
+                if broker_qty != expected_qty_signed:
+                    # Position active mais quantite different (partial fill ?)
+                    print(f"[BOT] query broker {sym} = {broker_qty} (expected {expected_qty_signed}) "
+                          f"→ position active, restaure tracking + alerte mismatch")
+                    _emit("STATE_VS_BROKER_MISMATCH", sym=sym,
+                          state_pos=expected_qty_signed, broker_pos=broker_qty)
+                else:
+                    print(f"[BOT] query broker {sym} = {broker_qty} → POSITION ACTIVE, restaure tracking")
+                positions_active_broker[sym] = pos
+
+        # ─── Restauration positions actives ───────────────────────────
+        # Repopule active_positions avec les positions verifiees actives broker.
+        # Le _recv_loop reprendra la surveillance des fills. Brackets restent
+        # en place (pas de cancel). State.json reste en place pour persistence.
+        # SIDs deja repopulees plus haut (R1 anti-race) — pas re-fait ici.
+        for sym, pos in positions_active_broker.items():
+            # Invariant interne : active_positions[sym]["ts_open"] doit etre
+            # un datetime (heartbeat _write_state fait .isoformat() ligne 1132).
+            # Le state.json contient ts_open en STRING ISO → convertir.
+            ts_open_raw = pos.get("ts_open")
+            if isinstance(ts_open_raw, str):
                 try:
-                    # ROLLBACK 29/04 soir : wait_for_sid param disparu (FIX 1
-                    # rollback non-bloquant). Recovery au boot a deja repopule
-                    # _server_order_ids depuis state.json ligne 569 — donc
-                    # cancel_order trouvera le SID directement, pas besoin
-                    # d'attendre.
-                    self.dtc.cancel_order(cid, trade_account=self.cfg.trade_account)
-                    print(f"[BOT] cancel orphan {sym} {cid_field}={cid}")
-                    _emit("OCO_ORPHAN_CANCELED", sym=sym, cid_field=cid_field, cid=cid)
-                except Exception as e:
-                    print(f"[BOT] cancel orphan failed {cid}: {e}")
+                    pos["ts_open"] = datetime.fromisoformat(ts_open_raw)
+                except (ValueError, TypeError):
+                    pos["ts_open"] = datetime.now(timezone.utc)
+            with self._pos_lock:
+                self.active_positions[sym] = pos
+            # Repopule register_oco_pair pour OCO manuel
+            tp_cid = pos.get("tp_cid")
+            sl_cid = pos.get("sl_cid")
+            if tp_cid and sl_cid and hasattr(self.dtc, "register_oco_pair"):
+                try:
+                    self.dtc.register_oco_pair(tp_cid, sl_cid)
+                except Exception:
+                    pass
+            # R6 (code-reviewer 30/04 v2) : tracabilite prod
+            _emit("OCO_RECOVERY_RESTORED", sym=sym,
+                  side=pos.get("side"), entry=pos.get("entry"),
+                  sl_price=pos.get("sl_price"), tp_price=pos.get("tp_price"))
 
-        # FIX audit final 29/04 (R3) : attendre 2s pour confirm cancel async DTC
-        # (double envoi 0.3s + verify 1s timer). Sans ca, unlink immediat =
-        # destruction evidence locale si le 1er cancel a fail (DTC pas ready).
-        time.sleep(2)
+        # ─── Cancel brackets pour orphelins vrais uniquement ─────────
+        # (SIDs deja repopulees plus haut, R1 anti-race).
+        if positions_orphan_real:
+            for sym, pos in positions_orphan_real.items():
+                for cid_field in ("tp_cid", "sl_cid"):
+                    cid = pos.get(cid_field)
+                    if not cid:
+                        continue
+                    try:
+                        self.dtc.cancel_order(cid, trade_account=self.cfg.trade_account)
+                        print(f"[BOT] cancel orphan {sym} {cid_field}={cid}")
+                        _emit("OCO_ORPHAN_CANCELED", sym=sym, cid_field=cid_field, cid=cid)
+                    except Exception as e:
+                        print(f"[BOT] cancel orphan failed {cid}: {e}")
+            # Wait 2s pour confirm cancel async DTC
+            time.sleep(2)
 
-        # FIX audit final 29/04 (R3) : rename en .processed au lieu d'unlink
-        # pour preserver evidence du recovery (debug post-mortem si orphelin
-        # persiste cote AMP malgre cancel envoye).
-        try:
-            ts_archive = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-            archive_path = self._active_positions_state_file.with_suffix(
-                f".json.processed.{ts_archive}"
-            )
-            self._active_positions_state_file.rename(archive_path)
-            print(f"[BOT] state archived: {archive_path.name}")
-        except OSError as e:
-            print(f"[BOT] state archive failed (non-fatal): {e}")
+        # ─── Archivage state.json ────────────────────────────────────
+        # Si TOUTES les positions etaient orphelins reels → archive (comportement
+        # original). Sinon → garder state.json a jour avec les positions actives
+        # restaurees (sans les orphelins cancellees).
+        if not positions_active_broker and not positions_unknown:
+            # 100% orphelins → archive
+            try:
+                ts_archive = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                archive_path = self._active_positions_state_file.with_suffix(
+                    f".json.processed.{ts_archive}"
+                )
+                self._active_positions_state_file.rename(archive_path)
+                print(f"[BOT] state archived: {archive_path.name}")
+            except OSError as e:
+                print(f"[BOT] state archive failed (non-fatal): {e}")
+        else:
+            # Au moins 1 position active OU unknown → re-ecrire state avec
+            # les positions a preserver (sans orphelins cancellees).
+            kept_positions = {**positions_active_broker, **positions_unknown}
+            try:
+                with open(self._active_positions_state_file, "w", encoding="utf-8") as f:
+                    json.dump(kept_positions, f, indent=2, default=str)
+                print(f"[BOT] state preserved : {len(kept_positions)} positions actives/unknown "
+                      f"({len(positions_orphan_real)} orphelins cancellees)")
+            except OSError as e:
+                print(f"[BOT] state rewrite failed (non-fatal): {e}")
 
     def _scan_recent_archives_for_orphan_cancel(self):
         """Scan archives `databento_active_positions.json.processed.*` des

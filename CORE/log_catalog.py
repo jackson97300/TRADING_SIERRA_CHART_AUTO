@@ -174,6 +174,7 @@ LOG_CODES = {
     "BAR_KEY_PARSE_FAIL":        (LogLevel.MAJEUR,   "events", "Bar key parse fail (SKIP) : {sym} bar_ts={bar_ts} err={err}"),
     "BAR_KEY_PARSE_FAIL_STORM":  (LogLevel.CRITIQUE, "events", "Storm BAR_KEY_PARSE_FAIL : {n_fails} fails en {window_sec}s — pipeline upstream casse ?"),
     "OCO_RECOVERY_BOOT":         (LogLevel.MAJEUR,   "events", "OCO recovery au boot : {n_positions} positions pending symbols={symbols}"),
+    "OCO_RECOVERY_RESTORED":     (LogLevel.MAJEUR,   "events", "OCO recovery RESTORE : {sym} {side} entry={entry} sl={sl_price} tp={tp_price} (broker confirme position active)"),
     "OCO_ORPHAN_CANCELED":       (LogLevel.MAJEUR,   "execution", "OCO orphan cancel : {sym} {cid_field}={cid}"),
     "CLEANUP_DEFENSIVE_BOOT":    (LogLevel.MAJEUR,   "events", "Cleanup defensif boot : {n_archives} archives <24h, {n_cids} CIDs candidats"),
     "CLEANUP_DEFENSIVE_DONE":    (LogLevel.MAJEUR,   "events", "Cleanup defensif termine : {n_sent}/{n_total} cancels envoyes"),

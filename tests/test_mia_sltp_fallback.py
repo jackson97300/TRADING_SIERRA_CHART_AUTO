@@ -205,19 +205,26 @@ class TestAntiRegressionCloseWall:
     def test_multi_obstacles_scan_picks_first_rr_acceptable_nq(self, engine_nq):
         """🆕 Reserve code-reviewer 24/04 : scan multi-obstacles avec R:R varies.
 
+        ⚠️ ADAPTE 30/04 v2 (CAS 4 universel) : le scenario original utilisait
+        GEX_UP @ 30t (T1) comme obstacle proche skip → SESS_HIGH @ 80t (T1) pris.
+        Avec CAS 4 v2, GEX_UP T1 sur le chemin capoterait le TP a 26t (R:R 0.68
+        < MIN_RR_RATIO 0.8) → trade rejete. Adapte : remplace GEX_UP par
+        CUR_VAH (T2) qui ne declenche pas CAS 4 v2 (only T1 capote).
+
         Scenario NQ LONG, SL=38t (GEX_DN -30 + EXT_EDGE_BUY -30 → SL=30+8buffer=38t) :
-          - Obstacle 1 : GEX_UP +30t  → tp 30-4=26t   → R:R 0.68 (<1.5) SKIP
-          - Obstacle 2 : MQ_CALL +60t → tp 60-4=56t   → R:R 1.47 (<1.5) SKIP
-          - Obstacle 3 : SESS_HIGH +80t → tp 80-4=76t → R:R 2.00 (>=1.5) ✅ PRIS
+          - Obstacle 1 : CUR_VAH +30t (T2) → tp 30-4=26t → R:R 0.68 SKIP (T2 sur
+            chemin → CAS 4 v2 ne capote PAS car T2 = traversable acceptable)
+          - Obstacle 2 : MQ_CALL +60t (T2) → tp 60-4=56t → R:R 1.47 SKIP
+          - Obstacle 3 : SESS_HIGH +80t (T1) → tp 80-4=76t → R:R 2.00 PRIS
         Valide que le scan parcourt bien tous les obstacles et prend le 3e.
         """
         row = pd.Series({
             "price_close": 27000.0,
             "dist_gex_nearest_dn": -30.0,
             "dist_ext_edge_buy": -30.0,
-            "dist_gex_nearest_up": +30.0,   # R:R 0.68 — trop proche
-            "dist_mq_call": +60.0,          # R:R 1.47 — encore trop proche
-            "dist_sess_high": +80.0,        # R:R 2.0 — acceptable
+            "dist_cur_vah": +30.0,          # T2 : R:R 0.68 trop proche, mais CAS 4 v2 skip (T2)
+            "dist_mq_call": +60.0,          # T2 : R:R 1.47 — encore trop proche
+            "dist_sess_high": +80.0,        # T1 : R:R 2.0 — acceptable
         })
         result = engine_nq.evaluate_single(row, 1)
         assert result.valid, f"Trade doit etre valide: {result.reject_reason}"

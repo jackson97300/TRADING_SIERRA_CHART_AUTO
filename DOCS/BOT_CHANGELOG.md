@@ -62,6 +62,145 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-01 02:30 UTC — [Bot 2 OCO recovery query broker + Bot 1 SLTP CAS 4 v2 universel]
+
+**Categorie** : FIX architectural Tier 1 — 2 bugs paper traders observes 30/04
+**Impact prod** : Bot 1 (MIA-Paper Sim3) + Bot 2 (MIA-DataBento-Paper Sim2)
+**Fichier(s)** :
+- Modif : `CORE/databento_paper_trader.py:564-735` — OCO recovery query broker (Type 305)
+- Modif : `CORE/mia_sltp.py:415-475` — CAS 4 v2 garde universelle anti-traversee mur T1
+- Modif : `CORE/mia_sltp.py:241-263` — SLTPResult new field cas4_source_pre
+- Modif : `CORE/log_catalog.py` — code OCO_RECOVERY_RESTORED ajoute
+- Modif : `tests/test_mia_sltp_fallback.py` — test multi_obstacles adapte (T2 vs T1)
+- Cree : `tests/test_bot2_oco_recovery_query_broker.py` — 7 tests (active/flat/timeout/exception/empty/multi-sym)
+- Cree : `tests/test_mia_sltp_mq_walls.py` mise a jour — 4 tests CAS 4 v2 universel
+
+**Reviewer(s) agent** :
+- code-reviewer #1 : GO-AVEC-RESERVES → R1+R2+R5+R6 traitees
+  - R1 (race) : repopulation SIDs DEPLACEE avant query broker
+  - R2 (connect) : verifie ordre connect()→reload (ligne 542-556)
+  - R5 (multi-sym) : test ES active + NQ timeout ajoute
+  - R6 (logging) : OCO_RECOVERY_RESTORED emit ajoute
+- 101/101 tests PASS
+
+### Quoi
+
+**1. Bot 2 OCO recovery query broker** (databento_paper_trader.py)
+
+Bug observe screen 30/04 : ES SHORT @ 7206.50 ouvert avant 13:19 UTC.
+3 restarts successifs dans la journee → a chaque restart, OCO recovery
+annulait les brackets TP/SL ET archivait state.json, MAIS NE FERMAIT PAS
+la position broker. Resultat : position SHORT vivante cote Sierra Sim2
+SANS tracking ni protection. Profit +453t invisible pour le bot.
+
+Fix : avant cancel brackets, query broker via `request_position_blocking()`
+(Type 305 → 306, timeout 3s par position). 4 cas distingues :
+- broker_qty != 0 : position TOUJOURS active → restaurer dans `active_positions`,
+  repopuler `_server_order_ids`, re-`register_oco_pair`, garder state.json.
+  Emit `OCO_RECOVERY_RESTORED`.
+- broker_qty == 0 : vraie orphelin → cancel + archive (comportement original)
+- broker_qty == None (timeout) : conservateur → ne pas cancel + alerte
+  `STATE_VS_BROKER_MISMATCH` + re-ecrire state.json
+- Exception : traite comme timeout
+
+Anti-race R1 : repopulation `_server_order_ids` AVANT query broker (le
+`_recv_loop` thread est actif des `connect()` BOT/dtc_connector.py:138 →
+peut recevoir un fill ORDER_UPDATE pendant la query 3s).
+
+Validation prod (post-deploy 14:40 UTC) : log `[BOT] query broker ES = -3
+→ POSITION ACTIVE, restaure tracking` + `state preserved : 1 positions
+actives/unknown (0 orphelins cancellees)`. Position du screen propre.
+
+**2. Bot 1 SLTP CAS 4 v2 universel** (mia_sltp.py)
+
+Bug screen 30/04 apres-midi : ES SHORT @ 7160.50 (Bot 1), SL=20t,
+TP @ GEX_DN -77t (R:R 3.85). HVL_0DTE @ -18t SUR LE CHEMIN du TP. Prix
+rebondit sur HVL_0DTE → SL hit -57t.
+
+Cause : SLTPEngine `_find_tp_obstacle` SKIP HVL_0DTE (R:R 0.8 < MIN_RR_SELECTION
+1.5) puis prend GEX_DN (R:R 3.9). Mais ignore que HVL_0DTE T1 doit etre
+casse pour atteindre TP. CAS 4 v1 (matin 30/04) ne couvre que `tp1_wall.startswith("TP_STANDARD")`.
+
+Fix v2 universel : capote TP a TOUT mur TIER 1 plus proche que tp1_ticks,
+peu importe la SOURCE du TP (TP_STANDARD ou mur scanne). T2 acceptes comme
+traversables (only T1 capote). Si capot rend R:R < MIN_RR_RATIO 0.8,
+STEP 8 reject le trade naturellement (mieux que SL programme).
+
+Idempotence : si tp1_wall IS deja le 1er T1 (ou TP_DEVANT_<T1>), skip
+(evite double-capot).
+
+`cas4_source_pre` ajoute dans SLTPResult pour distinguer CAS 4 v1
+(`TP_STANDARD_*`) vs v2 (nom mur scanne) en logs prod.
+
+**3. Bug heartbeat fix** (databento_paper_trader.py)
+
+Bug introduit par fix #1 : state.json restaure avait `ts_open` en STRING ISO,
+mais `_write_state` ligne 1132 fait `pos["ts_open"].isoformat()` → AttributeError
+(string n'a pas isoformat). Heartbeat error spam.
+
+Fix : convertir `ts_open` str → `datetime.fromisoformat()` lors de la
+restauration dans `active_positions` (invariant interne preserve).
+
+### Impact attendu
+
+- **Bot 2** : zero orphelin sur restart bot avec position active. Verifie
+  empiriquement post-deploy 14:40 UTC.
+- **Bot 1** : trades structurellement casses (TP derriere mur T1) seront
+  REJETES au lieu de SL hit. Estimation impact : 5-15% trades supplementaires
+  rejetes. A monitorer via `cas4_source_pre` log.
+
+### Validation pre-deploy
+
+- [x] Tests : 101/101 PASS
+  - 7 OCO recovery (4 nouveaux + multi-sym + ts_open + edge)
+  - 38 SLTP (13 fallback + 25 MQ/CAS4)
+  - 23 trailing TR40 (existants)
+  - 30 gates Bot 2 (existants)
+  - 3 funnel reject (existants)
+- [x] Code-reviewer GO-AVEC-RESERVES → R1+R2+R5+R6 traitees
+- [x] Validation empirique : log Bot 2 post-restart confirme `query broker ES = -3 → POSITION ACTIVE`
+
+### Revert plan
+```bash
+git revert <commit-sha>
+scp CORE/databento_paper_trader.py CORE/mia_sltp.py CORE/log_catalog.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 'powershell -Command "nssm.exe restart MIA-Paper; nssm.exe restart MIA-DataBento-Paper"'
+```
+
+### Deployed at 2026-05-01 02:30 UTC
+- 3 fichiers SCP -> VPS
+- MIA-Paper + MIA-DataBento-Paper restart
+- Verifie : Bot 2 query broker ES = -3 (position SHORT @ 7174.00 active restauree)
+
+### Suivi post-deploy
+- J+1 (01/05) : grep `OCO_RECOVERY_RESTORED` LOGS/events/ → freq query broker active
+- J+1 : grep `cas4_source_pre != ""` LOGS/decisions/ → freq CAS 4 v2
+- J+7 : ratio rejets `R:R < 0.8 (TP_DEVANT_*)` vs avant fix v2
+- J+30 : impact PF Bot 1 (cible : moins de SL sur trades structurels casses)
+
+### Anomalies detectees a chantier suivant (29/04 → 01/05)
+
+**Anomalie 1 — SD-1 W mur invisible SLTPEngine** :
+Screen Bot 2 30/04 (Trade 7174.00 → TP 7163.50) montre TP place 1.4 ticks
+SOUS le mur SD-1 W @ 7163.84 (VWAP Weekly -1SD). Le DMP feed actuel N'EXPOSE
+PAS `dist_vwap_w_sd1u/d`. Fix architectural = ajouter dans DMP_Reader.h
++ DMP_Transform.h + DMP_Writer.h (CHANTIER C++ + recompile + deploy VPS).
+
+**Anomalie 2 — Bot 2 dashboard pas d'evolution live** :
+Bot 1 `state.json` (488 KB) contient open_by_symbol + stats + entry_funnel.
+Bot 2 `databento_paper_state.json` (653 B) ne contient QUE active_positions
+(entry/sl/tp/ts_open). Manque : unrealized_pnl, current_price, mfe/mae,
+bars_held → dashboard ne peut pas afficher l'evolution live d'un trade Bot 2.
+Fix : enrichir `_write_state()` Bot 2.
+
+### Liens
+
+- Memories : `feedback_pre_deploy_3_questions.md`, `reference_vps_process_persistence.md`
+- Rule : `.claude/rules/critical-tasks-review.md` (Tier 1 SLTPEngine + DTC)
+- Code-reviewer : 2 reviews (R1+R2+R5+R6 + traitees + recos appliquees)
+
+---
+
 ## 2026-05-01 00:30 UTC — [Fix bug TypeError _funnel_reject + Système logs anomalies tracables]
 
 **Categorie** : FIX (bug Python preexistant) + FEATURE (12 nouveaux codes log)
