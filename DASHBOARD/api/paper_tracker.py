@@ -333,6 +333,39 @@ def get_paper_trades_payload() -> dict:
     return _build_bot_payload(STATE_FILE, "*_trades.jsonl", "dmp")
 
 
+def _clean_nan_inf(obj):
+    """Remplace recursivement NaN/Inf/-Inf par None pour serialisation JSON.
+
+    FIX 30/04 (Jackson "TOUJOURS PAS RESOLUE") : /api/paper_trades_dual
+    retournait 500 ValueError "Out of range float values are not JSON
+    compliant" car state.json contient parfois NaN/Inf dans :
+    - features at entry/exit (DMP bars)
+    - last_cross_context (rare)
+    - stats_by_symbol pf si edge case
+
+    JSON strict (FastAPI default) refuse NaN/Inf → tout l'endpoint plante 500
+    → frontend voit `paperData = {}` → "Aucune donnee (trader jamais demarre)"
+    + closed_today vide alors que state a 20+ trades.
+
+    Solution : nettoyage recursif post-build. Conserve types autres (int/str/
+    bool/None/list/dict). Remplace float NaN/Inf par None (JSON-safe).
+    """
+    import math
+    if obj is None:
+        return None
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _clean_nan_inf(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean_nan_inf(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_clean_nan_inf(v) for v in obj)
+    return obj
+
+
 def get_dual_bots_payload() -> dict:
     """Retourne payload des DEUX bots (BOT 1 DMP Sim3 + BOT 2 DB Sim2).
 
@@ -347,9 +380,12 @@ def get_dual_bots_payload() -> dict:
     `eco_status` partagee par les 2 bots (les blocs eco/session s'appliquent
     aux 2 bots simultanement). Le frontend utilise resume_in_sec pour
     afficher "Bot reprend dans HH:MM".
+
+    FIX 30/04 v2 : cleanup NaN/Inf avant return (prevent JSON 500 error).
     """
-    return {
+    payload = {
         "bot1_dmp": _build_bot_payload(STATE_FILE, "*_trades.jsonl", "dmp"),
         "bot2_db":  _build_bot_payload(STATE_FILE_DB, "*_databento_trades.jsonl", "db"),
         "eco_status": get_eco_status_payload(),
     }
+    return _clean_nan_inf(payload)
