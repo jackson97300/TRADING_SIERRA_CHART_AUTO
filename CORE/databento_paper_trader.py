@@ -1767,14 +1767,47 @@ class DatabentoPaperTrader:
                 sl_wall_used = sltp.sl_wall
                 tp_wall_used = sltp.tp1_wall
                 print(f"[{symbol}] SLTP walls: sl={sl_ticks_use}t ({sl_wall_used}) tp={tp_ticks_use}t ({tp_wall_used})")
+
+                # 30/04 : tracking observability MQ walls + CAS 4
+                # - SLTP_MQ_WALL_USED : MQ level utilise comme TP/SL → freq deploy MQ tiers
+                # - SLTP_CAS4_TRIGGERED : capot anti-TP-derriere-mur active → freq bug pre-fix
+                if "MQ_" in sl_wall_used or "MQ_" in tp_wall_used:
+                    _emit("SLTP_MQ_WALL_USED", sym=symbol,
+                          direction=result.direction,
+                          role="SL" if "MQ_" in sl_wall_used else "TP",
+                          wall_name=sl_wall_used if "MQ_" in sl_wall_used else tp_wall_used,
+                          dist_ticks=sl_ticks_use if "MQ_" in sl_wall_used else tp_ticks_use,
+                          tier=sltp.sl_wall_tier if "MQ_" in sl_wall_used else 0)
+                if getattr(sltp, "cas4_triggered", False):
+                    # Valeurs exactes exposees par SLTPEngine (R1+R2 review 30/04 v2)
+                    # cas4_blocked_wall_dist : distance reelle du mur (pas approx)
+                    # cas4_tp_standard_pre : tp_ticks AVANT capot (post CAS 1/2/3)
+                    _emit("SLTP_CAS4_TRIGGERED", sym=symbol,
+                          direction=result.direction,
+                          wall_name=sltp.cas4_blocked_wall,
+                          tp_ticks=tp_ticks_use,
+                          tp_standard=sltp.cas4_tp_standard_pre,
+                          wall_dist=sltp.cas4_blocked_wall_dist,
+                          rr=tp_ticks_use / sl_ticks_use if sl_ticks_use > 0 else 0)
             else:
                 print(f"[{symbol}] SLTP invalid ({sltp.reject_reason or 'no walls found'}), "
                       f"fallback adaptatif SL={sl_ticks_use}t TP={tp_ticks_use}t "
                       f"(budget ${FALLBACK_SL_USD}, RR {FALLBACK_RR})")
+                # Fallback FIXED applique cote databento_paper (hors mia_sltp). Track freq.
+                _emit("SLTP_NO_VALID_WALL", sym=symbol,
+                      direction=result.direction,
+                      sl_fixed=sl_ticks_use,
+                      tp_fixed=tp_ticks_use)
         except (AttributeError, KeyError) as e:
             print(f"[{symbol}] SLTP exception {e}, fallback fixes")
+            _emit("PY_EXCEPTION_HOT_PATH", sym=symbol,
+                  fn_name="SLTPEngine.evaluate_single",
+                  exc_type=type(e).__name__, exc_msg=str(e))
         except Exception as e:  # noqa: BLE001
             print(f"[{symbol}] SLTP unexpected exception {type(e).__name__}: {e}, fallback fixes")
+            _emit("PY_EXCEPTION_HOT_PATH", sym=symbol,
+                  fn_name="SLTPEngine.evaluate_single",
+                  exc_type=type(e).__name__, exc_msg=str(e))
 
         # ── GATE B — VETO SHORT si TP no-wall ou room insuffisant (Plan A_v2 30/04) ──
         # Audit Phase 0 SHORTs Bot 2 (n=8) : 3/8 SHORTs avec TP_STANDARD_NO_WALL ou

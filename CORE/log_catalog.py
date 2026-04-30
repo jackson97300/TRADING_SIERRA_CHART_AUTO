@@ -197,6 +197,33 @@ LOG_CODES = {
     "MARKET_VOLATILITY_SHIFT":   (LogLevel.INFO,     "events", "Volatility shift : {sym} atr_pct={atr_pct} bucket={bucket}"),
     "SESSION_TRANSITION":        (LogLevel.INFO,     "events", "Session : {from_session} -> {to_session}"),
     "MQ_LEVELS_UPDATE":          (LogLevel.INFO,     "events", "MQ levels updated : {sym} call={mq_call} put={mq_put} hvl={mq_hvl}"),
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 30/04/2026 : tracking anomalies pour les nouvelles features
+    # ─────────────────────────────────────────────────────────────────────
+
+    # Bot 1 trailing TR40_20 NQ (mia_paper_trader.py)
+    # Permet de tracker : armement, updates, anomalies tick-align, blocage favorable
+    "TRAILING_TR40_ARMED":       (LogLevel.INFO,     "execution", "Trailing TR40_20 ARM : {sym} mfe={mfe}t >= {arming_thr}t (40% × SL_init={sl_init}t)"),
+    "TRAILING_TR40_UPDATED":     (LogLevel.INFO,     "execution", "Trailing TR40_20 UPDATE : {sym} sl={old_sl}->{new_sl} (give_back={give_back}t, count={count})"),
+    "TRAILING_TR40_NOT_ALIGNED": (LogLevel.MAJEUR,   "execution", "Trailing TR40_20 TICK MISALIGN : {sym} sl_raw={sl_raw} sl_aligned={sl_aligned} delta={delta_ticks}t"),
+    "TRAILING_TR40_LOOSEN_BLOCK":(LogLevel.ALERTE,   "execution", "Trailing TR40_20 LOOSEN BLOCKED : {sym} new_sl={new_sl} en defaveur de pos (current_sl={current_sl}, dir={direction})"),
+
+    # SLTPEngine MQ walls + CAS 4 (mia_sltp.py)
+    # Permet de tracker : utilisation effective des MQ walls, frequence CAS 4
+    "SLTP_MQ_WALL_USED":         (LogLevel.INFO,     "decisions", "SLTP MQ wall used : {sym} dir={direction} role={role} wall={wall_name} dist={dist_ticks}t tier={tier}"),
+    "SLTP_CAS4_TRIGGERED":       (LogLevel.MAJEUR,   "decisions", "SLTP CAS 4 trigger : {sym} dir={direction} TP capote DEVANT {wall_name} a {tp_ticks}t (was {tp_standard}t derriere mur a {wall_dist}t) — R:R sacrifie a {rr:.2f}"),
+    "SLTP_FALLBACK_STANDARD":    (LogLevel.INFO,     "decisions", "SLTP fallback STANDARD : {sym} dir={direction} reason={reason_fallback} sl={sl_ticks}t tp={tp_ticks}t"),
+    "SLTP_NO_VALID_WALL":        (LogLevel.ALERTE,   "decisions", "SLTP no valid wall : {sym} dir={direction} → fallback FIXED applique sl={sl_fixed}t tp={tp_fixed}t"),
+    "SLTP_TP_BEHIND_WALL_DETECTED": (LogLevel.CRITIQUE, "decisions", "ANOMALIE TP DERRIERE MUR : {sym} dir={direction} tp_price={tp_price} mur={wall_name}@{wall_price} delta={delta_ticks}t — bug pre-CAS4 ?"),
+
+    # Anomalies generiques python (paper_trader)
+    # Permet de tracker exceptions Python uncaught dans hot paths
+    "PY_EXCEPTION_HOT_PATH":     (LogLevel.CRITIQUE, "events", "Exception Python hot path : {sym} fn={fn_name} type={exc_type} msg={exc_msg}"),
+    "FUNNEL_REJECT_CONTRACT_BUG":(LogLevel.MAJEUR,   "events", "Funnel reject API misuse : {sym} step={step} kwargs_overlap={overlap_keys}"),
+
+    # Mismatch state.json vs broker (position fantome)
+    "STATE_VS_BROKER_MISMATCH":  (LogLevel.CRITIQUE, "execution", "State vs broker mismatch : {sym} state={state_pos} broker={broker_pos} → cleanup attendu"),
 }
 
 

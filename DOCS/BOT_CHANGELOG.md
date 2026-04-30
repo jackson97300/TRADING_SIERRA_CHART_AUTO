@@ -62,6 +62,90 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-01 00:30 UTC — [Fix bug TypeError _funnel_reject + Système logs anomalies tracables]
+
+**Categorie** : FIX (bug Python preexistant) + FEATURE (12 nouveaux codes log)
+**Impact prod** : Bot 1 (MIA-Paper Sim3) + Bot 2 (MIA-DataBento-Paper Sim2)
+**Fichier(s)** :
+- Modif : `CORE/mia_paper_trader.py:843-848` — fix TypeError (kwarg `reason=` -> `disable_reason=`)
+- Modif : `CORE/mia_paper_trader.py:1631-1716` — emits TRAILING_TR40_* + fix bug latent NameError `old_sl`
+- Modif : `CORE/log_catalog.py:200-225` — 12 nouveaux codes tracking anomalies
+- Modif : `CORE/databento_paper_trader.py:1763-1800` — emits SLTP_MQ_WALL_USED + SLTP_CAS4_TRIGGERED + PY_EXCEPTION_HOT_PATH
+- Modif : `CORE/mia_sltp.py:241-249,418-446` — 2 nouveaux flags SLTPResult `cas4_blocked_wall_dist` + `cas4_tp_standard_pre`
+- Cree : `tests/test_paper_funnel_reject.py` — 3 tests regression bug
+- Cree : `DOCS/LOGS_ANOMALY_GUIDE.md` — table ANOMALIE -> CODE LOG -> COMMANDE
+
+**Reviewer(s) agent** :
+- code-reviewer : GO-AVEC-RESERVES (R1+R2 traitees : exposer wall_dist exact + tp_standard_pre dans SLTPResult)
+- 90/90 tests PASS (3 funnel + 13 fallback + 21 MQ + 23 trailing + 30 gates)
+
+### Quoi
+**1. Bug TypeError _funnel_reject** (observe paper_trader.err depuis avant 30/04) :
+```python
+# Avant : reason= kwarg en conflit avec reason positional
+self._funnel_reject("3_conseil", "sell_auto_disabled",
+                    reason=self._sell_disable_reason.get(symbol),  # TypeError
+                    ...)
+# Apres : kwarg renomme
+self._funnel_reject("3_conseil", "sell_auto_disabled",
+                    disable_reason=self._sell_disable_reason.get(symbol),
+                    ...)
+```
+Plus : fix bug latent `NameError: old_sl` dans branche LOOSEN_BLOCK du trailing TR40 (capture deplacee AVANT branchement).
+
+**2. 12 nouveaux codes log tracking anomalies** :
+- Trailing TR40 (4) : ARMED, UPDATED, NOT_ALIGNED (delta>0.5t), LOOSEN_BLOCK
+- SLTP MQ + CAS 4 (5) : MQ_WALL_USED, CAS4_TRIGGERED, FALLBACK_STANDARD, NO_VALID_WALL, TP_BEHIND_WALL_DETECTED
+- Anomalies generiques (3) : PY_EXCEPTION_HOT_PATH, FUNNEL_REJECT_CONTRACT_BUG, STATE_VS_BROKER_MISMATCH
+
+**3. Doc DOCS/LOGS_ANOMALY_GUIDE.md** : table ANOMALIE Jackson -> CODE -> CMD GREP. 6 sections (signal pas trade, TP non atteint, trailing, OCO, exceptions, verif post-deploy).
+
+### Pourquoi
+1. **Bug TypeError** : observe en prod depuis ~24/04 (introduit avec fix kill-switch SELL auto-disable). Silencieux car logge dans paper_trader.err mais bot continue. Funnel reject jamais incremente pour ce reject.
+
+2. **Logs anomalies** : Jackson directive "MET A JOUR NOTRE SYSTEM DE LOGS INGENIEUX POUR TRACKER TOUT ANOMALIE EN FONCTION DE DERNIERE MODIF". Avant fix, on ne pouvait pas savoir :
+   - Frequence trailing TR40 arme vs mur en fav
+   - Frequence CAS 4 capote vs MQ wall scanne
+   - Frequence fallback FIXED databento (Bot 2 SHORTs perdus)
+   - Distinction exceptions Python hot path vs autres
+
+### Impact attendu
+- **Bot 1** : SHORTs auto-disabled correctement loggees dans funnel_reject (avant : TypeError silencieuse)
+- **Bot 2** : observability MQ walls + CAS 4 + fallback FIXED en prod
+- **Debug** : Jackson dit "verifie les logs" -> grep `LOGS_ANOMALY_GUIDE.md` table -> 1 commande -> diagnostic
+
+### Validation pre-deploy
+- [x] Tests unitaires : 90/90 (3 funnel + 13 fallback + 21 MQ tiers/scan/CAS4 + 23 trailing + 30 gates)
+- [x] Test cas screen 30/04 PASS (CAS 4 capote MQ_CALL_0DTE)
+- [x] Tests new fields exposes (cas4_blocked_wall_dist + cas4_tp_standard_pre)
+- [x] Review agent code-reviewer : GO-AVEC-RESERVES R1+R2 traitees
+- [x] Pre-deploy 3 questions : (1) MIA-Paper + MIA-DataBento-Paper consomment, (2) bug TypeError observe paper_trader.err 24/04+, (3) tests empiriques + cas screen 30/04 PASS
+
+### Revert plan
+```bash
+git revert <commit-sha>
+scp CORE/mia_paper_trader.py CORE/mia_sltp.py CORE/log_catalog.py CORE/databento_paper_trader.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 'powershell -Command "nssm.exe restart MIA-Paper; nssm.exe restart MIA-DataBento-Paper"'
+```
+
+### Deployed at 2026-05-01 00:30 UTC
+- 4 fichiers SCP -> VPS
+- MIA-Paper + MIA-DataBento-Paper restart
+- err.log paper_trader mtime 09:53 ET = juste apres restart, pas de nouvelle TypeError
+
+### Suivi post-deploy
+- J+1 (01/05) : grep `disable_reason` dans LOGS/decisions/ → fix effectif
+- J+1 : grep `TRAILING_TR40_ARMED` LOGS/execution/ → trailing arme au moins 1 trade
+- J+7 : freq SLTP_CAS4_TRIGGERED vs SLTP_MQ_WALL_USED → bench fix MQ walls
+- J+30 : zero `PY_EXCEPTION_HOT_PATH` non documentee
+
+### Liens
+- Memories : `feedback_log_debug_protocol.md` (4 niveaux + categories)
+- Rule : `.claude/rules/log-debug-protocol.md` (consultation logs ordre)
+- Doc : `DOCS/LOGS_ANOMALY_GUIDE.md` (table debug) NEW
+
+---
+
 ## 2026-04-30 23:55 UTC — [SLTPEngine MQ walls TIER1/TIER2 + CAS 4 anti-TP-derriere-mur]
 
 **Categorie** : FIX (bug TP derriere mur) + FEATURE (niveaux MQ scannes comme obstacles)

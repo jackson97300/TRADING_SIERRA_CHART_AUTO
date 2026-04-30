@@ -287,6 +287,37 @@ class TestCas4AntiTpBehindWall:
         assert result.cas4_blocked_wall == "MQ_CALL_0DTE", \
             f"cas4_blocked_wall doit etre MQ_CALL_0DTE, got {result.cas4_blocked_wall}"
 
+    def test_cas4_exposes_exact_wall_dist_and_tp_pre(self):
+        """R1+R2 code-reviewer review 2 : cas4_blocked_wall_dist +
+        cas4_tp_standard_pre exposent les valeurs EXACTES (pas d'approximation
+        cote caller). Avant fix, le caller utilisait `tp_ticks_use + 2`
+        (hardcode tp_buffer ES=2 mais NQ=4) et `sl_ticks * 2.0` (faux
+        car cap V47 applique avant CAS 4)."""
+        engine = SLTPEngine(symbol="ES")
+        row = _build_row_with_mq(
+            direction=-1,
+            dist_mq_call_0dte=-28.0,
+            dist_mq_call=-28.0,
+        )
+        row["dist_gex_nearest_up"] = 14.0
+        row["close"] = 7200.0
+
+        result = engine.evaluate_single(row, direction=-1)
+        assert result.valid
+        assert result.cas4_triggered is True
+
+        # Distance exacte du mur (pas approx)
+        assert result.cas4_blocked_wall_dist == 28.0, \
+            f"wall_dist exact attendu 28t, got {result.cas4_blocked_wall_dist}"
+
+        # tp_standard_pre = valeur APRES CAS 1/2/3 mais AVANT CAS 4 capot
+        # Avec SL=18t (14 GEX + 4 buffer) → CAS 1 fallback = 36t → cap V47 ES = 30t
+        assert result.cas4_tp_standard_pre == 30.0, \
+            f"tp_standard_pre attendu 30t (cap V47 ES), got {result.cas4_tp_standard_pre}"
+
+        # tp1_ticks final apres capot = floor(28-2) = 26
+        assert result.tp1_ticks == 26.0
+
     def test_cas4_observability_flag_not_set_when_no_trigger(self):
         """Cas nominal sans CAS 4 : flags doivent rester False/empty."""
         engine = SLTPEngine(symbol="ES")

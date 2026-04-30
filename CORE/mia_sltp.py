@@ -256,8 +256,10 @@ class SLTPResult:
     reject_reason: str = ""
 
     # CAS 4 anti-TP-derriere-mur (30/04/2026) — observability prod
-    cas4_triggered: bool = False     # True si TP_STANDARD capote DEVANT un mur
-    cas4_blocked_wall: str = ""      # Nom du mur qui a force le capot
+    cas4_triggered: bool = False         # True si TP_STANDARD capote DEVANT un mur
+    cas4_blocked_wall: str = ""          # Nom du mur qui a force le capot
+    cas4_blocked_wall_dist: float = 0.0  # Distance exacte du mur (avant tp_buffer)
+    cas4_tp_standard_pre: float = 0.0    # Valeur tp1_ticks AVANT capot (apres CAS 1/2/3)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -431,18 +433,28 @@ class SLTPEngine:
                         first_obstacle.abs_dist - self.tp_buffer
                     )
                     if tp_devant_mur > 0:
+                        # Capture avant mutation : valeur tp1_ticks pre-capot
+                        # (apres CAS 1/2/3, donc deja capee V47 si applicable).
+                        # Exposee dans res.cas4_tp_standard_pre pour observability.
+                        tp_standard_pre = tp1_ticks
+
                         tp1_ticks = float(tp_devant_mur)
                         tp1_wall = f"TP_DEVANT_{first_obstacle.name}"
                         tp1_reason = (
                             f"TP devant {first_obstacle.name} (T{first_obstacle.tier}) "
-                            f"a {tp_devant_mur}t — fallback TP_STANDARD aurait "
-                            f"traverse le mur a {first_obstacle.abs_dist:.1f}t"
+                            f"a {tp_devant_mur}t — fallback TP_STANDARD ({tp_standard_pre:.0f}t) "
+                            f"aurait traverse le mur a {first_obstacle.abs_dist:.1f}t"
                         )
-                        # R2 (code-reviewer 30/04) : flag observability prod
-                        # Permet de tracker freq CAS 4 dans logs decisions/.
+                        # R2 (code-reviewer 30/04) : flags observability prod
+                        # Permet de tracker freq CAS 4 + valeurs exactes dans logs.
                         # Sans ca on ne sait pas si CAS 4 cape 5% ou 40% des trades.
+                        # Reserves R1+R2 (code-reviewer 30/04 review 2) :
+                        # exposer wall_dist exact + tp_standard pre-capot (pas approxime
+                        # cote caller avec tp_buffer hardcode).
                         res.cas4_triggered = True
                         res.cas4_blocked_wall = first_obstacle.name
+                        res.cas4_blocked_wall_dist = float(first_obstacle.abs_dist)
+                        res.cas4_tp_standard_pre = float(tp_standard_pre)
 
         res.tp1_ticks = tp1_ticks
         res.tp1_wall = tp1_wall

@@ -843,7 +843,7 @@ class PaperTrader:
             self._funnel_reject("3_conseil", "sell_auto_disabled",
                                 symbol=symbol,
                                 action=action,
-                                reason=self._sell_disable_reason.get(symbol),
+                                disable_reason=self._sell_disable_reason.get(symbol),
                                 signal_id=conseil.get("signal_id"),
                                 **market_ctx)
             return None
@@ -1647,6 +1647,16 @@ class PaperTrader:
                 arming_thr = 0.40 * sl_dist_ticks_init
                 give_back = 0.20 * sl_dist_ticks_init
                 if pos.get("mfe", 0) >= arming_thr:
+                    # Emit ARM uniquement a la PREMIERE fois (sl_trailed pas encore True)
+                    if not pos.get("sl_trailed", False) and _v2log:
+                        try:
+                            _v2log.emit("TRAILING_TR40_ARMED", sym=symbol,
+                                        mfe=round(pos["mfe"], 1),
+                                        arming_thr=round(arming_thr, 1),
+                                        sl_init=round(sl_dist_ticks_init, 1))
+                        except Exception:
+                            pass
+
                     new_sl_price = None
                     if pos["direction"] == "LONG":
                         candidate = pos["entry_price"] + (pos["mfe"] - give_back) * TICK_SIZE
@@ -1661,10 +1671,23 @@ class PaperTrader:
                         # NQ tick=0.25. round(price/tick)*tick garantit multiple valide.
                         # Sans ce fix : 7209.55 sortait au lieu de 7209.50 (= rejet broker live).
                         aligned_sl = round(round(new_sl_price / TICK_SIZE) * TICK_SIZE, 2)
+
+                        # Emit TICK_MISALIGN si delta > 0.5 tick (anomalie : prix
+                        # candidate enormement loin de la grille tick — bug calcul ?)
+                        delta_ticks = abs(new_sl_price - aligned_sl) / TICK_SIZE
+                        if delta_ticks > 0.5 and _v2log:
+                            try:
+                                _v2log.emit("TRAILING_TR40_NOT_ALIGNED", sym=symbol,
+                                            sl_raw=round(new_sl_price, 4),
+                                            sl_aligned=round(aligned_sl, 2),
+                                            delta_ticks=round(delta_ticks, 2))
+                            except Exception:
+                                pass
+
                         # SL ne doit toujours aller que dans le sens favorable apres alignement
-                        if (pos["direction"] == "LONG" and aligned_sl > pos["sl_price"]) or \
-                           (pos["direction"] == "SHORT" and aligned_sl < pos["sl_price"]):
-                            old_sl = pos["sl_price"]
+                        old_sl = pos["sl_price"]  # capturer AVANT branchement (fix bug NameError)
+                        if (pos["direction"] == "LONG" and aligned_sl > old_sl) or \
+                           (pos["direction"] == "SHORT" and aligned_sl < old_sl):
                             pos["sl_price"] = aligned_sl
                             pos["sl_trailed"] = True
                             pos["sl_trail_count"] = pos.get("sl_trail_count", 0) + 1
@@ -1674,14 +1697,25 @@ class PaperTrader:
                             print(f"[{symbol}] SL TRAIL: {old_sl:.2f} → {pos['sl_price']:.2f} "
                                   f"(MFE={pos['mfe']:.0f}t, SL_init={sl_dist_ticks_init:.0f}t, "
                                   f"arm={arming_thr:.0f}t, gb={give_back:.0f}t)")
-                        else:
-                            # Aligned price ne progresse pas (cas rare due a l'alignement)
-                            new_sl_price = None  # skip log/emit
                             if _v2log:
                                 try:
-                                    _v2log.emit("SL_TRAIL_UPDATE", sym=symbol,
-                                                old_sl=old_sl, new_sl=pos["sl_price"],
-                                                mfe=pos["mfe"], sl_init_ticks=sl_dist_ticks_init)
+                                    _v2log.emit("TRAILING_TR40_UPDATED", sym=symbol,
+                                                old_sl=round(old_sl, 2),
+                                                new_sl=round(pos["sl_price"], 2),
+                                                give_back=round(give_back, 1),
+                                                count=pos["sl_trail_count"])
+                                except Exception:
+                                    pass
+                        else:
+                            # Aligned price ne progresse pas en faveur (cas rare).
+                            # Track pour diagnostic : si frequent → arming_thr/give_back
+                            # mal calibre OU bug calcul.
+                            if _v2log:
+                                try:
+                                    _v2log.emit("TRAILING_TR40_LOOSEN_BLOCK", sym=symbol,
+                                                new_sl=round(aligned_sl, 2),
+                                                current_sl=round(old_sl, 2),
+                                                direction=pos["direction"])
                                 except Exception:
                                     pass
 
