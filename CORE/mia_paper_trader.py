@@ -121,6 +121,12 @@ ENTRY_RULES = {
     # bloque -354$ (=eviter), PnL passe +401$ (=garde), WR 23%→37.8%.
     # Filtre LOSERS empiriques : profile_shape==0 (D Range -19t) + day_type==1 (Normal -19t).
     "regime_gate_enabled": True,            # mode skip direct (Jackson directive)
+    # 30/04 v4 LOT 2B (Jackson "ON APPLIQUE PAPER DIRECT") — EntryQualityGate
+    # Backtest 104 trades Bot 1 mode BOTH_CONTRA :
+    #   32.7% rejection, PnL bloque -1803$, PnL passe +7274$, WR 53.8%.
+    # Filtre golden empirique : skip si momentum_5b ET cvd_bar_delta both contra.
+    "entry_quality_gate_enabled": True,     # toggle desactivable
+    "entry_quality_gate_strict": False,     # False = BOTH_CONTRA, True = AT_LEAST_1
 }
 
 # Config DTC (valide Phase 1 paper uniquement, pas de compte LIVE)
@@ -153,6 +159,10 @@ FUNNEL_STEPS = [
      ["regime_loser_profile_shape", "regime_loser_day_type"]),  # 🆕 30/04 v4
      # Skip empirique : profile_shape==0 (D Range -19t) + day_type==1 (Normal -19t).
      # Backtest 80 trades : 22.5% bloques, PnL eviter -354$, WR 23%→37.8%.
+    ("6cinq_entry_quality", "EntryQualityGate BOTH_CONTRA",
+     ["entry_quality_both_contra"]),  # 🆕 30/04 LOT 2B
+     # Skip si momentum_5b ET cvd_bar_delta BOTH contra direction.
+     # Backtest 104 trades : 32.7% bloques, PnL eviter -1803$, WR 23%→53.8%.
     ("7_sltp",          "SLTP murs+budget",
      ["sltp_no_wall", "sltp_rr_low", "sltp_budget_exceeded", "sltp_out_of_range"]),
     ("8_payoff",        "Expected payoff",  ["expected_payoff_low"]),
@@ -1113,6 +1123,31 @@ class PaperTrader:
                                     **market_ctx)
                 return None
             self._funnel_pass("6quart_regime")
+
+        # ─── 6cinq. EntryQualityGate (LOT 2B Jackson "ON APPLIQUE") ───────
+        # Skip si momentum_5b ET cvd_bar_delta BOTH contra direction.
+        # Backtest 104 trades : 32.7% bloques, PnL eviter -1803$, WR 23→53.8%.
+        if ENTRY_RULES.get("entry_quality_gate_enabled", True):
+            try:
+                from CORE.entry_quality_gate import evaluate_entry_quality_gate
+            except ImportError:
+                from entry_quality_gate import evaluate_entry_quality_gate
+            eq_result = evaluate_entry_quality_gate(
+                bar_row_dict, direction,
+                enabled=True,
+                strict_mode=ENTRY_RULES.get("entry_quality_gate_strict", False),
+            )
+            if eq_result.skip:
+                self._funnel_reject("6cinq_entry_quality", "entry_quality_both_contra",
+                                    symbol=symbol,
+                                    direction=direction,
+                                    skip_reason=eq_result.skip_reason,
+                                    momentum_5b=eq_result.momentum_5b,
+                                    cvd_bar_delta=eq_result.cvd_bar_delta,
+                                    next_wall_dist_ticks=eq_result.next_wall_dist_ticks,
+                                    **market_ctx)
+                return None
+            self._funnel_pass("6cinq_entry_quality")
 
         # 7. SLTPEngine — calcul intelligent Tier 1/2 murs + TP1
         engine = self.sltp_engines[symbol]

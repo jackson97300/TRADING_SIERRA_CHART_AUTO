@@ -196,6 +196,9 @@ class BotConfig:
     range_gate_mode: str = "observe"         # "observe" (log only) ou "skip" (mutation)
     # Backtest empirique 30/04 : mode skip = 65% rejection + PnL bloque +753$
     # → mode observe par defaut (R1+S3 code-reviewer). Bench 5j puis switch skip.
+    # LOT 2B : EntryQualityGate (graceful degradation Bot 2 V4 manque cvd_bar_delta)
+    entry_quality_gate_enabled: bool = True
+    entry_quality_gate_strict: bool = False  # False = BOTH_CONTRA, True = AT_LEAST_1
 
 
 # ============================================================
@@ -1160,6 +1163,11 @@ class DatabentoPaperTrader:
         Lopez meta-labeling. 1 ligne = 1 trade complet self-contained
         (features visibles a l'entree + outcome). Permet entrainement direct
         primary/meta sans join externe.
+
+        FIX 30/04 v4 LOT 2A (Jackson "audit Bot 2 aveugle") : ajout
+        `dmp_bar_at_entry` (alias de features_at_entry) + `dmp_bar_at_exit`
+        (snapshot bar courante a l'exit). Symetrie avec Bot 1 trades schema.
+        Permet audit features post-hoc cross-bots avec script unifie.
         """
         try:
             today = get_cme_trading_day()  # CME rollover 18:00 ET (DST-aware)
@@ -1169,8 +1177,23 @@ class DatabentoPaperTrader:
             ts_close = datetime.now(timezone.utc)
             duration_sec = (ts_close - ts_open).total_seconds() if ts_open else None
             features_at_entry = pos.get("features_at_entry", {})
+
+            # LOT 2A : snapshot bar courante a l'exit (parite Bot 1)
+            # load_last_bar retourne le dernier bar Databento V4 enrichi.
+            dmp_bar_at_exit = {}
+            try:
+                last_bar = load_last_bar(symbol)
+                if last_bar is not None:
+                    # Convertit pd.Series -> dict (compat JSON)
+                    if hasattr(last_bar, "to_dict"):
+                        dmp_bar_at_exit = last_bar.to_dict()
+                    elif isinstance(last_bar, dict):
+                        dmp_bar_at_exit = last_bar
+            except Exception as e:
+                print(f"[TRADE_LOG] dmp_bar_at_exit fetch failed: {e}")
+
             trade = {
-                "schema_version": "databento_paper_v2_meta_labeling",  # bump pour distinguer
+                "schema_version": "databento_paper_v3_meta_labeling_with_exit_bar",
                 "trade_account": self.cfg.trade_account,
                 "symbol": symbol,
                 "direction": "SHORT" if pos.get("side") == "SELL" else "LONG",
@@ -1197,6 +1220,13 @@ class DatabentoPaperTrader:
                 "checks_entry": pos.get("checks", []),
                 "n_features_at_entry": len(features_at_entry),  # observabilite
                 "features_at_entry": features_at_entry,  # FIX Tier1 #3 — Lopez meta-labeling
+                # LOT 2A : alias `dmp_bar_at_entry` pour parite avec Bot 1 schema.
+                # Note : Databento V4 != DMP Sierra (manque profile_shape,
+                # cvd_bar_delta, next_wall_dist_ticks, range_pos, etc.).
+                # Chantier futur enrichir parquet V4 via build_dataset_v4_*.
+                "dmp_bar_at_entry": features_at_entry,  # alias pour audit unifie
+                "dmp_bar_at_exit": dmp_bar_at_exit,     # snapshot bar exit (LOT 2A)
+                "n_features_at_exit": len(dmp_bar_at_exit),
                 # FIX 30/04 nuit : tracking 12 signatures game changers + score
                 # Permet analyse walk-forward post-hoc sur n>=30 trades avant
                 # activation du gate Phase B.
@@ -1965,6 +1995,32 @@ class DatabentoPaperTrader:
                       low_count=rg_result.low_count)
             # Skip uniquement si mode=skip (mutation effective)
             if rg_result.skip:
+                self._log_snapshot(symbol, bar, result, traded=False)
+                return
+
+        # ── EntryQualityGate (LOT 2B Jackson "ON APPLIQUE") ────────────
+        # Bot 2 graceful degradation : Databento V4 manque cvd_bar_delta +
+        # next_wall_dist_ticks → seul momentum_5b dispo. Mode BOTH_CONTRA
+        # par default = pas de skip Bot 2 (besoin de 2 conditions, ne peut
+        # pas avoir 2 sans cvd). Toggle strict_mode=True pour activer
+        # filtre sur momentum seul (apres enrichissement parquet V4).
+        if getattr(self.cfg, "entry_quality_gate_enabled", True):
+            try:
+                from CORE.entry_quality_gate import evaluate_entry_quality_gate
+            except ImportError:
+                from entry_quality_gate import evaluate_entry_quality_gate
+            eq_result = evaluate_entry_quality_gate(
+                bar, result.direction,
+                enabled=True,
+                strict_mode=getattr(self.cfg, "entry_quality_gate_strict", False),
+            )
+            if eq_result.skip:
+                print(f"[{symbol}] ENTRY QUALITY SKIP {result.direction}: {eq_result.skip_reason}")
+                _emit("GATE_ENTRY_QUALITY_BLOCK", sym=symbol,
+                      direction=result.direction,
+                      reason=eq_result.skip_reason,
+                      momentum_5b=eq_result.momentum_5b,
+                      cvd_bar_delta=eq_result.cvd_bar_delta)
                 self._log_snapshot(symbol, bar, result, traded=False)
                 return
 

@@ -141,6 +141,7 @@ LOG_CODES = {
     "VETO_SHORT_NO_WALL":      (LogLevel.INFO,     "decisions", "Veto SHORT {sym} : {reason} (sl={sl_ticks}t tp={tp_ticks}t)"),
     "GATE_RANGE_BLOCK":        (LogLevel.INFO,     "decisions", "RangeGate block : {sym} {direction} reason={reason} (high={high_count}/4 low={low_count}/4)"),
     "GATE_REGIME_BLOCK":       (LogLevel.INFO,     "decisions", "RegimeGate block : {sym} {direction} reason={reason} ps={profile_shape} dt={day_type} ot={open_type}"),
+    "GATE_ENTRY_QUALITY_BLOCK": (LogLevel.INFO,    "decisions", "EntryQualityGate block : {sym} {direction} reason={reason} mom={momentum_5b} cvd={cvd_bar_delta}"),
 
     "DISCORD_SEND_OK":         (LogLevel.INFO,     "events", "Discord envoye : channel={channel}"),
     "DISCORD_SEND_FAIL":       (LogLevel.MAJEUR,   "events", "Discord echec : {err}"),

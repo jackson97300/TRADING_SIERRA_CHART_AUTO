@@ -38,6 +38,38 @@ Cf `.claude/rules/log-debug-protocol.md`.
 | "Tres faible conf" | `GATE_CONF_TOO_LOW` | decisions | Score < min_required ? |
 | "MTF pas valide" | `GATE_MTF_INSUFFICIENT` | decisions | Bulls < 3/4 ou bears > 1 ? |
 | "SELL bloque" | `GATE_SELL_AUTO_DISABLED` | decisions | Kill-switch auto declenche apres N SL ? |
+| **"Haut/bas range achat/vente"** | `GATE_RANGE_BLOCK` | decisions | Confluence VA+IB+DAY+MQ_1D >=2/4 zone extreme ? |
+| **"Regime adverse profile/day"** | `GATE_REGIME_BLOCK` | decisions | profile_shape==0 (D Range) OU day_type==1 (Normal) ? |
+| **"Order flow contre direction"** | `GATE_ENTRY_QUALITY_BLOCK` | decisions | momentum_5b ET cvd_bar_delta BOTH contra direction ? |
+
+**Cmd type unified : compter blocages funnel par categorie aujourd'hui** :
+```bash
+grep -E "GATE_(RANGE|REGIME|ENTRY_QUALITY|RISK|HEALTH|SESSION)_BLOCK|VETO_" \
+  LOGS/decisions/decisions_$(date +%Y%m%d)_*.jsonl | \
+  jq -r .code | sort | uniq -c | sort -rn
+```
+
+### A-bis. Funnel Bot 1 (8 steps)
+
+Bot 1 utilise un funnel 8-step. Si trade pas pris, identifier QUEL step a bloque :
+```bash
+grep "FUNNEL_REJECT" LOGS/decisions/decisions_$(date +%Y%m%d)_paper.jsonl | \
+  jq -r '.ctx.step + ": " + .ctx.reason' | sort | uniq -c
+```
+
+Steps actuels (mia_paper_trader FUNNEL_STEPS) :
+1. `1_position_day` — already_position OR max_trades_day
+2. `2_cooldown_cb` — cooldown_active OR circuit_breaker
+3. `3_conseil` — conseil_attendre OR conseil_conflit OR sell_auto_disabled
+4. `4_freshness` — freshness_not_new
+5. `5_dedup` — signal_already_traded
+6. `6_conf_mtf` — confidence_too_low OR mtf_insufficient
+7. `6bis_bias` — bar_dmp_missing
+8. `6ter_range` — range_extreme (RangeGate confluence VA+IB+DAY+MQ_1D)
+9. `6quart_regime` — regime_loser_profile_shape OR regime_loser_day_type
+10. `6cinq_entry_quality` — entry_quality_both_contra (momentum + CVD)
+11. `7_sltp` — sltp_no_wall OR sltp_rr_low OR sltp_budget_exceeded
+12. `8_payoff` — expected_payoff_low
 
 Commande type :
 ```bash
