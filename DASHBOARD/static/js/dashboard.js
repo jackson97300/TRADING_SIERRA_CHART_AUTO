@@ -4262,7 +4262,7 @@
             var pnl = st.pnl_usd || 0;
             var pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
             statsEl.innerHTML =
-                _paperStatBox('Trades', st.trades || 0, (state.trade_count_today || 0) + ' / ' + (state.max_trades_per_day || 10)) +
+                _paperStatBox('Trades', st.trades || 0, (state.trade_count_today || 0) + ' / ' + (((state.max_trades_per_day || 9999) >= 9999) ? '∞' : (state.max_trades_per_day || 9999))) +
                 _paperStatBox('Win Rate', (st.wr || 0) + '%', (st.wins || 0) + 'W / ' + (st.losses || 0) + 'L') +
                 _paperStatBox('Profit Factor', (st.pf !== null && st.pf !== undefined) ? st.pf : '—', '') +
                 _paperStatBox('PnL', (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2), (st.pnl_ticks || 0) + ' ticks', pnlColor);
@@ -4313,12 +4313,15 @@
         if (protEl) {
             var cooldown = state.cooldown_status || {};
             var count = state.trade_count_today || 0;
-            var maxTrades = state.max_trades_per_day || 10;
+            var maxTrades = state.max_trades_per_day || 9999;
+            var maxTradesDisplay = (maxTrades >= 9999) ? '∞' : maxTrades;
+            var maxAtteint = (maxTrades < 9999 && count >= maxTrades);
             var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">';
             html += '<div style="padding:8px;border:1px solid var(--border);border-radius:6px;">' +
                 '<div style="color:var(--text-secondary);font-size:0.75rem;">Trades du jour</div>' +
-                '<div style="font-size:1.125rem;font-weight:700;margin-top:3px;">' + count + ' / ' + maxTrades + '</div>' +
-                (count >= maxTrades ? '<div style="color:var(--red);font-size:0.75rem;margin-top:2px;">Max atteint</div>' : '') +
+                '<div style="font-size:1.125rem;font-weight:700;margin-top:3px;">' + count + ' / ' + maxTradesDisplay + '</div>' +
+                (maxAtteint ? '<div style="color:var(--red);font-size:0.75rem;margin-top:2px;">Max atteint</div>' :
+                 (maxTrades >= 9999 ? '<div style="color:var(--text-disabled);font-size:0.7rem;margin-top:2px;">Illimite (paper)</div>' : '')) +
                 '</div>';
             ['ES', 'NQ'].forEach(function (sym) {
                 var cs = cooldown[sym] || {};
