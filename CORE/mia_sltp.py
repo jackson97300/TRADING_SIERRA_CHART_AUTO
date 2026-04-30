@@ -30,6 +30,7 @@ Schema : 3.6.0 — 250 colonnes
 🆕 13/03: +dist_ext_long_up/dn (Tier 2, momentum support/resist)
 """
 
+import math
 import numpy as np
 import pandas as pd
 from typing import Optional, List, Tuple
@@ -41,18 +42,33 @@ from dataclasses import dataclass, field
 # ═════════════════════════════════════════════════════════════════════
 
 # Budget SL max par symbole (pour 3 micro-contrats)
+# 🆕 FIX 24/04 SLTP P2 (audit market-analyst) : elargir bornes SL pour eviter
+#   les 5 rejets `sltp_out_of_range` / jour. Bornes initiales [30-50t] NQ trop
+#   serrees en trend. Nouveau : [20-80t] NQ / [10-40t] ES.
+#   Justification :
+#     - ATR-based recommande par reviewer mais ATR actuel = 420-450 ticks (probable
+#       ATR-daily, pas per-bar). Refactor ATR-14-min reporte (backlog) → on
+#       elargit les bornes fixes avec marges empiriques.
+#     - NQ swing trades 1-min peuvent avoir SL 40-70t en sessions volatiles.
+#     - Cap max 80t coherent avec MAX_TP_WALL_DISTANCE NQ (garde-fou budget).
 SL_BUDGET = {
-    'NQ': {'max_ticks': 50, 'max_usd': 75.0, 'tick_value': 0.50, 'n_micros': 3},
-    'ES': {'max_ticks': 20, 'max_usd': 75.0, 'tick_value': 1.25, 'n_micros': 3},
+    'NQ': {'max_ticks': 80, 'max_usd': 75.0, 'tick_value': 0.50, 'n_micros': 3},  # 50→80 (24/04)
+    'ES': {'max_ticks': 40, 'max_usd': 75.0, 'tick_value': 1.25, 'n_micros': 3},  # 20→40 (24/04)
 }
 
 # Buffer derrière le mur (le SL est APRÈS le niveau + buffer)
 # FIX 07/03: 5→8 ticks NQ (les wicks intra-barre font 8-15t)
 SL_BUFFER_TICKS = {'NQ': 8, 'ES': 4}
 
+# Buffer ETENDU quand on accepte un T2 seul sans T1 backup (anti stop-hunt).
+# 🆕 FIX 24/04 SLTP P3 (audit market-analyst) : +5t extra pour securite.
+SL_BUFFER_EXTENDED_TICKS = {'NQ': 13, 'ES': 8}  # NQ 8+5=13 / ES 4+4=8
+
 # SL minimum (trop près = sorti par le bruit)
 # FIX 07/03: 12→30 ticks NQ (4 trades perdants avaient SL 13-17t = bruit)
-SL_MIN_TICKS = {'NQ': 30, 'ES': 12}
+# 🆕 FIX 24/04 SLTP P2 : NQ 30→20 (les barres NQ 1-min range typique 12-20t,
+#   30t trop serre sur conditions calmes. Garde 20 comme plancher anti-bruit).
+SL_MIN_TICKS = {'NQ': 20, 'ES': 10}  # NQ 30→20 / ES 12→10 (24/04)
 
 # TP buffer avant l'obstacle (on prend profit AVANT le mur)
 TP_BUFFER_TICKS = {'NQ': 4, 'ES': 2}
@@ -67,8 +83,52 @@ RUNNER_RR_RATIO = 2.0
 # Confluence: 2 Tier 2 dans ce rayon = cluster acceptable
 CONFLUENCE_RADIUS_TICKS = 30
 
-# R:R minimum pour prendre le trade
+# R:R minimum pour prendre le trade (validation finale _evaluate)
 MIN_RR_RATIO = 0.8
+
+# R:R minimum pour SELECTION d'un mur comme TP dans _find_tp_obstacle
+# 🆕 FIX 24/04/2026 (audit market-analyst) : le code prenait le PREMIER obstacle
+#   sans verifier que R:R etait acceptable. Cas empirique NQ 23/04 :
+#     SL=49t, TP=55t (GEX_UP premier mur), R:R=1.12 → accepte par MIN_RR_RATIO 0.8
+#     → STEP 8 payoff rejette (EV=-$3.3 avec WR 0.45 prior).
+#   Fix : scanner TOUS les obstacles, prendre le premier avec R:R >= 1.5.
+#   Si aucun n'atteint 1.5 → fallback TP_STANDARD = SL × 2.0 (R:R 2.0 garanti).
+#   Seuil 1.5 choisi entre MIN_RR_RATIO (0.8 trop permissif) et
+#   DEFAULT_TP_RR_FALLBACK (2.0 qui est le fallback). 1.5 = compromis raisonnable.
+#
+# TODO V2CLEAN : migrer cette constante (+ MIN_RR_RATIO + DEFAULT_TP_RR_FALLBACK
+#   + MAX_TP_WALL_DISTANCE + MAX_TP_TICKS_ABSOLUTE) dans V2CLEAN/config.py quand
+#   le port V2CLEAN sera operationnel. Reference : feedback_config_centralise.md
+#   (17/04) "Toute config dans V2CLEAN/config.py. Jamais de constantes hardcodees
+#   ni de *_params.py locaux. V1 leçon : TICK_SIZE duplique 5x."
+#
+# TODO post N>=100 trades : revisiter ce seuil via meta-labeler ML qui apprendra
+#   la fonction "R:R optimal selon regime marche" au lieu d'un seuil constant.
+#   Reference : feedback_lightgbm_no_composite_indicators.md.
+MIN_RR_SELECTION = 1.5
+
+# ═════════════════════════════════════════════════════════════════════
+# TP STANDARD — fallback quand mur absent OU trop loin (V1 adaptive_sltp_calculator)
+# Jackson validation 24/04/2026 — evite les TP absurdes genre R:R 13.3
+# ═════════════════════════════════════════════════════════════════════
+# Cible R:R du TP standard (quand pas d'obstacle exploitable)
+DEFAULT_TP_RR_FALLBACK = 2.0  # TP = SL × 2 = R:R 2.0
+
+# Distance max d'un mur pour le considerer comme TP. Au-dela, TP standard applique.
+# Si un mur legitime existe en dessous de cette distance, on l'utilise SANS cap
+# (car il donne un R:R naturel pris du marche, meme si > MAX_TP_TICKS_ABSOLUTE).
+MAX_TP_WALL_DISTANCE = {
+    'ES': 80,   # 20pts max distance mur. Mur entre 30-80t donne R:R eleve prenable.
+    'NQ': 250,  # 62.5pts max distance mur. Au-dela = mouvement improbable intraday.
+}
+
+# Cap absolu du TP (V47) — applique UNIQUEMENT sur fallback TP_STANDARD (pas murs).
+# Evite qu'un SL large (ex 40t NQ) avec fallback 2R donne un TP 80t ambitieux.
+# Les murs legitimes < MAX_TP_WALL_DISTANCE ne sont PAS cappes (R:R nature marche).
+MAX_TP_TICKS_ABSOLUTE = {
+    'ES': 30,   # 7.5pts max pour fallback
+    'NQ': 80,   # 20pts max pour fallback
+}
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -88,6 +148,18 @@ TIER1_WALLS = {
     'dist_ext_edge_buy':        ('EXT_EDGE_BUY',   'support'),
     'dist_ext_edge_sell':       ('EXT_EDGE_SELL',   'resist'),
     'dist_sess_high':           ('SESS_HIGH',       'resist'),
+    # 🆕 30/04/2026 (Jackson "ON DOIS LISTER LES NIVEAU MENTHORQ COMME MUR")
+    # Bug observé : ES SHORT @ 7206.50, mur Call Resistance + Call Resistance 0DTE +
+    # Gamma Wall 0DTE empilés @ 7199.46. SLTPEngine ne voyait aucun de ces niveaux
+    # (rollback 28/04 a retiré TIER3 du scan TP). TP placé @ 7199.25 = 1 tick DERRIÈRE
+    # le mur empilé → besoin de casser le mur pour TP. Pattern recurrent.
+    # Niveaux 0DTE = expiration jour J = très structurants empiriquement, role='both'
+    # car fonctionnent dans les 2 sens (au-dessus = résistance, en-dessous = support
+    # inversé que le prix doit casser). Reference : memoire reference_timezone_convention.md
+    # MQ levels updated daily via API SC.
+    'dist_mq_call_0dte':        ('MQ_CALL_0DTE',   'both'),
+    'dist_mq_put_0dte':         ('MQ_PUT_0DTE',    'both'),
+    'dist_mq_hvl_0dte':         ('MQ_HVL_0DTE',    'both'),
 }
 
 # Tier 2: MURS SOLIDES (score 0.20-0.35)
@@ -114,20 +186,24 @@ TIER2_WALLS = {
     # 🆕 3.6.0: Extension Lines LONG BAR (momentum support/resist, fix 13/03)
     'dist_ext_long_up':         ('EXT_LONG_UP',    'resist'),
     'dist_ext_long_dn':         ('EXT_LONG_DN',    'support'),
+    # 🆕 30/04/2026 — MenthorQ classiques (non-0DTE) : robustes mais moins
+    # immédiats que 0DTE → TIER2. role='both' (cf justification TIER1).
+    'dist_mq_call':             ('MQ_CALL',        'both'),
+    'dist_mq_put':              ('MQ_PUT',         'both'),
+    'dist_mq_hvl':              ('MQ_HVL',         'both'),
 }
 
 # Tier 3: MURS PAPIER — PIÈGE (rebondent souvent mais pénétration 40-80 pts)
 # SL derrière = DANGER. TP avant = optionnel.
+# 🆕 30/04/2026 : MQ_HVL, MQ_PUT_0DTE, MQ_CALL_0DTE PROMUS en TIER1 (cf TIER1_WALLS).
+# Anti-doublon : un meme dist_* ne peut etre que dans UN tier (sinon double-scan).
 TIER3_WALLS = {
     'dist_vwap_d':              ('VWAP_D',         'both'),
     'dist_prev_vpoc':           ('PREV_VPOC',      'both'),
     'dist_prev_vwap':           ('PREV_VWAP',      'both'),
-    'dist_mq_hvl':              ('MQ_HVL',         'both'),
     'dist_ib_low':              ('IB_LOW',         'support'),
     'dist_ib_high':             ('IB_HIGH',        'resist'),
     'dist_ovn_low':             ('OVN_LOW',        'support'),
-    'dist_mq_put_0dte':         ('MQ_PUT_0DTE',    'support'),
-    'dist_mq_call_0dte':        ('MQ_CALL_0DTE',   'resist'),
     'dist_sess_low':            ('SESS_LOW',       'support'),
 }
 
@@ -178,6 +254,10 @@ class SLTPResult:
     rr_ratio: float = 0.0     # TP1/SL
     sl_usd: float = 0.0       # Perte max en $
     reject_reason: str = ""
+
+    # CAS 4 anti-TP-derriere-mur (30/04/2026) — observability prod
+    cas4_triggered: bool = False     # True si TP_STANDARD capote DEVANT un mur
+    cas4_blocked_wall: str = ""      # Nom du mur qui a force le capot
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -295,11 +375,74 @@ class SLTPEngine:
         tp1_ticks, tp1_wall, tp1_reason = \
             self._find_tp_obstacle(row, direction, sl_ticks)
 
+        # ─── FALLBACK TP STANDARD (V1 adaptive_sltp_calculator — Jackson 24/04) ───
+        # 3 cas où on utilise le TP standard (fallback) au lieu du mur observé :
+        #   1) Aucun obstacle trouvé (tp1_ticks == 0) → TP = SL × 2.0 (au lieu de 1:1)
+        #   2) Mur trop loin (> MAX_TP_WALL_DISTANCE[symbol]) → TP = SL × 2.0
+        #      Evite les TP absurdes genre R:R 13.3 (exemple Jackson ES SL=15 mur=200)
+        #   3) Cap absolu MAX_TP_TICKS_ABSOLUTE (V47 — evite TP > 30t ES / 80t NQ)
+        max_tp_dist = MAX_TP_WALL_DISTANCE.get(self.symbol, 200)
+        max_tp_abs = MAX_TP_TICKS_ABSOLUTE.get(self.symbol, 100)
+
         if tp1_ticks == 0:
-            # Pas d'obstacle → TP fixe = 1:1
-            tp1_ticks = sl_ticks
-            tp1_wall = ""
-            tp1_reason = "TP1 fixe 1:1 (pas d'obstacle)"
+            # CAS 1 : aucun obstacle trouve
+            tp1_ticks = sl_ticks * DEFAULT_TP_RR_FALLBACK
+            tp1_wall = "TP_STANDARD_NO_WALL"
+            tp1_reason = (
+                f"TP standard {DEFAULT_TP_RR_FALLBACK:.1f}R "
+                f"({tp1_ticks:.0f}t = SL × {DEFAULT_TP_RR_FALLBACK}, aucun obstacle)"
+            )
+        elif tp1_ticks > max_tp_dist:
+            # CAS 2 : mur trop loin → TP standard au lieu du mur
+            far_wall_name = tp1_wall
+            tp1_ticks = sl_ticks * DEFAULT_TP_RR_FALLBACK
+            tp1_wall = "TP_STANDARD_WALL_FAR"
+            tp1_reason = (
+                f"TP standard {DEFAULT_TP_RR_FALLBACK:.1f}R "
+                f"(mur {far_wall_name} trop loin > {max_tp_dist}t, fallback SL × {DEFAULT_TP_RR_FALLBACK})"
+            )
+
+        # CAS 3 : cap absolu UNIQUEMENT pour fallback TP_STANDARD
+        # (corrigé 24/04 post-audit : un mur légitime à 75t ES avec SL 12t donne
+        # R:R 5.1 — on le conserve. Le cap ne concerne que les fallbacks x2R
+        # pour éviter TP ambitieux après un SL large.)
+        if tp1_wall.startswith("TP_STANDARD") and tp1_ticks > max_tp_abs:
+            tp1_ticks = max_tp_abs
+            tp1_reason += f" [cap {max_tp_abs}t V47]"
+
+        # ─── CAS 4 (30/04/2026) : GARDE ANTI-TP-DERRIÈRE-MUR ────────────
+        # Bug observé screen 30/04 : ES SHORT @ 7206.50 + MQ_CALL @ 7199.46.
+        # SLTPEngine voit MQ_CALL @ 28t mais R:R 0.93 < MIN_RR_SELECTION (1.5)
+        # → fallback TP_STANDARD 30t (cap V47) → TP @ 7199.00 = 1 tick DERRIÈRE
+        # le mur 7199.46 → trade doit casser le mur pour TP. Trap classique.
+        # Solution : si TP_STANDARD ferait passer le TP DERRIÈRE un mur T1/T2,
+        # capper le TP DEVANT ce mur (- tp_buffer). Sacrifier le R:R minimal
+        # est mieux que TP non-atteignable. Seul le PREMIER mur T1/T2 compte
+        # (les murs au-delà sont déjà filtrés par la logique de scan).
+        if tp1_wall.startswith("TP_STANDARD"):
+            obstacles_in_path = self._scan_obstacles(row, direction)
+            if obstacles_in_path:
+                first_obstacle = obstacles_in_path[0]  # déjà trié par dist
+                if first_obstacle.abs_dist < tp1_ticks:
+                    # floor() pour rester DU CÔTÉ entry du mur (plus prudent
+                    # si le mur est à distance fractionnaire — niveaux MQ pas
+                    # toujours tick-aligned).
+                    tp_devant_mur = math.floor(
+                        first_obstacle.abs_dist - self.tp_buffer
+                    )
+                    if tp_devant_mur > 0:
+                        tp1_ticks = float(tp_devant_mur)
+                        tp1_wall = f"TP_DEVANT_{first_obstacle.name}"
+                        tp1_reason = (
+                            f"TP devant {first_obstacle.name} (T{first_obstacle.tier}) "
+                            f"a {tp_devant_mur}t — fallback TP_STANDARD aurait "
+                            f"traverse le mur a {first_obstacle.abs_dist:.1f}t"
+                        )
+                        # R2 (code-reviewer 30/04) : flag observability prod
+                        # Permet de tracker freq CAS 4 dans logs decisions/.
+                        # Sans ca on ne sait pas si CAS 4 cape 5% ou 40% des trades.
+                        res.cas4_triggered = True
+                        res.cas4_blocked_wall = first_obstacle.name
 
         res.tp1_ticks = tp1_ticks
         res.tp1_wall = tp1_wall
@@ -425,6 +568,19 @@ class SLTPEngine:
                 return sl_ticks, best_t2.name, 2, 1, \
                     f"SL derrière {best_t2.name} (T2 + T1 backup)"
 
+        # ─── OPTION D: Tier 2 seul sans T1 backup avec buffer ETENDU ───
+        # 🆕 FIX 24/04 SLTP P3 (audit market-analyst) : accept T2 seul mais avec
+        #   buffer +5t (13t total NQ / 8t total ES) pour mitiger stop-hunt.
+        #   Avant : 10 rejets `sltp_no_wall` / jour NQ (T2 EXT_LONG_DN seul).
+        #   Apres : SL derriere T2 unique, placement plus large = plus d'espace
+        #   au prix pour bouger sans hit le SL sur un spike ponctuel.
+        if behind_t2 and not behind_t1:
+            best_t2 = behind_t2[0]
+            sl_ticks_extended = best_t2.abs_dist + SL_BUFFER_EXTENDED_TICKS.get(self.symbol, self.sl_buffer + 5)
+            if self.sl_min <= sl_ticks_extended <= self.max_sl_ticks:
+                return sl_ticks_extended, best_t2.name, 2, 1, \
+                    f"SL derrière {best_t2.name} (T2 seul, buffer ETENDU anti stop-hunt)"
+
         # ─── REJET ───
         n_t1 = len(behind_t1)
         n_t2 = len(behind_t2)
@@ -434,8 +590,9 @@ class SLTPEngine:
             return 0, "", 0, 0, \
                 f"T1 {behind_t1[0].name} trop loin ({behind_t1[0].abs_dist:.0f}t > {self.max_sl_ticks}t)"
         elif behind_t2 and len(behind_t2) < 2:
+            # Cas rare post-fix P3 : T2 seul mais SL extended hors bornes
             return 0, "", 0, 0, \
-                f"T2 {behind_t2[0].name} seul (pas de confluence)"
+                f"T2 {behind_t2[0].name} seul + SL extended hors bornes ({self.sl_min}-{self.max_sl_ticks}t)"
         else:
             return 0, "", 0, 0, f"SL hors limites ({self.sl_min}-{self.max_sl_ticks}t)"
 
@@ -444,32 +601,42 @@ class SLTPEngine:
     def _find_tp_obstacle(self, row: pd.Series, direction: int,
                           sl_ticks: float) -> Tuple[float, str, str]:
         """
-        Trouve le premier obstacle Tier 1 ou Tier 2 dans la direction du trade.
-        Le TP est placé AVANT cet obstacle.
+        Trouve le premier obstacle Tier 1 ou Tier 2 qui donne un R:R acceptable
+        dans la direction du trade. Le TP est placé AVANT cet obstacle.
+
+        🆕 FIX 24/04/2026 (audit market-analyst) :
+          AVANT : prenait le PREMIER obstacle sans verifier R:R. Bug empirique
+            NQ 23/04 : premier obstacle GEX_UP donnait R:R 1.12 → STEP 8 rejette.
+          APRES : scanne TOUS les obstacles, prend le premier avec R:R >= 1.5.
+            Si aucun → return 0, caller applique fallback TP_STANDARD = SL × 2.
 
         Returns: (tp_ticks, wall_name, reason)
+          - tp_ticks > 0 : obstacle valide trouve (R:R >= MIN_RR_SELECTION)
+          - tp_ticks == 0 : aucun obstacle acceptable, caller doit fallback
         """
         obstacles = self._scan_obstacles(row, direction)
 
         if not obstacles:
             return 0, "", "Aucun obstacle"
 
-        first = obstacles[0]
+        # Scanner tous les obstacles dans l'ordre (distance croissante),
+        # prendre le premier qui donne un R:R >= MIN_RR_SELECTION.
+        skipped: List[str] = []
+        for obs in obstacles:
+            tp_cand = obs.abs_dist - self.tp_buffer
+            if tp_cand <= 0:
+                # Obstacle trop proche, mange entierement par le buffer
+                skipped.append(f"{obs.name}@too_close")
+                continue
+            rr = tp_cand / sl_ticks if sl_ticks > 0 else 0
+            if rr >= MIN_RR_SELECTION:
+                return tp_cand, obs.name, \
+                    f"TP avant {obs.name} (T{obs.tier}, R:R {rr:.2f})"
+            skipped.append(f"{obs.name}@R:R{rr:.2f}")
 
-        # TP = avant l'obstacle
-        tp_ticks = first.abs_dist - self.tp_buffer
-
-        if tp_ticks < sl_ticks * MIN_RR_RATIO:
-            # Obstacle trop proche → R:R insuffisant
-            # Chercher le suivant
-            if len(obstacles) > 1:
-                second = obstacles[1]
-                tp_ticks = second.abs_dist - self.tp_buffer
-                return tp_ticks, second.name, \
-                    f"TP avant {second.name} (T{second.tier}, {first.name} trop proche)"
-            return tp_ticks, first.name, f"TP avant {first.name} (R:R faible)"
-
-        return tp_ticks, first.name, f"TP avant {first.name} (T{first.tier})"
+        # Aucun obstacle n'atteint MIN_RR_SELECTION → caller applique fallback
+        return 0, "", (f"Aucun obstacle R:R>={MIN_RR_SELECTION} "
+                       f"(skipped: {', '.join(skipped[:3])})")
 
     # ─── SCAN OBSTACLES ────────────────────────────────────────────
 
@@ -477,6 +644,15 @@ class SLTPEngine:
         """
         Scanne tous les murs Tier 1 et Tier 2 DEVANT le prix (dans la direction du trade).
         LONG → obstacles AU-DESSUS | SHORT → obstacles EN-DESSOUS
+
+        FIX/ROLLBACK 28/04/2026 13:30 (Jackson "TP a hit quand meme") :
+          Reaction initiale : inclure TIER3 dans scan TP (Put_0DTE, IB, OVN, etc.)
+          parce qu'observation "TP derriere 3 murs" sur ES SHORT @ 7174.
+          MAIS empiriquement le trade a TP +30t (TP_STANDARD_WALL_FAR R:R 2.0)
+          alors que TIER3 inclusion aurait donne +13t (TP devant Put_0DTE).
+          Lecon : TIER3 = murs papier qui se traversent. Lecture humaine "danger"
+          != decision bot. R:R 2.0 mecanique > lecture visuelle prudente.
+          ROLLBACK : revenir a TIER1+TIER2 seulement.
         """
         obstacles = []
 

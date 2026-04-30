@@ -62,6 +62,77 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-04-30 23:55 UTC — [SLTPEngine MQ walls TIER1/TIER2 + CAS 4 anti-TP-derriere-mur]
+
+**Categorie** : FIX (bug TP derriere mur) + FEATURE (niveaux MQ scannes comme obstacles)
+**Impact prod** : BOT 1 (mia_paper_trader) + BOT 2 (databento_paper_trader) — paper Sim2/Sim3
+**Fichier(s)** :
+- Modif : `CORE/mia_sltp.py:33` — `import math` au top (reco code-reviewer)
+- Modif : `CORE/mia_sltp.py:139-203` — promotion 6 niveaux MQ TIER1/TIER2 + retrait TIER3
+- Modif : `CORE/mia_sltp.py:241-249` — SLTPResult fields `cas4_triggered` + `cas4_blocked_wall` (R2 observability)
+- Modif : `CORE/mia_sltp.py:~415-440` — CAS 4 garde anti-TP-derriere-mur dans `_evaluate`
+- Modif : `tests/test_mia_sltp_fallback.py:168-202` — 1 test updated avec commentaire historique (R1)
+- Cree : `tests/test_mia_sltp_mq_walls.py` — 20 nouveaux tests (5 MQ tiers + 5 MQ scanned + 8 CAS 4 + 2 observability)
+
+**Reviewer(s) agent** :
+- code-reviewer : GO-AVEC-RESERVES (R1 commentaire test + R2 observability flags traitees)
+- Recos non-bloquantes appliquees : import math au top, test runner_tp3_coherent
+
+### Quoi
+**1. Promotion niveaux MenthorQ** :
+- TIER1 : `dist_mq_call_0dte`, `dist_mq_put_0dte`, `dist_mq_hvl_0dte` (role='both')
+- TIER2 : `dist_mq_call`, `dist_mq_put`, `dist_mq_hvl` (role='both')
+- TIER3 : retrait des 3 MQ levels (anti-doublon)
+
+**2. CAS 4 anti-TP-derriere-mur** : si fallback `TP_STANDARD` placerait le TP DERRIERE un mur scanne, capote le TP DEVANT (`floor(abs_dist - tp_buffer)`) → marque `cas4_triggered=True` + `cas4_blocked_wall=<name>` pour observability prod. Compromis : sacrifie R:R minimum (1.5) au profit d'un TP atteignable. Garde-fou final `MIN_RR_RATIO=0.8` reste actif (rejet si capot donne R:R < 0.8).
+
+### Pourquoi (cause racine)
+Screen 30/04 ES SHORT @ 7206.50 (Sim2 paper) : TP @ 7199.25 placé 1 tick DERRIERE mur "Call Resistance + Call Resistance 0DTE + Gamma Wall 0DTE" empile @ 7199.46. Pattern recurrent.
+
+Causes :
+1. `dist_mq_call/put/hvl_0dte` ABSENTS des TIER1/TIER2 → SLTPEngine ne voit pas les niveaux MQ
+2. Niveaux MQ qui etaient en TIER3 → NON SCANNES depuis rollback 28/04
+3. Meme avec MQ_CALL detecte, R:R 0.93 < MIN_RR_SELECTION (1.5) → fallback `TP_STANDARD` 30t → TP @ 7199.00 = 1 tick DERRIERE le mur
+
+Jackson directive : "ON DOIS LISTER LES NIVEAU MENTHORQ COMME MUR".
+
+### Impact attendu
+- **TP atteignable** : trades avec mur MQ proche → TP placé DEVANT le mur (no trap)
+- **Bot 2 Gate B compatibilite** : si CAS 4 capote → tp_wall = `TP_DEVANT_<MQ_NAME>` (pas synthetic) → Gate B SHORT laisse passer (cf is_synthetic_tp_wall)
+- **Observability** : `cas4_triggered` flag dans logs paper_trader pour tracker frequence en prod
+- **Effet de bord** : les SHORTs avec mur MQ proche auront un R:R reduit (parfois < 1.5) mais TP atteignable
+
+### Validation pre-deploy
+- [x] Tests unitaires : 33/33 (13 fallback existants dont 1 update + 20 nouveaux tiers/scan/CAS4)
+- [x] Test cas screen 30/04 : `test_es_short_screen_case_30042026` PASS — TP @ 7193.50 DEVANT mur 7192.96 (delta +14 ticks DEVANT)
+- [x] Test runner TP3 coherent : tp3 >= tp1 quand CAS 4 capote
+- [x] Anti-doublon : `test_no_overlap_between_tiers` confirme aucun col dans 2 tiers
+- [x] Review agent : code-reviewer GO-AVEC-RESERVES (R1 + R2 + recos appliquees)
+- [x] Pre-deploy 3 questions : (1) MIA-Paper + MIA-DataBento-Paper consomment mia_sltp.py, (2) bug observe screen 30/04 reel, (3) test cas screen 30/04 PASS empirique
+
+### Revert plan
+```bash
+# Rollback mia_sltp.py vers commit precedent (TIER definitions + retrait CAS 4)
+git revert <commit-sha>
+scp CORE/mia_sltp.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 'powershell -Command "nssm.exe restart MIA-Paper; nssm.exe restart MIA-DataBento-Paper"'
+```
+
+### Deployed at
+A deployer apres commit (Sim2 + Sim3 paper).
+
+### Suivi post-deploy
+- J+1 (01/05) : grep `cas4_triggered=True` ou `TP_DEVANT_` dans `LOGS/decisions/` → frequence CAS 4
+- J+7 : ratio TP atteint vs SL atteint pour trades avec MQ wall scanne (avant fix : TP rare car derriere mur. Apres : TP plus frequent attendu)
+- J+30 : audit consolide impact PF Bot 2 (cible : capture profit avant rebound mur MQ structural)
+
+### Liens
+- Memories : `feedback_pre_deploy_3_questions.md`, `reference_timezone_convention.md` (MQ levels updated daily)
+- Lecons : `.claude/rules/lessons.md` (rollback 28/04 ne ciblait pas les MQ)
+- Review code-reviewer : R1 fermee (commentaire test), R2 fermee (cas4_triggered flag), recos appliquees
+
+---
+
 ## 2026-04-30 23:30 UTC — [BOT 1 trailing TR40_20 NQ + BOT 2 Plan A_v2 gates VETO BUY/SHORT]
 
 **Categorie** : FEATURE (nouveau trailing) + GATE (vetos paramétrables) — moteur execution + signal
