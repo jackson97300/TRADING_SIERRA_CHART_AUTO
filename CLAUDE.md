@@ -25,6 +25,37 @@
 **Protocole complet** : `.claude/rules/incident-protocol.md`.
 **Trace factuelle** : `DOCS/INCIDENT_LOG.md` (jamais supprimer entrees).
 
+## DOCUMENTS DE REFERENCE A AUTO-CHARGER (30/04/2026)
+
+**Au demarrage de chaque session**, en plus de INCIDENT_LOG.md :
+
+1. **`DOCS/MANUEL_EDGE_JACKSON.md`** (838 lignes — lecture ciblee suffit)
+   - Convention SC Alert Conditions ([-N]=passe, [+N]=futur)
+   - 3 methodes capture C++ (A=SG0 evt, B=Extension Lines fenetre, C=custom)
+   - Familles d'etudes (LONG UP/DN, EDGE ZONES, COLOR, ABSORB...)
+   - **Avant tout fix feature liee a Jackson** : grep ce manuel d'abord
+   - Note 24/04 : "Auto-load a ajouter dans CLAUDE.md" → fait 30/04
+
+2. **`DOCS/INVENTAIRE_DUMPER_VS_BOT.md`** (262 lignes)
+   - **106 features DMP inutilisees par les bots** (Open Type 9, Day Type 9,
+     Profile Shape 9, IB 21, VWAP SD 12, Composite 12, Booleans 13)
+   - **A consulter avant de proposer une nouvelle feature** : peut etre deja
+     dispo, juste non integree
+   - Signal majeur : "il manque quelque chose" → souvent des features ignorees
+
+3. **`feedback_extraction_expertise_jackson.md`** (memory) — METHODE CTA
+   - **NE JAMAIS demander a Jackson une formalisation abstraite** ("decris
+     ton setup", "liste les conditions"). System 1 trader 10000h+ = impossible.
+   - **TOUJOURS commencer par "montre-moi un trade concret"** (Klein 1998).
+   - Protocoles A/B/C : replay trade, think-aloud, comparaison 2 situations.
+
+**Actions declencheurs lecture cible** (en plus INCIDENT_LOG) :
+- Fix feature liee a Sierra Chart / DMP / formula → grep MANUEL_EDGE_JACKSON
+- Proposition nouvelle feature → grep INVENTAIRE pour voir si deja existante
+- Demande extraction expertise Jackson → relire feedback_extraction_expertise
+
+**Protocole complet auto-amelioration** : `auto_improvement_protocol.md` (memory).
+
 ## CHANGELOG OBLIGATOIRE (25/04/2026)
 
 **AVANT tout deploy d'une modif qui touche le moteur de decision** (paper_trader, builders, SLTPEngine, gates, C++ DMP, config Bot), ecrire une entry dans `DOCS/BOT_CHANGELOG.md`.
