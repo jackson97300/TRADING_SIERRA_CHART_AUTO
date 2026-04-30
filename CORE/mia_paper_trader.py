@@ -116,6 +116,11 @@ ENTRY_RULES = {
     "range_gate_mode": "observe",           # "observe" (log only) ou "skip" (mutation)
     # Backtest 30/04 : mode skip = 65% rejection + PnL bloque +753$ → observe
     # par defaut (R1+S3 code-reviewer). Bench 5j puis switch skip.
+    # 30/04 v4 (Jackson "ON APPLIQUE EN PAPER DIRECT") — RegimeGate skip empirique
+    # Backtest empirique 80 trades Bot 1 (24+29+30/04) : 22.5% bloques, PnL
+    # bloque -354$ (=eviter), PnL passe +401$ (=garde), WR 23%→37.8%.
+    # Filtre LOSERS empiriques : profile_shape==0 (D Range -19t) + day_type==1 (Normal -19t).
+    "regime_gate_enabled": True,            # mode skip direct (Jackson directive)
 }
 
 # Config DTC (valide Phase 1 paper uniquement, pas de compte LIVE)
@@ -144,6 +149,10 @@ FUNNEL_STEPS = [
      ["range_extreme"]),  # 🆕 30/04 v3 (Jackson "ON A ACHETE HAUT DE RANGE")
      # Confluence 4 metriques (VA + IB + DAY + MQ_1D) : skip si >=2/4 en zone
      # extreme. Plus cas BREAKOUT_VA (range_pos extreme + inside_cur_va=0).
+    ("6quart_regime",   "RegimeGate Profile/Day",
+     ["regime_loser_profile_shape", "regime_loser_day_type"]),  # 🆕 30/04 v4
+     # Skip empirique : profile_shape==0 (D Range -19t) + day_type==1 (Normal -19t).
+     # Backtest 80 trades : 22.5% bloques, PnL eviter -354$, WR 23%→37.8%.
     ("7_sltp",          "SLTP murs+budget",
      ["sltp_no_wall", "sltp_rr_low", "sltp_budget_exceeded", "sltp_out_of_range"]),
     ("8_payoff",        "Expected payoff",  ["expected_payoff_low"]),
@@ -1076,6 +1085,34 @@ class PaperTrader:
                                     **market_ctx)
                 return None
             self._funnel_pass("6ter_range")
+
+        # ─── 6quart. RegimeGate (30/04 v4 Jackson "ON APPLIQUE PAPER DIRECT") ──
+        # Skip empirique categories LOSERS : profile_shape==0 (D Range -19t)
+        # + day_type==1 (Normal -19t). Backtest 80 trades Bot 1 : 22.5%
+        # bloques, PnL eviter -354$, PnL garde +401$, WR 23%→37.8%.
+        # ml-trainer NOGO sur dataset v3 mais profile_shape ABSENT du v3 →
+        # validation empirique paper = seul recours. Reversibilite via flag.
+        if ENTRY_RULES.get("regime_gate_enabled", True):
+            try:
+                from CORE.regime_gate import evaluate_regime_gate
+            except ImportError:
+                from regime_gate import evaluate_regime_gate
+            reg_result = evaluate_regime_gate(bar_row_dict, direction, enabled=True)
+            if reg_result.skip:
+                # Reason fine : profile_shape ou day_type ?
+                reason_key = ("regime_loser_profile_shape"
+                              if "PROFILE_SHAPE" in reg_result.skip_reason
+                              else "regime_loser_day_type")
+                self._funnel_reject("6quart_regime", reason_key,
+                                    symbol=symbol,
+                                    direction=direction,
+                                    skip_reason=reg_result.skip_reason,
+                                    profile_shape=reg_result.profile_shape,
+                                    day_type=reg_result.day_type,
+                                    open_type=reg_result.open_type,
+                                    **market_ctx)
+                return None
+            self._funnel_pass("6quart_regime")
 
         # 7. SLTPEngine — calcul intelligent Tier 1/2 murs + TP1
         engine = self.sltp_engines[symbol]
