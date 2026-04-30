@@ -783,6 +783,8 @@
                 }
                 hideConnError();
                 data = d;
+                // Expose au scope global pour fix P/L unrealized live (FIX 30/04 v5)
+                window.data = d;
                 if (d.tier) {
                     var prevTier = currentTier;
                     currentTier = d.tier;
@@ -4226,9 +4228,43 @@
                     var p = normalizedOpen[sym];
                     var dir = _isLong(p.direction) ? 'BUY' : 'SELL';
                     var dirColor = _isLong(p.direction) ? 'var(--green)' : 'var(--red)';
-                    var unrealized = (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null) ? p.unrealized_pnl_usd : 0;
+
+                    // FIX 30/04 v5 (Jackson "GROS DECALAGE PnL Sierra vs dashboard") :
+                    // recalculer P/L unrealized live a partir du banner price (DMP, latency
+                    // ~5s) au lieu du current_price state.json Bot 2 (Databento V4, latency
+                    // ~1min entre 2 bars). Cas observe : SHORT 7239 + state.current_price=7234.50
+                    // (vieux) → +18t affiche ; mais banner=7239.75 (live) → -3t reel.
+                    // Decalage potentiel = lag bar Bot 2 entre 2 polls.
+                    var bannerPrice = null;
+                    try {
+                        if (window.data && window.data.banner && window.data.banner[sym]) {
+                            bannerPrice = window.data.banner[sym].price;
+                        }
+                    } catch (e) { /* ignore */ }
+                    var unrealized, unrealizedTicks, livePriceUsed;
+                    var TICK = 0.25;
+                    var TICK_VAL = (sym === "ES") ? 1.25 : 0.50;
+                    var nMicros = p.n_micros || 3;
+                    if (bannerPrice && p.entry_price) {
+                        var sign = _isLong(p.direction) ? 1 : -1;
+                        unrealizedTicks = Math.round(((bannerPrice - p.entry_price) / TICK) * sign);
+                        unrealized = Math.round(unrealizedTicks * TICK_VAL * nMicros * 100) / 100;
+                        livePriceUsed = bannerPrice;
+                    } else {
+                        // Fallback : valeurs state.json (peuvent etre obsoletes)
+                        unrealized = (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null) ? p.unrealized_pnl_usd : 0;
+                        unrealizedTicks = (p.unrealized_pnl_ticks !== undefined && p.unrealized_pnl_ticks !== null) ? p.unrealized_pnl_ticks : null;
+                        livePriceUsed = p.current_price;
+                    }
                     var upnlColor = unrealized >= 0 ? 'var(--green)' : 'var(--red)';
-                    var unrealizedTicks = (p.unrealized_pnl_ticks !== undefined && p.unrealized_pnl_ticks !== null) ? p.unrealized_pnl_ticks : null;
+
+                    // Detecter decalage state.current_price vs banner (>1 tick)
+                    var staleWarning = '';
+                    if (bannerPrice && p.current_price &&
+                        Math.abs(bannerPrice - p.current_price) > TICK) {
+                        var lagTicks = Math.round((bannerPrice - p.current_price) / TICK);
+                        staleWarning = ' <span style="color:var(--orange,#ff9800);font-size:0.7rem;" title="state.json bar close=' + fmtPrice(p.current_price) + ', banner live=' + fmtPrice(bannerPrice) + ', decalage=' + lagTicks + 't">⚠ bar lag</span>';
+                    }
                     html += '<div style="border:1px solid ' + dirColor + ';border-radius:8px;padding:12px;background:rgba(255,255,255,0.02);">' +
                         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
                         '<span style="font-weight:800;font-size:1rem;color:' + dirColor + ';">' + sym + ' ' + dir + '</span>' +
@@ -4241,7 +4277,7 @@
                         '<div>Taille : <strong>' + (p.n_micros || 3) + ' micros</strong></div>' +
                         '<div>SL : <strong style="color:var(--red);">' + fmtPrice(p.sl_price) + '</strong>' + (p.sl_ticks ? ' (' + p.sl_ticks + 't)' : '') + '</div>' +
                         '<div>TP : <strong style="color:var(--green);">' + fmtPrice(p.tp_price) + '</strong>' + (p.tp_ticks ? ' (' + p.tp_ticks + 't)' : '') + '</div>' +
-                        (p.current_price !== undefined && p.current_price !== null ? '<div style="grid-column:1/-1;color:var(--text-secondary);">Prix courant : <strong>' + fmtPrice(p.current_price) + '</strong></div>' : '') +
+                        (livePriceUsed ? '<div style="grid-column:1/-1;color:var(--text-secondary);">Prix live : <strong>' + fmtPrice(livePriceUsed) + '</strong>' + staleWarning + '</div>' : '') +
                         (p.mfe !== undefined && p.mfe !== null ? '<div>MFE : <strong style="color:var(--green);">+' + Math.round(p.mfe) + 't</strong></div>' : '') +
                         (p.mae !== undefined && p.mae !== null ? '<div>MAE : <strong style="color:var(--red);">' + Math.round(p.mae) + 't</strong></div>' : '') +
                         (p.bars_held !== undefined && p.bars_held !== null ? '<div style="grid-column:1/-1;color:var(--text-disabled);font-size:0.75rem;">Bars : ' + p.bars_held + '</div>' : '') +
