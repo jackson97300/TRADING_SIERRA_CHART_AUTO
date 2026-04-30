@@ -62,6 +62,117 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-01 03:30 UTC — [Bot 2 metrics dashboard + CAS 4 v3 T1 mutation + T2 observability]
+
+**Categorie** : FEATURE (UX dashboard) + FIX (CAS 4 elargissement)
+**Impact prod** : Bot 1 (MIA-Paper Sim3) + Bot 2 (MIA-DataBento-Paper Sim2)
+**Fichier(s)** :
+- Modif : `CORE/databento_paper_trader.py:1156-1207` — `_update_position_metrics()` NEW
+- Modif : `CORE/databento_paper_trader.py:1717-1730` — appel dans `_process_symbol`
+- Modif : `CORE/mia_sltp.py:139-200` — TIER2 ajouts vwap_w + open_830
+- Modif : `CORE/mia_sltp.py:241-263` — SLTPResult fields cas4_observed_*
+- Modif : `CORE/mia_sltp.py:415-490` — CAS 4 v3 split T1 mutation / T2 observability
+- Modif : `tests/test_mia_sltp_fallback.py` — test multi_obstacles adapte v3
+- Modif : `tests/test_mia_sltp_mq_walls.py` — test v3 T2 observability-only
+
+**Reviewer(s) agent** :
+- code-reviewer #1 GO-AVEC-RESERVES : R1+R2 BLOQUANTES → traitees ci-dessous
+- 101/101 tests PASS
+
+### Quoi
+
+**1. Bot 2 dashboard live (Q2 Jackson "Bot 2 ne montre pas evolution live")**
+
+`_update_position_metrics(symbol, bar)` appele au debut de `_process_symbol`.
+Calcule sur chaque nouvelle bar pour la position ouverte :
+- `unrealized_pnl_ticks` / `unrealized_pnl_usd` (signed)
+- `current_price` (last bar close)
+- `mfe` / `mae` running
+- `bars_held` (incremente)
+- `last_bar_ts`
+
+Le `_write_state` heartbeat 30s serialise auto via `pos.items()`. Dashboard
+voit live l'evolution comme Bot 1.
+
+Validation prod : state.json post-deploy montre `unrealized_pnl_ticks: -14.0,
+mfe: 0.0, mae: -14.0, current_price: 7179.0, bars_held: 1` sur trade ES BUY
+@ 7182.5.
+
+**2. CAS 4 v3 split (Jackson "RATISER LARGE" + R1+R2 code-reviewer)**
+
+Jackson directive 30/04 soir : etendre CAS 4 v2 (T1 only) aux T2 (Open US,
+VWAP daily/weekly, niveau de la veille). Code-reviewer R1+R2 BLOQUANTES :
+- R1 : pas de promotion T3→T2 sur n=1 screen (pattern PRIO V1)
+- R2 : T2 mutation sans backtest = risque rejets massifs
+
+Compromis : split T1 vs T2 :
+- T1 : MUTATION (validee v2 sur cas screen Bot 1)
+- T2 : OBSERVABILITY-ONLY 5 jours. Log `cas4_observed_tier2=True` +
+  `cas4_observed_wall_t2` + `cas4_observed_tp_devant` SANS muter tp1_ticks.
+  Si fire rate <15% et capots coherents → activer mutation T2 en v4.
+
+Plus : ajouts vraiment nouveaux en TIER2 (pas de contradiction historique) :
+- `dist_vwap_w` (Weekly VWAP nu) : NEW
+- `dist_open_830` (Open 830 ET pre-market) : NEW
+
+REVERT promotions T3→T2 sur `dist_vwap_d` et `dist_prev_vwap` (R1).
+
+### Pourquoi
+
+**Q2 Bot 2 dashboard** : Bot 1 state.json (488 KB) contient mfe/mae/unrealized
+auto-update ; Bot 2 state.json (653 B) ne contient que active_positions
+statiques → asymetrie UX.
+
+**Q1 CAS 4 v3** : screen Bot 2 ES SHORT @ 7174 → TP @ 7163.50 bloque par
+SD-1 W (Weekly VWAP -1SD, ABSENT du DMP feed) + Open US (T2 OPEN_CASH).
+Plusieurs T2 empiles sur le chemin = obstacle reel. v2 (T1 only) ne couvre
+pas. Compromis prudent v3 split = T1 mutation + T2 logging 5 jours.
+
+### Impact attendu
+
+- **Bot 2 dashboard** : evolution live trade visible (P/L, MFE, MAE).
+  Verifie empiriquement post-deploy 15:06 UTC.
+- **CAS 4 v3** : T1 mutation actif → memes rejets que v2. T2 observability
+  = ZERO impact comportemental, juste logs. Bench 5 jours puis decision v4.
+
+### Validation pre-deploy
+
+- [x] Tests : 101/101 PASS
+- [x] Code-reviewer GO-AVEC-RESERVES → R1 (revert T3→T2) + R2 (split T1/T2 obs) traitees
+- [x] Validation empirique : Bot 2 state.json post-restart contient mfe/mae/pnl
+
+### Revert plan
+```bash
+git revert <commit-sha>
+scp CORE/databento_paper_trader.py CORE/mia_sltp.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 'powershell -Command "nssm.exe restart MIA-Paper; nssm.exe restart MIA-DataBento-Paper"'
+```
+
+### Deployed at 2026-05-01 03:30 UTC
+
+### Suivi post-deploy
+- J+1 (01/05) : grep `cas4_observed_tier2=True` LOGS/decisions/ → freq capot T2 hypothetique
+- J+5 : audit fire rate T2 obs vs trades pris. Si <15% coherent → activer mutation T2 v4
+- J+7 : dashboard Bot 2 affiche bien P/L live + MFE/MAE
+
+### Anomalies detectees pour chantier suivant
+
+**Anomalie residuelle — SD-1 W mur invisible SLTPEngine** :
+Toujours non resolu (DMP feed n'expose pas `dist_vwap_w_sd1u/d`). Chantier
+C++ requis :
+1. `DMP_Reader.h` : lire SD bands weekly Sierra Chart
+2. `DMP_Transform.h` : calculer dist_vwap_w_sd1u/d/2u/d
+3. `DMP_Writer.h` : serialiser dans JSONL
+4. Bump schema 3.7.2 → 3.7.3 (+4 colonnes)
+5. Recompile + reload charts + deploy 2 dossiers VPS
+
+### Liens
+- Memories : `feedback_pattern11_repetition_avoided.md` (R1), `feedback_data_mining_trap.md` (R2)
+- Rule : `.claude/rules/critical-tasks-review.md`
+- Code-reviewer : 2 reserves R1+R2 traitees via revert + split
+
+---
+
 ## 2026-05-01 02:30 UTC — [Bot 2 OCO recovery query broker + Bot 1 SLTP CAS 4 v2 universel]
 
 **Categorie** : FIX architectural Tier 1 — 2 bugs paper traders observes 30/04

@@ -191,6 +191,16 @@ TIER2_WALLS = {
     'dist_mq_call':             ('MQ_CALL',        'both'),
     'dist_mq_put':              ('MQ_PUT',         'both'),
     'dist_mq_hvl':              ('MQ_HVL',         'both'),
+    # 🆕 30/04/2026 v3 (Jackson "OPEN US VWAP NIVEAU DE LA VEILLE DOIVENT Y ETRE,
+    # ON DOIS RATISER LARGE"). Screen Bot 2 ES SHORT @ 7174 → SD-1 W + Open US
+    # (T2) conjointement bloque TP.
+    # R1 code-reviewer 30/04 soir BLOQUANT : pas de promotion T3→T2 (pattern
+    # PRIO V1 incident `feedback_pattern11_repetition_avoided.md`). VWAP_D et
+    # PREV_VWAP avaient commentaire explicite "MURS PAPIER PIEGE" → on ne
+    # contredit pas une analyse historique sur n=1 screen.
+    # GARDE uniquement les ajouts vraiment nouveaux (pas de contradiction) :
+    'dist_vwap_w':              ('VWAP_W',         'both'),  # nouveau (Weekly VWAP nu)
+    'dist_open_830':            ('OPEN_830',       'both'),  # nouveau (pre-market open 09:30 ET)
 }
 
 # Tier 3: MURS PAPIER — PIÈGE (rebondent souvent mais pénétration 40-80 pts)
@@ -256,11 +266,18 @@ class SLTPResult:
     reject_reason: str = ""
 
     # CAS 4 anti-TP-derriere-mur (30/04/2026) — observability prod
-    cas4_triggered: bool = False         # True si TP_STANDARD capote DEVANT un mur
+    # T1 = MUTATION active (capote tp1_ticks). T2 = observability-only 5j.
+    cas4_triggered: bool = False         # True si T1 capot active (mutation)
     cas4_blocked_wall: str = ""          # Nom du mur T1 qui a force le capot
     cas4_blocked_wall_dist: float = 0.0  # Distance exacte du mur (avant tp_buffer)
-    cas4_tp_standard_pre: float = 0.0    # Valeur tp1_ticks AVANT capot (apres CAS 1/2/3)
-    cas4_source_pre: str = ""            # tp1_wall AVANT capot (TP_STANDARD_* ou nom mur scanne)
+    cas4_blocked_wall_tier: int = 0      # Tier du mur capote (1 = mutation)
+    cas4_tp_standard_pre: float = 0.0    # Valeur tp1_ticks AVANT capot
+    cas4_source_pre: str = ""            # tp1_wall AVANT capot
+    # v3 split observability-only T2 (R2 code-reviewer 30/04) :
+    cas4_observed_tier2: bool = False    # True si capot T2 AURAIT trigger (sans mutation)
+    cas4_observed_wall_t2: str = ""      # Nom mur T2 qui aurait capote
+    cas4_observed_wall_t2_dist: float = 0.0  # Dist exacte
+    cas4_observed_tp_devant: float = 0.0     # tp_ticks calcule HYPOTHETIQUE
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -413,59 +430,62 @@ class SLTPEngine:
             tp1_ticks = max_tp_abs
             tp1_reason += f" [cap {max_tp_abs}t V47]"
 
-        # ─── CAS 4 (30/04/2026 v2) : GARDE UNIVERSELLE ANTI-TP-DERRIÈRE-MUR-T1 ──
-        # Bug initial 30/04 matin : TP_STANDARD passait derriere mur T1 → fix
-        # limite a `tp1_wall.startswith("TP_STANDARD")`.
-        # Bug 2 (30/04 apres-midi, screen Bot 1) : ES SHORT @ 7160.50, SL=20t,
-        # SLTPEngine SKIP HVL_0DTE @ 18t (R:R 0.8 < MIN_RR_SELECTION 1.5) puis
-        # PREND GEX_DN @ 78t (R:R 3.9). TP @ 7141.25 demande de casser HVL_0DTE
-        # @ 7156. Resultat : prix rebondit sur HVL_0DTE → SL hit -57t.
-        # Cause : la garde CAS 4 v1 ne s'active que sur fallback TP_STANDARD,
-        # pas sur murs scannes. Mais le PROBLEME est le meme : un mur T1 sur
-        # le chemin du TP doit capoter le TP, peu importe la SOURCE du TP.
-        # Fix v2 : appliquer CAS 4 a TOUT TP qui passerait derriere un mur T1
-        # plus proche que le TP choisi. Si le capot rend R:R < MIN_RR_RATIO
-        # (0.8), STEP 8 reject le trade naturellement (mieux que SL programme).
-        # Note : on ne capote QUE sur TIER 1 (pas TIER 2) car les T2 sont moins
-        # structurels et on accepte de les traverser pour atteindre un TP T1.
-        # Si tp1_wall contient deja "TP_DEVANT_<T1_NAME>" ou "<T1_NAME>" =>
-        # on est deja AU mur T1, donc skip (idempotence).
+        # ─── CAS 4 v3 (30/04/2026 soir) : T1 MUTATION + T2 OBSERVABILITY-ONLY ──
+        # Historique :
+        #   v1 (matin) : capote uniquement sur fallback TP_STANDARD passant
+        #     derriere un mur scanne.
+        #   v2 (apres-midi) : etend a TOUT TP, capote uniquement sur T1.
+        #   v3 (soir, Jackson "RATISER LARGE") : etend a T1+T2.
+        #   v3 split (R2 code-reviewer 30/04 soir) : compromis backtest
+        #     - T1 garde mutation (validee v2 sur cas screen Bot 1)
+        #     - T2 OBSERVABILITY-ONLY 5 jours : log les capots HYPOTHETIQUES
+        #       sans muter tp1_ticks (cas4_observed_tier2=True). Si fire rate
+        #       <15% et coherent sur 5j → activer mutation T2 v4.
+        # Justification compromis : R2 BLOQUANT codereviewer = "passer de
+        # T1-only a T1+T2 ajoute ~24 niveaux scannes. Risque mecanique : capot
+        # proche → R:R<0.8 → reject massif. Aucun backtest sur historique propre".
+        # → Compromis : monitorer 5j avant mutation T2.
         obstacles_in_path = self._scan_obstacles(row, direction)
-        t1_obstacles = [o for o in obstacles_in_path if o.tier == 1]
-        if t1_obstacles:
-            first_t1 = t1_obstacles[0]  # déjà trié par dist (asc)
-            # Idempotence : si le tp1_wall actuel EST deja ce premier T1
-            # (ou TP_DEVANT_ce_T1), pas de re-capot necessaire.
-            already_at_first_t1 = (
-                first_t1.name == tp1_wall
-                or tp1_wall == f"TP_DEVANT_{first_t1.name}"
+        walls_in_path = [o for o in obstacles_in_path if o.tier in (1, 2)]
+        if walls_in_path:
+            first_wall = walls_in_path[0]  # deja trie par dist (asc)
+            already_at_first_wall = (
+                first_wall.name == tp1_wall
+                or tp1_wall == f"TP_DEVANT_{first_wall.name}"
             )
-            if not already_at_first_t1 and first_t1.abs_dist < tp1_ticks:
-                # floor() pour rester DU CÔTÉ entry du mur (plus prudent si
-                # mur a distance fractionnaire — niveaux MQ pas toujours tick-aligned)
+            if not already_at_first_wall and first_wall.abs_dist < tp1_ticks:
                 tp_devant_mur = math.floor(
-                    first_t1.abs_dist - self.tp_buffer
+                    first_wall.abs_dist - self.tp_buffer
                 )
                 if tp_devant_mur > 0:
-                    # Capture avant mutation pour observability
-                    tp_pre_capot = tp1_ticks
-                    wall_pre_capot = tp1_wall
+                    if first_wall.tier == 1:
+                        # T1 : MUTATION (validee v2)
+                        tp_pre_capot = tp1_ticks
+                        wall_pre_capot = tp1_wall
 
-                    tp1_ticks = float(tp_devant_mur)
-                    tp1_wall = f"TP_DEVANT_{first_t1.name}"
-                    tp1_reason = (
-                        f"TP devant {first_t1.name} (T1) a {tp_devant_mur}t — "
-                        f"TP precedent ({wall_pre_capot} a {tp_pre_capot:.0f}t) "
-                        f"aurait traverse le mur T1 a {first_t1.abs_dist:.1f}t"
-                    )
-                    # Flags observability prod (etendus v2)
-                    # cas4_source_pre : 'TP_STANDARD' / nom mur scanne / etc.
-                    # Permet de distinguer freq CAS 4 v1 (sur fallback) vs v2 (sur mur scan)
-                    res.cas4_triggered = True
-                    res.cas4_blocked_wall = first_t1.name
-                    res.cas4_blocked_wall_dist = float(first_t1.abs_dist)
-                    res.cas4_tp_standard_pre = float(tp_pre_capot)
-                    res.cas4_source_pre = wall_pre_capot
+                        tp1_ticks = float(tp_devant_mur)
+                        tp1_wall = f"TP_DEVANT_{first_wall.name}"
+                        tp1_reason = (
+                            f"TP devant {first_wall.name} (T1) a {tp_devant_mur}t — "
+                            f"TP precedent ({wall_pre_capot} a {tp_pre_capot:.0f}t) "
+                            f"aurait traverse le mur T1 a {first_wall.abs_dist:.1f}t"
+                        )
+                        res.cas4_triggered = True
+                        res.cas4_blocked_wall = first_wall.name
+                        res.cas4_blocked_wall_dist = float(first_wall.abs_dist)
+                        res.cas4_tp_standard_pre = float(tp_pre_capot)
+                        res.cas4_source_pre = wall_pre_capot
+                        res.cas4_blocked_wall_tier = 1
+                    else:
+                        # T2 : OBSERVABILITY-ONLY (5j backlog R2 code-reviewer)
+                        # Log le capot HYPOTHETIQUE sans muter tp1_ticks. Permet
+                        # de mesurer fire rate et coherence sur 5 jours avant
+                        # d'activer mutation T2 en v4.
+                        res.cas4_observed_tier2 = True
+                        res.cas4_observed_wall_t2 = first_wall.name
+                        res.cas4_observed_wall_t2_dist = float(first_wall.abs_dist)
+                        res.cas4_observed_tp_devant = float(tp_devant_mur)
+                        # Pas de mutation tp1_ticks/tp1_wall ici (observability)
 
         res.tp1_ticks = tp1_ticks
         res.tp1_wall = tp1_wall

@@ -422,26 +422,42 @@ class TestCas4V2UniversalGuard:
             assert not result.cas4_triggered, \
                 "CAS 4 v2 ne doit pas trigger quand tp_wall = first_t1 (idempotence)"
 
-    def test_cas4_v2_does_not_capote_t2_walls_in_path(self):
-        """CAS 4 v2 ne capote QUE sur TIER 1 (pas T2). Permet de traverser
-        des T2 acceptables pour atteindre un T1 plus loin."""
+    def test_cas4_v3_t2_observability_only_no_mutation(self):
+        """CAS 4 v3 split (R2 code-reviewer 30/04 soir) : T2 sur chemin =
+        OBSERVABILITY-ONLY (log capot hypothetique sans muter tp1_ticks).
+
+        Justification compromis : R2 BLOQUANT = "passer T1-only a T1+T2 ajoute
+        ~24 niveaux scannes, risque rejet massif sans backtest". Solution :
+        monitorer 5 jours avec cas4_observed_tier2=True puis activer mutation
+        en v4 si fire rate <15% et coherent.
+
+        Cas test : T2 (CUR_VAH @ 60t) sur chemin du TP (SESS_HIGH T1 @ 80t).
+        Attendu : tp1_ticks reste 76t (pas de mutation), MAIS cas4_observed_*
+        flags sets pour observability prod.
+        """
         engine = SLTPEngine(symbol="NQ")
-        # SL=38t, T2 @ 30t, T1 @ 80t → scan prend T1 @ 80t (R:R 2.0)
-        # T2 sur le chemin ne doit PAS capoter (T2 = traversable)
         row = _build_row_with_mq(
             direction=1,
             dist_gex_nearest_dn=-30.0,
             dist_ext_edge_buy=-30.0,
-            dist_cur_vah=+30.0,         # T2 a 30t (sur chemin)
+            dist_cur_vah=+60.0,         # T2 a 60t (sur chemin)
             dist_sess_high=+80.0,       # T1 a 80t (TP)
         )
         result = engine.evaluate_single(row, direction=1)
         if result.valid:
-            # TP doit etre @ SESS_HIGH (T1, 80-4=76t), PAS capote au CUR_VAH (T2)
+            # tp1 NE DOIT PAS etre mute (observability-only)
+            assert result.tp1_ticks > 60, \
+                f"T2 ne doit PAS muter tp1_ticks (observability-only), got {result.tp1_ticks}"
             assert "SESS_HIGH" in result.tp1_wall, \
-                f"T2 sur chemin ne doit pas capoter, got {result.tp1_wall}"
-            assert not result.cas4_triggered, \
-                "CAS 4 v2 ne doit pas trigger sur T2 (only T1)"
+                f"tp1_wall doit rester SESS_HIGH (T1, R:R 2.0), got {result.tp1_wall}"
+            # MAIS flags observability T2 sets
+            assert result.cas4_observed_tier2 is True, \
+                "cas4_observed_tier2 doit etre True (T2 sur chemin)"
+            assert result.cas4_observed_wall_t2 == "CUR_VAH", \
+                f"observed_wall_t2 attendu CUR_VAH, got {result.cas4_observed_wall_t2}"
+            # cas4_triggered (T1 mutation) doit etre False (pas de T1 sur chemin)
+            assert result.cas4_triggered is False, \
+                "cas4_triggered doit etre False (T1 SESS_HIGH = tp1_wall, pas sur chemin)"
 
     def test_cas4_v2_observability_source_pre_set(self):
         """cas4_source_pre expose le tp1_wall AVANT capot (pour distinguer

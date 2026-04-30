@@ -1153,6 +1153,59 @@ class DatabentoPaperTrader:
         except OSError as e:
             print(f"[STATE] write failed: {e}")
 
+    def _update_position_metrics(self, symbol: str, bar: pd.Series):
+        """Met a jour mfe/mae/unrealized_pnl/current_price/bars_held pour la
+        position ouverte sur ce symbol.
+
+        Appele a chaque nouvelle bar processed (debut de _process_symbol).
+        Permet au dashboard d'afficher l'evolution live d'un trade Bot 2,
+        comme deja le cas pour Bot 1 (state.json riche). Sans ce calcul,
+        Bot 2 state.json contient UNIQUEMENT les valeurs statiques entry/sl/tp,
+        donc dashboard ne peut pas afficher P/L courant ni MFE/MAE running.
+
+        Reference Q2 Jackson 30/04 :
+          "QUAND LE BOT 2 A UN TRADE ON NE VOIS PAS LE TRADE EN DIRECT EVOLUER"
+
+        Champs ajoutes dans pos[] (auto-serialises par _write_state) :
+        - unrealized_pnl_ticks : signed P/L courant en ticks
+        - unrealized_pnl_usd   : signed P/L courant en USD (incluant n_micros)
+        - current_price        : last bar close
+        - mfe                  : max favorable excursion en ticks (running)
+        - mae                  : max adverse excursion en ticks (running)
+        - bars_held            : nb de bars depuis ts_open
+        - last_bar_ts          : ts_event de la derniere bar processed
+        """
+        with self._pos_lock:
+            pos = self.active_positions.get(symbol)
+            if not pos:
+                return
+            try:
+                close_price = float(bar.get("close"))
+            except (TypeError, ValueError):
+                return
+            entry = pos.get("entry")
+            side = pos.get("side")
+            if not entry or not side:
+                return
+            # P/L unrealized signe (positif = en profit, negatif = en perte)
+            if side == "BUY":
+                unrealized_ticks = (close_price - entry) / TICK_SIZE
+            else:  # SELL/SHORT
+                unrealized_ticks = (entry - close_price) / TICK_SIZE
+            # MFE/MAE rolling (init 0 a la 1ere passe)
+            mfe = pos.get("mfe", 0.0) or 0.0
+            mae = pos.get("mae", 0.0) or 0.0
+            pos["mfe"] = max(float(mfe), unrealized_ticks)
+            pos["mae"] = min(float(mae), unrealized_ticks)
+            pos["unrealized_pnl_ticks"] = round(unrealized_ticks, 2)
+            tick_val = TICK_VALUE.get(symbol, 1.0)
+            pos["unrealized_pnl_usd"] = round(
+                unrealized_ticks * tick_val * self.cfg.quantity, 2
+            )
+            pos["current_price"] = close_price
+            pos["bars_held"] = int(pos.get("bars_held", 0)) + 1
+            pos["last_bar_ts"] = str(bar.get("ts_event", ""))
+
     def _track_market_context(self, symbol: str, bar: pd.Series):
         """Detect changes regime / volatility / session / mq levels → emit events."""
         # Regime (cvd_5d_rolling_ffd > 50 = BULL, < -50 = BEAR, sinon NEUTRAL)
@@ -1669,6 +1722,12 @@ class DatabentoPaperTrader:
         if self.last_bar_ts[symbol] is not None and bar_ts == self.last_bar_ts[symbol]:
             return
         self.last_bar_ts[symbol] = bar_ts
+
+        # Q2 (Jackson 30/04 "Bot 2 dashboard pas d'evolution live") :
+        # maj metrics position (mfe/mae/unrealized_pnl/current_price/bars_held)
+        # AVANT validation stale (pour ne pas perdre une bar valide en cas de
+        # stale-skip qui se debloque). Auto-serialise via _write_state heartbeat 30s.
+        self._update_position_metrics(symbol, bar)
 
         # ── FIX #2 (29/04) — Bar staleness HARD SKIP ─────────────────
         # Avant : juste WARN. Maintenant : SKIP si bar_age > threshold.

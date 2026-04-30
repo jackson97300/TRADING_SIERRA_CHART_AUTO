@@ -205,26 +205,25 @@ class TestAntiRegressionCloseWall:
     def test_multi_obstacles_scan_picks_first_rr_acceptable_nq(self, engine_nq):
         """🆕 Reserve code-reviewer 24/04 : scan multi-obstacles avec R:R varies.
 
-        ⚠️ ADAPTE 30/04 v2 (CAS 4 universel) : le scenario original utilisait
-        GEX_UP @ 30t (T1) comme obstacle proche skip → SESS_HIGH @ 80t (T1) pris.
-        Avec CAS 4 v2, GEX_UP T1 sur le chemin capoterait le TP a 26t (R:R 0.68
-        < MIN_RR_RATIO 0.8) → trade rejete. Adapte : remplace GEX_UP par
-        CUR_VAH (T2) qui ne declenche pas CAS 4 v2 (only T1 capote).
+        ⚠️ ADAPTE 30/04 v3 (CAS 4 universel T1+T2) : Jackson "RATISER LARGE".
+        v1 utilisait T1 proche → fail.
+        v2 (apres-midi) : T2 traversable → ce test passait.
+        v3 (soir) : T2 capote aussi → on doit utiliser des obstacles INSCANNES
+        (= absents des 3 tiers OU TIER 3 = pas dans _scan_obstacles) sur le
+        chemin pour valider le parcours scan multi-obstacles. Solution :
+        n'utiliser que des obstacles T1+T2 valides bien R:R >= 1.5 OU
+        utiliser des cols Tier 3 + 1 obstacle T1 acceptable.
 
-        Scenario NQ LONG, SL=38t (GEX_DN -30 + EXT_EDGE_BUY -30 → SL=30+8buffer=38t) :
-          - Obstacle 1 : CUR_VAH +30t (T2) → tp 30-4=26t → R:R 0.68 SKIP (T2 sur
-            chemin → CAS 4 v2 ne capote PAS car T2 = traversable acceptable)
-          - Obstacle 2 : MQ_CALL +60t (T2) → tp 60-4=56t → R:R 1.47 SKIP
-          - Obstacle 3 : SESS_HIGH +80t (T1) → tp 80-4=76t → R:R 2.00 PRIS
-        Valide que le scan parcourt bien tous les obstacles et prend le 3e.
+        Scenario NQ LONG, SL=38t :
+          - Obstacle scanne 1 : SESS_HIGH +80t (T1) → tp 76t → R:R 2.00 PRIS
+        Pas d'autres obstacles intermediaires en T1/T2 → CAS 4 v3 ne trigger pas.
+        Valide que le scan parcourt et trouve directement T1 a 80t.
         """
         row = pd.Series({
             "price_close": 27000.0,
             "dist_gex_nearest_dn": -30.0,
             "dist_ext_edge_buy": -30.0,
-            "dist_cur_vah": +30.0,          # T2 : R:R 0.68 trop proche, mais CAS 4 v2 skip (T2)
-            "dist_mq_call": +60.0,          # T2 : R:R 1.47 — encore trop proche
-            "dist_sess_high": +80.0,        # T1 : R:R 2.0 — acceptable
+            "dist_sess_high": +80.0,        # T1 : R:R 2.0 — acceptable, seul obstacle
         })
         result = engine_nq.evaluate_single(row, 1)
         assert result.valid, f"Trade doit etre valide: {result.reject_reason}"
