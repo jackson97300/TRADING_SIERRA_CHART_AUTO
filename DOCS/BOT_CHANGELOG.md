@@ -62,6 +62,900 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-04-30 23:30 UTC — [BOT 1 trailing TR40_20 NQ + BOT 2 Plan A_v2 gates VETO BUY/SHORT]
+
+**Categorie** : FEATURE (nouveau trailing) + GATE (vetos paramétrables) — moteur execution + signal
+**Impact prod** : BOT 1 (mia_paper_trader Sim3 NQ trailing) + BOT 2 (databento_paper_trader Sim2 vetos)
+**Fichier(s)** :
+- Modif : `CORE/mia_paper_trader.py:~1620-1680` — Trailing TR40_20 NQ : armement MFE >= 40% × SL_initial, give-back 20% × SL_initial, tick-aligned (FIX C1), favorable-direction only (FIX I3)
+- Modif : `CORE/databento_paper_trader.py:128-148,167-175,1661-1679,1761-1791` — Constante `NO_WALL_TP_PATTERNS_*` + helper `is_synthetic_tp_wall()` + 3 BotConfig params + Gate A (VETO BUY color wall) + Gate B (VETO SHORT no-wall + room ratio)
+- Modif : `CORE/log_catalog.py` — 2 codes `VETO_BUY_COLOR_WALL` + `VETO_SHORT_NO_WALL` (decisions, INFO)
+- Cree : `tests/test_trailing_tr40_20.py` — 23 tests (4 arming + 4 favorable + 2 case + 3 tick-align + 4 integration check_exit + 4 edge + 1 progression + 1 case)
+- Cree : `tests/test_bot2_veto_gates.py` — 30 tests (9 Gate A + 9 Gate B + 4 Phase 0 audit + 8 helper contrat)
+
+**Reviewer(s) agent** :
+- Bot 1 trailing : market-analyst (audit n=50 réels + 934 simulés → TR40_20 NQ only, PF 0.99→1.32, walk-forward 3/3) + code-reviewer (FIX C1 tick-align + I3 integration test)
+- Bot 2 gates : market-analyst (audit 1277 backtests synthétiques 4 mois Databento V4 → PROP A PF 1.04→1.49, walk-forward 3/3, CI95 [1.20, 1.86], p=0.0003) + code-reviewer (GO-AVEC-RESERVES, R1 traitée par refacto helper, R2/R3 polish)
+- Plan agent : revisé Plan A → A_v2 paramétrable + Phase 0 audit n=8 SHORTs → veto cible execution (Gate B) pas signal
+
+### Quoi
+**Bot 1 (NQ uniquement)** : trailing TR40_20 — quand MFE >= 40% × SL_initial, le SL trail à `entry +/- (MFE - 20% × SL_initial)`. Tick-aligned (multiple de 0.25). Ne bouge QUE en faveur de la position (pas de loosen). Pos["sl_trailed"] / "sl_trail_count" pour audit.
+
+**Bot 2 (ES + NQ)** :
+- **Gate A** : VETO BUY si `dist_color_dn_nearest_pct ∈ (0, cfg.veto_buy_color_wall_pct]` (default 0.05%). Color wall trop proche au-dessus = stop hunt likely.
+- **Gate B** : VETO SHORT si `tp_wall ∈ {FIXED_*, *STANDARD*, *NO_WALL*}` OR `room_ratio = tp_ticks/sl_ticks < cfg.veto_short_room_min_ratio` (default 1.5). TP synthetic = pas de mur réel pour catch profit.
+- Helper `is_synthetic_tp_wall()` extrait pour single source of truth wall taxonomy.
+
+### Pourquoi
+**Bot 1** : trade NQ BUY 12:37 24/04 — MFE +90 ticks ($45) puis retracé à TIMEOUT -1t (-$3.75) en 26 min. Audit market-analyst : pattern fréquent (trade qui touche 40% SL_init puis retrace). TR40_20 capture 50-70% du MFE empiriquement.
+
+**Bot 2** : 26 trades cumulés sur 4 jours, WR 26.9%, -$1492. SHORT 12.5% WR vs LONG 33% WR. Phase 0 audit n=8 SHORTs réels nuit 28-30/04 → 3/8 trades avec TP_NO_WALL (vs 11% sur LONGs). H1 (signal cassé) REFUTÉ + H4 (anecdote n=8) CONFIRMÉ → veto cible execution (no wall TP) pas signal. Wilson CI95 SHORT [2.2%, 47.1%] englobe LONG WR → pas de VETO SHORT permanent.
+
+### Impact attendu
+- **Bot 1 NQ** : trailing récupère 50-70% MFE des trades qui retracent (estim +$30-40 / trade médian sauvé)
+- **Bot 2** : Gate A élimine ~10-15% des BUY mort-nés. Gate B élimine 3/8 SHORTs historiques perdus = ~37.5% des SHORTs
+- **Anti Pattern 11 V1** : tous les vetos paramétrables (cfg.veto_*=0/False désactive), reversibles sans recompile
+- **Effet de bord** : Bot 1 ES inchangé, Bot 1 NQ trailing seulement (pas BE séparé). Bot 2 : risk check toujours exécuté après Gate A (pas de double-skip)
+
+### Validation pre-deploy
+- [x] Tests unitaires : 53/53 (Bot 1: 23, Bot 2: 30)
+- [x] Backtest preservation : Bot 2 walk-forward 3/3 folds CI95 [1.20, 1.86] p=0.0003 (1277 backtests)
+- [x] Review agent : market-analyst GO + code-reviewer GO-AVEC-RESERVES (R1 traitée par refacto)
+- [x] Test empirique : `pytest tests/test_trailing_tr40_20.py tests/test_bot2_veto_gates.py -v` → 53/53 PASS
+- [x] Pre-deploy 3 questions : (1) MIA-Paper + MIA-DataBento-Paper services nssm prod, (2) bug réel WR 26.9% + audit walk-forward, (3) testé empiriquement audit Phase 0 n=8 + 30 tests
+
+### Revert plan
+```bash
+# Bot 1 trailing : disable via constante = code rollback simple
+# Bot 2 gates : reversible runtime via cfg
+ssh Administrator@212.28.179.199 'powershell -Command "& nssm.exe stop MIA-DataBento-Paper"'
+# Edit BotConfig sur VPS:
+# veto_buy_color_wall_pct=0.0 (Gate A off)
+# veto_short_no_wall=False (Gate B off)
+ssh Administrator@212.28.179.199 'powershell -Command "& nssm.exe start MIA-DataBento-Paper"'
+# Bot 1 trailing rollback complet :
+git revert <commit-sha-bot1>
+scp CORE/mia_paper_trader.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 'powershell -Command "& nssm.exe restart MIA-Paper"'
+```
+
+### Deployed at
+- Bot 1 trailing : déployé Sim3 paper ~30/04 22:00 UTC (avant cette entry consolidée)
+- Bot 2 gates Plan A_v2 : à déployer maintenant Sim2 paper
+
+### Suivi post-deploy
+- J+1 (01/05) : 0 erreur runtime + premiers vetos loggés (decisions/decisions_*.jsonl `VETO_BUY_COLOR_WALL` / `VETO_SHORT_NO_WALL`)
+- J+7 : Bot 1 NQ : taux trailing armé / trades NQ + ratio capturé MFE. Bot 2 : N vetos vs N trades, PnL vs baseline 26.9% WR
+- J+30 (30/05) : audit consolidé Bot 1 PF NQ (cible >1.20) + Bot 2 PF (cible >1.30 vs baseline 0.78)
+
+### Liens
+- Memories : `feedback_data_mining_trap.md` (n>=60 walk-forward DSR), `feedback_pattern11_repetition_avoided.md` (anti-cascade), `feedback_pre_deploy_3_questions.md` (3 Q avant fix)
+- Review agent code-reviewer : verdict GO-AVEC-RESERVES, 3 recos non-bloquantes (R1 fermée par refacto, R2/R3 polish)
+- Audit Phase 0 SHORT Bot 2 : n=8 (28-30/04), H4 anecdote CONFIRMÉ → Gate B targeted
+
+---
+
+## 2026-05-01 03:00 UTC — [PILOT 30 JOURS — Asia early reprise 18:15 ET + Bot 1 timeout disabled en Asia]
+
+**Categorie** : PILOT (modif moteur eco/timeout = sec critique paper)
+**Impact prod** : BOT 1 (mia_paper_trader Sim3) + BOT 2 (databento_paper_trader Sim2) — paper only, 0$ risk
+**Fichier(s)** :
+- Modif : `CORE/eco_calendar.py` — block_end (21,30) → (18,15), label "Post-MOC pause", Sunday <18:15 ET, _session_block_end_utc, docstring + commentaires alignes
+- Modif : `CORE/mia_paper_trader.py:1645-1657` — timeout 2h DESACTIVE en session Asia via current_session_label() + fail-safe ImportError
+- Modif : `CORE/databento_paper_trader.py:1418-1419` — commentaires eco gate alignes
+- Modif : `tests/test_eco_calendar.py` — 8 tests adaptes (_2130et → _1815et, "Close US" → "Post-MOC")
+- Cree : `tests/test_mia_paper_trader_timeout_asia.py` — 13 tests timeout Asia (logique + integration current_session_label + fail-safe)
+**Reviewer(s) agent** :
+- code-reviewer : GO-AVEC-RESERVES (3 reserves I1/I2/S1)
+- Reserves traitees : 6 commentaires Tokyo/21:30 corriges (I1) + 2 commentaires obsoletes paper (I2) + 13 tests timeout Asia (S1)
+- 49/49 tests PASSED (36 eco + 13 timeout Asia)
+
+### Quoi
+PILOT 30 JOURS pour collecter empirique sur la session Asia futures CME avant decision finale. Jackson 30/04 :
+1. **Reprise bot a 18:15 ET (= 00:15 Paris)** au lieu de 21:30 ET (03:30 Paris). Pause overnight raccourcie de 6h → 2h45.
+2. **Bot 1 timeout 2h DESACTIVE pendant Asia** (18:00-03:00 ET) car peu de volatilite = setups longs ont besoin de patience.
+
+### Pourquoi (cousine `feedback_data_mining_trap.md`)
+Jackson : "JE NE RISQUE QUOI RIEN ENFAITE — paper trading sur compte simule". Argument valide : collecter du data live > simulation backtest hypothetique. Approche scientifique propre, pas data mining (decision pre-engagee avec criteres).
+
+### Criteres review J+30 (30/05/2026)
+1. **n >= 15 trades** dans la fenetre 18:15-21:30 ET (ex-pause)
+2. **PSR > 0.95** sur ces trades (Lopez)
+3. **Slippage moyen < 1 tick** (verif que Tokyo open n'expose pas a spreads exotiques)
+4. **Concentration test** : top 10% best+worst retires → edge persiste avec >=50% du gain
+
+**Decision J+30** :
+- 4/4 criteres atteints → garder 18:15 ET definitif
+- < 4/4 → rollback a 21:30 ET (revert config + timeout Bot 1)
+
+### Impact attendu
+- **Bot 2 paper Sim2** : trade Asia complete (sans timeout, design preserve)
+- **Bot 1 paper Sim3** : trade Asia + pas de TIMEOUT outcome possible, juste TP/SL
+- Effet de bord : positions Bot 1 ouvertes >2h en Asia (rare en pratique vu TP/SL adaptatifs)
+- Cout dollars : 0 (paper)
+
+### Validation pre-deploy
+- [x] Tests unitaires : 49/49 PASSED
+- [x] Smoke test live API VPS : `blocked=False` post-18:15 ET (= comportement attendu maintenant a 20:38 ET)
+- [x] Review code-reviewer : GO-AVEC-RESERVES → 3 reserves traitees
+- [x] Backward compat : eco_calendar.is_blocked_combined() retourne 18:15 ET pour les session blocks (vs absent avant ce commit)
+- [x] Pas de regression Bot 2 : Bot 2 sans timeout (design inchange)
+
+### Revert plan (si J+30 NOGO)
+```bash
+ssh Administrator@212.28.179.199
+nssm stop MIA-Paper MIA-DataBento-Paper MIA-Dashboard
+cd C:/TRADING_SIERRA_CHART_AUTO
+# Revert eco_calendar (block_end_et 18:15 → 21:30) + mia_paper_trader (timeout sans is_asia)
+git log --oneline -5 CORE/eco_calendar.py CORE/mia_paper_trader.py
+git checkout <commit_pre_pilot> CORE/eco_calendar.py CORE/mia_paper_trader.py CORE/databento_paper_trader.py
+nssm start MIA-Dashboard MIA-DataBento-Paper MIA-Paper
+```
+
+### Deployed at 2026-05-01 03:00 UTC
+- SCP CORE/eco_calendar.py + CORE/mia_paper_trader.py + CORE/databento_paper_trader.py → VPS OK
+- nssm restart MIA-Dashboard (force kill Python + restart pour reload eco_calendar)
+- nssm restart MIA-DataBento-Paper + MIA-Paper
+- Verif API local VPS : blocked=False a 20:38 ET (post 18:15 = pilot actif)
+
+### Suivi post-deploy
+- J+1 (01/05) : verifier 1er trade Bot 1 ou Bot 2 dans la fenetre 18:15-21:30 ET (Asia early)
+- J+7 : compter trades 18:15-21:30 ET, slippage moyen
+- J+30 (30/05) : audit complet n>=15, PSR, concentration → decision GARDER ou ROLLBACK
+
+### Liens
+- Memoire : `feedback_data_mining_trap.md` (28/04 cousine), `feedback_pre_deploy_3_questions.md` (24/04 Q2)
+- Review agent : code-reviewer GO-AVEC-RESERVES → I1/I2/S1 traitees inline
+
+---
+
+## 2026-05-01 02:30 UTC — [FEATURE — Auth Option B Pro : refresh 30j/90j + rotation sliding window + heartbeat 10min]
+
+**Categorie** : FEATURE (touche moteur auth = sec critique)
+**Impact prod** : DASHBOARD (auth users) — Bot trading non impacte
+**Fichier(s)** :
+- Modif : `DASHBOARD/config.py` (REFRESH_TOKEN_EXPIRY_SEC 7j -> 30j, +REFRESH_TOKEN_REMEMBER_EXPIRY_SEC 90j)
+- Modif : `DASHBOARD/api/auth.py` (rotation /refresh + flag rmb + remember_me dans 4 bodies + docstring module)
+- Modif : `DASHBOARD/static/index.html` (checkbox login-remember-me + cache bust v=89)
+- Modif : `DASHBOARD/static/js/dashboard.js` (heartbeat 10min + remember_me dans login fetch)
+- Modif : `DASHBOARD/tests/test_auth.py` (35->41 tests : 3 unitaires + 5 integration TestClient)
+**Reviewer(s) agent** :
+- code-reviewer #1 : GO-AVEC-RESERVES (3 reserves non-bloquantes : rename, tests integration, docstring)
+- Reserves traitees : 41/41 tests, COOKIE_MAX_AGE renomme DEFAULT_COOKIE_MAX_AGE, docstring + limitations documentees
+
+### Quoi
+Auth dashboard reconnexion frequente (Jackson) -> implementation pattern industry standard (TradingView/Coinbase) :
+
+1. **Refresh token allonge** : 7j -> 30j default, 90j si "Remember me" coche au login.
+2. **Rotation /refresh** : sliding window. A chaque /refresh, emission nouveau access ET nouveau refresh (preserve flag `rmb`). User actif tous les jours = jamais reconnexion. Inactif > 30j (90j) = re-login.
+3. **Heartbeat frontend 10 min** : refresh proactif via setInterval (vs reactif sur 401 avant). Anticipe expiry 15 min de l'access. Demarre au login + au pageload si authToken present, stop au logout.
+4. **Checkbox UI** : "Rester connecte 90 jours" sur login form (default false = 30j).
+5. **Securite preservee** : cookie HttpOnly+Secure+SameSite=Lax, PBKDF2 100k iterations, HMAC SHA256, guards typ=refresh sur /refresh + /promo (refresh tokens rejetes par get_current_user).
+
+### Pourquoi
+Jackson : "se reconnecter trop souvent". Audit revele que 60% de l'archi (cookie HttpOnly cross-domain + refresh + endpoint /refresh) etait deja en place. Manquait : duree, rotation, heartbeat, UI choix.
+
+### Impact attendu
+- Avant : reconnexion 1× / 7 jours fixe (refresh expire) + risque coupures session si access expire pendant fetch
+- Apres : reconnexion 1× / 30 jours default ou 1× / 90 jours si checkbox + heartbeat = jamais coupe en session active
+- Impact bot trading : 0 (auth = scope dashboard frontend uniquement)
+
+### Validation pre-deploy
+- [x] Tests unitaires : 41/41 PASSED (`pytest DASHBOARD/tests/test_auth.py`)
+- [x] Tests integration TestClient : 5/5 (login default, login remember, rotation rmb, no cookie 401, access-as-refresh rejected)
+- [x] Smoke test : login + /refresh rotation preserve rmb + nouveau access != ancien
+- [x] Review code-reviewer : GO-AVEC-RESERVES (3 reserves non-bloquantes traitees)
+- [x] Backward compat : users existants avec refresh 7j -> migration silencieuse 30j default au prochain /refresh
+- [x] Pas de regression auth : 32 tests existants restent passants
+
+### Limitations connues (documentees dans auth.py docstring module)
+1. Pas de revocation list server-side (logout sur device A ne kill pas device B). Acceptable scope actuel (1 user PRO).
+2. Sliding window sans cap absolu. Standard industry. Migration future : ajouter `absolute_exp` 365j si scaling > 10 PRO.
+3. Pas de fingerprint device. Mitigation possible si abus detectes plus tard.
+
+### Revert plan
+```bash
+ssh Administrator@212.28.179.199
+nssm stop MIA-Dashboard
+cd C:/TRADING_SIERRA_CHART_AUTO
+git checkout DASHBOARD/config.py DASHBOARD/api/auth.py DASHBOARD/static/index.html DASHBOARD/static/js/dashboard.js
+nssm start MIA-Dashboard
+```
+
+### Deployed at 2026-05-01 02:30 UTC
+- SCP `DASHBOARD/config.py`, `DASHBOARD/api/auth.py`, `DASHBOARD/static/index.html`, `DASHBOARD/static/js/dashboard.js` -> VPS OK
+- `nssm restart MIA-Dashboard` -> Status Running Automatic
+- Verif API : `/api/auth/me` sans cookie -> 401 (comportement attendu)
+
+### Suivi post-deploy
+- J+1 : verifier que les sessions actives ne sont pas perturbees (sauf logout force au restart = attendu)
+- J+1 : test reel checkbox "Rester connecte 90 jours" + verif cookie 90j cote browser DevTools
+- J+7 : 0 incident auth signale, 0 user PRO bloque sur reconnexion frequente
+- J+30 : confirmer sliding window OK (Jackson actif quotidien -> jamais deconnecte)
+
+### Liens
+- Memoire : (aucune nouvelle, modif auth = backlog stocke dans CLAUDE.md)
+- Review agent : code-reviewer GO-AVEC-RESERVES + reserves traitees inline
+
+---
+
+## 2026-04-30 23:00 UTC — [FEATURE — Timer dashboard "Bot reprend dans HH:MM" + buffer Tokyo 21:30 ET + reset stats CME]
+
+**Categorie** : FEATURE + FIX (touche moteur decision Bot 2 paper trading + dashboard)
+**Impact prod** : BOT 2 (databento_paper_trader Sim2) + DASHBOARD (paper page status)
+**Fichier(s)** :
+- Modif : `CORE/eco_calendar.py` (ajout `_session_block_end_utc()` + `is_blocked_combined()` retourne `blocked_until_utc` pour session blocks + buffer end 21:00 → 21:30 ET)
+- Modif : `CORE/log_catalog.py` (ajout code `ECO_BLOCK` LogLevel.INFO)
+- Modif : `DASHBOARD/api/paper_tracker.py` (`_compute_stats_today_from_trades` utilise `get_cme_trading_day()` au lieu de UTC midnight + `get_eco_status_payload()` expose timer)
+- Modif : `DASHBOARD/static/js/dashboard.js` (statut "● Pause · reprend dans HH:MM" si bloque)
+- Modif : `DASHBOARD/static/index.html` (cache bust v=88)
+- Cree : `tests/test_eco_calendar.py` etendu de 17 → 26 tests (specularite + transitions Tokyo +30min)
+**Reviewer(s) agent** :
+- code-reviewer #1 : GO-AVEC-RESERVES (C1 logique boolean cassee + I1 tests manquants)
+- code-reviewer #2 : GO-AVEC-RESERVES (commentaires/docstrings encore "21:00 ET" apres fix 21:30) → RESERVE TRAITEE → GO
+
+### Quoi
+3 changements en cascade decoulant du diagnostic 30/04 ~00:24 Paris (Asia ouverture imminente, Bot 2 affichait stats d'hier + pas de timer reprise) :
+
+1. **Timer dashboard pause** : `is_blocked_combined()` retourne maintenant `blocked_until_utc` aussi pour les session blocks (pas seulement eco events). Frontend affiche "● Pause · reprend dans HH:MM (Close US + pause overnight)" au lieu de "Trader DOWN" trompeur.
+
+2. **Reset stats CME timezone** : dashboard utilisait `datetime.now(timezone.utc).date()` (UTC midnight) alors que Bot 2 rollover 18:00 ET (`get_cme_trading_day()`). Ecart 4-6h ou stats Bot 2 affichaient les trades du day precedent. Maintenant aligne sur convention CME (start = 18:00 ET du day courant).
+
+3. **Buffer Tokyo open +30min** : `block_end_et` 21:00 → 21:30 ET (= 03:30 Paris ete) sur fenetre B (Close US lun-jeu) et fenetre C (weekend Sunday block). Decision Jackson 30/04 : eviter la volatilite initiale du Tokyo open (premiers prises de position asiatiques + spreads larges).
+
+### Pourquoi
+- Dashboard timer : Jackson "ON AURAIS DU A VOIR UN TIMER LE BOT RETRAIDE DANS X" — feature critique pour comprendre quand le bot va reprendre sans deviner.
+- Reset stats CME : pattern bug timezone documente (memoire `feedback_data_quality_first.md`). Bot 1 (mia_paper_trader) etait deja sur convention CME, Bot 2 dashboard pas → asymetrie.
+- Buffer Tokyo : decision orale validee Jackson ("ON AVAIS VALIDER 21H30 ET IL REPREND A 3H15 POUR EVITER LA VOLATILITER DE OPEN TKY"). Initialement code en 21:00 ET, j'ai mal lu et mis 21:15, Jackson a recadre → 21:30 ET final.
+
+### Impact attendu
+- Trades NEW Bot 2 supprimes 16:00-21:30 ET (avant 21:00 ET) = +30min de pause overnight → 0-2 signaux Tokyo early evites par session
+- Dashboard UX : timer visible vs status DOWN trompeur
+- Reset stats : Bot 2 affiche maintenant 0 trades a Tokyo open (au lieu de 15 trades du day precedent)
+- Effet de bord : aucun sur trades en cours (gate preventif NEW only, pas de flatten force)
+
+### Validation pre-deploy
+- [x] Tests unitaires : 26/26 PASSED (`pytest tests/test_eco_calendar.py`)
+- [x] Test specularite : invariant `blocked == (end is not None)` sur 28 timestamps Mon-Sun
+- [x] Smoke test live : log Bot 2 confirme `(jusqu'a 01:30 UTC)` apres restart (= 21:30 ET)
+- [x] Review code-reviewer #1 : C1 + I1 traites
+- [x] Review code-reviewer #2 : RESERVE doc traitees (10 commentaires fixes)
+- [x] Backtest preservation : N/A (pas de modif scoring/gates de validation, juste fenetre temporelle)
+
+### Revert plan
+```bash
+ssh Administrator@212.28.179.199
+nssm stop MIA-DataBento-Paper
+nssm stop MIA-Dashboard
+cd C:/TRADING_SIERRA_CHART_AUTO
+git diff HEAD CORE/eco_calendar.py CORE/log_catalog.py DASHBOARD/api/paper_tracker.py DASHBOARD/static/js/dashboard.js DASHBOARD/static/index.html
+git checkout CORE/eco_calendar.py CORE/log_catalog.py DASHBOARD/api/paper_tracker.py DASHBOARD/static/js/dashboard.js DASHBOARD/static/index.html
+nssm start MIA-Dashboard
+nssm start MIA-DataBento-Paper
+```
+
+### Deployed at 2026-04-30 22:39 UTC (premier deploy 21:00 ET) + 22:50 UTC (correction 21:30 ET)
+- SCP `CORE/log_catalog.py`, `CORE/eco_calendar.py`, `DASHBOARD/api/paper_tracker.py`, `DASHBOARD/static/js/dashboard.js`, `DASHBOARD/static/index.html` → VPS OK
+- `nssm restart MIA-Dashboard` + `nssm restart MIA-DataBento-Paper` → tous Running
+- Logs Bot 2 confirment : `[ES/NQ] ECO BLOCK : SESSION: Close US + pause overnight (jusqu'a Tokyo open +30min) (jusqu'a 01:30 UTC)` = 21:30 ET = 03:30 Paris ete
+
+### Suivi post-deploy
+- J+1 : verifier Bot 2 reprend trade exactement a 03:30 Paris (= 01:30 UTC) sur Tokyo
+- J+1 : dashboard frontend affiche timer "Bot reprend dans HH:MM" en orange pendant pause overnight
+- J+1 : stats Bot 2 reset a 0 a 18:00 ET (et pas 00:00 UTC)
+- J+7 : confirmer 0 occurrence `[EMIT_FAIL] code=ECO_BLOCK` dans err.log
+- J+7 : suivre nombre signaux NEW supprimes par fenetre 21:00-21:30 ET (impact recettes)
+
+### Liens
+- INCIDENT_LOG : 2026-04-30 (timer manquant + reset CME asymetrie)
+- Memoire : `feedback_data_quality_first.md` (timezone), `feedback_log_debug_protocol.md` (codes)
+- Review agents : 2 rounds code-reviewer (C1+I1 puis COMMENT_FALSE)
+
+---
+
+## 2026-04-30 12:00 — [ROLLBACK PREVENTIF — Phase A refactor TIER3 dans scan TP mia_sltp.py]
+
+**Categorie** : ROLLBACK (decision de NE PAS deployer)
+**Impact prod** : BOT 2 (databento_paper_trader Sim2) - statut quo preserve
+**Fichier(s)** : `CORE/mia_sltp.py:593-600` (rollback note 28/04 confirme par 2 agents)
+**Reviewer(s) agent** : market-analyst + ml-trainer (2/2 NOGO convergent)
+
+### Quoi
+Decision de NE PAS executer la Phase A refactor demande par Jackson "DABORD SOLUTION 3 REFACTORISATION GROS MISE A JOUR DES MUR POUR TP ET SL". Phase A consistait a inclure TIER3_WALLS (MQ_HVL, MQ_PUT/CALL_0DTE, IB, PREV_VPOC, PREV_VWAP) dans `_scan_obstacles` du SLTPEngine pour donner plus de murs candidats au scan TP.
+
+Le code source `mia_sltp.py:593-600` documente deja un ROLLBACK 28/04 13:30 sur exactement cette modification (decision n=1 ES SHORT @ 7174). L'audit `audit_tpsl_walls.py` du 29/04 (n=13 Bot 2) a sorti +$56.59 net en faveur de Phase A, mais cet edge tombe dans le bruit (CI 95% bootstrap [-$33, +$42]).
+
+### Pourquoi
+**market-analyst** :
+- Audit n=13 = 5/5 controles Data Mining Trap NOGO (memoire 28/04)
+- Concentration : 1 trade NQ LONG 17:04 = -$225 = 397% du delta net (sans cet outlier, Phase A = -$168 NET)
+- Pattern : Jackson CADRE le probleme (lecture visuelle "TP derriere 3 murs" → audit construit pour valider)
+
+**ml-trainer** :
+- PSR Lopez ≈ 0.55-0.65 (seuil acceptable = 0.95) → NOGO statistique
+- DSR non-calculable n<30 → ininterpretable
+- CI 95% bootstrap [-$33, +$42] → zero dans intervalle, aucune significativite
+- Cohen's d ≈ 0.06 → effet trivial
+- Option B (MIN_RR adaptive) = Pattern 11 V1 confirme (2 seuils sur 13 trades = 6.5/seuil = overfitting trivial)
+
+**Repetition d'erreur** : Phase A reproduit exactement la modification rollback'd 24h avant. Pattern V2 = "audit n<30 motive refactor deja rollback'd → STOP".
+
+### Impact attendu
+- 0 modification code prod (mia_sltp.py reste TIER1+TIER2 dans scan TP)
+- Preservation comportement valide : top loss audit (NQ LONG 17:04) prouve que Phase A aurait DEGRADE ce trade (sim ferme +1t devant PREV_VPOC vs actual hit GEX_UP +151t)
+- Effet de bord : aucun (pas de deploy)
+
+### Validation pre-deploy
+- N/A (pas de deploy)
+- [x] Verdict market-analyst : NOGO Phase A + B, GO Option C
+- [x] Verdict ml-trainer : NOGO Phase A + B (PSR<0.95), GO Option C imperative
+- [x] Pre-deploy 3 questions (memoire 24/04) : Q2 confirme cadrage du probleme
+
+### Criteres reactivation Phase A future (cumulatifs obligatoires)
+1. **n >= 60 trades** Bot 2 avec features_at_entry (PSR robuste, ETA realiste 45-90 jours)
+2. **Walk-forward 3 folds chronologiques** n>=30/fold sans overlap
+3. **DSR Lopez > 0.95** sur >=2/3 folds avec correction Bonferroni n_trials=3
+4. **Concentration test** : retirer top 10% best+worst → edge persiste avec >=50% du gain
+5. **Costs inclus** : Topstep $0.85 round-trip + slippage 0.5t ≈ $10-15/trade
+6. **Implementation shadow** : `_scan_obstacles_v2` derriere flag `USE_TIER3_TP=False`, log decisions parallele 2 semaines avant switch
+7. **Validation ml-trainer agent** GO explicite (pas RESERVES)
+
+### Revert plan
+N/A (pas de deploy). Si modification deployee accidentellement par Phase B/C plus tard :
+```bash
+ssh Administrator@212.28.179.199
+nssm stop MIA-DataBento-Paper
+git -C C:/TRADING_SIERRA_CHART_AUTO checkout CORE/mia_sltp.py
+nssm start MIA-DataBento-Paper
+```
+
+### Suivi post-decision
+- J+5 : compter trades Bot 2 cumules (target n=15-20)
+- J+15 : re-run audit_tpsl_walls.py si n>=30 (test intermediaire NON-decision)
+- J+45-90 : re-evaluation Phase A si tous criteres reactivation atteints
+
+### Liens
+- INCIDENT_LOG : 2026-04-28 13:30 (rollback initial TIER3-in-TP n=1)
+- Memoire : `feedback_data_mining_trap.md` (28/04), `feedback_pre_deploy_3_questions.md` (24/04), `feedback_lightgbm_no_composite_indicators.md` (18/04)
+- Memoire (creee ce jour) : `feedback_pattern11_repetition_avoided.md`
+- Code reference : `CORE/mia_sltp.py:593-600` (rollback note source)
+
+---
+
+## 2026-04-30 03:00 — [FEATURE signatures audit Bot 2 — 12 game changers pro tracking]
+
+**Categorie** : FEATURE (mode AUDIT only — pas de gate actif Phase A)
+**Impact prod** : BOT 2 (databento_paper_trader Sim2)
+**Fichier(s)** :
+- Cree : `CORE/signatures.py` (~280 LOC, 12 fonctions signatures + helpers + scoring)
+- Cree : `CORE/backtest_signatures_bot2.py` (~190 LOC, backtest empirique WIN vs LOSS)
+- Modif : `CORE/databento_paper_trader.py:1676-1715` (compute signatures + INJECT dans features_at_entry avec prefixe sig_)
+- Modif : `CORE/databento_paper_trader.py:_log_closed_trade()` (save signatures_at_entry + sig_score_at_entry dans trades.jsonl)
+- Modif : `CORE/log_catalog.py` (codes SIGNATURES_COMPUTED, SIGNATURES_GATE_TIER1_BLOCK, SIGNATURES_GATE_TIER3_BLOCK, SIGNATURES_GATE_PASS, CHECK_EXIT_DTC_HIT)
+**Reviewer(s) agent** :
+- Plan agent (29/04 nuit) : architecture meta-labeling Lopez AFML chap 3 valide
+- code-reviewer (30/04 nuit) : GO-AVEC-RESERVES (2 bugs precis B1+B2 + 6 reserves Phase B)
+
+### Quoi
+Framework "game changers" pro de Jackson pour distinguer trades qualite vs amateur :
+- 12 signatures binaires sur 3 tiers (pression directionnelle + confirmation env + absence inverse)
+- Calculees a chaque BUY/SELL signal Bot 2
+- Stockees dans `signatures_at_entry` + INJECT dans `features_at_entry` avec prefixe `sig_*`
+- Sauvegardees dans trades.jsonl pour analyse walk-forward post-hoc
+
+12 signatures :
+- TIER 1 (4) : absorb_bid, trapped_traders, long_directional_bar, aggressor_flip
+- TIER 2 (4) : color_zone_proximity, vwap_aligned, cvd_divergence, big_order_dominance
+- TIER 3 (4) : no_inverse_color, no_big_inverse, no_inverse_long_bar, mq_no_inverse_resistance
+
+**MODE AUDIT ONLY** : ne bloque PAS les trades. Logue + stocke pour walk-forward 30+ trades futurs avant Phase B (gate actif).
+
+### Backtest empirique (n=15, 30/04 nuit)
+- 3 Tier A candidats avec +30/+50pp discrimination WIN vs LOSS :
+  - cvd_divergence : WIN 60% / LOSS 10% (+50pp)
+  - color_zone_proximity : WIN 80% / LOSS 50% (+30pp)
+  - big_order_dominance : WIN 40% / LOSS 10% (+30pp)
+- Score total >= 6 : 75% WR (3W/4 trades)
+- Score total >= 7 : 100% WR (2W/0L)
+- n=15 = LIMITE STATISTIQUE — indicatif pas conclusif
+
+### BUGS A FIXER avant Phase B (gate actif) — code-reviewer 30/04 nuit
+- **B1** (`signatures.py:175-185`) : `mq_no_inverse_resistance` convention signe `dist_mq_call_pct` / `dist_mq_put_pct` a verifier dans `dataset_builder.py`. **STATUS : PENDING (a fixer avant Phase B).**
+- **B2** (`signatures.py:120-142`) : ✅ FIXE 30/04 03h00 — seuil absolu 200 sur `cvd_5d_rolling_ffd` violait `data-quality.md` rechute #3. Migration vers normalisation z-score / proxy ATR.
+
+### RESERVES (Phase B obligatoire)
+- R1 : crash safety partielle — init defensive `signatures_at_entry = {name: False ...}` AVANT le try
+- R2 : import dans hot path — monter au top du fichier
+- R6 : `tests/test_signatures.py` OBLIGATOIRE par `.claude/rules/critical-tasks-review.md` critere 1 (Trading/Risk)
+- Pattern 11 V1 risk : 8 cascade gates potentiels Phase B → backtest "count rejects simules" obligatoire avant activation
+- ml-trainer mandataire pour verdict GO/NOGO Phase B (5 controles : walk-forward 12-fold + DSR + n>=100 + concentration <33% + costs)
+
+### Validation pre-deploy
+- [x] Syntax Python OK (3 fichiers)
+- [x] Backtest pre-fix : 3 Tier A candidats ressortent
+- [x] Backtest post-fix B2 : Tier A toujours present, distribution score identique
+- [x] Code-reviewer GO-AVEC-RESERVES (Phase A audit OK)
+- [x] Service Bot 2 Running post-deploy
+
+### Revert plan
+```bash
+ssh Administrator@212.28.179.199
+nssm stop MIA-DataBento-Paper
+cd C:/TRADING_SIERRA_CHART_AUTO
+git checkout CORE/signatures.py CORE/databento_paper_trader.py CORE/log_catalog.py
+nssm start MIA-DataBento-Paper
+# Le bot continue avec le code pre-signatures (FF cancel + check_exit_dtc + Live OHLCV stream encore actifs)
+```
+
+### Deployed at 2026-04-30 03:00 UTC
+- SCP 3 fichiers → VPS OK
+- Restart MIA-DataBento-Paper : Running
+- Bot 2 attend Tokyo open ~03h00 Paris pour 1er trade post-deploy
+
+### Suivi post-deploy
+- J+1 (30/04 matin) : verifier log SIGNATURES audit apparait au prochain trade Bot 2 + champ `sig_*` present dans trades.jsonl
+- J+5 (04/05) : re-run backtest sur n=20-30 trades cumules. Pattern Tier A confirme/infirme ?
+- J+14 (13/05) : si n>=30 et pattern stable → mandater ml-trainer pour verdict GO/NOGO Phase B
+- J+30 : decision finale Phase B activable (avec mitigation Pattern 11 = mode hybrid scoring vs binary cascade)
+
+### Liens
+- Memory `feedback_data_mining_trap.md` (n=100 Lopez minimum)
+- Memory `feedback_ia_traps_detection.md` (Pattern 11 V1 cascade rules)
+- Rule `.claude/rules/data-quality.md` (rechute #3)
+- Rule `.claude/rules/critical-tasks-review.md` (Phase B critere 1)
+- Backtest CSV : `DATA/BACKTEST/signatures_bot2_*.csv`
+
+---
+
+## 2026-04-30 02:00 — [FEATURE check_exit_dtc proactif Bot 2 — fix bug "2 fills simultanes" via Live trades stream]
+
+**Categorie** : FEATURE CRITIQUE (resout bug capital orphan + position residuelle imprevue)
+**Impact prod** : BOT 2 (databento_paper_trader Sim2)
+**Fichier(s)** :
+- Modif `CORE/databento_live_stream.py` : ajout subscribe schema=`trades` (en plus de ohlcv-1m) + handler `TradeMsg` + thread daemon flush 0.5Hz cache `LIVE_CACHE/{ES,NQ}_c_0_last_trade.json`
+- Modif `CORE/databento_paper_trader.py` : ajout `_read_live_trade_price()` + `_check_exit_dtc()` + integration dans `run()` (appel AVANT `_process_symbol`) + poll adaptatif (30s → 2s si position ouverte)
+**Reviewer(s) agent** :
+- Plan agent (29/04 nuit) : verdict GO-AVEC-RESERVES SEVERES sur port pattern Bot 1 → recommande Live trades schema (au lieu de Live OHLCV cache 60s) car DTC subscribe_market_data refuse par SC server
+- Test empirique 30/04 nuit : round-trip NQ Sim2 valide 1 seul fill (TP) au lieu de 2 (avant fix)
+
+### Quoi
+Port du pattern `check_exit()` de Bot 1 (`mia_paper_trader.py:1600`) vers Bot 2 :
+- Bot 1 utilise banner price DMP (latence ~100ms) pour anticiper hit SL/TP avant que SC fille les 2 brackets simultanement → cancel proactif les 2 brackets.
+- Bot 2 ne pouvait pas faire ce pattern car DTC `subscribe_market_data` refuse par SC server (cf `mia_paper_trader.py:312-316` "Market data request not allowed").
+- Solution : etendre le service `MIA-Live-OHLCV` pour subscribe AUSSI au schema `trades` Databento Live (chaque transaction CME, latence ~100-200ms). Bot 2 lit le cache `_last_trade.json` (mis a jour 0.5Hz par flush thread daemon) pour anticiper le hit.
+
+Mitigation faux positifs (Plan agent verdict P0) :
+- Skip check si position ouverte depuis < 5s (laisser SC enregistrer brackets avant de check)
+- Skip si live trade cache stale (>5s) → fallback comportement actuel (OCO callback existant)
+
+### Pourquoi
+Test empirique 29/04 nuit : envoi BUY MARKET 1 NQ Sim2 + bracket TP=27289.25 SL=27285.50 → **les 2 brackets ont fillé** dans la même seconde (NQ a oscille sur 4 ticks). Position résiduelle SHORT 1 NQ imprévue.
+
+L'OCO manuel existant dans `dtc_connector.py:574` ne suffit pas en marche volatile : delai callback DTC ~200-500ms vs 2 fills broker en <1s. Le FF cancel ajoute aujourd'hui (etape precedente) ne résout pas non plus (réactif, pas proactif).
+
+Bot 1 n'a pas ce bug car `check_exit()` proactif tourne tick par tick sur banner price → cancel les 2 brackets AVANT que SC ne fille les 2.
+
+### Impact attendu
+- **Resolution bug "2 fills simultanes"** : un seul fill (TP ou SL), pas les 2 → 0 position résiduelle imprévue
+- **Latence reaction** : 100-200ms (vs 200-500ms callback OCO) = course gagnée vs marche
+- **Effet bord** : poll Bot 2 raccourci 30s→2s si position ouverte = 15x plus de checks. Cost CPU/disk minime.
+- **Pas de regression** : si live trade cache absent/stale → fallback OCO callback existant comme avant
+
+### Validation pre-deploy
+- [x] Smoke test stream trades : `LIVE_CACHE/{ES,NQ}_c_0_last_trade.json` mis a jour avec latence **115ms** (vs 60s ohlcv-1m)
+- [x] Test live round-trip NQ Sim2 (1 micro) AVANT fix : 2 fills simultanés (SL @ 27285.5 + TP @ 27289.25) = bug reproduit
+- [x] Test live round-trip NQ Sim2 (1 micro) APRES fix : **1 seul fill** (TP @ 27296.25), 0 orphan SL = bug résolu
+- [x] Plan agent review : GO-AVEC-RESERVES → mitigation entry_ts buffer 5s appliquée
+- [x] Syntax Python OK (3 fichiers : eco_calendar.py, databento_live_stream.py, databento_paper_trader.py)
+
+### Revert plan
+```bash
+ssh Administrator@212.28.179.199
+nssm stop MIA-DataBento-Paper MIA-Live-OHLCV
+cd C:/TRADING_SIERRA_CHART_AUTO
+git checkout CORE/databento_live_stream.py CORE/databento_paper_trader.py
+nssm start MIA-Live-OHLCV MIA-DataBento-Paper
+```
+
+### Deployed at 2026-04-30 02:00 UTC
+- SCP `databento_live_stream.py` → VPS OK
+- SCP `databento_paper_trader.py` → VPS OK
+- Restart `MIA-Live-OHLCV` : Running (subscribe ohlcv-1m + trades simultanes)
+- Restart `MIA-DataBento-Paper` : Running (check_exit_dtc actif)
+- Live trade cache valide : NQ price=27271 lat=0.115s, ES price=7159 lat=0.114s
+
+### Suivi post-deploy
+- J+1 : verifier err.log clean + count `CHECK_EXIT_DTC_HIT` events dans events.jsonl
+- J+5 : audit empirique 5j → confirmer 0 orphan SL/TP residuel post-FF + check_exit_dtc
+- J+30 : valider que mitigation 5s entry_ts buffer ne crée pas de cancel premature
+
+### Liens
+- INCIDENT_LOG : 2026-04-29 nuit incident "2 fills simultanés" reproduit empiriquement
+- Memory : `feedback_automation_first.md` (preference Jackson auto > manual)
+- Plan agent verdict 29/04 nuit (P0 mitigation entry_ts + alternative Live trades vs DTC market data)
+- Test empirique : `CORE/test_dtc_round_trip_nq.py`
+- Pattern source : `mia_paper_trader.py:1600` `check_exit()` Bot 1
+
+---
+
+## 2026-04-29 23:30 — [FEATURE eco_calendar — gate trading FOMC/NFP/CPI + fenetres session structurelles]
+
+**Categorie** : FEATURE CRITIQUE (touche moteur decision Bot 1 + Bot 2 — gate hard skip)
+**Impact prod** : BOT 1 (mia_paper_trader Sim3) + BOT 2 (databento_paper_trader Sim2) + DASHBOARD
+**Fichier(s)** :
+  - Cree : `CORE/eco_calendar.py` (475 lignes)
+  - Cree : `DASHBOARD/api/eco_calendar_routes.py` (3 endpoints)
+  - Cree : `DOCS/eco_session_blocks_design.md` (decisions + verdict agents)
+  - Cree : `tests/test_eco_calendar.py` (17 tests)
+  - Modif : `DASHBOARD/api/app.py` (register router)
+  - Modif : `DASHBOARD/static/calendar.html` (render dynamique events + sessions)
+  - Modif : `DASHBOARD/static/index.html` (sidebar badge `Eco`)
+  - Modif : `DASHBOARD/static/js/dashboard.js` (initEcoSidebar + Compare Bots)
+  - Modif : `CORE/databento_paper_trader.py` (gate `is_blocked_combined()`)
+  - Modif : `CORE/mia_paper_trader.py` (gate `is_blocked_combined()`)
+**Reviewer(s) agent** :
+  - market-analyst (verdict Q1-Q5 fenetres : NOGO Q1+Q2, GO-RESERVES Q3, GO Q4+Q5)
+  - code-reviewer (verdict NOGO sur P0 question business + 2 P1 mineurs : zoneinfo fail-loud + capture now_utc une fois)
+
+### Quoi
+Calendrier UNIFIE qui regroupe TOUTES les regles "ne pas trader" du bot :
+1. Events economiques ForexFactory (FOMC, NFP, CPI, PCE) → BLOCK -15min/+30min
+2. Open US volatilite : 09:15-09:45 ET (= 15:15-15:45 Paris ete)
+3. Close US + overnight pause : 15:30 ET → 21:00 ET (Tokyo open)
+4. Weekend : vendredi 15:30 ET → dimanche 21:00 ET
+
+Source unique : `CORE/eco_calendar.py` exposes `is_blocked_combined()` que Bot 1 + Bot 2 + dashboard interrogent.
+
+Source events : `https://nfs.faireconomy.media/ff_calendar_thisweek.json` (gratuit, hebdo, Cloudflare).
+Cache local 6h dans `DATA/CALENDAR/ff_cache.json`, fallback gracieux si fetch fail.
+
+DST automatique via `zoneinfo` (Python 3.9+ stdlib). Fail-loud si zoneinfo absent (raise ImportError au boot, evite corruption silencieuse 6 mois/an).
+
+### Pourquoi
+Soiree 29/04 : Bot 1 NQ Sim3 a perdu **-$1156 pendant FOMC** alors que la page `/calendar` du dashboard etait DECORATIVE (iframe TradingView, zero integration bot). Le marketing "MIA bloque -15min/+30min" etait un mensonge — aucun code ne faisait ce blocage.
+
+Decision Jackson : automatisation complete (cf `feedback_automation_first.md` 29/04). Pas de fichier JSON manuel. Source ForexFactory automatique + fenetres structurelles deduites de l'horloge ET.
+
+### Impact attendu
+- **Securite** : -$1156 NQ ce soir aurait ete 0 avec ce gate. Estimation $50-200/event critique evite (3-5 events/mois = ~$150-1000/mois economises).
+- **Effet bord** : bot trade environ **78-83h/semaine** au lieu de 168h H24 brut. Data collectee /2 mais data PROPRE (sans heures pourries).
+- **Dashboard** : page `/calendar` devient FONCTIONNELLE (events live + status blocking + sidebar badge `Eco BLOCK HH:MM`).
+
+### Validation pre-deploy
+- [x] Syntax Python OK (`python -c 'import ast; ast.parse(...)'` sur 5 fichiers Python)
+- [x] Smoke test live : `Federal Funds Rate (USD)` correctement detecte, blocked=True jusqu'a 18:30 UTC. Bot 2 logs `[ES] ECO BLOCK ... [NQ] ECO BLOCK ...` valides.
+- [x] **17 tests unitaires passent** (`tests/test_eco_calendar.py` : 9 scenarios session + 2 combined + 1 import + 5 edge cases)
+- [x] Review agent : market-analyst (Q1-Q5) + code-reviewer (P0+P1+P2)
+- [x] Fixes P1 appliques : zoneinfo fail-loud + capture now_utc une seule fois
+- [x] Fix glob `*_trades.jsonl` Bot 1 (exclude databento) — applique en parallele
+
+### Revert plan
+```bash
+ssh Administrator@212.28.179.199
+nssm stop MIA-Paper MIA-DataBento-Paper MIA-Dashboard
+cd C:/TRADING_SIERRA_CHART_AUTO
+git checkout CORE/eco_calendar.py CORE/mia_paper_trader.py CORE/databento_paper_trader.py
+git checkout DASHBOARD/api/eco_calendar_routes.py DASHBOARD/api/app.py
+git checkout DASHBOARD/static/calendar.html DASHBOARD/static/js/dashboard.js DASHBOARD/static/index.html
+nssm start MIA-Dashboard MIA-DataBento-Paper MIA-Paper
+```
+
+### Suivi post-deploy
+- J+1 (30/04) : verifier err.log Bot 1 + Bot 2 clean de TypeError eco_calendar. Verifier les logs ECO_BLOCK pendant les fenetres open US (15:15-15:45 Paris) + close US (21:30 Paris).
+- J+5 (04/05) : audit empirique 5 jours data — bucket horaire UTC PnL/trade. Si fenetre montre PF<0.7 sur n>=30 → maintenir gate. Si fenetre PF>1.2 → reconsiderer relaxation (ex: serrer Q3 a 10min au lieu de 30min).
+- J+30 (29/05) : validation backtest preservation wins historiques. Eco events + sessions doivent ne PAS etre dans la fenetre des trades gagnants historiques (sinon cas de trading que le gate fait perdre).
+
+### Liens
+- INCIDENT_LOG : 2026-04-29 incident -$1156 NQ pendant FOMC
+- Memory : `feedback_automation_first.md` (preference Jackson auto > manual)
+- Design : `DOCS/eco_session_blocks_design.md` (decisions Q1-Q5 + verdicts agents)
+- Verdict market-analyst : NOGO Q1+Q2 (close 21:30 + reprise rollover, pas de data) ; GO-RESERVES Q3 (open US ±15) ; GO Q4 (no Sunday) ; GO Q5 (pas flatten)
+- Verdict code-reviewer rollback (FIX 1+2+5) : 3/3 GO + observations P1 fixees
+
+---
+
+## 2026-04-29 22:00 — [FIX defensif Bot 2 — cleanup orphan au boot + stale position detection]
+
+**Categorie** : FIX (touche moteur execution OCO + monitoring runtime)
+**Impact prod** : BOT 2 (databento_paper_trader Sim2) UNIQUEMENT
+**Fichier(s)** : `CORE/databento_paper_trader.py:478-489 (init), 590-595 (call), 597-685 (nouvelles methodes), 887-891 (call dans _emit_periodic_logs)`
+**Reviewer(s) agent** : aucun (modif defensive, pas de scoring/gate touche)
+
+### Quoi
+Deux ajouts complementaires :
+1. **`_scan_recent_archives_for_orphan_cancel`** : au boot, apres recovery `_reload_active_positions_or_cancel_orphans`, scan TOUS les fichiers `databento_active_positions.json.processed.*` modifies dans les dernieres 24h et envoie cancel defensif sur tous les CIDs (tp_cid, sl_cid). Couvre le cas "manual flatten in-session puis restart bot rapide" ou des CIDs d'une session anterieure peuvent rester pending au broker. DTC tolere cancel sur ordre deja ferme (no-op silencieux).
+2. **`_check_stale_positions`** : appele dans `_emit_periodic_logs` toutes les 5min. Si une position dans `active_positions` est ouverte depuis > 30min sans aucun fill TP/SL recu, emit `STALE_POSITION_WARNING` (idempotent via flag `_stale_warned`). Pas de cancel auto pour eviter de couper un trade legitime long-running. Jackson decide manuellement.
+
+### Pourquoi
+Soiree 29/04 : orphan B|Stop|27303.31 visible sur Sim2 alors que position FLAT cote broker. Cause : Jackson a fait flatten manuel sur Sierra Chart → bot n'a recu aucun ORDER_UPDATE matching ses CIDs → `_on_dtc_fill` jamais declenche → OCO manuel ne cancel pas l'oppose → SL reste pending au broker = orphan.
+
+Le mecanisme existant `_reload_active_positions_or_cancel_orphans` (ligne 518) gere bien le cas state.json non-vide au boot, mais ne couvrait pas :
+- Detection RUNTIME d'une position fantome (manual flatten sans restart bot)
+- Cancel defensif sur archives anciennes (cas crash bot en cascade)
+
+Recommandation market-analyst 28/04 (3e action) : "broker reconciliation au boot". Implementation light sans query DTC native (Option 3 reportee = trop d'engineering).
+
+### Impact attendu
+- Reduction risque orphan : couvre 95% des cas (manual flatten + restart, crash bot)
+- Detection runtime : alerte Jackson si position fantome > 30min
+- Effet de bord : 0 sur trades actifs (cancel defensif = no-op si ordre deja ferme)
+- Cout perf : 1 read fichier glob + 1 cancel par CID au boot. ~10ms total. Negligeable.
+
+### Validation pre-deploy
+- [x] Syntax Python OK (`python -c 'import ast; ast.parse(...)'`)
+- [x] Smoke test import + signatures methodes OK
+- [ ] Test empirique : restart bot + verifier logs `[BOT] cleanup defensif boot` + `STALE_POSITION_WARNING` apres 30min position open
+- [x] Pas de modif scoring/gate → backtest preservation N/A
+- [ ] Review agent : skip (modif defensive, pas Tier 1 risk)
+
+### Revert plan
+```bash
+# Si nouveau bug runtime detecte :
+ssh Administrator@212.28.179.199
+nssm stop MIA-DataBento-Paper
+# Revert via git :
+cd C:/TRADING_SIERRA_CHART_AUTO
+git diff HEAD CORE/databento_paper_trader.py  # check diff
+git checkout CORE/databento_paper_trader.py   # revert vers HEAD
+nssm start MIA-DataBento-Paper
+```
+
+### Deployed at 2026-04-29 16:40 UTC
+- SCP `databento_paper_trader.py` → VPS OK (75302 bytes)
+- SCP `log_catalog.py` → VPS OK (ajout codes `CLEANUP_DEFENSIVE_BOOT`, `CLEANUP_DEFENSIVE_DONE`, `STALE_POSITION_WARNING`)
+- `nssm restart MIA-DataBento-Paper` → Status Running
+- Boot logs validés :
+  - `[BOT] OCO recovery : 1 positions pending au previous run` (NQ orphan ce soir)
+  - `[BOT] cancel orphan NQ tp_cid=MIA_TP_af0a59ef` ✓
+  - `[BOT] cancel orphan NQ sl_cid=MIA_SL_3f64131a` ✓
+  - `[BOT] cleanup defensif boot : 8 archives <24h, 22 CIDs candidats`
+  - `[BOT] cleanup defensif : 22/22 cancels envoyes`
+- Warning attendu : `Cancel sans ServerOrderID` sur archives anciennes (pré-FIX B2 28/04, n'avaient pas tp_sid/sl_sid persistés). Cancel envoyé quand même = best-effort. Archives futures (post-28/04) auront les SID = cancel effectif.
+- KeyError [EMIT_FAIL] sur les 3 nouveaux codes log_catalog : `log_catalog.py` redéployé après le restart. Sera effectif au prochain restart bot. Cosmétique (print stdout fonctionne, seul l'écriture JSONL structurée échoue temporairement).
+
+### Suivi post-deploy
+- J+1 : verifier err.log VPS clean, log `[BOT] cleanup defensif` au demarrage suivant, 0 orphan visible Sim2
+- J+7 : compter occurrences `STALE_POSITION_WARNING` (devrait etre 0 si pas de manual flatten)
+- J+30 : valider ratio orphans / trades total < 1%
+
+### Liens
+- INCIDENT_LOG : 2026-04-29 12:00 (DTC silent crash, prereq fix)
+- Memory : aucune (modif defensive simple)
+- Recommandation source : market-analyst 28/04 verdict Bot 2 recadrage (3e action "broker reconciliation au boot")
+
+---
+
+## 2026-04-29 12:00 — [FIX critique DTC — silent crash _recv_loop sur ORDER_UPDATE null]
+
+**Categorie** : FIX CRITIQUE (touche moteur execution OCO + state position tracking)
+**Impact prod** : BOT 1 (mia_paper_trader Sim3) + BOT 2 (databento_paper_trader Sim2)
+**Fichier(s)** : `BOT/dtc_connector.py:497, 510-511, 527, 550`
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES → reserves traitees inline)
+
+### Quoi
+Fix du pattern `msg.get(key, default)` dans `_handle_order_update`. Sierra Chart envoie ORDER_UPDATE intermediaires avec `"FilledQuantity": null` → `dict.get("FilledQuantity", 0)` retourne `None` (pas 0) car la cle existe → comparaison `None > 0` leve TypeError → `_recv_loop` plante silencieusement → ORDER_UPDATE final (status=7) jamais traite → fills perdus → state `active_positions` jamais mis a jour → **position fantome**.
+
+```python
+# AVANT (bug)
+filled_qty = msg.get("FilledQuantity", 0)  # null → None
+if filled_qty > 0:  # TypeError
+    ...
+
+# APRES (fix)
+filled_qty = msg.get("FilledQuantity") or 0  # null → 0
+if filled_qty > 0:  # safe
+    ...
+```
+
+4 sites patches dans `_handle_order_update` :
+- ligne 497 : `fill_price = (msg.get("AverageFillPrice") or msg.get("LastFillPrice") or msg.get("Price1") or 0)`
+- ligne 510 : `filled_qty = msg.get("FilledQuantity") or 0`
+- ligne 511 : `expected_qty = msg.get("OrderQuantity") or 0`
+- ligne 527 : `is_filled = ... or ((msg.get("FilledQuantity") or 0) > 0 and ...)`
+- ligne 550 : `quantity = (msg.get("FilledQuantity") or msg.get("OrderQuantity") or 0)`
+
+### Pourquoi
+Bot 2 Sim2 a presente desync state vs Sierra Chart broker pour la 2eme fois en 24h :
+- 28/04 17:00 : NQ -3 contrats fantome non protege
+- 29/04 11:00 : NQ -6 contrats fantome P/L -729T (= -$365)
+
+Investigation forensique des err.log revele `DTC order update error: '>' not supported between instances of 'NoneType' and 'int'` repete des centaines de fois depuis 24h+. Cause root identifiee : bug `dict.get` default qui ne marche pas sur valeur null.
+
+### Impact attendu
+- Bot 2 : ne perd plus les fills sur ORDER_UPDATE intermediaires SC → state `active_positions` synchronise → plus de position fantome
+- Bot 1 : meme fix, code DTC partage. Devrait ameliorer la robustesse (mais Bot 1 avait moins d'incidence visible — moins de fills probable)
+
+### Validation pre-deploy
+- Test empirique isole : mock `{"FilledQuantity": null, "OrderQuantity": null}` → AVANT TypeError, APRES retourne `NOT_FILL` proprement
+- Test fill normal `{"FilledQuantity": 3, "OrderQuantity": 3}` → AVANT et APRES retournent OK (pas de regression)
+- code-reviewer audit : GO-AVEC-RESERVES → fix ligne 550 residuelle ajoute → GO
+- Deploy VPS via SCP `BOT/dtc_connector.py`
+- Restart `MIA-DataBento-Paper` + `MIA-Paper`
+- Surveillance err.log Bot 2 : 30 secondes sans nouvelle erreur DTC ✓
+
+### Revert plan
+1. `git checkout BOT/dtc_connector.py` (revert local)
+2. `scp BOT/dtc_connector.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/BOT/"`
+3. `Restart-Service MIA-DataBento-Paper, MIA-Paper`
+4. Note : revert restaurerait le bug, donc seulement si le fix introduit une regression (improbable, fix est strictement plus permissif).
+
+### Deployed at 2026-04-29 12:00 UTC
+
+### Suivi post-deploy
+- **J+1 (30/04)** : verifier err.log Bot 2 + Bot 1 — aucune ligne `TypeError.*NoneType` ne doit apparaitre
+- **J+1** : verifier que `state.json` Bot 2 reste sync avec realite Sierra Chart Sim2 (positions ouvertes match)
+- **J+7** : audit cumul fills handled vs fills perdus (idealement 0 perte)
+- Backlog : ajouter test unitaire `test_dtc_handle_order_update_null_values()` pour prevenir regression
+
+### Liens
+- INCIDENT_LOG : 2026-04-29 entry [VALIDATION_MISS]
+- Memory : `feedback_validation_miss_patterns.md` (pattern silent crash propage)
+- Reviewed-by : code-reviewer (GO-AVEC-RESERVES → reserves traitees)
+
+---
+
+## 2026-04-28 18:50 — [FIX cascade Sim2 — incident orphan/double-entry + pipeline fige]
+
+**Categorie** : FIX (10 fixes deployes ensemble apres incident bot)
+**Impact prod** : BOT databento_paper_trader (Sim2) + pipeline live VPS
+**Fichier(s)** :
+- `CORE/databento_paper_trader.py` (8 fixes)
+- `CORE/log_catalog.py` (6 nouveaux codes)
+- `CORE/live_pipeline.py:150-152` (--force download)
+- `CORE/databento_download.py:84-101` (atomic write tmp+replace)
+- `CORE/build_dataset_v4_dmp_databento.py:1024-1037, 1057` (helper _mq_filled_pct)
+- 14 fichiers Phase B deployes VPS (manquants suite redeploy 28/04 matin)
+
+**Reviewer(s) agent** : code-reviewer 4 audits successifs (NOGO → GO-AVEC-RESERVES → GO-AVEC-RESERVES → GO-AVEC-RESERVES). Toutes reserves traitees inline (zero dette).
+
+### Quoi
+Cascade de fixes apres incident Sim2 17:17 UTC :
+1. **Bot Fix #1** : dedup signal cross-restart `(sym, bar_ts)` persiste disque (`_traded_bars_file`)
+2. **Bot Fix #2** : bar staleness HARD SKIP (avant : warn only, bot tradait quand meme)
+3. **Bot Fix #3** : OCO recovery au boot (cancel orphans depuis `_active_positions_state_file`)
+4. **Bot Fix B1** : `self.dtc.on_fill = self._on_dtc_fill` (avant : `register_fill_callback` n'existe pas → callback JAMAIS appele)
+5. **Bot Fix B2** : persist `_server_order_ids` (tp_sid/sl_sid/parent_sid) + restore au boot AVANT cancel (sinon SC ignore le cancel)
+6. **Bot Fix R1** : `_persist_active_positions` sous `_pos_lock` (anti race iteration/mutation)
+7. **Bot Fix R4** : `bar_key` normalise via `pd.to_datetime().strftime('%Y-%m-%dT%H:%M:%S')` + check `pd.isna` + catch `(TypeError, ValueError, AttributeError)`
+8. **Bot R2** : `_rotate_day_if_needed` pour bot 24/7 (rotation fichier dedup a minuit UTC)
+9. **Bot Atomic** : `_persist_active_positions` write tmp+rename
+10. **Bot Fail-loud** : `BAR_KEY_PARSE_FAIL` emit + storm detection >=10/min
+11. **Bot threshold** : `_stale_threshold_sec` 600s → 2400s (aligne sur `DATABENTO_DELAY_MIN=30`)
+12. **Pipeline --force** : intra-day download passe `--force` quand `partial_end` non-null
+13. **Pipeline atomic** : `databento_download.py` ecrit DBN+parquet via tmp+replace
+14. **Pipeline summary** : helper `_mq_filled_pct` cherche `dist_mq_call_pct` (apres drop) puis brut
+
+### Pourquoi
+Incident 28/04 17:17 UTC :
+- ES double entree BUY sur meme bar `16:10:00` (multiple restarts service → dedup in-memory only perdu)
+- NQ ordre orphelin SHORT 3 contrats (TP fillé pendant restart, `_recv_loop` mort + callback `register_fill_callback` inexistant + cancel sans ServerOrderID)
+- Pipeline fige sur bar `16:10` pendant 2h+ (14 fichiers Phase B manquants VPS + `--force` manquant au download intra-day)
+
+### Impact attendu
+- Bot Sim2 = data collection paper sur signaux fictifs, pas live timing-sensitive
+- Bot tradera sur bars Databento Historical T-30min (limite API). Pour live precision → upgrade Databento Live API.
+- Pipeline livre desormais 418 cols enrichies (53 base + 365 Phase B) avec MQ filled = 26.9% intra-day (au lieu de 0% cosmetique)
+- Aucune position active a deployer (Cancel All effectue manuellement par Jackson)
+
+### Validation pre-deploy
+- 4 audits code-reviewer successifs (verdicts NOGO → GO-AVEC-RESERVES x3, toutes reserves traitees)
+- Tests empiriques dry-run : init bot + reload state + dedup + atomic write + storm trigger + rotate jour
+- Verification post-deploy VPS :
+  - `BAR_STALE_SKIP age=8472s` (bar 16:10 skip apres restart) ✅
+  - `BAR_STALE_SKIP age=1934s` (bar 18:11 skip avec ancien threshold 600s) ✅
+  - Apres threshold 2400s : `[NQ] 18:11:00 close=27130 bull=4 → BUY → OPEN` ✅
+  - Pipeline iter 1 OK : 1092 bars, mq=26.9%, dernière bar 18:11 (au lieu de 16:10) ✅
+
+### Revert plan
+1. Restaurer `databento_paper_trader.py` au commit precedent (avant 28/04 18:50)
+2. Restaurer `log_catalog.py` (sans nouveaux codes ne casse rien — codes inconnus juste loggees vides)
+3. Restaurer `live_pipeline.py` (`--force` removed → reprod du bug pipeline fige)
+4. Restaurer `databento_download.py` (atomic write removed → race convert/download)
+5. Restart MIA-DataBento-Paper + MIA-LivePipeline
+
+### Deployed at 2026-04-28 18:50 UTC
+
+### Suivi post-deploy
+- **J+1 (29/04)** : verifier `_rotate_day_if_needed` declenche a minuit UTC, nouveau fichier `20260429_databento_traded_bars.txt` cree, dedup keys=0
+- **J+1 (29/04)** : verifier qu'aucune entree dans `errors/errors_*.jsonl` ne contient `BAR_KEY_PARSE_FAIL` ni `BAR_KEY_PARSE_FAIL_STORM`
+- **J+1 (29/04)** : verifier que `databento_active_positions.json` reste a jour apres chaque fill
+- **J+7 (05/05)** : couts Databento (re-download intra-day = ~620MB/jour ; verifier dashboard facturation)
+- **J+30 (28/05)** : performance bot Sim2 sur fenetre 30 jours
+
+### DETTE TECHNIQUE explicite — BLOQUANTE avant passage AMP live
+
+**`_stale_threshold_sec = 2400` (40 min) sur Databento Historical API** :
+- Bot Sim2 trade actuellement sur des bars de **30+ minutes d'age** (delai constant Databento Historical)
+- Acceptable en paper Sim2 (collecte donnees comportementales) — **PAS acceptable en AMP live**
+- Sur live AMP : slippage systematique + entrees sur prix inexistants (le marche a deja bouge)
+- **Action requise avant AMP live** : upgrade Databento Live API (~$300/mois subscription)
+- Owner : Jackson — decision business
+- Deadline : avant tout passage Sim2 → AMP live (pas de date forcee tant qu'on reste en paper)
+
+Cette dette est consciente, documentee, et trackee. Reviewer audit final (29/04) a flagge ce point comme "elephant dans la piece" pour live trading. Maintenu pour permettre la poursuite de la collecte data Sim2 en attendant decision upgrade.
+
+### Liens
+- INCIDENT_LOG : 2026-04-28 entry (cascade VALIDATION_MISS)
+- Memory : `feedback_validation_miss_patterns.md` (pattern repete)
+- Review agent : code-reviewer (4 audits) — toutes reserves traitees inline
+- Reviewed-by : code-reviewer (GO-AVEC-RESERVES → reserves traitees)
+
+---
+
+## 2026-04-28 13:13 — [FIX bot stuck — DOUBLE fix MTF threshold + gamma cap]
+
+**Categorie** : FIX (2 fixes deployes ensemble)
+**Impact prod** : DASHBOARD (consume par PAPER + V2CLEAN bot)
+**Fichier(s)** : `DASHBOARD/api/builders.py:1085, 1262-1276`
+**Reviewer(s) agent** : code-reviewer (NO-GO plan rules complet, GO sur fix simple Option B)
+
+### Quoi
+Modification scoring `build_conseil_global` : MTF threshold abaissé de `>= 3` à `>= 2` pour bull_pts/bear_pts. Tous autres seuils inchangés (verdict ACHAT PRUDENT toujours `bull_pts >= 4 AND bear_pts <= 2`).
+
+### Pourquoi
+Bot paper ne trade plus depuis 25/04 (4 jours, 0 trade) malgré service Running. Investigation empirique :
+- `LOGS/decisions/decisions_20260427_paper.jsonl` : 2790 conseil events, **bull_pts max=3, bear_pts max=3**, 0 bars eligible verdict.
+- 40% bars bias=NEUTRAL (0 pts), mtf_bulls<3 frequent (0 pts) → bull_pts plafonne a 3.
+- 24/04 (PF 2.64 reel) : marche directionnel, bias clair → atteignait bull_pts >= 4.
+- 25-28/04 : marche indecis → arithmétiquement impossible d'atteindre 4 sans nouveau scoring.
+
+Simulation fix sur dataset 27/04 : **0 → 40 candidats** (36 ACHAT_PRUDENT + 4 VENTE_PRUDENTE). Filtrage aval (MTF gates, confidence, SLTP, payoff) → estim ~3-5 trades/jour (cohérent 24/04 = 193 candidats → 13 trades = 6.7% acceptation aval).
+
+### Validation pre-deploy
+- Test syntax import OK
+- Test simulation 27/04 : 40 candidats post-fix vs 0 actuellement
+- Backup `DASHBOARD/api/builders.py.backup_20260428_premerge`
+- 24/04 PF 2.64 preserve : MTF >= 3 etait deja atteint, ajout MTF=2 ne degrade pas le scoring de ce jour
+
+### Sessions
+**Toutes sessions** (Asia + Londres + US RTH) — paper trader n'a aucun filtre session, donc fix s'applique 24/24h trading day. Validation Jackson 28/04 12:30.
+
+### Revert plan
+```bash
+cp DASHBOARD/api/builders.py.backup_20260428_premerge DASHBOARD/api/builders.py
+ssh Administrator@212.28.179.199 "Restart-Service MIA-Dashboard"
+```
+
+### Suivi post-deploy
+- J+1 (29/04) : verifier nb trades/jour ≥ 3, PF >= 1.0
+- J+5 (03/05) : bilan stabilité multi-jours, comparer PF/WR vs 24/04 reference (PF 2.64)
+- Rollback automatique si : 5 jours consecutifs avec PF < 0.8 OR drawdown > 200t
+
+### Cross-reference
+- Diagnostic complet : INCIDENT_LOG.md entry 28/04 12:00 (a creer apres deploy)
+- Code-reviewer ULTRATHINK : NO-GO sur plan rules_bot complet, GO Option B fix simple
+- Audit BN agent : 24/04 = jour cassé (BN dead), confirmation que PF 2.64 24/04 viable malgré BN cassé (= scoring conseil_global fait le travail)
+
+### Deployed at
+- **2026-04-28 12:53** : initial deploy fix #1 MTF >= 2 (cache Python pas purge)
+- **2026-04-28 13:08** : pycache purge + restart Dashboard + Paper
+- **2026-04-28 13:13** : fix #2 _GAMMA_CAP_BULL_BEAR 3 → 4 (cap residuel decouvert)
+- **2026-04-28 13:14** : Stop-Start fresh + pycache purge complet
+- **2026-04-28 13:20** : ✅ **PREMIER TRADE post-fix** : ES SHORT +22t TP en 5 min
+- **2026-04-28 13:20+** : 3 trades pris en 8 min (ES SHORT 7179.75 TP, NQ SHORT, ES SHORT 7173.75)
+
+### Suivi J+0 (28/04 13:35) — BILAN FINAL SESSION
+**3 TRADES — 3 TP — WR 100% — +$297**
+
+| Trade | Sym | Direction | Outcome | PnL ticks | $ (3 micros) |
+|---|---|---|---|---|---|
+| 1 | ES | SHORT | TP | +22t | +$82.50 |
+| 2 | NQ | SHORT | TP | +68t | +$102 |
+| 3 | ES | SHORT | TP | +30t | +$112.50 |
+| | | | **TOTAL** | **+120t** | **+$297** |
+
+- Marche bearish bias confirme post-fix (mtf_bears=4 + bias=BEARISH = VENTE PRUDENTE)
+- Sessions : Asia + London + US RTH active (pas de filtre)
+- TP placement : `TP_STANDARD_WALL_FAR` (SL × 2.0) traverse les murs TIER3 (Put_0DTE, BL, LL) en pratique → conserve la philosophie originale du SLTPEngine
+
+### Lecons importantes
+1. **"TP derriere mur" != bug** : marche traverse les TIER3 (murs papier)
+2. **R:R mecanique 2.0 > intuition visuelle** : TP_STANDARD_WALL_FAR fonctionne
+3. **NE PAS paniquer sur logs incomplets** : `trading_*.jsonl` peut manquer events ; `state.json` reste fiable. NQ trade etait pas orphan, juste TRADE_CLOSE non logge.
+4. **Tentative fix TIER3 inclusion + rollback 5min** : mauvaise pratique. Faut backtest 60j AVANT modif.
+
+---
+
 ## 2026-04-28 00:30 — [FEAT signal_engine_rules V2 — 3 rules pullback continuation validees]
 
 **Categorie** : FEAT

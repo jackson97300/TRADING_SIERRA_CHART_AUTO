@@ -136,6 +136,9 @@ LOG_CODES = {
     "GATE_HEALTH_BLOCK":       (LogLevel.ALERTE,   "decisions", "Gate Health block : V2CLEAN status={status}"),
     "GATE_SESSION_BLOCK":      (LogLevel.INFO,     "decisions", "Gate Session block : phase={phase}"),
     "GATE_RISK_BLOCK":         (LogLevel.ALERTE,   "decisions", "Gate Risk block : {reason}"),
+    "ECO_BLOCK":               (LogLevel.INFO,     "decisions", "Eco/Session block : {sym} {reason} (jusqu'a {until_utc})"),
+    "VETO_BUY_COLOR_WALL":     (LogLevel.INFO,     "decisions", "Veto BUY {sym} : color_dn wall a {dist_color_dn_pct}% (seuil {threshold}%)"),
+    "VETO_SHORT_NO_WALL":      (LogLevel.INFO,     "decisions", "Veto SHORT {sym} : {reason} (sl={sl_ticks}t tp={tp_ticks}t)"),
 
     "DISCORD_SEND_OK":         (LogLevel.INFO,     "events", "Discord envoye : channel={channel}"),
     "DISCORD_SEND_FAIL":       (LogLevel.MAJEUR,   "events", "Discord echec : {err}"),
@@ -146,6 +149,54 @@ LOG_CODES = {
     "GENERIC_MAJEUR":          (LogLevel.MAJEUR,   "events", "{msg}"),
     "GENERIC_CRITIQUE":        (LogLevel.CRITIQUE, "events", "{msg}"),
     "GENERIC_DEBUG":           (LogLevel.INFO,     "events", "[DEBUG] {msg}"),
+
+    # --- BOT 2 DB databento_paper_trader codes (28/04/2026) ---
+    "BOT_START":                 (LogLevel.INFO,     "events", "Bot demarre : account={account} qty={quantity} rth={rth_only}"),
+    "BOT_STOP":                  (LogLevel.INFO,     "events", "Bot stop : account={account} positions_open={positions_open_at_stop}"),
+    "DTC_CONNECT_FAIL":          (LogLevel.MAJEUR,   "execution", "DTC connect fail : account={account}"),
+    "DTC_CONNECTED":             (LogLevel.INFO,     "execution", "DTC connect OK : account={account}"),
+    "GATE_POSITION_BLOCK":       (LogLevel.INFO,     "decisions", "Position block : {sym} reason={reason}"),
+    "ORDER_DTC_ERROR":           (LogLevel.MAJEUR,   "execution", "Order DTC error : {sym} {error}"),
+    # FIX C2 review : renomme pour eviter collision avec ORDER_REJECT V2CLEAN bot
+    "ORDER_REJECT_BOT2":         (LogLevel.MAJEUR,   "execution", "Order reject BOT2 : {sym} dir={direction} entry={entry}"),
+
+    # --- ENRICHISSEMENT comprehension comportement bot (28/04 soir) ---
+    # 1. Decision tracking (chaque bar processed)
+    "BAR_PROCESSED":             (LogLevel.INFO,     "decisions", "Bar : {sym} ts={bar_ts} close={close} bull={bull_pts} bear={bear_pts} dir={direction}"),
+    "THRESHOLD_NEAR_MISS":       (LogLevel.INFO,     "decisions", "Near miss : {sym} bull={bull_pts} bear={bear_pts} besoin_de={missing_for_signal}"),
+    "HOLD_REASON_AGGREGATE":     (LogLevel.INFO,     "decisions", "Aggregate {n_bars}b ({sym}) : bull max={bull_max} bear max={bear_max} hold={n_hold} buy={n_buy} sell={n_sell} conflit={n_conflit}"),
+
+    # 2. Heartbeat & alertes pipeline/data
+    "BOT_HEARTBEAT":             (LogLevel.INFO,     "events", "Heartbeat : account={account} positions={n_positions} bars_processed_total={total_bars} last_bar_age_sec={last_bar_age}"),
+    "BAR_STALE_WARNING":         (LogLevel.ALERTE,   "events", "Bar stale : {sym} last_bar_age_sec={age} > {threshold}s"),
+    "BAR_STALE_SKIP":            (LogLevel.ALERTE,   "events", "Bar stale SKIP : {sym} bar_ts={bar_ts} age={age}s > {threshold}s"),
+    "BAR_ALREADY_TRADED":        (LogLevel.INFO,     "events", "Bar deja tradee (dedup cross-restart) : {sym} key={bar_key}"),
+    "BAR_KEY_PARSE_FAIL":        (LogLevel.MAJEUR,   "events", "Bar key parse fail (SKIP) : {sym} bar_ts={bar_ts} err={err}"),
+    "BAR_KEY_PARSE_FAIL_STORM":  (LogLevel.CRITIQUE, "events", "Storm BAR_KEY_PARSE_FAIL : {n_fails} fails en {window_sec}s — pipeline upstream casse ?"),
+    "OCO_RECOVERY_BOOT":         (LogLevel.MAJEUR,   "events", "OCO recovery au boot : {n_positions} positions pending symbols={symbols}"),
+    "OCO_ORPHAN_CANCELED":       (LogLevel.MAJEUR,   "execution", "OCO orphan cancel : {sym} {cid_field}={cid}"),
+    "CLEANUP_DEFENSIVE_BOOT":    (LogLevel.MAJEUR,   "events", "Cleanup defensif boot : {n_archives} archives <24h, {n_cids} CIDs candidats"),
+    "CLEANUP_DEFENSIVE_DONE":    (LogLevel.MAJEUR,   "events", "Cleanup defensif termine : {n_sent}/{n_total} cancels envoyes"),
+    "STALE_POSITION_WARNING":    (LogLevel.MAJEUR,   "events", "Position stale : {sym} {side} ouverte depuis {age_min}min sans fill TP/SL — {msg_fr}"),
+    # ── Game changers signatures gate (30/04 nuit, brainstorm timing entry) ──
+    "SIGNATURES_COMPUTED":       (LogLevel.INFO,     "decisions", "Signatures : {sym} {direction} t1={tier1}/{tier1_max} t2={tier2}/{tier2_max} t3={tier3}/{tier3_max} score={total}"),
+    "SIGNATURES_GATE_TIER1_BLOCK": (LogLevel.MAJEUR, "decisions", "Gate signatures BLOCK Tier1 (pression directionnelle insuffisante) : {sym} {direction} t1={tier1}/{tier1_max} signaux_present={signals_on}"),
+    "SIGNATURES_GATE_TIER3_BLOCK": (LogLevel.MAJEUR, "decisions", "Gate signatures BLOCK Tier3 (invalidateur present) : {sym} {direction} t3={tier3}/{tier3_max} invalidateurs={invalidators}"),
+    "SIGNATURES_GATE_PASS":      (LogLevel.INFO,     "decisions", "Gate signatures PASS : {sym} {direction} score={total}/{max} t1={tier1} t2={tier2} t3={tier3} → entry autorisee"),
+    "CHECK_EXIT_DTC_HIT":        (LogLevel.MAJEUR,   "execution", "Check exit DTC hit : {sym} {outcome} live_price={live_price} sl={sl} tp={tp} age_s={age_s} → cancel brackets proactif"),
+    "DAY_ROLLOVER":              (LogLevel.INFO,     "events", "Rollover UTC date : {prev_date} -> {new_date} (dedup_keys_dropped={dedup_keys_dropped})"),
+    "SL_ANCHOR_BUDGET_OVERFLOW": (LogLevel.ALERTE,   "execution", "SL ancre depasse budget : {sym} risk=${risk_usd} > ${budget} (extra={sl_extra_ticks}t) → fallback close"),
+    "SL_ANCHOR_BAR_MISSING":     (LogLevel.MAJEUR,   "execution", "SL ancre bar_low/high MISSING : {sym} err={err} ({msg}) → fallback price"),
+    "SL_ANCHOR_APPLIED":         (LogLevel.INFO,     "execution", "SL ancre applique : {sym} {direction} anchor={sl_anchor} vs close={close} (+{extra_ticks}t, fallback={is_fallback})"),
+    "PIPELINE_LAG":              (LogLevel.ALERTE,   "events", "Pipeline lag : last_iter_age_sec={age} > {threshold}s"),
+    "DTC_HEARTBEAT_LOST":        (LogLevel.MAJEUR,   "execution", "DTC heartbeat absent depuis {age}s"),
+    "SCORING_NULL_FEATURES":     (LogLevel.ALERTE,   "decisions", "Scoring degrade : {sym} null_pct={null_pct}% > 50%"),
+
+    # 3. Context marche
+    "MARKET_REGIME_CHANGE":      (LogLevel.INFO,     "events", "Regime change : {sym} {from_regime} -> {to_regime} (cvd_ffd={cvd_ffd})"),
+    "MARKET_VOLATILITY_SHIFT":   (LogLevel.INFO,     "events", "Volatility shift : {sym} atr_pct={atr_pct} bucket={bucket}"),
+    "SESSION_TRANSITION":        (LogLevel.INFO,     "events", "Session : {from_session} -> {to_session}"),
+    "MQ_LEVELS_UPDATE":          (LogLevel.INFO,     "events", "MQ levels updated : {sym} call={mq_call} put={mq_put} hvl={mq_hvl}"),
 }
 
 

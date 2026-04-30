@@ -28,6 +28,12 @@ import pandas as pd
 # Import SLTPEngine (audit Tier1/2/3 sur 1349 barres, 07/03/2026)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from CORE.mia_sltp import SLTPEngine, SL_BUDGET  # SL_BUDGET pour kill-switch SELL asymetrique (R3 review 24/04)
+# FIX 29/04 (R3 audit) : import top-level avec fallback (Bot 1 run depuis racine,
+# Bot 2 depuis CORE/ → 2 conventions a supporter).
+try:
+    from CORE.constants import get_cme_trading_day
+except ImportError:
+    from constants import get_cme_trading_day
 from CORE.bias_calculator import compute_bias  # 3.7.9 (24/04) gate directionnel
 from CORE.cross_instrument import compute_cross_bonus  # 24/04 mode OBSERVATION (log-only)
 
@@ -204,7 +210,10 @@ class PaperTrader:
         os.makedirs(DATA_DIR, exist_ok=True)
         self.positions = {}  # {symbol: position_dict}
         self.today_trades = []
-        self.date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+        # FIX 29/04 (Jackson) : convention CME trading day (rollover 18:00 ET =
+        # ouverture Asia/CME futures, DST-aware), pas UTC midnight. Aligne le
+        # PnL "session" avec la realite des sessions de trading reelles.
+        self.date_str = get_cme_trading_day()
         self.log_file = os.path.join(DATA_DIR, f"{self.date_str}_trades.jsonl")
         self.snapshot_file = os.path.join(DATA_DIR, f"{self.date_str}_snapshots.jsonl")
         self.trade_count = 0
@@ -362,7 +371,8 @@ class PaperTrader:
 
         Appele en tete de boucle `run()` avant toute autre logique.
         """
-        current_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+        # FIX 29/04 (Jackson) : convention CME (18:00 ET = nouveau trading day, DST-aware)
+        current_date = get_cme_trading_day()
         if current_date == self.date_str:
             return
         prev_date = self.date_str
@@ -779,6 +789,22 @@ class PaperTrader:
             return None
         self._funnel_pass("2_cooldown_cb")
 
+        # 2ter. ECO CALENDAR + SESSION gate (29/04 soir)
+        # Calendrier UNIFIE qui regroupe :
+        #   1. Events eco High USD (FOMC, NFP, CPI, PCE) : -15min/+30min
+        #   2. Open US volatility 09:15-09:45 ET (lun-ven)
+        #   3. Post-MOC pause 15:30-18:15 ET (lun-jeu) — PILOT 30j 30/04
+        #   4. Weekend : vendredi 15:30 ET → dimanche 18:15 ET (CME Asia reopen)
+        # Source : CORE/eco_calendar.py.
+        try:
+            from CORE import eco_calendar as _eco
+            _blocked, _reason, _until = _eco.is_blocked_combined()
+            if _blocked:
+                self._funnel_reject("2_cooldown_cb", f"eco_block:{_reason or '?'}")
+                return None
+        except Exception:
+            pass  # fail-safe : si module plante, ne pas bloquer le bot
+
         # 3. Conseil Global action
         conseil = data.get("conseil_global", {}).get(sym, {})
         action = conseil.get("action", "ATTENDRE")
@@ -1053,13 +1079,70 @@ class PaperTrader:
             return None
         self._funnel_pass("8_payoff")
 
-        # Calcul prix
+        # FIX 29/04 (Jackson) : SL ancre au bar_low (LONG) / bar_high (SHORT).
+        # Avant : SL relatif au close = stoppe sur n'importe quel wick adverse
+        # (cf 5 trades 0min Bot 1 le 28/04 NQ : -$335 perdu sur wicks).
+        # Apres : SL sous le bar_low (LONG) = sous le mouvement adverse deja
+        # vu = protection structurelle + TP stretch pour preserver R/R.
+        # DMP schema 3.7.1+ fournit `bar_low`/`bar_high` (CLAUDE.md).
+        # FIX audit R2 (29/04) : fail-loud emit si bar_low/high manquant
+        # (regression DMP schema = signal a investiguer, pas masquer).
+        bar_low_v = bar_row_dict.get("bar_low")
+        bar_high_v = bar_row_dict.get("bar_high")
+        bar_anchor_fallback = False
+        try:
+            if bar_low_v is None or bar_high_v is None:
+                raise ValueError("bar_low or bar_high missing in DMP bar")
+            bar_low_v = float(bar_low_v)
+            bar_high_v = float(bar_high_v)
+        except (TypeError, ValueError) as e:
+            bar_low_v, bar_high_v = price, price
+            bar_anchor_fallback = True
+            if _v2log:
+                _v2log.emit("SL_ANCHOR_BAR_MISSING", sym=symbol,
+                            err=type(e).__name__, msg=str(e)[:80])
+
         if direction == "LONG":
-            sl_price = round(price - sl_ticks * TICK_SIZE, 2)
+            sl_anchor = min(bar_low_v, price)  # plus bas (low ou price si marubozu up)
+            sl_price = round(sl_anchor - sl_ticks * TICK_SIZE, 2)
             tp_price = round(price + tp_ticks * TICK_SIZE, 2)
         else:
-            sl_price = round(price + sl_ticks * TICK_SIZE, 2)
+            sl_anchor = max(bar_high_v, price)  # plus haut
+            sl_price = round(sl_anchor + sl_ticks * TICK_SIZE, 2)
             tp_price = round(price - tp_ticks * TICK_SIZE, 2)
+        sl_extra_ticks = abs(sl_anchor - price) / TICK_SIZE
+
+        # Re-cap budget post-ancrage : si SL ancre fait depasser max_sl_usd
+        # ($75 par sym), fallback ancre au price (close) + log warn.
+        # Sans ca : ancrage silencieux peut violer le budget config.
+        max_sl_usd_eng = engine.max_sl_usd
+        tick_value_sym = engine.tick_value
+        n_micros_sym = engine.n_micros
+        risk_usd_post = abs(price - sl_price) * tick_value_sym * n_micros_sym
+        if risk_usd_post > max_sl_usd_eng:
+            if _v2log:
+                _v2log.emit("SL_ANCHOR_BUDGET_OVERFLOW", sym=symbol,
+                            risk_usd=round(risk_usd_post, 2),
+                            budget=max_sl_usd_eng,
+                            sl_extra_ticks=int(sl_extra_ticks))
+            if direction == "LONG":
+                sl_price = round(price - sl_ticks * TICK_SIZE, 2)
+            else:
+                sl_price = round(price + sl_ticks * TICK_SIZE, 2)
+            sl_extra_ticks = 0  # reset car ancrage abandonne
+
+        # TP stretch : etirer TP de meme sl_extra_ticks pour preserver R/R
+        # initial (sinon R/R degrade silencieusement).
+        if sl_extra_ticks > 0:
+            if direction == "LONG":
+                tp_price = round(tp_price + sl_extra_ticks * TICK_SIZE, 2)
+            else:
+                tp_price = round(tp_price - sl_extra_ticks * TICK_SIZE, 2)
+            # tp_ticks reflete le nouveau TP pour traçabilite signal output
+            tp_ticks = tp_ticks + int(sl_extra_ticks)
+            # FIX audit R1 (29/04) : recalculer expected_payoff_usd avec tp_ticks
+            # ajuste (sinon snapshot logge payoff obsolete = bruit ML training).
+            expected_payoff_usd = (wr * tp_ticks - (1 - wr) * sl_ticks) * tv * ENTRY_RULES["n_micros"]
 
         return {
             "direction": direction,
@@ -1545,6 +1628,63 @@ class PaperTrader:
         pos["unrealized_pnl_ticks"] = round(excursion, 1)
         pos["unrealized_pnl_usd"] = round(excursion * tv * pos.get("n_micros", 3), 2)
 
+        # ─── TRAILING STOP TR40_20 (FIX 30/04 audit market-analyst) ─────────
+        # Pilot NQ only (audit : ES marginal F2 fold PF 0.88 < 1.0).
+        # Trail s'arme quand MFE >= 40% du SL initial.
+        # Give back 20% du SL initial → trail SL = entry +/- (MFE - 20% × SL_init) ticks.
+        # SL ne va QUE dans le sens favorable (LONG : monte, SHORT : descend).
+        # Validation backtest 4 mois : PF 0.99 → 1.32, walk-forward 3/3, CI95 [1.15, 1.51].
+        # NOTE paper Sim3 : on update pos["sl_price"] (simu only). Le bracket SL broker
+        # reste a l'ancien prix mais ne fait jamais fill car la simu close en premier.
+        # Pour LIVE : ajouter cancel + replace SL bracket via DTC (TODO).
+        if symbol == "NQ":
+            sl_dist_ticks_init = pos.get("sl_ticks_initial")
+            if sl_dist_ticks_init is None:
+                sl_dist_ticks_init = pos.get("sl_ticks")
+                if sl_dist_ticks_init:
+                    pos["sl_ticks_initial"] = sl_dist_ticks_init  # snapshot a la 1ere passe
+            if sl_dist_ticks_init and sl_dist_ticks_init > 0:
+                arming_thr = 0.40 * sl_dist_ticks_init
+                give_back = 0.20 * sl_dist_ticks_init
+                if pos.get("mfe", 0) >= arming_thr:
+                    new_sl_price = None
+                    if pos["direction"] == "LONG":
+                        candidate = pos["entry_price"] + (pos["mfe"] - give_back) * TICK_SIZE
+                        if candidate > pos["sl_price"]:  # SL monte uniquement
+                            new_sl_price = candidate
+                    else:  # SHORT
+                        candidate = pos["entry_price"] - (pos["mfe"] - give_back) * TICK_SIZE
+                        if candidate < pos["sl_price"]:  # SL descend uniquement
+                            new_sl_price = candidate
+                    if new_sl_price is not None:
+                        # FIX C1 (review code-reviewer 30/04) : alignement sur tick
+                        # NQ tick=0.25. round(price/tick)*tick garantit multiple valide.
+                        # Sans ce fix : 7209.55 sortait au lieu de 7209.50 (= rejet broker live).
+                        aligned_sl = round(round(new_sl_price / TICK_SIZE) * TICK_SIZE, 2)
+                        # SL ne doit toujours aller que dans le sens favorable apres alignement
+                        if (pos["direction"] == "LONG" and aligned_sl > pos["sl_price"]) or \
+                           (pos["direction"] == "SHORT" and aligned_sl < pos["sl_price"]):
+                            old_sl = pos["sl_price"]
+                            pos["sl_price"] = aligned_sl
+                            pos["sl_trailed"] = True
+                            pos["sl_trail_count"] = pos.get("sl_trail_count", 0) + 1
+                            # FIX I1 backlog LIVE : persister sl_ticks_initial pour
+                            # que reload state.json ne re-snapshot pas avec un sl_ticks modifie.
+                            # (deja fait via pos["sl_ticks_initial"] set au-dessus)
+                            print(f"[{symbol}] SL TRAIL: {old_sl:.2f} → {pos['sl_price']:.2f} "
+                                  f"(MFE={pos['mfe']:.0f}t, SL_init={sl_dist_ticks_init:.0f}t, "
+                                  f"arm={arming_thr:.0f}t, gb={give_back:.0f}t)")
+                        else:
+                            # Aligned price ne progresse pas (cas rare due a l'alignement)
+                            new_sl_price = None  # skip log/emit
+                            if _v2log:
+                                try:
+                                    _v2log.emit("SL_TRAIL_UPDATE", sym=symbol,
+                                                old_sl=old_sl, new_sl=pos["sl_price"],
+                                                mfe=pos["mfe"], sl_init_ticks=sl_dist_ticks_init)
+                                except Exception:
+                                    pass
+
         # Check SL
         hit_sl = False
         hit_tp = False
@@ -1559,8 +1699,16 @@ class PaperTrader:
             if price <= pos["tp_price"]:
                 hit_tp = True
 
-        # Timeout — 120 barres (2h)
-        timeout = pos["bars_held"] >= 120
+        # Timeout — 120 barres (2h) — DESACTIVE en session Asia (faible volatilite)
+        # PILOT 30 JOURS (Jackson 30/04) : Asia (18:00-03:00 ET) = peu de volatilite,
+        # le timeout 2h coupe les setups longs qui ont besoin de plus de patience.
+        # En Asia : on attend juste TP ou SL. Hors Asia : timeout 2h conserve.
+        try:
+            from CORE import eco_calendar as _eco
+            _is_asia = _eco.current_session_label() == "Asia"
+        except Exception:
+            _is_asia = False  # fail-safe : timeout 2h actif si import casse
+        timeout = (not _is_asia) and pos["bars_held"] >= 120
 
         if hit_tp or hit_sl or timeout:
             self._close_trade(symbol, price, "TP" if hit_tp else "SL" if hit_sl else "TIMEOUT")
@@ -1685,6 +1833,23 @@ class PaperTrader:
         expected_payoff = pos.get("expected_payoff_usd", 0.0)
         realized_vs_expected_pct = round(pnl_usd / expected_payoff * 100, 1) if expected_payoff else None
 
+        # FIX 29/04 (Jackson Action #1) : instrumenter sl_ticks/tp_ticks +
+        # calculer slip_exit_ticks pour audit comparatif Bot 1 vs Bot 2.
+        # Slippage convention : negatif = fill plus mauvais que prevu.
+        sl_ticks_val = pos.get("sl_ticks", 0) or 0
+        tp_ticks_val = pos.get("tp_ticks", 0) or 0
+        sl_price_val = pos.get("sl_price")
+        tp_price_val = pos.get("tp_price")
+        slip_exit_calc = 0.0
+        if outcome == "SL" and sl_ticks_val:
+            # SL prevu = -sl_ticks. Slip = pnl_real - pnl_theo
+            # pnl_real = pnl_ticks (negatif). pnl_theo = -sl_ticks.
+            # Slip = pnl_ticks - (-sl_ticks) = pnl_ticks + sl_ticks
+            slip_exit_calc = float(pnl_ticks + sl_ticks_val)
+        elif outcome == "TP" and tp_ticks_val:
+            # TP prevu = +tp_ticks. Slip = pnl_real - pnl_theo
+            slip_exit_calc = float(pnl_ticks - tp_ticks_val)
+
         trade = {
             "schema_version": "trade_v2_ml_2026_04_22",
             "trade_id": f"{self.date_str}_{len(self.today_trades) + 1}",
@@ -1705,7 +1870,11 @@ class PaperTrader:
             "mfe": pos["mfe"],
             "bars_held": pos["bars_held"],
             "duration_sec": duration_sec,
-            # v2 enrichissement SL/TP
+            # v2 enrichissement SL/TP (FIX 29/04 : sl_ticks/tp_ticks ajoutes)
+            "sl_ticks": sl_ticks_val,
+            "tp_ticks": tp_ticks_val,
+            "sl_price": sl_price_val,
+            "tp_price": tp_price_val,
             "sl_wall": pos.get("sl_wall", ""),
             "sl_tier": pos.get("sl_tier", 0),
             "tp_wall": pos.get("tp_wall", ""),
@@ -1713,8 +1882,9 @@ class PaperTrader:
             "n_micros": n_mic,
             "signal_id": pos.get("signal_id"),
             # Snapshot V2 ML-ready : slippage + DTC link + expected vs realized
+            # FIX 29/04 : slip_exit_ticks calcule depuis pnl vs sl/tp_ticks
             "slip_entry_ticks": pos.get("slip_entry_ticks", 0.0),
-            "slip_exit_ticks": pos.get("slip_exit_ticks", 0.0),
+            "slip_exit_ticks": slip_exit_calc,
             "parent_id": pos.get("parent_id", ""),
             "tp_cid": pos.get("tp_cid", ""),
             "sl_cid": pos.get("sl_cid", ""),
