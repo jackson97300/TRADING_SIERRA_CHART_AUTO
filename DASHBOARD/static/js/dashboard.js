@@ -692,8 +692,14 @@
         return h;
     }
 
-    // ── Auto-refresh token sur 401 ──
+    // ── Auto-refresh token sur 401 + heartbeat proactif ──
+    // FIX 30/04 (Jackson Option B Pro) : heartbeat refresh toutes les 10 min
+    // pour eviter expiry transparent du access (15 min). Pattern TradingView /
+    // Coinbase. Le backend rotate aussi le refresh cookie (sliding window 30j /
+    // 90j si remember_me) -> user actif jamais deconnecte.
     var _refreshPromise = null;
+    var _heartbeatTimer = null;
+    var HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000;  // 10 min
 
     function _doRefresh() {
         if (_refreshPromise) return _refreshPromise;
@@ -739,6 +745,26 @@
             }
             return r;
         });
+    }
+
+    // FIX 30/04 (Jackson Option B Pro) : heartbeat proactif refresh
+    // Demarre uniquement si user logge (authToken present), s'arrete au logout.
+    function _startHeartbeat() {
+        if (_heartbeatTimer || !authToken) return;
+        _heartbeatTimer = setInterval(function () {
+            if (!authToken) {
+                _stopHeartbeat();
+                return;
+            }
+            // _doRefresh gere _refreshPromise (anti-double-call) + redirect /welcome si echec
+            _doRefresh().catch(function () { /* deja gere par _doRefresh */ });
+        }, HEARTBEAT_INTERVAL_MS);
+    }
+    function _stopHeartbeat() {
+        if (_heartbeatTimer) {
+            clearInterval(_heartbeatTimer);
+            _heartbeatTimer = null;
+        }
     }
 
     var currentPollInterval = POLL_INTERVAL;
@@ -3719,21 +3745,58 @@
         } catch (_e) {}
     }
 
+    // Notification API browser (fix O3 25/04 - marche onglet inactif contrairement a Audio)
+    function _sendNotif(title, body, color) {
+        if (!_soundEnabled) return;  // meme toggle que son
+        if (!("Notification" in window)) return;
+        if (Notification.permission !== "granted") return;
+        try {
+            var n = new Notification(title, {
+                body: body,
+                icon: "/static/images/logo-dark.jpg",
+                tag: "mia-trade",  // replace precedente notif meme tag
+                silent: true,  // on a deja le son separement
+                requireInteraction: false,
+            });
+            n.onclick = function () {
+                window.focus();
+                n.close();
+            };
+            // Auto-close apres 8s
+            setTimeout(function () { try { n.close(); } catch (_) {} }, 8000);
+        } catch (_e) {}
+    }
+
     function _detectTradeEvents(state) {
         if (!state) return;
         _initSoundsAudio();
         var openBySym = state.open_by_symbol || {};
         var closedList = state.closed_today || [];
-        var curOpen = {};
+        // Map trade_id -> {symbol, direction} pour notif contextualisee
+        var openInfo = {};
         for (var sym in openBySym) {
-            var tid = openBySym[sym] && openBySym[sym].trade_id;
-            if (tid) curOpen[tid] = true;
+            var o = openBySym[sym];
+            if (o && o.trade_id) {
+                openInfo[o.trade_id] = { sym: sym, direction: o.direction, price: o.entry_price };
+            }
         }
-        var curClosed = {};
+        var curOpen = {};
+        for (var tid in openInfo) curOpen[tid] = true;
+        // Map trade_id -> {outcome, pnl, symbol, direction}
+        var closedInfo = {};
         for (var i = 0; i < closedList.length; i++) {
             var t = closedList[i];
-            if (t && t.trade_id) curClosed[t.trade_id] = t.outcome || "UNKNOWN";
+            if (t && t.trade_id) {
+                closedInfo[t.trade_id] = {
+                    outcome: t.outcome || "UNKNOWN",
+                    pnl: t.pnl_ticks,
+                    sym: t.symbol,
+                    direction: t.direction,
+                };
+            }
         }
+        var curClosed = {};
+        for (var tid2 in closedInfo) curClosed[tid2] = closedInfo[tid2].outcome;
         // Premier fetch : init sans jouer (evite rejeu historique au load)
         if (_soundOpenIds === null) {
             _soundOpenIds = curOpen;
@@ -3742,14 +3805,29 @@
         }
         // Nouveaux opens
         for (var id in curOpen) {
-            if (!_soundOpenIds[id]) _playSound(_soundOpen);
+            if (!_soundOpenIds[id]) {
+                _playSound(_soundOpen);
+                var oi = openInfo[id];
+                if (oi) {
+                    _sendNotif(
+                        "MIA — Trade ouvert",
+                        oi.sym + " " + oi.direction + " @ " + (oi.price || "?")
+                    );
+                }
+            }
         }
         // Nouveaux closes
-        for (var id2 in curClosed) {
-            if (!(id2 in _soundClosedIds)) {
-                var outc = curClosed[id2];
-                if (outc === "TP") _playSound(_soundTP);
-                else if (outc === "SL") _playSound(_soundSL);
+        for (var id3 in curClosed) {
+            if (!(id3 in _soundClosedIds)) {
+                var outc = curClosed[id3];
+                var ci = closedInfo[id3];
+                if (outc === "TP") {
+                    _playSound(_soundTP);
+                    if (ci) _sendNotif("MIA — TP atteint", ci.sym + " " + ci.direction + " +" + ci.pnl + "t");
+                } else if (outc === "SL") {
+                    _playSound(_soundSL);
+                    if (ci) _sendNotif("MIA — SL touche", ci.sym + " " + ci.direction + " " + ci.pnl + "t");
+                }
                 // TIMEOUT / KILL_SWITCH / autre = silencieux (evite fatigue)
             }
         }
@@ -3795,6 +3873,14 @@
                 _soundEnabled = true;
                 _playSound(_soundOpen);
                 _soundEnabled = wasEnabled;
+                // Request Notification permission au 1er clic (user gesture requis)
+                if (("Notification" in window) && Notification.permission === "default") {
+                    Notification.requestPermission().then(function (p) {
+                        if (p === "granted") {
+                            _sendNotif("MIA — Notifications activees", "Tu seras alerte des trades meme en onglet inactif.");
+                        }
+                    });
+                }
             });
         }
         if (slider && label && !slider._bound) {
@@ -3811,17 +3897,116 @@
         _updateSoundToggleUI();
     }
 
+    // Toggle bot affiche (29/04 — A/B testing dual bot)
+    if (typeof window.currentPaperBot === "undefined") window.currentPaperBot = "bot1";
+    if (typeof window.paperDataAll === "undefined") window.paperDataAll = { bot1_dmp: null, bot2_db: null };
+
+    window.setPaperBot = function (which) {
+        window.currentPaperBot = which;
+        var b1 = document.getElementById("paper-bot-toggle-1");
+        var b2 = document.getElementById("paper-bot-toggle-2");
+        var label = document.getElementById("paper-bot-active-label");
+        if (which === "bot1") {
+            if (b1) { b1.classList.add("active"); b1.setAttribute("aria-selected", "true"); }
+            if (b2) { b2.classList.remove("active"); b2.setAttribute("aria-selected", "false"); }
+            if (label) label.textContent = "DMP JSONL Sierra Chart · 262 features";
+            paperData = window.paperDataAll.bot1_dmp || {};
+        } else {
+            if (b2) { b2.classList.add("active"); b2.setAttribute("aria-selected", "true"); }
+            if (b1) { b1.classList.remove("active"); b1.setAttribute("aria-selected", "false"); }
+            if (label) label.textContent = "Databento V4 enrichi · 421 features · Lopez meta-labeling";
+            paperData = window.paperDataAll.bot2_db || {};
+        }
+        if (currentPage === "paper") renderPaperPage();
+    };
+
+    // Helper : count open positions pour un bot (gere les 2 conventions
+    // open_by_symbol pour Bot 1 DMP, active_positions pour Bot 2 DB)
+    function _countBotOpen(botData) {
+        if (!botData || !botData.state) return 0;
+        var s = botData.state;
+        if (s.open_by_symbol) return Object.keys(s.open_by_symbol).length;
+        if (s.active_positions) return Object.keys(s.active_positions).length;
+        return 0;
+    }
+
+    // Met a jour les badges OPEN sur les boutons toggle Bot 1/Bot 2
+    function _updateBotToggleBadges() {
+        var data = window.paperDataAll || {};
+        var n1 = _countBotOpen(data.bot1_dmp);
+        var n2 = _countBotOpen(data.bot2_db);
+        var b1 = document.getElementById("paper-bot-toggle-1-badge");
+        var b2 = document.getElementById("paper-bot-toggle-2-badge");
+        if (b1) {
+            if (n1 > 0) { b1.style.display = "inline-block"; b1.textContent = n1 + " OPEN"; }
+            else { b1.style.display = "none"; }
+        }
+        if (b2) {
+            if (n2 > 0) { b2.style.display = "inline-block"; b2.textContent = n2 + " OPEN"; }
+            else { b2.style.display = "none"; }
+        }
+        // FIX 30/04 (Jackson) : dots statut bot dans le toggle
+        _updateBotStatusDot("paper-bot-toggle-1-status-dot", data.bot1_dmp);
+        _updateBotStatusDot("paper-bot-toggle-2-status-dot", data.bot2_db);
+    }
+
+    // FIX 30/04 (Jackson) : dot vert pulse / orange pause / rouge down
+    function _updateBotStatusDot(dotId, botData) {
+        var dot = document.getElementById(dotId);
+        if (!dot) return;
+        var classes = ["bot-toggle-status-dot"];
+        var title;
+        if (!botData) {
+            classes.push("bot-toggle-status-dot--idle");
+            title = "Statut inconnu";
+        } else {
+            var alive = botData.paper_trader_alive;
+            var age = botData.state_age_sec;
+            var eco = window.paperEcoStatus || {};
+            if (alive) {
+                if (eco.blocked) {
+                    classes.push("bot-toggle-status-dot--paused");
+                    title = "Bot actif mais en PAUSE (" + (eco.reason || "eco/session") + ")";
+                } else {
+                    classes.push("bot-toggle-status-dot--active");
+                    title = "Bot ACTIF — derniere maj " + (age != null ? Math.round(age) + "s" : "?");
+                }
+            } else if (age != null) {
+                classes.push("bot-toggle-status-dot--down");
+                title = "Bot DOWN — derniere maj il y a " + Math.round(age) + "s";
+            } else {
+                classes.push("bot-toggle-status-dot--idle");
+                title = "Aucune donnee (jamais demarre)";
+            }
+        }
+        dot.className = classes.join(" ");
+        dot.title = title;
+    }
+
     function fetchPaperTrades() {
-        fetchWithAuth(API_BASE + "/api/paper_trades", { method: "GET" })
+        // FIX 29/04 (Jackson) : utilise endpoint dual pour avoir bot1 + bot2.
+        fetchWithAuth(API_BASE + "/api/paper_trades_dual", { method: "GET" })
             .then(function (r) {
                 if (!r.ok) throw new Error("HTTP " + r.status);
                 return r.json();
             })
             .then(function (d) {
                 paperFetchErrors = 0;
-                paperData = d;
-                _detectTradeEvents(d && d.state);
+                window.paperDataAll = {
+                    bot1_dmp: d.bot1_dmp || null,
+                    bot2_db: d.bot2_db || null,
+                };
+                // FIX 30/04 (Jackson "ON AURAIS DU A VOIR UN TIMER") : stocker
+                // eco_status partage par les 2 bots pour afficher "Bot reprend
+                // dans HH:MM" pendant les pauses session (close US, weekend, FOMC).
+                window.paperEcoStatus = d.eco_status || null;
+                // Affecte paperData selon bot actif
+                paperData = window.paperDataAll[
+                    window.currentPaperBot === "bot1" ? "bot1_dmp" : "bot2_db"
+                ] || {};
+                _detectTradeEvents(paperData && paperData.state);
                 renderPaperBadge();
+                _updateBotToggleBadges();  // FIX 29/04 : badges OPEN sur toggle
                 if (currentPage === "paper") renderPaperPage();
             })
             .catch(function (err) {
@@ -3934,7 +4119,19 @@
         if (statusEl) {
             var alive = paperData.paper_trader_alive;
             var age = paperData.state_age_sec;
-            if (alive) {
+            // FIX 30/04 : si eco/session block actif, afficher "PAUSE - reprend dans HH:MM"
+            // au lieu de "Trader DOWN" qui est trompeur (le bot est volontairement en pause).
+            var eco = window.paperEcoStatus || {};
+            if (eco.blocked && eco.resume_in_sec !== null && eco.resume_in_sec !== undefined) {
+                var sec = eco.resume_in_sec;
+                var hh = Math.floor(sec / 3600);
+                var mm = Math.floor((sec % 3600) / 60);
+                var timer = (hh > 0 ? hh + 'h' + (mm < 10 ? '0' : '') + mm : mm + 'min');
+                var reasonShort = (eco.reason || '').replace(/^(ECO|SESSION):\s*/, '');
+                statusEl.innerHTML = '<span style="color:var(--orange,#ff9800);">● Pause</span>' +
+                    ' · reprend dans <strong>' + timer + '</strong>' +
+                    ' <span style="color:var(--text-secondary);font-size:0.85em;">(' + reasonShort + ')</span>';
+            } else if (alive) {
                 statusEl.innerHTML = '<span style="color:var(--green);">● Trader actif</span>' +
                     (age !== null && age !== undefined ? ' · maj il y a ' + Math.round(age) + 's' : '');
             } else if (age !== null && age !== undefined) {
@@ -3945,31 +4142,89 @@
         }
 
         // ── Positions ouvertes
+        // FIX 30/04 v2 (Jackson "ON A UN TRADE MAIS ON ARRIVE PAS A SUIVRE EVOLUTION") :
+        // supporter les 2 formats state.json :
+        //   Bot 1 DMP   : `open_by_symbol[sym]` avec `entry_price`, `direction`, `sl_ticks`, `rr_ratio`...
+        //   Bot 2 DB    : `active_positions[sym]` avec `entry`, `side`, `unrealized_pnl_usd` (post-fix metrics)
+        // Normalise via adapter avant render. Sans ce fix, Bot 2 affichait
+        // "Aucune position ouverte" malgre le badge "1 OPEN" dans la nav.
         var openEl = $("paper-open-positions");
         var openBySymbol = state.open_by_symbol || {};
         var openKeys = Object.keys(openBySymbol);
+        // Bot 2 fallback : active_positions
+        var bot2Positions = state.active_positions || {};
+        var bot2Keys = Object.keys(bot2Positions);
+
+        // Adapter Bot 2 → format Bot 1 unifie pour render
+        var normalizedOpen = {};
+        openKeys.forEach(function(sym) { normalizedOpen[sym] = openBySymbol[sym]; });
+        bot2Keys.forEach(function(sym) {
+            var p2 = bot2Positions[sym];
+            // Bot 2 side = "BUY"/"SELL" string. Bot 1 direction = "LONG"/"SHORT"/+1/-1
+            // _isLong reconnait "LONG", "BUY", 1 et "L". Standardise en "BUY"/"SELL".
+            var dirNormalized = (p2.side === "BUY" || p2.side === "LONG") ? "BUY" : "SELL";
+            // sl_ticks / tp_ticks parfois absents cote Bot 2 -> calcul depuis prix
+            var slTicks = p2.sl_ticks;
+            var tpTicks = p2.tp_ticks;
+            var TICK = 0.25;
+            if (slTicks === undefined && p2.sl_price !== undefined && p2.entry !== undefined) {
+                slTicks = Math.round(Math.abs(p2.sl_price - p2.entry) / TICK);
+            }
+            if (tpTicks === undefined && p2.tp_price !== undefined && p2.entry !== undefined) {
+                tpTicks = Math.round(Math.abs(p2.tp_price - p2.entry) / TICK);
+            }
+            var rrRatio = (slTicks && tpTicks && slTicks > 0) ? (tpTicks / slTicks) : null;
+            normalizedOpen[sym] = {
+                direction: dirNormalized,
+                entry_price: p2.entry,
+                sl_price: p2.sl_price,
+                tp_price: p2.tp_price,
+                sl_ticks: slTicks,
+                tp_ticks: tpTicks,
+                rr_ratio: rrRatio,
+                sl_wall: p2.sl_wall,
+                tp_wall: p2.tp_wall,
+                unrealized_pnl_usd: p2.unrealized_pnl_usd,
+                unrealized_pnl_ticks: p2.unrealized_pnl_ticks,
+                current_price: p2.current_price,
+                mfe: p2.mfe,
+                mae: p2.mae,
+                bars_held: p2.bars_held,
+                n_micros: p2.n_micros,  // peut etre absent
+                entry_time: p2.ts_open,
+            };
+        });
+
+        var allKeys = Object.keys(normalizedOpen);
         if (openEl) {
-            if (openKeys.length === 0) {
+            if (allKeys.length === 0) {
                 openEl.innerHTML = '<div style="color:var(--text-disabled);grid-column:1/-1;padding:16px;text-align:center;">Aucune position ouverte</div>';
             } else {
                 var html = '';
-                openKeys.forEach(function (sym) {
-                    var p = openBySymbol[sym];
+                allKeys.forEach(function (sym) {
+                    var p = normalizedOpen[sym];
                     var dir = _isLong(p.direction) ? 'BUY' : 'SELL';
                     var dirColor = _isLong(p.direction) ? 'var(--green)' : 'var(--red)';
                     var unrealized = (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null) ? p.unrealized_pnl_usd : 0;
                     var upnlColor = unrealized >= 0 ? 'var(--green)' : 'var(--red)';
+                    var unrealizedTicks = (p.unrealized_pnl_ticks !== undefined && p.unrealized_pnl_ticks !== null) ? p.unrealized_pnl_ticks : null;
                     html += '<div style="border:1px solid ' + dirColor + ';border-radius:8px;padding:12px;background:rgba(255,255,255,0.02);">' +
                         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
                         '<span style="font-weight:800;font-size:1rem;color:' + dirColor + ';">' + sym + ' ' + dir + '</span>' +
-                        '<span style="color:' + upnlColor + ';font-weight:700;font-size:1.1rem;">' + (unrealized >= 0 ? '+$' : '-$') + Math.abs(unrealized).toFixed(2) + '</span>' +
+                        '<span style="color:' + upnlColor + ';font-weight:700;font-size:1.1rem;">' + (unrealized >= 0 ? '+$' : '-$') + Math.abs(unrealized).toFixed(2) +
+                        (unrealizedTicks !== null ? ' <span style="font-size:0.75rem;color:var(--text-secondary);">(' + (unrealizedTicks >= 0 ? '+' : '') + unrealizedTicks + 't)</span>' : '') +
+                        '</span>' +
                         '</div>' +
                         '<div style="font-size:0.8125rem;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;">' +
                         '<div>Entry : <strong>' + fmtPrice(p.entry_price) + '</strong></div>' +
                         '<div>Taille : <strong>' + (p.n_micros || 3) + ' micros</strong></div>' +
                         '<div>SL : <strong style="color:var(--red);">' + fmtPrice(p.sl_price) + '</strong>' + (p.sl_ticks ? ' (' + p.sl_ticks + 't)' : '') + '</div>' +
                         '<div>TP : <strong style="color:var(--green);">' + fmtPrice(p.tp_price) + '</strong>' + (p.tp_ticks ? ' (' + p.tp_ticks + 't)' : '') + '</div>' +
-                        (p.sl_wall ? '<div style="grid-column:1/-1;color:var(--text-secondary);">Wall SL : <strong>' + p.sl_wall + '</strong>' + (p.sl_tier ? ' (' + p.sl_tier + ')' : '') + '</div>' : '') +
+                        (p.current_price !== undefined && p.current_price !== null ? '<div style="grid-column:1/-1;color:var(--text-secondary);">Prix courant : <strong>' + fmtPrice(p.current_price) + '</strong></div>' : '') +
+                        (p.mfe !== undefined && p.mfe !== null ? '<div>MFE : <strong style="color:var(--green);">+' + Math.round(p.mfe) + 't</strong></div>' : '') +
+                        (p.mae !== undefined && p.mae !== null ? '<div>MAE : <strong style="color:var(--red);">' + Math.round(p.mae) + 't</strong></div>' : '') +
+                        (p.bars_held !== undefined && p.bars_held !== null ? '<div style="grid-column:1/-1;color:var(--text-disabled);font-size:0.75rem;">Bars : ' + p.bars_held + '</div>' : '') +
+                        (p.sl_wall ? '<div style="grid-column:1/-1;color:var(--text-secondary);">Wall SL : <strong>' + p.sl_wall + '</strong>' + (p.sl_tier ? ' (' + p.sl_tier + ')' : '') + (p.tp_wall ? ' · Wall TP : <strong>' + p.tp_wall + '</strong>' : '') + '</div>' : '') +
                         (p.rr_ratio ? '<div style="grid-column:1/-1;color:var(--text-secondary);">R:R : <strong>' + p.rr_ratio.toFixed(2) + '</strong>' + (p.expected_payoff_usd !== undefined ? ' · E[$] : <strong>$' + p.expected_payoff_usd.toFixed(2) + '</strong>' : '') + '</div>' : '') +
                         (p.entry_time ? '<div style="grid-column:1/-1;color:var(--text-disabled);font-size:0.75rem;margin-top:4px;">Ouvert : ' + p.entry_time + '</div>' : '') +
                         '</div>' +
@@ -4627,6 +4882,9 @@
         function doLogin() {
             var email = (emailEl && emailEl.value || "").trim();
             var pwd = (pwdEl && pwdEl.value || "").trim();
+            // FIX 30/04 (Jackson Option B Pro) : checkbox "Rester connecte 90j"
+            var rememberEl = $("login-remember-me");
+            var rememberMe = !!(rememberEl && rememberEl.checked);
             if (!email || !pwd) {
                 if (msgEl) { msgEl.style.color = "var(--red)"; msgEl.textContent = "Email + mot de passe requis"; }
                 return;
@@ -4636,7 +4894,7 @@
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
-                body: JSON.stringify({ email: email, password: pwd })
+                body: JSON.stringify({ email: email, password: pwd, remember_me: rememberMe })
             })
                 .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
                 .then(function (res) {
@@ -4645,6 +4903,8 @@
                         currentTier = res.data.tier || "free";
                         localStorage.setItem("mia_token", authToken);
                         localStorage.setItem("mia_tier", currentTier);
+                        // FIX 30/04 : demarrer heartbeat refresh proactif
+                        _startHeartbeat();
                         if (msgEl) { msgEl.style.color = "var(--green)"; msgEl.textContent = "Connecte (" + currentTier + ")"; }
                         updateTierIndicator();
                         // Reload pour activer les sections admin
@@ -4664,6 +4924,8 @@
         function doLogout() {
             // 1. Stopper le polling AVANT tout (evite race condition)
             if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            // FIX 30/04 : stopper heartbeat refresh
+            _stopHeartbeat();
 
             // 2. Reset etat JS local
             authToken = "";
@@ -5448,6 +5710,14 @@
         loadChart(currentInstrument);
         fetchDashboard();
         pollTimer = setInterval(fetchDashboard, POLL_INTERVAL);
+        // FIX 30/04 (Jackson Option B Pro) : si user deja logge au load,
+        // demarrer heartbeat refresh proactif (vs attendre prochain login).
+        if (authToken) {
+            _startHeartbeat();
+        }
+
+        // FIX 29/04 soir : eco calendar sidebar badge (public, pas owner-only)
+        initEcoSidebar();
 
         // Auto-start onboarding tour au premier login (apres que le dashboard ait charge)
         if (!localStorage.getItem("mia_onboarding_done")) {
@@ -5575,6 +5845,9 @@
         // Init sons Paper Trading (24/04) — visible admin section
         initPaperSounds();
 
+        // FIX 29/04 soir : init boutons services par bot (nssm reel)
+        initServicesControl();
+
         var btnStop = $("btn-bot-stop");
         var btnStart = $("btn-bot-start");
 
@@ -5634,6 +5907,351 @@
                     msgEl.textContent = "Erreur reseau";
                 }
                 console.error("[killSwitch]", err);
+            });
+    }
+
+    // ════════ FIX 29/04 soir : ECO CALENDAR sidebar badge ════════
+    var ecoSidebarTimer = null;
+    function initEcoSidebar() {
+        var badge = $("eco-sidebar-badge");
+        if (!badge) return;
+        function refresh() {
+            fetch(API_BASE + "/api/calendar/status", { method: "GET", headers: apiHeaders() })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (!d || !d.ok) return;
+                    if (d.blocked) {
+                        badge.className = "badge badge-red";
+                        var until = d.blocked_until_utc ? new Date(d.blocked_until_utc).toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit"}) : "?";
+                        badge.textContent = "BLOCK " + until;
+                        badge.title = d.block_reason || "Event eco";
+                    } else if (d.next_event && d.next_event.in_seconds < 3600) {
+                        badge.className = "badge badge-yellow";
+                        var min = Math.floor(d.next_event.in_seconds / 60);
+                        badge.textContent = "Event " + min + "min";
+                        badge.title = d.next_event.title;
+                    } else {
+                        badge.className = "badge badge-green";
+                        badge.textContent = "OK";
+                        badge.title = "Aucun event blocking proche";
+                    }
+                })
+                .catch(function () {
+                    badge.className = "badge badge-gray";
+                    badge.textContent = "--";
+                });
+        }
+        refresh();
+        if (ecoSidebarTimer) clearInterval(ecoSidebarTimer);
+        ecoSidebarTimer = setInterval(refresh, 30000);
+    }
+
+    // ════════ FIX 29/04 soir : COMPARE BOTS (modale admin) ════════
+    function initCompareBots() {
+        var btnOpen = $("btn-compare-bots");
+        var btnClose = $("btn-compare-close");
+        var overlay = $("compare-bots-overlay");
+        if (btnOpen && !btnOpen._bound) {
+            btnOpen._bound = true;
+            btnOpen.addEventListener("click", openCompareBots);
+        }
+        if (btnClose && !btnClose._bound) {
+            btnClose._bound = true;
+            btnClose.addEventListener("click", function () {
+                if (overlay) overlay.style.display = "none";
+            });
+        }
+        if (overlay && !overlay._bound) {
+            overlay._bound = true;
+            overlay.addEventListener("click", function (e) {
+                if (e.target === overlay) overlay.style.display = "none";
+            });
+        }
+    }
+
+    function openCompareBots() {
+        var overlay = $("compare-bots-overlay");
+        var content = $("compare-bots-content");
+        if (!overlay || !content) return;
+        overlay.style.display = "block";
+        content.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Chargement...</div>';
+
+        fetch(API_BASE + "/api/admin/compare_bots", { method: "GET", headers: apiHeaders() })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d || !d.bot1_dmp) {
+                    content.innerHTML = '<div style="color:#ff5252;padding:20px;">Erreur : ' + JSON.stringify(d) + '</div>';
+                    return;
+                }
+                content.innerHTML = renderCompareBots(d);
+            })
+            .catch(function (err) {
+                content.innerHTML = '<div style="color:#ff5252;padding:20px;">Erreur reseau : ' + err + '</div>';
+            });
+    }
+
+    function _fmtN(v, def) {
+        if (v === null || v === undefined) return def || "--";
+        return typeof v === "number" ? v.toLocaleString() : String(v);
+    }
+    function _fmtUsd(v) {
+        if (v === null || v === undefined) return "--";
+        var n = typeof v === "number" ? v : parseFloat(v);
+        if (isNaN(n)) return "--";
+        var s = n >= 0 ? "+" : "";
+        return s + "$" + n.toFixed(2);
+    }
+    function _fmtPct(v) {
+        if (v === null || v === undefined) return "--";
+        return v + "%";
+    }
+    function _color(v) {
+        if (v === null || v === undefined) return "#94a3b8";
+        var n = typeof v === "number" ? v : parseFloat(v);
+        if (isNaN(n)) return "#94a3b8";
+        return n > 0 ? "#4caf50" : (n < 0 ? "#ff5252" : "#94a3b8");
+    }
+
+    function _row(label, v1, v2, fmt, colorize) {
+        fmt = fmt || _fmtN;
+        var c1 = colorize ? _color(v1) : "#e2e8f0";
+        var c2 = colorize ? _color(v2) : "#e2e8f0";
+        return '<tr><td style="padding:6px 12px;color:#94a3b8;border-bottom:1px solid rgba(255,255,255,0.05);">' + label + '</td>' +
+               '<td style="padding:6px 12px;text-align:right;color:' + c1 + ';font-weight:600;border-bottom:1px solid rgba(255,255,255,0.05);">' + fmt(v1) + '</td>' +
+               '<td style="padding:6px 12px;text-align:right;color:' + c2 + ';font-weight:600;border-bottom:1px solid rgba(255,255,255,0.05);">' + fmt(v2) + '</td></tr>';
+    }
+
+    function _section(title, b1, b2) {
+        if (!b1 || !b2) return "";
+        var html = '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:rgba(255,255,255,0.02);border-radius:8px;overflow:hidden;">';
+        html += '<thead><tr style="background:rgba(33,150,243,0.1);">';
+        html += '<th style="padding:8px 12px;text-align:left;color:#42a5f5;font-size:0.8125rem;">' + title + '</th>';
+        html += '<th style="padding:8px 12px;text-align:right;color:#42a5f5;font-size:0.8125rem;">Bot 1 DMP</th>';
+        html += '<th style="padding:8px 12px;text-align:right;color:#42a5f5;font-size:0.8125rem;">Bot 2 DB</th>';
+        html += '</tr></thead><tbody>';
+        html += _row("N trades", b1.n, b2.n);
+        if (b1.n || b2.n) {
+            html += _row("WR", b1.wr, b2.wr, _fmtPct);
+            html += _row("Profit Factor", b1.pf, b2.pf);
+            html += _row("PnL USD", b1.pnl_usd, b2.pnl_usd, _fmtUsd, true);
+            html += _row("PnL ticks", b1.pnl_ticks, b2.pnl_ticks, _fmtN, true);
+            html += _row("Mean ticks", b1.mean_ticks, b2.mean_ticks, _fmtN, true);
+            html += _row("Median ticks", b1.median_ticks, b2.median_ticks, _fmtN, true);
+        }
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function _periodAudit(b1, b2, periodLabel) {
+        if (!b1 || !b2) return "";
+        var html = '<h3 style="color:#42a5f5;margin:20px 0 10px 0;font-size:1rem;">' + periodLabel + '</h3>';
+        // Global
+        html += _section("Global", b1.global || {}, b2.global || {});
+        // Direction
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
+        html += _section("LONG", (b1.by_dir || {}).LONG || {}, (b2.by_dir || {}).LONG || {});
+        html += _section("SHORT", (b1.by_dir || {}).SHORT || {}, (b2.by_dir || {}).SHORT || {});
+        // Symbole
+        html += _section("ES", (b1.by_sym || {}).ES || {}, (b2.by_sym || {}).ES || {});
+        html += _section("NQ", (b1.by_sym || {}).NQ || {}, (b2.by_sym || {}).NQ || {});
+        // Session
+        html += _section("Session ASIA", (b1.by_session || {}).ASIA || {}, (b2.by_session || {}).ASIA || {});
+        html += _section("Session LONDON", (b1.by_session || {}).LONDON || {}, (b2.by_session || {}).LONDON || {});
+        html += _section("Session RTH", (b1.by_session || {}).RTH || {}, (b2.by_session || {}).RTH || {});
+        html += '</div>';
+
+        // Outcomes side-by-side
+        var oc1 = b1.by_outcome || {};
+        var oc2 = b2.by_outcome || {};
+        html += '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:rgba(255,255,255,0.02);border-radius:8px;overflow:hidden;">';
+        html += '<thead><tr style="background:rgba(33,150,243,0.1);"><th style="padding:8px 12px;text-align:left;color:#42a5f5;">Outcome</th>' +
+                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 1 N (%)</th>' +
+                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 1 PnL</th>' +
+                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 2 N (%)</th>' +
+                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 2 PnL</th></tr></thead><tbody>';
+        ["TP", "SL", "TIMEOUT"].forEach(function (oc) {
+            var o1 = oc1[oc] || { n: 0, pct: 0, pnl_usd: 0 };
+            var o2 = oc2[oc] || { n: 0, pct: 0, pnl_usd: 0 };
+            html += '<tr><td style="padding:6px 12px;color:#94a3b8;border-bottom:1px solid rgba(255,255,255,0.05);">' + oc + '</td>' +
+                    '<td style="padding:6px 12px;text-align:right;border-bottom:1px solid rgba(255,255,255,0.05);">' + o1.n + ' (' + o1.pct + '%)</td>' +
+                    '<td style="padding:6px 12px;text-align:right;color:' + _color(o1.pnl_usd) + ';border-bottom:1px solid rgba(255,255,255,0.05);">' + _fmtUsd(o1.pnl_usd) + '</td>' +
+                    '<td style="padding:6px 12px;text-align:right;border-bottom:1px solid rgba(255,255,255,0.05);">' + o2.n + ' (' + o2.pct + '%)</td>' +
+                    '<td style="padding:6px 12px;text-align:right;color:' + _color(o2.pnl_usd) + ';border-bottom:1px solid rgba(255,255,255,0.05);">' + _fmtUsd(o2.pnl_usd) + '</td></tr>';
+        });
+        html += '</tbody></table>';
+
+        // Streaks + slippage
+        html += '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:rgba(255,255,255,0.02);border-radius:8px;overflow:hidden;">';
+        html += '<thead><tr style="background:rgba(33,150,243,0.1);"><th style="padding:8px 12px;text-align:left;color:#42a5f5;">Anomalies</th>' +
+                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 1 DMP</th>' +
+                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 2 DB</th></tr></thead><tbody>';
+        html += _row("Max SL streak", b1.max_loss_streak, b2.max_loss_streak);
+        html += _row("Slippage entry avg", b1.slip_entry_avg, b2.slip_entry_avg);
+        html += _row("Slippage exit avg", b1.slip_exit_avg, b2.slip_exit_avg);
+        if (b1.top_trade && b2.top_trade) {
+            html += _row("Top trade USD", b1.top_trade.pnl_usd, b2.top_trade.pnl_usd, _fmtUsd, true);
+            html += _row("Top trade sym", b1.top_trade.sym, b2.top_trade.sym);
+            html += _row("Worst trade USD", b1.worst_trade.pnl_usd, b2.worst_trade.pnl_usd, _fmtUsd, true);
+            html += _row("Worst trade sym", b1.worst_trade.sym, b2.worst_trade.sym);
+        }
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function renderCompareBots(d) {
+        var b1 = d.bot1_dmp || {};
+        var b2 = d.bot2_db || {};
+        var html = '<div style="margin-bottom:16px;color:#94a3b8;font-size:0.75rem;">Mise a jour : ' + (d.ts || "") + '</div>';
+
+        // Tabs periode
+        html += '<div style="display:flex;gap:8px;margin-bottom:16px;">';
+        html += '<button class="cmp-tab cmp-tab-active" data-period="today" style="padding:8px 16px;background:#42a5f5;color:#0D1321;border:none;border-radius:6px;font-weight:600;cursor:pointer;">Aujourd\'hui</button>';
+        html += '<button class="cmp-tab" data-period="stats_7d" style="padding:8px 16px;background:transparent;color:#94a3b8;border:1px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;">7 jours</button>';
+        html += '<button class="cmp-tab" data-period="stats_30d" style="padding:8px 16px;background:transparent;color:#94a3b8;border:1px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;">30 jours</button>';
+        html += '</div>';
+
+        html += '<div id="cmp-content">';
+        html += _periodAudit(b1.today || {}, b2.today || {}, "Aujourd'hui");
+        html += '</div>';
+
+        // Hedges
+        var hedges = d.hedges_24h || [];
+        html += '<h3 style="color:#ff9800;margin:20px 0 10px 0;font-size:1rem;">Hedges involontaires (positions opposees meme symbole) — 24h : ' + hedges.length + '</h3>';
+        if (hedges.length) {
+            html += '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:rgba(255,152,0,0.05);border-radius:8px;overflow:hidden;">';
+            html += '<thead><tr style="background:rgba(255,152,0,0.15);">' +
+                    '<th style="padding:8px 12px;text-align:left;color:#ffa726;">Sym</th>' +
+                    '<th style="padding:8px 12px;text-align:right;color:#ffa726;">Bot 1</th>' +
+                    '<th style="padding:8px 12px;text-align:right;color:#ffa726;">Bot 2</th>' +
+                    '<th style="padding:8px 12px;text-align:right;color:#ffa726;">Overlap</th></tr></thead><tbody>';
+            hedges.forEach(function (h) {
+                var dur = "";
+                try {
+                    var s = new Date(h.overlap_start).getTime();
+                    var e = new Date(h.overlap_end).getTime();
+                    dur = Math.round((e - s) / 60000) + "min";
+                } catch (_e) { dur = "?"; }
+                html += '<tr><td style="padding:6px 12px;border-bottom:1px solid rgba(255,255,255,0.05);">' + h.sym + '</td>' +
+                        '<td style="padding:6px 12px;text-align:right;border-bottom:1px solid rgba(255,255,255,0.05);">' + h.bot1_dir + ' @' + h.bot1_entry + '</td>' +
+                        '<td style="padding:6px 12px;text-align:right;border-bottom:1px solid rgba(255,255,255,0.05);">' + h.bot2_dir + ' @' + h.bot2_entry + '</td>' +
+                        '<td style="padding:6px 12px;text-align:right;color:#ffa726;border-bottom:1px solid rgba(255,255,255,0.05);">' + dur + '</td></tr>';
+            });
+            html += '</tbody></table>';
+        }
+
+        // Bind tabs
+        setTimeout(function () {
+            var tabs = document.querySelectorAll(".cmp-tab");
+            tabs.forEach(function (tab) {
+                tab.addEventListener("click", function () {
+                    tabs.forEach(function (t) {
+                        t.style.background = "transparent";
+                        t.style.color = "#94a3b8";
+                        t.style.border = "1px solid rgba(255,255,255,0.15)";
+                    });
+                    tab.style.background = "#42a5f5";
+                    tab.style.color = "#0D1321";
+                    tab.style.border = "none";
+                    var period = tab.getAttribute("data-period");
+                    var label = period === "today" ? "Aujourd'hui" : (period === "stats_7d" ? "7 jours" : "30 jours");
+                    var cmpContent = $("cmp-content");
+                    if (cmpContent) cmpContent.innerHTML = _periodAudit(b1[period] || {}, b2[period] || {}, label);
+                });
+            });
+        }, 100);
+
+        return html;
+    }
+
+    // ════════ FIX 29/04 soir : SERVICES CONTROL (nssm par bot) ════════
+    var servicesTimer = null;
+
+    function initServicesControl() {
+        // FIX 29/04 soir : init aussi compare bots (meme section admin)
+        initCompareBots();
+
+        ["1", "2"].forEach(function (botId) {
+            ["start", "stop", "restart"].forEach(function (action) {
+                var btn = $("btn-svc-" + botId + "-" + action);
+                if (btn && !btn._bound) {
+                    btn._bound = true;
+                    btn.addEventListener("click", function () {
+                        servicesAction(botId, action);
+                    });
+                }
+            });
+        });
+        fetchServicesStatus();
+        if (servicesTimer) clearInterval(servicesTimer);
+        servicesTimer = setInterval(fetchServicesStatus, 5000);
+    }
+
+    function fetchServicesStatus() {
+        fetch(API_BASE + "/api/services/status", { method: "GET", headers: apiHeaders() })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d || !d.services) return;
+                ["1", "2"].forEach(function (botId) {
+                    var svc = d.services[botId];
+                    var el = $("svc-state-" + botId);
+                    if (!el || !svc) return;
+                    var state = svc.state;
+                    // FIX 30/04 (Jackson) : "RUNNING" pas parlant en francais → "ACTIF"
+                    if (state === "RUNNING") {
+                        el.className = "badge badge-green";
+                        el.textContent = "ACTIF";
+                    } else if (state === "PAUSE") {
+                        el.className = "badge badge-yellow";
+                        el.textContent = "EN PAUSE";
+                    } else if (state === "STOPPED") {
+                        el.className = "badge badge-red";
+                        el.textContent = "ARRETE";
+                    } else {
+                        el.className = "badge badge-gray";
+                        el.textContent = "INCONNU";
+                    }
+                });
+            })
+            .catch(function (err) {
+                console.error("[svc] fetch", err);
+            });
+    }
+
+    function servicesAction(botId, action) {
+        var labels = { start: "DEMARRER", stop: "ARRETER", restart: "REDEMARRER" };
+        var label = labels[action] || action;
+        if (!confirm(label + " Bot " + botId + " ?\n\nAction sur le service Windows nssm.\nConfirmer ?")) {
+            return;
+        }
+        var msgEl = $("svc-msg");
+        if (msgEl) {
+            msgEl.style.color = "var(--text-secondary)";
+            msgEl.textContent = label + " Bot " + botId + " en cours...";
+        }
+        fetch(API_BASE + "/api/bot/" + botId + "/" + action, {
+            method: "POST",
+            headers: Object.assign({ "Content-Type": "application/json" }, apiHeaders()),
+            body: "{}",
+        })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (res) {
+                if (msgEl) {
+                    if (res.ok && res.data && res.data.status === "ok") {
+                        msgEl.style.color = "var(--green)";
+                        msgEl.textContent = "Bot " + botId + " " + (res.data.final_status || "OK");
+                    } else {
+                        msgEl.style.color = "var(--red)";
+                        msgEl.textContent = "Erreur : " + ((res.data && (res.data.error || res.data.message)) || "?");
+                    }
+                }
+                fetchServicesStatus();
+            })
+            .catch(function (err) {
+                if (msgEl) {
+                    msgEl.style.color = "var(--red)";
+                    msgEl.textContent = "Erreur reseau";
+                }
+                console.error("[svc] action", err);
             });
     }
 

@@ -16,7 +16,7 @@
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"></noscript>
-    <link rel="stylesheet" href="/static/css/dashboard.css?v=63">
+    <link rel="stylesheet" href="/static/css/dashboard.css?v=69">
     <!-- Driver.js — Onboarding tour -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css">
     <script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js" defer></script>
@@ -148,6 +148,7 @@
                 <div style="padding:0 12px;">
                     <div class="kv-row"><span class="kv-key">Data Feed</span><span id="health-feed" class="badge badge-gray">--</span></div>
                     <div class="kv-row"><span class="kv-key">Bot</span><span id="health-bot" class="badge badge-gray">--</span></div>
+                    <div class="kv-row"><span class="kv-key">Eco</span><span id="eco-sidebar-badge" class="badge badge-gray">--</span></div>
                     <div class="kv-row"><span class="kv-key">MAJ</span><span id="last-update" class="kv-value" style="font-size:0.6875rem;">--:--</span></div>
                 </div>
             </div>
@@ -163,13 +164,56 @@
                     </div>
                     <button id="btn-bot-stop" type="button"
                         style="width:100%;padding:10px;background:linear-gradient(135deg,#c62828,#8b0000);color:#fff;border:1px solid #ff5252;border-radius:6px;font-weight:700;font-size:0.8125rem;cursor:pointer;letter-spacing:0.5px;box-shadow:0 2px 8px rgba(198,40,40,0.3);">
-                        STOP BOT
+                        STOP BOT (FLAG)
                     </button>
                     <button id="btn-bot-start" type="button"
                         style="width:100%;margin-top:6px;padding:8px;background:rgba(76,175,80,0.15);color:#4caf50;border:1px solid #4caf50;border-radius:6px;font-weight:600;font-size:0.75rem;cursor:pointer;display:none;">
-                        REDEMARRER
+                        REDEMARRER (FLAG)
                     </button>
                     <div id="killswitch-msg" style="font-size:0.625rem;margin-top:6px;text-align:center;min-height:14px;color:var(--text-secondary);"></div>
+                </div>
+
+                <!-- FIX 29/04 soir : Bouton Compare Bots -->
+                <div style="padding:10px 12px 0 12px;border-top:1px solid var(--border);margin-top:10px;">
+                    <button id="btn-compare-bots" type="button"
+                        style="width:100%;padding:8px;background:rgba(33,150,243,0.15);color:#42a5f5;border:1px solid #2196f3;border-radius:6px;font-weight:600;font-size:0.75rem;cursor:pointer;">
+                        COMPARER BOT 1 vs BOT 2
+                    </button>
+                </div>
+
+                <!-- FIX 29/04 soir : Controle services par bot (nssm) -->
+                <div style="padding:10px 12px 0 12px;border-top:1px solid var(--border);margin-top:10px;">
+                    <div style="font-size:0.6875rem;color:var(--text-disabled);text-transform:uppercase;letter-spacing:0.5px;margin:4px 0 8px 0;">Services Bots</div>
+
+                    <!-- Bot 1 DMP Sim3 -->
+                    <div class="kv-row" style="margin-bottom:4px;">
+                        <span class="kv-key" style="font-size:0.7rem;">Bot 1 DMP</span>
+                        <span id="svc-state-1" class="badge badge-gray" style="font-size:0.625rem;">--</span>
+                    </div>
+                    <div style="display:flex;gap:4px;margin-bottom:8px;">
+                        <button id="btn-svc-1-start" type="button" data-bot="1" data-action="start"
+                            style="flex:1;padding:6px;background:rgba(76,175,80,0.15);color:#4caf50;border:1px solid #4caf50;border-radius:4px;font-weight:600;font-size:0.6875rem;cursor:pointer;">START</button>
+                        <button id="btn-svc-1-stop" type="button" data-bot="1" data-action="stop"
+                            style="flex:1;padding:6px;background:rgba(198,40,40,0.15);color:#e57373;border:1px solid #c62828;border-radius:4px;font-weight:600;font-size:0.6875rem;cursor:pointer;">STOP</button>
+                        <button id="btn-svc-1-restart" type="button" data-bot="1" data-action="restart"
+                            style="flex:1;padding:6px;background:rgba(255,152,0,0.15);color:#ffa726;border:1px solid #ff9800;border-radius:4px;font-weight:600;font-size:0.6875rem;cursor:pointer;">RESTART</button>
+                    </div>
+
+                    <!-- Bot 2 DB Sim2 -->
+                    <div class="kv-row" style="margin-bottom:4px;">
+                        <span class="kv-key" style="font-size:0.7rem;">Bot 2 DB</span>
+                        <span id="svc-state-2" class="badge badge-gray" style="font-size:0.625rem;">--</span>
+                    </div>
+                    <div style="display:flex;gap:4px;margin-bottom:6px;">
+                        <button id="btn-svc-2-start" type="button" data-bot="2" data-action="start"
+                            style="flex:1;padding:6px;background:rgba(76,175,80,0.15);color:#4caf50;border:1px solid #4caf50;border-radius:4px;font-weight:600;font-size:0.6875rem;cursor:pointer;">START</button>
+                        <button id="btn-svc-2-stop" type="button" data-bot="2" data-action="stop"
+                            style="flex:1;padding:6px;background:rgba(198,40,40,0.15);color:#e57373;border:1px solid #c62828;border-radius:4px;font-weight:600;font-size:0.6875rem;cursor:pointer;">STOP</button>
+                        <button id="btn-svc-2-restart" type="button" data-bot="2" data-action="restart"
+                            style="flex:1;padding:6px;background:rgba(255,152,0,0.15);color:#ffa726;border:1px solid #ff9800;border-radius:4px;font-weight:600;font-size:0.6875rem;cursor:pointer;">RESTART</button>
+                    </div>
+
+                    <div id="svc-msg" style="font-size:0.625rem;margin-top:4px;text-align:center;min-height:14px;color:var(--text-secondary);"></div>
                 </div>
 
                 <!-- Sons Paper Trading (owner only, persiste localStorage) -->
@@ -272,6 +316,10 @@
                     <div style="display:flex;flex-direction:column;gap:4px;">
                         <input id="login-email" type="email" placeholder="Email" autocomplete="username" style="padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:0.75rem;outline:none;">
                         <input id="login-password" type="password" placeholder="Mot de passe" autocomplete="current-password" style="padding:6px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:0.75rem;outline:none;">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.6875rem;color:var(--text-secondary);cursor:pointer;user-select:none;padding:2px 4px;">
+                            <input id="login-remember-me" type="checkbox" style="margin:0;cursor:pointer;">
+                            Rester connecte 90 jours
+                        </label>
                         <button id="login-btn" type="button" style="padding:6px 12px;background:rgba(41,98,255,0.2);color:#2962ff;border:1px solid #2962ff;border-radius:6px;font-weight:700;font-size:0.75rem;cursor:pointer;">SE CONNECTER</button>
                     </div>
                     <div id="login-msg" style="font-size:0.625rem;margin-top:4px;text-align:center;min-height:14px;"></div>
@@ -932,10 +980,35 @@
                 </div>
             </div>
 
-            <!-- Page Paper Trading (v2 22/04) -->
+            <!-- Page Paper Trading (v2 22/04 + dual bot switch 29/04) -->
             <div class="page-content hidden" id="page-paper">
                 <div class="page-title">Paper Trading <span class="badge badge-cyan">LIVE</span>
                     <span id="paper-trader-status" style="font-size:0.75rem;margin-left:12px;color:var(--text-secondary);"></span>
+                </div>
+
+                <!-- Toggle Bot 1 / Bot 2 (29/04) — segmented control moderne -->
+                <div class="card bot-toggle-card">
+                    <div class="bot-toggle-row">
+                        <span class="label">Bot</span>
+                        <div class="bot-toggle-group" role="tablist" aria-label="Selection bot">
+                            <button id="paper-bot-toggle-1" class="bot-toggle-btn active"
+                                    onclick="setPaperBot('bot1')" role="tab" aria-selected="true">
+                                <span id="paper-bot-toggle-1-status-dot" class="bot-toggle-status-dot bot-toggle-status-dot--idle" title="Statut bot"></span>
+                                BOT 1 DMP <span class="bot-tag">SIM3</span>
+                                <span id="paper-bot-toggle-1-badge" class="bot-toggle-open-badge" style="display:none;"></span>
+                            </button>
+                            <button id="paper-bot-toggle-2" class="bot-toggle-btn"
+                                    onclick="setPaperBot('bot2')" role="tab" aria-selected="false">
+                                <span id="paper-bot-toggle-2-status-dot" class="bot-toggle-status-dot bot-toggle-status-dot--idle" title="Statut bot"></span>
+                                BOT 2 DB <span class="bot-tag">SIM2</span>
+                                <span id="paper-bot-toggle-2-badge" class="bot-toggle-open-badge" style="display:none;"></span>
+                            </button>
+                        </div>
+                        <span class="bot-toggle-info">
+                            <span class="bot-info-dot"></span>
+                            <span id="paper-bot-active-label">DMP JSONL Sierra Chart · 262 features</span>
+                        </span>
+                    </div>
                 </div>
 
                 <!-- Trades en cours -->
@@ -998,8 +1071,22 @@
     </div>
     <script>if(!localStorage.getItem('mia_cookies_accepted')){document.getElementById('cookie-banner').style.display='block';}</script>
 
+    <!-- FIX 29/04 soir : Modal Compare Bots (owner only) -->
+    <div id="compare-bots-overlay"
+         style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9998;backdrop-filter:blur(4px);overflow-y:auto;padding:20px;">
+        <div style="max-width:1400px;margin:0 auto;background:#0D1321;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:20px;color:#e2e8f0;font-size:0.875rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:12px;">
+                <h2 style="margin:0;font-size:1.25rem;color:#42a5f5;">Comparaison Bot 1 vs Bot 2</h2>
+                <button id="btn-compare-close" type="button" style="padding:6px 12px;background:transparent;color:#94a3b8;border:1px solid rgba(255,255,255,0.15);border-radius:6px;cursor:pointer;font-size:0.875rem;">FERMER</button>
+            </div>
+            <div id="compare-bots-content" style="font-size:0.8125rem;line-height:1.5;">
+                <div style="text-align:center;padding:40px;color:#94a3b8;">Chargement...</div>
+            </div>
+        </div>
+    </div>
+
     <script defer src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script defer src="/static/js/ticker-widget.js?v=52"></script>
-    <script defer src="/static/js/dashboard.js?v=80"></script>
+    <script defer src="/static/js/dashboard.js?v=91"></script>
 </body>
 </html>
