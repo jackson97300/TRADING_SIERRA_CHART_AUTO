@@ -783,7 +783,28 @@
                 }
                 hideConnError();
                 data = d;
-                if (d.tier) { currentTier = d.tier; updateTierIndicator(); }
+                if (d.tier) {
+                    var prevTier = currentTier;
+                    currentTier = d.tier;
+                    updateTierIndicator();
+                    // FIX 30/04 (Jackson "POURQUOI LE BOUTON NE SONT PAS ALIMENTES") :
+                    // race condition au boot : initKillSwitch() etait appele tot
+                    // avec currentTier="free" (localStorage vide) → handlers
+                    // jamais bind. Plus tard, fetch retourne tier="owner",
+                    // section devient visible mais boutons inertes (no events).
+                    // Fix : re-call initKillSwitch quand tier devient owner/admin.
+                    var isNowOwner = (currentTier === "owner" || currentTier === "admin");
+                    var wasOwner = (prevTier === "owner" || prevTier === "admin");
+                    if (isNowOwner && !wasOwner) {
+                        try {
+                            if (typeof initKillSwitch === "function") {
+                                initKillSwitch();
+                            }
+                        } catch (e) {
+                            console.warn("[init] re-bind kill switch failed:", e);
+                        }
+                    }
+                }
                 renderBanner();
                 renderCurrentPage();
                 renderSidebarStatus();
