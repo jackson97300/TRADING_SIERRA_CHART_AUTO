@@ -5997,7 +5997,7 @@
         overlay.style.display = "block";
         content.innerHTML = '<div style="text-align:center;padding:40px;color:#94a3b8;">Chargement...</div>';
 
-        fetch(API_BASE + "/api/admin/compare_bots", { method: "GET", headers: apiHeaders() })
+        fetchWithAuth(API_BASE + "/api/admin/compare_bots", { method: "GET" })
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 if (!d || !d.bot1_dmp) {
@@ -6208,7 +6208,7 @@
     }
 
     function fetchServicesStatus() {
-        fetch(API_BASE + "/api/services/status", { method: "GET", headers: apiHeaders() })
+        fetchWithAuth(API_BASE + "/api/services/status", { method: "GET" })
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 if (!d || !d.services) return;
@@ -6249,9 +6249,9 @@
             msgEl.style.color = "var(--text-secondary)";
             msgEl.textContent = label + " Bot " + botId + " en cours...";
         }
-        fetch(API_BASE + "/api/bot/" + botId + "/" + action, {
+        fetchWithAuth(API_BASE + "/api/bot/" + botId + "/" + action, {
             method: "POST",
-            headers: Object.assign({ "Content-Type": "application/json" }, apiHeaders()),
+            headers: { "Content-Type": "application/json" },
             body: "{}",
         })
             .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
@@ -6282,7 +6282,7 @@
         var btnStart = $("btn-bot-start");
         if (!stateEl) return;
 
-        fetch(API_BASE + "/api/bot/status", { method: "GET", headers: apiHeaders() })
+        fetchWithAuth(API_BASE + "/api/bot/status", { method: "GET" })
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 var stopped = d && d.stop_flag_active === true;
@@ -6335,7 +6335,7 @@
     }
 
     function fetchUsersStats() {
-        fetch(API_BASE + "/api/admin/users/stats", { headers: apiHeaders() })
+        fetchWithAuth(API_BASE + "/api/admin/users/stats", {})
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
                 if (!d) return;
@@ -6350,7 +6350,7 @@
     }
 
     function fetchBotHealth() {
-        fetch(API_BASE + "/api/admin/bot/health", { headers: apiHeaders() })
+        fetchWithAuth(API_BASE + "/api/admin/bot/health", {})
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
                 if (!d) return;
