@@ -109,6 +109,13 @@ ENTRY_RULES = {
     #   Cf. feedback_lightgbm_no_composite_indicators.md + audit market-analyst 24/04.
     "min_bias_clarity": 0.30,               # seuil soft-flag observabilite uniquement
     "enforce_bias_gate": True,              # si False, bias calcule mais gate desactive (observabilite only)
+    # 30/04 v3 (Jackson "ON A ACHETE HAUT DE RANGE") — RangeGate confluence
+    # 4 metriques (VA + IB + DAY + MQ_1D). Reversibilite via flag.
+    "range_gate_enabled": True,             # toggle desactivable (anti pattern 11 V1)
+    "range_gate_min_confluence": 2,         # >= 2/4 metriques en zone extreme = SKIP
+    "range_gate_mode": "observe",           # "observe" (log only) ou "skip" (mutation)
+    # Backtest 30/04 : mode skip = 65% rejection + PnL bloque +753$ → observe
+    # par defaut (R1+S3 code-reviewer). Bench 5j puis switch skip.
 }
 
 # Config DTC (valide Phase 1 paper uniquement, pas de compte LIVE)
@@ -133,6 +140,10 @@ FUNNEL_STEPS = [
      # `bias_opposite_direction` RETIRE (quasi-tautologie : conseil_global utilise deja
      # compute_bias sur meme bar). STEP 6bis garde uniquement check prereq bar DMP.
      # Soft-flag `bias_weak_but_aligned` continue d'etre loggue V2 pour observabilite.
+    ("6ter_range",      "RangeGate haut/bas",
+     ["range_extreme"]),  # 🆕 30/04 v3 (Jackson "ON A ACHETE HAUT DE RANGE")
+     # Confluence 4 metriques (VA + IB + DAY + MQ_1D) : skip si >=2/4 en zone
+     # extreme. Plus cas BREAKOUT_VA (range_pos extreme + inside_cur_va=0).
     ("7_sltp",          "SLTP murs+budget",
      ["sltp_no_wall", "sltp_rr_low", "sltp_budget_exceeded", "sltp_out_of_range"]),
     ("8_payoff",        "Expected payoff",  ["expected_payoff_low"]),
@@ -1028,6 +1039,43 @@ class PaperTrader:
             # Mode observation ne doit JAMAIS faire echouer un trade
             if _v2log:
                 _v2log.emit("GENERIC_ALERTE", msg=f"cross_obs failed: {e}")
+
+        # ─── 6ter. RangeGate (30/04 v3 Jackson "ON A ACHETE HAUT DE RANGE") ──
+        # Confluence 4 metriques (VA + IB + DAY + MQ_1D) : skip si >=2/4 en
+        # zone extreme. Plus cas special BREAKOUT_VA (range_pos extreme +
+        # inside_cur_va=0). Reproduction trade ES LONG @ 7197.75 → SL hit -30t.
+        # Reversibilite via ENTRY_RULES['range_gate_enabled'] (default True).
+        if ENTRY_RULES.get("range_gate_enabled", True):
+            try:
+                from CORE.range_gate import evaluate_range_gate
+            except ImportError:
+                from range_gate import evaluate_range_gate
+            # Conversion direction Bot 1 ("LONG"/"SHORT") -> "BUY"/"SELL"
+            rg_dir = "BUY" if direction == "LONG" else "SELL"
+            rg_result = evaluate_range_gate(
+                bar_row_dict, rg_dir, symbol,
+                enabled=True,
+                min_confluence=ENTRY_RULES.get("range_gate_min_confluence", 2),
+                mode=ENTRY_RULES.get("range_gate_mode", "observe"),
+            )
+            # Log would_skip meme en mode observe (bench 5j R1 code-reviewer)
+            if rg_result.would_skip and _v2log:
+                try:
+                    _v2log.emit("GENERIC_INFO",
+                                msg=(f"range_gate [{rg_result.mode}] {symbol} "
+                                     f"{direction}: {rg_result.skip_reason}"))
+                except Exception:
+                    pass
+            if rg_result.skip:
+                self._funnel_reject("6ter_range", "range_extreme",
+                                    symbol=symbol,
+                                    direction=direction,
+                                    skip_reason=rg_result.skip_reason,
+                                    high_count=rg_result.high_count,
+                                    low_count=rg_result.low_count,
+                                    **market_ctx)
+                return None
+            self._funnel_pass("6ter_range")
 
         # 7. SLTPEngine — calcul intelligent Tier 1/2 murs + TP1
         engine = self.sltp_engines[symbol]

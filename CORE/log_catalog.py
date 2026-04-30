@@ -139,6 +139,7 @@ LOG_CODES = {
     "ECO_BLOCK":               (LogLevel.INFO,     "decisions", "Eco/Session block : {sym} {reason} (jusqu'a {until_utc})"),
     "VETO_BUY_COLOR_WALL":     (LogLevel.INFO,     "decisions", "Veto BUY {sym} : color_dn wall a {dist_color_dn_pct}% (seuil {threshold}%)"),
     "VETO_SHORT_NO_WALL":      (LogLevel.INFO,     "decisions", "Veto SHORT {sym} : {reason} (sl={sl_ticks}t tp={tp_ticks}t)"),
+    "GATE_RANGE_BLOCK":        (LogLevel.INFO,     "decisions", "RangeGate block : {sym} {direction} reason={reason} (high={high_count}/4 low={low_count}/4)"),
 
     "DISCORD_SEND_OK":         (LogLevel.INFO,     "events", "Discord envoye : channel={channel}"),
     "DISCORD_SEND_FAIL":       (LogLevel.MAJEUR,   "events", "Discord echec : {err}"),

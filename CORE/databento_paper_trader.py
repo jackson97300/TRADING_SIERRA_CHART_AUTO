@@ -190,6 +190,12 @@ class BotConfig:
     veto_buy_color_wall_pct: float = 0.05    # 0 = desactive. Audit : 26.2% bars touchent ce filtre.
     veto_short_no_wall: bool = True          # False = desactive (pour A/B test ou regime BEAR confirme).
     veto_short_room_min_ratio: float = 1.5   # tp_ticks / sl_ticks doit etre >= 1.5 (room-to-target).
+    # 30/04 v3 (Jackson "ON A ACHETE HAUT DE RANGE") — RangeGate confluence
+    range_gate_enabled: bool = True          # False = desactive (anti pattern 11 V1)
+    range_gate_min_confluence: int = 2       # >= 2/4 metriques en zone extreme = SKIP
+    range_gate_mode: str = "observe"         # "observe" (log only) ou "skip" (mutation)
+    # Backtest empirique 30/04 : mode skip = 65% rejection + PnL bloque +753$
+    # → mode observe par defaut (R1+S3 code-reviewer). Bench 5j puis switch skip.
 
 
 # ============================================================
@@ -1932,6 +1938,35 @@ class DatabentoPaperTrader:
                           bull_pts=result.bull_pts, bear_pts=result.bear_pts)
                     self._log_snapshot(symbol, bar, result, traded=False)
                     return
+
+        # ── RangeGate (30/04 v3 Jackson "ON A ACHETE HAUT DE RANGE") ────
+        # Confluence 4 metriques (VA + IB + DAY + MQ_1D) : skip si >=2/4
+        # en zone extreme. Plus cas special "BREAKOUT_VA" (range_pos extreme
+        # + inside_cur_va=0). Reversibilite via cfg.range_gate_enabled.
+        if getattr(self.cfg, "range_gate_enabled", True):
+            try:
+                from CORE.range_gate import evaluate_range_gate
+            except ImportError:
+                from range_gate import evaluate_range_gate
+            rg_result = evaluate_range_gate(
+                bar, result.direction, symbol,
+                enabled=True,
+                min_confluence=getattr(self.cfg, "range_gate_min_confluence", 2),
+                mode=getattr(self.cfg, "range_gate_mode", "observe"),
+            )
+            # Log les would_skip meme en mode observe (pour bench 5j)
+            if rg_result.would_skip:
+                print(f"[{symbol}] RANGE GATE [{rg_result.mode}] {result.direction}: "
+                      f"{rg_result.skip_reason}")
+                _emit("GATE_RANGE_BLOCK", sym=symbol,
+                      direction=result.direction,
+                      reason=rg_result.skip_reason,
+                      high_count=rg_result.high_count,
+                      low_count=rg_result.low_count)
+            # Skip uniquement si mode=skip (mutation effective)
+            if rg_result.skip:
+                self._log_snapshot(symbol, bar, result, traded=False)
+                return
 
         # Risk check
         allowed, reason = self.risk.can_trade(symbol)
