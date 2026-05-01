@@ -2572,15 +2572,21 @@ class DatabentoPaperTrader:
         # ════════════════════════════════════════════════════════════
         # Envoi ordre broker (apres QualityGate v3 PASS)
         # ════════════════════════════════════════════════════════════
-        # Observability veto retire (Jackson 01/05) : log SHORT avec delta_div_buy>0
-        # juste AVANT envoi ordre (apres tous les gates), pour audit WR pur
-        # (= seulement trades reellement executes, pas SHORTs bloques par anti_fomo etc)
+        # Observability vetos divergence retires (Jackson 01/05 "PAS DE VETO DIVERGENCE,
+        # ELLE ARRIVE TRES PEU") : log avant envoi ordre pour audit WR pur sur trades
+        # reellement executes. Re-introduction conditionnee N>=20 + WR<30%.
         if result.direction == "SELL":
             ddb = features_at_entry.get("delta_div_buy", 0)
             if ddb and ddb > 0:
                 _emit("VETO_DELTA_DIV_OBSERVED", sym=symbol,
                       direction="SHORT", delta_div_buy=int(ddb),
-                      note="veto_retire_01_05_audit_WR_avant_send_order")
+                      note="veto5_delta_div_buy_for_short_retire_01_05")
+        elif result.direction == "BUY":
+            dds = features_at_entry.get("delta_div_sell", 0)
+            if dds and dds > 0:
+                _emit("VETO_DELTA_DIV_OBSERVED", sym=symbol,
+                      direction="LONG", delta_div_sell=int(dds),
+                      note="veto4_delta_div_sell_for_buy_retire_01_05")
         print(f"[{symbol}] SEND {result.direction} {self.cfg.quantity}x {contract} "
               f"entry~{close:.2f} sl={sl_price:.2f} tp={tp_price:.2f}")
         try:

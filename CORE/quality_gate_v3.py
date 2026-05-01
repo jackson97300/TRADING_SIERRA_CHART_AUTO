@@ -175,9 +175,14 @@ def _check_vetos(features: Dict, direction: str, regime: Optional[str]) -> Optio
     #     if regime in ("TREND_UP", "TREND_DOWN", "TREND"):
     #         return "veto_cvd_divergence_in_trend"
 
-    # Veto 4 — delta_div_sell pour BUY (0% WR / -$272 sur 3 trades)
-    if _is_long(direction) and _fget(features, "delta_div_sell") > 0:
-        return "veto_delta_div_sell_for_buy_0pct_wr"
+    # Veto 4 — delta_div_sell pour BUY
+    # 🔴 RETIRE 01/05 (Jackson "PAS DE VETO DIVERGENCE, ELLE ARRIVE TRES PEU")
+    # Statistique : N=3 trades 0% WR -$272 = sample insuffisant (cousin Veto 3
+    # retire pour N=2 noise). Divergences = events rares, N<5 = noise pur.
+    # Coherence avec Veto 5 (delta_div_buy pour SHORT) retire 01/05.
+    # Re-introduction conditionnee a N>=20 trades avec WR<30% mesure.
+    # if _is_long(direction) and _fget(features, "delta_div_sell") > 0:
+    #     return "veto_delta_div_sell_for_buy_0pct_wr"
 
     # Veto 5 — delta_div_buy pour SHORT
     # 🔴 RETIRE 01/05 (Jackson "PAS DE VETO") : veto base sur "symetrie attendue
