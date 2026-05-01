@@ -1,0 +1,95 @@
+# V5 GATE 17h Results — YYYY-MM-DD HH:MM UTC
+
+> Template empty — a remplir samedi 17h apres train baselines.
+> Ne PAS modifier les seuils dans `GATE_17H_METHODOLOGY.md` apres remplissage
+> de ce fichier (anti-data-dredging).
+
+## Setup
+
+- n_trials declare : ___ (Optuna inclus, minimum 120)
+- Hold-out used : NO / YES
+  - Si YES : score hold-out PF ___, DSR ___, degradation vs val ___ PF
+- Commit hash methodologie : ___
+  - Verifier hash = pre-samedi 9h via `git log DOCS/GATE_17H_METHODOLOGY.md`
+- Costs inclus : ES 2.3 ticks, NQ 5.2 ticks (round-trip)
+- Folds walk-forward : ___ folds (typique 9-12)
+- Period train : ___ → ___
+- Period val   : ___ → ___
+- Period hold-out (si used) : ___ → ___
+
+## Resultats par combinaison
+
+| Combo | PF mediane | DSR (n_trials=120+) | WR | EV/trade | Trades/j | Max DD ticks | std/mean | min(PF) | Verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| ES_BUY  | | | | | | | | | GO/NOGO/MARG |
+| ES_SELL | | | | | | | | | |
+| NQ_BUY  | | | | | | | | | |
+| NQ_SELL | | | | | | | | | |
+
+### Edge brut (cost=0) — info only
+
+| Combo | PF brut | Edge ticks/trade | Notes |
+|---|---|---|---|
+| ES_BUY  | | | |
+| ES_SELL | | | |
+| NQ_BUY  | | | |
+| NQ_SELL | | | |
+
+## Decision tree applique
+
+Cocher UNE seule case :
+
+- [ ] **4/4 GO** → deploy paper integral 4 combos observe-only
+- [ ] **3/4 GO** → deploy 3 OK observe-only + investigation 1 NO-GO isolee
+- [ ] **2/4 GO symetrique SELL** (ES_SELL+NQ_SELL OK) → deploy SELL only,
+      archive BUY pour V6
+- [ ] **2/4 GO asymetrique** (mix incoherent) → MARGINAL hold-out
+- [ ] **1/4 GO** → MARGINAL strict hold-out unique decide
+- [ ] **0/4 GO** → pivot Voie 5
+
+## Conditions critiques bloquantes (1 = NO-GO immediat)
+
+Pour chaque combinaison, verifier AUCUN des criteres NO-GO clair section 2 :
+
+| Combo | PF<1.0 | DSR<0 | WR<35% | EV<0 | DD>limit | min(PF)<0.5 |
+|---|---|---|---|---|---|---|
+| ES_BUY  | | | | | | |
+| ES_SELL | | | | | | |
+| NQ_BUY  | | | | | | |
+| NQ_SELL | | | | | | |
+
+## Verdict final
+
+### Choix : ___________
+
+(GO_PAPER_4 / GO_PAPER_3 / GO_SELL_ONLY / MARGINAL_HOLDOUT / PIVOT_VOIE_5)
+
+### Justification (5-10 lignes max)
+
+___________
+
+### Hold-out used? : NO / YES
+
+Si YES, score :
+- ES_BUY hold-out  : PF ___, DSR ___
+- ES_SELL hold-out : PF ___, DSR ___
+- NQ_BUY hold-out  : PF ___, DSR ___
+- NQ_SELL hold-out : PF ___, DSR ___
+- Degradation worst : ___ PF (limite : 0.15)
+
+## Next step
+
+Cocher UN seul :
+
+- [ ] Continue dimanche signal rules x 4 TF (Option A) — re-train + hold-out
+- [ ] Pivot Voie 5 immediate (Option B) — implement dashboard ML observe
+- [ ] Deploy paper observe-only ___ combos (lundi matin)
+- [ ] Reporter GATE lendemain (livrables incomplets)
+
+## Checklist post-verdict
+
+- [ ] Commit `DOCS/V5_GATE_17H_RESULTS.md` rempli avec timestamp UTC
+- [ ] Memory update `feedback_v5_gate_17h_verdict.md`
+- [ ] IDEAS_BACKLOG.md update (statut V5 ML)
+- [ ] Discord notif Jackson (si YES paper deploy)
+- [ ] Prochaines etapes dans `TODO.md` ou plan dimanche/lundi
