@@ -105,10 +105,30 @@ except ImportError as _e:
 DATASET_ROOT = ROOT / "DATA" / "datasets" / "v4_enriched"
 STATE_FILE = ROOT / "DATA" / "PAPER_TRADES" / "databento_paper_state.json"
 STOP_FLAG = ROOT / "DATA" / "BOT_CONTROL" / "STOP.flag"
+# 01/05/2026 (Jackson) : flag local dedie au bot databento (anti-cascade).
+# STOP.flag       = kill admin GLOBAL (tous les bots, intervention humaine)
+# STOP_DATABENTO.flag = kill LOCAL (data feed stale Databento uniquement)
+# Le bot databento lit les DEUX, mais ne CREE QUE le local quand auto-killswitch.
+# Evite que stale Databento tue mia_paper_trader (DTC live = data feed different).
+STOP_FLAG_LOCAL = ROOT / "DATA" / "BOT_CONTROL" / "STOP_DATABENTO.flag"
 # Snapshots = log de TOUS les checks (HOLD + BUY + SELL) pour analyse posterior
 SNAPSHOTS_DIR = ROOT / "DATA" / "PAPER_TRADES"
 
 POLL_INTERVAL_SEC = 30
+# Watchdog data freshness (01/05 Jackson) — seuils en secondes.
+# Calibres pour TOLERER le retard structurel pipeline live_pipeline_loop (~30 min
+# en periode de catch-up apres incident). Bot 2 lit DATA/datasets/v4_enriched/
+# parquets enrichis par phase BUILD_V4 + PHASE_B (~5-10 min latence normale
+# steady-state, plus en catch-up).
+#
+# v1 01/05 matin : 90/300/900 — TROP STRICT, recovery jamais declenche
+#   car pipeline ne descend pas sous 90s. Bot 2 reste pause indefiniment.
+# v2 01/05 14:00 (Option B Jackson) : 600/1500/2700 — aligne sur latence pipeline
+#   steady-state ~5-10 min + marge catch-up.
+DATA_FRESH_THR_SEC = 600       # 10 min = fresh (couvre latence pipeline normale)
+DATA_WARN_THR_SEC = 1500       # 25 min = warning (alerte douce)
+DATA_CRIT_THR_SEC = 2700       # 45 min = critical → kill local (STOP_DATABENTO.flag)
+DATA_RECOVERY_CONSEC_HB = 3    # heartbeats consec frais avant clear flag local
 COOLDOWN_MIN = 15
 # 30/04 Jackson : alignement sur Bot 1 mia_paper_trader (max_trades_per_day=9999).
 # PAS de limite trades/jour en paper (collecte max de donnees). Cooldown 15min
@@ -421,6 +441,8 @@ class RiskManager:
         now = datetime.now(timezone.utc)
         if STOP_FLAG.exists():
             return False, "STOP_FLAG_PRESENT"
+        if STOP_FLAG_LOCAL.exists():
+            return False, "STOP_FLAG_LOCAL_DATA_STALE"
         last = self.last_close_time.get(symbol)
         if last and (now - last) < timedelta(minutes=COOLDOWN_MIN):
             return False, f"COOLDOWN_{COOLDOWN_MIN}MIN"
@@ -472,6 +494,10 @@ class DatabentoPaperTrader:
         self._volatility_bucket = {sym: None for sym in SYMBOLS}   # detect shift
         self._session_state = None                                  # detect transition
         self._mq_levels_state = {sym: {} for sym in SYMBOLS}       # detect MQ refresh
+        # 01/05 Jackson : recovery automatique data feed stale.
+        # Compteur de heartbeats CONSECUTIFS avec data fraiche (last_age <= THR_FRESH).
+        # Si flag local existe ET compteur >= N_RECOVERY → suppr flag + emit RECOVERED.
+        self._consec_fresh_hb = 0
         self._heartbeat_interval_sec = 300    # 5 min
         self._aggregate_interval_sec = 300    # 5 min
         # FIX 29/04 : threshold aligne sur DATABENTO_DELAY_MIN (30min) + buffer
@@ -1047,6 +1073,7 @@ class DatabentoPaperTrader:
         self._volatility_bucket = {sym: None for sym in SYMBOLS}
         self._mq_levels_state = {sym: {} for sym in SYMBOLS}
         self._session_state = None
+        self._consec_fresh_hb = 0
 
     def _setup_signals(self):
         def handler(signum, frame):
@@ -1582,6 +1609,109 @@ class DatabentoPaperTrader:
         _emit("CHECK_EXIT_DTC_HIT", sym=symbol, outcome=outcome,
               live_price=live_price, sl=sl, tp=tp, age_s=round(age_s, 1))
 
+    def _read_live_cache_bar(self, symbol: str, max_age_sec: int = 180) -> Optional[dict]:
+        """Lit la bar LIVE complete depuis DATA/LIVE_CACHE alimente par MIA-Live-OHLCV.
+
+        Retourne dict avec {ts_event_iso, ts_event_ns, open, high, low, close, volume, age_sec}
+        ou None si cache absent/stale.
+
+        01/05/2026 (Jackson "INADMISSIBLE 33 min retard") : permet a Bot 2 de scorer
+        sur close LIVE au lieu de close parquet (delay 30 min Historical Databento).
+        """
+        sym_full = f"{symbol}.c.0"
+        safe_sym = sym_full.replace("/", "_").replace(".", "_")
+        cache_path = ROOT / "DATA" / "LIVE_CACHE" / f"{safe_sym}_last.json"
+        try:
+            if not cache_path.exists():
+                return None
+            file_age_sec = time.time() - cache_path.stat().st_mtime
+            if file_age_sec > max_age_sec:
+                return None
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            close = data.get("close")
+            if close is None or not isinstance(close, (int, float)) or close <= 0:
+                return None
+            data["age_sec"] = file_age_sec
+            return data
+        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+            return None
+
+    def _enrich_bar_with_live(self, symbol: str, bar: pd.Series) -> tuple[pd.Series, Optional[pd.Timestamp]]:
+        """Enrichit la bar parquet (delay 30 min) avec OHLC + distances LIVE.
+
+        Strategy :
+        - Lire bar LIVE (latence ~60s)
+        - Si dispo + plus recente que parquet : remplacer OHLC + ts_event
+        - Garder features structurelles parquet (mq_levels daily, day_type, profile_shape, cvd_*)
+        - Recalculer features price-driven : dist_mq_*_pct, dist_pdh/pdl_pct, bool_above_*
+        - Logger drift (close_parquet, close_live, delta_ticks) max 1x/min
+
+        Returns:
+            (bar_enrichie, live_ts_or_None)
+            live_ts_or_None : ts_event LIVE si override applique, None si fallback parquet
+        """
+        live = self._read_live_cache_bar(symbol, max_age_sec=180)
+        if live is None:
+            return bar, None  # fallback parquet (no-op)
+
+        parquet_close = float(bar.get("close", 0) or 0)
+        live_close = float(live["close"])
+        if parquet_close <= 0 or live_close <= 0:
+            return bar, None  # safety
+
+        delta_ticks = (live_close - parquet_close) / TICK_SIZE
+
+        # Logger drift (rate-limited 1x/min/symbol)
+        if not hasattr(self, "_last_drift_log"):
+            self._last_drift_log = {}
+        last_log = self._last_drift_log.get(symbol, 0)
+        if time.time() - last_log > 60:
+            self._last_drift_log[symbol] = time.time()
+            _emit("LIVE_BAR_OVERRIDE",
+                  sym=symbol,
+                  close_parquet=round(parquet_close, 2),
+                  close_live=round(live_close, 2),
+                  delta_ticks=round(delta_ticks, 1),
+                  live_age_sec=round(live["age_sec"], 1))
+
+        # Build enriched bar
+        new_bar = bar.copy()
+        new_bar["close"] = live_close
+        new_bar["open"] = float(live["open"])
+        new_bar["high"] = float(live["high"])
+        new_bar["low"] = float(live["low"])
+        new_bar["volume"] = float(live["volume"])
+
+        # Recalculer dist_mq_*_pct avec close LIVE (mq_* levels broadcast daily, restent valides)
+        for level_key in ("mq_call", "mq_put", "mq_hvl"):
+            level = bar.get(level_key)
+            if level is not None and pd.notna(level):
+                level_f = float(level)
+                if level_f > 0:
+                    dist_key = f"dist_{level_key}_pct"
+                    new_bar[dist_key] = (live_close - level_f) / live_close * 100
+                    bool_key = f"bool_above_{level_key}"
+                    new_bar[bool_key] = 1 if live_close > level_f else 0
+
+        # Recalculer dist_pdh/pdl_pct avec close LIVE
+        for level_key, dist_key in [("pdh", "dist_pdh_pct"), ("pdl", "dist_pdl_pct")]:
+            level = bar.get(level_key)
+            if level is not None and pd.notna(level):
+                level_f = float(level)
+                if level_f > 0:
+                    new_bar[dist_key] = (live_close - level_f) / live_close * 100
+
+        # ts_event LIVE pour le check stale en aval (safe parsing — code-reviewer 01/05)
+        live_ts = None
+        try:
+            ts_iso = live.get("ts_event_iso")
+            if ts_iso:
+                live_ts = pd.to_datetime(ts_iso).tz_localize(None)
+        except (ValueError, TypeError, KeyError):
+            live_ts = None  # iso malforme → fallback parquet ts_event en aval
+        return new_bar, live_ts
+
     def _read_live_cache_close(self, symbol: str, fallback: float, max_age_sec: int = 300) -> float:
         """Lit le close LIVE depuis DATA/LIVE_CACHE alimente par MIA-Live-OHLCV.
 
@@ -1662,6 +1792,68 @@ class DatabentoPaperTrader:
             _emit("BOT_HEARTBEAT", account=self.cfg.trade_account,
                   n_positions=n_pos, total_bars=total_bars, last_bar_age=last_age)
             self._last_heartbeat = now
+
+            # P0 01/05/2026 (Jackson "ON AURAIS DU AVOIR UN ALERT SUR DONNER PERIMER")
+            # Watchdog data freshness : si last_bar_age depasse seuil, alerter.
+            #
+            # Refactor 01/05 soir (anti-cascade + recovery auto) :
+            # - WARN     : > DATA_WARN_THR_SEC  → emit MAJEUR (monitoring, pas action)
+            # - CRITICAL : > DATA_CRIT_THR_SEC  → cree STOP_DATABENTO.flag (LOCAL, pas global)
+            # - FRESH    : <= DATA_FRESH_THR_SEC consec DATA_RECOVERY_CONSEC_HB → suppr flag
+            #
+            # Le flag LOCAL pause UNIQUEMENT ce bot (anti-cascade : mia_paper_trader
+            # DTC live continue sa route). Recovery auto pour eviter intervention
+            # humaine quand stream Databento revient (cas reconnect WebSocket).
+            if last_age > 0:
+                # Mise a jour compteur recovery (incremental ou reset)
+                if last_age <= DATA_FRESH_THR_SEC:
+                    self._consec_fresh_hb += 1
+                else:
+                    self._consec_fresh_hb = 0
+
+                if last_age > DATA_CRIT_THR_SEC:
+                    # CRITICAL : creer flag LOCAL UNIQUEMENT s'il n'existe pas deja
+                    # (idempotent — anti-pollution logs si stale persiste plusieurs hb)
+                    if not STOP_FLAG_LOCAL.exists():
+                        try:
+                            STOP_FLAG_LOCAL.parent.mkdir(parents=True, exist_ok=True)
+                            STOP_FLAG_LOCAL.write_text(
+                                f"auto_killswitch_data_feed_stale_critical_"
+                                f"age_{last_age}s_at_{datetime.now(timezone.utc).isoformat()}",
+                                encoding="utf-8"
+                            )
+                            _emit("DATA_FEED_STALE_CRITICAL",
+                                  account=self.cfg.trade_account,
+                                  last_age_sec=last_age,
+                                  threshold_sec=DATA_CRIT_THR_SEC,
+                                  action="local_killswitch_created")
+                            print(f"[DATA_STALE] CRITICAL: bar age {last_age}s "
+                                  f"> {DATA_CRIT_THR_SEC}s — STOP_DATABENTO.flag (local) creee")
+                        except Exception as e:
+                            print(f"[DATA_STALE] auto-killswitch fail: {e}")
+                elif last_age > DATA_WARN_THR_SEC:
+                    _emit("DATA_FEED_STALE_WARNING",
+                          account=self.cfg.trade_account,
+                          last_age_sec=last_age,
+                          threshold_sec=DATA_WARN_THR_SEC)
+
+                # RECOVERY : flag local existe + N heartbeats consec fresh → clear.
+                # Compteur NON reset apres recovery : si data re-stale, on garde le max
+                # pour permettre re-recovery rapide (semantique : "data est stable").
+                if (STOP_FLAG_LOCAL.exists()
+                        and self._consec_fresh_hb >= DATA_RECOVERY_CONSEC_HB
+                        and last_age <= DATA_FRESH_THR_SEC):
+                    try:
+                        STOP_FLAG_LOCAL.unlink()
+                        _emit("DATA_FEED_RECOVERED",
+                              account=self.cfg.trade_account,
+                              last_age_sec=last_age,
+                              consec_fresh_hb=self._consec_fresh_hb,
+                              action="local_killswitch_removed")
+                        print(f"[DATA_RECOVERY] OK: bar age {last_age}s "
+                              f"x{self._consec_fresh_hb} consec — STOP_DATABENTO.flag supprime")
+                    except Exception as e:
+                        print(f"[DATA_RECOVERY] flag removal fail: {e}")
 
         # Aggregate (HOLD reason)
         if (now - self._last_aggregate_emit) >= self._aggregate_interval_sec:
@@ -1830,7 +2022,15 @@ class DatabentoPaperTrader:
         bar = load_last_bar(symbol)
         if bar is None:
             return
-        bar_ts = bar.get("ts_event")
+        # 01/05/2026 (Jackson "INADMISSIBLE 33 min") : enrichir bar parquet (delay
+        # 30 min Historical Databento) avec close LIVE (latence 60s) + recompute
+        # dist_mq_*_pct + dist_pdh/pdl_pct sur close LIVE. Features structurelles
+        # (mq_levels, day_type, profile_shape, cvd_*) restent du parquet (broadcast
+        # daily, valides). Si LIVE_CACHE absent/stale → fallback parquet (no-op).
+        bar, live_ts = self._enrich_bar_with_live(symbol, bar)
+
+        # ts_event de reference : LIVE si dispo, sinon parquet
+        bar_ts = live_ts if live_ts is not None else bar.get("ts_event")
         if self.last_bar_ts[symbol] is not None and bar_ts == self.last_bar_ts[symbol]:
             return
         self.last_bar_ts[symbol] = bar_ts
@@ -2107,16 +2307,26 @@ class DatabentoPaperTrader:
                           dist_ticks=sl_ticks_use if "MQ_" in sl_wall_used else tp_ticks_use,
                           tier=sltp.sl_wall_tier if "MQ_" in sl_wall_used else 0)
                 if getattr(sltp, "cas4_triggered", False):
-                    # Valeurs exactes exposees par SLTPEngine (R1+R2 review 30/04 v2)
-                    # cas4_blocked_wall_dist : distance reelle du mur (pas approx)
-                    # cas4_tp_standard_pre : tp_ticks AVANT capot (post CAS 1/2/3)
+                    # 🆕 v6 30/04 : enrichi avec subtier (T1 / T2_STRUCTUREL) + col + rr_pre/post
                     _emit("SLTP_CAS4_TRIGGERED", sym=symbol,
                           direction=result.direction,
                           wall_name=sltp.cas4_blocked_wall,
+                          wall_col=getattr(sltp, "cas4_blocked_wall_col", ""),
+                          subtier=getattr(sltp, "cas4_subtier", ""),
                           tp_ticks=tp_ticks_use,
                           tp_standard=sltp.cas4_tp_standard_pre,
                           wall_dist=sltp.cas4_blocked_wall_dist,
+                          rr_pre=getattr(sltp, "cas4_rr_pre", 0.0),
+                          rr_post=getattr(sltp, "cas4_rr_post", 0.0),
                           rr=tp_ticks_use / sl_ticks_use if sl_ticks_use > 0 else 0)
+                # 🆕 v6 30/04 : T2 observability (mur T2 hors structurel qui aurait capote)
+                if getattr(sltp, "cas4_observed_tier2", False):
+                    _emit("SLTP_CAS4_T2_OBSERVED", sym=symbol,
+                          direction=result.direction,
+                          wall_name=sltp.cas4_observed_wall_t2,
+                          wall_dist=sltp.cas4_observed_wall_t2_dist,
+                          tp_devant=sltp.cas4_observed_tp_devant,
+                          tp_actual=tp_ticks_use)
             else:
                 print(f"[{symbol}] SLTP invalid ({sltp.reject_reason or 'no walls found'}), "
                       f"fallback adaptatif SL={sl_ticks_use}t TP={tp_ticks_use}t "
@@ -2126,6 +2336,19 @@ class DatabentoPaperTrader:
                       direction=result.direction,
                       sl_fixed=sl_ticks_use,
                       tp_fixed=tp_ticks_use)
+                # 🆕 v6 30/04 : flag dedie quand le rejet est cause par capot CAS 4
+                # (mur T1 ou T2_STRUCTUREL qui a fait chuter R:R sous MIN_RR_RATIO).
+                # Permet grep ex-post pour calibrer fire rate du fix v6.
+                if getattr(sltp, "cas4_caused_reject", False):
+                    _emit("SLTP_CAS4_CAUSED_REJECT", sym=symbol,
+                          direction=result.direction,
+                          wall_name=sltp.cas4_blocked_wall,
+                          wall_col=getattr(sltp, "cas4_blocked_wall_col", ""),
+                          subtier=getattr(sltp, "cas4_subtier", ""),
+                          wall_dist=sltp.cas4_blocked_wall_dist,
+                          rr_pre=getattr(sltp, "cas4_rr_pre", 0.0),
+                          rr_post=getattr(sltp, "cas4_rr_post", 0.0),
+                          reject_reason=sltp.reject_reason)
         except (AttributeError, KeyError) as e:
             print(f"[{symbol}] SLTP exception {e}, fallback fixes")
             _emit("PY_EXCEPTION_HOT_PATH", sym=symbol,
@@ -2253,6 +2476,90 @@ class DatabentoPaperTrader:
             print(f"[{symbol}] DTC unavailable")
             return
         contract = BOT_INSTRUMENTS[symbol].contract
+
+        # ════════════════════════════════════════════════════════════
+        # 🆕 STEP 6.5 v3 — QualityGate v3 data-driven (01/05/2026)
+        # ════════════════════════════════════════════════════════════
+        # Calcule features + signatures AVANT envoi ordre, applique QualityGate v3.
+        # Si NO_TRADE → bloque envoi + log JSONL. Si STRONG → continue flow normal.
+        # Validation : 42 trades 28-30/04+01/05, WR 23.8% → 42.9% (+$1,945 evite paper).
+        # Reviews : code-reviewer GO-AVEC-RESERVES, market-analyst GO-AVEC-MONITORING.
+        # ════════════════════════════════════════════════════════════
+        features_at_entry = self._extract_features_dict(bar)
+        bar_ts_entry = str(bar.get("ts_event"))[:19]
+
+        # SIGNATURES (deplacees avant envoi ordre pour QualityGate v3)
+        signatures_at_entry = {}
+        sig_score_at_entry = {}
+        try:
+            from CORE import signatures as _sigs_mod
+            sig_dir = "LONG" if result.direction == "BUY" else "SHORT"
+            signatures_at_entry = _sigs_mod.compute_all(features_at_entry, direction=sig_dir)
+            sig_score_at_entry = _sigs_mod.overall_score(signatures_at_entry)
+            for sig_name, sig_val in signatures_at_entry.items():
+                features_at_entry[f"sig_{sig_name}"] = int(bool(sig_val))
+            features_at_entry["sig_score_tier1"] = sig_score_at_entry.get("tier1", 0)
+            features_at_entry["sig_score_tier2"] = sig_score_at_entry.get("tier2", 0)
+            features_at_entry["sig_score_tier3"] = sig_score_at_entry.get("tier3", 0)
+            features_at_entry["sig_score_total"] = sig_score_at_entry.get("total", 0)
+            signals_on = [k for k, v in signatures_at_entry.items() if v]
+            _emit("SIGNATURES_COMPUTED", sym=symbol, direction=sig_dir,
+                  tier1=sig_score_at_entry.get("tier1", 0),
+                  tier1_max=sig_score_at_entry.get("tier1_max", 0),
+                  tier2=sig_score_at_entry.get("tier2", 0),
+                  tier2_max=sig_score_at_entry.get("tier2_max", 0),
+                  tier3=sig_score_at_entry.get("tier3", 0),
+                  tier3_max=sig_score_at_entry.get("tier3_max", 0),
+                  total=sig_score_at_entry.get("total", 0))
+            print(f"[{symbol}] SIGNATURES : T1={sig_score_at_entry.get('tier1',0)}/4 "
+                  f"T2={sig_score_at_entry.get('tier2',0)}/4 T3={sig_score_at_entry.get('tier3',0)}/4 "
+                  f"= {sig_score_at_entry.get('total',0)}/12 | ON: {','.join(signals_on)}")
+        except Exception as _sig_err:
+            print(f"[{symbol}] signatures fail (non-fatal): {_sig_err}")
+
+        # QualityGate v3 — veto data-driven + scoring composite + hierarchie sizing
+        qg_result = None
+        try:
+            from CORE.quality_gate_v3 import quality_gate, log_decision
+            sig_dir = "LONG" if result.direction == "BUY" else "SHORT"
+            ma_trend = features_at_entry.get("ma_trend", "FLAT")
+            regime = "TREND_UP" if ma_trend == "UP" else (
+                "TREND_DOWN" if ma_trend == "DOWN" else "RANGE")
+            qg_result = quality_gate(features_at_entry, sig_dir, regime=regime)
+
+            signal_id_qg = f"{symbol}_{bar_ts_entry}"
+
+            if not qg_result.allow:
+                # NO_TRADE / VETO — bloquer envoi ordre
+                print(f"[{symbol}] QUALITY_GATE v3 BLOCK : {qg_result.reason}")
+                _emit("QUALITY_GATE_BLOCK", sym=symbol, direction=sig_dir,
+                      tier=qg_result.tier, score=qg_result.score,
+                      veto=qg_result.veto_triggered or "",
+                      reason=qg_result.reason)
+                # Log decision JSONL (executed=False)
+                log_decision(qg_result, signal_id=signal_id_qg, symbol=symbol,
+                             direction=sig_dir, regime=regime, bar_ts=bar_ts_entry,
+                             executed=False)
+                return  # ← BLOQUE envoi ordre
+
+            # PASS — log + continuer flow normal
+            print(f"[{symbol}] QUALITY_GATE v3 PASS : {qg_result.reason} "
+                  f"(breakdown: {qg_result.score_breakdown})")
+            _emit("QUALITY_GATE_PASS", sym=symbol, direction=sig_dir,
+                  tier=qg_result.tier, score=qg_result.score,
+                  sizing=qg_result.sizing)
+            log_decision(qg_result, signal_id=signal_id_qg, symbol=symbol,
+                         direction=sig_dir, regime=regime, bar_ts=bar_ts_entry,
+                         executed=True)
+        except Exception as _qg_err:
+            # Fail-safe : si QualityGate crash, NE PAS bloquer (mode dégradé temporaire)
+            # mais émettre une alerte pour investigation.
+            print(f"[{symbol}] quality_gate v3 fail (non-fatal, degraded mode): {_qg_err}")
+            _emit("QUALITY_GATE_ERROR", sym=symbol, error=str(_qg_err))
+
+        # ════════════════════════════════════════════════════════════
+        # Envoi ordre broker (apres QualityGate v3 PASS)
+        # ════════════════════════════════════════════════════════════
         print(f"[{symbol}] SEND {result.direction} {self.cfg.quantity}x {contract} "
               f"entry~{close:.2f} sl={sl_price:.2f} tp={tp_price:.2f}")
         try:
@@ -2266,55 +2573,9 @@ class DatabentoPaperTrader:
             return
         if not parent_id:
             print(f"[{symbol}] order rejected")
-            # FIX C2 review : code distinct du ORDER_REJECT V2CLEAN
             _emit("ORDER_REJECT_BOT2", sym=symbol, direction=result.direction,
                   entry=close, sl_price=sl_price, tp_price=tp_price)
             return
-        # FIX Tier1 #3 (29/04) : extract features_at_entry pour Lopez
-        # meta-labeling. Stocke sur position pour join avec outcome au close.
-        features_at_entry = self._extract_features_dict(bar)
-        bar_ts_entry = str(bar.get("ts_event"))[:19]
-
-        # ── FIX 30/04 nuit : SIGNATURES AUDIT (game changers framework Jackson) ─
-        # Compute les 12 signatures pro (cvd_divergence, color_zone, big_order_dom,
-        # absorb_bid, trapped_traders, etc.) au moment de l'entree. AUDIT ONLY :
-        # ne bloque PAS le trade pour l'instant. Stocke sur la position + emit
-        # SIGNATURES_COMPUTED. Permet validation walk-forward sur n>=30 trades
-        # avant d'activer le gate (Phase B).
-        # Backtest 30/04 nuit (n=15) : 3 Tier A candidates avec +30/+50pp de
-        # discrimination WIN vs LOSS. cf DOCS/eco_session_blocks_design.md +
-        # DATA/BACKTEST/signatures_bot2_*.csv.
-        signatures_at_entry = {}
-        sig_score_at_entry = {}
-        try:
-            from CORE import signatures
-            sig_dir = "LONG" if result.direction == "BUY" else "SHORT"
-            signatures_at_entry = signatures.compute_all(features_at_entry, direction=sig_dir)
-            sig_score_at_entry = signatures.overall_score(signatures_at_entry)
-            # FIX P2 (Jackson 30/04 nuit) : INJECT signatures dans features_at_entry
-            # avec prefixe sig_ pour centralisation (398 + 12 + 4 scores = 414 features
-            # totales que le bot voit). Permet analyse ML/meta-labeling sans join externe.
-            for sig_name, sig_val in signatures_at_entry.items():
-                features_at_entry[f"sig_{sig_name}"] = int(bool(sig_val))
-            features_at_entry["sig_score_tier1"] = sig_score_at_entry.get("tier1", 0)
-            features_at_entry["sig_score_tier2"] = sig_score_at_entry.get("tier2", 0)
-            features_at_entry["sig_score_tier3"] = sig_score_at_entry.get("tier3", 0)
-            features_at_entry["sig_score_total"] = sig_score_at_entry.get("total", 0)
-            # Liste des signaux ON (pour log lisible)
-            signals_on = [k for k, v in signatures_at_entry.items() if v]
-            _emit("SIGNATURES_COMPUTED", sym=symbol, direction=sig_dir,
-                  tier1=sig_score_at_entry["tier1"],
-                  tier1_max=sig_score_at_entry["tier1_max"],
-                  tier2=sig_score_at_entry["tier2"],
-                  tier2_max=sig_score_at_entry["tier2_max"],
-                  tier3=sig_score_at_entry["tier3"],
-                  tier3_max=sig_score_at_entry["tier3_max"],
-                  total=sig_score_at_entry["total"])
-            print(f"[{symbol}] SIGNATURES audit : T1={sig_score_at_entry['tier1']}/4 "
-                  f"T2={sig_score_at_entry['tier2']}/4 T3={sig_score_at_entry['tier3']}/4 "
-                  f"= {sig_score_at_entry['total']}/12 | ON: {','.join(signals_on)}")
-        except Exception as _sig_err:
-            print(f"[{symbol}] signatures audit fail (non-fatal): {_sig_err}")
 
         with self._pos_lock:
             self.active_positions[symbol] = {

@@ -221,6 +221,45 @@ LOG_CODES = {
     "SLTP_NO_VALID_WALL":        (LogLevel.ALERTE,   "decisions", "SLTP no valid wall : {sym} dir={direction} → fallback FIXED applique sl={sl_fixed}t tp={tp_fixed}t"),
     "SLTP_TP_BEHIND_WALL_DETECTED": (LogLevel.CRITIQUE, "decisions", "ANOMALIE TP DERRIERE MUR : {sym} dir={direction} tp_price={tp_price} mur={wall_name}@{wall_price} delta={delta_ticks}t — bug pre-CAS4 ?"),
 
+    # ════════════════════════════════════════════════════════════════════
+    # QualityGate v3 (Bot 2 step 6.5 — 01/05/2026)
+    # ════════════════════════════════════════════════════════════════════
+    # Filtre data-driven 9 dimensions (zones+flow+pieges+color+swing+div+imbalances+clusters+big)
+    # 5 vetos absolus + score composite + hierarchie tier sizing.
+    # Validation 42 trades : WR 23.8% → 42.9% (+$1,945 evite paper).
+    "QUALITY_GATE_PASS":         (LogLevel.INFO,     "decisions", "QualityGate v3 PASS : {sym} dir={direction} tier={tier} score={score} sizing={sizing}"),
+    "QUALITY_GATE_BLOCK":        (LogLevel.MAJEUR,   "decisions", "QualityGate v3 BLOCK : {sym} dir={direction} tier={tier} score={score} veto={veto} reason={reason}"),
+    "QUALITY_GATE_ERROR":        (LogLevel.CRITIQUE, "decisions", "QualityGate v3 ERROR (degraded mode) : {sym} {error}"),
+
+    # ════════════════════════════════════════════════════════════════════
+    # Close trade Bot 1 v2 (anti-naked + anti-fantome — 01/05/2026)
+    # ════════════════════════════════════════════════════════════════════
+    # Pattern aligne Bot 2 _check_exit_dtc : poll broker via Type 305 puis
+    # send_close_market (OpenCloseTrade=2) si position active. Skip si flat.
+    "CLOSE_TRADE_ALREADY_FLAT":  (LogLevel.INFO,     "execution", "Close skip : {sym} broker deja FLAT (outcome={outcome} bot_qty={bot_qty} broker_qty={broker_qty}) — anti-fantome, brackets cancel idempotent"),
+
+    # ════════════════════════════════════════════════════════════════════
+    # Trailing TR40 (Bot 1 — desactive 01/05 jusqu'a fix cancel+replace broker)
+    # ════════════════════════════════════════════════════════════════════
+    "TRAILING_BROKER_REPLACE_FAILED": (LogLevel.MAJEUR, "execution", "Trailing broker replace FAILED : {sym} old_sl_cid={old_sl_cid} new_sl={new_sl} error={error} — trailing virtuel actif sans broker = risque naked"),
+
+    # ════════════════════════════════════════════════════════════════════
+    # Watchdog data feed stale (Bot 2 — 01/05/2026)
+    # ════════════════════════════════════════════════════════════════════
+    # Detecte si bars v4_enriched retardes (ex: bug pipeline MIA-LivePipeline
+    # 30 min retard 01/05). 2 niveaux : WARNING (5 min) + CRITICAL (15 min).
+    # CRITICAL declenche STOP.flag automatique pour eviter trades sur conditions
+    # de marche obsoletes (bar 12:06 UTC traitee a 12:36 UTC = 30 min stale).
+    "DATA_FEED_STALE_WARNING":   (LogLevel.MAJEUR,   "events", "Data feed STALE WARNING : {account} last_bar_age={last_age_sec}s > seuil {threshold_sec}s (no action, monitoring)"),
+    "DATA_FEED_STALE_CRITICAL":  (LogLevel.CRITIQUE, "events", "Data feed STALE CRITICAL : {account} last_bar_age={last_age_sec}s > seuil {threshold_sec}s — {action}"),
+    # 01/05 Jackson : recovery auto data feed apres reconnexion stream Databento.
+    # Emis quand N heartbeats consecutifs avec last_bar_age <= THR_FRESH apres
+    # un STOP_DATABENTO.flag actif. Permet reprise trading sans intervention humaine.
+    "DATA_FEED_RECOVERED":       (LogLevel.MAJEUR,   "events", "Data feed RECOVERED : {account} last_bar_age={last_age_sec}s apres {consec_fresh_hb} hb consec fresh — {action}"),
+    # 01/05 Jackson "INADMISSIBLE 33 min" : Bot 2 lit close LIVE_CACHE pour scoring.
+    # Emit max 1x/min/symbole pour audit drift live vs parquet.
+    "LIVE_BAR_OVERRIDE":         (LogLevel.INFO,     "events", "Live bar override : {sym} close_parquet={close_parquet} close_live={close_live} delta={delta_ticks}t live_age={live_age_sec}s"),
+
     # Anomalies generiques python (paper_trader)
     # Permet de tracker exceptions Python uncaught dans hot paths
     "PY_EXCEPTION_HOT_PATH":     (LogLevel.CRITIQUE, "events", "Exception Python hot path : {sym} fn={fn_name} type={exc_type} msg={exc_msg}"),
