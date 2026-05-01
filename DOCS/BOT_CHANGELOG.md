@@ -62,6 +62,289 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-01 14:57 UTC — [Bot 2 SCORING sur LIVE bar (anti-INADMISSIBLE Jackson)]
+
+**Categorie** : FIX (architecture data freshness)
+**Impact prod** : PAPER (Bot 2 databento)
+**Fichier(s)** : `CORE/databento_paper_trader.py:1612-1716` + `CORE/log_catalog.py:259-261`
+**Reviewer(s) agent** : Plan agent v3 (NOGO sur drift mais score_consensus est rule-based pas ML donc N/A) + code-reviewer (GO-AVEC-RESERVES, 1 reserve appliquee : safe parsing ts_event_iso)
+
+### Quoi
+Bot 2 lit desormais la bar du LIVE_CACHE (`databento_live_stream.py` ecrit, latence 60s) au lieu de scorer sur la bar parquet Historical (delay 30 min). Implementation :
+- Nouvelle methode `_read_live_cache_bar` : lit JSON OHLCV LIVE complet
+- Nouvelle methode `_enrich_bar_with_live` : merge bar parquet + live :
+  - Override OHLC + volume avec valeurs LIVE
+  - Recalcule `dist_mq_call/put/hvl_pct` + `bool_above_mq_*` + `dist_pdh/pdl_pct` avec close LIVE
+  - Garde features structurelles parquet (mq_levels daily, day_type, profile_shape, cvd_5d, atr_14m)
+  - Logger `LIVE_BAR_OVERRIDE` 1x/min/symbole
+- `_process_symbol` ligne 1910 : appelle `_enrich_bar_with_live` AVANT le check stale → bar_ts = live_ts (60s) au lieu de parquet ts (30 min) → HARD SKIP plus declenche
+- Code log `LIVE_BAR_OVERRIDE` (INFO, events) ajoute
+
+### Pourquoi
+Jackson directive 14:50 UTC : "TRADER SUR DONNEES 33 MIN DE RETARD = INADMISSIBLE". Mesures empiriques au deploy : ES drift -59 ticks / NQ drift -178 ticks entre close parquet (vieux 30 min) et close live. Trader sur parquet = decisions sur conditions completement differentes du marche actuel.
+
+DATABENTO_DELAY_MIN reduit 30→15 (compromis pipeline) en parallele, mais la VRAIE solution est ce refactor live override.
+
+### Impact attendu
+- Bot 2 score sur conditions de marche actuelles (latence 60-90s vs 30 min)
+- Reduction drastique slippage entry (cf coherence avec close_for_order ligne 2295 qui utilisait deja live)
+- Drift train/serve : NON-APPLICABLE car score_consensus = rule-based (if/else), pas ML LGBM
+- Si MIA-Live-OHLCV down → fallback parquet auto (no-op via try/except + max_age_sec=180)
+
+### Validation pre-deploy
+- [x] Compile check OK
+- [x] Plan agent v3 + code-reviewer reviews
+- [x] Reserve appliquee : try/except autour pd.to_datetime(ts_event_iso)
+- [x] Deploy 14:57:23 UTC, premiers events LIVE_BAR_OVERRIDE OK :
+  - ES : close_parquet=7296.5 close_live=7281.75 delta=-59t live_age=23s
+  - NQ : close_parquet=27872.75 close_live=27832.25 delta=-178t
+
+### Suivi post-deploy
+- T+15min : verifier first BOT_HEARTBEAT nouveau PID 6448 → last_bar_age doit etre <90s (vs 2300s avant)
+- J+1 : grep `LIVE_BAR_OVERRIDE` events distribution delta_ticks (median <2t en steady-state, p99 <10t)
+- J+7 : ratio slippage entry vs scoring close — doit chuter 23t → <3t
+
+### Risques residuels documentes
+- `aggressor_imbalance` reste de 30 min en arriere (poids 1, pas bloquant dans score)
+- Re-trade meme bar parquet sur N ts LIVE differents : mitige par RiskManager + ALREADY_IN_POSITION
+- Si MIA-Live-OHLCV crash : fallback parquet, bar_age explose 30 min, flag CRIT recree, Bot 2 stop (comportement souhaite)
+
+### Branche dev
+`feature/pipeline-incremental` (merge master apres 24h validation steady-state)
+
+---
+
+## 2026-05-01 13:55 UTC — [Option B : bumper seuils Bot 2 + watchdog pour tolerer retard pipeline]
+
+**Categorie** : CONFIG (seuils data freshness)
+**Impact prod** : PAPER (Bot 2 databento)
+**Fichier(s)** : `CORE/databento_paper_trader.py:113-125` + `BOT/mia_watchdog.py:101-107`
+**Reviewer(s) agent** : N/A (calibration de constantes, pas de logique nouvelle)
+
+### Quoi
+- Bot 2 anti-cascade seuils : FRESH 90→600, WARN 300→1500, CRIT 900→2700 (en sec)
+- Watchdog Bot 2 alignement : warn 300→1500, crit 900→2700
+- Restart MIA-DataBento-Paper avec nouveaux seuils
+- Suppr `STOP_DATABENTO.flag` manuellement pour boot propre
+
+### Pourquoi
+**Bug logique decouvert apres deploy fix anti-cascade matin** : `live_pipeline_loop.py` produit parquet `v4_enriched` avec **retard structurel ~30 min** (pipeline batch retraite mois entier a chaque cycle 5 min, ne rattrape qu'1 min/cycle). Mes seuils v1 (FRESH=90s) ne sont JAMAIS atteints car pipeline ne descend pas sous 90s. Resultat : Bot 2 reste en pause indefiniment apres premier flag CRIT. Recovery automatique cassee.
+
+Solution Option B (Jackson 14:00 UTC) : bumper seuils pour aligner sur latence pipeline ~5-10 min steady-state + marge catch-up. Bot 2 trade sur bars 5-10 min anciennes (perf paper degradee mais OK). Solution propre = pipeline incremental (Option C, backlog).
+
+### Validation pre-deploy
+- [x] Compile check OK
+- [x] SCP + restart MIA-DataBento-Paper, MIA-Watchdog
+- [x] Watchdog incoherence detectee post-deploy : seuils watchdog Bot 2 desalignes (CRIT 900) → re-restart Bot 2 inutile a 13:55:11. Fix immediat alignement seuils watchdog.
+
+### Deployed at 2026-05-01 13:54 UTC (databento) + 13:56 UTC (watchdog seuils alignes)
+
+### Suivi post-deploy
+- T+15min : verifier flag local non recree par Bot 2
+- T+1h : verifier 0 restart inutile par watchdog
+- T+2h30 : pipeline doit avoir rattrape, parquet last bar ~5 min retard
+
+### Backlog (Option C, prochaine session)
+Refactor `CORE/build_dataset_v4_dmp_databento.py` incremental — voir memory `project_pipeline_incremental_backlog.md`.
+
+---
+
+## 2026-05-01 14:00 UTC — [Watchdog v2 multi-source data freshness + auto-restart nssm]
+
+**Categorie** : FEATURE (monitoring + reliability)
+**Impact prod** : NEW SERVICE (`MIA-Watchdog`)
+**Fichier(s)** : `BOT/mia_watchdog.py` (reecriture complete v1 legacy obsolete)
+**Reviewer(s) agent** : code-reviewer 2x (NOGO v1 → fixes 9 issues → GO v2 + fix 2 bugs dry-run runtime)
+
+### Quoi
+Service nssm `MIA-Watchdog` qui surveille en continu la fraicheur de **7 sources** :
+1. V2CLEAN brain (heartbeat.txt json ts_utc)
+2. Databento stream (databento_live_stream.log mtime)
+3. Bot 1 Sierra (events_*_paper.jsonl mtime, regex strict pour exclure databento)
+4. Bot 2 Databento (last_bar_age dans BOT_HEARTBEAT)
+5. Live pipeline (live_pipeline_loop.log mtime)
+6. DMP JSONL ES + 7. NQ (mtime fichier du jour)
+
+Sur stale CRITICAL → Discord alerte + `Restart-Service` nssm (cap 3/heure/service persistant disque).
+Heartbeat positif Discord toutes les 10 min — color/title/channel selon worst level (vert OK admin, rouge CRIT alertes).
+Logs structures dans `LOGS/events/events_YYYYMMDD_watchdog.jsonl` (audit J+1 grep).
+
+### Pourquoi
+**Incident 30/04 minuit → 01/05 09:00** (33h) : V2CLEAN.bot_main service nssm "Running" mais 0 log ecrit (deadlock probable post-rotation EventJournal). Aucune alerte Discord. Jackson decouvre par hasard. Le legacy `mia_watchdog.py` surveillait UNIQUEMENT `BOT/bot_main.py` (legacy non utilise) via `heartbeat_writer.py` → inutile pour les 6 services nssm actuels. Reecriture complete obligatoire.
+
+### Impact attendu
+- Detection zombie/stale < 5 min (vs 33h sans watchdog)
+- Auto-restart si possible (cap protection anti-loop)
+- Visibility positive : silence Discord 10 min = watchdog mort = a investiguer
+- Aucun impact trading direct (monitoring pur)
+
+### Validation pre-deploy
+- [x] Compile check : `python -m py_compile` OK
+- [x] Smoke tests logiques : 4 tests (filter glob, persistence RestartTracker, priorites level, ABSENT seuil)
+- [x] Dry-run local 8s : 7 sources scannees, Discord simule, no crash
+- [x] Code-reviewer agent v1 : NOGO 3 bugs critiques + 6 reserves
+- [x] Code-reviewer agent v2 : **GO** apres fixes
+- [x] Bugs runtime detectes en dry-run (UnicodeDecodeError stderr fr-FR + dry-run ne couvrait pas Restart-Service) : FIXES appliques
+- [N/A] Backtest preservation : pas de modif scoring/gates
+
+### Revert plan
+```bash
+ssh Administrator@212.28.179.199 'powershell -Command "Stop-Service MIA-Watchdog ; nssm remove MIA-Watchdog confirm"'
+git checkout HEAD~1 -- BOT/mia_watchdog.py
+# Si besoin : supprimer DATA/HEARTBEAT/watchdog_restart_history.json
+```
+
+### Deployed at 2026-05-01 13:42 UTC (initial) + 13:44 UTC (v2.1 fix seuils Bot1)
+- v1 deploy 13:42:17 → faux positif immediat sur Bot1_Sierra_paper (silence 21 min entre BOT_KILL_SWITCH_RELEASED et fin blocage RTH 15 min) → restart MIA-Paper inutile.
+- Stop-Service MIA-Watchdog 13:43:21
+- Bumper seuils Bot1 : warn 120→600, crit 600→1800 (commentaires inline)
+- v2.1 SCP + Start-Service 13:44:11 → WATCHDOG_HEARTBEAT worst=PAUSED, 0 crits, 0 restarts ✅
+- Bug fixes runtime decouverts en dry-run : UnicodeDecodeError stderr fr-FR + dry_run ne couvrait pas Restart-Service → fixes appliques avant deploy.
+
+### Suivi post-deploy
+- J+1 : verifier `LOGS/events/events_*_watchdog.jsonl` contient WATCHDOG_HEARTBEAT toutes les 10 min
+- J+7 : compter restarts auto declenches, valider reduction MTTR
+- J+30 : reviewer cap 3/h trop strict ou trop laxiste
+
+### Nouveaux logs (rule log-debug-protocol.md)
+- WATCHDOG_START / WATCHDOG_STOP / WATCHDOG_CRASH (events)
+- WATCHDOG_HEARTBEAT (info, toutes les 10 min)
+- WATCHDOG_SOURCE_WARN / WATCHDOG_SOURCE_CRIT (per-source)
+- WATCHDOG_FLAG_STALE (flag pause oublie > 30 min)
+- WATCHDOG_RESTART_TRIGGERED / WATCHDOG_RESTART_CAP_REACHED / WATCHDOG_RESTART_SIMULATED
+
+---
+
+## 2026-05-01 13:10 UTC — [Anti-cascade STOP.flag + recovery auto data feed databento]
+
+**Categorie** : FIX (kill-switch design)
+**Impact prod** : PAPER (Bot 2 databento + Bot 1 mia_paper indirect)
+**Fichier(s)** : `CORE/databento_paper_trader.py:107,117,422,478,1059,1670-1740` + `CORE/log_catalog.py:255`
+**Schema/version** : N/A (no schema change)
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES — 3/4 reserves appliquees, Discord alerter reportee phase 2 watchdog)
+
+### Quoi
+- `databento_paper_trader.py` n'ecrit plus `STOP.flag` GLOBAL quand son data feed est stale, mais un flag DEDIE `STOP_DATABENTO.flag` (LOCAL au bot databento).
+- `can_trade()` lit les 2 flags : global admin + local data stale.
+- Recovery auto : compteur `_consec_fresh_hb`, si flag local existe + 3 hb consec frais (last_age <= 90s) → suppr flag automatiquement + emit `DATA_FEED_RECOVERED`.
+- Constantes nommees `DATA_FRESH_THR_SEC=90`, `DATA_WARN_THR_SEC=300`, `DATA_CRIT_THR_SEC=900`, `DATA_RECOVERY_CONSEC_HB=3`.
+- Idempotence : flag re-write seulement si pas deja present (pas de pollution logs).
+
+### Pourquoi
+**Incident 01/05 12:43 UTC** : `databento_paper_trader.py:1683` (avant fix) creait `STOP.flag` GLOBAL sur stale 900s+. Ce flag est lu par 5 bots dont `mia_paper_trader.py` (DTC live, data feed different). Resultat cascade : un probleme isole cote Databento a kill mia_paper_trader pendant 20 min juste avant l'open RTH 09:30 ET. Bot DTC live ne devait jamais pauser sur incident Databento.
+
+### Impact attendu
+- Anti-cascade : data feed Databento stale → tue UNIQUEMENT le bot databento, pas mia_paper_trader DTC
+- Reduit MTTR : recovery auto 15 min apres reconnect stream (vs intervention humaine sinon)
+- Admin override conserve : `STOP.flag` global tue toujours TOUS les bots
+- Effet de bord : aucun (pas de modif scoring/gates/sizing)
+
+### Validation pre-deploy
+- [x] Compile check : `python -m py_compile CORE/databento_paper_trader.py CORE/log_catalog.py` OK
+- [N/A] Backtest preservation : pas de modif scoring/gates
+- [x] Review agent code-reviewer : GO-AVEC-RESERVES (4 reserves)
+  - 3 appliquees (constantes nommees, idempotence flag, no-reset compteur post-recovery)
+  - 1 reportee (Discord alerter pour flag local) → phase 2 watchdog externe
+
+### Revert plan
+```bash
+# Si rollback necessaire :
+ssh Administrator@212.28.179.199 'powershell -Command "Stop-Service MIA-DataBento-Paper"'
+git checkout HEAD~1 -- CORE/databento_paper_trader.py CORE/log_catalog.py
+scp CORE/databento_paper_trader.py CORE/log_catalog.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 'powershell -Command "Start-Service MIA-DataBento-Paper"'
+# Et supprimer manuellement STOP_DATABENTO.flag si present
+```
+
+### Deployed at 2026-05-01 13:15 UTC
+- SCP `databento_paper_trader.py` (134718 bytes) + `log_catalog.py` (28053 bytes) vers VPS OK
+- `Restart-Service MIA-DataBento-Paper` OK : ancien PID 10292 stop, nouveau PID 2228 BOT_START a 13:15:31 UTC
+- Service `Running`, BOT_HEARTBEAT en attente premiere bar Databento
+
+### Suivi post-deploy
+- J+1 : verifier 0 occurence de `BOT_KILL_SWITCH_ACTIVATED` cote `mia_paper_trader.py` cause data Databento stale
+- J+7 : verifier `DATA_FEED_RECOVERED` emis au moins 1 fois si data Databento a oscille
+- J+30 : metrics watchdog phase 2 (a designer)
+
+### Nouveaux logs (rule log-debug-protocol.md)
+- `DATA_FEED_RECOVERED` (MAJEUR, events) : transition stale → fresh apres N=3 hb consec frais
+
+### Liens
+- Incident matin 01/05 ~12:43 UTC : voir DOCS/INCIDENT_LOG.md (a ajouter post-deploy)
+- Review agent code-reviewer : transcript session 2026-05-01
+
+---
+
+## 2026-05-01 09:00 UTC — [v6 SLTP sub-tier T2_STRUCTUREL mutation + logs CAS 4 enrichis]
+
+**Categorie** : FEATURE (refacto walls) + LOGGING (tracking rejets CAS 4)
+**Impact prod** : Bot 1 (MIA-Paper-Trader Sim3) + Bot 2 (MIA-DataBento-Paper Sim2) + dataset paper_trades.jsonl
+**Fichier(s)** :
+- Modif : `CORE/mia_sltp.py` — ajout `T2_STRUCTUREL_WALLS` set (13 cols), 3 nouvelles features TIER2 (`dist_blind_nearest_up/dn`, `dist_vwap_m`), enrichissement SLTPResult (cas4_subtier, cas4_blocked_wall_col, cas4_rr_pre/post, cas4_caused_reject), logique CAS 4 v6 mutation T1+T2_STRUCTUREL, reject_reason enrichi avec context capot
+- Modif : `CORE/mia_paper_trader.py:1156-1206` — `_funnel_reject("7_sltp")` enrichi avec cas4_kwargs si cas4_caused_reject. Snapshot trade ouvert (~1290) : ajout 11 champs cas4_* tracking ex-post
+- Modif : `CORE/databento_paper_trader.py:2109-2160` — emit `SLTP_CAS4_TRIGGERED` enrichi (subtier, wall_col, rr_pre/post), nouveaux emit `SLTP_CAS4_T2_OBSERVED` + `SLTP_CAS4_CAUSED_REJECT`
+- Nouveau : `tests/test_mia_sltp_v6_t2_structurel.py` — 22 tests (T2_STRUCTUREL set invariants, mutation T1+T2_S, observability T2 hors structurel, reject tracking, df columns)
+
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES — réserves observabilite non bloquantes : R1 casing wall_col vs cas4_blocked_col, R2 helper extraction DRY, R3 doc cas4_observed_tier2 legacy ; aucun bug bloquant)
+
+### Quoi
+
+13 features T2 (anchors VWAP multi-TF, MQ classiques, 1D extremes, Blind Levels) deviennent un sub-tier `T2_STRUCTUREL` qui beneficie de la MUTATION CAS 4 anti-TP-derriere-mur (comme TIER1). Le reste de TIER2 reste observability-only legacy. Logs CAS 4 enrichis pour tracking ex-post : subtier (T1/T2_STRUCTUREL/T2_OBSERVABILITY), col du mur, R:R pre/post capot, flag caused_reject si capot a fait chuter R:R sous MIN_RR_RATIO (0.8).
+
+### Pourquoi
+
+Audit walls 30/04 : trade screen Bot 1 SHORT @ 7239 → 1D Max @ 7236.77 (~9 ticks devant TP) + SD-1 W bloquaient le TP de facto. Avec mutation T2_STRUCTUREL, TP cap a 6t → R:R 6/14 = 0.43 < MIN_RR_RATIO → trade REJECTED avant entree (intention defensive). Anti pattern 11 V1 : ce n'est pas une promotion T3→T2, juste un label MUTATION sur sous-ensemble curated dans T2.
+
+Validation Jackson 30/04 soir : "ok je valide" apres comparatif visuel actuel vs proposition v6.
+
+### Impact attendu
+
+- Effet protecteur : trades avec mur structurel devant TP (R:R<0.8 apres capot) seront rejetes avant entree → reduction nb trades
+- Logs enrichis : permet grep ex-post `cas4_capot_t2_structurel` pour identifier murs offenders et calibrer fire rate
+- Effet de bord : aucun (capot deja existant pour T1, on etend a 13 cols T2 curated avec defaults)
+
+### Validation pre-deploy
+
+- [x] Tests unitaires: 60/60 PASS suite SLTP globale (22 nouveaux v6)
+- [x] Backtest preservation: smoke test 4 scenarios (T1 mutation, T2_STRUCTUREL mutation, T2 observability, CAS4 caused reject) tous validés
+- [x] Review agent: code-reviewer GO-AVEC-RESERVES (réserves R1-R5 non bloquantes, observabilité)
+- [x] Test empirique : `python -X utf8 -m pytest tests/test_mia_sltp_v6_t2_structurel.py` → 22 passed
+
+### Revert plan
+
+```bash
+# Rollback git
+git revert HEAD~3..HEAD  # 3 commits split (sltp, bot1, bot2)
+
+# Re-deploy ancien code VPS
+scp CORE/mia_sltp.py CORE/mia_paper_trader.py CORE/databento_paper_trader.py \
+    Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+
+# Restart services nssm
+ssh Administrator@212.28.179.199 "nssm restart MIA-Paper-Trader"
+ssh Administrator@212.28.179.199 "nssm restart MIA-DataBento-Paper"
+```
+
+### Deployed at 2026-05-01 09:XX UTC
+(a remplir apres SCP + restart nssm)
+
+### Suivi post-deploy
+
+- **J+1 (02/05)** : grep `SLTP_CAS4_TRIGGERED` events → ratio T1 vs T2_STRUCTUREL (attendu : majorite T1, T2_S minoritaire mais non nul). grep `SLTP_CAS4_CAUSED_REJECT` → fire rate (>5/jour = trop agressif, audit murs offenders). grep `cas4_capot_t2_structurel` decisions → identifier murs T2_S responsables (BLIND_UP, 1D_MIN, VWAP_W).
+- **J+7 (08/05)** : preservation backtest wins → si > 10% wins historiques rejetes par v6, rollback.
+- **J+30 (31/05)** : si fire rate stable et coherent, evaluer extension T2_STRUCTUREL aux T2 actuellement observ-only (CUR_VAH, SWING_HIGH...).
+
+### Contexte deploy
+
+Deploy en pleine periode catastrophique : 2 jours de pertes (30/04 + 01/05) totalisant -$1,526 sur 61 trades, WR moyen 25%. v6 SLTP deployee comme **couche defensive** (rejette plus de trades = moins de pertes en attendant audit cause racine WR catastrophique). Audit market-analyst dispatchée en parallèle pour identifier patterns d'entrée fautifs (sur-trading meme setup, repetition LONG NQ confluence VWAP-SD inverse, Bot 2 fallback FIXED_40T fréquent).
+
+### Liens
+
+- Memory : `user_jackson_workflow.md` (validation "ok je valide" 30/04 soir), `feedback_pattern11_repetition_avoided.md` (anti-T3→T2)
+- Tests : `tests/test_mia_sltp_v6_t2_structurel.py`
+
+---
+
 ## 2026-05-01 04:15 UTC — [Bot 2 MAX_TRADES illimite + fix cooldown restore au boot]
 
 **Categorie** : FEATURE (alignement Bot 1) + FIX (bug safety cooldown bypass)
