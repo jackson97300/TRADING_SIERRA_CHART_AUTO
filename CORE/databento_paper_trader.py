@@ -2572,6 +2572,15 @@ class DatabentoPaperTrader:
         # ════════════════════════════════════════════════════════════
         # Envoi ordre broker (apres QualityGate v3 PASS)
         # ════════════════════════════════════════════════════════════
+        # Observability veto retire (Jackson 01/05) : log SHORT avec delta_div_buy>0
+        # juste AVANT envoi ordre (apres tous les gates), pour audit WR pur
+        # (= seulement trades reellement executes, pas SHORTs bloques par anti_fomo etc)
+        if result.direction == "SELL":
+            ddb = features_at_entry.get("delta_div_buy", 0)
+            if ddb and ddb > 0:
+                _emit("VETO_DELTA_DIV_OBSERVED", sym=symbol,
+                      direction="SHORT", delta_div_buy=int(ddb),
+                      note="veto_retire_01_05_audit_WR_avant_send_order")
         print(f"[{symbol}] SEND {result.direction} {self.cfg.quantity}x {contract} "
               f"entry~{close:.2f} sl={sl_price:.2f} tp={tp_price:.2f}")
         try:

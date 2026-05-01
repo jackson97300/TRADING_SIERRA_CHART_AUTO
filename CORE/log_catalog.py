@@ -263,6 +263,9 @@ LOG_CODES = {
     "BAR_LOAD_NONE":             (LogLevel.ALERTE,   "decisions", "Bar load None : {sym} {reason}"),
     "GATE_RTH_BLOCK":            (LogLevel.INFO,     "decisions", "Gate RTH BLOCK : {sym} hors RTH (heure UTC={hour_utc:.2f}h) — {reason}"),
     "GATE_DTC_UNAVAILABLE":      (LogLevel.ALERTE,   "decisions", "Gate DTC UNAVAILABLE : {sym} dtc_ok={dtc_ok} in_instruments={in_instruments} — {reason}"),
+    # 01/05 Jackson "PAS DE VETO, JUSTE LOGGER" : veto_delta_div_buy_for_short retire
+    # de quality_gate_v3 (jamais valide empiriquement). Observe-only pour audit WR.
+    "VETO_DELTA_DIV_OBSERVED":   (LogLevel.INFO,     "decisions", "Veto observed : {sym} dir={direction} delta_div_buy={delta_div_buy} — {note}"),
 
     # Anomalies generiques python (paper_trader)
     # Permet de tracker exceptions Python uncaught dans hot paths
