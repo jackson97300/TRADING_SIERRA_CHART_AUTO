@@ -2021,6 +2021,9 @@ class DatabentoPaperTrader:
     def _process_symbol(self, symbol: str):
         bar = load_last_bar(symbol)
         if bar is None:
+            # 01/05 Jackson "TRACK TOUT" : trace les rejets silencieux
+            _emit("BAR_LOAD_NONE", sym=symbol,
+                  reason="load_last_bar returned None (parquet absent or empty)")
             return
         # 01/05/2026 (Jackson "INADMISSIBLE 33 min") : enrichir bar parquet (delay
         # 30 min Historical Databento) avec close LIVE (latence 60s) + recompute
@@ -2069,11 +2072,14 @@ class DatabentoPaperTrader:
         if null_pct > 50:
             _emit("SCORING_NULL_FEATURES", sym=symbol, null_pct=round(null_pct, 1))
 
-        # RTH filter
+        # RTH filter (01/05 Jackson "TRACK TOUT" : plus de silent skip)
         if self.cfg.rth_only:
             now_utc = datetime.now(timezone.utc)
             if not is_rth(now_utc):
-                return  # silent skip
+                _emit("GATE_RTH_BLOCK", sym=symbol,
+                      reason="hors RTH (Regular Trading Hours 13:30-20:00 UTC)",
+                      hour_utc=now_utc.hour + now_utc.minute / 60)
+                return
 
         # ── ECO CALENDAR + SESSION GATE (29/04 soir) ─────────────────
         # Calendrier UNIFIE qui regroupe :
@@ -2332,10 +2338,12 @@ class DatabentoPaperTrader:
                       f"fallback adaptatif SL={sl_ticks_use}t TP={tp_ticks_use}t "
                       f"(budget ${FALLBACK_SL_USD}, RR {FALLBACK_RR})")
                 # Fallback FIXED applique cote databento_paper (hors mia_sltp). Track freq.
+                # 01/05 Jackson "TRACK TOUT" : ajout reject_reason pour debug SLTPEngine
                 _emit("SLTP_NO_VALID_WALL", sym=symbol,
                       direction=result.direction,
                       sl_fixed=sl_ticks_use,
-                      tp_fixed=tp_ticks_use)
+                      tp_fixed=tp_ticks_use,
+                      reject_reason=str(sltp.reject_reason or "no_walls_found"))
                 # 🆕 v6 30/04 : flag dedie quand le rejet est cause par capot CAS 4
                 # (mur T1 ou T2_STRUCTUREL qui a fait chuter R:R sous MIN_RR_RATIO).
                 # Permet grep ex-post pour calibrer fire rate du fix v6.
@@ -2474,6 +2482,10 @@ class DatabentoPaperTrader:
 
         if not _DTC_OK or symbol not in BOT_INSTRUMENTS:
             print(f"[{symbol}] DTC unavailable")
+            # 01/05 Jackson "TRACK TOUT" : trace si DTC indisponible (broker connection KO)
+            _emit("GATE_DTC_UNAVAILABLE", sym=symbol,
+                  dtc_ok=_DTC_OK, in_instruments=(symbol in BOT_INSTRUMENTS),
+                  reason="DTC connector unavailable or symbol not configured")
             return
         contract = BOT_INSTRUMENTS[symbol].contract
 

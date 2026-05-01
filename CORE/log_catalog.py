@@ -218,7 +218,7 @@ LOG_CODES = {
     "SLTP_MQ_WALL_USED":         (LogLevel.INFO,     "decisions", "SLTP MQ wall used : {sym} dir={direction} role={role} wall={wall_name} dist={dist_ticks}t tier={tier}"),
     "SLTP_CAS4_TRIGGERED":       (LogLevel.MAJEUR,   "decisions", "SLTP CAS 4 trigger : {sym} dir={direction} TP capote DEVANT {wall_name} a {tp_ticks}t (was {tp_standard}t derriere mur a {wall_dist}t) — R:R sacrifie a {rr:.2f}"),
     "SLTP_FALLBACK_STANDARD":    (LogLevel.INFO,     "decisions", "SLTP fallback STANDARD : {sym} dir={direction} reason={reason_fallback} sl={sl_ticks}t tp={tp_ticks}t"),
-    "SLTP_NO_VALID_WALL":        (LogLevel.ALERTE,   "decisions", "SLTP no valid wall : {sym} dir={direction} → fallback FIXED applique sl={sl_fixed}t tp={tp_fixed}t"),
+    "SLTP_NO_VALID_WALL":        (LogLevel.ALERTE,   "decisions", "SLTP no valid wall : {sym} dir={direction} → fallback FIXED applique sl={sl_fixed}t tp={tp_fixed}t reject_reason={reject_reason}"),
     "SLTP_TP_BEHIND_WALL_DETECTED": (LogLevel.CRITIQUE, "decisions", "ANOMALIE TP DERRIERE MUR : {sym} dir={direction} tp_price={tp_price} mur={wall_name}@{wall_price} delta={delta_ticks}t — bug pre-CAS4 ?"),
 
     # ════════════════════════════════════════════════════════════════════
@@ -259,6 +259,10 @@ LOG_CODES = {
     # 01/05 Jackson "INADMISSIBLE 33 min" : Bot 2 lit close LIVE_CACHE pour scoring.
     # Emit max 1x/min/symbole pour audit drift live vs parquet.
     "LIVE_BAR_OVERRIDE":         (LogLevel.INFO,     "events", "Live bar override : {sym} close_parquet={close_parquet} close_live={close_live} delta={delta_ticks}t live_age={live_age_sec}s"),
+    # 01/05 Jackson "TRACK TOUT" : tracage exhaustif des rejets silencieux
+    "BAR_LOAD_NONE":             (LogLevel.ALERTE,   "decisions", "Bar load None : {sym} {reason}"),
+    "GATE_RTH_BLOCK":            (LogLevel.INFO,     "decisions", "Gate RTH BLOCK : {sym} hors RTH (heure UTC={hour_utc:.2f}h) — {reason}"),
+    "GATE_DTC_UNAVAILABLE":      (LogLevel.ALERTE,   "decisions", "Gate DTC UNAVAILABLE : {sym} dtc_ok={dtc_ok} in_instruments={in_instruments} — {reason}"),
 
     # Anomalies generiques python (paper_trader)
     # Permet de tracker exceptions Python uncaught dans hot paths
