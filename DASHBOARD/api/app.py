@@ -13,6 +13,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from DASHBOARD.api.admin_routes import admin_router
 from DASHBOARD.api.auth import auth_router, get_user_tier as auth_get_user_tier, get_tier_level
 from DASHBOARD.api.briefing import router as briefing_router
+from DASHBOARD.api.eco_calendar_routes import eco_calendar_router
 from DASHBOARD.api.data_reader import (
     build_advisory,
     build_battle_navale,
@@ -140,6 +141,7 @@ app.include_router(auth_router)
 app.include_router(briefing_router)
 app.include_router(stripe_router)
 app.include_router(admin_router)
+app.include_router(eco_calendar_router)
 
 if os.path.isdir(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -231,6 +233,113 @@ async def stripe_links():
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "mia-dashboard-v2"}
+
+
+@app.get("/api/data_freshness")
+async def data_freshness():
+    """Voyant fraicheur donnees temps reel (Jackson 01/05 "voyant DI DIT").
+
+    Retourne pour chaque source critique l'age en secondes + status OK/WARN/CRIT.
+    Utilise par le widget dashboard pour afficher un indicateur visuel.
+    """
+    import time as _t
+    import glob as _g
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+
+    base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sources = []
+    now_ts = _t.time()
+
+    def _file_age_sec(path: str) -> tuple:
+        """Returns (age_sec, exists)."""
+        try:
+            return (now_ts - os.stat(path).st_mtime, True)
+        except (FileNotFoundError, OSError):
+            return (None, False)
+
+    def _glob_latest_age(pattern: str) -> tuple:
+        """Returns (age_sec, latest_path or None)."""
+        matches = _g.glob(pattern)
+        if not matches:
+            return (None, None)
+        try:
+            latest = max(matches, key=lambda p: os.stat(p).st_mtime)
+            return (now_ts - os.stat(latest).st_mtime, latest)
+        except OSError:
+            return (None, None)
+
+    def _classify(age: float, warn_s: float, crit_s: float) -> str:
+        if age is None:
+            return "ABSENT"
+        if age > crit_s:
+            return "CRIT"
+        if age > warn_s:
+            return "WARN"
+        return "OK"
+
+    # 1. Bot 2 LIVE cache (latence cible 60s)
+    age_es, _ = _file_age_sec(os.path.join(base, "DATA", "LIVE_CACHE", "ES_c_0_last.json"))
+    age_nq, _ = _file_age_sec(os.path.join(base, "DATA", "LIVE_CACHE", "NQ_c_0_last.json"))
+    age_live = max(age_es or 0, age_nq or 0) if (age_es or age_nq) else None
+    sources.append({
+        "name": "Stream Databento Live",
+        "age_sec": round(age_live, 1) if age_live else None,
+        "status": _classify(age_live, 90, 300),
+        "details": f"ES {round(age_es, 1) if age_es else 'n/a'}s · NQ {round(age_nq, 1) if age_nq else 'n/a'}s",
+    })
+
+    # 2. DMP JSONL (Bot 1 Sierra source)
+    today = _dt.now(_tz.utc).strftime("%Y%m%d")
+    age_es_dmp, _ = _file_age_sec(os.path.join(base, "DATA", "ES", f"{today}_ES.jsonl"))
+    age_nq_dmp, _ = _file_age_sec(os.path.join(base, "DATA", "NQ", f"{today}_NQ.jsonl"))
+    age_dmp = max(age_es_dmp or 0, age_nq_dmp or 0) if (age_es_dmp or age_nq_dmp) else None
+    sources.append({
+        "name": "DMP JSONL (Sierra Chart)",
+        "age_sec": round(age_dmp, 1) if age_dmp else None,
+        "status": _classify(age_dmp, 90, 300),
+        "details": f"ES {round(age_es_dmp, 1) if age_es_dmp else 'n/a'}s · NQ {round(age_nq_dmp, 1) if age_nq_dmp else 'n/a'}s",
+    })
+
+    # 3. Pipeline parquet v4_enriched (Bot 2 source structurelle)
+    pipe_age, _ = _glob_latest_age(os.path.join(base, "DATA", "datasets", "v4_enriched", "symbol=ES.c.0", "year=*", "month=*", "data.parquet"))
+    sources.append({
+        "name": "Pipeline parquet v4 (Historical)",
+        "age_sec": round(pipe_age, 1) if pipe_age else None,
+        "status": _classify(pipe_age, 360, 900),
+        "details": "Cycle 5 min, delay reel ~30 min",
+    })
+
+    # 4. V2CLEAN brain heartbeat
+    v2_path = os.path.join(base, "V2CLEAN", "logs", "heartbeat.txt")
+    v2_age = None
+    try:
+        if os.path.exists(v2_path):
+            with open(v2_path, "r", encoding="utf-8") as f:
+                hb_data = _json.load(f)
+            ts_str = hb_data.get("ts_utc")
+            if ts_str:
+                ts = _dt.fromisoformat(ts_str.replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=_tz.utc)
+                v2_age = (_dt.now(_tz.utc) - ts).total_seconds()
+    except (OSError, _json.JSONDecodeError, ValueError, KeyError):
+        v2_age = None
+    sources.append({
+        "name": "V2CLEAN brain heartbeat",
+        "age_sec": round(v2_age, 1) if v2_age else None,
+        "status": _classify(v2_age, 180, 600),
+        "details": "Cerveau Python ML pipeline",
+    })
+
+    # Worst status pour le voyant principal
+    priority = {"OK": 0, "WARN": 1, "CRIT": 2, "ABSENT": 3}
+    worst = max(sources, key=lambda s: priority.get(s["status"], 0))
+    return {
+        "sources": sources,
+        "worst_status": worst["status"],
+        "ts": _dt.now(_tz.utc).isoformat(),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -367,6 +476,24 @@ async def paper_trades_endpoint(request: Request):
     from DASHBOARD.api.paper_tracker import get_paper_trades_payload
     _require_tier(request, 1)  # STARTER+
     return get_paper_trades_payload()
+
+
+@app.get("/api/paper_trades_dual")
+async def paper_trades_dual_endpoint(request: Request):
+    """Paper trades DUAL bots (BOT 1 DMP Sim3 + BOT 2 DB Sim2) — A/B testing 28/04.
+
+    BOT 1 DMP : `state.json` (mia_paper_trader, source DMP JSONL, dashboard rules)
+    BOT 2 DB  : `databento_paper_state.json` (databento_paper_trader, Databento + 420 features)
+
+    Retourne :
+      {
+        "bot1_dmp": {state, stats_7d, stats_30d, has_paper_active, paper_trader_alive, ...},
+        "bot2_db":  {state, stats_7d, stats_30d, has_paper_active, paper_trader_alive, ...}
+      }
+    """
+    from DASHBOARD.api.paper_tracker import get_dual_bots_payload
+    _require_tier(request, 1)
+    return get_dual_bots_payload()
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -950,8 +950,17 @@
         feedEl.className = "badge " + (feed === "LIVE" ? "badge-green" : feed === "OK" ? "badge-cyan" : "badge-red");
 
         var botEl = $("health-bot");
-        botEl.textContent = bot;
-        botEl.className = "badge " + (bot === "OK" ? "badge-green" : bot === "STANDBY" ? "badge-cyan" : "badge-red");
+        // 🆕 v98 FIX 01/05 (Jackson "MESSAGE CONTRADICTOIRE")
+        // Synchroniser avec kill_switch global (window.killSwitchActive est set
+        // par fetchKillSwitchStatus). Si kill_switch actif, override "OK" → "EN PAUSE"
+        // pour eviter contradiction entre STATUT > Bot OK (vert) et SERVICES Bot EN PAUSE (orange).
+        if (window.killSwitchActive === true && bot === "OK") {
+            botEl.textContent = "EN PAUSE";
+            botEl.className = "badge badge-yellow";
+        } else {
+            botEl.textContent = bot;
+            botEl.className = "badge " + (bot === "OK" ? "badge-green" : bot === "STANDBY" ? "badge-cyan" : "badge-red");
+        }
 
         $("last-update").textContent = new Date().toLocaleTimeString("fr-FR");
     }
@@ -4237,23 +4246,39 @@
                     // Decalage potentiel = lag bar Bot 2 entre 2 polls.
                     var bannerPrice = null;
                     try {
-                        if (window.data && window.data.banner && window.data.banner[sym]) {
-                            bannerPrice = window.data.banner[sym].price;
+                        // 🆕 v97 FIX 01/05 : window.data.banner a des cles LOWERCASE
+                        // (es/nq via build_price_banner builders.py:109) mais sym ici
+                        // est UPPERCASE (ES/NQ) depuis state.open_by_symbol.
+                        // v96 lookup [sym] = undefined → bannerPrice null → fallback
+                        // p.current_price (stale Bot 2 Databento ~1min) → P/L figé.
+                        var symLow = (sym || "").toLowerCase();
+                        if (window.data && window.data.banner && window.data.banner[symLow]) {
+                            bannerPrice = window.data.banner[symLow].price;
                         }
                     } catch (e) { /* ignore */ }
                     var unrealized, unrealizedTicks, livePriceUsed;
                     var TICK = 0.25;
                     var TICK_VAL = (sym === "ES") ? 1.25 : 0.50;
                     var nMicros = p.n_micros || 3;
+                    // 🆕 v96 FIX 30/04/2026 (Jackson "DASHBOARD COMPTE 1 CONTRAT
+                    // ALORS QU ON TRADE A 3 CONTRATS"). Sierra Chart affiche le
+                    // P/L TOTAL en ticks (16t/contrat * 3 = 48T). v95 affichait
+                    // 16t (par contrat) → desalignement visuel x3 vs SC. Fix :
+                    // multiplier les ticks par n_micros pour matcher SC.
+                    // unrealized USD est correct (deja * nMicros ligne 4253).
+                    // Convention Python `unrealized_pnl_ticks` reste PAR contrat
+                    // (mia_paper_trader.py:1781) → multiplier aussi en fallback.
                     if (bannerPrice && p.entry_price) {
                         var sign = _isLong(p.direction) ? 1 : -1;
-                        unrealizedTicks = Math.round(((bannerPrice - p.entry_price) / TICK) * sign);
-                        unrealized = Math.round(unrealizedTicks * TICK_VAL * nMicros * 100) / 100;
+                        var ticksPerContract = Math.round(((bannerPrice - p.entry_price) / TICK) * sign);
+                        unrealizedTicks = ticksPerContract * nMicros;  // TOTAL aligne SC
+                        unrealized = Math.round(ticksPerContract * TICK_VAL * nMicros * 100) / 100;
                         livePriceUsed = bannerPrice;
                     } else {
                         // Fallback : valeurs state.json (peuvent etre obsoletes)
                         unrealized = (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null) ? p.unrealized_pnl_usd : 0;
-                        unrealizedTicks = (p.unrealized_pnl_ticks !== undefined && p.unrealized_pnl_ticks !== null) ? p.unrealized_pnl_ticks : null;
+                        var fallbackPerContract = (p.unrealized_pnl_ticks !== undefined && p.unrealized_pnl_ticks !== null) ? p.unrealized_pnl_ticks : null;
+                        unrealizedTicks = (fallbackPerContract !== null) ? Math.round(fallbackPerContract * nMicros) : null;
                         livePriceUsed = p.current_price;
                     }
                     var upnlColor = unrealized >= 0 ? 'var(--green)' : 'var(--red)';
@@ -5830,6 +5855,51 @@
             if (el) el.textContent = new Date().toLocaleTimeString("fr-FR");
         }, 1000);
 
+        // Voyant fraicheur donnees (Jackson 01/05) — fetch toutes les 5s
+        function updateDataFreshness() {
+            fetch("/api/data_freshness").then(function (r) { return r.json(); }).then(function (data) {
+                var el = $("banner-data-freshness");
+                if (!el || !data || !data.worst_status) return;
+                var statusMap = {
+                    "OK":     { emoji: "🟢", color: "#00C853", label: "LIVE" },
+                    "WARN":   { emoji: "🟠", color: "#FF8C00", label: "STALE" },
+                    "CRIT":   { emoji: "🔴", color: "#D50000", label: "DOWN" },
+                    "ABSENT": { emoji: "⚫", color: "#616161", label: "ABS" }
+                };
+                var conf = statusMap[data.worst_status] || statusMap["ABSENT"];
+                // Trouver la pire source pour afficher son age
+                var worstSrc = null;
+                var priority = { "OK": 0, "WARN": 1, "CRIT": 2, "ABSENT": 3 };
+                (data.sources || []).forEach(function (s) {
+                    if (!worstSrc || priority[s.status] > priority[worstSrc.status]) worstSrc = s;
+                });
+                var ageDisplay = "n/a";
+                if (worstSrc && worstSrc.age_sec !== null) {
+                    var a = worstSrc.age_sec;
+                    if (a < 60) ageDisplay = a.toFixed(0) + "s";
+                    else if (a < 3600) ageDisplay = (a / 60).toFixed(1) + "m";
+                    else ageDisplay = (a / 3600).toFixed(1) + "h";
+                }
+                el.textContent = conf.emoji + " " + conf.label + " " + ageDisplay;
+                el.style.color = conf.color;
+                // Tooltip detaille toutes les sources
+                var tooltip = "Fraicheur donnees:\n";
+                (data.sources || []).forEach(function (s) {
+                    var ageStr = s.age_sec !== null ? s.age_sec + "s" : "n/a";
+                    tooltip += "\n[" + s.status + "] " + s.name + " : " + ageStr + " (" + (s.details || "") + ")";
+                });
+                el.title = tooltip;
+            }).catch(function () {
+                var el = $("banner-data-freshness");
+                if (el) {
+                    el.textContent = "⚫ DATA n/a";
+                    el.style.color = "#616161";
+                }
+            });
+        }
+        updateDataFreshness();
+        setInterval(updateDataFreshness, 5000);
+
         // Keyboard shortcuts
         var pages = ["overview", "options", "orderflow", "profile", "levels", "signals", "cta", "menthorq", "performance", "alerts"];
         document.addEventListener("keydown", function (e) {
@@ -6303,6 +6373,12 @@
                         msgEl.style.color = "var(--red)";
                         msgEl.textContent = "Erreur : " + ((res.data && (res.data.error || res.data.message)) || "?");
                     }
+                    // 🆕 v98 FIX 01/05 (Jackson "MESSAGE CONTRADICTOIRE Bot 2 Running")
+                    // Auto-clear apres 5s pour eviter message stale qui contredit
+                    // l'etat reel (ex: "Bot 2 Running" persistant alors que kill_switch actif).
+                    setTimeout(function () {
+                        if (msgEl) msgEl.textContent = "";
+                    }, 5000);
                 }
                 fetchServicesStatus();
             })
@@ -6310,6 +6386,7 @@
                 if (msgEl) {
                     msgEl.style.color = "var(--red)";
                     msgEl.textContent = "Erreur reseau";
+                    setTimeout(function () { if (msgEl) msgEl.textContent = ""; }, 5000);
                 }
                 console.error("[svc] action", err);
             });
@@ -6325,6 +6402,9 @@
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 var stopped = d && d.stop_flag_active === true;
+                // 🆕 v98 FIX 01/05 : exposer global pour synchroniser STATUT > Bot
+                // (cf renderHealth ligne 957). Evite contradiction visuelle.
+                window.killSwitchActive = stopped;
                 if (stopped) {
                     stateEl.className = "badge badge-red";
                     stateEl.textContent = "ARRETE";
@@ -6340,6 +6420,7 @@
             .catch(function () {
                 stateEl.className = "badge badge-gray";
                 stateEl.textContent = "--";
+                window.killSwitchActive = undefined;  // unknown
             });
     }
 
