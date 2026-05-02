@@ -116,10 +116,39 @@ Si l'assertion fail → STOP train, investiguer pipeline V5 build.
 - **MEDIUM** : surveillance V5 build samedi, test 1 min apres build
 - Tests V4 actuel propre, pattern reproducible
 
+## ADDENDUM 02/05 11:00 — train_lightgbm.py apply_edge mq_* fillna(0)
+
+Finding additionnel via grep `train_lightgbm.py:334-347` :
+```python
+edge_buy_mask = ((df["bool_above_mq_hvl"].fillna(0).values == 0) & ...)
+edge_sell_mask = ((df["bool_above_mq_call"].fillna(0).values == 1) & ...)
+```
+
+**Contexte** : ces lignes ne sont actives QUE si `apply_edge=True` dans
+`backtest_oos()`. Elles construisent un MASQUE de filtrage pour simulation
+backtest (rule-based filter pendant le run du modele), PAS un fillna sur
+les FEATURES du dataset training.
+
+**Impact V5 train ML** :
+- Si `apply_edge=True` sur 13 ans data 2011-2024 → NaN traite comme
+  "below_hvl=False" → filtre se declenche systematiquement.
+- Bias filtre : "edge present" partout pre-MenthorQ alors que vrai signal
+  inconnu.
+
+**Decision V5 build samedi** : 2 options
+- (A) `apply_edge=False` sur train V5 (RECOMMANDE, plus simple)
+- (B) Restrict train V5 a dates >= 2025-12-15 (5 mois data) — perd 13 ans
+- (C) Modifier ligne 334-347 pour skip rows pre-MQ (NaN preserve mask) —
+      complexite + risque regressions backtest existant
+
+**Recommandation** : Option A. Le test d'edge filter est optionnel et peut
+etre teste apres train ML sur subset post-MQ uniquement.
+
 ## Lien
 
 - Finding initial : ml-trainer agent 2nd round review GATE_17H_METHODOLOGY
 - Verification : 02/05 09:30 (test empirique V4 + grep V4 builder)
+- Addendum 02/05 11:00 : train_lightgbm apply_edge fillna(0) flag
 - Pattern V4 propre : `build_dataset_v4_dmp_databento.py:895-911`
 - Pattern legacy a EVITER : `dataset_builder.py:506-516`
-- Decision V5 : reutiliser pattern V4, garder 15 ans data
+- Decision V5 : reutiliser pattern V4, garder 15 ans data, apply_edge=False

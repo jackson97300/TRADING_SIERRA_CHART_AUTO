@@ -398,6 +398,36 @@ Si ml-trainer 2nd round NOGO : **corriger AVANT samedi 9h**, pas apres.
 
 ---
 
+## 10.quater Scope V5 samedi REVISÉ (2 reports CAT4 + signal_rules)
+
+V5 baseline samedi = **602 features** (vs 728 plan initial).
+
+| Cat | Plan initial | Revisé samedi |
+|---|---|---|
+| Base 290 | 290 | 290 |
+| Phase B (9) | 9 | 9 (vérification grep) |
+| HTF CAT2 (234) | 234 | 234 |
+| MenthorQ × 3 TF (51) | 51 | 51 |
+| Trapped HTF (18) | 18 | 18 |
+| **CAT4 cross-instrument (30)** | 30 | **0 — REPORTÉ DIMANCHE** |
+| **Signal rules × 4 TF (96)** | 96 | **0 — REPORTÉ DIMANCHE** (audit nuit) |
+| **TOTAL** | **728** | **602** |
+
+**Justification CAT4 report** :
+- `IntermarketFeatures.compute()` requiert features DMP (dist_sess_high,
+  delta_day, large_trader_ratio, open_type, etc.)
+- `enrich_dataset_v5_htf.py` ne les produit pas (juste OHLCV + EMA/RSI/ATR)
+- Réimplémenter version V5 simplifiée = scope creep samedi
+- Dimanche : utiliser V4 dataset full (qui a ces features) + IntermarketFeatures
+  per TF
+
+**Si V5 602 features baseline = GO clair** → ajouter CAT4 + signal_rules
+dimanche pour boost final, re-train.
+
+**Si V5 602 = MARGINAL** → meta-labeling Lopez ch.3.4 dimanche (déjà tracé).
+
+---
+
 ## 10.ter Calibration params labeler v3 (grid search ES + NQ avril 2026)
 
 **Decision finale** : `pt_sl=(1.5, 1.0), horizon=8` (40 min sur 5m bars).
