@@ -575,6 +575,92 @@ def add_im_features_per_tf(df_es_v5: pd.DataFrame, df_nq_v5: pd.DataFrame,
     return df_es, df_nq
 
 
+# ═════════════════════════════════════════════════════════════════════
+# TOP 78 CAT2 PER TF (Jackson 02/05 Option B — extension complete)
+# ═════════════════════════════════════════════════════════════════════
+# Pour chaque feature top 78 (presente dans df_v4_1m), resample en bar HTF
+# (last value = valeur a la fin de bar HTF fermee) + merge_asof anti-leak strict.
+#
+# Performance : 1 resample multi-cols + 1 merge_asof par TF = 3 merges total
+# pour 234 nouvelles cols (vs 234 merges naïfs).
+
+def add_top_78_features_per_tf(df_1m_enriched: pd.DataFrame,
+                                  top_78_features: list,
+                                  tf_suffixes: Optional[dict] = None) -> pd.DataFrame:
+    """Ajoute 78 features CAT2 sur 5m/15m/1h via resample last + merge_asof anti-leak.
+
+    Args:
+        df_1m_enriched : DataFrame avec ts_event + features V4 (incl top 78)
+        top_78_features : liste features V4 a reproduire per TF
+        tf_suffixes : {freq: suffix} mapping. Default {5min:_5m, 15min:_15m, 1h:_1h}
+
+    Returns:
+        DataFrame enrichi avec ~78 × 3 = 234 nouvelles cols (suffix _5m/_15m/_1h)
+
+    Anti-leak : pour bar 1m at T, valeur de feature_5m provient de bar 5m
+    fermee STRICTEMENT avant T (allow_exact_matches=False).
+    """
+    if tf_suffixes is None:
+        tf_suffixes = {"5min": "_5m", "15min": "_15m", "1h": "_1h"}
+
+    out = df_1m_enriched.copy()
+    if "ts_event" not in out.columns:
+        print("[top78] ts_event manquant, skip")
+        return out
+
+    # Normalize tz : tz-naive UTC
+    out["ts_event"] = pd.to_datetime(out["ts_event"], utc=True).dt.tz_convert(None)
+
+    cols_present = [f for f in top_78_features if f in out.columns]
+    cols_missing = [f for f in top_78_features if f not in out.columns]
+    if cols_missing:
+        print(f"[top78] WARN {len(cols_missing)} features absentes : {cols_missing[:5]}...")
+    if not cols_present:
+        print("[top78] Aucune feature top 78 dans df, skip")
+        return out
+
+    print(f"[top78] {len(cols_present)} features reproduites × {len(tf_suffixes)} TF")
+
+    for freq, suffix in tf_suffixes.items():
+        if freq not in FREQ_TO_DELTA:
+            continue
+        # Resample multi-cols 1m → bar TF (last value = fin bar TF)
+        df_indexed = out.set_index("ts_event")
+        resampled = df_indexed[cols_present].resample(
+            freq, label="left", closed="left"
+        ).last().dropna(how="all").reset_index()
+
+        # Rename cols avec suffix
+        rename_map = {c: c + suffix for c in cols_present}
+        resampled = resampled.rename(columns=rename_map)
+
+        # Add ts_event_htf_close pour merge anti-leak strict
+        # bar TF "10:00" represente data 10:00-10:04 (label='left')
+        # ts_event_htf_close = label + freq_delta = 10:05
+        # Pour bar 1m at T, on cherche ts_event_htf_close STRICTEMENT < T
+        resampled["ts_event_htf_close"] = resampled["ts_event"] + FREQ_TO_DELTA[freq]
+        resampled = resampled.drop(columns=["ts_event"])
+
+        # FIX : harmoniser dtype datetime64 (ns vs us) pour merge_asof
+        out["ts_event"] = out["ts_event"].astype("datetime64[ns]")
+        resampled["ts_event_htf_close"] = resampled["ts_event_htf_close"].astype("datetime64[ns]")
+
+        # 1 merge_asof pour toutes les cols TF
+        out = pd.merge_asof(
+            out.sort_values("ts_event"),
+            resampled.sort_values("ts_event_htf_close"),
+            left_on="ts_event",
+            right_on="ts_event_htf_close",
+            direction="backward",
+            allow_exact_matches=False,  # anti-leak strict
+        )
+        out = out.drop(columns=["ts_event_htf_close"])
+
+    new_cols_count = len(cols_present) * len(tf_suffixes)
+    print(f"[top78] +{new_cols_count} cols ajoutees ({len(cols_present)} × {len(tf_suffixes)} TF)")
+    return out
+
+
 def enrich_1m_with_all_htf(df_1m: pd.DataFrame,
                               df_5m: Optional[pd.DataFrame] = None,
                               df_15m: Optional[pd.DataFrame] = None,

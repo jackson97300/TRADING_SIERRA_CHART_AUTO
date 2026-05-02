@@ -45,6 +45,10 @@ LVN_CLUSTER_MIN = 3  # >=3 LVN consecutifs = confluence
 def load_trades_session(symbol: str, session_date: str) -> pd.DataFrame:
     """Charge trades Databento pour 1 session RTH (9:30-16:00 ET).
 
+    FIX review (Jackson 02/05) : DST-safe via tz_convert America/New_York.
+    Avant : RTH UTC hardcoded 13:30-20:00 = correct EDT mais 14:30-21:00 EST hiver.
+    Apres : RTH 9:30-16:00 ET conversion → UTC selon DST automatique.
+
     Args:
         symbol : 'ES.c.0' ou 'NQ.c.0'
         session_date : 'YYYY-MM-DD' (date du jour ET)
@@ -63,9 +67,13 @@ def load_trades_session(symbol: str, session_date: str) -> pd.DataFrame:
 
     full = pd.concat(parts, ignore_index=True)
     full["ts_event"] = pd.to_datetime(full["ts_event"], utc=True).dt.tz_convert(None)
-    # RTH filter 13:30-20:00 UTC (= 9:30-16:00 ET DST)
-    rth_start = pd.Timestamp(session_date) + pd.Timedelta(hours=13, minutes=30)
-    rth_end = pd.Timestamp(session_date) + pd.Timedelta(hours=20)
+
+    # RTH filter DST-safe (EDT été UTC-4, EST hiver UTC-5)
+    rth_start_et = pd.Timestamp(f"{session_date} 09:30").tz_localize("America/New_York")
+    rth_end_et = pd.Timestamp(f"{session_date} 16:00").tz_localize("America/New_York")
+    rth_start = rth_start_et.tz_convert("UTC").tz_convert(None)
+    rth_end = rth_end_et.tz_convert("UTC").tz_convert(None)
+
     full = full[(full["ts_event"] >= rth_start) & (full["ts_event"] < rth_end)]
     return full.reset_index(drop=True)
 
