@@ -399,10 +399,27 @@ def label_dataset_v3(df_ohlcv: pd.DataFrame,
     # 3. Subset daily_vol sur barres survivantes (pas recalcul)
     daily_vol = daily_vol_full.reindex(df.index)
 
-    # 3. Vertical barriers (horizon temporel)
+    # 4. Vertical barriers (horizon temporel)
+    # DEVIATION LOPEZ DOCUMENTEE (review Jackson 02/05 point 5) :
+    # Apres filter_low_rvol, les barres ne sont plus contigues chronologiquement.
+    # compute_vertical_barriers utilise shift(-num_bars) sur df FILTERED →
+    # horizon = "12 barres actives suivantes" (pas "12 bars chronologiques fixes").
+    #
+    # Ex : si 14:30, 14:35, 14:40 survivent + 14:45-15:00 droppees low vol,
+    # bar 14:30 horizon 12 = 12eme bar active = potentiellement 16:00 reel
+    # (pas 15:30 = 12 × 5min).
+    #
+    # Justification (defendable) :
+    # - Coherent avec un trader qui skip les barres mortes (no-trade zone)
+    # - Lopez ch.3.2 prescrit "horizon = N bars" sans specifier contigues
+    # - Alternative : compute vertical AVANT filter (chronologique strict)
+    #   → mais cree des t1 pointant vers bars droppees, complications join
+    #
+    # Si tu veux horizon strict chronologique : compute_vertical_barriers
+    # DOIT etre appelle avant filter_low_rvol (deplacer le code).
     t1_vertical = compute_vertical_barriers(df['close'], num_bars=horizon_bars)
 
-    # 4. Build events df
+    # 5. Build events df
     events = pd.DataFrame({
         't1': t1_vertical,
         'daily_vol': daily_vol,
@@ -410,19 +427,19 @@ def label_dataset_v3(df_ohlcv: pd.DataFrame,
     if events.empty:
         return pd.DataFrame()
 
-    # 5. Apply triple barrier path detection (high/low intrabar)
+    # 6. Apply triple barrier path detection (high/low intrabar)
     events_barriers = apply_triple_barrier(df, events, pt_sl=pt_sl)
 
-    # 6. Get labels {-1, 0, +1} — Lopez ch.3.3 strict default
+    # 7. Get labels {-1, 0, +1} — Lopez ch.3.3 strict default
     events_labeled = get_labels(events_barriers,
                                   vertical_label_mode=vertical_label_mode)
 
-    # 7. Sample weights uniqueness (Lopez ch.4)
+    # 8. Sample weights uniqueness (Lopez ch.4)
     events_labeled['sample_weight'] = compute_sample_weights_uniqueness(
         events_labeled, df.index
     )
 
-    # 8. Stats finales
+    # 9. Stats finales
     label_dist = events_labeled['label'].value_counts(normalize=True)
     print(f"[labeler_v3] Distribution labels :")
     print(f"  +1 (TP/long) : {label_dist.get(1, 0):.1%}")
