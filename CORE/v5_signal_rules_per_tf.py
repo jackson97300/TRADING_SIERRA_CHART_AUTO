@@ -102,19 +102,34 @@ def apply_rules_all_tfs(df_v5: pd.DataFrame) -> pd.DataFrame:
         ]
 
         # FIX R1 : drop cols redondantes (rule_*_TF == rule_*_1m partout)
-        # 6/12 rules listes par code-reviewer comme 100% redondantes :
-        # long_up/dn_bar, cluster_at_high/low, failed_ib_poor_high, edge_zone_fire
-        # → ne lisent QUE des cols sans version TF → identiques 1m
-        # Detection automatique : compare values.
+        # FIX audit Claude.com mobile (Q2) : drop cols quasi-constantes
+        #   fires < MIN_FIRES_TF = 10 sur dataset → LightGBM ignore + bruit
         n_kept = 0
         n_redundant = 0
+        n_quasi_const = 0
         fires_tf = 0
+        MIN_FIRES_TF = 10  # data-quality.md "quasi-constante" threshold
         for rc in new_rule_cols:
             tf_values = df_tagged_tf[rc].values
             native_values = out[rc].values if rc in out.columns else None
+
+            # Test 1 : redondant avec 1m ?
             if native_values is not None and (tf_values == native_values).all():
                 n_redundant += 1
                 continue
+
+            # Test 2 : quasi-constant ? (fires < seuil pour _dir, std<1e-6 pour _strength)
+            if "_dir" in rc:
+                n_fires = int((tf_values != 0).sum())
+                if n_fires < MIN_FIRES_TF:
+                    n_quasi_const += 1
+                    continue
+            else:  # _strength
+                import numpy as np
+                if np.nanstd(tf_values) < 1e-6:
+                    n_quasi_const += 1
+                    continue
+
             new_cols_acc[f"{rc}{suffix}"] = tf_values
             n_kept += 1
             if "_dir" in rc:
@@ -122,7 +137,8 @@ def apply_rules_all_tfs(df_v5: pd.DataFrame) -> pd.DataFrame:
 
         n_redundant_total += n_redundant
         print(f"[signal_rules]   {suffix}: {cols_swapped} cols swap → "
-              f"+{n_kept} kept, drop {n_redundant} redondants ({fires_tf} fires)")
+              f"+{n_kept} kept, drop {n_redundant} redondants + "
+              f"{n_quasi_const} quasi-constants ({fires_tf} fires kept)")
 
     # FIX R4 : assemble en 1 fois via pd.concat (vs insert chain fragmenté)
     if new_cols_acc:
