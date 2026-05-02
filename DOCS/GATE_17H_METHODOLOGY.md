@@ -398,6 +398,50 @@ Si ml-trainer 2nd round NOGO : **corriger AVANT samedi 9h**, pas apres.
 
 ---
 
+## 10.ter Calibration params labeler v3 (grid search ES + NQ avril 2026)
+
+**Decision finale** : `pt_sl=(1.5, 1.0), horizon=8` (40 min sur 5m bars).
+
+**Pre-requis OBLIGATOIRE** : RTH filter 9:30-16:00 ET (UTC 13:30-20:00).
+
+### Resultats grid search (60 combinaisons)
+
+Top 4 sur ES + NQ avril 2026 (RTH only) :
+
+| pt_sl | horizon | ES (+/-/H) | NQ (+/-/H) | score_fine |
+|---|---|---|---|---|
+| **(1.5, 1.0)** | **8** | 49.1/50.6/0.2 | 50.0/49.9/0.1 | **2.19** |
+| (1.5, 1.0) | 6 | 49.8/49.5/0.7 | 51.6/48.3/0.07 | 2.17 |
+| (1.5, 1.0) | 12 | 48.5/51.3/0.1 | 48.5/51.1/0.3 | 2.15 |
+| (1.5, 1.0) | 4 | 50.5/48.6/0.9 | 52.2/47.5/0.3 | 2.15 |
+
+### Findings critiques
+
+1. **RTH filter OBLIGATOIRE** : sans RTH, distribution biaisee 57/43 SL.
+   Cause = bars overnight asymetriques (volume bas + drift directionnel).
+2. **HOLD reste < 1%** sur ES/NQ 5m → futures liquides bougent toujours
+   en 30min-2h. Pas de "no-trade naturel" significatif.
+3. **`prepare_for_lightgbm` drop HOLD** → reste binaire ~50/50 BUY vs SELL.
+   PARFAIT pour 2 modeles LightGBM (CLAUDE.md ML pipeline).
+
+### Code V5 build samedi
+
+```python
+# Avant V5 train ML, calibre + RTH filter obligatoire
+df_5m_rth = filter_rth(df_5m)  # 9:30-16:00 ET (UTC 13:30-20:00)
+events = label_dataset_v3(
+    df_5m_rth,
+    tf_name='5m',
+    pt_sl=(1.5, 1.0),
+    horizon_bars=8,  # 40 min, vs default 12
+    rvol_threshold=0.3,
+)
+events_buy = prepare_for_lightgbm(events, target_side='buy')   # ~50% positives
+events_sell = prepare_for_lightgbm(events, target_side='sell') # ~50% positives
+```
+
+---
+
 ## 10.bis Labeler v3 Lopez — conditions non-negociables (audit 2 agents 02/05)
 
 Audit ml-trainer + market-analyst sur 4 approches labeling :
