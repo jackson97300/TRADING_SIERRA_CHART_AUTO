@@ -108,10 +108,13 @@ TO_NORMALIZE = [
     "open_gap_ticks",
     "range_size_ticks", "sess_range_ticks",
     "dist_ext_edge_sell", "dist_ext_long_dn",
-    # ── Ajout 18/04/2026 : fuites PRICE_LEVEL flaggees par quality_validator ──
-    # Valeurs brutes en POINTS (dist_vwap_d_sd2d) ou en ticks non-normalises
-    # → ratio ES/NQ pur (NQ 4.6x ES). Apres atr_normalize : ratio proche 1.
-    "dist_sess_low", "dist_swing_low", "dist_vwap_d_sd2d",
+    # ── Note 18/04/2026 : dist_sess_low, dist_swing_low, dist_vwap_d_sd2d ──
+    # Ces 3 features ont un ratio ES/NQ pur (NQ ~4x ES) qui devrait normalement
+    # les qualifier pour /atr. MAIS les primary_models (CORE/primary_models/*.py)
+    # les utilisent en POINTS BRUTS comme parametres (proximity_pts, range_edge_pts).
+    # Compromise : on GARDE les versions brutes + exemption quality_validator
+    # (NATURALLY_DIFFERENT + PRICE_LEVEL_EXEMPT set).
+    # Reviewer TODO : refactor primary_models pour utiliser _atr versions proprement.
 ]
 
 # Features WHITELIST : forcees dans le dataset final meme si rho Spearman < 0.02.
@@ -508,6 +511,21 @@ class DatasetBuilder:
             vals = pd.to_numeric(df_clean[col], errors="coerce")
             df_clean[col] = vals
             df_clean.loc[vals < _INVALID_THRESHOLD, col] = np.nan
+
+        # GUARD 02/05 (review code-reviewer GATE A) :
+        # fillna(medians) global cree leak look-ahead sur features broadcast
+        # daily (mq_*, dist_mq_*, mq_dist_*) avec NaN pre-MenthorQ (15-12-2025).
+        # Pipeline V4/V5 doit utiliser build_dataset_v4_dmp_databento.py
+        # (pattern attach_mq_distances + fillna cible volumes only).
+        # Cf DOCS/BLOCKER_MQ_LEAK_PRE2026.md.
+        mq_cols_in_avail = [c for c in available if "mq_" in c.lower()]
+        if mq_cols_in_avail:
+            raise RuntimeError(
+                f"dataset_builder.py:516 fillna(medians) interdit avec mq_* "
+                f"({len(mq_cols_in_avail)} cols detectees: {mq_cols_in_avail[:3]}...). "
+                f"Utilisez build_dataset_v4_dmp_databento.py (pattern V4 propre). "
+                f"Cf DOCS/BLOCKER_MQ_LEAK_PRE2026.md."
+            )
 
         medians = df_clean.median()
         df_clean = df_clean.fillna(medians)
@@ -974,6 +992,10 @@ if __name__ == "__main__":
         strict_mode = False
         print("  [INFO] Mode backfill : validator NON-STRICT (rapport info, sauvegarde forcee)")
         print("  [INFO] Utilise --strict pour forcer le mode strict")
+    elif "--no-strict" in sys.argv:
+        strict_mode = False
+        print("  [INFO] Mode --no-strict : validator NON-STRICT (POC training)")
+        print("  [INFO] Datasets sauvegardes meme si red flags. NE PAS utiliser pour live.")
 
     validator = QualityValidator(strict=strict_mode, verbose=True)
     try:

@@ -46,6 +46,15 @@ LOG_CODES = {
     "DTC_RECONNECT":           (LogLevel.INFO,     "execution", "DTC reconnexion reussie apres {attempts} tentatives"),
     "ORDER_SUBMIT":            (LogLevel.INFO,     "execution", "Ordre envoye : {sym} {type} {direction} qty={qty}"),
     "ORDER_FILL":              (LogLevel.INFO,     "execution", "Fill : order_id={order_id} @ {price} slippage={slip}t"),
+    # PATCH R4 (02/05) — Track fill PARENT pour entry_price reel (vs signal_price)
+    # Avant patch : pos["entry"] = signal_price → biais slippage entry sur tous trades
+    # Apres patch : pos["entry"] = fill_price reel + slip_entry_ticks mesure
+    "PARENT_FILL_RECORDED":    (LogLevel.INFO,     "execution", "Parent fill recorded : {sym} fill={fill_price} signal={old_entry} slip={slip_ticks}t parent={parent_id}"),
+    # 01/05 soir DEBUG TEMPORAIRE — Verifier que Sierra Chart envoie TOUJOURS Symbol natif
+    # dans s_OrderUpdate Filled. Si confirme N>=3 trades : adopter Option 5 (utiliser
+    # fill.symbol au lieu de _order_to_symbol) — race condition entry_price disparait.
+    # A retirer apres validation (commit dedie).
+    "DTC_FILL_SYMBOL_DEBUG":   (LogLevel.INFO,     "execution", "DTC fill debug : cid={cid} symbol_raw={symbol_raw} present={symbol_present} acct={trade_account} fill={fill_price} parent={is_parent} keys={msg_keys}"),
     "ORDER_REJECT":            (LogLevel.MAJEUR,   "execution", "Ordre refuse broker : {sym} code={err_code} msg={err_msg}"),
     "ORDER_ACK_TIMEOUT":       (LogLevel.MAJEUR,   "execution", "Timeout ACK broker sur ordre {order_id} apres {timeout}s"),
     "OCO_CANCEL_OPPOSITE":     (LogLevel.INFO,     "execution", "OCO cancel oppose : {order_id}"),
@@ -259,6 +268,19 @@ LOG_CODES = {
     # 01/05 Jackson "INADMISSIBLE 33 min" : Bot 2 lit close LIVE_CACHE pour scoring.
     # Emit max 1x/min/symbole pour audit drift live vs parquet.
     "LIVE_BAR_OVERRIDE":         (LogLevel.INFO,     "events", "Live bar override : {sym} close_parquet={close_parquet} close_live={close_live} delta={delta_ticks}t live_age={live_age_sec}s"),
+    # 01/05 soir FIX C : recalcul dist_* aux walls T1+T2 avec close LIVE.
+    # SLTP_NO_VALID_WALL x10.8 post-deploy LIVE override → distances parquet
+    # incoherentes avec close LIVE → SLTPEngine ne trouvait plus les walls.
+    "LIVE_BAR_DIST_RECALC":      (LogLevel.INFO,     "events", "Live bar dist recalc : {sym} delta={delta_ticks}t n_walls_recalc={n_walls_recalc} n_from_pct={n_from_pct}"),
+    # 01/05 soir HTF Multi-tf alignment OBSERVE-ONLY (J+0 → J+7)
+    # Code-reviewer NOGO sur deploy VETO (Pattern 11 N=15). Mode observe seul.
+    # Audit J+7 sur N reel ~50-60 trades production puis decision activation.
+    "HTF_OBSERVE_PASS":          (LogLevel.INFO,     "decisions", "HTF observe PASS : {sym} {direction} aligned slope_5m={slope_5m:+.2f}"),
+    "HTF_OBSERVE_COUNTER_SHORT": (LogLevel.INFO,     "decisions", "HTF observe COUNTER SHORT : {sym} signal contre HTF uptrend slope_5m={slope_5m:+.2f} (no-block J+0)"),
+    "HTF_OBSERVE_COUNTER_LONG":  (LogLevel.INFO,     "decisions", "HTF observe COUNTER LONG : {sym} signal contre HTF downtrend slope_5m={slope_5m:+.2f} (no-block J+0)"),
+    "HTF_OBSERVE_NO_DATA":       (LogLevel.ALERTE,   "decisions", "HTF observe NO DATA : {sym} bars_1m={n_bars_1m} insufficient (besoin >=125)"),
+    "HTF_BLOCK_COUNTER_SHORT":   (LogLevel.MAJEUR,   "decisions", "HTF BLOCK SHORT counter-trend : {sym} slope_5m={slope_5m:+.2f} (active post J+7)"),
+    "HTF_BLOCK_COUNTER_LONG":    (LogLevel.MAJEUR,   "decisions", "HTF BLOCK LONG counter-trend : {sym} slope_5m={slope_5m:+.2f} (active post J+7)"),
     # 01/05 Jackson "TRACK TOUT" : tracage exhaustif des rejets silencieux
     "BAR_LOAD_NONE":             (LogLevel.ALERTE,   "decisions", "Bar load None : {sym} {reason}"),
     "GATE_RTH_BLOCK":            (LogLevel.INFO,     "decisions", "Gate RTH BLOCK : {sym} hors RTH (heure UTC={hour_utc:.2f}h) — {reason}"),

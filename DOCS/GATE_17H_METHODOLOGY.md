@@ -49,6 +49,24 @@ Pour chaque (instrument, side) :
 - ES_BUY+SELL et NQ_BUY+SELL = **4 modeles separes** (CLAUDE.md ML pipeline).
   Pas de modele joint.
 
+### 1.ter Cost model slip_entry — AJOUT post-PATCH R4 (review market-analyst)
+
+Patch R4 expose `slip_entry_ticks` (broker fill_price - signal_price). Avant
+patch : pnl historiques etaient surestimes de ~slip_entry moyen (~+1.5t Sim2).
+
+**Convention cost model V5 train** :
+- ES round-trip cost = 2.3 ticks (existing : 1 tick spread + 1.3 commission)
+- NQ round-trip cost = 5.2 ticks (existing)
+- **+ slip_entry_estimated = 1.5 ticks** (mediane Sim2 paper attendue)
+- Total cost ES : 2.3 + 1.5 = **3.8 ticks/trade**
+- Total cost NQ : 5.2 + 1.5 = **6.7 ticks/trade**
+
+Si DSR samedi calcule sur cost = 2.3/5.2 sans slip_entry → expectation OOS prod
+sera surestimee. Recalculer **avec slip_entry** dans le verdict GATE 17h.
+
+Audit J+7 lundi : si distribution slip_entry_ticks mediane Sim2 != 1.5t
+attendu → reviser cost model + impact verdict GO.
+
 Si 4/4 GO clair → deploy paper integral.
 
 ---

@@ -61,7 +61,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "CORE"))
 sys.path.insert(0, str(ROOT / "BOT"))
 
-from mia_sltp import SLTPEngine
+from mia_sltp import SLTPEngine, TIER1_WALLS, TIER2_WALLS
+# 01/05 soir : HTF Multi-tf alignment (OBSERVE-ONLY J+0 → audit J+7)
+from htf_alignment import HTFAlignmentFilter, log_htf_decision
 # FIX 29/04 (R3 audit) : import top-level avec fallback (Bot 2 run depuis CORE/,
 # Bot 1 depuis racine projet → 2 conventions a supporter).
 try:
@@ -569,8 +571,15 @@ class DatabentoPaperTrader:
             "buy_sell_ratio",        # == ask_pct
             "ask_bid_imbalance",     # == delta_pct
             "delta_bar_vol_norm",    # == delta_pct
+            # FIX C v2 (01/05) : marker prive LIVE override (pas une feature ML)
+            "_close_parquet_orig",
         }
         self._snapshot_excluded_suffixes = ("_ticks",)  # remplaces par _pct (data-quality.md)
+
+        # 01/05 soir : HTF Multi-tf alignment (OBSERVE-ONLY J+0 → J+7)
+        # Audit empirique +$1785/sem si filter ON, mais N=15 SHORT counter < 30
+        # → Pattern 11 risk → mode OBSERVE seul + JSONL audit avant activation.
+        self._htf_filter = HTFAlignmentFilter()
 
         if not cfg.dry_run and _DTC_OK:
             self.dtc = DTCConnector(DTCConfig())
@@ -1090,6 +1099,22 @@ class DatabentoPaperTrader:
         fill_price = getattr(fill, "fill_price", 0.0)
         if not order_id or not fill_price:
             return
+        # PATCH R4 RESERVE #2 (02/05) — DTC_FILL_SYMBOL_DEBUG temporaire pour valider
+        # Option 5 (utiliser fill.symbol natif Databento DTC vs _order_to_symbol mapping).
+        # Si fill.symbol toujours present N>=3 trades J+1 → adopter Option 5 (commit dedie).
+        # A retirer apres validation empirique.
+        try:
+            symbol_raw = getattr(fill, "symbol", "")
+            msg_keys = list(vars(fill).keys()) if hasattr(fill, "__dict__") else []
+            _emit("DTC_FILL_SYMBOL_DEBUG",
+                  cid=order_id, symbol_raw=symbol_raw,
+                  symbol_present=bool(symbol_raw),
+                  trade_account=getattr(self.cfg, "trade_account", ""),
+                  fill_price=float(fill_price),
+                  is_parent=False,  # rempli dans le block parent ci-dessous
+                  msg_keys=str(msg_keys))
+        except Exception:
+            pass  # debug non-bloquant
         with self._pos_lock:
             # FIX R2 (review code-reviewer 30/04) : reconnaitre AUSSI close_cid
             # (envoye par _check_exit_dtc en MARKET CLOSE force). Sans ce match,
@@ -1102,9 +1127,43 @@ class DatabentoPaperTrader:
                     if order_id == p.get("close_cid"):
                         symbol = sym
                         break
+            # PATCH R4 RESERVE #1 (02/05) — Fallback parent_id si _order_to_symbol pas populate
+            # (race callback fill arrive avant register_position). Symptome :
+            # parent fill ignore alors qu'il devrait update entry_price.
+            if not symbol:
+                for sym, p in self.active_positions.items():
+                    if order_id == p.get("parent_id"):
+                        symbol = sym
+                        break
             if not symbol or symbol not in self.active_positions:
                 return
             pos = self.active_positions[symbol]
+
+            # ── PATCH R4 (02/05) — Track fill PARENT pour entry_price reel ──
+            # Avant : pos["entry"] = signal_price (pollue ML training + pnl)
+            # Apres : pos["entry"] = fill_price broker + slip_entry_ticks mesure
+            # Reviewed-by: code-reviewer ULTRATHINK (DOCS/PATCH_R4_PARENT_FILL_TRACKING.md)
+            is_parent = (order_id == pos.get("parent_id"))
+            if is_parent:
+                old_entry = float(pos["entry"])
+                pos["entry"] = float(fill_price)
+                dir_sign = 1 if pos["side"] == "BUY" else -1
+                slip_ticks = round((fill_price - old_entry) / TICK_SIZE * dir_sign, 2)
+                pos["slip_entry_ticks"] = slip_ticks
+                print(f"[{symbol}] DTC FILL PARENT @ {fill_price:.2f} (slip={slip_ticks:+.1f}t)")
+                _emit("PARENT_FILL_RECORDED", sym=symbol,
+                      fill_price=float(fill_price), old_entry=old_entry,
+                      slip_ticks=slip_ticks, parent_id=order_id)
+                # FIX RESERVE R1 (review code-reviewer ULTRATHINK 02/05) :
+                # persister immediatement state.json. Sans cela, si crash entre
+                # PARENT fill et TP fill, le _write_state au close ne sera jamais
+                # appele → state.json garde signal_price → R6 recovery biais.
+                try:
+                    self._persist_active_positions()
+                except Exception as _e:
+                    print(f"[{symbol}] WARN persist post-PARENT fail (non-fatal): {_e}")
+                return  # parent fill = pas de close trade, juste update entry
+
             is_tp = (order_id == pos.get("tp_cid"))
             is_sl = (order_id == pos.get("sl_cid"))
             is_close = (order_id == pos.get("close_cid"))
@@ -1677,6 +1736,13 @@ class DatabentoPaperTrader:
 
         # Build enriched bar
         new_bar = bar.copy()
+        # FIX C v2 (01/05/2026 soir) — Stocke close_parquet ORIGINAL pour
+        # permettre a `_inject_dist_ticks_from_pct` de reconstruire les
+        # ticks correctement (au moment du parquet) puis ajuster vers LIVE.
+        # Cf code-reviewer NOGO sur fix v1 : recalcul des `dist_*` brutes
+        # ratait 35/40 walls (parquet V4 stocke majorite en `_pct` anti-fuite
+        # instrument). v2 corrige a la SOURCE de la reconstruction _pct->ticks.
+        new_bar["_close_parquet_orig"] = parquet_close
         new_bar["close"] = live_close
         new_bar["open"] = float(live["open"])
         new_bar["high"] = float(live["high"])
@@ -1701,6 +1767,11 @@ class DatabentoPaperTrader:
                 level_f = float(level)
                 if level_f > 0:
                     new_bar[dist_key] = (live_close - level_f) / live_close * 100
+
+        # NOTE (FIX C v2 01/05) : recalcul dist_* aux walls T1+T2 deplace dans
+        # `_inject_dist_ticks_from_pct` (apres reconstruction depuis _pct).
+        # 35/40 walls sont stockes en `_pct` dans parquet V4 (anti-fuite
+        # instrument) → fix v1 ici etait no-op sur 87.5% des cas.
 
         # ts_event LIVE pour le check stale en aval (safe parsing — code-reviewer 01/05)
         live_ts = None
@@ -1892,7 +1963,44 @@ class DatabentoPaperTrader:
             return False
         return True
 
-    def _inject_dist_ticks_from_pct(self, bar_dict: dict) -> dict:
+    def _load_recent_bars_1m(self, symbol: str, n_bars: int = 200) -> pd.DataFrame:
+        """Charge les N dernieres bars 1m du parquet enrichi pour HTF calc.
+
+        Source : DATA/DATASETS/v4_enriched/symbol={sym}.c.0/year=YYYY/month=MM/data.parquet
+
+        NB : retard 30 min vs LIVE (parquet enrichi est build incremental).
+        Acceptable pour HTF OBSERVE-ONLY J+0 (audit J+7). Pour activation veto
+        future, utiliser raw ohlcv-1m DBN ou LIVE_CACHE.
+        """
+        from datetime import timedelta
+        try:
+            today = datetime.now(timezone.utc).date()
+            yesterday = today - timedelta(days=1)
+            paths = []
+            for d in (yesterday, today):
+                p = (ROOT / "DATA" / "DATASETS" / "v4_enriched" /
+                     f"symbol={symbol}.c.0" / f"year={d.year}" / f"month={d.month:02d}" / "data.parquet")
+                if p.exists():
+                    paths.append(p)
+            if not paths:
+                return pd.DataFrame()
+            dfs = []
+            for p in paths:
+                try:
+                    df = pd.read_parquet(p, columns=["ts_event", "open", "high", "low", "close", "volume"])
+                    dfs.append(df)
+                except Exception:
+                    continue
+            if not dfs:
+                return pd.DataFrame()
+            full = pd.concat(dfs, ignore_index=True)
+            full["ts_event"] = pd.to_datetime(full["ts_event"], utc=True).dt.tz_convert(None)
+            full = full.sort_values("ts_event").reset_index(drop=True)
+            return full.tail(n_bars).reset_index(drop=True)
+        except Exception:
+            return pd.DataFrame()
+
+    def _inject_dist_ticks_from_pct(self, bar_dict: dict, symbol: str = "UNK") -> dict:
         """FIX Tier1 #10 (29/04) — Convertit dist_*_pct → dist_* en ticks.
 
         Pipeline V4 `add_pct_normalized_distances` (build_dataset_v4_dmp_databento.py:793)
@@ -1912,6 +2020,41 @@ class DatabentoPaperTrader:
         if close is None or pd.isna(close) or close <= 0:
             return bar_dict
 
+        # ─── FIX C v2 (01/05/2026 soir) — Coherence LIVE override ───────
+        # Bug confirme empiriquement (cf INCIDENT_LOG 22:00 du 01/05) :
+        # SLTP_NO_VALID_WALL x10.8 post-deploy LIVE override (3.8% → 41.2%).
+        #
+        # Cause : parquet V4 stocke `dist_*_pct` calcule au moment du build
+        # avec close_PARQUET. Le code legacy reconstruisait via
+        # `ticks = pct * close_LIVE / (TICK_SIZE*100)` ce qui donne une
+        # distance approximativement correcte au moment du PARQUET (ratio
+        # close_live/close_parquet ~= 1) mais PAS au moment LIVE.
+        #
+        # Avec drift -178t (NQ observe), erreur jusqu'a 162 ticks par wall.
+        #
+        # Fix : si `_close_parquet_orig` present (LIVE override actif),
+        # reconstruire au moment du parquet PUIS ajuster delta_ticks vers LIVE.
+        #
+        # Verification mathematique :
+        #   pct_parquet = (level - close_parquet) / close_parquet * 100
+        #   level = close_parquet * (1 + pct_parquet/100)
+        #   distance_live_correcte = (level - close_live) / TICK_SIZE
+        #                         = (close_parquet*(1+pct/100) - close_live) / TICK_SIZE
+        #                         = close_parquet*pct/(100*TICK_SIZE) + (close_parquet - close_live)/TICK_SIZE
+        #                         = ticks_at_parquet - delta_ticks
+        # ─────────────────────────────────────────────────────────────────
+        close_parquet_orig = bar_dict.get("_close_parquet_orig")
+        has_live_override = (close_parquet_orig is not None
+                             and not pd.isna(close_parquet_orig)
+                             and float(close_parquet_orig) > 0
+                             and float(close_parquet_orig) != float(close))
+        if has_live_override:
+            close_for_pct = float(close_parquet_orig)
+            delta_ticks = (float(close) - close_for_pct) / TICK_SIZE
+        else:
+            close_for_pct = float(close)
+            delta_ticks = 0.0
+
         # NOTE : dist_1d_min_ticks_pct et dist_1d_max_ticks_pct gardent le suffix
         # `_ticks` au milieu du nom (heritage build_dataset). On les mappe explicitement.
         # FIX audit 29/04 : swing naming mismatch — V4 produit
@@ -1925,6 +2068,9 @@ class DatabentoPaperTrader:
             "dist_last_swing_low_pct": "dist_swing_low",
         }
 
+        # Track les cols creees depuis _pct (pour eviter double-ajustement bloc brut)
+        cols_from_pct = set()
+
         # Iter sur copy keys car on mute le dict
         for key in list(bar_dict.keys()):
             if not key.endswith("_pct"):
@@ -1935,14 +2081,47 @@ class DatabentoPaperTrader:
             if v is None or pd.isna(v):
                 continue
             try:
-                ticks = float(v) * float(close) / (TICK_SIZE * 100.0)
+                # Reconstruction au moment du parquet (pct relatif a close_parquet)
+                ticks_at_parquet = float(v) * close_for_pct / (TICK_SIZE * 100.0)
+                # Ajustement vers close LIVE (no-op si delta_ticks == 0)
+                ticks_at_live = ticks_at_parquet - delta_ticks
             except (TypeError, ValueError):
                 continue
             # Nom cible : special_map si applicable, sinon drop _pct
             target_key = special_map.get(key, key[:-4])  # "_pct" = 4 chars
             # Ne pas ecraser une valeur deja presente (precedence aux ticks bruts)
             if target_key not in bar_dict or bar_dict[target_key] is None or pd.isna(bar_dict[target_key]):
-                bar_dict[target_key] = ticks
+                bar_dict[target_key] = ticks_at_live
+                cols_from_pct.add(target_key)
+
+        # FIX C v2 (suite) — Ajuster les cols T1+T2 BRUTES presentes dans
+        # parquet (5 sur 40 : dist_mq_call_0dte, dist_mq_put_0dte,
+        # dist_cur_vah/vpoc/val) qui NE sont PAS reconstruites depuis _pct
+        # (precedence aux ticks bruts). Ces valeurs sont relatives au
+        # close_parquet → besoin d'ajustement -delta_ticks aussi.
+        n_recalc = len(cols_from_pct)
+        if delta_ticks != 0:
+            for wall_col in list(TIER1_WALLS.keys()) + list(TIER2_WALLS.keys()):
+                if wall_col in cols_from_pct:
+                    continue  # Deja ajustee par la boucle _pct
+                v = bar_dict.get(wall_col)
+                if v is None or pd.isna(v):
+                    continue
+                bar_dict[wall_col] = float(v) - delta_ticks
+                n_recalc += 1
+
+            # Logger rate-limited 1x/min/symbole pour audit J+1
+            if not hasattr(self, "_last_dist_recalc_log"):
+                self._last_dist_recalc_log = {}
+            last_log_dist = self._last_dist_recalc_log.get(symbol, 0)
+            if time.time() - last_log_dist > 60:
+                self._last_dist_recalc_log[symbol] = time.time()
+                _emit("LIVE_BAR_DIST_RECALC",
+                      sym=symbol,
+                      delta_ticks=round(delta_ticks, 1),
+                      n_walls_recalc=n_recalc,
+                      n_from_pct=len(cols_from_pct))
+
         return bar_dict
 
     def _extract_features_dict(self, bar: pd.Series) -> dict:
@@ -2279,6 +2458,38 @@ class DatabentoPaperTrader:
             _emit("BAR_ALREADY_TRADED", sym=symbol, bar_key=bar_key)
             return
 
+        # ── 🆕 01/05 soir HTF Multi-tf alignment (OBSERVE-ONLY J+0) ───────
+        # Calcule slope EMA 5m + log decision. NE BLOQUE PAS (J+0).
+        # Audit J+7 sur N reel ~50-60 trades production puis decision activation.
+        # Source bars 1m : parquet enrichi (30 min retard accepte pour OBSERVE).
+        try:
+            bars_1m_recent = self._load_recent_bars_1m(symbol, n_bars=200)
+            htf_decision = self._htf_filter.evaluate(symbol, result.direction, bars_1m_recent)
+            # Code log selon action
+            if htf_decision.action == "PASS":
+                _emit("HTF_OBSERVE_PASS", sym=symbol, direction=result.direction,
+                      slope_5m=round(htf_decision.slope_5m, 2))
+            elif htf_decision.action == "OBSERVE_COUNTER":
+                code = "HTF_OBSERVE_COUNTER_SHORT" if result.direction == "SELL" else "HTF_OBSERVE_COUNTER_LONG"
+                _emit(code, sym=symbol, slope_5m=round(htf_decision.slope_5m, 2))
+            elif htf_decision.action == "NO_DATA":
+                _emit("HTF_OBSERVE_NO_DATA", sym=symbol, n_bars_1m=len(bars_1m_recent))
+            elif htf_decision.action == "BLOCK_COUNTER_SHORT":
+                _emit("HTF_BLOCK_COUNTER_SHORT", sym=symbol, slope_5m=round(htf_decision.slope_5m, 2))
+                # 🚨 J+0 : ne BLOQUE PAS (mode observe). Activation J+7 si robuste.
+            elif htf_decision.action == "BLOCK_COUNTER_LONG":
+                _emit("HTF_BLOCK_COUNTER_LONG", sym=symbol, slope_5m=round(htf_decision.slope_5m, 2))
+            # JSONL dedie pour audit J+7 (regle souveraine logs > 30% filter rate)
+            log_htf_decision(htf_decision, signal_id=bar_key, symbol=symbol,
+                             direction=result.direction, signal_price=close,
+                             executed=True)
+        except Exception as e:
+            # Module isole : ne casse jamais le bot. Silent fail + log warning.
+            try:
+                _emit("HTF_OBSERVE_NO_DATA", sym=symbol, n_bars_1m=0)
+            except Exception:
+                pass
+
         # SL/TP via SLTPEngine — fallback adaptatif si invalid (V4 _pct ou pas de wall).
         # FIX 29/04 (Jackson MES≠MNQ) : fallback sl_ticks dynamique par symbole
         # pour respecter budget $ commun (ES 16t ≈ NQ 40t ≈ $60).
@@ -2293,7 +2504,7 @@ class DatabentoPaperTrader:
             # systematique → fallback FIXED 30/40t = SL trop court NQ
             # (3 trades sur 4 du 28/04 = SL fallback = -277 ticks).
             # Formule inverse : ticks = pct * close / (100 * TICK_SIZE)
-            bar_dict = self._inject_dist_ticks_from_pct(bar.to_dict())
+            bar_dict = self._inject_dist_ticks_from_pct(bar.to_dict(), symbol=symbol)
             sltp = self.sltp_engines[symbol].evaluate_single(bar_dict, direction_int)
             if sltp.valid:
                 sl_ticks_use = sltp.sl_ticks
