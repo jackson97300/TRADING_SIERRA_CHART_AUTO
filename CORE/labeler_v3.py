@@ -375,7 +375,20 @@ def label_dataset_v3(df_ohlcv: pd.DataFrame,
         else:
             raise ValueError("df_ohlcv must be indexed ts_event or have 'ts_event' col")
 
-    # 1. Pre-filter RVOL (drop barres mortes)
+    # FIX RESERVE ml-trainer Q4.1 (02/05) :
+    # Calculer daily_vol sur serie COMPLETE (pre-filter) pour eviter biais
+    # EWMA span sur barres non-contigues. Puis filter, puis subset vol.
+    # Sans ce fix : si pre-filter drop 30% bars 1m, span=390 devient ~1.4 jour reel.
+
+    # 1. Daily volatility estimate sur serie complete (Lopez ch.3.1)
+    if vol_span is None:
+        vol_span = TF_SPANS.get(tf_name, 78)
+    daily_vol_full = compute_daily_vol(df['close'], span=vol_span, tf=tf_name)
+    print(f"[labeler_v3] daily_vol stats (pre-filter) : "
+          f"mean={daily_vol_full.mean():.6f}, "
+          f"median={daily_vol_full.median():.6f} (span={vol_span} for TF={tf_name})")
+
+    # 2. Pre-filter RVOL (drop barres mortes)
     if rvol_window_bars is None:
         rvol_window_bars = horizon_bars * 6  # heuristique : 6 fois horizon
     df = filter_low_rvol(df, rvol_threshold, volume_col='volume',
@@ -383,13 +396,8 @@ def label_dataset_v3(df_ohlcv: pd.DataFrame,
     if df.empty:
         return pd.DataFrame()
 
-    # 2. Daily volatility estimate (vol-scaled barriers Lopez ch.3.1)
-    # Span auto via TF_SPANS si vol_span None (recommandation ml-trainer 02/05)
-    if vol_span is None:
-        vol_span = TF_SPANS.get(tf_name, 78)
-    daily_vol = compute_daily_vol(df['close'], span=vol_span, tf=tf_name)
-    print(f"[labeler_v3] daily_vol stats : mean={daily_vol.mean():.6f}, "
-          f"median={daily_vol.median():.6f} (span={vol_span} for TF={tf_name})")
+    # 3. Subset daily_vol sur barres survivantes (pas recalcul)
+    daily_vol = daily_vol_full.reindex(df.index)
 
     # 3. Vertical barriers (horizon temporel)
     t1_vertical = compute_vertical_barriers(df['close'], num_bars=horizon_bars)
