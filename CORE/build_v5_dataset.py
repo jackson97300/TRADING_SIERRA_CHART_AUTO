@@ -307,8 +307,10 @@ def build_v5_single_symbol(symbol: str,
     # OPTIM : RTH filter avant HVN/LVN (30% economie temps)
     # Justification : HVN/LVN session calcule features SUR la bar courante.
     # Si bar overnight droppee plus tard, on a calcule pour rien.
-    # Anti-leak preserve : profile session reste calcule sur trades RTH only
-    # (load_trades_session deja filtre RTH 13:30-20:00 UTC DST-safe).
+    # Anti-leak preserve : profile session reste calcule sur trades RTH only.
+    # NOTE : load_trades_session filtre RTH via tz_localize("America/New_York")
+    # (DST-safe, applique tz_convert UTC apres) → 13:30-20:00 UTC en EDT,
+    # 14:30-21:00 UTC en EST. Les fenetres glissent automatiquement avec DST.
     if apply_rth_first:
         df = filter_rth(df)
 

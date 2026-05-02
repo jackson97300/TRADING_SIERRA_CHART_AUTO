@@ -382,7 +382,8 @@ if __name__ == "__main__":
                   f"mean={s.dropna().mean():.2f}")
 
     # FIX R2 (review 2nd) : diagnostic NaN par heure (verifier cohérence RTH)
-    # RTH = 13:30-20:00 UTC → heures 13-19 should be ~0% NaN, autres ~100% NaN.
+    # RTH UTC : 13:30-20:00 en EDT (ete) / 14:30-21:00 en EST (hiver).
+    # tz_localize America/New_York convertit dynamiquement, fenetre DST-safe.
     df_v5["__h_utc"] = pd.to_datetime(df_v5["ts_event"], utc=True).dt.hour
     print("\nNaN ratio dist_session_hvn_above par heure UTC (RTH=13-19) :")
     nan_per_hour = df_v5.groupby("__h_utc")["dist_session_hvn_above"].apply(lambda s: s.isna().mean())
