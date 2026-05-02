@@ -226,20 +226,34 @@ def filter_rth(df: pd.DataFrame) -> pd.DataFrame:
 # ═════════════════════════════════════════════════════════════════════
 
 def apply_labeler_v3(df: pd.DataFrame) -> pd.DataFrame:
-    """Apply labeler v3 Triple Barrier Lopez avec params calibres grid search.
+    """Apply labeler v3 Triple Barrier Lopez calibre 1m natif.
 
-    Params : pt_sl=(1.5, 1.0), horizon=8 (40 min), RTH-only deja applique.
+    HISTORIQUE FIXES :
+    - Original : tf_name='1m' pt_sl=(1.5, 1.0) h=8 → biais 44/55 (h trop court)
+    - Fix audit mobile 9/10 : h=40 (40 min cible) → biais 42/58 (pire,
+      car vol 1m ≠ vol 5m × sqrt(5), pt_sl=(1.5, 1.0) tight sur 1m)
+    - Mini grid 1m bars : (1.0, 1.0) h=60 → 52/48 symetrique ✅
+
+    Calibrage final 1m natif :
+      pt_sl = (1.0, 1.0)  : RR=1.0 symetrique (TP=SL distance vol)
+      horizon = 60        : 60 min (1h cible)
+      tf_name = '1m'      : vol_span 390 (1 jour 1m bars)
+
+    Note : differe du grid search 5m (1.5/1.0 h=8). C'est NORMAL — chaque TF
+    a sa propre dynamique de vol-scaling. Pour 1m bars, RR=1.0 + horizon=60
+    donne distribution 50/50 cible.
+
     Output : labels {-1, 0, +1} + sample_weight uniqueness Lopez ch.4.
     """
     from labeler_v3 import label_dataset_v3
 
     df_for_label = df[["ts_event", "open", "high", "low", "close", "volume"]].copy()
-    print("[V5] Labeler v3 (pt_sl=(1.5, 1.0), horizon=8, RTH-only)...")
+    print("[V5] Labeler v3 (pt_sl=(1.0, 1.0), horizon=60 bars 1m = 1h, RTH-only)...")
     events = label_dataset_v3(
         df_for_label,
         tf_name="1m",
-        pt_sl=(1.5, 1.0),
-        horizon_bars=8,
+        pt_sl=(1.0, 1.0),
+        horizon_bars=60,
         rvol_threshold=0.3,
     )
     if events.empty:
@@ -275,8 +289,13 @@ def apply_labeler_v3(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_v5_single_symbol(symbol: str,
                               date_min: Optional[str] = None,
-                              date_max: Optional[str] = None) -> pd.DataFrame:
-    """Build V5 dataset pour 1 symbole (sans CAT4 cross-instrument)."""
+                              date_max: Optional[str] = None,
+                              apply_rth_first: bool = True) -> pd.DataFrame:
+    """Build V5 dataset pour 1 symbole (sans CAT4 cross-instrument).
+
+    OPTIM (audit Claude.com point 3) : RTH filter AVANT HVN/LVN economise
+    ~30% temps calcul (HVN/LVN ne process que bars qui survivront).
+    """
     print(f"\n{'='*70}\nBUILD V5 — {symbol} ({date_min} → {date_max})\n{'='*70}")
     t_total = time.time()
 
@@ -284,6 +303,15 @@ def build_v5_single_symbol(symbol: str,
     df = apply_htf_pipeline(df)
     df = apply_top_78_cat2(df)
     df = apply_simples(df)
+
+    # OPTIM : RTH filter avant HVN/LVN (30% economie temps)
+    # Justification : HVN/LVN session calcule features SUR la bar courante.
+    # Si bar overnight droppee plus tard, on a calcule pour rien.
+    # Anti-leak preserve : profile session reste calcule sur trades RTH only
+    # (load_trades_session deja filtre RTH 13:30-20:00 UTC DST-safe).
+    if apply_rth_first:
+        df = filter_rth(df)
+
     df = apply_hvn_lvn(df, symbol)
 
     print(f"[V5] {symbol} build temps total: {time.time()-t_total:.0f}s")
@@ -311,21 +339,15 @@ def build_v5_pair(date_min: str = "2025-12-15",
     output_dir.mkdir(parents=True, exist_ok=True)
     t_total = time.time()
 
-    # 1. Build chaque symbole
-    df_es = build_v5_single_symbol("ES", date_min, date_max)
-    df_nq = build_v5_single_symbol("NQ", date_min, date_max)
+    # 1. Build chaque symbole (RTH filter applique avant HVN/LVN si apply_rth=True)
+    df_es = build_v5_single_symbol("ES", date_min, date_max, apply_rth_first=apply_rth)
+    df_nq = build_v5_single_symbol("NQ", date_min, date_max, apply_rth_first=apply_rth)
 
-    # 2. CAT4 cross-instrument (ES + NQ ensemble)
+    # 2. CAT4 cross-instrument (ES + NQ ensemble, post-RTH si applique)
     print(f"\n{'='*70}\nCAT4 CROSS-INSTRUMENT\n{'='*70}")
     df_es, df_nq = apply_cat4_cross(df_es, df_nq)
 
-    # 3. RTH filter (avant labeler — cf grid search calibration)
-    if apply_rth:
-        print(f"\n{'='*70}\nRTH FILTER (9:30-16:00 ET DST-safe)\n{'='*70}")
-        df_es = filter_rth(df_es)
-        df_nq = filter_rth(df_nq)
-
-    # 4. Labeler v3 calibre
+    # 3. Labeler v3 calibre (RTH deja applique en step 1 si requested)
     if apply_labels:
         print(f"\n{'='*70}\nLABELER V3 CALIBRE\n{'='*70}")
         df_es = apply_labeler_v3(df_es)
