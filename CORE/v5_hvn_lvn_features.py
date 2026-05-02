@@ -139,15 +139,26 @@ def get_profile_at_time(cumul: pd.DataFrame, ts: pd.Timestamp) -> pd.Series:
 
 def identify_hvn_lvn(profile: pd.Series,
                        hvn_q: float = HVN_QUANTILE,
-                       lvn_q: float = LVN_QUANTILE) -> tuple:
+                       lvn_q: float = LVN_QUANTILE,
+                       min_buckets: int = 10) -> tuple:
     """HVN = top 30% volume, LVN = bottom 30%.
+
+    FIX review R1 (CRITIQUE 2nd round) : early-session noise guard.
+    Profile <10 buckets ou distribution plate (quantile_70 <= quantile_30)
+    → HVN/LVN math meaningless → retourner empty (NaN propage).
+
+    Sinon : on aurait HVN et LVN qui overlappent (meme buckets dans 2 ensembles)
+    → features bidon sur 09:30-09:40.
 
     Returns : (hvn_buckets sorted, lvn_buckets sorted)
     """
-    if profile.empty:
+    if profile.empty or len(profile) < min_buckets:
         return np.array([]), np.array([])
     hvn_thresh = profile.quantile(hvn_q)
     lvn_thresh = profile.quantile(lvn_q)
+    if hvn_thresh <= lvn_thresh:
+        # Distribution trop plate (rare : tous bucket meme volume)
+        return np.array([]), np.array([])
     hvn = np.sort(profile[profile >= hvn_thresh].index.values)
     lvn = np.sort(profile[profile <= lvn_thresh].index.values)
     return hvn, lvn
@@ -248,18 +259,18 @@ def add_hvn_lvn_features(df_v4: pd.DataFrame,
                            target_col: str = "cur_vah") -> pd.DataFrame:
     """Pipeline principal : ajoute 9 HVN/LVN features per bar V4.
 
-    ANTI-LEAK : pour bar at T, profile = trades de la session ENTIRE
-    (incluant T+1...T+end). Cest une approximation : on utilise le profile
-    final session pour eviter de re-calc rolling per bar (cout O(N) trades
-    par bar = trop lent sur 351K bars).
+    ANTI-LEAK STRICT (Lopez ch.7) — fix 2nd round review :
+    Pour bar at T, profile = volume cumul rolling jusqu'a T-1min STRICTEMENT.
+    Implementation via compute_rolling_profile_per_minute + get_profile_at_time.
 
-    Justification anti-leak : trader humain voit le profile session entier
-    pour reperer HVN/LVN apres clôture. ML doit apprendre a interpreter ce
-    profile. Pour usage live, profile sera celui de la session en cours
-    (jusqu'au moment present).
+    Cumul aggregat per minute (1 fois par session) → lookup O(log N) par bar.
+    Cout : ~7 min sur 7 mois data, ~2.6h sur 15 ans (one-shot).
 
-    Pour samedi V5 baseline : profile session-entier OK (proxy session-rolled).
-    Optimisation rolling intra-session : phase 2 si MARGINAL.
+    Edge cases geres :
+      - Bar pre-1ere minute session → empty profile → NaN
+      - Bar hors RTH (trades RTH-only filtre) → empty cumul → NaN
+      - Profile <10 buckets early-session → identify_hvn_lvn retourne empty
+        (fix R1 : evite quantile(0.7)==quantile(0.3) noise)
 
     Args:
         df_v4 : DataFrame V4 indexed ts_event avec close + target_col
@@ -355,3 +366,12 @@ if __name__ == "__main__":
             print(f"  {c:30}: NaN={s.isna().mean():.1%}, "
                   f"unique={s.nunique()}, "
                   f"mean={s.dropna().mean():.2f}")
+
+    # FIX R2 (review 2nd) : diagnostic NaN par heure (verifier cohérence RTH)
+    # RTH = 13:30-20:00 UTC → heures 13-19 should be ~0% NaN, autres ~100% NaN.
+    df_v5["__h_utc"] = pd.to_datetime(df_v5["ts_event"], utc=True).dt.hour
+    print("\nNaN ratio dist_session_hvn_above par heure UTC (RTH=13-19) :")
+    nan_per_hour = df_v5.groupby("__h_utc")["dist_session_hvn_above"].apply(lambda s: s.isna().mean())
+    for h, r in nan_per_hour.items():
+        marker = " ← RTH" if 13 <= h < 20 else ""
+        print(f"  hour {h:02d}: NaN={r:.1%}{marker}")
