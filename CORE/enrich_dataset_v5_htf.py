@@ -613,10 +613,38 @@ def add_top_78_features_per_tf(df_1m_enriched: pd.DataFrame,
 
     cols_present = [f for f in top_78_features if f in out.columns]
     cols_missing = [f for f in top_78_features if f not in out.columns]
+
+    # FIX review Q6 (reserve) : raise si > 20% features manquantes
+    # (regle awesome-error-handling : fail-loud sur input incoherent vs warn silencieux)
+    pct_missing = len(cols_missing) / max(len(top_78_features), 1)
+    if pct_missing > 0.20:
+        raise ValueError(
+            f"[top78] {len(cols_missing)} features manquantes "
+            f"({pct_missing:.1%} > 20% threshold). "
+            f"Top_78_features liste incoherente avec V4 cols. "
+            f"Premiers manquants : {cols_missing[:10]}"
+        )
     if cols_missing:
-        print(f"[top78] WARN {len(cols_missing)} features absentes : {cols_missing[:5]}...")
+        print(f"[top78] WARN {len(cols_missing)} features absentes (<20% OK) : {cols_missing[:5]}...")
     if not cols_present:
         print("[top78] Aucune feature top 78 dans df, skip")
+        return out
+
+    # FIX review Q3 (reserve data-quality) : filtrer features 100% NaN
+    # ou quasi-constantes (nunique <= 1) AVANT resample.
+    # Sinon : 234 cols dont certaines polluees noient LightGBM (data-quality.md).
+    cols_all_nan = [c for c in cols_present if out[c].isna().all()]
+    cols_const = [c for c in cols_present
+                   if c not in cols_all_nan and out[c].nunique(dropna=True) <= 1]
+    cols_filtered = [c for c in cols_present if c not in cols_all_nan and c not in cols_const]
+    if cols_all_nan:
+        print(f"[top78] DROP {len(cols_all_nan)} features 100% NaN : {cols_all_nan[:3]}...")
+    if cols_const:
+        print(f"[top78] DROP {len(cols_const)} features quasi-constantes : {cols_const[:3]}...")
+    cols_present = cols_filtered
+
+    if not cols_present:
+        print("[top78] Toutes features top 78 droppees (NaN/const), skip")
         return out
 
     print(f"[top78] {len(cols_present)} features reproduites × {len(tf_suffixes)} TF")

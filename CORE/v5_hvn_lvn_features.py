@@ -69,8 +69,14 @@ def load_trades_session(symbol: str, session_date: str) -> pd.DataFrame:
     full["ts_event"] = pd.to_datetime(full["ts_event"], utc=True).dt.tz_convert(None)
 
     # RTH filter DST-safe (EDT été UTC-4, EST hiver UTC-5)
-    rth_start_et = pd.Timestamp(f"{session_date} 09:30").tz_localize("America/New_York")
-    rth_end_et = pd.Timestamp(f"{session_date} 16:00").tz_localize("America/New_York")
+    # FIX review Q1 reserve : nonexistent/ambiguous='raise' fail-loud
+    # (regle awesome-error-handling : pas de silent fallback sur date pathologique)
+    rth_start_et = pd.Timestamp(f"{session_date} 09:30").tz_localize(
+        "America/New_York", nonexistent="raise", ambiguous="raise"
+    )
+    rth_end_et = pd.Timestamp(f"{session_date} 16:00").tz_localize(
+        "America/New_York", nonexistent="raise", ambiguous="raise"
+    )
     rth_start = rth_start_et.tz_convert("UTC").tz_convert(None)
     rth_end = rth_end_et.tz_convert("UTC").tz_convert(None)
 
