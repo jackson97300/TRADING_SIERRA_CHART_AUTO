@@ -164,14 +164,34 @@ def apply_hvn_lvn(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
 # ═════════════════════════════════════════════════════════════════════
 
 def apply_cat4_cross(df_es: pd.DataFrame, df_nq: pd.DataFrame) -> tuple:
-    """CAT4 cross-instrument × 3 TF (besoin ES + NQ enrichis ensemble)."""
+    """CAT4 cross-instrument × 3 TF (besoin ES + NQ enrichis ensemble).
+
+    FIX review R2 : drop cols CAT4 100% NaN apres compute (data-quality.md).
+    Cause connue : V4 manque delta_day + large_trader_ratio (DMP polluant non-reingere).
+    → 6 cols (im_delta_day_divergence_*, im_ltr_slope_diff_*) × 3 TF = 100% NaN.
+    """
     from enrich_dataset_v5_htf import add_im_features_per_tf
     print("[V5] CAT4 cross-instrument × 3 TF (ES + NQ)...")
     n_before_es = df_es.shape[1]
     n_before_nq = df_nq.shape[1]
     df_es, df_nq = add_im_features_per_tf(df_es, df_nq)
-    print(f"[V5]   ES +{df_es.shape[1] - n_before_es} CAT4 cols")
-    print(f"[V5]   NQ +{df_nq.shape[1] - n_before_nq} CAT4 cols")
+    n_added_es = df_es.shape[1] - n_before_es
+    n_added_nq = df_nq.shape[1] - n_before_nq
+    print(f"[V5]   ES +{n_added_es} CAT4 cols")
+    print(f"[V5]   NQ +{n_added_nq} CAT4 cols")
+
+    # FIX R2 : drop cols 100% NaN ajoutees par CAT4
+    cat4_cols_es = [c for c in df_es.columns[-n_added_es:]] if n_added_es > 0 else []
+    cat4_cols_nq = [c for c in df_nq.columns[-n_added_nq:]] if n_added_nq > 0 else []
+    nan_only_es = [c for c in cat4_cols_es if df_es[c].isna().all()]
+    nan_only_nq = [c for c in cat4_cols_nq if df_nq[c].isna().all()]
+    if nan_only_es:
+        df_es = df_es.drop(columns=nan_only_es)
+        print(f"[V5]   ES drop {len(nan_only_es)} CAT4 cols 100% NaN : {nan_only_es[:3]}...")
+    if nan_only_nq:
+        df_nq = df_nq.drop(columns=nan_only_nq)
+        print(f"[V5]   NQ drop {len(nan_only_nq)} CAT4 cols 100% NaN : {nan_only_nq[:3]}...")
+
     return df_es, df_nq
 
 
@@ -223,8 +243,19 @@ def apply_labeler_v3(df: pd.DataFrame) -> pd.DataFrame:
         rvol_threshold=0.3,
     )
     if events.empty:
-        print("[V5] Labeler v3 : 0 events produits, skip merge")
-        return df
+        # FIX R3 : fail-loud (au lieu de return silent sans labels)
+        # Si labeler retourne empty alors qu'on a demande labels, c'est un BUG
+        # qu'il faut investiguer (pas un dataset utilisable shippe en silence).
+        raise RuntimeError(
+            f"[V5] Labeler v3 : 0 events produits sur {len(df)} bars. "
+            f"Investiguer (bars insuffisantes ? pre-filter trop agressif ?)."
+        )
+
+    # Drop anciens labels V4 (label v2) AVANT merge labels v3 (sinon conflit)
+    cols_to_drop = [c for c in ["label", "sample_weight"] if c in df.columns]
+    if cols_to_drop:
+        print(f"[V5] Drop V4 cols (replacees par labeler v3) : {cols_to_drop}")
+        df = df.drop(columns=cols_to_drop)
 
     # Merge labels par ts_event
     out = df.set_index("ts_event").join(
@@ -326,6 +357,22 @@ if __name__ == "__main__":
     parser.add_argument("--no-rth", action="store_true",
                         help="Skip RTH filter (24h dataset)")
     args = parser.parse_args()
+
+    # FIX R1 (CRITIQUE review) : --no-rth + apply_labels = INCOHERENT
+    # Grid search calibre labeler v3 (pt_sl=(1.5, 1.0) horizon=8) sur RTH-only.
+    # Sans RTH filter, labels biaises 57/43 SL (cf grid search 2 passes).
+    # → forcer --no-labels OU emettre WARNING explicite si caller insiste.
+    if args.no_rth and not args.no_labels:
+        print("=" * 70)
+        print("[V5] WARN : --no-rth + apply_labels = labels potentiellement biaises")
+        print("[V5]   Grid search calibre labeler sur RTH-only.")
+        print("[V5]   Sur 24h, distribution observee : 57/43 SL (vs 50/50 RTH).")
+        print("[V5]   Forcer --no-labels (recommande) ou continuer avec biais documente ?")
+        print("=" * 70)
+        # Default : forcer --no-labels pour eviter ship dataset biaise silencieusement
+        # Si user veut explicitement, qu'il use --force-labels-without-rth (a coder si besoin)
+        print("[V5] DEFAULT : --no-labels force pour eviter biais. Use --force pour override.")
+        args.no_labels = True
 
     build_v5_pair(
         date_min=args.start,
