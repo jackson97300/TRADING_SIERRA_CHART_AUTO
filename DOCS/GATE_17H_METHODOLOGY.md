@@ -398,7 +398,66 @@ Si ml-trainer 2nd round NOGO : **corriger AVANT samedi 9h**, pas apres.
 
 ---
 
-## 11. Checklist samedi 9h (operational)
+## 10.bis Labeler v3 Lopez — conditions non-negociables (audit 2 agents 02/05)
+
+Audit ml-trainer + market-analyst sur 4 approches labeling :
+- (A) Triple Barrier pur Lopez
+- (B) Quadruple Barrier (volume + delta) — REJETE par 2 agents (leak + anti-pattern)
+- (C v1) Triple + RVOL pre-filter — **CONSENSUS adopte**
+- (C v2) RVOL 4eme barriere — REJETE (classes 20/60/20 + leak)
+- (D) Meta-labeling Lopez ch.3.4 — CONDITIONNEL dimanche SI marginal samedi
+
+### Conditions OBLIGATOIRES labeler v3 (avant tout debat C vs D)
+
+1. **Vol-scaled barriers** (Lopez ch.3.1) :
+   ```python
+   # PAS ATR(14) fixe, MAIS daily_vol[t] recalc par barre
+   pt_sl = [1.5, 1.0] * daily_vol[t]  # vol estime sur fenetre rolling
+   ```
+   ATR fixe = approximation grossiere en regime change (VIX 12 vs 35).
+
+2. **Path-aware via high/low intrabar** (Databento dispo) :
+   ```python
+   for j in range(i+1, i+1+horizon):
+       if high[j] >= tp_level: label = +1; break
+       if low[j] <= sl_level: label = -1; break
+   ```
+   Vs close proxy = bias positif (SL intrabar manques).
+
+3. **Purged k-fold** (Lopez ch.7) avec **embargo = horizon barriers** :
+   - Pas walk-forward simple
+   - Embargo evite leak temporel sur labels overlapping (chaque bar regarde N forward → overlap entre bars consecutives)
+
+4. **Sample weight uniqueness** Lopez ch.4 (PRIO 3 codé `project_prio3_sample_weight.md` — integrer enfin) :
+   - mean uniqueness ~0.49 ES/NQ deja calcule
+   - Passer a `LightGBMClassifier.fit(sample_weight=uniqueness)`
+
+5. **RVOL pre-filter < 0.3** (C v1 consensus 2 agents) :
+   - Drop barres mortes du dataset
+   - PAS label 0 explicite (eviterait classes desequil)
+
+6. **PAS de delta dans label** (compatibilite meta-labeling dimanche).
+
+### Decision arbre samedi → dimanche
+
+```
+SAMEDI labeler v3 (C v1) :
+  → 4 baselines AUC (ES/NQ × BUY/SELL)
+  → DSR avec n_trials=120 (Optuna inclus)
+  
+SAMEDI 17h GATE :
+  ├── 4/4 GO (PF >=1.4 + DSR >=0.6) → deploy paper observe-only
+  │     PAS de meta-labeling necessaire
+  ├── 2-3/4 MARGINAL → DIMANCHE (D) meta-labeling
+  │     AVEC features regime obligatoires :
+  │     - vix_regime, gamma_condition
+  │     - mq_iv_30d, im_open_type_agreement
+  │     - cumulative_delta_5m, absorption_zones
+  │     Sans ces features regime → (D) perd edge squeeze (T4)
+  └── 0-1/4 NO-GO → pivot Voie 5
+```
+
+
 
 ```
 [ ] git log GATE_17H_METHODOLOGY.md commit hash visible
