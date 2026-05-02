@@ -313,6 +313,18 @@ def build_v5_single_symbol(symbol: str,
 
     OPTIM (audit Claude.com point 3) : RTH filter AVANT HVN/LVN economise
     ~30% temps calcul (HVN/LVN ne process que bars qui survivront).
+
+    NOTE ORDRE FEATURES TF (review code-reviewer R3) :
+    apply_top_78_cat2 (etape 3) calcule cols `_5m/_15m/_1h` sur dataset 24h
+    (resample 1m → bar HTF avec contexte Asia/London/RTH/AH inclus).
+    Puis RTH filter (etape 5) drop bars hors-RTH.
+    Puis HVN/LVN (etape 6) calcul sur trades RTH-only.
+
+    Resultat : cols `_5m/_15m/_1h` post-RTH refletent contexte 24h
+    (bar 5m at 14:00 UTC inclut activite London 13:30-14:00).
+    Pas de leak temporel (resample respecte ordre chronologique strict).
+    Coherence semantique : features TF = "valeur HTF la plus recente connue
+    avant T", incluant Asia/London → reflete reellement contexte trader.
     """
     print(f"\n{'='*70}\nBUILD V5 — {symbol} ({date_min} → {date_max})\n{'='*70}")
     t_total = time.time()
@@ -381,7 +393,50 @@ def build_v5_pair(date_min: str = "2025-12-15",
         df_es = apply_labeler_v3(df_es)
         df_nq = apply_labeler_v3(df_nq)
 
-    # 5. Save
+    # 5. PRE-SAVE SANITY CHECKS (review code-reviewer R2)
+    # Verifier cols rule_* avant ship — eviter pollution ML silencieuse
+    print(f"\n{'='*70}\nPRE-SAVE SANITY CHECKS\n{'='*70}")
+    for sym, df in [("ES", df_es), ("NQ", df_nq)]:
+        rule_cols = [c for c in df.columns if c.startswith("rule_")]
+        for c in rule_cols:
+            nu = df[c].nunique(dropna=True)
+            nan_pct = df[c].isna().mean()
+            if nu <= 1:
+                print(f"[V5] WARN {sym} {c} quasi-constant (nunique={nu})")
+            if nan_pct > 0.5:
+                print(f"[V5] WARN {sym} {c} {nan_pct:.0%} NaN > 50%")
+    print("[V5] Sanity checks rule_* passes (pollution warnings ci-dessus, non bloquant)")
+
+    # 6. QUALITY VALIDATOR (review code-reviewer R1 - data-quality.md souverain Jackson)
+    # Regle souveraine 13/04 : "AVOIR DES DONNEES PROPRES EST LA BASE"
+    #
+    # MODE STRICT vs WARN :
+    # - V5 baseline samedi : strict=False (warn red flags, save quand meme)
+    #   Justification : 349 red flags attendus sur features TF absolus (vwap_*,
+    #   dist_vix_gex_*, etc.) = volatility leak ES vs NQ. Drop/normalize requis
+    #   mais hors scope samedi (1-2h dev). Audit empirique doit guider sur dimanche
+    #   quelles features impacter performance ML reelle.
+    # - V5 prod (post-baseline GO) : strict=True obligatoire
+    #
+    # Cf data-quality.md "exemption explicite avec justification".
+    if apply_labels:
+        try:
+            from quality_validator import QualityValidator
+            print(f"\n{'='*70}\nQUALITY VALIDATOR V5 (5 criteres data-quality.md)\n{'='*70}")
+            print("[V5] MODE NON-STRICT pour V5 baseline samedi (warn red flags)")
+            print("[V5] TODO dimanche post-GATE : drop/normalize 349 red flags identifies")
+            validator = QualityValidator(strict=False, verbose=True)
+            report = validator.validate(df_es, df_nq)
+            print(f"[V5] Quality validator : {report}")
+            n_red = len(getattr(report, "red_flags", []))
+            n_yellow = len(getattr(report, "yellow_flags", []))
+            print(f"[V5] Red flags : {n_red} (drop dimanche), Yellow : {n_yellow}")
+        except ImportError:
+            print("[V5] WARN : quality_validator absent, skip validation")
+    else:
+        print("[V5] Quality validator skip (no labels - validator necessite labels)")
+
+    # 7. Save (post quality validation)
     suffix = f"{date_min.replace('-', '')}_{date_max.replace('-', '')}"
     es_out = output_dir / f"ES_v5_{suffix}.parquet"
     nq_out = output_dir / f"NQ_v5_{suffix}.parquet"
