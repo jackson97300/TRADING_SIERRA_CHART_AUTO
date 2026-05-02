@@ -27,6 +27,9 @@ from labeler_v3 import (
     filter_low_rvol,
     compute_sample_weights_uniqueness,
     label_dataset_v3,
+    get_purged_train_test_indices,
+    prepare_for_lightgbm,
+    TF_SPANS,
 )
 
 
@@ -172,8 +175,13 @@ class TestTripleBarrier:
 # ─────────────────────────────────────────────────────────────────────
 
 class TestPipelineComplet:
-    def test_label_distribution_balanced(self, synthetic_ohlcv_5m):
-        # Forcer volumes tous suffisants pour eviter pre-filter excessif
+    def test_label_distribution_three_classes(self, synthetic_ohlcv_5m):
+        """Lopez : attendre 3 classes presentes (jackson review point 4).
+
+        Note synthetic : random walk vol-scaled atteint quasi toujours
+        TP/SL en 12 bars → HOLD potentiellement bas. Sur vrai data ES/NQ
+        attendre 25/50/25 ± 10%.
+        """
         df = synthetic_ohlcv_5m.copy()
         df['volume'] = df['volume'].clip(lower=1000)
         result = label_dataset_v3(df, tf_name='5m', pt_sl=(1.5, 1.0),
@@ -182,11 +190,18 @@ class TestPipelineComplet:
         assert 'label' in result.columns
         assert 'sample_weight' in result.columns
         assert 'barrier_type' in result.columns
-        # Distribution doit avoir les 3 classes
-        unique_labels = result['label'].unique()
-        assert len(unique_labels) >= 2  # au moins 2 classes
-        # Pas de NaN dans label
+        # Distribution : 3 classes toutes presentes (Jackson point 4)
+        unique_labels = sorted(result['label'].unique())
+        assert -1 in unique_labels, "Classe -1 (SL) absente — anomalie"
+        assert 1 in unique_labels, "Classe +1 (TP) absente — anomalie"
+        # 0 (HOLD) peut etre tres bas sur synthetic (random walk vs barriers vol-scaled)
+        # Sur vrai data attendre >= 10%, mais synthetic peut etre 0.5%
         assert result['label'].notna().all()
+        # Log warning si HOLD < 10% (production-grade alert)
+        hold_pct = (result['label'] == 0).mean()
+        if hold_pct < 0.10:
+            print(f"[WARN test] HOLD={hold_pct:.1%} < 10% (acceptable synthetic, "
+                  f"investiguer si vrai data)")
 
     def test_no_temporal_leak(self, synthetic_ohlcv_5m):
         df = synthetic_ohlcv_5m.copy()
@@ -241,6 +256,170 @@ class TestPathAwareSuperiorClose:
         out = apply_triple_barrier(df, events, pt_sl=(1.5, 1.0))
         # path-aware (high/low) doit detecter SL hit alors que close-proxy non
         assert out.at[entry_ts, 'barrier_type'] == 'sl'
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Test 7 : PURGED K-FOLD NO LEAK (Jackson review : test manquant CRITIQUE)
+# Lopez AFML ch.7.4.2 — labels overlapping creent leak entre train/test
+# ─────────────────────────────────────────────────────────────────────
+
+class TestPurgedKFoldNoLeak:
+    """Verifie que get_purged_train_test_indices respecte Lopez ch.7.
+
+    Pattern leak typique :
+    - train = barres 0-499, test = barres 500-999
+    - Label entry @ bar 495 avec horizon 12 → t1 = bar 507
+    - Sans purge : label fait partie de train, mais son t1 (bar 507) est dans test
+    - Le ML apprend sur features bar 495 + label qui depend de prix bar 507
+    - Au test, le model voit bar 500-507 comme "future train" → overfit garanti
+    """
+
+    def test_purged_no_train_label_overlaps_test(self, synthetic_ohlcv_5m):
+        """Aucun label train n'a son t1 dans la range test."""
+        df = synthetic_ohlcv_5m.copy()
+        df['volume'] = df['volume'].clip(lower=1000)
+        events = label_dataset_v3(df, tf_name='5m', pt_sl=(1.5, 1.0),
+                                    horizon_bars=12, rvol_threshold=0.3,
+                                    vol_span=50)
+        if events.empty:
+            pytest.skip("No events produced")
+
+        n_splits = 5
+        embargo_bars = 12
+        leaks_count = 0
+        total_train_samples = 0
+
+        for train_idx, test_idx in get_purged_train_test_indices(
+            events, n_splits=n_splits, embargo_bars=embargo_bars
+        ):
+            test_t_min = test_idx[0]
+            test_t_max = test_idx[-1]
+            total_train_samples += len(train_idx)
+
+            # Pour chaque sample train, verifier que son t1 ne chevauche pas test
+            for entry_ts in train_idx:
+                t1 = events.at[entry_ts, 'ts_t1_actual']
+                if pd.isna(t1):
+                    continue
+                # LEAK = entry_ts AVANT test_t_min ET t1 DANS test fold
+                if entry_ts < test_t_min and t1 >= test_t_min and t1 <= test_t_max:
+                    leaks_count += 1
+
+        # Lopez : ZERO leak attendu
+        assert leaks_count == 0, (
+            f"LEAK DETECTE : {leaks_count} samples train ont t1 dans test fold. "
+            f"Purge non appliquee correctement Lopez ch.7.4.2."
+        )
+
+    def test_embargo_after_test_fold_drops_samples(self, synthetic_ohlcv_5m):
+        """Verifie que embargo apres test fold drop des samples train."""
+        df = synthetic_ohlcv_5m.copy()
+        df['volume'] = df['volume'].clip(lower=1000)
+        events = label_dataset_v3(df, tf_name='5m', pt_sl=(1.5, 1.0),
+                                    horizon_bars=12, rvol_threshold=0.3,
+                                    vol_span=50)
+        if events.empty:
+            pytest.skip("No events produced")
+
+        # Sans embargo (=0)
+        no_embargo_train_sizes = [
+            len(train_idx) for train_idx, _ in
+            get_purged_train_test_indices(events, n_splits=5, embargo_bars=0)
+        ]
+        # Avec embargo = 12 bars
+        with_embargo_train_sizes = [
+            len(train_idx) for train_idx, _ in
+            get_purged_train_test_indices(events, n_splits=5, embargo_bars=12)
+        ]
+        # Embargo doit reduire taille train (drop samples zone embargo)
+        assert sum(with_embargo_train_sizes) <= sum(no_embargo_train_sizes), (
+            "Embargo non applique : meme nb samples train avec/sans embargo"
+        )
+
+    def test_purged_kfold_n_splits_correct(self, synthetic_ohlcv_5m):
+        """Verifie que n_splits folds sont produits."""
+        df = synthetic_ohlcv_5m.copy()
+        df['volume'] = df['volume'].clip(lower=1000)
+        events = label_dataset_v3(df, tf_name='5m', pt_sl=(1.5, 1.0),
+                                    horizon_bars=12, rvol_threshold=0.3,
+                                    vol_span=50)
+        if events.empty:
+            pytest.skip("No events produced")
+
+        folds = list(get_purged_train_test_indices(events, n_splits=5, embargo_bars=12))
+        assert len(folds) == 5, f"Expected 5 folds, got {len(folds)}"
+
+        # Test sets disjoints (pas de chevauchement)
+        all_test_ts = set()
+        for _, test_idx in folds:
+            test_set = set(test_idx)
+            assert len(test_set & all_test_ts) == 0, "Test folds overlap"
+            all_test_ts |= test_set
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Test 8 : Vertical label mode (Jackson review point 1)
+# ─────────────────────────────────────────────────────────────────────
+
+class TestVerticalLabelMode:
+    """Lopez ch.3.3 : vertical → sign(return) STRICT, pas seuil neutre.
+
+    Mon code initial avait threshold 0.1 × daily_vol → deviation Lopez.
+    Nouveau code par defaut = 'lopez_strict' (sign pure).
+    """
+
+    def test_lopez_strict_sign_pure(self):
+        """Vertical avec return positif → label +1, return negatif → -1."""
+        events = pd.DataFrame({
+            'barrier_type': ['vertical', 'vertical', 'vertical', 'vertical'],
+            'return_at_t1': [0.001, -0.001, 0.0001, -0.0001],
+            'daily_vol': [0.005, 0.005, 0.005, 0.005],  # threshold = 0.0005
+        }, index=pd.date_range('2025-01-01', periods=4, freq='5min'))
+
+        out = get_labels(events, vertical_label_mode='lopez_strict')
+        # Strict : sign pure quel que soit l'amplitude
+        assert out['label'].iloc[0] == 1, "ret 0.001 > 0 → +1 strict"
+        assert out['label'].iloc[1] == -1, "ret -0.001 < 0 → -1 strict"
+        assert out['label'].iloc[2] == 1, "ret 0.0001 > 0 → +1 strict (pas seuil)"
+        assert out['label'].iloc[3] == -1, "ret -0.0001 < 0 → -1 strict"
+
+    def test_with_neutral_threshold_mode(self):
+        """Mode deviation : seuil neutre 0.1 × daily_vol force HOLD."""
+        events = pd.DataFrame({
+            'barrier_type': ['vertical', 'vertical', 'vertical', 'vertical'],
+            'return_at_t1': [0.001, -0.001, 0.0001, -0.0001],
+            'daily_vol': [0.005, 0.005, 0.005, 0.005],  # threshold = 0.0005
+        }, index=pd.date_range('2025-01-01', periods=4, freq='5min'))
+
+        out = get_labels(events, vertical_label_mode='with_neutral_threshold')
+        # Avec threshold : 0.001 > 0.0005 → +1, 0.0001 < 0.0005 → 0
+        assert out['label'].iloc[0] == 1, "ret 0.001 > threshold → +1"
+        assert out['label'].iloc[1] == -1, "ret -0.001 > threshold → -1"
+        assert out['label'].iloc[2] == 0, "ret 0.0001 < threshold → 0 (HOLD)"
+        assert out['label'].iloc[3] == 0, "ret -0.0001 < threshold → 0 (HOLD)"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Test 9 : TF_SPANS scaler (Jackson review point 3)
+# ─────────────────────────────────────────────────────────────────────
+
+class TestTfSpansScaling:
+    """Lopez ch.3.1 : span = ~1 jour bars (TF-dependent)."""
+
+    def test_tf_spans_dict_complete(self):
+        """Verifie que tous TF prevus sont dans TF_SPANS."""
+        for tf in ['1m', '5m', '15m', '1h']:
+            assert tf in TF_SPANS, f"TF {tf} manquant dans TF_SPANS"
+            assert TF_SPANS[tf] > 0
+
+    def test_compute_daily_vol_uses_tf_param(self, synthetic_ohlcv_5m):
+        """compute_daily_vol(tf='5m') doit utiliser span=78 auto."""
+        vol_explicit_78 = compute_daily_vol(synthetic_ohlcv_5m['close'], span=78)
+        vol_via_tf = compute_daily_vol(synthetic_ohlcv_5m['close'], span=999, tf='5m')
+        # tf override doit etre prioritaire sur span
+        # Comparer std au lieu d'egalite stricte (NaN warmup)
+        diff = (vol_explicit_78 - vol_via_tf).abs().sum()
+        assert diff < 1e-10, "tf='5m' doit utiliser span=78 (override)"
 
 
 if __name__ == "__main__":

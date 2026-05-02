@@ -196,32 +196,52 @@ def apply_triple_barrier(df: pd.DataFrame,
 # LABEL FROM BARRIERS (Lopez ch.3.3)
 # ═════════════════════════════════════════════════════════════════════
 
-def get_labels(events_with_barriers: pd.DataFrame) -> pd.DataFrame:
+def get_labels(events_with_barriers: pd.DataFrame,
+                vertical_label_mode: str = 'lopez_strict') -> pd.DataFrame:
     """
     Lopez AFML ch.3.3 — Label {-1, 0, +1} from barrier_type.
 
     Side-agnostic version : pas de side a priori.
     - barrier_type = 'tp' → label +1 (long aurait gagne)
     - barrier_type = 'sl' → label -1 (short aurait gagne)
-    - barrier_type = 'vertical' → label = sign(return_at_t1) si abs(ret) > seuil, sinon 0
+    - barrier_type = 'vertical' → label selon vertical_label_mode
+
+    vertical_label_mode :
+        'lopez_strict' (default, conforme AFML p.49) :
+            label = sign(return_at_t1)
+            Si return_at_t1 > 0 → +1, < 0 → -1, == 0 → 0 (rare)
+        'with_neutral_threshold' (deviation documentee) :
+            label = sign(return_at_t1) si |return| > 0.1 * daily_vol, sinon 0
+            Justification : mouvement trop petit = pas tradable, force HOLD
 
     Args:
         events_with_barriers : output de apply_triple_barrier()
+        vertical_label_mode : 'lopez_strict' ou 'with_neutral_threshold'
 
     Returns:
         DataFrame avec colonne 'label' added.
     """
+    if vertical_label_mode not in ('lopez_strict', 'with_neutral_threshold'):
+        raise ValueError(f"vertical_label_mode must be 'lopez_strict' or "
+                         f"'with_neutral_threshold', got {vertical_label_mode}")
+
     out = events_with_barriers.copy()
     out['label'] = 0
     out.loc[out['barrier_type'] == 'tp', 'label'] = 1
     out.loc[out['barrier_type'] == 'sl', 'label'] = -1
-    # Vertical : sign return si abs >> seuil neutre
+
     vertical = out['barrier_type'] == 'vertical'
-    # Seuil neutre = 0.1 × daily_vol (mouvement trop petit = HOLD)
-    threshold = 0.1 * out['daily_vol'].fillna(0)
-    out.loc[vertical & (out['return_at_t1'].abs() < threshold), 'label'] = 0
-    out.loc[vertical & (out['return_at_t1'] >= threshold), 'label'] = 1
-    out.loc[vertical & (out['return_at_t1'] <= -threshold), 'label'] = -1
+    if vertical_label_mode == 'lopez_strict':
+        # Lopez AFML ch.3.3 p.49 : sign(return_at_t1) pure, pas de seuil
+        out.loc[vertical & (out['return_at_t1'] > 0), 'label'] = 1
+        out.loc[vertical & (out['return_at_t1'] < 0), 'label'] = -1
+        # return == 0 reste a label = 0 (cas degenere)
+    else:
+        # Deviation : seuil neutre = mouvement < 0.1 × daily_vol → HOLD
+        threshold = 0.1 * out['daily_vol'].fillna(0)
+        out.loc[vertical & (out['return_at_t1'].abs() < threshold), 'label'] = 0
+        out.loc[vertical & (out['return_at_t1'] >= threshold), 'label'] = 1
+        out.loc[vertical & (out['return_at_t1'] <= -threshold), 'label'] = -1
     return out
 
 
@@ -327,7 +347,8 @@ def label_dataset_v3(df_ohlcv: pd.DataFrame,
                       horizon_bars: int = 12,
                       rvol_threshold: float = 0.3,
                       vol_span: Optional[int] = None,
-                      rvol_window_bars: Optional[int] = None) -> pd.DataFrame:
+                      rvol_window_bars: Optional[int] = None,
+                      vertical_label_mode: str = 'lopez_strict') -> pd.DataFrame:
     """
     Pipeline complet labeler v3 Lopez strict.
 
@@ -384,8 +405,9 @@ def label_dataset_v3(df_ohlcv: pd.DataFrame,
     # 5. Apply triple barrier path detection (high/low intrabar)
     events_barriers = apply_triple_barrier(df, events, pt_sl=pt_sl)
 
-    # 6. Get labels {-1, 0, +1}
-    events_labeled = get_labels(events_barriers)
+    # 6. Get labels {-1, 0, +1} — Lopez ch.3.3 strict default
+    events_labeled = get_labels(events_barriers,
+                                  vertical_label_mode=vertical_label_mode)
 
     # 7. Sample weights uniqueness (Lopez ch.4)
     events_labeled['sample_weight'] = compute_sample_weights_uniqueness(
