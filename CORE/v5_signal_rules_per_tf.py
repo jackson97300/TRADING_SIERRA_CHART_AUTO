@@ -103,12 +103,14 @@ def apply_rules_all_tfs(df_v5: pd.DataFrame) -> pd.DataFrame:
 
         # FIX R1 : drop cols redondantes (rule_*_TF == rule_*_1m partout)
         # FIX audit Claude.com mobile (Q2) : drop cols quasi-constantes
-        #   fires < MIN_FIRES_TF = 10 sur dataset → LightGBM ignore + bruit
+        # FIX audit ml-trainer (Q3) : ratio plutot qu'absolu hardcode
+        #   max(10, 0.5% × N) → adapte au dataset 1 mois (30) vs 7 mois (200)
+        #   Lopez : min 30 events pour PSR/DSR signifiant
         n_kept = 0
         n_redundant = 0
         n_quasi_const = 0
         fires_tf = 0
-        MIN_FIRES_TF = 10  # data-quality.md "quasi-constante" threshold
+        MIN_FIRES_TF = max(10, int(0.005 * len(out)))  # 0.5% bars min
         for rc in new_rule_cols:
             tf_values = df_tagged_tf[rc].values
             native_values = out[rc].values if rc in out.columns else None
