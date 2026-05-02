@@ -163,6 +163,24 @@ def apply_hvn_lvn(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
 # 6. APPLY CAT4 CROSS-INSTRUMENT (besoin ES + NQ)
 # ═════════════════════════════════════════════════════════════════════
 
+# ═════════════════════════════════════════════════════════════════════
+# 7-bis. APPLY SIGNAL RULES x 4 TF (Step 3b)
+# ═════════════════════════════════════════════════════════════════════
+
+def apply_signal_rules(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply 12 RULES_V1 sur 4 TF (1m natif + 5m + 15m + 1h via swap).
+
+    Output : ~36 cols rule_* (24 1m + 12 TF) apres drop redondants/quasi-const.
+    Cible plan v2 = 96 cols mais drop 60 cols pollutantes (audit ml-trainer).
+    """
+    from v5_signal_rules_per_tf import apply_rules_all_tfs
+    print("[V5] Signal rules x 4 TF (12 rules x 2 cols x 4 TF, drop redondants/quasi-const)...")
+    n_before = df.shape[1]
+    df = apply_rules_all_tfs(df)
+    print(f"[V5]   +{df.shape[1] - n_before} cols rule_* (24 1m + ~12 TF informatives)")
+    return df
+
+
 def apply_cat4_cross(df_es: pd.DataFrame, df_nq: pd.DataFrame) -> tuple:
     """CAT4 cross-instrument × 3 TF (besoin ES + NQ enrichis ensemble).
 
@@ -349,7 +367,15 @@ def build_v5_pair(date_min: str = "2025-12-15",
     print(f"\n{'='*70}\nCAT4 CROSS-INSTRUMENT\n{'='*70}")
     df_es, df_nq = apply_cat4_cross(df_es, df_nq)
 
-    # 3. Labeler v3 calibre (RTH deja applique en step 1 si requested)
+    # 3. Signal rules x 4 TF (Step 3b - apres CAT4, avant labeler)
+    # Order : signal_rules sont features (input ML), pas labels.
+    # Doit etre apres top78 + simples + HVN/LVN + CAT4 (autres features).
+    # Doit etre avant labeler (target generation).
+    print(f"\n{'='*70}\nSIGNAL RULES x 4 TF\n{'='*70}")
+    df_es = apply_signal_rules(df_es)
+    df_nq = apply_signal_rules(df_nq)
+
+    # 4. Labeler v3 calibre (RTH deja applique en step 1 si requested)
     if apply_labels:
         print(f"\n{'='*70}\nLABELER V3 CALIBRE\n{'='*70}")
         df_es = apply_labeler_v3(df_es)
