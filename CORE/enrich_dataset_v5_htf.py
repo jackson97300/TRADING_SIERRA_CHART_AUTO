@@ -233,6 +233,9 @@ def add_htf_columns_with_lag(df_1m: pd.DataFrame,
     # (la cloture exacte = info pas physiquement disponible au demarrage de bar 1m at 10:00).
     # Avec False : bar 1m at T cherche bar HTF avec ts_event_htf_close STRICTEMENT < T.
     # Conservateur de 1 freq mais defendable en live (anti-leak strict).
+    # FIX dtype (samedi 02/05) : harmoniser datetime64 ns vs us (V4 has us)
+    df_1m["ts_event"] = df_1m["ts_event"].astype("datetime64[ns]")
+    df_htf_lagged["ts_event_htf_close"] = df_htf_lagged["ts_event_htf_close"].astype("datetime64[ns]")
     merged = pd.merge_asof(
         df_1m,
         df_htf_lagged,
@@ -539,13 +542,34 @@ def add_im_features_per_tf(df_es_v5: pd.DataFrame, df_nq_v5: pd.DataFrame,
             print(f"[add_im_features_per_tf] {suffix}: cols absentes (skip)")
             continue
 
-        # Build mini-DF par TF avec close + volume agreges TF
-        es_tf = df_es[["ts_event", close_es_col, f"volume{suffix}"]].rename(
-            columns={close_es_col: "close", f"volume{suffix}": "volume"}
-        ).dropna()
-        nq_tf = df_nq[["ts_event", close_nq_col, f"volume{suffix}"]].rename(
-            columns={close_nq_col: "close", f"volume{suffix}": "volume"}
-        ).dropna()
+        # Build mini-DF par TF avec features V4 dispo + cols per TF
+        # IntermarketFeatures.compute() requirements :
+        #   ts, price, delta_bar, total_vol, cvd_day, delta_day, dist_sess_high,
+        #   dist_sess_low, large_trader_ratio, vwap_slope_10, open_type,
+        #   open_bias_conf, open_direction
+        #
+        # Strategy : on prend toutes ces cols V4 (broadcast 1m → tous bars dans bar TF)
+        # et on rename pour matcher signature IntermarketFeatures.
+        #
+        # FIX 02/05 (CAT4 crash) : passer toutes les cols V4 dispo, pas juste close+vol
+        v4_cols_required = [
+            "delta_bar", "cvd_day", "delta_day", "dist_sess_high", "dist_sess_low",
+            "large_trader_ratio", "vwap_slope_10", "open_type", "open_bias_conf",
+            "open_direction",
+        ]
+        v4_cols_present = [c for c in v4_cols_required
+                            if c in df_es.columns and c in df_nq.columns]
+
+        es_cols_to_take = ["ts_event", close_es_col, f"volume{suffix}"] + v4_cols_present
+        nq_cols_to_take = ["ts_event", close_nq_col, f"volume{suffix}"] + v4_cols_present
+
+        es_tf = df_es[es_cols_to_take].rename(
+            columns={"ts_event": "ts", close_es_col: "price", f"volume{suffix}": "total_vol"}
+        ).dropna(subset=["ts", "price"])
+        nq_tf = df_nq[nq_cols_to_take].rename(
+            columns={"ts_event": "ts", close_nq_col: "price", f"volume{suffix}": "total_vol"}
+        ).dropna(subset=["ts", "price"])
+        # IntermarketFeatures retournera NaN gracefully pour les cols manquantes.
 
         if es_tf.empty or nq_tf.empty:
             print(f"[add_im_features_per_tf] {suffix}: TF empty after dropna (skip)")
@@ -560,17 +584,16 @@ def add_im_features_per_tf(df_es_v5: pd.DataFrame, df_nq_v5: pd.DataFrame,
             continue
 
         # Suffix les im_* cols et merge sur df_nq (cross instrument vu cote NQ)
+        # FIX 02/05 : im_features a 'ts' (pas 'ts_event' suite renome ligne 540-548)
         if isinstance(im_features, pd.DataFrame):
+            ts_key = "ts" if "ts" in im_features.columns else "ts_event"
             for col in im_features.columns:
                 if col.startswith("im_"):
                     new_col = f"{col}{suffix}"
-                    # Map via ts_event
-                    df_nq[new_col] = df_nq["ts_event"].map(
-                        im_features.set_index("ts_event")[col].to_dict()
-                    )
-                    df_es[new_col] = df_es["ts_event"].map(
-                        im_features.set_index("ts_event")[col].to_dict()
-                    )
+                    # Map via ts (es_tf/nq_tf renomes ts_event → ts)
+                    mapping = im_features.set_index(ts_key)[col].to_dict()
+                    df_nq[new_col] = df_nq["ts_event"].map(mapping)
+                    df_es[new_col] = df_es["ts_event"].map(mapping)
 
     return df_es, df_nq
 
