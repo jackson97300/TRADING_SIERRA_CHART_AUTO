@@ -159,6 +159,30 @@ class TestTripleBarrier:
         out = apply_triple_barrier(df, events, pt_sl=(1.5, 1.0))
         assert out.at[entry_ts, 'barrier_type'] == 'sl'
 
+    def test_tie_break_same_bar_conservative_sl(self, synthetic_ohlcv_5m):
+        """Lopez ch.3.2 conservatif : si TP+SL touches sur MEME bar
+        (high>=tp ET low<=sl dans la meme barre), SL gagne (worst case
+        scenario, evite biais positif).
+
+        Edge case Jackson + agent Claude.com mobile (point 3 manquant 10/10).
+        """
+        df = synthetic_ohlcv_5m.copy()
+        entry_ts = df.index[100]
+        events = pd.DataFrame({
+            't1': [df.index[112]],
+            'daily_vol': [0.005],
+        }, index=[entry_ts])
+        entry_close = df.at[entry_ts, 'close']
+        # MEME BAR (103) : high touche TP ET low touche SL
+        df.at[df.index[103], 'high'] = entry_close * 1.01  # high >= TP
+        df.at[df.index[103], 'low'] = entry_close * 0.99   # low <= SL
+        out = apply_triple_barrier(df, events, pt_sl=(1.5, 1.0))
+        # Lopez conservatif : tie sur meme bar → SL (pas TP comme biais positif)
+        assert out.at[entry_ts, 'barrier_type'] == 'sl', \
+            "Tie meme bar doit retourner SL (Lopez conservatif worst case)"
+        # Return correspondant negatif
+        assert out.at[entry_ts, 'return_at_t1'] < 0
+
     def test_vertical_barrier_when_neither_hit(self, synthetic_ohlcv_5m):
         df = synthetic_ohlcv_5m.copy()
         entry_ts = df.index[100]

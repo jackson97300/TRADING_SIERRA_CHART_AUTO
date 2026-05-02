@@ -163,12 +163,20 @@ def apply_triple_barrier(df: pd.DataFrame,
         first_sl = hit_sl.index[0] if not hit_sl.empty else None
 
         if first_tp is not None and first_sl is not None:
-            # Tie-break : la plus precoce
-            if first_tp <= first_sl:
+            # Tie-break (review Jackson 02/05 point 3, agent Claude.com mobile) :
+            # - first_tp < first_sl : TP strictement avant → TP gagne
+            # - first_tp > first_sl : SL strictement avant → SL gagne
+            # - first_tp == first_sl (MEME BAR) : ambiguite intrabar
+            #   → Lopez ch.3.2 conservatif : SL gagne (worst case scenario)
+            #   Justification : avec sources tick-level on saurait, sans on
+            #   suppose le scenario defavorable. Evite biais positif systemique
+            #   sur datasets ~10-20 ties/1000 trades = +1-3% Sharpe surestime.
+            if first_tp < first_sl:
                 out.at[entry_ts, 'barrier_type'] = 'tp'
                 out.at[entry_ts, 'ts_t1_actual'] = first_tp
                 out.at[entry_ts, 'return_at_t1'] = pt_sl[0] * vol_t
             else:
+                # first_tp > first_sl OU first_tp == first_sl (tie conservatif)
                 out.at[entry_ts, 'barrier_type'] = 'sl'
                 out.at[entry_ts, 'ts_t1_actual'] = first_sl
                 out.at[entry_ts, 'return_at_t1'] = -pt_sl[1] * vol_t
