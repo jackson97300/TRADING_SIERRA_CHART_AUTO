@@ -336,6 +336,47 @@ class TestPurgedKFoldNoLeak:
             "Embargo non applique : meme nb samples train avec/sans embargo"
         )
 
+    def test_embargo_drops_samples_immediately_after_test(self, synthetic_ohlcv_5m):
+        """Lopez ch.7.4 — Les N barres immediatement apres test fold sont
+        exclues du train (zone embargo).
+
+        Edge case Jackson + ml-trainer Q2 :
+        Le test_purged_no_train_label_overlaps_test couvre le leak AVANT
+        (entry_train < test_min). Ce test couvre le leak APRES (entry_train
+        immediatement post-test, dont features depend de t1 dans test).
+        """
+        df = synthetic_ohlcv_5m.copy()
+        df['volume'] = df['volume'].clip(lower=1000)
+        events = label_dataset_v3(df, tf_name='5m', pt_sl=(1.5, 1.0),
+                                    horizon_bars=12, rvol_threshold=0.3,
+                                    vol_span=50)
+        if events.empty:
+            pytest.skip("No events produced")
+
+        embargo_bars = 12
+        for train_idx, test_idx in get_purged_train_test_indices(
+            events, n_splits=5, embargo_bars=embargo_bars
+        ):
+            test_t_max = test_idx[-1]
+            # Trouver position test_t_max dans events.index
+            try:
+                test_max_pos = events.index.get_loc(test_t_max)
+            except KeyError:
+                continue
+            # Zone embargo = barres test_max_pos+1 ... test_max_pos+embargo_bars
+            embargo_end_pos = min(test_max_pos + 1 + embargo_bars, len(events))
+            embargo_zone = events.index[test_max_pos + 1:embargo_end_pos]
+
+            # Aucune barre embargo ne doit etre dans train_idx
+            train_set = set(train_idx)
+            leaks_post_test = [ts for ts in embargo_zone if ts in train_set]
+
+            assert len(leaks_post_test) == 0, (
+                f"LEAK POST-TEST DETECTE : {len(leaks_post_test)} samples dans "
+                f"zone embargo (apres test fold ending {test_t_max}) sont presents "
+                f"dans train. Lopez ch.7.4 viole. Premiers leaks: {leaks_post_test[:3]}"
+            )
+
     def test_purged_kfold_n_splits_correct(self, synthetic_ohlcv_5m):
         """Verifie que n_splits folds sont produits."""
         df = synthetic_ohlcv_5m.copy()
