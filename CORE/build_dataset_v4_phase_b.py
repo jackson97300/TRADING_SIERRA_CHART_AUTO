@@ -21,6 +21,8 @@ Convention :
 Usage :
   python -X utf8 CORE/build_dataset_v4_phase_b.py --month 2026-04 --symbols ES NQ
   python -X utf8 CORE/build_dataset_v4_phase_b.py --all-months --symbols ES NQ
+  # MGC supporte (Chantier 5 - 10/05/2026) : intermarket auto-skip pour MGC
+  python -X utf8 CORE/build_dataset_v4_phase_b.py --month 2026-04 --symbols MGC
 
 Auteur : Phase B Session 1 (2026-04-26)
 """
@@ -466,8 +468,14 @@ def main():
             r = process_partition(sym, year, month, write=write)
             results.append(r)
 
+        # Intermarket = paire ES↔NQ uniquement (im_* features cross instrument).
+        # MGC n'est PAS concerne : pas de pair naturel cross-instrument dans
+        # le pipeline V1. Decision design Chantier 5 (10/05/2026) : skip total
+        # pour MGC. Si paire MGC↔DXY/SI un jour, refactor module dedie en V2.
         if not args.no_intermarket and "ES" in args.symbols and "NQ" in args.symbols:
             apply_intermarket_pair(year, month, write=write)
+        elif "MGC" in args.symbols:
+            print(f"  [INFO] MGC traite sans intermarket (skip Chantier 5 - pas de pair naturel)")
 
     print(f"\n=== SUMMARY ({len(results)} runs) ===")
     ok = [r for r in results if r["status"] == "OK"]

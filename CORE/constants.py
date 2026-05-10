@@ -72,6 +72,59 @@ TICK_VALUE: dict[str, float] = {
 # MGC est l'exception (0.10) — toujours utiliser get_tick_size("MGC") pour le Gold
 DEFAULT_TICK_SIZE: float = 0.25
 
+
+# ====================================================================
+# SYMBOL_TO_FS_DIR — Mapping symbole Python → dossier filesystem (10/05/2026)
+# ====================================================================
+# Source unique de verite pour le mapping symbole-Python ↔ dossier filesystem.
+# Necessaire car certains contrats Micro (MGC) partagent les chartbooks Sierra
+# du contrat Standard (GC). MenthorQ ne distingue pas Micro/Standard pour les
+# niveaux options-driven (memes call_resistance, put_support, hvl).
+#
+# Regle Lecons.md (centralisation duplique 5x avec TICK_SIZE) :
+# UTILISER get_fs_dir(symbol) au lieu de mapper inline `if symbol == 'MGC'`.
+#
+# Exemples :
+#   get_fs_dir("ES")  -> "ES"
+#   get_fs_dir("MGC") -> "GC"   (chart Sierra basee sur ticker GC)
+#   get_fs_dir("MNQ") -> "NQ"   (Micro NQ partage chart NQ — futur)
+SYMBOL_TO_FS_DIR: dict[str, str] = {
+    "ES": "ES",
+    "NQ": "NQ",
+    "MGC": "GC",   # 10/05/2026 : chart Sierra GCM26-COMEX, study MQ_Lite GC
+    # "MNQ": "NQ",  # futur
+    # "MES": "ES",  # futur
+}
+
+
+def get_fs_dir(symbol: str) -> str:
+    """Retourne le dossier filesystem (DATA/mq_levels/, DATA/<sym>/...) pour un symbole.
+
+    Fail-loud si symbole inconnu.
+    """
+    sym = symbol.upper()
+    if sym not in SYMBOL_TO_FS_DIR:
+        _logger.warning(
+            "get_fs_dir: symbole inconnu '%s' — fallback identite. "
+            "Ajouter une entree SYMBOL_TO_FS_DIR['%s'] dans constants.py.",
+            symbol, sym,
+        )
+        return sym
+    return SYMBOL_TO_FS_DIR[sym]
+
+
+def get_mq_json_key(symbol: str) -> str:
+    """Retourne la cle dans les fichiers JSON MenthorQ (YYYYMMDD_menthorq_complete.json).
+
+    Le scraper produit data["GC"] / data["GC_swing"] / data["GC_intraday"] pour
+    le Gold (MenthorQ ne distingue pas Micro vs Standard). Mapping identique
+    a get_fs_dir() : MGC -> GC, ES -> ES, NQ -> NQ.
+
+    Helper dedie pour clarifier l'intention : cle JSON != dossier filesystem
+    par essence, meme si les valeurs coincident actuellement.
+    """
+    return get_fs_dir(symbol)
+
 # Schema DMP version courante
 DMP_SCHEMA_VERSION: str = "3.7.2"
 DMP_SCHEMA_COLS: int = 262

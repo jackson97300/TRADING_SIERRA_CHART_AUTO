@@ -62,6 +62,17 @@
 - Le bench necessite `DATA/ES DATA/NQ` en 2 arguments (pas 1 dossier DATA)
 - Le scraper MenthorQ MidDay doit forcer --today (sinon prend la veille)
 - CTA et Vol Models MenthorQ : API 403, endpoints non disponibles via AJAX
+- MAPPING SYMBOLE PYTHON ↔ DOSSIER FILESYSTEM (10/05/2026, Chantier 5/7) :
+  `MGC` (symbole Python) → `GC` (dossier filesystem). MenthorQ ne distingue
+  pas Micro (MGC) vs Standard (GC) pour les niveaux options-driven, le
+  scsf_MIA_MQ_Lite_GC dump dans `mq_levels/GC/...`. SOURCE UNIQUE :
+  `CORE/constants.py:SYMBOL_TO_FS_DIR` + helper `get_fs_dir(symbol)`.
+  Anti-pattern : mapper inline `if symbol == "MGC"` dans plusieurs fichiers =
+  duplication garantie (cf TICK_SIZE duplique 5x V1).
+- BACKFILL DATABENTO + LIVE INGESTION CONFLIT (10/05/2026) : si periode
+  backfill chevauche activation live (ex: avril 2026 quand live MGC demarre
+  09/05), le live ecrase les parquets backfill avec fichiers vides. Check :
+  taille parquet (~20KB pour 1380 bars/1m). Si <1KB = corrompu, re-telecharger.
 
 ## Audits 09/04/2026 (34 fixes appliques)
 - briefing.py : get_user_tier local = bypass auth → toujours importer depuis auth.py
