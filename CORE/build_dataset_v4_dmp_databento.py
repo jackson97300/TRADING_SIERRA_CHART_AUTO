@@ -56,9 +56,9 @@ OUT_ROOT = ROOT / "DATA" / "datasets" / "v4_enriched"
 # faussait toutes les distances *_pct sur MGC d'un facteur 2.5x.
 # try/except : 2 conventions sys.path (ROOT/ via -m, vs CORE/ direct CLI)
 try:
-    from CORE.constants import get_tick_size, get_tick_value  # noqa: E402
+    from CORE.constants import get_tick_size, get_tick_value, get_databento_ticker  # noqa: E402
 except ImportError:
-    from constants import get_tick_size, get_tick_value  # noqa: E402
+    from constants import get_tick_size, get_tick_value, get_databento_ticker  # noqa: E402
 
 # ============================================================
 # ML training exclusions (audit ml-trainer 2026-04-25)
@@ -557,7 +557,10 @@ def load_ohlcv(symbol: str, start: date, end: date) -> pd.DataFrame:
     Sans ca, sur Windows TZ Paris, DuckDB strip tz et decale les bars de +2h
     (DST ete) ou +1h (DST hiver). Tout le dataset etait corrompu.
     """
-    pattern = (DBN_ROOT / "ohlcv-1m" / f"symbol={symbol}.c.0" / "**" / "*.parquet").as_posix()
+    # Chantier 5bis (10/05/2026) : utilise get_databento_ticker pour MGC.v.0
+    # (evite bug MGC.c.0 rollover qui tronquait 50% des bars).
+    db_ticker = get_databento_ticker(symbol)
+    pattern = (DBN_ROOT / "ohlcv-1m" / f"symbol={db_ticker}" / "**" / "*.parquet").as_posix()
     con = duckdb.connect()
     try:
         con.execute("SET TimeZone='UTC';")  # CRITIQUE : preserve UTC
@@ -584,7 +587,9 @@ def aggregate_trades_1min(symbol: str, start: date, end: date) -> pd.DataFrame:
 
     FIX BUG TIMEZONE 26/04/2026 : idem, SET TimeZone='UTC'.
     """
-    pattern = (DBN_ROOT / "trades" / f"symbol={symbol}.c.0" / "**" / "*.parquet").as_posix()
+    # Chantier 5bis (10/05/2026) : ticker per-symbole (MGC.v.0 vs ES.c.0/NQ.c.0)
+    db_ticker = get_databento_ticker(symbol)
+    pattern = (DBN_ROOT / "trades" / f"symbol={db_ticker}" / "**" / "*.parquet").as_posix()
     con = duckdb.connect()
     try:
         con.execute("SET TimeZone='UTC';")  # CRITIQUE : preserve UTC

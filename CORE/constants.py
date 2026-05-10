@@ -164,6 +164,40 @@ SESSION_BOUNDARIES_BY_SYMBOL: dict[str, dict[str, int]] = {
 }
 
 
+# ====================================================================
+# DATABENTO CONTINUOUS TICKER PER SYMBOL — Chantier 5bis (10/05/2026)
+# ====================================================================
+# `MGC.c.0` (date-based front-month rollover) a un bug Databento : tronque
+# 50-99% des bars sur les mois d'expiration GC futures (jun, aug, oct, dec,
+# fev, avr). Verification empirique 02/06/2025 :
+#   MGC.c.0 = 49 bars  (vs 1380 attendus, -97%)
+#   MGC.v.0 = 1380 bars (volume-based rollover, OK)
+#   MGC.n.0 = 1380 bars (open-interest based, OK)
+# ES/NQ : MGC.c.0 fonctionne correctement (rollover March/Jun/Sep/Dec quarterly).
+# Decision design : Gold = .v.0, ES/NQ = .c.0.
+SYMBOL_TO_DATABENTO_TICKER: dict[str, str] = {
+    "ES":  "ES.c.0",   # quarterly rollover, pas de bug observe
+    "NQ":  "NQ.c.0",   # idem
+    "MGC": "MGC.v.0",  # volume-based, evite bug rollover GC futures monthly
+}
+
+
+def get_databento_ticker(symbol: str) -> str:
+    """Retourne le ticker Databento continuous pour un symbole.
+
+    Fail-loud si symbole inconnu.
+    """
+    sym = symbol.upper()
+    if sym not in SYMBOL_TO_DATABENTO_TICKER:
+        _logger.warning(
+            "get_databento_ticker: symbole inconnu '%s' — fallback {sym}.c.0. "
+            "Ajouter SYMBOL_TO_DATABENTO_TICKER['%s'] dans constants.py.",
+            symbol, sym,
+        )
+        return f"{sym}.c.0"
+    return SYMBOL_TO_DATABENTO_TICKER[sym]
+
+
 def get_session_boundaries(symbol: str) -> dict[str, int]:
     """Retourne les bornes de sessions (mins ET) pour un symbole.
 

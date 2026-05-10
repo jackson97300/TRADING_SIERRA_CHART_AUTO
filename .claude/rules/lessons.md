@@ -73,6 +73,16 @@
   backfill chevauche activation live (ex: avril 2026 quand live MGC demarre
   09/05), le live ecrase les parquets backfill avec fichiers vides. Check :
   taille parquet (~20KB pour 1380 bars/1m). Si <1KB = corrompu, re-telecharger.
+- DATABENTO CONTINUOUS .c.0 BUG GC FUTURES (10/05/2026, Chantier 5bis) :
+  `MGC.c.0` (date-based rollover) tronque 50-99% des bars sur les 6 mois
+  d'expiration GC futures (jun, aug, oct, dec, fev, avr). Verification empirique :
+  02/06/2025 MGC.c.0 = 49 bars vs MGC.v.0 = 1380 bars. Cause : Databento
+  date-based continuous mal gere transition contrat actif.
+  REGLE : pour futures avec rollover MENSUEL (Gold GC, Silver SI), TOUJOURS
+  utiliser `.v.0` (volume-based) ou `.n.0` (open-interest-based). Le `.c.0`
+  fonctionne pour rollover QUARTERLY (ES, NQ) mais pas mensuel.
+  Source unique : `CORE/constants.py:SYMBOL_TO_DATABENTO_TICKER` + helper
+  `get_databento_ticker(symbol)`.
 
 ## Audits 09/04/2026 (34 fixes appliques)
 - briefing.py : get_user_tier local = bypass auth → toujours importer depuis auth.py
