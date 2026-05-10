@@ -73,11 +73,20 @@ TRADES_ROOT = ROOT / "DATA" / "databento" / "GLBX.MDP3" / "trades"
 # Toutes les colonnes generees par Phase B + B+ + B+++ (pour identifier les vraies cols originales sur re-run)
 GAME_CHANGERS_COLS = {"open_type", "open_zone", "day_type", "open_direction", "open_bias_conf"}
 INTERMARKET_PREFIX = "im_"
+# Chantier 5bis3 P1 (10/05/2026) : regime_* recalcule en Phase B (Phase A skip car
+# day_type/open_type pas encore presents). Ces colonnes peuvent exister dans le
+# parquet Phase A (UNKNOWN fallback) et sont overwrite ici legitimement.
+REGIME_GENERATED = {
+    "regime_mode", "regime_favor", "regime_confidence",
+    "regime_trend_votes", "regime_range_votes", "regime_vol", "regime_actionable",
+    "ib_formed_bool",  # derive depuis ib_range_ticks (FIX R1.3)
+}
 PHASE_B_GENERATED = (PHASE_B_HELPER_COLS | GAME_CHANGERS_COLS | set(RVOL_FEATURES)
                     | PHASE_B_PLUS_GENERATED | PHASE_B_PLUS_PLUS_GENERATED
                     | EDGE_ZONES_GENERATED | SESSIONS_SWINGS_GENERATED
                     | PHASE_B_ROLLING_INPUTS_COLS | MARKET_PROFILE_ROLLING_COLS
-                    | PHASE_D_GENERATED | VWAP_DIFF_GENERATED | OPTION_C_PLUS_GENERATED)
+                    | PHASE_D_GENERATED | VWAP_DIFF_GENERATED | OPTION_C_PLUS_GENERATED
+                    | REGIME_GENERATED)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

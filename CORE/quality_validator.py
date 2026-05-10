@@ -111,6 +111,12 @@ EVENT_BASED_FEATURES = [
     #   Deplaces vers PROHIBITED temporaire (dataset_builder.py), retour prevu a
     #   la purge v4 02/05/2026 apres rebuild backfill DMP 3.7.7.
     "ctx_instant_absorption",
+    # Ajout 03/05/2026 (Plan B regime_engine) — features rare events Sierra Chart :
+    # - delta_divergence : binaire DMP, rare event signal divergence
+    # - delta_day_dir : binaire -1/+1, broadcast 1 valeur/jour (event-based, top_freq>>95% par design)
+    #   R4 code-reviewer : reclasser ici (vs NATURALLY_DIFFERENT) car broadcast event jour.
+    "delta_divergence",
+    "delta_day_dir",
 ]
 
 # Features legitimement differenciees par instrument (% ou ratios naturels)
@@ -162,6 +168,12 @@ NATURALLY_DIFFERENT = [
     # - bars_since_retest_low : compteur bars, NQ plus volatil = plus de bars entre retests
     # - ctx_va_developing_10 : VA width scale ES vs NQ pure (points natifs)
     # - open_in_prev_va : biais session {ES,NQ} distinct par horaire de trading
+    # - dist_sess_low, dist_swing_low, dist_vwap_d_sd2d : POINTS BRUTS (utilises
+    #   par primary_models avec seuils en points). Ratio NQ/ES natif ~4x = prix.
+    #   TODO : refactor primary_models pour utiliser _atr versions.
+    "dist_sess_low",
+    "dist_swing_low",
+    "dist_vwap_d_sd2d",
     # RESERVE 3 code-reviewer : bn_score_bear RETIRE. Audit empirique DMP_Transform.h:1069
     # montre qu'il s'agit d'un COMPOSITE de features PROHIBITED (bn_color_dn, bn_absorb_bid,
     # bn_pressure_bid, bn_color_dn_2) + bn_long_dn. Avant fix 3.7.6 : composants satures
@@ -171,6 +183,28 @@ NATURALLY_DIFFERENT = [
     "bars_since_retest_low",
     "ctx_va_developing_10",
     "open_in_prev_va",
+    # Ajout 03/05/2026 (Plan B regime_engine) — features regime brutes naturellement
+    # differenciees ES/NQ par design :
+    # - poc_bar_dist : distance POC en bars, NQ plus volatil = POC migre plus loin
+    # - regime_mode : categoriel ("TREND"/"RANGE"/"NORMAL"), distribution differente ES/NQ
+    # - regime_favor : categoriel ("LONG"/"SHORT"/"NEUTRE")
+    # - regime_vol : categoriel ("EXTREME"/"HIGH"/"NORMAL"/"LOW")
+    # NOTE : regime_mode/favor/vol sont strings, quality_validator skip silencieusement
+    # (R4 code-reviewer). Validation parite via test_regime_engine.py (a creer).
+    "poc_bar_dist",
+    "regime_mode",
+    "regime_favor",
+    "regime_vol",
+    # Ajout 11/05/2026 (audit quality-auditor Phase 0.3) — n_big_t1 MGC :
+    # seuil empirique t1=10 (MGC) trop bas vs ES t1=100 -> fire rate MGC 37.65%
+    # vs ES 2.71% (ratio 14x). Naturellement different par calibration tier.
+    # MGC n_big_t2 (seuil 30) = fire 2.24% = equivalent ES t1 en rarete.
+    # Pour STANDALONE training (3 modeles ES/NQ/MGC separes) : feature utile,
+    # variance non-nulle MGC. Pour JOINT training : DROP obligatoire (leak instrument).
+    # Decision Jackson 11/05 : standalone par instrument -> garder + naturally_different.
+    "n_big_t1",
+    "n_big_buy_t1",
+    "n_big_sell_t1",
 ]
 
 # Meta columns a ignorer dans l'audit (pas des features)
@@ -419,6 +453,13 @@ class QualityValidator:
         # Est-ce normalise malgre le nom ?
         if any(feat_lower.endswith(s) or s in feat_lower[-10:]
                for s in NORMALIZED_SUFFIXES):
+            return None
+        # Exemption 18/04/2026 : features utilisees par primary_models en POINTS bruts
+        # (CORE/primary_models/*.py). Refactor TODO pour migrer vers _atr versions.
+        PRICE_LEVEL_EXEMPT = {
+            "dist_sess_low", "dist_swing_low", "dist_vwap_d_sd2d",
+        }
+        if feat in PRICE_LEVEL_EXEMPT:
             return None
         # Si les valeurs ES et NQ sont toutes deux > 100 et tres differentes
         # → strike/prix absolu

@@ -301,26 +301,59 @@ def _build_offline_bot_status() -> dict:
     }
 
 
+# FIX 11/05/2026 (defense en profondeur bug DMP C++ Phase A2 GC) :
+# Le DMP C++ DMP_Main.cpp:215 est hardcoded binaire ES/NQ
+# (`sym_name = is_nq ? "NQ" : "ES"`). Si l'etude DMP est attachee a un chart
+# non-NQ (ex: chart MGC Gold ajoute 09/05), elle ecrit ses bars dans
+# DATA/ES/{date}_ES.jsonl avec sym=ES mais contract=GCM26-COMEX et prix Gold.
+# -> banner.es.price = prix Gold (~4700) au lieu de prix ES (~7400)
+# -> Bot 1 check_exit declenche TP/SL fantome
+# Fix : filtrer par contract attendu, skip les lignes cross-symbol.
+# Cf audit code-reviewer 11/05/2026 + DOCS/INCIDENT_LOG.md.
+EXPECTED_CONTRACT = {
+    "ES": "ESM26-CME",
+    "NQ": "NQM26-CME",
+    # Note : update quarterly au roll-over CME (Jun/Sep/Dec/Mar)
+}
+
+
 def read_last_bar(symbol: str) -> dict:
-    """Lit la derniere ligne du JSONL en partant de la fin (rapide)."""
+    """Lit la derniere ligne du JSONL en partant de la fin (rapide).
+
+    FIX 11/05 (defense bug DMP C++ cross-symbol contamination) :
+    Skip les lignes ou bar.contract != EXPECTED_CONTRACT[symbol].
+    """
     path = get_latest_jsonl(symbol)
     if not path:
         return {}
+    expected = EXPECTED_CONTRACT.get(symbol.upper())
     try:
         with open(path, "rb") as f:
             f.seek(0, 2)  # fin du fichier
             size = f.tell()
-            # Lire les derniers 8KB max (une ligne JSONL fait ~2-4KB)
-            chunk = min(size, 8192)
+            # Lire les derniers 64KB max (anti-pollution : ouvre fenetre + large
+            # pour scanner plusieurs bars si les dernieres sont polluees Gold).
+            chunk = min(size, 65536)
             f.seek(size - chunk)
             data = f.read().decode("utf-8", errors="replace")
         lines = data.strip().split("\n")
         for line in reversed(lines):
             stripped = line.strip()
-            if stripped:
-                return json.loads(stripped)
+            if not stripped:
+                continue
+            try:
+                bar = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            # Filtre cross-symbol contamination
+            if expected:
+                bar_contract = bar.get("contract", "")
+                if bar_contract and bar_contract != expected:
+                    # Bar pollue (ex: GCM26-COMEX ecrit dans DATA/ES/)
+                    continue
+            return bar
         return {}
-    except (json.JSONDecodeError, OSError) as exc:
+    except OSError as exc:
         logger.error("Erreur lecture derniere barre %s: %s", symbol, exc)
         return {}
 

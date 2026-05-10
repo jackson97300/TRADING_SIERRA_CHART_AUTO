@@ -17,7 +17,9 @@ from typing import Any, Optional
 _ROOT = Path(__file__).parent.parent.parent
 PAPER_DIR = _ROOT / "DATA" / "PAPER_TRADES"
 STATE_FILE = PAPER_DIR / "state.json"                              # BOT 1 DMP (mia_paper Sim3)
-STATE_FILE_DB = PAPER_DIR / "databento_paper_state.json"           # BOT 2 DB (databento_paper Sim2)
+STATE_FILE_DB = PAPER_DIR / "databento_paper_state.json"           # BOT 2 DB V1 (databento_paper Sim2 — DEPRECATED)
+STATE_FILE_DB_V2 = PAPER_DIR / "state_v6.json"                     # BOT 2 V6 (mia2_brain_v6_databento, V4 enriched 456 cols, Sim2, 05/05/2026)
+STATE_FILE_BOT3 = PAPER_DIR / "databento_paper_v3_state.json"      # BOT 3 MP (Market Profile 13 niveaux, Sim1, 03/05/2026)
 
 # Import CME trading day helper (rollover 18:00 ET, DST-aware) pour aligner
 # le filtre dashboard "today" avec la convention bot.
@@ -151,6 +153,12 @@ def _iter_trades_from_files(since_utc: datetime, pattern: str = "*_trades.jsonl"
                         continue
                     try:
                         trade = json.loads(line)
+                        # FIX 11/05/2026 (cleanup phantom trades DMP Gold pollution) :
+                        # Skip les trades marques INVALIDATED via cleanup_phantom_paper_trades.py.
+                        # 5 trades concernes : NQ 25/04 (2x) + ES 10/05 (3x DMP Gold pollute).
+                        # Voir DOCS/INCIDENT_LOG.md cat VALIDATION_MISS.
+                        if trade.get("invalidated"):
+                            continue
                         exit_time_str = trade.get("exit_time", "")
                         try:
                             trade_ts = datetime.fromisoformat(exit_time_str.replace("Z", "+00:00"))
@@ -228,8 +236,8 @@ def _compute_stats_today_from_trades(pattern: str) -> dict:
     CME trading day. Coherent avec stats_7d/30d (deja calcules a la volee).
     """
     today_start = _cme_trading_day_start_utc()
-    trades = list(_iter_trades_from_files(today_start, pattern))
-    if not trades:
+    trades_raw = list(_iter_trades_from_files(today_start, pattern))
+    if not trades_raw:
         return {
             "stats_today": {"trades": 0, "wins": 0, "losses": 0, "wr": 0,
                              "pf": None, "pnl_usd": 0, "pnl_ticks": 0},
@@ -238,37 +246,96 @@ def _compute_stats_today_from_trades(pattern: str) -> dict:
             "stats_by_symbol": {"ES": {"trades": 0}, "NQ": {"trades": 0}},
         }
 
-    wins = [t for t in trades if t.get("pnl_ticks", 0) > 0]
-    losses = [t for t in trades if t.get("pnl_ticks", 0) <= 0]
+    # FIX 06/05 soir (P0 review code-reviewer) : DEDUP par signal_id.
+    # Le fix Type 209 capture (cid_type='flatten') re-log une 2eme ligne JSONL
+    # avec pnl_known=true APRES la 1ere ligne pnl=null logge a chaud par
+    # _bot3_check_timeout ETAPE 8. Sans dedup, le dashboard double-compte
+    # le trade dans `trade_count_today`.
+    # Strategie : pour chaque signal_id, garder la ligne avec pnl_known=true
+    # si dispo, sinon la 1ere. Bot 1/2 ne re-loggent jamais → comportement inchange.
+    # `pos_snapshot` (envoye dans entry _bot3_cid_index) preserve le signal_id pour
+    # que la 2eme ligne soit dedupable.
+    def _is_numeric_pnl(t):
+        v = t.get("pnl_ticks")
+        return isinstance(v, (int, float)) and not (v != v)  # exclut NaN aussi
+
+    def _is_official_pnl(t):
+        """FIX 07/05 Solution A v2 : PnL utilisable pour metriques Lopez officielles
+        (PF, Sharpe, DSR). Exclut les pnl approximatifs via close JSONL DMP
+        (TIMEOUT Bot 3 sans fill Type 209 capture) marques pnl_estimated=True.
+
+        Garde _is_numeric_pnl pour total $ informationnel dashboard.
+        Bot 1 / Bot 2 V6 n'emettent pas pnl_estimated -> retro-compat OK.
+        """
+        return _is_numeric_pnl(t) and not t.get("pnl_estimated", False)
+
+    # Dedup par signal_id : known_pnl gagne sur null, ordre conserve sinon
+    seen: dict = {}
+    for t in trades_raw:
+        sig_id = t.get("signal_id")
+        if not sig_id:
+            # Pas de signal_id : conserver tel quel (ne peut pas etre dedup)
+            seen[id(t)] = t  # cle unique ad-hoc pour preserver l'ordre
+            continue
+        prev = seen.get(sig_id)
+        if prev is None:
+            seen[sig_id] = t
+        else:
+            # Preferer la ligne avec pnl_known=true. Si les 2 sont known/unknown,
+            # garder la plus recente (= ordre du fichier append-only).
+            prev_known = _is_numeric_pnl(prev)
+            curr_known = _is_numeric_pnl(t)
+            if curr_known and not prev_known:
+                seen[sig_id] = t  # promouvoir
+            elif curr_known == prev_known:
+                seen[sig_id] = t  # plus recente
+            # else (prev known, curr unknown) : keep prev
+    trades = list(seen.values())
+    known_trades = [t for t in trades if _is_numeric_pnl(t)]
+    # FIX 07/05 Solution A v2 : PF/Sharpe/wr OFFICIEL exclut pnl_estimated=True
+    # (close JSONL DMP approximation TIMEOUT Bot 3). Total $ informationnel
+    # garde tous les pnl numeriques (estim inclus pour visualisation).
+    official_trades = [t for t in trades if _is_official_pnl(t)]
+
+    wins = [t for t in official_trades if t.get("pnl_ticks", 0) > 0]
+    losses = [t for t in official_trades if t.get("pnl_ticks", 0) <= 0]
     win_ticks = sum(t.get("pnl_ticks", 0) for t in wins)
     loss_ticks = sum(abs(t.get("pnl_ticks", 0)) for t in losses)
-    pnl_usd = sum(t.get("pnl_usd", 0) for t in trades)
-    pnl_ticks = sum(t.get("pnl_ticks", 0) for t in trades)
+    # Total $ = tous les pnl numeriques (info dashboard, pas Lopez)
+    pnl_usd = sum(t.get("pnl_usd", 0) or 0 for t in known_trades)
+    pnl_ticks = sum(t.get("pnl_ticks", 0) for t in known_trades)
 
     by_sym = {}
     for sym in ("ES", "NQ"):
-        sub = [t for t in trades if t.get("symbol") == sym]
-        if not sub:
+        sub = [t for t in known_trades if t.get("symbol") == sym]
+        sub_all = [t for t in trades if t.get("symbol") == sym]  # tous (pour count)
+        if not sub_all:
             by_sym[sym] = {"trades": 0, "wins": 0, "losses": 0, "wr": 0,
                             "pnl_usd": 0, "pnl_ticks": 0}
             continue
         sw = [t for t in sub if t.get("pnl_ticks", 0) > 0]
         sl = [t for t in sub if t.get("pnl_ticks", 0) <= 0]
+        wr_pct = round(len(sw) / len(sub) * 100, 1) if sub else 0.0
         by_sym[sym] = {
-            "trades": len(sub),
+            "trades": len(sub_all),
             "wins": len(sw),
             "losses": len(sl),
-            "wr": round(len(sw) / len(sub) * 100, 1),
-            "pnl_usd": round(sum(t.get("pnl_usd", 0) for t in sub), 2),
+            "wr": wr_pct,
+            "pnl_usd": round(sum(t.get("pnl_usd", 0) or 0 for t in sub), 2),
             "pnl_ticks": round(sum(t.get("pnl_ticks", 0) for t in sub), 1),
         }
 
+    # FIX 06/05 : wr / count denominators bases sur known_trades pour ne pas
+    # diluer les stats avec TIMEOUT pnl=None (Bot 3). Bot 1/2 : aucun TIMEOUT
+    # pnl=None dans leurs schemas → known_trades == trades, comportement inchange.
+    n_known = len(known_trades)
     return {
         "stats_today": {
-            "trades": len(trades),
+            "trades": len(trades),                        # display total
+            "trades_known_pnl": n_known,                  # for stats fairness
             "wins": len(wins),
             "losses": len(losses),
-            "wr": round(len(wins) / len(trades) * 100, 1),
+            "wr": round(len(wins) / n_known * 100, 1) if n_known else 0.0,
             "pf": round(win_ticks / loss_ticks, 2) if loss_ticks > 0 else None,
             "pnl_usd": round(pnl_usd, 2),
             "pnl_ticks": round(pnl_ticks, 1),
@@ -305,17 +372,22 @@ def _build_bot_payload(state_file: Path, trades_pattern: str, bot_label: str) ->
         for cs in (state.get("cooldown_status") or {}).values()
     )
 
-    # Age du state (DMP utilise updated_ts, DB utilise ts ISO)
+    # Age du state (DMP utilise updated_ts, DB Bot 2 utilise ts_utc, Bot 3 utilise updated_iso/ts)
+    # Fix 04/05 soir : Bot 2 expose `ts_utc`, le code cherchait `ts` -> age_sec None ->
+    # bouton ROUGE/INACTIF dashboard alors que Bot 2 tournait normalement.
     age_sec = None
     updated_ts = state.get("updated_ts")
     if updated_ts:
         age_sec = max(0, datetime.now(timezone.utc).timestamp() - updated_ts)
-    elif state.get("ts"):
-        try:
-            db_ts = datetime.fromisoformat(state["ts"].replace("Z", "+00:00"))
-            age_sec = max(0, (datetime.now(timezone.utc) - db_ts).total_seconds())
-        except (ValueError, AttributeError):
-            pass
+    else:
+        # Tente plusieurs champs ISO selon format state (Bot 2 vs Bot 3 vs DMP)
+        ts_iso = state.get("ts_utc") or state.get("updated_iso") or state.get("ts")
+        if ts_iso:
+            try:
+                db_ts = datetime.fromisoformat(str(ts_iso).replace("Z", "+00:00"))
+                age_sec = max(0, (datetime.now(timezone.utc) - db_ts).total_seconds())
+            except (ValueError, AttributeError):
+                pass
 
     return {
         "bot": bot_label,
@@ -383,9 +455,122 @@ def get_dual_bots_payload() -> dict:
 
     FIX 30/04 v2 : cleanup NaN/Inf avant return (prevent JSON 500 error).
     """
+    # 04/05 SOIR FIX : `STATE_FILE_DB` = V1 DEPRECATED (databento_paper_state.json,
+    # last 02/05) → bouton Bot 2 ROUGE alors que Bot 2 V2 (Sim2 SetupEngine) tourne
+    # bien sur `STATE_FILE_DB_V2` (databento_paper_v2_state.json). Fix : pointer
+    # vers V2 qui est le bot reellement actif depuis 02/05/2026.
     payload = {
         "bot1_dmp": _build_bot_payload(STATE_FILE, "*_trades.jsonl", "dmp"),
-        "bot2_db":  _build_bot_payload(STATE_FILE_DB, "*_databento_trades.jsonl", "db"),
+        "bot2_db":  _build_bot_payload(STATE_FILE_DB_V2, "*_databento_trades.jsonl", "db"),
         "eco_status": get_eco_status_payload(),
     }
     return _clean_nan_inf(payload)
+
+
+def get_bot2_v2_payload() -> dict:
+    """BOT 2 V2 (SetupEngine 11 setups, Sim2, deploye 02/05/2026 dimanche soir).
+
+    Structure :
+      {
+        "state_file": "databento_paper_v2_state.json",
+        "state": <contenu state.json brut>,
+        "positions_with_countdown": {NQ: {...,seconds_until_timeout, session_label_entry}, ES: ...},
+        "setup_stats": {SETUP_NAME: {n_trades, wr_pct, pf, pnl_total_usd, mfe_avg_ticks, ...}},
+        "trades_today": [...],  # depuis JSONL
+        "trading_window_utc": "2h-21h",
+        "phase_1_free_run": True/False,
+      }
+
+    Endpoint pour frontend dashboard V2 : afficher countdown timeout + session
+    + setup tracking en temps reel.
+    """
+    state = _safe_read_state(STATE_FILE_DB_V2)
+    if not state:
+        return {
+            "state_file": "databento_paper_v2_state.json",
+            "state": None,
+            "available": False,
+            "msg": "Bot V2 non actif ou state.json non disponible",
+        }
+
+    return _clean_nan_inf({
+        "state_file": "databento_paper_v2_state.json",
+        "state": state,
+        "positions_with_countdown": state.get("positions", {}),
+        "setup_stats": state.get("setup_stats", {}),
+        "trading_window_utc": state.get("trading_window_utc", "2h-21h"),
+        "phase_1_free_run": state.get("phase_1_free_run", True),
+        "mode": state.get("mode", "PAPER_TRADE_V2"),
+        "trade_account": state.get("trade_account", "Sim2"),
+        "available": True,
+        "ts_utc": state.get("ts_utc"),
+    })
+
+
+def get_bot3_payload() -> dict:
+    """BOT 3 MP (Market Profile, 13 niveaux Tier 1/2/3, Sim1, deploye 03/05/2026).
+
+    Structure :
+      {
+        "state_file": "databento_paper_v3_state.json",
+        "state": <contenu state.json brut>,
+        "positions_with_countdown": {NQ: {..., seconds_until_timeout, level, side, action, confidence}, ES: ...},
+        "level_stats": {LEVEL_NAME: {n_contacts, n_go, n_skip, win_rate, pf, pnl_total_usd, avg_confidence, baseline_rej, baseline_pf}, ...},
+        "recent_decisions": [{ts, level, decision, reason, sym, ctx_summary}, ...20 dernieres],
+        "phase": "OBSERVE_ONLY" | "PAPER_TIER1" | "FULL",
+        "trade_rejections": bool, "trade_breakouts": bool,
+        "trading_window_utc": "2h-21h",
+        "trade_account": "Sim1",
+        "available": True,
+      }
+
+    Endpoint pour frontend dashboard Bot 3 : afficher contacts niveaux temps reel
+    + level_stats par niveau + recent_decisions feed live (Phase 1 critique pour audit).
+    """
+    state = _safe_read_state(STATE_FILE_BOT3)
+    if not state:
+        return {
+            "state_file": "databento_paper_v3_state.json",
+            "state": None,
+            "available": False,
+            "msg": "Bot 3 MP non actif ou state.json non disponible",
+        }
+
+    # SOLUTION DURABLE 06/05 (Plan agent GO) : closed_today + stats_today lus
+    # depuis le journal append-only `*_databento_v3_trades.jsonl` ecrit par
+    # Bot 3 (cf `_bot3_log_trade_close`). Source de verite unique :
+    # - audit J+30 cross-bot via glob unifie
+    # - restart-safe (fichier persiste)
+    # - pas de cap memoire, historique illimite
+    # - coherent Bot 1 (`*_trades.jsonl`) et Bot 2 V2 (`*_databento_trades.jsonl`)
+    bot3_stats = _compute_stats_today_from_trades("*_databento_v3_trades.jsonl")
+    # Cap display 50 derniers trades (volume potentiel Bot 3 = 13 niveaux × 2 sym)
+    closed_full = bot3_stats.get("closed_today", [])
+    closed_display = closed_full[-50:] if len(closed_full) > 50 else closed_full
+
+    return _clean_nan_inf({
+        "state_file": "databento_paper_v3_state.json",
+        "state": state,
+        "positions_with_countdown": state.get("positions", {}),
+        "level_stats": state.get("level_stats", {}),
+        "recent_decisions": state.get("recent_decisions", [])[-20:],  # 20 dernieres
+        "n_contacts_today": state.get("n_contacts_today", {"NQ": 0, "ES": 0}),
+        "n_go_today": state.get("n_go_today", {"NQ": 0, "ES": 0}),
+        "n_skip_today": state.get("n_skip_today", {"NQ": 0, "ES": 0}),
+        "n_veto_today": state.get("n_veto_today", {"NQ": 0, "ES": 0}),
+        # Source = journal JSONL (cf `_compute_stats_today_from_trades` ligne 232+)
+        "closed_today": closed_display,
+        "trade_count_today": bot3_stats.get("trade_count_today", 0),
+        "stats_today": bot3_stats.get("stats_today", {}),
+        "stats_by_symbol": bot3_stats.get("stats_by_symbol", {}),
+        "phase": state.get("phase", "OBSERVE_ONLY"),
+        "trade_rejections": state.get("trade_rejections", True),
+        "trade_breakouts": state.get("trade_breakouts", True),
+        "tier2_enabled": state.get("tier2_enabled", False),
+        "tier3_enabled": state.get("tier3_enabled", False),
+        "trading_window_utc": state.get("trading_window_utc", "2h-21h"),
+        "trade_account": state.get("trade_account", "Sim1"),
+        "mode": state.get("mode", "OBSERVE_ONLY"),
+        "available": True,
+        "ts_utc": state.get("ts_utc"),
+    })

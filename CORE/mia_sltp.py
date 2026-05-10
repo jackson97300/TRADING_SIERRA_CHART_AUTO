@@ -52,30 +52,42 @@ from dataclasses import dataclass, field
 #     - NQ swing trades 1-min peuvent avoir SL 40-70t en sessions volatiles.
 #     - Cap max 80t coherent avec MAX_TP_WALL_DISTANCE NQ (garde-fou budget).
 SL_BUDGET = {
-    'NQ': {'max_ticks': 80, 'max_usd': 75.0, 'tick_value': 0.50, 'n_micros': 3},  # 50→80 (24/04)
-    'ES': {'max_ticks': 40, 'max_usd': 75.0, 'tick_value': 1.25, 'n_micros': 3},  # 20→40 (24/04)
+    # 🆕 01/05/2026 (Jackson "SL doit etre protege derriere le mur") :
+    # max_usd 75 → 120. Audit empirique 01/05 : 107 rejets "SL > budget $75"
+    # observes (95% des SHORTs bloques). Avec $120 :
+    #   NQ : SL max 80t (=$0.50*3*80) = exploite totalement max_ticks 80 NQ
+    #   ES : SL max 32t (=$1.25*3*32) = capped USD avant max_ticks 40 ES
+    # Topstep $50K daily limit -$1000 : 8 SL × $120 = -$960 (proche limit, OK).
+    # Cap 5 trades/jour Bot + circuit breaker 3 SL consec = garde-fou.
+    'NQ': {'max_ticks': 80, 'max_usd': 120.0, 'tick_value': 0.50, 'n_micros': 3},
+    'ES': {'max_ticks': 40, 'max_usd': 120.0, 'tick_value': 1.25, 'n_micros': 3},
+    # MGC ajoute 11/05/2026 (Phase 1.4) — Calibration tick-scaled depuis ES.
+    # tick_value=$1.00 (Micro Gold 10oz) -> max_ticks = $120 / ($1 * 3) = 40t (=4pt Gold)
+    # A recalibrer apres backtest Phase 2 MGC (PF + EV par regime).
+    'MGC': {'max_ticks': 40, 'max_usd': 120.0, 'tick_value': 1.00, 'n_micros': 3},
 }
 
 # Buffer derrière le mur (le SL est APRÈS le niveau + buffer)
 # FIX 07/03: 5→8 ticks NQ (les wicks intra-barre font 8-15t)
-SL_BUFFER_TICKS = {'NQ': 8, 'ES': 4}
+SL_BUFFER_TICKS = {'NQ': 8, 'ES': 4, 'MGC': 10}  # MGC=10t=1pt Gold (tick-scaled ES 1pt)
 
 # Buffer ETENDU quand on accepte un T2 seul sans T1 backup (anti stop-hunt).
 # 🆕 FIX 24/04 SLTP P3 (audit market-analyst) : +5t extra pour securite.
-SL_BUFFER_EXTENDED_TICKS = {'NQ': 13, 'ES': 8}  # NQ 8+5=13 / ES 4+4=8
+SL_BUFFER_EXTENDED_TICKS = {'NQ': 13, 'ES': 8, 'MGC': 15}  # MGC 10+5=15
 
 # SL minimum (trop près = sorti par le bruit)
 # FIX 07/03: 12→30 ticks NQ (4 trades perdants avaient SL 13-17t = bruit)
 # 🆕 FIX 24/04 SLTP P2 : NQ 30→20 (les barres NQ 1-min range typique 12-20t,
 #   30t trop serre sur conditions calmes. Garde 20 comme plancher anti-bruit).
-SL_MIN_TICKS = {'NQ': 20, 'ES': 10}  # NQ 30→20 / ES 12→10 (24/04)
+# MGC 11/05 Phase 1.4 : 20t = 2pt Gold (plancher anti-bruit, recalibrer Phase 2)
+SL_MIN_TICKS = {'NQ': 20, 'ES': 10, 'MGC': 20}
 
 # TP buffer avant l'obstacle (on prend profit AVANT le mur)
-TP_BUFFER_TICKS = {'NQ': 4, 'ES': 2}
+TP_BUFFER_TICKS = {'NQ': 4, 'ES': 2, 'MGC': 4}  # MGC=4t=0.4pt Gold
 
 # Trailing stop (micro #2)
-TRAILING_START_TICKS = {'NQ': 20, 'ES': 8}    # Activer après +X ticks
-TRAILING_DIST_TICKS = {'NQ': 12, 'ES': 5}     # Suivre à X ticks
+TRAILING_START_TICKS = {'NQ': 20, 'ES': 8, 'MGC': 20}    # Activer après +X ticks
+TRAILING_DIST_TICKS = {'NQ': 12, 'ES': 5, 'MGC': 10}     # Suivre à X ticks
 
 # Runner TP (micro #3) = multiple du risque
 RUNNER_RR_RATIO = 2.0
@@ -114,12 +126,20 @@ MIN_RR_SELECTION = 1.5
 # Cible R:R du TP standard (quand pas d'obstacle exploitable)
 DEFAULT_TP_RR_FALLBACK = 2.0  # TP = SL × 2 = R:R 2.0
 
+# 🆕 01/05/2026 (Jackson "TP trop ambitieux") — Cap MAX R:R sur TP final.
+# Audit empirique 81 trades 7j : RR > 2.0 a generé 0% TP atteints (12/12 SL).
+# Cap RR=2.0 backteste sur Bot 2 = +$210 sur 7j (1 SL converti en TP).
+# S'applique APRES tous les fallbacks/CAS 1-4. Si tp1_ticks > sl_ticks*MAX_TP_RR_RATIO,
+# on cap tp1_ticks pour viser un TP atteignable au lieu d'un mur trop lointain.
+MAX_TP_RR_RATIO = 2.0
+
 # Distance max d'un mur pour le considerer comme TP. Au-dela, TP standard applique.
 # Si un mur legitime existe en dessous de cette distance, on l'utilise SANS cap
 # (car il donne un R:R naturel pris du marche, meme si > MAX_TP_TICKS_ABSOLUTE).
 MAX_TP_WALL_DISTANCE = {
     'ES': 80,   # 20pts max distance mur. Mur entre 30-80t donne R:R eleve prenable.
     'NQ': 250,  # 62.5pts max distance mur. Au-dela = mouvement improbable intraday.
+    'MGC': 150, # 15pts Gold (recalibrer Phase 2 backtest). Range intraday Gold ~3-10pts.
 }
 
 # Cap absolu du TP (V47) — applique UNIQUEMENT sur fallback TP_STANDARD (pas murs).
@@ -128,6 +148,7 @@ MAX_TP_WALL_DISTANCE = {
 MAX_TP_TICKS_ABSOLUTE = {
     'ES': 30,   # 7.5pts max pour fallback
     'NQ': 80,   # 20pts max pour fallback
+    'MGC': 60,  # 6pts Gold (= equivalent 7.5pt ES x 0.8 = scale conservateur)
 }
 
 
@@ -201,6 +222,42 @@ TIER2_WALLS = {
     # GARDE uniquement les ajouts vraiment nouveaux (pas de contradiction) :
     'dist_vwap_w':              ('VWAP_W',         'both'),  # nouveau (Weekly VWAP nu)
     'dist_open_830':            ('OPEN_830',       'both'),  # nouveau (pre-market open 09:30 ET)
+    # 🆕 30/04/2026 v6 (Jackson "ok je valide" sub-tier T2_STRUCTUREL)
+    # Audit murs complet : 35 dist_* features inexploitees sur 79 dispo. Ajout :
+    # - dist_blind_nearest_up/dn : Blind Levels (gap ouverts derniers swings, structurels)
+    # - dist_vwap_m : VWAP Monthly nu (anchor structurel long-terme)
+    # Ces 3 features + 11 autres deja en T2 forment le sub-tier T2_STRUCTUREL
+    # qui beneficie de la MUTATION CAS 4 (cf T2_STRUCTUREL_WALLS plus bas).
+    'dist_blind_nearest_up':    ('BLIND_UP',       'resist'),
+    'dist_blind_nearest_dn':    ('BLIND_DN',       'support'),
+    'dist_vwap_m':              ('VWAP_M',         'both'),
+}
+
+# Sub-tier T2_STRUCTUREL — murs T2 BENEFICIANT MUTATION CAS 4 (comme T1)
+# Validation Jackson 30/04/2026 soir ("ok je valide") apres audit walls complet.
+# Trade screen Bot 1 SHORT @ 7239 : TP @ 7233.75 alors que 1D Max @ 7236.77
+# (~9 ticks devant TP) + SD-1 W. Avec mutation T2_STRUCTUREL, TP serait cap
+# a 7237.50 (6 ticks), R:R 6/14 = 0.43 < MIN_RR_RATIO 0.8 → trade REJECTED
+# avant entree (ce qui est l'intention : eviter trades avec mur structurel
+# entre prix et TP).
+#
+# Anti pattern 11 V1 : ce n'est PAS une promotion T3→T2, c'est un sub-tier
+# DANS T2. La hierarchie T1/T2/T3 reste inchangee. T2_STRUCTUREL = label
+# qui force mutation pour murs T2 reconnus structurellement importants
+# (anchors VWAP multi-TF, MenthorQ, Blind Levels, 1D extremes).
+#
+# Liste = features dist_* presentes ici DOIVENT etre dans TIER2_WALLS.
+T2_STRUCTUREL_WALLS = {
+    # Anchors VWAP multi-timeframe (deja T2)
+    'dist_vwap_d_sd1u', 'dist_vwap_d_sd1d',
+    'dist_vwap_d_sd2u', 'dist_vwap_d_sd2d',
+    'dist_vwap_w', 'dist_vwap_m',
+    # 1D extremes MenthorQ (deja T2)
+    'dist_1d_max_ticks', 'dist_1d_min_ticks',
+    # MenthorQ classiques non-0DTE (deja T2)
+    'dist_mq_call', 'dist_mq_put', 'dist_mq_hvl',
+    # Blind Levels (gaps swings, deja T2)
+    'dist_blind_nearest_up', 'dist_blind_nearest_dn',
 }
 
 # Tier 3: MURS PAPIER — PIÈGE (rebondent souvent mais pénétration 40-80 pts)
@@ -266,14 +323,21 @@ class SLTPResult:
     reject_reason: str = ""
 
     # CAS 4 anti-TP-derriere-mur (30/04/2026) — observability prod
-    # T1 = MUTATION active (capote tp1_ticks). T2 = observability-only 5j.
-    cas4_triggered: bool = False         # True si T1 capot active (mutation)
-    cas4_blocked_wall: str = ""          # Nom du mur T1 qui a force le capot
+    # v6 : T1 + T2_STRUCTUREL = MUTATION. T2 hors structurel = observability-only.
+    cas4_triggered: bool = False         # True si capot active (mutation T1 OU T2_STRUCTUREL)
+    cas4_blocked_wall: str = ""          # Nom du mur qui a force le capot
+    cas4_blocked_wall_col: str = ""      # 🆕 v6 col dist_* du mur (pour grep logs)
     cas4_blocked_wall_dist: float = 0.0  # Distance exacte du mur (avant tp_buffer)
-    cas4_blocked_wall_tier: int = 0      # Tier du mur capote (1 = mutation)
+    cas4_blocked_wall_tier: int = 0      # Tier du mur capote (1 ou 2)
+    cas4_subtier: str = ""               # 🆕 v6 "T1" / "T2_STRUCTUREL" / "T2_OBSERVABILITY"
     cas4_tp_standard_pre: float = 0.0    # Valeur tp1_ticks AVANT capot
     cas4_source_pre: str = ""            # tp1_wall AVANT capot
-    # v3 split observability-only T2 (R2 code-reviewer 30/04) :
+    # 🆕 v6 tracking impact R:R (Jackson "enrichis les logs pour tracker rejets")
+    cas4_rr_pre: float = 0.0             # R:R AVANT capot (TP non-capote / SL)
+    cas4_rr_post: float = 0.0            # R:R APRES capot (TP capote / SL)
+    cas4_caused_reject: bool = False     # True si capot a force R:R<MIN_RR_RATIO → reject
+    # v3 split observability-only T2 (R2 code-reviewer 30/04, conserve en v6
+    # pour murs T2 NON structurels — VPOC, swing, prev_vah/val, etc.) :
     cas4_observed_tier2: bool = False    # True si capot T2 AURAIT trigger (sans mutation)
     cas4_observed_wall_t2: str = ""      # Nom mur T2 qui aurait capote
     cas4_observed_wall_t2_dist: float = 0.0  # Dist exacte
@@ -348,6 +412,19 @@ class SLTPEngine:
         df['sltp_rr'] = [r.rr_ratio for r in results]
         df['sltp_sl_usd'] = [r.sl_usd for r in results]
         df['sltp_reject'] = [r.reject_reason for r in results]
+        # 🆕 v6 (30/04/2026) tracking CAS 4 mutation T1+T2_STRUCTUREL
+        df['sltp_cas4_triggered'] = [r.cas4_triggered for r in results]
+        df['sltp_cas4_subtier'] = [r.cas4_subtier for r in results]
+        df['sltp_cas4_blocked_wall'] = [r.cas4_blocked_wall for r in results]
+        df['sltp_cas4_blocked_col'] = [r.cas4_blocked_wall_col for r in results]
+        df['sltp_cas4_blocked_dist'] = [r.cas4_blocked_wall_dist for r in results]
+        df['sltp_cas4_blocked_tier'] = [r.cas4_blocked_wall_tier for r in results]
+        df['sltp_cas4_rr_pre'] = [r.cas4_rr_pre for r in results]
+        df['sltp_cas4_rr_post'] = [r.cas4_rr_post for r in results]
+        df['sltp_cas4_caused_reject'] = [r.cas4_caused_reject for r in results]
+        # T2 observability (legacy R2 codereviewer, conserve pour murs T2 hors structurel)
+        df['sltp_cas4_observed_t2'] = [r.cas4_observed_tier2 for r in results]
+        df['sltp_cas4_observed_t2_wall'] = [r.cas4_observed_wall_t2 for r in results]
 
         return df
 
@@ -430,21 +507,23 @@ class SLTPEngine:
             tp1_ticks = max_tp_abs
             tp1_reason += f" [cap {max_tp_abs}t V47]"
 
-        # ─── CAS 4 v3 (30/04/2026 soir) : T1 MUTATION + T2 OBSERVABILITY-ONLY ──
+        # ─── CAS 4 v6 (30/04/2026 soir) : T1 + T2_STRUCTUREL MUTATION ──
         # Historique :
         #   v1 (matin) : capote uniquement sur fallback TP_STANDARD passant
         #     derriere un mur scanne.
         #   v2 (apres-midi) : etend a TOUT TP, capote uniquement sur T1.
-        #   v3 (soir, Jackson "RATISER LARGE") : etend a T1+T2.
-        #   v3 split (R2 code-reviewer 30/04 soir) : compromis backtest
-        #     - T1 garde mutation (validee v2 sur cas screen Bot 1)
-        #     - T2 OBSERVABILITY-ONLY 5 jours : log les capots HYPOTHETIQUES
-        #       sans muter tp1_ticks (cas4_observed_tier2=True). Si fire rate
-        #       <15% et coherent sur 5j → activer mutation T2 v4.
-        # Justification compromis : R2 BLOQUANT codereviewer = "passer de
-        # T1-only a T1+T2 ajoute ~24 niveaux scannes. Risque mecanique : capot
-        # proche → R:R<0.8 → reject massif. Aucun backtest sur historique propre".
-        # → Compromis : monitorer 5j avant mutation T2.
+        #   v3 (soir Jackson "RATISER LARGE") : etend a T1+T2.
+        #   v3 split (R2 code-reviewer 30/04 soir) : T1 mutation + T2 observ-only
+        #   v6 (Jackson "ok je valide" apres audit walls 30/04 soir tard) :
+        #     - T1 garde mutation
+        #     - T2_STRUCTUREL (sub-tier curated 13 cols) → MUTATION
+        #     - T2 hors structurel (VPOC, swing, prev_vah/val, etc.) →
+        #       OBSERVABILITY-ONLY (legacy R2 codereviewer)
+        # Justification v6 : audit empirique trade SHORT @ 7239 a montre que
+        # le 1D Max + SD-1 W (T2 structurels) bloquaient un TP de facto. Mutation
+        # T2_STRUCTUREL = TP cap a 6t → R:R 0.43 → reject avant entree (intention).
+        # Anti pattern 11 V1 : pas une promotion T3→T2, juste un label MUTATION
+        # sur sous-ensemble curated dans T2.
         obstacles_in_path = self._scan_obstacles(row, direction)
         walls_in_path = [o for o in obstacles_in_path if o.tier in (1, 2)]
         if walls_in_path:
@@ -458,43 +537,97 @@ class SLTPEngine:
                     first_wall.abs_dist - self.tp_buffer
                 )
                 if tp_devant_mur > 0:
-                    if first_wall.tier == 1:
-                        # T1 : MUTATION (validee v2)
+                    # Determiner sub-tier (T1, T2_STRUCTUREL, T2_OBSERVABILITY)
+                    is_t2_structurel = (
+                        first_wall.tier == 2
+                        and first_wall.col in T2_STRUCTUREL_WALLS
+                    )
+                    apply_mutation = (
+                        first_wall.tier == 1 or is_t2_structurel
+                    )
+
+                    if apply_mutation:
+                        # MUTATION T1 ou T2_STRUCTUREL
                         tp_pre_capot = tp1_ticks
                         wall_pre_capot = tp1_wall
+
+                        if first_wall.tier == 1:
+                            subtier_label = "T1"
+                            tier_log = "T1"
+                        else:
+                            subtier_label = "T2_STRUCTUREL"
+                            tier_log = "T2_STRUCTUREL"
 
                         tp1_ticks = float(tp_devant_mur)
                         tp1_wall = f"TP_DEVANT_{first_wall.name}"
                         tp1_reason = (
-                            f"TP devant {first_wall.name} (T1) a {tp_devant_mur}t — "
+                            f"TP devant {first_wall.name} ({tier_log}) a {tp_devant_mur}t — "
                             f"TP precedent ({wall_pre_capot} a {tp_pre_capot:.0f}t) "
-                            f"aurait traverse le mur T1 a {first_wall.abs_dist:.1f}t"
+                            f"aurait traverse le mur a {first_wall.abs_dist:.1f}t"
                         )
                         res.cas4_triggered = True
                         res.cas4_blocked_wall = first_wall.name
+                        res.cas4_blocked_wall_col = first_wall.col
                         res.cas4_blocked_wall_dist = float(first_wall.abs_dist)
+                        res.cas4_blocked_wall_tier = first_wall.tier
+                        res.cas4_subtier = subtier_label
                         res.cas4_tp_standard_pre = float(tp_pre_capot)
                         res.cas4_source_pre = wall_pre_capot
-                        res.cas4_blocked_wall_tier = 1
+                        # R:R pre/post pour tracking rejets
+                        if sl_ticks > 0:
+                            res.cas4_rr_pre = float(tp_pre_capot) / sl_ticks
+                            res.cas4_rr_post = tp1_ticks / sl_ticks
                     else:
-                        # T2 : OBSERVABILITY-ONLY (5j backlog R2 code-reviewer)
-                        # Log le capot HYPOTHETIQUE sans muter tp1_ticks. Permet
-                        # de mesurer fire rate et coherence sur 5 jours avant
-                        # d'activer mutation T2 en v4.
+                        # T2 hors structurel : OBSERVABILITY-ONLY (legacy R2)
+                        # Log capot HYPOTHETIQUE sans muter tp1_ticks. Cas a
+                        # surveiller : VPOC, swing, prev_vah/val, EXT_LONG, OPEN_*.
                         res.cas4_observed_tier2 = True
                         res.cas4_observed_wall_t2 = first_wall.name
                         res.cas4_observed_wall_t2_dist = float(first_wall.abs_dist)
                         res.cas4_observed_tp_devant = float(tp_devant_mur)
+                        res.cas4_subtier = "T2_OBSERVABILITY"
                         # Pas de mutation tp1_ticks/tp1_wall ici (observability)
+
+        # ─── CAS 5 (01/05/2026 soir) — Cap RR final MAX_TP_RR_RATIO ──
+        # Empirique : RR > 2.0 = 0% TP atteint sur 12 trades RR>2 / 81 (7j).
+        # Cap apres CAS 1-4 pour eviter TP "moonshot" inatteignable.
+        # Backteste = +$210 / 7j Bot 2 (1 SL converti en TP).
+        # Anti pattern 11 : revoit decision 24/04 ('mur conserve sans cap')
+        # car hypothese 'R:R nature marche atteignable' rejetee empiriquement.
+        if sl_ticks > 0 and tp1_ticks > sl_ticks * MAX_TP_RR_RATIO:
+            tp_pre_cap = tp1_ticks
+            wall_pre_cap = tp1_wall
+            tp1_ticks = sl_ticks * MAX_TP_RR_RATIO
+            tp1_wall = f"TP_CAPPED_RR{MAX_TP_RR_RATIO}"
+            tp1_reason = (
+                f"TP cap RR={MAX_TP_RR_RATIO} ({tp1_ticks:.0f}t = SL × {MAX_TP_RR_RATIO}) — "
+                f"TP precedent {wall_pre_cap} a {tp_pre_cap:.0f}t (RR_pre={tp_pre_cap/sl_ticks:.2f}) "
+                f"juge inatteignable empirique 1-min"
+            )
 
         res.tp1_ticks = tp1_ticks
         res.tp1_wall = tp1_wall
         res.tp1_reason = tp1_reason
 
         # ═══ ÉTAPE 3: R:R CHECK ═══
+
         rr = tp1_ticks / sl_ticks if sl_ticks > 0 else 0
         if rr < MIN_RR_RATIO:
-            res.reject_reason = f"R:R {rr:.2f} < {MIN_RR_RATIO} ({tp1_wall} trop proche)"
+            # 🆕 v6 logs : si le capot CAS 4 a fait chuter R:R sous seuil,
+            # marquer cas4_caused_reject=True et expliciter dans reject_reason
+            # pour permettre grep/audit ex-post (Jackson "tracker rejets fix").
+            if res.cas4_triggered:
+                res.cas4_caused_reject = True
+                res.reject_reason = (
+                    f"R:R {rr:.2f} < {MIN_RR_RATIO} — CAS4 capot "
+                    f"{res.cas4_subtier} {res.cas4_blocked_wall} "
+                    f"({res.cas4_blocked_wall_col}@{res.cas4_blocked_wall_dist:.1f}t) "
+                    f"a fait chuter R:R {res.cas4_rr_pre:.2f}→{res.cas4_rr_post:.2f}"
+                )
+            else:
+                res.reject_reason = (
+                    f"R:R {rr:.2f} < {MIN_RR_RATIO} ({tp1_wall} trop proche)"
+                )
             return res
 
         res.rr_ratio = rr

@@ -39,7 +39,19 @@ NQ = InstrumentConfig(
     contract="NQM26-CME",
 )
 
-INSTRUMENTS: Dict[str, InstrumentConfig] = {"ES": ES, "NQ": NQ}
+# Ajout 11/05/2026 (Chantier 5/Phase 1.0) — Micro Gold COMEX
+# - Tick size : 0.10 (vs ES/NQ 0.25)
+# - Tick value : $1.00 (Micro 10oz Gold, vs ES $1.25 / NQ $0.50)
+# - Contract Sierra Chart : MGCM26-CMECOMEX (a valider en Sim — Phase 0.3.d)
+# - Session COMEX : 08:30-13:30 ET (vs NYSE 09:30-16:00 ET)
+MGC = InstrumentConfig(
+    symbol="MGC",
+    tick_size=0.10,
+    tick_value=1.00,        # Micro Gold = $1.00/tick (10oz)
+    contract="MGCM26-CMECOMEX",
+)
+
+INSTRUMENTS: Dict[str, InstrumentConfig] = {"ES": ES, "NQ": NQ, "MGC": MGC}
 
 
 @dataclass

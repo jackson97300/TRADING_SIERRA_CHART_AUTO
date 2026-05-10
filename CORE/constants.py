@@ -222,6 +222,53 @@ def get_session_boundaries(symbol: str) -> dict[str, int]:
         return SESSION_BOUNDARIES_BY_SYMBOL["ES"]
     return SESSION_BOUNDARIES_BY_SYMBOL[sym]
 
+# ====================================================================
+# CROSS-INSTRUMENT PAIR MAP (Phase 0.3.g — 10/05/2026 audit code-reviewer)
+# ====================================================================
+# Source unique pour les rules cross-instrument (SMT divergence, bias cross,
+# ratio ES/NQ). Au lieu de duplicater `if symbol == "MGC": skip` dans 5+
+# endroits du code (anti-pattern V1).
+#
+# - ES <-> NQ : paire naturelle (correlation 0.85+, meme regime macro)
+# - MGC : pas de pair naturel (Gold = decorrele equities). Futur : SI Silver ou DXY ?
+#
+# Usage :
+#   from CORE.constants import get_pair
+#   other = get_pair(symbol)
+#   if other is None:
+#       return None  # no-op explicite, log INFO "no cross pair"
+#   # ... compute cross feature avec `other` ...
+PAIR_MAP: dict[str, str | None] = {
+    "ES": "NQ",
+    "NQ": "ES",
+    "MGC": None,  # pas de pair naturel (Gold decorrele equities)
+}
+
+
+def get_pair(symbol: str) -> str | None:
+    """Retourne la paire cross-instrument naturelle (ou None si pas de paire).
+
+    Args:
+        symbol : ES/NQ/MGC (case-insensitive).
+
+    Returns:
+        str : symbole de la paire (e.g. "NQ" pour "ES").
+        None : si pas de pair naturel (e.g. MGC) ou symbol inconnu.
+
+    Anti-pattern interdit : `if symbol == "MGC": skip cross-instrument`
+    duplique dans 5+ endroits. Utiliser ce helper centralise.
+    """
+    sym = symbol.upper()
+    if sym not in PAIR_MAP:
+        _logger.warning(
+            "get_pair: symbole inconnu '%s' — retourne None (pas de pair). "
+            "Ajouter une entree PAIR_MAP['%s'] dans constants.py.",
+            symbol, sym,
+        )
+        return None
+    return PAIR_MAP[sym]
+
+
 # Schema DMP version courante
 DMP_SCHEMA_VERSION: str = "3.7.2"
 DMP_SCHEMA_COLS: int = 262
@@ -249,13 +296,28 @@ INSTANT_ABSORPTION_DELTA_K: float = 1.5   # multiplicateur rolling_std(delta_bar
 INSTANT_ABSORPTION_WINDOW: int = 50       # bars de lookback pour rolling_std
 
 
-def get_tick_size(symbol: str) -> float:
+def get_tick_size(symbol: str, strict: bool = False) -> float:
     """Retourne le tick size d'un instrument.
 
-    Fail-loud si symbole inconnu (anti silent fallback — interdit lessons.md).
+    Args:
+        symbol : ES/NQ/MGC (case-insensitive).
+        strict : si True, leve ValueError si symbol absent (au lieu de fallback).
+                 A utiliser dans les paths critiques (envoi ordre, PnL final, sizing).
+                 Sans strict (default) : warning + fallback DEFAULT 0.25 (compat retro).
+
+    Raises:
+        ValueError : si strict=True ET symbol absent de TICK_SIZE.
+
+    Anti silent fallback (audit code-reviewer 10/05/2026 Phase 0.3.c) — `lessons.md`.
     """
     sym = symbol.upper()
     if sym not in TICK_SIZE:
+        if strict:
+            raise ValueError(
+                f"get_tick_size(strict=True): symbole inconnu {symbol!r}. "
+                f"Symboles supportes : {sorted(TICK_SIZE.keys())}. "
+                f"Ajouter une entree TICK_SIZE['{sym}'] dans constants.py."
+            )
         _logger.warning(
             "get_tick_size: symbole inconnu '%s' — fallback DEFAULT %s. "
             "Ajouter une entree TICK_SIZE['%s'] dans constants.py.",
@@ -265,15 +327,28 @@ def get_tick_size(symbol: str) -> float:
     return TICK_SIZE[sym]
 
 
-def get_tick_value(symbol: str) -> float:
+def get_tick_value(symbol: str, strict: bool = False) -> float:
     """Retourne la valeur d'un tick en USD.
 
-    Fail-loud si symbole inconnu (anti silent fallback — interdit lessons.md).
-    Avant 09/05/2026 : fallback silencieux 1.25 (= ES) sans warning, piege en cas
-    de nouvel instrument. Maintenant log warning + fallback explicite.
+    Args:
+        symbol : ES/NQ/MGC (case-insensitive).
+        strict : si True, leve ValueError si symbol absent (au lieu de fallback ES).
+                 A utiliser dans les paths critiques (PnL final, sizing, kill-switch).
+                 Sans strict (default) : warning + fallback ES 1.25 (compat retro).
+
+    Raises:
+        ValueError : si strict=True ET symbol absent de TICK_VALUE.
+
+    Anti silent fallback (audit code-reviewer 10/05/2026 Phase 0.3.c) — `lessons.md`.
     """
     sym = symbol.upper()
     if sym not in TICK_VALUE:
+        if strict:
+            raise ValueError(
+                f"get_tick_value(strict=True): symbole inconnu {symbol!r}. "
+                f"Symboles supportes : {sorted(TICK_VALUE.keys())}. "
+                f"Ajouter une entree TICK_VALUE['{sym}'] dans constants.py."
+            )
         _logger.warning(
             "get_tick_value: symbole inconnu '%s' — fallback ES (1.25) USD. "
             "Ajouter une entree TICK_VALUE['%s'] dans constants.py.",
