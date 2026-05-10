@@ -151,3 +151,43 @@ Souvent OK car testent ES/NQ uniquement. Migration uniquement si besoin MGC.
 Le lint guard `tools/check_tick_hardcode.py` empeche tout NOUVEAU module de
 violer. Donc la dette est PLAFONNEE — elle ne peut que diminuer dans le temps.
 
+
+## Chantier 5bis3 — MGC features residuelles (10/05/2026)
+
+Apres Chantier 5bis2 (fix I/O + seuils MGC empiriques), 2 categories de features
+encore mortes pour MGC (causes structurelles, non-bloquant Phase 2 backtests) :
+
+### 1. Edge Zones — 3 features const=0
+- `bar_edge_buy_fire`, `bar_edge_sell_fire`
+- `n_edge_buy_active`, `n_edge_sell_active`
+
+**Cause** : algorithme `_detect_stacks_for_bar` (edge_zones_engine.py) cherche
+cellules ADJACENTES dans le footprint. Sur MGC (tick=0.10), footprint
+**sparse** (cells non-adjacentes au tick) → `cells.get(p_above) == None` →
+aucun stack detecte → 0 fire.
+
+**Options fix** :
+- (A) Bucket prix MGC en "macro-tick" 0.50 (5x tick natif) pour densifier
+- (B) Reduire min_group_size de 2 a 1 (single-cell imbalance)
+- (C) Reformuler imbalance entre cellules NON-adjacentes (within 2-3 ticks)
+
+Empiriquement, distribution imbalance MGC = p50=200%, p95=700%, p99=1000% donc
+imbalances forts existent — c'est l'algo adjacence qui les rate.
+
+### 2. Regime engine — 7 features const=0
+- `regime_confidence`, `regime_trend_votes`, `regime_range_votes`
+- `regime_actionable`, `regime_mode`, `regime_favor`, `regime_vol`
+
+**Cause** : `compute_regime_dict` appele dans `build_dataset_v4_dmp_databento`
+(Phase A, ligne 1019-1028) AVANT que `apply_game_changers` (Phase B) calcule
+`open_type/day_type`. Phase A detect `missing_regime != []` → skip + const 0.
+
+Pour ES/NQ, ces colonnes existent en Phase A car DMP les fournit (Sierra Chart
+calcule). Pour MGC, DMP n'est pas configure → colonnes absentes Phase A → skip.
+
+**Fix** : deplacer appel `compute_regime_dict` en fin de `build_dataset_v4_phase_b`
+APRES `apply_game_changers`. Effort 30 min + test non-regression ES/NQ.
+
+### Effort total Chantier 5bis3 : 1h30
+Priorite : faible (non-bloquant Phase 2). A faire avant trading live MGC.
+

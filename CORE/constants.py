@@ -185,14 +185,19 @@ SYMBOL_TO_DATABENTO_TICKER: dict[str, str] = {
 def get_databento_ticker(symbol: str) -> str:
     """Retourne le ticker Databento continuous pour un symbole.
 
-    Fail-loud si symbole inconnu.
+    Fail-loud : warning + fallback `{sym}.c.0` si symbole inconnu, mais loggue
+    visiblement pour qu'un test/audit puisse detecter l'usage (anti silent fallback).
+    Pour les contrats avec rollover MENSUEL (Gold, Silver), `.c.0` peut etre
+    bugue (cf lessons.md). Ajouter explicitement dans SYMBOL_TO_DATABENTO_TICKER
+    pour ces cas.
     """
     sym = symbol.upper()
     if sym not in SYMBOL_TO_DATABENTO_TICKER:
         _logger.warning(
-            "get_databento_ticker: symbole inconnu '%s' — fallback {sym}.c.0. "
-            "Ajouter SYMBOL_TO_DATABENTO_TICKER['%s'] dans constants.py.",
-            symbol, sym,
+            "get_databento_ticker: symbole inconnu '%s' — fallback '%s.c.0'. "
+            "Ajouter SYMBOL_TO_DATABENTO_TICKER['%s'] dans constants.py si "
+            "rollover mensuel (.v.0 ou .n.0 recommande).",
+            symbol, sym, sym,
         )
         return f"{sym}.c.0"
     return SYMBOL_TO_DATABENTO_TICKER[sym]

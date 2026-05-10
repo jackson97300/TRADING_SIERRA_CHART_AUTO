@@ -32,13 +32,24 @@ from extension_lines_manager import ExtensionLineBuffer
 TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — caller passe tick=get_tick_size(symbol)
 
 # Seuils par symbole (cf DMP_Config 3.7.13)
+# MGC ajoute 10/05/2026 (Chantier 5bis2). Volume MGC ~5x moins ES typiquement
+# (max trade size ~68 vs ES 400+). Tiers proportionnels :
+#   t1=3 (small), t2=5, t3=10 (rare), t4=30 (very rare).
+# Recalibrage empirique a faire apres backtest Phase 2.
 BIG_ORDER_TIERS = {
-    "ES": [100, 150, 400, 1000],
-    "NQ": [10, 30, 100, 300],
+    "ES":  [100, 150, 400, 1000],
+    "NQ":  [10, 30, 100, 300],
+    # MGC distribution mesuree empirique (mars 2026, 30k bars) :
+    # max_trade_size p50=6, p95=16, p99=31, max=621
+    # Recalibre : t1=10 (22% fire = signal), t2=30 (1.2% rare),
+    # t3/t4 None (events trop rares pour ML).
+    "MGC": [10, 30, 100, None],
 }
 CLUSTER_THRESHOLDS = {
-    "ES": 250,
-    "NQ": 20,
+    "ES":  250,
+    "NQ":  20,
+    # MGC volume p95=986, p99=1722. Cluster vol seuil 50 = ~10-15% fire rate.
+    "MGC": 50,
 }
 
 
@@ -210,7 +221,8 @@ ABSORPTION_SUPPORT_LEVELS = [
 
 
 # BN #7 Double Ask/Bid ES (Chart 1 ID 27/28) + Triple Ask/Bid NQ (Chart 2 ID 27/28)
-STACK_N_CELLS = {"ES": 2, "NQ": 3}  # ES = Double (2 cellules), NQ = Triple (3 cellules)
+# MGC ajoute 10/05 (Chantier 5bis2) : Double comme ES (volume Gold faible)
+STACK_N_CELLS = {"ES": 2, "NQ": 3, "MGC": 2}
 
 # BN #8 Big Orders multi-tier (Volume At Price Threshold Alert V2)
 # Pas de formule alert : etude scan cellules VAP, marker si AskVol/BidVol >= seuil
@@ -218,17 +230,21 @@ BIG_ORDERS_TIERS_NEW = {
     # FIX 27/04 (audit ULTRATHINK + market-analyst rescue) :
     # Tier 3 (ES=400, NQ=100) stuck 1939 bars empirique = events trop rares.
     # DROP tier 3 cote ES + NQ. Garder t1/t2 avec NQ recalibre.
-    # NQ avant : [10, 30] -> fire ratio NQ/ES = 3.30 (fuite instrument).
-    # NQ apres : [40, 80] (cible fire ratio NQ/ES < 1.5).
-    "ES": [100, 150, None, None],  # 2 tiers actifs (t3/t4 dropped audit 27/04)
-    "NQ": [40, 80, None, None],    # AVANT [10, 30, 100, None]
+    "ES":  [100, 150, None, None],
+    "NQ":  [40, 80, None, None],
+    # MGC distribution empirique : max_trade_size p95=16, p99=31.
+    # t1=10 (22% fire), t2=30 (1.2% rare-mais-signal).
+    "MGC": [10, 30, None, None],
 }
 
 # BN #9 CLUSTER VOLUME (Volume At Price Threshold Alert V2 - Total Volume)
 # FIX 27/04 : NQ avant=20 (ratio fuite 2.62-2.77) -> apres=70 (ratio cible <1.5).
 CLUSTER_VOLUME_THRESHOLD = {
-    "ES": 250,   # Chart 1 ID 10
-    "NQ": 70,    # AVANT 20 (audit 27/04 : ratio fuite NQ/ES x2.77)
+    "ES":  250,  # Chart 1 ID 10
+    "NQ":  70,   # AVANT 20 (audit 27/04 : ratio fuite NQ/ES x2.77)
+    # MGC volume p95=986 par bar / 0.10 ticks = ~9860 contrats au pire.
+    # Cluster=50 (volume bucket) = signal si concentration >50 contracts/tick.
+    "MGC": 50,
 }
 CLUSTER_VOLUME_MIN_GROUP = 2  # ES + NQ both
 

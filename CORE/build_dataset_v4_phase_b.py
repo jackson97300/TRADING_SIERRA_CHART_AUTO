@@ -9,9 +9,13 @@ Pipeline :
   5. Apply intermarket (ES vs NQ, 10 features im_*)
   6. Quality validator + write back
 
-Input  : DATA/datasets/v4_enriched/symbol={ES,NQ}.c.0/year=*/month=*/data.parquet
-Trades : DATA/databento/GLBX.MDP3/trades/symbol={ES,NQ}.c.0/year=*/month=*/day=*/data_0.parquet
+Input  : DATA/datasets/v4_enriched/symbol={ES.c.0, NQ.c.0, MGC.c.0}/year=*/month=*/data.parquet
+Trades : DATA/databento/GLBX.MDP3/trades/symbol={ES.c.0, NQ.c.0, MGC.v.0}/year=*/...
+         (path Databento ticker via get_databento_ticker(symbol) — MGC -> .v.0
+         car .c.0 bug rollover monthly, cf Chantier 5bis 10/05/2026)
 Output : meme chemin que input (overwrite atomique apres backup)
+         Convention pipeline : symbol={SYM}.c.0/ pour TOUS (incl. MGC) pour
+         coherence consumers aval (dashboard, backtest, etc.)
 
 Convention :
   - Append columns uniquement (32 features existantes preservees byte-identique)
@@ -46,9 +50,9 @@ sys.path.insert(0, str(ROOT / "CORE"))
 from phase_b_helpers import add_all_phase_b_helpers, PHASE_B_HELPER_COLS, ET, TICK_SIZE
 # try/except : 2 conventions sys.path (ROOT/ via -m, vs CORE/ direct CLI)
 try:
-    from CORE.constants import get_tick_size
+    from CORE.constants import get_tick_size, get_databento_ticker
 except ImportError:
-    from constants import get_tick_size
+    from constants import get_tick_size, get_databento_ticker
 from phase_b_plus_engine import apply_phase_b_plus, PHASE_B_PLUS_GENERATED
 from phase_b_plus_plus_engine import apply_phase_b_plus_plus, PHASE_B_PLUS_PLUS_GENERATED
 from sessions_swings_engine import apply_sessions_swings, SESSIONS_SWINGS_GENERATED
@@ -81,7 +85,12 @@ PHASE_B_GENERATED = (PHASE_B_HELPER_COLS | GAME_CHANGERS_COLS | set(RVOL_FEATURE
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def load_v4_partition(symbol: str, year: int, month: int) -> pd.DataFrame:
-    """Lit 1 partition v4_enriched."""
+    """Lit 1 partition v4_enriched.
+
+    Note 10/05 (Chantier 5bis) : v4_enriched output toujours en `MGC.c.0` (convention
+    pipeline interne, pas le ticker Databento). Le DBN_ROOT switch (MGC.v.0) ne
+    s'applique qu'aux INPUTS Databento (load_trades_for_month).
+    """
     path = DATASET_ROOT / f"symbol={symbol}.c.0" / f"year={year}" / f"month={month:02d}" / "data.parquet"
     if not path.exists():
         return pd.DataFrame()
@@ -92,8 +101,15 @@ def load_v4_partition(symbol: str, year: int, month: int) -> pd.DataFrame:
 
 
 def load_trades_for_month(symbol: str, year: int, month: int) -> pd.DataFrame:
-    """Charge les Trades pour 1 mois (toutes partitions day) avec side (aggressor)."""
-    pattern = str(TRADES_ROOT / f"symbol={symbol}.c.0" / f"year={year}" / f"month={month}" / "day=*" / "*.parquet")
+    """Charge les Trades pour 1 mois (toutes partitions day) avec side (aggressor).
+
+    FIX BUG CRITIQUE 10/05/2026 (Chantier 5bis) : path utilise get_databento_ticker
+    pour MGC -> "MGC.v.0" (au lieu de hardcode "MGC.c.0"). Avant fix : trades_df
+    vide pour MGC -> 207 features mortes en cascade (Volume Profile, big orders,
+    clusters, BN absorption, edge zones, regime engine, game changers).
+    """
+    db_ticker = get_databento_ticker(symbol)
+    pattern = str(TRADES_ROOT / f"symbol={db_ticker}" / f"year={year}" / f"month={month}" / "day=*" / "*.parquet")
     files = sorted(glob.glob(pattern))
     if not files:
         return pd.DataFrame()
@@ -159,7 +175,7 @@ def write_v4_atomic(df: pd.DataFrame, symbol: str, year: int, month: int, origin
 # GAME CHANGERS WRAPPER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def apply_game_changers(df: pd.DataFrame) -> pd.DataFrame:
+def apply_game_changers(df: pd.DataFrame, symbol: str = "ES") -> pd.DataFrame:
     """
     Applique game_changers par jour : open_type, day_type, profile_shape +
     derivees (open_direction, open_bias_conf).
@@ -168,7 +184,22 @@ def apply_game_changers(df: pd.DataFrame) -> pd.DataFrame:
       open_cash, prev_vah, prev_val, prev_vpoc, pdh, pdl,
       ib_high, ib_low, ib_atr, ib_range, ib_complete,
       sess_high, sess_low, price_1030, close
+
+    FIX 10/05/2026 (Chantier 5bis2) : avant le fix, la fonction utilisait
+    grp.iloc[0] (1ere barre du jour, 18:00 ET J-1 = Asia open) ou ib_high/low
+    sont NaN (masked anti-leak avant fin IB). Resultat : open_type/day_type
+    toujours UNKNOWN/NORM_VAR. Cascade : open_direction/open_bias_conf const=0.
+    Fix : prendre la 1ere row POST-IB (mins_et >= us_start + 60) ou tous les
+    inputs sont valides. Per-symbole : ES/NQ ib_close=10:30, MGC ib_close=09:30.
     """
+    # Bounds per-symbole pour identifier la fin de la fenetre IB
+    try:
+        from CORE.constants import get_session_boundaries
+    except ImportError:
+        from constants import get_session_boundaries
+    bounds = get_session_boundaries(symbol)
+    ib_close_min = bounds["us_start"] + 60  # ES 10:30 ET, MGC 09:30 ET
+
     df = df.copy()
     out_open_type = []
     out_open_zone = []
@@ -178,8 +209,20 @@ def apply_game_changers(df: pd.DataFrame) -> pd.DataFrame:
 
     # Group par date (1 classification par jour, broadcast sur barres)
     for date, grp in df.groupby("date_et", sort=False):
-        # Lecture des inputs (premiere barre de jour ou les valeurs sont stables)
-        first = grp.iloc[0]
+        # FIX 10/05 : prendre row POST-IB (ib_high/low valides)
+        # Avant : first = grp.iloc[0] = 18:00 ET J-1 = ib_high/low NaN
+        # Apres : 1ere row apres ib_close_min (09:30 MGC, 10:30 ES/NQ)
+        post_ib = grp[grp["mins_et"] >= ib_close_min]
+        if post_ib.empty:
+            # Pas de bar post-IB ce jour (weekend, holiday, partial) - fallback UNKNOWN
+            n_bars = len(grp)
+            out_open_type.extend([0] * n_bars)
+            out_open_zone.extend([0] * n_bars)
+            out_day_type.extend([2] * n_bars)  # NORM_VAR default
+            out_open_direction.extend([0] * n_bars)
+            out_open_bias_conf.extend([0.0] * n_bars)
+            continue
+        first = post_ib.iloc[0]
         open_cash = first["open_cash"]
         prev_vah = first["prev_vah"]
         prev_val = first["prev_val"]
@@ -261,7 +304,7 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     )
     print(f"  After helpers: {df.shape[1]} cols (+{df.shape[1]-n_cols_orig})")
 
-    df = apply_game_changers(df)
+    df = apply_game_changers(df, symbol=symbol)
     print(f"  After game_changers: {df.shape[1]} cols (+5)")
 
     df = apply_rvol(df)

@@ -56,9 +56,14 @@ from extension_lines_manager import ExtensionLineBuffer
 TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — caller passe tick explicitement
 
 # Seuils per-symbole (Jackson 26/04/2026)
+# MGC ajoute 10/05 (Chantier 5bis2) : tests successifs 600 et 300 = const=0.
+# Volume Gold tres concentre (max_trade p99=31) : imbalance 600/300%
+# rare/jamais atteint. Reduit a 150% (3x au lieu de 6x ratio Ask/Bid).
+# Recalibrer empiriquement apres rebuild + backtest Phase 2.
 EDGE_THRESHOLD_PCT = {
-    "ES": 600,
-    "NQ": 1000,
+    "ES":  600,
+    "NQ":  1000,
+    "MGC": 150,
 }
 MIN_GROUP_SIZE = 2  # SC default Highlight Adjacent Alerts Minimum Group Size
 
