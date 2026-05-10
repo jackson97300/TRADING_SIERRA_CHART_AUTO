@@ -364,6 +364,39 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     n_ocp = sum(1 for c in df.columns if c in OPTION_C_PLUS_GENERATED)
     print(f"  After Option C+ transforms: {df.shape[1]} cols ({n_ocp} new features)")
 
+    # === Chantier 5bis3 (10/05/2026) — Regime engine en Phase B ===
+    # Phase A (build_dataset_v4_dmp_databento) skip systematiquement le regime
+    # car day_type/open_type/profile_shape/trend_day_probability n'existent
+    # PAS en Phase A (calcules par apply_game_changers en Phase B).
+    # Bug ES/NQ depuis Chantier 1 : regime_* features ABSENTES dans tous les
+    # parquets v4_enriched ES/NQ historiques.
+    # Fix : recalculer regime ICI apres game_changers/Phase B+/Phase D.
+    if "open_type" in df.columns and "day_type" in df.columns:
+        try:
+            from regime_engine import compute_regime_dict
+        except ImportError:
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent))
+            from regime_engine import compute_regime_dict
+
+        # FIX R1.3 Phase A : derive ib_formed_bool depuis ib_range_ticks (avant drop)
+        if "ib_range_ticks" in df.columns:
+            df["ib_formed_bool"] = (df["ib_range_ticks"].fillna(0) > 0).astype(int)
+
+        regime_records = []
+        for _, row in df.iterrows():
+            bar = row.to_dict()
+            regime_records.append(compute_regime_dict(bar))
+        df_regime = pd.DataFrame(regime_records, index=df.index)
+        # Drop colonnes existantes (Phase A UNKNOWN fallback) avant concat
+        for c in df_regime.columns:
+            if c in df.columns:
+                df = df.drop(columns=[c])
+        df = pd.concat([df, df_regime], axis=1)
+        actionable_pct = df["regime_actionable"].mean() * 100 if "regime_actionable" in df.columns else 0
+        print(f"  After Regime engine: {df.shape[1]} cols (actionable {actionable_pct:.1f}%)")
+
     # Sanity stats
     if "open_type" in df.columns:
         ot_dist = df.groupby("date_et")["open_type"].first().value_counts().to_dict()
