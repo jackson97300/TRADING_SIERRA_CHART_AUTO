@@ -248,10 +248,16 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     trades_df = load_trades_for_month(symbol, year, month)
     print(f"  Loaded {len(trades_df):,} trades")
 
-    # Pipeline (10/05/2026 : tick par symbole via get_tick_size — supporte MGC=0.10)
+    # Pipeline (10/05/2026 : tick + bounds per-symbole — supporte MGC=0.10 + 08:30 RTH)
     tick = get_tick_size(symbol)
+    try:
+        from CORE.constants import get_session_boundaries
+    except ImportError:
+        from constants import get_session_boundaries
+    bounds = get_session_boundaries(symbol)
     df = add_all_phase_b_helpers(
-        df_orig, trades_df=trades_df if not trades_df.empty else None, tick=tick
+        df_orig, trades_df=trades_df if not trades_df.empty else None,
+        tick=tick, bounds=bounds,
     )
     print(f"  After helpers: {df.shape[1]} cols (+{df.shape[1]-n_cols_orig})")
 

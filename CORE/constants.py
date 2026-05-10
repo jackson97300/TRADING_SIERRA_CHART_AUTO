@@ -125,6 +125,64 @@ def get_mq_json_key(symbol: str) -> str:
     """
     return get_fs_dir(symbol)
 
+
+# ====================================================================
+# SESSION BOUNDARIES PER SYMBOL — Chantier 4 (10/05/2026)
+# ====================================================================
+# Sessions de trading par instrument (mins ET = minutes since midnight ET).
+# ES/NQ : convention equity NYSE/Nasdaq. MGC : convention COMEX gold.
+#
+# Cause racine du Chantier 4 : avant 10/05/2026, sessions hardcodees ES dans
+# sessions_swings_engine.py (US Cash 09:30-16:00). Sur MGC, ca causait :
+# - cash_high/low : 71.9% NaN (filtre RTH 09:30-16:00 trop tard pour Gold)
+# - us_* features : 67.6% NaN
+# - london : 39.4% NaN (incoherent avec liquidite Gold London)
+# - ovn : 40.6% NaN (concept overnight equity inadapte Gold)
+#
+# Fix : SESSION_BOUNDARIES_BY_SYMBOL[symbol] dispatch per-instrument.
+SESSION_BOUNDARIES_BY_SYMBOL: dict[str, dict[str, int]] = {
+    "ES": {
+        "asia_start":     18 * 60,         # 18:00 ET (re-ouverture Globex)
+        "london_start":    3 * 60,         # 03:00 ET (LDN cash open)
+        "us_start":        9 * 60 + 30,    # 09:30 ET (NYSE cash open)
+        "us_after_start": 16 * 60,         # 16:00 ET (NYSE close)
+    },
+    "NQ": {  # Identique ES (NYSE/Nasdaq mêmes horaires equity)
+        "asia_start":     18 * 60,
+        "london_start":    3 * 60,
+        "us_start":        9 * 60 + 30,
+        "us_after_start": 16 * 60,
+    },
+    "MGC": {  # COMEX gold : RTH 08:30-13:30 ET, Asia gold 19:00 ET (TOCOM/SHFE)
+        "asia_start":     19 * 60,         # 19:00 ET (Asian gold open)
+        "london_start":    3 * 60,         # 03:00 ET (London Bullion AM)
+        "us_start":        8 * 60 + 30,    # 08:30 ET (COMEX RTH gold open)
+        "us_after_start": 13 * 60 + 30,    # 13:30 ET (COMEX settle, after-hours)
+        # Note : MGC a aussi pause maintenance 17:00-18:00 ET, geree par Globex.
+        # Asia start 19:00 vs ES 18:00 = liquidite Gold demarre 1h plus tard.
+    },
+}
+
+
+def get_session_boundaries(symbol: str) -> dict[str, int]:
+    """Retourne les bornes de sessions (mins ET) pour un symbole.
+
+    Fail-loud si symbole inconnu (anti silent fallback).
+
+    Returns:
+        dict avec keys: asia_start, london_start, us_start, us_after_start
+        (toutes en mins depuis minuit ET).
+    """
+    sym = symbol.upper()
+    if sym not in SESSION_BOUNDARIES_BY_SYMBOL:
+        _logger.warning(
+            "get_session_boundaries: symbole inconnu '%s' — fallback ES (NYSE 09:30 RTH). "
+            "Ajouter SESSION_BOUNDARIES_BY_SYMBOL['%s'] dans constants.py.",
+            symbol, sym,
+        )
+        return SESSION_BOUNDARIES_BY_SYMBOL["ES"]
+    return SESSION_BOUNDARIES_BY_SYMBOL[sym]
+
 # Schema DMP version courante
 DMP_SCHEMA_VERSION: str = "3.7.2"
 DMP_SCHEMA_COLS: int = 262

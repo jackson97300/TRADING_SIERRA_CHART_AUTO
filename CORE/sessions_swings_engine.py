@@ -35,10 +35,20 @@ ET = ZoneInfo("America/New_York")
 TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — caller passe tick explicitement
 
 # Session boundaries en minutes ET (DST-aware automatique via zoneinfo)
-SESSION_ASIA_START = 18 * 60      # 18:00 ET
+# Defaults ES/NQ (NYSE convention). Pour MGC=08:30 ET RTH gold COMEX, utiliser
+# get_session_boundaries(symbol) depuis CORE/constants.py (Chantier 4 10/05/2026).
+SESSION_ASIA_START = 18 * 60      # 18:00 ET (default ES/NQ)
 SESSION_LONDON_START = 3 * 60     # 03:00 ET
-SESSION_US_START = 9 * 60 + 30    # 09:30 ET
-SESSION_US_AFTER_START = 16 * 60  # 16:00 ET
+SESSION_US_START = 9 * 60 + 30    # 09:30 ET (default ES/NQ — MGC=08:30)
+SESSION_US_AFTER_START = 16 * 60  # 16:00 ET (default ES/NQ — MGC=13:30)
+
+# Defaults dict pour passage aux sous-fonctions
+_DEFAULT_BOUNDS = {
+    "asia_start": SESSION_ASIA_START,
+    "london_start": SESSION_LONDON_START,
+    "us_start": SESSION_US_START,
+    "us_after_start": SESSION_US_AFTER_START,
+}
 
 # Swing detection params
 SWING_LOOKBACK = 10                # N bars de chaque cote
@@ -60,38 +70,54 @@ def _ts_to_et_mins(df: pd.DataFrame) -> pd.Series:
     return ts_et.dt.hour * 60 + ts_et.dt.minute, ts_et
 
 
-def add_session_metadata_v2(df: pd.DataFrame) -> pd.DataFrame:
+def add_session_metadata_v2(df: pd.DataFrame, bounds: dict | None = None) -> pd.DataFrame:
     """
     Ajoute session_id + booleans is_in_*.
 
-    session_id codes:
+    Args:
+        df: DataFrame avec ts_event
+        bounds: dict avec keys asia_start/london_start/us_start/us_after_start
+            (mins ET). Si None, utilise defaults ES/NQ (09:30 NYSE RTH).
+            Pour MGC, passer get_session_boundaries("MGC") depuis constants.py.
+
+    session_id codes (defaults ES/NQ) :
       0 = Asia (18:00-03:00 ET)
       1 = London (03:00-09:30 ET)
       2 = US Cash (09:30-16:00 ET)
       3 = US After-hours (16:00-18:00 ET)
+
+    Pour MGC : Asia 19:00-03:00, London 03:00-08:30, US RTH 08:30-13:30,
+    US After 13:30-19:00.
     """
+    if bounds is None:
+        bounds = _DEFAULT_BOUNDS
+    asia_start = bounds["asia_start"]
+    london_start = bounds["london_start"]
+    us_start = bounds["us_start"]
+    us_after_start = bounds["us_after_start"]
+
     df = df.copy()
     mins_et, ts_et = _ts_to_et_mins(df)
     df["mins_et"] = mins_et.values
 
-    # session_id selon mins_et
+    # session_id selon mins_et (utilise bounds per-symbole)
     sid = np.full(len(df), -1, dtype=np.int8)
-    sid[(mins_et >= SESSION_ASIA_START) | (mins_et < SESSION_LONDON_START)] = 0  # Asia
-    sid[(mins_et >= SESSION_LONDON_START) & (mins_et < SESSION_US_START)] = 1     # London
-    sid[(mins_et >= SESSION_US_START) & (mins_et < SESSION_US_AFTER_START)] = 2  # US Cash
-    sid[(mins_et >= SESSION_US_AFTER_START) & (mins_et < SESSION_ASIA_START)] = 3  # US After
+    sid[(mins_et >= asia_start) | (mins_et < london_start)] = 0  # Asia
+    sid[(mins_et >= london_start) & (mins_et < us_start)] = 1     # London
+    sid[(mins_et >= us_start) & (mins_et < us_after_start)] = 2  # US Cash (RTH)
+    sid[(mins_et >= us_after_start) & (mins_et < asia_start)] = 3  # US After
     df["session_id"] = sid
     df["is_in_asia"] = (sid == 0).astype("int8")
     df["is_in_london"] = (sid == 1).astype("int8")
     df["is_in_us_cash"] = (sid == 2).astype("int8")
     df["is_in_us_after"] = (sid == 3).astype("int8")
 
-    # date_session_trading : jour de session (= date ET, sauf si on est apres 18:00 -> jour suivant)
+    # date_session_trading : jour de session (= date ET, sauf si on est apres asia_start -> jour suivant)
     # Permet de regrouper toutes les bars d'une session de trading (Asia + London + US + After d'un meme cycle)
     date_et = ts_et.dt.date
-    # Si on est apres 18:00 ET (= debut Asia du J+1), session_date = date_et + 1
+    # Si on est apres asia_start ET (= debut Asia du J+1), session_date = date_et + 1
     df["session_date"] = np.where(
-        mins_et >= SESSION_ASIA_START,
+        mins_et >= asia_start,
         (ts_et + pd.Timedelta(days=1)).dt.date,
         date_et,
     )
@@ -185,22 +211,33 @@ def add_session_highs_lows(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.Data
     return df
 
 
-def add_session_opens(df: pd.DataFrame) -> pd.DataFrame:
+def add_session_opens(df: pd.DataFrame, bounds: dict | None = None) -> pd.DataFrame:
     """
     Opens de chaque session (concept ICT/SMC : prix d'ouverture = niveau cle).
-      asia_open    = open de la 1ere barre Asia (mins_et == 18:00 ET)
-      london_open  = open 1ere barre London (mins_et == 03:00 ET)
-      ny_open      = open 1ere barre US cash (mins_et == 09:30 ET)
-      after_open   = open 1ere barre after-hours (mins_et == 16:00 ET)
+      asia_open    = open de la 1ere barre Asia (defaults ES/NQ : 18:00 ET, MGC : 19:00 ET)
+      london_open  = open 1ere barre London (03:00 ET universel)
+      ny_open      = open 1ere barre US cash (defaults : 09:30 ET, MGC : 08:30 ET RTH gold)
+      after_open   = open 1ere barre after-hours (defaults : 16:00 ET, MGC : 13:30 ET)
+
+    Args:
+        df: DataFrame avec ts_event, open, close
+        bounds: dict per-symbole. Si None, defaults ES/NQ.
 
     Output (12 features) :
       asia_open, london_open, ny_open, after_open (PRIX -> exclude ML)
       dist_*_open_pct (ML, 4 features)
       above_*_open (booleans bias, 4 features)
     """
+    if bounds is None:
+        bounds = _DEFAULT_BOUNDS
+    asia_start = bounds["asia_start"]
+    london_start = bounds["london_start"]
+    us_start = bounds["us_start"]
+    us_after_start = bounds["us_after_start"]
+
     df = df.copy()
     if "session_id" not in df.columns:
-        df = add_session_metadata_v2(df)
+        df = add_session_metadata_v2(df, bounds=bounds)
 
     open_arr = df["open"].values
     close_arr = df["close"].values
@@ -216,20 +253,21 @@ def add_session_opens(df: pd.DataFrame) -> pd.DataFrame:
     # Track open par (sdate, target_minute)
     opens_dict = {}  # {(sdate, target_min) -> open_value}
 
+    targets = [asia_start, london_start, us_start, us_after_start]
     for i in range(n):
         sdate = sdate_arr[i]
         m = mins_arr[i]
         # Stocke open de la 1ere bar atteignant chaque target
-        for target in [SESSION_ASIA_START, SESSION_LONDON_START, SESSION_US_START, SESSION_US_AFTER_START]:
+        for target in targets:
             key = (sdate, target)
             if m == target and key not in opens_dict:
                 opens_dict[key] = open_arr[i]
 
-        # Recupere opens de la session_date courante
-        asia_o[i] = opens_dict.get((sdate, SESSION_ASIA_START), np.nan)
-        lon_o[i] = opens_dict.get((sdate, SESSION_LONDON_START), np.nan)
-        ny_o[i] = opens_dict.get((sdate, SESSION_US_START), np.nan)
-        aft_o[i] = opens_dict.get((sdate, SESSION_US_AFTER_START), np.nan)
+        # Recupere opens de la session_date courante (bounds per-symbole)
+        asia_o[i] = opens_dict.get((sdate, asia_start), np.nan)
+        lon_o[i] = opens_dict.get((sdate, london_start), np.nan)
+        ny_o[i] = opens_dict.get((sdate, us_start), np.nan)
+        aft_o[i] = opens_dict.get((sdate, us_after_start), np.nan)
 
     df["asia_open"] = asia_o
     df["london_open"] = lon_o
@@ -611,19 +649,30 @@ SESSIONS_SWINGS_GENERATED = {
 def apply_sessions_swings(df: pd.DataFrame, symbol: str = "ES") -> pd.DataFrame:
     """Pipeline complet Bloc 3 #8-10 : Sessions + Swings + bonus ICT/SMC.
 
-    symbol : utilise pour tick_size (MGC=0.10 vs ES/NQ=0.25) propage aux
-             helpers tick-aware (add_session_highs_lows, add_equal_swings).
+    symbol : utilise pour :
+      - tick_size (MGC=0.10 vs ES/NQ=0.25) propage aux helpers tick-aware
+        (add_session_highs_lows, add_equal_swings)
+      - session boundaries (Chantier 4 10/05/2026) : ES/NQ=09:30 NYSE RTH,
+        MGC=08:30 COMEX RTH gold. Propage a add_session_metadata_v2 et
+        add_session_opens. Cause racine fix NaN 71.9% cash sur MGC.
     """
     tick = _get_tick_size(symbol)
+
+    # Charge boundaries per-symbole (Chantier 4 fix sessions Gold)
+    try:
+        from CORE.constants import get_session_boundaries
+    except ImportError:
+        from constants import get_session_boundaries
+    bounds = get_session_boundaries(symbol)
 
     df = df.copy()
     drop_existing = [c for c in SESSIONS_SWINGS_GENERATED if c in df.columns]
     if drop_existing:
         df = df.drop(columns=drop_existing)
 
-    df = add_session_metadata_v2(df)
+    df = add_session_metadata_v2(df, bounds=bounds)
     df = add_session_highs_lows(df, tick=tick)
-    df = add_session_opens(df)
+    df = add_session_opens(df, bounds=bounds)
     df = add_swing_features_v2(df)
     df = add_liquidity_sweep(df)
     df = add_equal_swings(df, symbol=symbol, tick=tick)

@@ -41,7 +41,7 @@ TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — caller doit passer tick explicit
 # 1. SESSION HELPERS (ET timezone)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def add_session_metadata(df: pd.DataFrame) -> pd.DataFrame:
+def add_session_metadata(df: pd.DataFrame, bounds: dict | None = None) -> pd.DataFrame:
     """
     Ajoute date_et, mins_et, session_date_trading, is_cash_session, is_ib_window.
 
@@ -54,16 +54,19 @@ def add_session_metadata(df: pd.DataFrame) -> pd.DataFrame:
     ts_et = df["ts_event"].dt.tz_localize("UTC").dt.tz_convert(ET) if df["ts_event"].dt.tz is None else df["ts_event"].dt.tz_convert(ET)
     df["date_et"] = ts_et.dt.date
     df["mins_et"] = ts_et.dt.hour * 60 + ts_et.dt.minute
-    # Session trading date = date+1 si on est apres 18:00 ET
+    # Session trading date = date+1 si on est apres asia_start
+    asia_start = (bounds or {"asia_start": 1080})["asia_start"]
     df["session_date_trading"] = np.where(
-        df["mins_et"] >= 1080,
+        df["mins_et"] >= asia_start,
         (ts_et + pd.Timedelta(days=1)).dt.date,
         df["date_et"],
     )
-    # Cash session = 09:30-16:00 ET
-    df["is_cash_session"] = ((df["mins_et"] >= 570) & (df["mins_et"] < 960)).astype("int8")
-    # IB window = 09:30-10:30 ET
-    df["is_ib_window"] = ((df["mins_et"] >= 570) & (df["mins_et"] < 630)).astype("int8")
+    # Cash session = us_start -> us_after_start (defaults ES 09:30-16:00, MGC 08:30-13:30)
+    us_start = (bounds or {"us_start": 570})["us_start"]
+    us_after_start = (bounds or {"us_after_start": 960})["us_after_start"]
+    df["is_cash_session"] = ((df["mins_et"] >= us_start) & (df["mins_et"] < us_after_start)).astype("int8")
+    # IB window = us_start -> us_start+60 (1ere heure de RTH : 09:30-10:30 ES, 08:30-09:30 MGC)
+    df["is_ib_window"] = ((df["mins_et"] >= us_start) & (df["mins_et"] < us_start + 60)).astype("int8")
     return df
 
 
@@ -71,7 +74,8 @@ def add_session_metadata(df: pd.DataFrame) -> pd.DataFrame:
 # 2. INITIAL BALANCE (IB)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def add_ib_features(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame:
+def add_ib_features(df: pd.DataFrame, tick: float = TICK_SIZE,
+                     bounds: dict | None = None) -> pd.DataFrame:
     """ib_high/low/range/complete/atr/broken + position_pct.
 
     FIX 27/04 (anti-leak) : ib_high/low broadcast a tout le jour creait un leak
@@ -84,9 +88,12 @@ def add_ib_features(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame:
     """
     df = df.copy()
     if "date_et" not in df.columns:
-        df = add_session_metadata(df)
+        df = add_session_metadata(df, bounds=bounds)
 
-    # IB stats par jour : max(high)/min(low) sur fenetre 09:30-10:30 ET
+    # IB stats par jour : max(high)/min(low) sur fenetre 1h apres us_start
+    # ES/NQ : 09:30-10:30 ET, MGC : 08:30-09:30 ET (RTH gold COMEX)
+    us_start = (bounds or {"us_start": 570})["us_start"]
+    ib_close = us_start + 60
     ib_rows = df[df["is_ib_window"] == 1]
     ib_agg = ib_rows.groupby("date_et").agg(
         ib_high=("high", "max"),
@@ -94,8 +101,8 @@ def add_ib_features(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame:
     ).reset_index()
     df = df.merge(ib_agg, on="date_et", how="left")
 
-    # ib_complete : 1 si bar apres 10:30 ET (fin IB window)
-    df["ib_complete"] = (df["mins_et"] >= 630).astype("int8")
+    # ib_complete : 1 si bar apres us_start+60 (fin IB window per-symbole)
+    df["ib_complete"] = (df["mins_et"] >= ib_close).astype("int8")
 
     # FIX ANTI-LEAK : masker ib_high/low avant 10:30 ET (IB pas encore termine)
     is_pre_ib_close = df["ib_complete"] == 0
@@ -121,7 +128,8 @@ def add_ib_features(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame:
 # 3. SESSION HIGH/LOW (cumulative)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def add_session_high_low(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame:
+def add_session_high_low(df: pd.DataFrame, tick: float = TICK_SIZE,
+                          bounds: dict | None = None) -> pd.DataFrame:
     """
     sess_high/low cumulatif par session trading (CME : dim 18:00 ET -> ven 17:00 ET).
     + cash_high/low (cash session 09:30-16:00 ET seulement)
@@ -129,7 +137,7 @@ def add_session_high_low(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFr
     """
     df = df.copy()
     if "session_date_trading" not in df.columns:
-        df = add_session_metadata(df)
+        df = add_session_metadata(df, bounds=bounds)
 
     # Full trading session HH/LL
     df["sess_high"] = df.groupby("session_date_trading")["high"].cummax()
@@ -164,15 +172,22 @@ def add_session_high_low(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFr
 # 4. OPEN CASH + PRICE 10:30
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def add_open_cash_price1030(df: pd.DataFrame) -> pd.DataFrame:
-    """open_cash (close de barre 09:30 ET) + price_1030 (close de barre 10:30 ET)."""
+def add_open_cash_price1030(df: pd.DataFrame, bounds: dict | None = None) -> pd.DataFrame:
+    """open_cash (close de barre us_start) + price_1030 (close de barre us_start+60).
+
+    Per-symbole (Chantier 4 10/05/2026) :
+      - ES/NQ : open_cash = 09:30 ET, price_1030 = 10:30 ET
+      - MGC   : open_cash = 08:30 ET, price_1030 = 09:30 ET (RTH gold +1h IB)
+    """
     df = df.copy()
     if "date_et" not in df.columns:
-        df = add_session_metadata(df)
-    # Open cash = close de la barre 09:30 (mins_et == 570)
-    open_cash = df[df["mins_et"] == 570].groupby("date_et")["close"].first().rename("open_cash")
-    # Price 10:30 = close de la barre 10:30 (mins_et == 630), premiere apres IB complete
-    price_1030 = df[df["mins_et"] == 630].groupby("date_et")["close"].first().rename("price_1030")
+        df = add_session_metadata(df, bounds=bounds)
+    us_start = (bounds or {"us_start": 570})["us_start"]
+    ib_close = us_start + 60  # fin IB = 1h apres us_start
+    # Open cash = close de la barre us_start
+    open_cash = df[df["mins_et"] == us_start].groupby("date_et")["close"].first().rename("open_cash")
+    # Price 10:30 (ou 09:30 MGC) = close de la barre us_start+60, premiere apres IB complete
+    price_1030 = df[df["mins_et"] == ib_close].groupby("date_et")["close"].first().rename("price_1030")
     df = df.merge(open_cash, on="date_et", how="left")
     df = df.merge(price_1030, on="date_et", how="left")
     return df
@@ -227,6 +242,7 @@ def add_volume_profile_features(
     df: pd.DataFrame,
     trades_df: Optional[pd.DataFrame] = None,
     tick: float = TICK_SIZE,
+    bounds: dict | None = None,
 ) -> pd.DataFrame:
     """
     Ajoute cur_vpoc/vah/val (current day) + prev_vpoc/vah/val (yesterday) + pdh/pdl.
@@ -237,7 +253,7 @@ def add_volume_profile_features(
     """
     df = df.copy()
     if "date_et" not in df.columns:
-        df = add_session_metadata(df)
+        df = add_session_metadata(df, bounds=bounds)
 
     daily_profiles = {}
     daily_hl = {}
@@ -391,6 +407,7 @@ def add_all_phase_b_helpers(
     trades_df: Optional[pd.DataFrame] = None,
     tick: float = TICK_SIZE,
     enable_phase_c_running: bool = True,
+    bounds: dict | None = None,
 ) -> pd.DataFrame:
     """Pipeline complet Phase B helpers : sessions + IB + VP + sess HL + RVOL inputs + ATR.
 
@@ -401,16 +418,20 @@ def add_all_phase_b_helpers(
     trades_df fourni, ecrase cur_vpoc/vah/val EOD broadcast par leur version
     RUNNING (cumulatif depuis debut session), eliminant le lookahead intraday
     documente dans ML_EXCLUDE_FEATURES.
+
+    Chantier 4 (10/05/2026) : bounds per-symbole via get_session_boundaries(sym).
+    Defaults ES/NQ (09:30 NYSE RTH). Pour MGC, passer bounds=get_session_boundaries("MGC")
+    pour obtenir IB 08:30-09:30, cash 08:30-13:30 (COMEX RTH gold).
     """
     df = df.copy()
     drop_existing = [c for c in PHASE_B_HELPER_COLS if c in df.columns]
     if drop_existing:
         df = df.drop(columns=drop_existing)
-    df = add_session_metadata(df)
-    df = add_ib_features(df, tick=tick)
-    df = add_session_high_low(df, tick=tick)
-    df = add_open_cash_price1030(df)
-    df = add_volume_profile_features(df, trades_df=trades_df, tick=tick)
+    df = add_session_metadata(df, bounds=bounds)
+    df = add_ib_features(df, tick=tick, bounds=bounds)
+    df = add_session_high_low(df, tick=tick, bounds=bounds)
+    df = add_open_cash_price1030(df, bounds=bounds)
+    df = add_volume_profile_features(df, trades_df=trades_df, tick=tick, bounds=bounds)
     # Phase C : VPOC/VA running cumsum (ecrase cur_vpoc/vah/val EOD)
     if enable_phase_c_running and trades_df is not None and not trades_df.empty:
         from value_area_running import apply_value_area_running
