@@ -146,7 +146,10 @@ class MIABot:
         # Data feed DMP — cache des barres par symbole
         self._data_dir = Path(__file__).parent.parent / "DATA"
         self._dmp_reader = DmpReader(str(self._data_dir))
-        self._rolling = RollingFeatures()
+        # symbol="ES" car Bot 1 traite ES + NQ qui ont le meme tick=0.25.
+        # Si Bot 1 etendu MGC (Chantier 6), refactorer en dict per-symbol :
+        # self._rolling = {"ES": RollingFeatures(symbol="ES"), "MGC": RollingFeatures(symbol="MGC")}
+        self._rolling = RollingFeatures(symbol="ES")
         self._intermarket = IntermarketFeatures()
         self._last_bar_count: dict = {}  # {symbol: nb barres vues}
         self._features_cache: dict = {}  # {symbol: dernier dict features}

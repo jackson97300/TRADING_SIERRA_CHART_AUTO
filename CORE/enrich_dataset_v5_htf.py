@@ -465,7 +465,9 @@ def add_mq_levels_per_tf(df_1m_enriched: pd.DataFrame,
     if tf_suffixes is None:
         tf_suffixes = ["_5m", "_15m", "_1h"]
 
-    TICK_SIZE = 0.25  # ES + NQ futures
+    TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — TODO Chantier 6 : signature
+                      # add_mq_levels_per_tf() doit accepter tick_size param (actuellement
+                      # hardcoded local = MGC silencieusement faux si appele).
 
     for feat, cfg in MQ_FEATURES_TO_RECALC.items():
         if feat not in df.columns:

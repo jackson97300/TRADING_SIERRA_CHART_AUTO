@@ -35,7 +35,7 @@ from typing import Dict
 ROOT = Path(__file__).resolve().parents[1]
 TRADES_ROOT = ROOT / "DATA" / "databento" / "GLBX.MDP3" / "trades"
 
-TICK_SIZE = 0.25
+TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — caller passe tick explicitement
 HVN_QUANTILE = 0.70
 LVN_QUANTILE = 0.30
 NEAR_RANGE_TICKS = 100
@@ -288,9 +288,22 @@ def add_hvn_lvn_features(df_v4: pd.DataFrame,
 
     Args:
         df_v4 : DataFrame V4 indexed ts_event avec close + target_col
-        symbol : 'ES' ou 'NQ' (sans .c.0)
+        symbol : 'ES', 'NQ' ou 'MGC' (sans .c.0)
         target_col : col V4 utilisee pour lvn_between/hvn_between target
+
+    FIX 10/05/2026 (audit profond Chantier 1) : symbol etait recu mais NON
+    propage a compute_rolling_profile_per_minute() ni compute_hvn_lvn_features
+    _for_bar(). Resultat : tick_size=0.25 hardcoded → 9 features HVN/LVN cassees
+    sur MGC (tick=0.10). Bug DORMANT sur ES/NQ (mêmes ticks). Fix : lookup
+    tick_size par symbole + propagation aux 2 fonctions internes.
     """
+    try:
+        from CORE.constants import get_tick_size as _get_tick_size
+    except ImportError:
+        from constants import get_tick_size as _get_tick_size
+
+    tick_size = _get_tick_size(symbol)
+
     out = df_v4.copy()
     if "ts_event" not in out.columns:
         raise ValueError("df_v4 must have ts_event col")
@@ -320,7 +333,8 @@ def add_hvn_lvn_features(df_v4: pd.DataFrame,
             continue
 
         # FIX review Q1 (anti-leak strict) : rolling intra-session par minute
-        cumul = compute_rolling_profile_per_minute(df_trades)
+        # FIX 10/05/2026 : tick_size propage par symbol (MGC=0.10 vs ES/NQ=0.25)
+        cumul = compute_rolling_profile_per_minute(df_trades, tick_size=tick_size)
         if cumul.empty:
             continue
 
@@ -342,7 +356,10 @@ def add_hvn_lvn_features(df_v4: pd.DataFrame,
                 continue  # Trop tot dans session (premiere minute) → NaN partout
 
             hvn, lvn = identify_hvn_lvn(profile_t)
-            feats = compute_hvn_lvn_features_for_bar(close, target, hvn, lvn)
+            # FIX 10/05/2026 : tick_size propage (etait hardcoded 0.25)
+            feats = compute_hvn_lvn_features_for_bar(
+                close, target, hvn, lvn, tick_size=tick_size
+            )
             for c, v in feats.items():
                 out.at[idx, c] = v
 

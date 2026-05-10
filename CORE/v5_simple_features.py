@@ -22,7 +22,9 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 
-TICK_SIZE = 0.25  # ES + NQ futures
+TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — TODO Chantier 6 : ajouter param symbol
+                  # caller passe tick aux fonctions add_v5_simple_features (signature
+                  # actuellement sans symbol = MGC silencieusement faux si appele).
 
 # Niveaux clés pour bool_near_level
 KEY_LEVELS = [

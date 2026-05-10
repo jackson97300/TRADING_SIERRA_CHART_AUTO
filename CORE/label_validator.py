@@ -339,7 +339,9 @@ class LabelValidator:
         expected = EXPECTED_TP_SL.get(self.symbol)
         if expected:
             # tp_pts/sl_pts sont en points (pas ticks), convertir avec TICK_SIZE
-            tick_size = 0.25  # ES et NQ
+            tick_size = 0.25  # default ES/NQ. MGC=0.10 — TODO Chantier 6 : recuperer
+                              # tick_size par symbole via expected['symbol'] ou param fonction
+                              # (actuellement hardcoded = MGC silencieusement faux).
             expected_tp = expected["tp_ticks"] * tick_size
             expected_sl = expected["sl_ticks"] * tick_size
             tolerance = 0.2  # 20%

@@ -29,20 +29,42 @@ from typing import Optional
 
 from constants import INSTANT_ABSORPTION_DELTA_K, INSTANT_ABSORPTION_WINDOW
 
+# Pattern try/except pour 2 conventions sys.path (ROOT vs CORE)
+try:
+    from CORE.constants import get_tick_size as _get_tick_size
+except ImportError:
+    from constants import get_tick_size as _get_tick_size
+
 
 class RollingFeatures:
     """Calcule 44 features derivees sur fenetres glissantes."""
 
-    def __init__(self, short: int = 3, mid: int = 5, long: int = 10):
+    def __init__(self, short: int = 3, mid: int = 5, long: int = 10,
+                  symbol: str | None = None):
         """
         Args:
             short: Fenêtre courte (3 barres = ~3 min)
             mid:   Fenêtre moyenne (5 barres = ~5 min)
             long:  Fenêtre longue (10 barres = ~10 min)
+            symbol: ES, NQ, MGC. Si None, fallback ES + WARNING (16 callers
+                legacy avant 10/05/2026 instanciaient sans symbol). Pour MGC,
+                OBLIGATOIRE sinon ctx_range_vs_atr_10 sous-estime 2.5x (bug
+                audit 09-10/05/2026).
         """
+        import logging
+        _logger = logging.getLogger(__name__)
+        if symbol is None:
+            _logger.warning(
+                "RollingFeatures() instancie sans symbol — fallback ES (tick=0.25). "
+                "Pour MGC (tick=0.10), passer symbol='MGC' explicitement. "
+                "Sinon ctx_range_vs_atr_10 sera sous-estime d'un facteur 2.5x."
+            )
+            symbol = "ES"
         self.short = short
         self.mid = mid
         self.long = long
+        self.symbol = symbol.upper()
+        self.tick_size = _get_tick_size(self.symbol)
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -167,10 +189,11 @@ class RollingFeatures:
         )
 
         # 16. Range vs ATR sur 10 barres (expansion vs contraction)
+        # FIX 10/05/2026 : tick_size depuis self (per-symbole). MGC=0.10 vs ES/NQ=0.25.
+        # Avant : tick_size=0.25 hardcoded -> ratio 2.5x trop grand pour MGC.
         price_max = df["price"].rolling(self.long, min_periods=2).max()
         price_min = df["price"].rolling(self.long, min_periods=2).min()
-        tick_size = 0.25  # NQ et ES
-        range_ticks = (price_max - price_min) / tick_size
+        range_ticks = (price_max - price_min) / self.tick_size
         df["ctx_range_vs_atr_10"] = range_ticks / df["atr"].replace(0, np.nan)
 
         # 17. Vélocité position dans l'IB
@@ -410,27 +433,13 @@ class RollingFeatures:
             df["ctx_excess_low_bars"] = np.nan
             df["ctx_poor_low"] = 0.0
 
-        # FIX 13/04/2026 : bool_near_level reconstruit en Python
-        # L'original C++ utilisait des seuils PROXIMITY_ES=20, PROXIMITY_NQ=30
-        # mal calibres (ratio 2.3x ES/NQ dans quality_validator).
-        # Formule : min(|dist_vwap_d|, |dist_ib_high|, |dist_sess_high|,
-        #              |dist_swing_high|) / atr < 0.06
-        # 0.06 * atr = ~8 ticks ES, ~34 ticks NQ. Cohérent "zone serree niveau".
-        # Attention : dist_vwap_d est en POINTS (decimales), convertir en ticks.
-        dist_cols_points = {"dist_vwap_d", "dist_vwap_m"}  # POINTS → /0.25
-        dist_cols_all = ["dist_vwap_d", "dist_ib_high", "dist_sess_high", "dist_swing_high"]
-        dist_present = [c for c in dist_cols_all if c in df.columns]
-        if dist_present and "atr" in df.columns:
-            atr_safe = pd.to_numeric(df["atr"], errors="coerce").replace(0, np.nan)
-            abs_ticks = pd.DataFrame(index=df.index)
-            for c in dist_present:
-                v = pd.to_numeric(df[c], errors="coerce").abs()
-                if c in dist_cols_points:
-                    v = v / 0.25  # POINTS → TICKS
-                abs_ticks[c] = v
-            min_dist = abs_ticks.min(axis=1)
-            df["bool_near_level"] = (min_dist / atr_safe < 0.06).astype(float)
-        # else : bool_near_level garde sa valeur C++ (d.bool_near_level de DMP_Transform)
+        # DESACTIVE 24/04/2026 (schema 3.7.11) : override Python supprime.
+        # Ancien code reconstruisait `bool_near_level` avec 4 niveaux seulement
+        # (vwap_d, ib_high, sess_high, swing_high) et seuil 0.06*ATR.
+        # Le C++ DMP_Transform.h::CalcBooleans (fix 24/04) genere desormais
+        # `bool_near_level` avec 23 niveaux majeurs et seuil 10 ticks strict.
+        # Le dataset ML lit directement la valeur C++ depuis JSONL (plus propre).
+        # Cf DOCS/INCIDENT_LOG.md 24/04 et DMP_Config.h changelog 3.7.11.
 
         # ─── DELTA DIVERGENCE — Reconstruction Python (17/04/2026) ─────────
         # Le C++ delta_divergence est POLLUE (bug Extension Line Count = 100%

@@ -62,6 +62,10 @@ TOOLS/
 STUDIES/
 SNAPSHOTS/
 
+# Exception : tools/ (lowercase) = scripts utilitaires projet (lint guards, hooks)
+!tools/
+!tools/*.py
+
 # === OS ===
 Thumbs.db
 Desktop.ini

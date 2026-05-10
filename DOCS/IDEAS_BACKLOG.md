@@ -53,3 +53,101 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 - [2026-05-01] SL Budget 75→120 : DEPLOY (107 rejets observés, calcul Topstep OK)
 - [2026-05-01] Pullback entry : REJECT pour deploy (backtest -$111 net, mais limites méthodologiques)
 - [2026-05-01] Reversal indicator : OBSERVE-ONLY 100+ trades futurs avant deploy
+
+## Dette technique MGC — Chantier 1 tick_size centralise (2026-05-10)
+
+### Contexte
+Chantier 1 a centralise `get_tick_size(symbol)` dans 11 modules pipeline V4
+actifs (build_dataset_v4_*, phase_b_*, rolling_features, sessions_swings,
+edge_zones, value_area_running, footprint_builder, game_changers,
+market_profile_rolling, phase_d_dalton_levels). Pipeline ES+NQ valide
+end-to-end (test 2026-04-01 : 1380 bars × 90 cols, pas de regression).
+
+### Dette residuelle (47 fichiers hors scope MGC actuel)
+Audit code-reviewer 2026-05-10 a identifie ~47 fichiers avec `TICK_SIZE = 0.25`
+hardcode dans des modules **hors pipeline V4 actif** :
+
+**A migrer SI Bot 1/2/3 etendus a MGC live** (Chantier 6) :
+- `CORE/mia_paper_trader.py` (Bot 1)
+- `CORE/databento_paper_trader.py`, `databento_paper_trader_v2.py` (Bot 2/3)
+- `CORE/dataset_builder.py` (legacy v1/v2)
+
+**A migrer SI utilises pour MGC backtests/research** :
+- `CORE/research/*.py` (~30 scripts audit)
+- `CORE/backtest_*.py` (3 scripts)
+- `CORE/audit_*.py` (~10 scripts)
+
+**Fichiers dette annexe** :
+- `CORE/intermarket_features.py` : ES↔NQ pair fixe, refactor pour MGC en
+  Chantier 5 (option A skip / B paire MGC↔DXY)
+- `CORE/build_dataset_v4_phase_b.py:386-392` : `apply_intermarket_pair`
+  utilise TICK_SIZE=0.25 OK pour ES/NQ pair, refactor MGC en Chantier 5
+- 16 callers `RollingFeatures()` sans symbol (warn emis a chaque appel)
+  - `bot_main.py:149` migre 10/05 a `RollingFeatures(symbol="ES")` (1 inst shared ES+NQ)
+  - 15 autres (dataset_builder, mia_sim, mia_bench, test_all, pattern_discovery,
+    backtest_strategies, backtest_chantiers, backtest_div) : warning OK car
+    ces scripts traitent ES/NQ en mono-instrument hardcode
+
+### Action
+Aucune action immediate. Documente pour pas oublier au moment du Chantier 6
+(paper traders MGC) et Chantier 5 (intermarket MGC).
+
+
+## Plan migration long terme dette TICK_SIZE (10/05/2026)
+
+### Solution preventive deployee
+1. **Lint guard** : `tools/check_tick_hardcode.py` scan automatique
+2. **Rule** : `.claude/rules/tick-size-policy.md` documente patterns interdits/acceptes
+3. **Pre-commit hook** (optionnel) : `python tools/check_tick_hardcode.py --strict`
+
+### Categorisation 107 violations residuelles
+
+**Tier A - BOT LIVE (critique 5 modules)** — A migrer AVANT extension MGC live :
+- `BOT/bot_config.py` (2 violations)
+- `BOT/trade_journal.py` (1)
+- `CORE/databento_bot.py` (1)
+- `CORE/databento_paper_trader.py` (1)
+- `CORE/mia_paper_trader.py` (1)
+
+Effort estime : 2.5-4h (5 modules x 30-45 min refactor + tests). **Priorite haute** :
+ces modules sont en prod active.
+
+**DEADLINE : 31/05/2026** (3 semaines). Si non migre, documenter retard dans
+`DOCS/INCIDENT_LOG.md` categorie SCOPE_CREEP avec raison.
+
+A faire en Chantier 6 (Paper traders state dicts MGC).
+
+**Tier B - PIPELINE LEGACY (8 modules)** — A migrer SI utilises pour dataset MGC :
+- `CORE/dataset_builder.py` (2) - V1/V2 legacy
+- `CORE/load_mq_levels.py`, `menthorq_backfill_injector.py`, `enrich_dataset_v5_htf.py`
+- `CORE/databento_dumper.py`, `ib_recalc.py`, `mia_session_replay.py`, `mia_sim.py`
+
+Effort : 4-6h. **Priorite moyenne** : utilises principalement pour ES/NQ.
+
+**Tier C - RESEARCH/AUDIT (~50 modules)** — Migration optionnelle :
+- `CORE/research/*.py` (~30 scripts audits ponctuels)
+- `CORE/audit_*.py` (~10)
+- `CORE/backtest_*.py`, `CORE/feature_rules_*.py`, `CORE/mia_double_top.py`...
+
+Effort : 8-12h. **Priorite basse** : scripts one-shot, peuvent etre migres
+au case-by-case quand reutilises pour MGC.
+
+**Tier D - TESTS/SCRIPTS (~30 modules)** — A juger :
+- `BOT/test_dtc_*.py` (test scripts)
+- `BOT/audit_*.py`, `BOT/backtest_*.py`
+- `CORE/test_*.py`, scripts research/
+
+Souvent OK car testent ES/NQ uniquement. Migration uniquement si besoin MGC.
+
+### Sequencement recommande
+
+| Phase | Quand | Modules | Effort |
+|---|---|---|---|
+| 1 | Avant Chantier 6 | Tier A (5 bot live) | 2-3h |
+| 2 | Quand MGC dataset = priorite | Tier B (8 legacy) | 4-6h |
+| 3 | Au cas par cas | Tier C/D (~80) | n/a |
+
+### Garde-fou
+Le lint guard `tools/check_tick_hardcode.py` empeche tout NOUVEAU module de
+violer. Donc la dette est PLAFONNEE — elle ne peut que diminuer dans le temps.
+
