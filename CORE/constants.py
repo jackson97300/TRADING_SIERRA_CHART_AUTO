@@ -179,6 +179,12 @@ SYMBOL_TO_DATABENTO_TICKER: dict[str, str] = {
     "ES":  "ES.c.0",   # quarterly rollover, pas de bug observe
     "NQ":  "NQ.c.0",   # idem
     "MGC": "MGC.v.0",  # volume-based, evite bug rollover GC futures monthly
+    # Phase D Gold features (12/05/2026, market-analyst R3) :
+    "6E":  "6E.c.0",   # Euro/USD futures CME - proxy DXY gratuit (-0.9 corr)
+                       # (DX.c.0 sur ICE Futures, pas dans GLBX.MDP3 sub $179)
+    "SI":  "SI.c.0",   # Silver futures - im_silver_lead_lag (SI/MGC ratio)
+    "ZN":  "ZN.c.0",   # 10-yr Treasury - im_real_yields_proxy (TIPS proxy)
+    "ZB":  "ZB.c.0",   # 30-yr Treasury - idem, complement ZN
 }
 
 
