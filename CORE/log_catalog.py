@@ -59,6 +59,7 @@ LOG_CODES = {
     "ORDER_ACK_TIMEOUT":       (LogLevel.MAJEUR,   "execution", "Timeout ACK broker sur ordre {order_id} apres {timeout}s"),
     # 12/05 FIX entry_price (cf INCIDENT_LOG 2026-05-12 03:30) — race condition resolue
     "BOT_ENTRY_FILL_RECORDED": (LogLevel.INFO,     "execution", "Entry fill enregistre : {sym} {direction} signal={signal_price} fill={fill_price} drift={drift_ticks}t bot={bot}"),
+    "BOT_DRIFT_WARNING":       (LogLevel.ALERTE,   "execution", "Drift entry eleve mais sous seuil : {sym} {direction} drift={drift_ticks}t threshold={threshold}t (50-100%) bot={bot}"),
     "BOT_DRIFT_REJECT":        (LogLevel.MAJEUR,   "execution", "Trade refuse drift excessif : {sym} {direction} drift={drift_ticks}t threshold={threshold}t bot={bot}"),
     "OCO_CANCEL_OPPOSITE":     (LogLevel.INFO,     "execution", "OCO cancel oppose : {order_id}"),
     "OCO_ORPHAN_DETECTED":     (LogLevel.CRITIQUE, "execution", "Position orpheline detectee : {order_id}, cancel force"),

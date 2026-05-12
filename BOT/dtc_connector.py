@@ -316,8 +316,18 @@ class DTCConnector:
             # 12/05 FIX : persister fill_price dans _last_fill_prices pour callers
             # (Bot 1/2 V6/3) qui appellent get_last_fill_price() apres return.
             # Resout race condition _handle_dtc_fill is_parent (code mort).
+            # FIX R1 code-reviewer : LRU cap 1000 entries pour eviter fuite memoire
+            # (worst case 100 trades/jour x 365j = 36500 entries ~2.9MB/an, mais
+            # propre = cap explicite). Eviction FIFO de la plus ancienne.
             if fill_price > 0:
                 with self._last_fill_lock:
+                    if len(self._last_fill_prices) >= 1000:
+                        # Pop oldest entry (FIFO eviction)
+                        try:
+                            oldest_key = next(iter(self._last_fill_prices))
+                            self._last_fill_prices.pop(oldest_key, None)
+                        except StopIteration:
+                            pass
                     self._last_fill_prices[parent_id] = fill_price
             slip_t = 0.0
             reprice_done = False

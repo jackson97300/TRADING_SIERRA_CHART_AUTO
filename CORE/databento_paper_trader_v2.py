@@ -2460,6 +2460,13 @@ class DatabentoPaperTraderV2:
                   drift_ticks=round(drift_abs, 1),
                   threshold=max_drift, bot="bot3_mp")
             return False
+        # 12/05 FIX Jackson : alerte precoce drift 50-100% seuil pour visibilite
+        # immediate dashboard avant le reject (pas attendre que ca arrive).
+        if drift_abs >= max_drift * 0.5:
+            _emit("BOT_DRIFT_WARNING",
+                  sym=sym, direction=signal.side,
+                  drift_ticks=round(drift_abs, 1),
+                  threshold=max_drift, bot="bot3_mp")
 
         if signal.side == "LONG":
             side_int = DTC_BUY
