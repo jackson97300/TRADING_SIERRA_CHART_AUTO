@@ -46,6 +46,34 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-05-12 09:20 — [VALIDATION_MISS] — Rebuild V4 enriched mai 2026 confirme partial fix + identifie Cat A residuelle
+
+**Contexte** : Bot 1+Bot 2 V6 trade SHORT correctement (DMP Sierra OK) mais Bot 3 prend LONGs contre-tendance dans marché baissier. Audit features V4 enriched 12/05 06:54 UTC : 88.5% NaN sur 17 features regime critiques. Fix `--use-mq-lite` deploye 02:30 UTC ne touche que les nouvelles bars → parquet existant cassé.
+
+**Action 09:06 UTC** : rebuild V4 enriched complet ES+NQ mai 2026 (12 jours BUILD_V4 + PHASE_B 147s). Stop MIA-LivePipeline + force rebuild + restart.
+
+**Résultat** :
+- ✅ **17 features Cat B réparées partiellement** : 88.5% NaN → **36.3% NaN** (-52pp). Les 36.3% restants sont probablement bars hors RTH (event-based normal).
+- ❌ **Cat A 100% NaN définitif** : `atr_regime_zscore_60d` (bug min_periods=13800 vs 9977 bars disponibles), `dist_mq_call/put/hvl/0dte` (MQ Lite scsf démarré 08/05), `dist_gex_nearest_*` NQ, `dist_blind_*` NQ, `days_since_roll`, `roll_phase`, `n_long_*_zones_active`, `im_ltr_slope_diff`.
+
+**Cat A causes investiguer** :
+- `atr_regime_zscore_60d` : rolling 60j × 1380 bars = 82800 bars requis, mai a 9977 → JAMAIS calculable sur mois unique. Solution : charger historique cross-mois OU réduire min_periods.
+- `dist_mq_*_0dte` : 5 jours sans MQ Lite (01-07/05). Backfill ou accept NaN.
+- Autres Cat A : pipeline engine à investiguer (engines individuels non-fixés).
+
+**Leçon** :
+1. Toute extension de schema `DMP_MQ_FIELDS` nécessite synchro `load_mq_levels.py` ET rebuild backfill complet (pas juste live).
+2. Rolling features cross-mois doivent charger historique antérieur OU baisser min_periods.
+3. Filter `BOT3_REGIME_SKIP` ne pourra activer que pendant RTH après rebuild + features Cat A non-bloquantes pour compute_regime.
+
+**Trigger prevention** :
+- Avant tout déploiement filter regime/qualité, audit `% NaN par feature` sur 30j historique (pas just 100 bars).
+- Tout `min_periods >= n_bars_mensuel` nécessite handling cross-mois explicite OU fallback.
+
+**Validation J+1** : à 14:00 UTC test `regime_actionable > 10%` pendant RTH. Si oui → filter ressuscité. Si non → Cat A bugs bloquants → investigation prioritaire.
+
+**Reviewed** : self + agent code-reviewer (audit features V4 + cause racine) + cross-check empirique audit_v4_regime_features_now.py
+
 ### 2026-05-12 03:00 — [VALIDATION_MISS] — Mode --use-mq-lite ne charge pas DMP JSONL → 6 features V4 enriched 100% NaN
 
 **Contexte** : Investigation veto swing_proximity 12/05. Découverte que `range_pos`, `profile_shape`, `trend_day_probability`, `bars_in_va`, `cvd_day_dir`, `dist_mq_call_0dte` toutes 100% NaN dans V4 enriched parquet (9716 bars NQ mai 2026), alors qu'OK dans Sierra DMP JSONL.
