@@ -57,6 +57,9 @@ LOG_CODES = {
     "DTC_FILL_SYMBOL_DEBUG":   (LogLevel.INFO,     "execution", "DTC fill debug : cid={cid} symbol_raw={symbol_raw} present={symbol_present} acct={trade_account} fill={fill_price} parent={is_parent} keys={msg_keys}"),
     "ORDER_REJECT":            (LogLevel.MAJEUR,   "execution", "Ordre refuse broker : {sym} code={err_code} msg={err_msg}"),
     "ORDER_ACK_TIMEOUT":       (LogLevel.MAJEUR,   "execution", "Timeout ACK broker sur ordre {order_id} apres {timeout}s"),
+    # 12/05 FIX entry_price (cf INCIDENT_LOG 2026-05-12 03:30) — race condition resolue
+    "BOT_ENTRY_FILL_RECORDED": (LogLevel.INFO,     "execution", "Entry fill enregistre : {sym} {direction} signal={signal_price} fill={fill_price} drift={drift_ticks}t bot={bot}"),
+    "BOT_DRIFT_REJECT":        (LogLevel.MAJEUR,   "execution", "Trade refuse drift excessif : {sym} {direction} drift={drift_ticks}t threshold={threshold}t bot={bot}"),
     "OCO_CANCEL_OPPOSITE":     (LogLevel.INFO,     "execution", "OCO cancel oppose : {order_id}"),
     "OCO_ORPHAN_DETECTED":     (LogLevel.CRITIQUE, "execution", "Position orpheline detectee : {order_id}, cancel force"),
     "TRAILING_ACTIVATED":      (LogLevel.INFO,     "execution", "Trailing actif : {sym} SL {old}->{new}"),
@@ -123,6 +126,26 @@ LOG_CODES = {
     "GATE_CONSEIL_CONFLIT":     (LogLevel.INFO,    "decisions", "Conseil CONFLIT : {sym} bull={bull_pts} bear={bear_pts}"),
     "GATE_SELL_AUTO_DISABLED":  (LogLevel.ALERTE,  "decisions", "SELL auto-disabled : {sym} reason={reason}"),
     "GATE_FRESHNESS_EXPIRED":   (LogLevel.INFO,    "decisions", "Freshness expire : {sym} state={freshness}"),
+    # Option B 05/05 : signal RESCUED par seuil EXECUTION (4 bars) qui aurait ete
+    # bloque par seuil DISPLAY (2 bars). Permet audit J+1 : combien de trades
+    # debloques par le fix vs ancien comportement.
+    "GATE_CONSEIL_EXEC_RESCUED":(LogLevel.INFO,    "decisions", "Signal RESCUED Option B : {sym} dir={direction} bull={bull_pts} bear={bear_pts} age_bars={age_bars} (UI=EXPIRED, EXEC=PERSISTENT)"),
+    # ChaseTopGate 05/05 (walk-forward Lopez DSR=0.72) : bloque LONG range_pos>=60.
+    "GATE_CHASE_TOP_LONG_BLOCK":(LogLevel.INFO,    "decisions", "Chase top bloque : {sym} {direction} range_pos={range_pos}% >= {threshold}% (walk-forward DSR=0.72)"),
+    # R2 : audit RESCUED offline J+7 — emit par audit_chase_top_rescued.py (script
+    # post-hoc qui parse les blocks et matche prix t+30min). Mesure false-block rate.
+    "GATE_CHASE_TOP_LONG_RESCUED":(LogLevel.INFO, "decisions", "Chase top RESCUED audit : {sym} block_ts={block_ts} price_ref={price_ref} mfe_30min={mfe_ticks}t (filter rate des TPs)"),
+    # Observe-only tracker SHORT au bottom (05/05 — risque miroir ChaseTopGate).
+    # Audit n=32 dit NOGO block, mais sample sous Lopez seuil n>=100.
+    # Track SHORT pris a range_pos<=30 sur 2-4 semaines pour valider l'asymetrie.
+    # Si WR_chase_bottom < WR_baseline - 15% => deployer ChaseBottomGate SHORT.
+    "SHORT_AT_BOTTOM_OBSERVED":(LogLevel.INFO,    "decisions", "SHORT au bottom observe : {sym} range_pos={range_pos}% entry={entry_price} (audit J+14 vs WR baseline)"),
+    # Edge zones retest observe-only (06/05 — V4 Phase B+++ Edge Zones).
+    # Setup ICT : push violent cree une zone edge -> prix revient -> rebond/rejet.
+    # Track les bars qui touchent une zone edge (|dist|<=0.10%) pour audit J+14
+    # WR vs baseline. Si fort signal -> proposer setup actif sur Bot V6.
+    "EDGE_SELL_RETEST_OBSERVED":(LogLevel.INFO,   "decisions", "Edge SELL retest observe : {sym} dist={dist_pct}% n_active={n_active} entry={entry_price} (SHORT setup ICT)"),
+    "EDGE_BUY_RETEST_OBSERVED":(LogLevel.INFO,    "decisions", "Edge BUY retest observe : {sym} dist={dist_pct}% n_active={n_active} entry={entry_price} (LONG setup ICT)"),
     "GATE_SIGNAL_DEDUPED":      (LogLevel.INFO,    "decisions", "Signal dedup : {sym} signal_id={signal_id}"),
     "GATE_CONF_TOO_LOW":        (LogLevel.INFO,    "decisions", "Confidence too low : {sym} conf={confidence} < {min_conf_required}"),
     "GATE_MTF_INSUFFICIENT":    (LogLevel.INFO,    "decisions", "MTF insuffisant : {sym} dir={direction} bulls={mtf_bulls}/{mtf_bears} need>={min_required}"),
@@ -229,6 +252,12 @@ LOG_CODES = {
     "SLTP_FALLBACK_STANDARD":    (LogLevel.INFO,     "decisions", "SLTP fallback STANDARD : {sym} dir={direction} reason={reason_fallback} sl={sl_ticks}t tp={tp_ticks}t"),
     "SLTP_NO_VALID_WALL":        (LogLevel.ALERTE,   "decisions", "SLTP no valid wall : {sym} dir={direction} → fallback FIXED applique sl={sl_fixed}t tp={tp_fixed}t reject_reason={reject_reason}"),
     "SLTP_TP_BEHIND_WALL_DETECTED": (LogLevel.CRITIQUE, "decisions", "ANOMALIE TP DERRIERE MUR : {sym} dir={direction} tp_price={tp_price} mur={wall_name}@{wall_price} delta={delta_ticks}t — bug pre-CAS4 ?"),
+    # FIX 07/05 (Jackson "voyants verts mais bot mort") : codes manquants causant
+    # EMIT_FAIL en boucle sur MIA-DataBento-Paper -> service crash silencieux.
+    # SLTP_CAS4_T2_OBSERVED : mur T2 hors structurel qui aurait capote (observability).
+    # SLTP_CAS4_CAUSED_REJECT : capot CAS 4 a fait chuter R:R sous MIN_RR_RATIO -> reject.
+    "SLTP_CAS4_T2_OBSERVED":     (LogLevel.INFO,     "decisions", "SLTP CAS 4 T2 OBSERVED : {sym} dir={direction} mur T2 hors structurel {wall_name}@{wall_dist}t aurait capote tp_devant={tp_devant}t tp_actual={tp_actual}t"),
+    "SLTP_CAS4_CAUSED_REJECT":   (LogLevel.MAJEUR,   "decisions", "SLTP CAS 4 reject : {sym} dir={direction} capot {subtier} {wall_name} ({wall_col}@{wall_dist}t) a fait chuter R:R {rr_pre:.2f} -> {rr_post:.2f} (< MIN_RR_RATIO 0.8). reason={reject_reason}"),
 
     # ════════════════════════════════════════════════════════════════════
     # QualityGate v3 (Bot 2 step 6.5 — 01/05/2026)
@@ -268,6 +297,19 @@ LOG_CODES = {
     # 01/05 Jackson "INADMISSIBLE 33 min" : Bot 2 lit close LIVE_CACHE pour scoring.
     # Emit max 1x/min/symbole pour audit drift live vs parquet.
     "LIVE_BAR_OVERRIDE":         (LogLevel.INFO,     "events", "Live bar override : {sym} close_parquet={close_parquet} close_live={close_live} delta={delta_ticks}t live_age={live_age_sec}s"),
+    # 04/05 Jackson — Etape 1 anti-slippage long terme. Bot 2 V2 + Bot 3 utilisent
+    # live_cache.get_signal_entry_ref() au lieu de signal.price (parquet 30s+ retard).
+    # Emit chaque trade pour audit drift signal vs prix de reference live utilise.
+    "LIVE_REF_USED":             (LogLevel.INFO,     "events", "Live ref used : {sym} bot={bot} signal_price={signal_price} live_ref={live_ref} src={ref_source} drift={drift_ticks}t"),
+    # 04/05 — Politique STRICT : si live cache stale > 180s, bot skip le trade.
+    # Indique que la chaine live cache est cassee, signal a investiguer.
+    "LIVE_CACHE_STALE_SKIP":     (LogLevel.MAJEUR,   "decisions", "Live cache stale SKIP trade : {sym} bot={bot} signal_price={signal_price} fallback={fallback_mode}"),
+    # 04/05 — Etape 2 anti-slippage : metric slip systematique (signal_ref vs fill).
+    # Permet audit J+1 du slippage reel et regression du fix live cache.
+    "BRACKET_SLIP_METRIC":       (LogLevel.INFO,     "execution", "Bracket slip {sym} {side} parent={parent_id} ref={signal_ref_price} fill={fill_price} slip={slip_ticks}t"),
+    # 04/05 — Etape 2 : reprice declenche si slip > seuil (default 5t). Recalc
+    # SL/TP depuis fill_price reel AVANT envoi childs. Conforme FIX B-1 (02/05).
+    "BRACKET_REPRICE":           (LogLevel.MAJEUR,   "execution", "Bracket reprice {sym} parent={parent_id} slip={slip_ticks}t signal_ref={signal_ref} fill={fill_price} old_sl={old_sl}->new_sl={new_sl} old_tp={old_tp}->new_tp={new_tp}"),
     # 01/05 soir FIX C : recalcul dist_* aux walls T1+T2 avec close LIVE.
     # SLTP_NO_VALID_WALL x10.8 post-deploy LIVE override → distances parquet
     # incoherentes avec close LIVE → SLTPEngine ne trouvait plus les walls.
@@ -290,6 +332,172 @@ LOG_CODES = {
     # Format flexible : delta_div_buy ou delta_div_sell selon direction (kwargs).
     "VETO_DELTA_DIV_OBSERVED":   (LogLevel.INFO,     "decisions", "Veto divergence observed : {sym} dir={direction} — {note}"),
 
+    # ─── PHASE 1 OBSERVE-ONLY widgets V4 (Bot 1 / mia_paper_trader 04/05) ───
+    # Audit market-analyst : ne pas integrer en gate avant n>=100 + DSR>=0.95.
+    # Logs en mode OBSERVE pour audit empirique J+7 / J+14.
+    "MANUAL_VWAP_TRIPLE_ALIGN_OBSERVED": (LogLevel.INFO,  "decisions", "VWAP triple align : {sym} dir={direction} D={d}/W={w}/M={m} slope_dir={slope_dir} action={action}"),
+    "MANUAL_RVOL_EXCEPTIONAL_OBSERVED":  (LogLevel.INFO,  "decisions", "RVOL exceptionnel : {sym} z={zscore} zone={zone} action={action}"),
+    "MANUAL_DIVERGENCE_OBSERVED":        (LogLevel.INFO,  "decisions", "Delta divergence observed : {sym} signal={signal} strength={strength} action={action}"),
+    "MANUAL_NEXT_WALL_REACTION_OBSERVED":(LogLevel.INFO,  "decisions", "Next wall reaction zone : {sym} side={side} dist={dist}t action={action}"),
+    "MANUAL_TRAP_OBSERVED":              (LogLevel.INFO,  "decisions", "Trapped traders @ niveau : {sym} signal={signal} zones_buy={buy} zones_sell={sell} action={action}"),
+    "MANUAL_POC_MIGRATING_OBSERVED":     (LogLevel.INFO,  "decisions", "POC migration : {sym} state={state} speed={speed} pos={pos} action={action}"),
+    "MANUAL_ABSORB_OBSERVED":            (LogLevel.INFO,  "decisions", "Absorption @ niveau : {sym} signal={signal} action={action}"),
+    "OFA_CLUSTER_TRAP_OBSERVED":         (LogLevel.MAJEUR,"decisions", "Cluster TRAP @ niveau : {sym} signal={signal} side={side} dist_pct={dist_pct} trap_buy={trap_buy} trap_sell={trap_sell} action={action}"),
+    "OFA_BIG_AGGRESSIVE_OBSERVED":       (LogLevel.INFO,  "decisions", "Big orders aggressive : {sym} signal={signal} side={side} buy_dom={buy_dom} sell_dom={sell_dom} t1_buy={t1_buy} t1_sell={t1_sell} action={action}"),
+    "OFA_SMT_DIVERGENCE_OBSERVED":       (LogLevel.INFO,  "decisions", "SMT divergence ES/NQ : {sym} signal={signal} value={value} delta_day={delta_day} action={action}"),
+    "OFA_NPOC_MAGNET_OBSERVED":          (LogLevel.MAJEUR,"decisions", "Naked POC magnet : {sym} signal={signal} dist_pct={dist_pct} age_days={age_days} action={action}"),
+    "V4_STALE_OBSERVED":                 (LogLevel.ALERTE,"decisions", "V4 staleness detected : {sym} v4_ts={v4_ts} dmp_ts={dmp_ts} stale_sec={stale_sec}"),
+
+    # ─── BOT 1 anti-orphelin sequence 8 etapes (Option B 04/05 soir) ─────
+    # Port de la sequence databento_paper_trader_v2.py:_bot3_check_timeout
+    # vers mia_paper_trader.py:_close_trade. Sim3 multi-positions -> PAS Type 210.
+    "BOT1_CLEANUP_CANCEL_FAIL":          (LogLevel.MAJEUR, "execution", "Bot 1 cleanup cancel failed : {sym} failed={failed} (orphan risk)"),
+    "BOT1_CLEANUP_FLATTEN_SYM":          (LogLevel.INFO,   "execution", "Bot 1 Type 209 flatten symbol : {sym} cid={cid}"),
+    "BOT1_CLEANUP_FLATTEN_FAIL":         (LogLevel.ALERTE, "execution", "Bot 1 Type 209 flatten fail : {sym} err={err}"),
+    "BOT1_CLEANUP_VERIFY_OK":            (LogLevel.INFO,   "execution", "Bot 1 cleanup verified flat : {sym} qty_final={qty}"),
+    "BOT1_CLEANUP_VERIFY_FAIL":          (LogLevel.CRITIQUE,"execution","Bot 1 cleanup verify FAIL : {sym} qty_final={qty} ORPHAN_RISK"),
+    "BOT1_CLEANUP_VERIFY_TIMEOUT":       (LogLevel.ALERTE, "execution", "Bot 1 cleanup verify timeout : {sym} broker_qty=None"),
+
+    # ─── LEVIER A Trailing TP MFE-based (Bot 1 anti-TIMEOUT 04/05 backtest +$620) ─
+    # Capture les MFE ratees : ES seuil 40t / NQ seuil 60t, drawback 25t = close.
+    # Audit 28 TIMEOUT : 13 trades MFE>=20t mais final capture 30-50% seulement.
+    "TRAILING_TP_ARMED":                 (LogLevel.INFO,   "execution", "Trailing TP armed : {sym} mfe={mfe}t threshold={threshold}t"),
+    "TRAILING_TP_TRIGGERED":             (LogLevel.MAJEUR, "execution", "Trailing TP triggered : {sym} mfe_peak={mfe}t current={current}t drawback={drawback}t captured={captured_pct}%"),
+    "TRAILING_TP_OBSERVED_VALIDATED":    (LogLevel.INFO,   "decisions", "Trailing TP Option 1 OBSERVE (40/60/25) : {sym} mfe_peak={mfe}t current={current}t drawback={drawback}t captured={captured_pct}% — pas trigger live (Option 2 active)"),
+    # Audit Bot 2 SetupEngine 04/05 soir : trace bars evaluees sans trigger
+    "SETUP_NO_TRIGGER":                  (LogLevel.INFO,   "decisions", "SetupEngine evaluated, aucun trigger : {sym} bar_ts={bar_ts}"),
+
+    # ─── 22 codes manquants Bot 2/3 detectes 04/05 soir ─────────────────
+    # Cause : Bot 3 logs trades non ecrits, dashboard PnL=$0 alors que trades reels.
+    # Emit echouent en silence (log_catalog incomplet) → trade tracking casse.
+    # Audit + ajout massif pour fix logging Bot 2/3 anti-orphelin sequence + regime.
+    # Templates alignes sur kwargs reels du code (databento_paper_trader_v2.py:1003-1182)
+    "BOT2_REGIME_OBSERVE":               (LogLevel.INFO,    "decisions", "Bot 2 regime : {sym} mode={regime_mode} favor={regime_favor} vol={regime_vol} actionable={regime_actionable} conf={regime_confidence}"),
+    "BOT2_REGIME_SKIP":                  (LogLevel.INFO,    "decisions", "Bot 2 regime SKIP : {sym} side={sig_side} setup={setup} regime_favor={regime_favor} regime_mode={regime_mode} conf={regime_confidence}"),
+    "BOT2_REGIME_ERROR":                 (LogLevel.ALERTE,  "decisions", "Bot 2 regime ERROR : {sym} err_type={err_type} err_msg={err_msg}"),
+    "BOT3_REGIME_OBSERVE":               (LogLevel.INFO,    "decisions", "Bot 3 regime : {sym} mode={regime_mode} favor={regime_favor} vol={regime_vol} actionable={regime_actionable} conf={regime_confidence}"),
+    "BOT3_REGIME_SKIP":                  (LogLevel.INFO,    "decisions", "Bot 3 regime SKIP : {sym} side={sig_side} level={level} regime_favor={regime_favor} regime_mode={regime_mode} conf={regime_confidence}"),
+    "BOT3_REGIME_ERROR":                 (LogLevel.ALERTE,  "decisions", "Bot 3 regime ERROR : {sym} err_type={err_type} err_msg={err_msg}"),
+    # BOT3 anti-orphelin sequence 8 etapes (documente dans .claude/rules/orphan-prevention.md)
+    "BOT3_DTC_DOWN_ORPHAN_RISK":         (LogLevel.CRITIQUE, "execution", "Bot 3 DTC DOWN — orphan risk : {sym} level={level} age_min={age_min}"),
+    "BOT3_TIMEOUT_FORCE_CLOSE":          (LogLevel.MAJEUR,   "execution", "Bot 3 timeout force close : {sym} level={level} close_cid={close_cid} qty={qty} age_min={age_min}"),
+    "BOT3_TIMEOUT_CLOSE_FAIL":           (LogLevel.CRITIQUE, "execution", "Bot 3 timeout close FAIL : {sym} err={err}"),
+    "BOT3_TIMEOUT_CANCEL_EXCEPTION":     (LogLevel.ALERTE,   "execution", "Bot 3 timeout cancel exception : {sym} label={label} cid={cid} err={err}"),
+    "BOT3_TIMEOUT_CANCEL_FAIL_ORPHAN_RISK":(LogLevel.CRITIQUE, "execution", "Bot 3 timeout cancel fail — ORPHAN RISK : {sym} level={level} failed={failed}"),
+    "BOT3_TIMEOUT_ALREADY_FLAT":         (LogLevel.INFO,     "execution", "Bot 3 timeout : deja flat : {sym} level={level} age_min={age_min}"),
+    "BOT3_TIMEOUT_POSITION_UNKNOWN":     (LogLevel.ALERTE,   "execution", "Bot 3 timeout position unknown : {sym} level={level} age_min={age_min}"),
+    "BOT3_TIMEOUT_REQUEST_POS_FAIL":     (LogLevel.ALERTE,   "execution", "Bot 3 timeout request_position fail : {sym} err={err}"),
+    "BOT3_TIMEOUT_FLATTEN_SYM":          (LogLevel.INFO,     "execution", "Bot 3 timeout Type 209 flatten symbole : {sym} cid={cid}"),
+    "BOT3_TIMEOUT_FLATTEN_FAIL":         (LogLevel.ALERTE,   "execution", "Bot 3 timeout Type 209 flatten FAIL : {sym} err={err}"),
+    "BOT3_TIMEOUT_FLATTEN_ACCOUNT":      (LogLevel.MAJEUR,   "execution", "Bot 3 timeout Type 210 flatten account : account={account} cid={cid}"),
+    "BOT3_TIMEOUT_FLATTEN_ACCOUNT_FAIL": (LogLevel.CRITIQUE, "execution", "Bot 3 timeout Type 210 flatten account FAIL : err={err}"),
+    # BOT3 boot recovery (apres restart si position orpheline broker)
+    "BOT3_RECOVER_POSITION_RESTORED":    (LogLevel.MAJEUR,   "execution", "Bot 3 recovery boot : position restauree depuis broker : {sym} qty={qty} side={side} avg_price={avg_price} has_tp={has_tp} has_sl={has_sl}"),
+    "BOT3_RECOVER_QUERY_FAIL":           (LogLevel.ALERTE,   "execution", "Bot 3 recovery query fail : {sym} err={err}"),
+    "BOT3_RECOVER_QUERY_TIMEOUT":        (LogLevel.ALERTE,   "execution", "Bot 3 recovery query timeout : {sym}"),
+    "BOT3_RECOVER_SKIP_ALREADY_TRACKED": (LogLevel.INFO,     "execution", "Bot 3 recovery skip : position deja trackee : {sym}"),
+    # P0.2 (06/05) : reconstruction CIDs reels via Type 300 OPEN_ORDERS au boot
+    "BOT3_RECOVER_OPEN_ORDERS_QUERY_FAIL":(LogLevel.ALERTE,   "execution", "Bot 3 recovery OPEN_ORDERS query fail : err={err}"),
+    "BOT3_RECOVER_FULL_BRACKET":         (LogLevel.MAJEUR,   "execution", "Bot 3 recovery FULL bracket reconstruit : {sym} qty={qty} side={side} avg_price={avg_price} tp_cid={tp_cid} sl_cid={sl_cid} tp_price={tp_price} sl_price={sl_price}"),
+    "BOT3_RECOVER_PARTIAL_BRACKET":      (LogLevel.CRITIQUE, "execution", "Bot 3 recovery PARTIAL bracket : {sym} qty={qty} side={side} tp_cid={tp_cid} sl_cid={sl_cid} n_working_total={n_working_total} - asymetrie SL/TP, timeout immediat"),
+    "BOT3_RECOVER_NO_BRACKET_FOUND":     (LogLevel.CRITIQUE, "execution", "Bot 3 recovery NO bracket trouve : {sym} qty={qty} side={side} n_working_total={n_working_total} - position broker nue, P0.3 cancel-all + flatten"),
+    "BOT3_RECOVER_AMBIGUOUS_BRACKET":    (LogLevel.CRITIQUE, "execution", "Bot 3 recovery AMBIGUOUS bracket : {sym} qty={qty} n_limit={n_limit} n_stop={n_stop} n_total_working={n_total_working} msg={msg}"),
+    # FIX 06/05 soir : capture fill Type 209 SUBMIT_FLATTEN_POSITION_ORDER
+    # (anti pnl=null bug observe sur les 5 trades du 06/05).
+    "BOT3_FLATTEN_FILL_CAPTURED":        (LogLevel.MAJEUR,   "execution", "Bot 3 fill Type 209 capture : {sym} level={level} fill_price={fill_price} entry={entry} pnl_ticks={pnl_ticks} pnl_usd={pnl_usd} reason={reason} cid={cid}"),
+    "BOT3_FLATTEN_FILL_NO_ENTRY":        (LogLevel.ALERTE,   "execution", "Bot 3 fill Type 209 sans entry_price snapshot : {sym} fill_price={fill_price} cid={cid} msg={msg}"),
+    "BOT3_RECOVER_OCO_REGISTER_FAIL":    (LogLevel.ALERTE,   "execution", "Bot 3 recovery OCO register fail : {sym} tp_cid={tp_cid} sl_cid={sl_cid} err={err}"),
+    "BOT3_RECOVER_ORPHANS_FOUND_QTY_ZERO":(LogLevel.CRITIQUE, "execution", "Bot 3 recovery ORPHANS trouves position=0 : {sym} n_orphans={n_orphans} cids={cids} - cleanup automatique"),
+    "BOT3_RECOVER_CANCEL_ORPHAN_FAIL":   (LogLevel.CRITIQUE, "execution", "Bot 3 recovery cancel orphan FAIL : {sym} cid={cid} err={err}"),
+    # P0.3 (06/05) : etape 6.5 cancel-all-working dans _bot3_check_timeout
+    "BOT3_TIMEOUT_CANCEL_ALL_WORKING_FOUND":(LogLevel.MAJEUR, "execution", "Bot 3 timeout cancel-all-working : {sym} n={n} cids={cids}"),
+    "BOT3_TIMEOUT_CANCEL_ALL_FAIL":      (LogLevel.ALERTE,   "execution", "Bot 3 timeout cancel-all FAIL : {sym} cid={cid} err={err}"),
+    "BOT3_TIMEOUT_CANCEL_ALL_QUERY_FAIL":(LogLevel.ALERTE,   "execution", "Bot 3 timeout cancel-all query fail : {sym} err={err}"),
+    # P0.4 (06/05) : etape 9 verification post-cleanup
+    "BOT3_ORPHAN_DETECTED_POST_CLEANUP": (LogLevel.CRITIQUE, "execution", "Bot 3 ORPHAN PERSISTANT post-cleanup : {sym} level={level} n={n} cids={cids} msg={msg}"),
+    "BOT3_ORPHAN_RECANCEL_FAIL":         (LogLevel.CRITIQUE, "execution", "Bot 3 orphan re-cancel FAIL : {sym} cid={cid} err={err}"),
+    "BOT3_ORPHAN_VERIFY_QUERY_FAIL":     (LogLevel.ALERTE,   "execution", "Bot 3 orphan verify query fail : {sym} err={err}"),
+    "BOT3_TIMEOUT_CLEANUP_VERIFIED_CLEAN":(LogLevel.INFO,    "execution", "Bot 3 cleanup verifie clean : {sym} level={level}"),
+    # FIX 07/05 (Jackson "C SUSPECT 0 PILE") : Solution A v2 pnl approximatif
+    # via tail JSONL DMP du jour quand fill 209 ne remonte jamais (31 attempts /
+    # 0 captures sur 4 jours). Bar age max 90s. Flag pnl_estimated=True dans
+    # JSONL trades + dashboard (suffix "*") pour distinguer du pnl_known via fill.
+    "BOT3_TIMEOUT_PNL_APPROX":           (LogLevel.MAJEUR,   "execution", "Bot 3 timeout pnl approx via DMP close : {sym} entry={entry} exit_approx={exit_approx} pnl_ticks_approx={pnl_ticks_approx} pnl_usd_approx={pnl_usd_approx} bar_age_s={bar_age_s} mfe={mfe} mae={mae}"),
+    "BOT3_TIMEOUT_PNL_APPROX_SKIP_STALE":(LogLevel.ALERTE,   "execution", "Bot 3 timeout pnl approx skip - bar trop stale : {sym} bar_age_s={bar_age_s}"),
+    "BOT3_TIMEOUT_PNL_APPROX_FAIL":      (LogLevel.ALERTE,   "execution", "Bot 3 timeout pnl approx FAIL : {sym} err={err}"),
+    # 08/05 Health Checker (Controle General Bots) - Jackson directive
+    # Apres incident 08/05 Bot 2 V6 STALE 24h+ silently. Auto-run + Discord alert.
+    "HEALTH_CHECK_RUN":                  (LogLevel.INFO,     "events",    "Health check lance trigger={trigger} score={score} worst={worst}"),
+    "HEALTH_CHECK_FAIL":                 (LogLevel.MAJEUR,   "events",    "Health check FAIL : check={check_name} status={status} details={details}"),
+    "HEALTH_CHECK_CRIT":                 (LogLevel.CRITIQUE, "events",    "Health check CRITIQUE : check={check_name} details={details} fix={fix}"),
+    "HEALTH_CHECK_RECOVERED":            (LogLevel.INFO,     "events",    "Health check OK apres alerte : check={check_name} prev_status={prev_status}"),
+    "HEALTH_CHECK_RUNNER_DOWN":          (LogLevel.CRITIQUE, "events",    "Health check auto-runner inactif depuis {age_min}min - watchdog defaillant"),
+    # 07/05 Bot 3 cooldown + circuit breaker (Jackson directive "ANALYSE COOLDOWN BOT 1+2 APPLIQUE BOT 3")
+    # Apres incident 2 SL consec en 4 min sans cooldown -> -$801. Aligne Bot 1+Bot 2 (15min/3SL/60min).
+    "BOT3_COOLDOWN_BLOCK":               (LogLevel.MAJEUR,   "decisions", "Bot 3 cooldown block (re-entry < 15 min post-close) : {sym} {side} level={level} reason={reason} cooldown_min={cooldown_min}"),
+    "BOT3_CIRCUIT_BREAKER_BLOCK":        (LogLevel.MAJEUR,   "decisions", "Bot 3 circuit breaker block (3 SL consec + pause 60min) : {sym} {side} level={level} reason={reason} consec_sl={consec_sl}/{max_consec_sl}"),
+    "BOT3_CIRCUIT_BREAKER_TRIGGERED":    (LogLevel.CRITIQUE, "decisions", "Bot 3 circuit breaker TRIGGERED (3 SL consec) : {sym} consec_sl={consec_sl} pause_min={pause_min} until={breaker_until} last_pnl_ticks={last_pnl_ticks}"),
+    # 07/05 BN V3 paper loop (Bot 2 Sim2 Databento) - Jackson directive 2 contrats + recharge Long Up/Dn Bar
+    "BN_V3_LOOP_START":                  (LogLevel.INFO,     "events",    "BN V3 paper loop start : sym={sym} dry_run={dry_run} recharge_enabled={recharge_enabled} trade_account={trade_account}"),
+    "BN_V3_LOOP_ERROR":                  (LogLevel.CRITIQUE, "events",    "BN V3 paper loop error : sym={sym} err={err}"),
+    "BN_V3_ENTRY":                       (LogLevel.MAJEUR,   "decisions", "BN V3 entry : sym={sym} dir={direction} entry={entry_price} sl={sl} tp_partial={tp_partial} qty={qty} dry_run={dry_run}"),
+    "BN_V3_RECHARGE":                    (LogLevel.MAJEUR,   "decisions", "BN V3 recharge : sym={sym} dir={direction} entry={entry_price} n_recharges={n_recharges}/{max_recharges} dry_run={dry_run}"),
+    "BN_V3_SCALE_OUT_50":                (LogLevel.INFO,     "execution", "BN V3 scale out 50% : sym={sym} dir={direction} tp_price={tp_price} qty_close={qty_close} new_sl_be={new_sl} dry_run={dry_run}"),
+    "BN_V3_FLATTEN":                     (LogLevel.INFO,     "execution", "BN V3 flatten : sym={sym} reason={reason} dir={direction} dry_run={dry_run}"),
+    # P1.1 (06/05) : shutdown pre-emptive cancel
+    "BOT3_SHUTDOWN_PREEMPTIVE_CANCEL":   (LogLevel.MAJEUR,   "execution", "Bot 3 shutdown pre-emptive cancel : {sym} label={label} cid={cid}"),
+    "BOT3_SHUTDOWN_CANCEL_FAIL":         (LogLevel.ALERTE,   "execution", "Bot 3 shutdown cancel fail : {sym} label={label} err={err}"),
+    # P1.2 (06/05) : drain disconnect
+    "DTC_DISCONNECT_DRAIN_TIMEOUT":      (LogLevel.ALERTE,   "execution", "DTC disconnect drain timeout : drain_sec={drain_sec} thread non-termine"),
+    # P0.1 (06/05) : query OPEN_ORDERS partial timeout
+    "OPEN_ORDERS_QUERY_TIMEOUT":         (LogLevel.ALERTE,   "execution", "DTC Type 300 OPEN_ORDERS timeout : trade_account={trade_account} partial_count={partial_count}"),
+    "OPEN_ORDERS_QUERY_LOCK_TIMEOUT":    (LogLevel.ALERTE,   "execution", "DTC Type 300 lock timeout (concurrent query) : trade_account={trade_account}"),
+    # FIX 06/05 soir : on_order_update callback (consume msg dict brut Type 301)
+    "ON_ORDER_UPDATE_CALLBACK_ERR":      (LogLevel.ALERTE,   "execution", "DTC on_order_update callback exception : cid={cid} err={err}"),
+    # 07/05 audit walk-forward TREND DAY override pour ChaseTopGate
+    "GATE_CHASE_TOP_TREND_DAY_BYPASS":   (LogLevel.INFO,     "decisions", "ChaseTopGate BYPASS TREND DAY : {symbol} {direction} range_pos={range_pos}% trend_votes={trend_votes} favor={regime_favor} median_range_pos={median_range_pos}% n_history={n_history}"),
+    # 07/05 PHASE 1 OBSERVATION trailing + BE Bot 3 (Jackson directive)
+    "BOT3_TRAILING_BE_OBSERVED":         (LogLevel.INFO,     "execution", "Bot 3 trailing BE trigger OBSERVED : {sym} {side} level={level} entry={entry_price} mfe={current_mfe_ticks}t >= {be_trigger_ticks}t → SL hypothetique BE={sl_hypothetical_be} (sl_actuel={sl_current})"),
+    "BOT3_TRAILING_UPDATE_OBSERVED":     (LogLevel.INFO,     "execution", "Bot 3 trailing UPDATE OBSERVED : {sym} {side} level={level} mfe={current_mfe_ticks}t mfe_price={mfe_price} → SL hypothetique trailing={sl_hypothetical_trailing} (sl_actuel={sl_current} dist={trailing_distance_ticks}t)"),
+    # 11/05 SOLUTION D2 LADDER PROFIT-LOCKING Bot 3 (Jackson directive "pas gourmand")
+    "BOT3_LADDER_TICK":                  (LogLevel.INFO,     "execution", "Bot 3 ladder TICK : {sym} mfe={mfe}t entry={entry} n_paliers={n_paliers} executed={executed_count} mode={mode}"),
+    "BOT3_LADDER_WOULD_LOCK":            (LogLevel.MAJEUR,   "execution", "Bot 3 ladder WOULD LOCK palier {palier} : {sym} {side} mfe={mfe_ticks}t >= seuil {mfe_seuil_ticks}t → SL new={sl_new_price} lock=${lock_usd}"),
+    "BOT3_LADDER_ACTION_NOT_IMPLEMENTED_YET": (LogLevel.ALERTE, "execution", "Bot 3 ladder ACTION mode not implemented yet (Phase 1b) : {sym} palier={palier} {msg}"),
+    "BOT3_LADDER_INVALID_MODE":          (LogLevel.ALERTE,   "execution", "Bot 3 ladder INVALID MODE : {sym} mode={mode} {msg}"),
+    # 11/05 17:00 PHASE 1b ACTION — vrai cancel/replace SL via DTC avec 7 fixes anti-orphan
+    "BOT3_LADDER_SL_MODIFIED":           (LogLevel.MAJEUR,   "execution", "Bot 3 ladder SL MODIFIED palier {palier} : {sym} {side} level={level} old_cid={old_sl_cid} new_cid={new_sl_cid} new_sl={new_sl_price} lock=${lock_usd}"),
+    "BOT3_LADDER_NO_SL_ALERT":           (LogLevel.CRITIQUE, "execution", "Bot 3 ladder NO SL ALERT — position sans SL = ORPHAN RISK : {sym} palier={palier} level={level} old_sl_cid={old_sl_cid} entry={entry} attempted_new_sl={attempted_new_sl} {msg}"),
+    "BOT3_LADDER_MODIFY_DTC_DOWN":       (LogLevel.CRITIQUE, "execution", "Bot 3 ladder MODIFY DTC DOWN : {sym} palier={palier} {msg}"),
+    "BOT3_LADDER_MODIFY_NO_OLD_SL_CID":  (LogLevel.ALERTE,   "execution", "Bot 3 ladder MODIFY skip — pos.sl_cid manquant : {sym} palier={palier} {msg}"),
+    "BOT3_LADDER_MODIFY_CONTRACT_LOOKUP_FAIL": (LogLevel.CRITIQUE, "execution", "Bot 3 ladder MODIFY contract lookup FAIL : {sym} palier={palier}"),
+    "BOT3_LADDER_CANCEL_EXCEPTION":      (LogLevel.CRITIQUE, "execution", "Bot 3 ladder CANCEL exception : {sym} palier={palier} old_sl_cid={old_sl_cid} exc={exc} msg={msg}"),
+    "BOT3_LADDER_CANCEL_FAILED":         (LogLevel.CRITIQUE, "execution", "Bot 3 ladder CANCEL returned False : {sym} palier={palier} old_sl_cid={old_sl_cid} {msg}"),
+    "BOT3_LADDER_SEND_NEW_SL_EXCEPTION": (LogLevel.CRITIQUE, "execution", "Bot 3 ladder SEND new SL exception : {sym} palier={palier} new_sl_cid={new_sl_cid} exc={exc} msg={msg}"),
+    # 11/05 17:30 PHASE 1b ACTION review code-reviewer — fix #2 race condition (request_position_blocking)
+    "BOT3_LADDER_POS_VERIFY_EXCEPTION":  (LogLevel.CRITIQUE, "execution", "Bot 3 ladder POS verify exception : {sym} palier={palier} exc={exc} msg={msg}"),
+    "BOT3_LADDER_POS_VERIFY_TIMEOUT":    (LogLevel.CRITIQUE, "execution", "Bot 3 ladder POS verify TIMEOUT : {sym} palier={palier} {msg}"),
+    "BOT3_LADDER_POS_CLOSED_DURING_MODIFY": (LogLevel.CRITIQUE, "execution", "Bot 3 ladder POS CLOSED pendant modify (anti trade inverse) : {sym} palier={palier} old_sl_cid={old_sl_cid} {msg}"),
+    # 11/05 Jackson "met a jour les log on dois pouvoir suivre tout les blocage"
+    # 5 blocages silencieux dans _bot3_poll_cycle + _bot3_execute_trade
+    # Niveaux affines apres review code-reviewer 11/05 (anti-spam Discord)
+    "BOT3_BAR_NONE":             (LogLevel.INFO,     "execution", "Bot 3 blocage bar manquante : {sym} load_last_bar=None (throttle 60s)"),
+    "BOT3_BAR_STALE":            (LogLevel.ALERTE,   "execution", "Bot 3 blocage bar stale : {sym} age={age}s > limit={limit}s (throttle 300s)"),
+    "BOT3_OBSERVE_ONLY_SKIP":    (LogLevel.INFO,     "execution", "Bot 3 blocage OBSERVE_ONLY actif (paper desactive) : {sym} {side} level={level}"),
+    "BOT3_EXECUTE_DTC_DOWN":     (LogLevel.MAJEUR,   "execution", "Bot 3 blocage execute_trade abort DTC down : {sym} {side} level={level}"),
+    "BOT3_ALREADY_IN_POSITION":  (LogLevel.INFO,     "execution", "Bot 3 blocage deja en position : {sym} level={level} side={side} mfe={mfe_ticks}t (throttle 300s)"),
+    # 11/05 J3 FIX BUG COOLDOWN : persistance _bot3_risk state au restart
+    "BOT3_RISK_STATE_RESTORED":  (LogLevel.INFO,     "events",    "Bot 3 risk state restore au boot : n_last_close={n_last_close} consec_sl NQ={consec_sl_nq} ES={consec_sl_es}"),
+    # 11/05 audit code-reviewer post-incident ES.c.0 ohlcv-1m stuck 2h+
+    # 12/05 fix v3 ajustement niveaux post observation midnight UTC false positifs :
+    # - EMPTY_RESPONSE CRITIQUE (garde-fou ES stuck 2h+ original)
+    # - NON_RETRY_EXC CRITIQUE (exception non-recuperable = vrai signal)
+    # - STALE_POST_FETCH MAJEUR (peut etre transient midnight UTC) au lieu de CRITIQUE
+    #   pour eviter spam widget health_checker.check_recent_errors (filtre CRITIQUE).
+    #   Logique : si vraiment grave (ES stuck heures), DMP_JSONL_STALE deja CRITIQUE alerte.
+    "DOWNLOAD_EMPTY_RESPONSE":   (LogLevel.CRITIQUE, "data", "Databento API empty response (0 records) : {schema} {symbol} {day} end={end} - DBN preserve (pas overwrite vide)"),
+    "DOWNLOAD_NON_RETRY_EXC":    (LogLevel.CRITIQUE, "data", "Databento download exception non-retry : {schema} {symbol} {day} type={exc_type} msg={exc_msg}"),
+    "DOWNLOAD_STALE_POST_FETCH": (LogLevel.MAJEUR,   "data", "Post-DL : fichier non refresh apres call API : {schema} {symbol} reason={reason}"),
+
     # Anomalies generiques python (paper_trader)
     # Permet de tracker exceptions Python uncaught dans hot paths
     "PY_EXCEPTION_HOT_PATH":     (LogLevel.CRITIQUE, "events", "Exception Python hot path : {sym} fn={fn_name} type={exc_type} msg={exc_msg}"),
@@ -297,6 +505,74 @@ LOG_CODES = {
 
     # Mismatch state.json vs broker (position fantome)
     "STATE_VS_BROKER_MISMATCH":  (LogLevel.CRITIQUE, "execution", "State vs broker mismatch : {sym} state={state_pos} broker={broker_pos} → cleanup attendu"),
+
+    # ─── SETUP ENGINE V1 (Bot 2 Sim2 PAPER_TRADE actif, 2026-05-02) ─────
+    # 11 setups validés empiriquement sur 1 an V4 enriched.
+    # cf DOCS/EDGE_REPORT_BOT2_NQ.md + DOCS/EDGE_REPORT_BOT2_ES.md
+    "SETUP_TRIGGERED":           (LogLevel.INFO,    "decisions", "Setup triggered : {sym} {side} setup={setup} bar_ts={bar_ts} price={price}"),
+    "SETUP_CONFLUENCE":          (LogLevel.INFO,    "decisions", "Setup confluence : {sym} {side} setups={setups} bar_ts={bar_ts} price={price}"),
+    "SETUP_CONFLICT_SKIP":       (LogLevel.ALERTE,  "decisions", "Setup conflict SKIP : {sym} long={setups_long} short={setups_short} bar_ts={bar_ts}"),
+    "SETUP_TRADE_OPEN":          (LogLevel.INFO,    "execution", "Setup trade OPEN : {sym} {side} setup={setup} entry={entry_price} sl={sl_price} tp_cap={tp_cap_price}"),
+    "SETUP_TRADE_CLOSE":         (LogLevel.INFO,    "execution", "Setup trade CLOSE : {sym} {side} setup={setup} reason={exit_reason} pnl_ticks={pnl_ticks} pnl_dollars={pnl_dollars} mfe={mfe_ticks}t mae={mae_ticks}t"),
+    "TRAILING_TRIGGERED":        (LogLevel.INFO,    "execution", "Trailing trigger EXIT : {sym} {side} trailing_stop={trailing_stop} mfe={mfe_ticks}t pnl={pnl_ticks}t"),
+    # FIX B-2 (02/05) : router success/exception cancel+replace SL DTC
+    "TRAILING_BROKER_REPLACED_OK": (LogLevel.INFO,   "execution", "Trailing SL broker replaced OK : {sym} old_sl={old_sl} new_sl={new_sl} new_sl_cid={new_sl_cid}"),
+    # Risk isolé par symbole (NQ et ES indépendants)
+    "GATE_RISK_FLAT_BY_LOSSES":  (LogLevel.MAJEUR,  "decisions", "Risk flat by losses : {sym} n_losses={n_losses}/{max_losses} — flat reste session"),
+    "GATE_RISK_KILL_SWITCH":     (LogLevel.CRITIQUE, "decisions", "Risk kill switch : {sym} daily_pnl={daily_pnl}$ <= {limit}$ — flat reste session"),
+    "DEDUP_BAR_TS":              (LogLevel.INFO,    "decisions", "Dedup bar_ts : {sym} bar_ts={bar_ts} (deja evaluee, skip re-trigger)"),
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # BOT 3 — Market Profile Trader (03/05/2026)
+    # ═══════════════════════════════════════════════════════════════════════
+    "BOT3_BOOT_READY":          (LogLevel.INFO,    "events",    "Bot3 boot pret : phase={phase} tier1={tier1} tier2={tier2} tier3={tier3} observe={observe}"),
+    "BOT3_LEVEL_CONTACT":       (LogLevel.INFO,    "decisions", "Bot3 contact niveau : {sym} {level} dist={dist:.4f}% tier={tier}"),
+    "BOT3_DECISION_GO":         (LogLevel.INFO,    "decisions", "Bot3 GO : {sym} {level} side={side} action={action} conf={conf} sl={sl}t"),
+    "BOT3_DECISION_SKIP":       (LogLevel.INFO,    "decisions", "Bot3 SKIP : {sym} {level} reason={reason}"),
+    "BOT3_VETO_ROLL_DAY":       (LogLevel.MAJEUR,  "decisions", "Bot3 veto ROLL_DAY : {sym} jour de roll, no trade"),
+    "BOT3_VETO_NEWS":           (LogLevel.MAJEUR,  "decisions", "Bot3 veto NEWS : {sym} reason={reason} mins_since={mins_since}"),
+    "BOT3_VETO_VOL_DEAD":       (LogLevel.ALERTE,  "decisions", "Bot3 veto VOLUME_MORT : {sym} rvol={rvol:.2f} < {limit}"),
+    "BOT3_TIER3_MISS":          (LogLevel.INFO,    "decisions", "Bot3 Tier3 required_context miss : {sym} {level} {detail}"),
+    "BOT3_TRADE_OPEN":          (LogLevel.INFO,    "trading",   "Bot3 trade ouvert : {sym} {level} {side} {action} qty={qty} @ {price} sl={sl}t conf={conf}"),
+    "BOT3_TRADE_CLOSE":         (LogLevel.INFO,    "trading",   "Bot3 trade ferme : {sym} {level} reason={reason} pnl={pnl:.1f}t mfe={mfe:.0f}t mae={mae:.0f}t dur={dur}s"),
+    "BOT3_TRAILING_ACTIVATED":  (LogLevel.INFO,    "execution", "Bot3 trailing actif : {sym} sl_old={sl_old} -> sl_new={sl_new}"),
+    "BOT3_OBSERVE_RECORD":      (LogLevel.INFO,    "decisions", "Bot3 observe-only : {sym} {level} would_GO={would_go} side={side} conf={conf} (no trade)"),
+    # ─── 🆕 09/05 (Bot 3 v2 — bucket SIDAK/COMBO_BOOSTED) ───
+    "BOT3_FILTER_BYPASS_SIDAK_COMBO": (LogLevel.INFO, "decisions", "Bot3 v2 BYPASS filter regime (bucket validé cross-régime) : {sym} {level} bucket={bucket} side={sig_side} regime_favor={regime_favor} mode={regime_mode} conf={regime_confidence}"),
+    "BOT3_SIDAK_SLTP_WALL_AWARE": (LogLevel.INFO, "execution", "Bot3 v2 SLTPEngine WALL-AWARE : {sym} {level} bucket={bucket} {side} sl={sl_ticks}t tp={tp_ticks}t sl_wall={sl_wall} tp_wall={tp_wall} rr={rr}"),
+    "BOT3_SIDAK_SLTP_FALLBACK": (LogLevel.MAJEUR, "execution", "Bot3 v2 SLTPEngine REJECT → fallback standard : {sym} {level} bucket={bucket} {side} reject={reject_reason} fallback_sl={fallback_sl_ticks}t fallback_tp={fallback_tp_ticks}t"),
+    "BOT3_COMBO_BOOSTED_FIRE":  (LogLevel.MAJEUR, "decisions", "Bot3 v2 COMBO_BOOSTED FIRE (priority 1 haute conviction) : {sym} {level} side={side} cols_touched={cols_touched} filter_passed={filter_passed}"),
+    # FIX C-3 (review code-reviewer 03/05) : code dedie pour bug config niveau invalide
+    "BOT3_LEVEL_DEF_INVALID":   (LogLevel.CRITIQUE, "decisions", "Bot3 level def invalide : {sym} {level} side_value={side_value} (config bug)"),
+    # FIX M-2 (review code-reviewer 03/05) : trading window parse fail (fail-CLOSED)
+    "BOT3_TRADING_WINDOW_PARSE_FAIL": (LogLevel.MAJEUR, "decisions", "Bot3 trading window parse fail : ts={ts} err={err} (fail-CLOSED, no trade)"),
+    # FIX market-analyst Section 4 (03/05) : tracker inversions theoriques (BREAKOUTS off)
+    "BOT3_ACCEPTANCE_DETECTED": (LogLevel.INFO,    "decisions", "Bot3 acceptance detected (theorique, BREAKOUTS off) : {sym} {level} would_invert {old_side}->{new_side} delta={delta} finish={finish}"),
+    # FIX M-6 (review code-reviewer 03/05) : feature missing au boot (degraded mode)
+    "BOT3_FEATURE_MISSING":     (LogLevel.MAJEUR,  "events",    "Bot3 feature missing : {feature} (impact={impact})"),
+    # Skip OBSERVE_ONLY tier 99 (Section 6 market-analyst) — anti-trade automatique
+    "BOT3_OBSERVE_LEVEL_LOGGED":(LogLevel.INFO,    "decisions", "Bot3 observe-only tier99 : {sym} {level} dist={dist:.4f}% (no decision_engine call)"),
+    # BREAKOUT_RETEST state machine (Steidlmayer/Dalton) — Jackson Option B (03/05)
+    "BOT3_BREAKOUT_PENDING":     (LogLevel.INFO,    "decisions", "Bot3 breakout PENDING acceptance : {sym} {level} side_break={side} (3 bars to confirm)"),
+    "BOT3_BREAKOUT_ACCEPTED":    (LogLevel.INFO,    "decisions", "Bot3 breakout ACCEPTED : {sym} {level} side_break={side} confirms={confirms}/{required} (waiting retest)"),
+    "BOT3_BREAKOUT_CRUSH_ABSORBED": (LogLevel.INFO, "decisions", "Bot3 breakout CRUSH_ABSORBED : {sym} {level} confirms={confirms}/{required} (Wyckoff spring filtre)"),
+    "BOT3_BREAKOUT_RETEST_ENTRY":(LogLevel.INFO,    "trading",   "Bot3 BREAKOUT_RETEST ENTRY : {sym} {level} side={side} entry={entry_price} bars_touch_to_retest={n_bars}"),
+    "BOT3_BREAKOUT_RETEST_TIMEOUT": (LogLevel.INFO, "decisions", "Bot3 breakout RETEST_TIMEOUT : {sym} {level} pas de retest dans {max_bars} bars"),
+    # Bonus 2 (Jackson 03/05) : MQ stale veto
+    "BOT3_VETO_MQ_STALE":        (LogLevel.MAJEUR,  "decisions", "Bot3 veto MQ STALE : {sym} {level} dist > 5% sur tous walls (ingestion failed?)"),
+    # FIX round 5 (Jackson 03/05 soir)
+    "BOT3_ECO_EXCEPTION":        (LogLevel.CRITIQUE, "errors",   "Bot3 eco_calendar exception : {err} {msg} (FAIL-CLOSED)"),
+    "BOT3_CAP_TRADES_REACHED":   (LogLevel.MAJEUR,  "decisions", "Bot3 cap trades atteint : {sym} n_trades={n_trades}/{max} (data quality)"),
+    "BOT3_CAP_LOSSES_REACHED":   (LogLevel.MAJEUR,  "decisions", "Bot3 cap losses atteint : {sym} n_losses={n_losses}/{max} (circuit breaker)"),
+
+    # ============================================================
+    # V6 brain Sim2 (05/05) — Bot V6 enrichi Databento V4
+    # ============================================================
+    "BRAIN_V6_ACTIVE":           (LogLevel.INFO,    "events",    "Bot V6 brain actif : {sym} regime_mode={regime_mode} favor={regime_favor} bias_v6_score={bias_v6_score} dir={bias_v6_dir}"),
+    "V6_V4_BAR_STALE":           (LogLevel.MAJEUR,  "events",    "V6 bar V4 STALE : {sym} age={age_sec}s > {threshold}s (pipeline V4 retard) -> fallback DMP"),
+    "V6_V4_FALLBACK_DMP":        (LogLevel.ALERTE,  "events",    "V6 fallback DMP : {sym} V4 indisponible source={fallback_source} reason={reason}"),
+    "V6_CHASE_SKIPPED":          (LogLevel.INFO,    "decisions", "V6 CHASE skipped (R8 raffinement) : {sym} {direction} reason={reason}"),
+    "V6_VOLUME_Z_TOO_LOW":       (LogLevel.MAJEUR,  "decisions", "V6 reject : {sym} {direction} volume_z={volume_z} < {threshold} (faux-breakout pepite #2)"),
 }
 
 

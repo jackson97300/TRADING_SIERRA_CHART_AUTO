@@ -1,19 +1,42 @@
-"""mia_paper_trader.py — Paper trading bot qui suit le dashboard (v2 22/04/2026).
+"""mia2_brain_v6_databento.py — Bot V6 (Sim2) cerveau enrichi Databento V4.
+
+CONTEXTE 04/05/2026 (Jackson) :
+  - Copie autonome de mia_paper_trader.py (Bot 1 sur Sim3) qui reste INCHANGE.
+  - Memes infrastructure (DTC connector, OCO manuel, SLTPEngine, logs V2,
+    risk manager, kill-switch, anti-orphelin 7 etapes, retry os.replace,
+    LEVIER #1 skip NEUTRAL, LEVIER #2 circuit breaker, LEVIER A trailing TP,
+    Phase 1 OBSERVE V4 widgets, _get_dynamic_wr Bayesien shrunk).
+  - Cerveau ENRICHI via les imports _v6 :
+      from CORE.bias_calculator_v6 import compute_bias
+      from CORE.regime_engine_v6 import compute_regime
+  - Cible Sim2 (remplace Bot 2 V2 SetupEngine).
+
+Architecture Plan refonte V6 (10 buckets V4 mappes) :
+  Phase 0 — Foundation (copies + tests parite avec Bot 1)
+  Phase 1 — Bucket #3 Absorption / Trapped (max impact ⭐⭐⭐ x4)
+  Phase 2 — Bucket #1 SMT cross-instrument (im_*)
+  Phase 3 — Bucket #5 Multi-session + wr session-conditionnel
+  Phase 4 — Bucket #6 Liquidity / SMC
+  Phase 5-10 — Buckets #8 #2 #9 #4 #7 #10
+  Audit final : moi + agent en parallele sur Bot V6 complet
+
+Pondération + lissage (Jackson 04/05) :
+  - Anti flip-flop conseil global (1H>15M>5M>1M)
+  - Hysteresis temporel (N bars confirmation avant flip)
+  - Reviews entre buckets : code-reviewer + market-analyst selon impact
 
 Suit les recommandations du dashboard MIA en temps reel :
 - Prend un trade quand Conseil Global = ACHAT/VENTE AVEC freshness == "NEW"
-  (state machine v1.5 fix 22/04 — evite signal persistent / FOMO)
 - SL/TP via SLTPEngine (Tier 1/2 derriere mur + TP1 premier obstacle)
-- Filtre expected_payoff_$ >= $2 (audit ES vs NQ 22/04)
-- 3 micros tracking (realistic futur bot live)
+- Filtre expected_payoff_$ >= $2 avec wr Bayesien shrunk + cellule
+- 1 micro tracking (coherent ENTRY_RULES)
 - Cooldown 15 min post-close par symbol
 - Circuit breaker 3 SL consec → pause 60 min par symbol
-- Ecrit state.json pour consommation dashboard (endpoint /api/paper_trades)
+- Ecrit state.json pour consommation dashboard
 
 Usage :
-    python CORE/mia_paper_trader.py            # lance le paper trader
-    python CORE/mia_paper_trader.py --stats
-    python CORE/mia_paper_trader.py --stats --symbol NQ
+    python CORE/mia2_brain_v6_databento.py     # lance le bot V6
+    python CORE/mia2_brain_v6_databento.py --stats
 """
 import json
 import os
@@ -31,16 +54,16 @@ from CORE.mia_sltp import SLTPEngine, SL_BUDGET  # SL_BUDGET pour kill-switch SE
 # FIX 29/04 (R3 audit) : import top-level avec fallback (Bot 1 run depuis racine,
 # Bot 2 depuis CORE/ → 2 conventions a supporter).
 try:
-    from CORE.constants import get_cme_trading_day, TRAILING_TR40_NQ_ENABLED, get_tick_value
+    from CORE.constants import get_cme_trading_day, TRAILING_TR40_NQ_ENABLED
 except ImportError:
-    from constants import get_cme_trading_day, TRAILING_TR40_NQ_ENABLED, get_tick_value
-from CORE.bias_calculator import compute_bias  # 3.7.9 (24/04) gate directionnel
+    from constants import get_cme_trading_day, TRAILING_TR40_NQ_ENABLED
+from CORE.bias_calculator_v6 import compute_bias  # V6 (04/05) cerveau enrichi V4 — Phase 0 = identique au standard
 from CORE.cross_instrument import compute_cross_bonus  # 24/04 mode OBSERVATION (log-only)
 
 # Systeme logs V2 (22/04 session)
 try:
     from CORE.logging_v2 import get_logger as _get_v2_logger
-    _v2log = _get_v2_logger("paper_trader", process="paper")
+    _v2log = _get_v2_logger("mia2_brain_v6", process="paper_v6")
 except Exception:
     _v2log = None
 
@@ -66,7 +89,15 @@ if DTC_ENABLED:
 DASHBOARD_URL = "http://localhost:8503/api/dashboard"
 POLL_INTERVAL = 10  # secondes entre chaque check
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DATA", "PAPER_TRADES")
-STATE_FILE = os.path.join(DATA_DIR, "state.json")  # bridge pour dashboard endpoint
+# V6 (Sim2) state file dedie pour ne pas ecraser Bot 1 (Sim3) state.json
+STATE_FILE = os.path.join(DATA_DIR, "state_v6.json")  # bridge pour dashboard endpoint Bot V6
+
+# V4 ENRICHED Databento parquet root (Bot 2 V2 pattern - REQUIS pour V6 brain enrichi)
+# Sans ca les blocs 7-16 bias_v6 + votes 11-16 regime_v6 sont INERTES (features V4 absentes du DMP).
+# Cache de la lecture parquet : 1x par minute (le pipeline V4 update toutes 5 min).
+V4_DATASET_ROOT = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "DATA", "datasets", "v4_enriched"
+)
 MENTHORQ_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DATA", "MENTHORQ")
 # Kill-switch admin : cree/supprime par POST /api/bot/{stop,start} (admin_routes.py)
 # Meme chemin que BOT/bot_main.py pour compat, mais seul paper_trader ecoute en prod.
@@ -175,7 +206,7 @@ ENTRY_RULES = {
 }
 
 # Config DTC (valide Phase 1 paper uniquement, pas de compte LIVE)
-TRADE_ACCOUNT = os.environ.get("MIA_TRADE_ACCOUNT", "Sim3")
+TRADE_ACCOUNT = os.environ.get("MIA_TRADE_ACCOUNT", "Sim2")  # V6 cible Sim2 (remplace Bot 2)
 _SIM_WHITELIST_PREFIX = ("SIM", "Sim", "sim")
 
 
@@ -275,32 +306,24 @@ _SERVICE_TOKEN_EXPIRY: float = 0.0
 # Q5 code-reviewer : si ImportError, REGIME_SKIP_ENABLED=False = Bot 1 continue
 # sans gate (pas paralyse 100%). Logging error visible dans LOGS/errors.
 try:
-    from CORE.regime_engine import REGIME_SKIP_ENABLED as _REGIME_SKIP_ENABLED
+    from CORE.regime_engine_v6 import REGIME_SKIP_ENABLED as _REGIME_SKIP_ENABLED
 except Exception as _e:
     import logging as _logging
-    _logging.error(f"regime_engine import fail in mia_paper_trader: {_e} - fail-open (gate disabled)")
-    _REGIME_SKIP_ENABLED = False  # fail-OPEN : Bot 1 continue sans gate
+    _logging.error(f"regime_engine_v6 import fail in mia2_brain_v6: {_e} - fail-open (gate disabled)")
+    _REGIME_SKIP_ENABLED = False  # fail-OPEN : Bot V6 continue sans gate
 
-# ChaseTopGate kill-switch (R3 code-reviewer 05/05). Permet rollback rapide via :
-#   nssm set MIA-Paper AppEnvironmentExtra MIA_CHASE_TOP_GATE_ENABLED=0
-#   Restart-Service MIA-Paper
-# Sans redeploy code. Default ON (1) pour deploy fix walk-forward DSR=0.72.
+# ChaseTopGate kill-switch (R3 code-reviewer 05/05). Env var MIA_CHASE_TOP_GATE_ENABLED.
 _CHASE_TOP_GATE_ENABLED = os.environ.get("MIA_CHASE_TOP_GATE_ENABLED", "1") == "1"
 _CHASE_TOP_THRESHOLD = float(os.environ.get("MIA_CHASE_TOP_THRESHOLD", "60"))
 
 # ─── Mode TREND DAY override (07/05 audit walk-forward) ──────────────────
-# Audit walk-forward 12 folds (D:/.../audit_chasetop_trendday_*.json) :
-#   - ChaseTopGate seuil 60% : DSR INSTABLE (-3.30t a +1.63t par fold) → pas d'edge stable
-#   - TREND LONG day (pct_in_range median 60bars >=80%) : LONG @ range_pos 70-90% =
-#     +1.31t a +1.38t mean_pnl mieux que non-trend day (n=43k+ bars chaque)
-#   - 9/12 folds NQ delta positif (TREND DAY > non-trend), 5/12 ES (marginal mais favorable)
-# Verdict : ChaseTopGate reste actif PAR DEFENSE (pas pour edge), MAIS bypass quand
-# trend day confirmed avec 3 conditions cumulatives :
-#   (1) regime_trend_votes >= 6 (regime_engine compute_regime)
-#   (2) regime_favor == direction du signal (LONG si BUY, SHORT si SELL)
-#   (3) median pct_in_range sur 60 dernieres bars >= 80% (LONG day) OU <= 20% (SHORT)
-# Si TOUS 3 OK → bypass ChaseTopGate. Edge empirique +1.3t mean_pnl pas suffisant
-# absolu mais combine avec SLTPEngine (R:R > 2 sur murs) → EV positif probable.
+# Audit walk-forward 12 folds : ChaseTopGate seuil 60% DSR INSTABLE par fold.
+# Mais TREND LONG day (pct_in_range median 60bars >=80%) : LONG @ range_pos 70-90% =
+# +1.31t a +1.38t mean_pnl mieux que non-trend. Detail : CORE/research/audit_chasetop_trendday_walkforward.py
+# 3 conditions cumulatives pour bypass :
+#   (1) regime_trend_votes >= 6
+#   (2) regime_favor == direction du signal
+#   (3) median pct_in_range sur lookback bars >= 80% (LONG) OU <= 20% (SHORT)
 _TREND_DAY_OVERRIDE_ENABLED = os.environ.get("MIA_TREND_DAY_OVERRIDE_ENABLED", "0") == "1"  # P0.2 default OFF
 _TREND_DAY_LOOKBACK_BARS = int(os.environ.get("MIA_TREND_DAY_LOOKBACK_BARS", "60"))
 _TREND_DAY_LONG_THRESHOLD = float(os.environ.get("MIA_TREND_DAY_LONG_THRESHOLD", "80.0"))
@@ -309,26 +332,14 @@ _TREND_DAY_MIN_TREND_VOTES = int(os.environ.get("MIA_TREND_DAY_MIN_TREND_VOTES",
 
 
 def _is_trend_day(direction: str, regime_data: dict, range_pos_history: list) -> tuple:
-    """Detection TREND DAY pour bypass ChaseTopGate (Bot 1 + Bot 2 V6).
+    """Detection TREND DAY pour bypass ChaseTopGate Bot 2 V6 (cf mia_paper_trader.py).
 
-    Args:
-        direction : "LONG" ou "SHORT"
-        regime_data : dict du regime (peut contenir keys natives `mode_trend_votes`/`favor`
-                       depuis instr["regime"] du dashboard, OU les keys normalisees
-                       `regime_trend_votes`/`regime_favor` apres mapping). Lookup defensif
-                       avec fallback (P0.1 fix code-reviewer 07/05 : sans le fallback,
-                       le bypass ne s'activait JAMAIS car `reg` du dashboard a `favor`
-                       et `mode_trend_votes` natifs, pas les cles normalisees).
-        range_pos_history : liste des pct_in_range sur les N dernieres bars (recent en derniere position)
-
-    Returns:
-        (is_trend_day: bool, reason: str)
-        reason = "TREND_DAY_OK" si toutes conditions remplies, sinon raison du fail
+    P0.1 fix code-reviewer 07/05 : lookup defensif `mode_trend_votes`/`favor` (cles
+    natives du dict `instr["regime"]` du dashboard) avec fallback `regime_trend_votes`/
+    `regime_favor` (cles normalisees). Sans ce fallback le bypass ne s'activait jamais.
     """
     if not _TREND_DAY_OVERRIDE_ENABLED:
         return (False, "TREND_DAY_DISABLED")
-
-    # Condition 1 : trend_votes >= seuil (lookup defensif 2 conventions)
     trend_votes = (regime_data.get("regime_trend_votes")
                    or regime_data.get("mode_trend_votes")
                    or 0)
@@ -338,16 +349,12 @@ def _is_trend_day(direction: str, regime_data: dict, range_pos_history: list) ->
         trend_votes = 0
     if trend_votes < _TREND_DAY_MIN_TREND_VOTES:
         return (False, f"trend_votes_{trend_votes}_lt_{_TREND_DAY_MIN_TREND_VOTES}")
-
-    # Condition 2 : regime_favor aligne avec la direction (lookup defensif 2 conventions)
     regime_favor = (regime_data.get("regime_favor")
                     or regime_data.get("favor")
                     or "").upper()
     expected_favor = "LONG" if direction == "LONG" else "SHORT"
     if regime_favor != expected_favor:
         return (False, f"favor_{regime_favor}_not_{expected_favor}")
-
-    # Condition 3 : median pct_in_range sustained sur lookback bars
     if not range_pos_history or len(range_pos_history) < _TREND_DAY_LOOKBACK_BARS // 2:
         return (False, f"range_pos_history_insufficient_{len(range_pos_history) if range_pos_history else 0}")
     try:
@@ -364,7 +371,6 @@ def _is_trend_day(direction: str, regime_data: dict, range_pos_history: list) ->
     else:
         if median_range > _TREND_DAY_SHORT_THRESHOLD:
             return (False, f"median_range_{median_range:.1f}_gt_{_TREND_DAY_SHORT_THRESHOLD}")
-
     return (True, "TREND_DAY_OK")
 
 
@@ -402,8 +408,11 @@ class PaperTrader:
         # ouverture Asia/CME futures, DST-aware), pas UTC midnight. Aligne le
         # PnL "session" avec la realite des sessions de trading reelles.
         self.date_str = get_cme_trading_day()
-        self.log_file = os.path.join(DATA_DIR, f"{self.date_str}_trades.jsonl")
-        self.snapshot_file = os.path.join(DATA_DIR, f"{self.date_str}_snapshots.jsonl")
+        # FIX 05/05 cohérence Bot 2 V6 : suffixe _v6 pour ne pas hériter des trades Bot 1
+        # qui écrit dans {date}_trades.jsonl (sans suffixe). Sans ça, _load_existing()
+        # au boot V6 charge les trades Bot 1 dans state_v6.json — incohérent.
+        self.log_file = os.path.join(DATA_DIR, f"{self.date_str}_v6_trades.jsonl")
+        self.snapshot_file = os.path.join(DATA_DIR, f"{self.date_str}_v6_snapshots.jsonl")
         self.trade_count = 0
 
         # v2 (22/04) : SLTPEngine par instrument (Tier 1/2 murs audites)
@@ -419,12 +428,10 @@ class PaperTrader:
 
         # v2 (22/04) : tracker signal_ids deja consommes (dedup cross-restart VPS)
         # Persiste sur disque (review R3 : sinon restart = re-entry meme signal_id)
-        self._traded_signals_file = os.path.join(DATA_DIR, f"{self.date_str}_traded_signals.txt")
+        self._traded_signals_file = os.path.join(DATA_DIR, f"{self.date_str}_v6_traded_signals.txt")
         self._traded_signal_ids = set()
 
-        # 07/05 — buffer range_pos history pour detection TREND DAY (audit walk-forward)
-        # Ring buffer rolling 60 bars par symbole (deque avec maxlen=60).
-        # Update a chaque poll dans poll_cycle, lu par _is_trend_day pour bypass ChaseTopGate.
+        # 07/05 — buffer range_pos history pour TREND DAY override (audit walk-forward)
         from collections import deque as _deque
         self._range_pos_history = {
             "ES": _deque(maxlen=_TREND_DAY_LOOKBACK_BARS),
@@ -449,6 +456,20 @@ class PaperTrader:
         # Cross-instrument observation (24/04 mode log-only, pre-integration Option 2)
         # Stocke le dernier compute_cross_bonus pour expose dans state.json + logs V2
         self._last_cross_context: Optional[dict] = None
+
+        # V6 brain (04/05) : fix R1 code-reviewer re-audit
+        # Initialise pour eviter AttributeError si acces externe avant 1er check_entry
+        self._latest_v6_bias = None
+
+        # V4 enriched bar cache (FIX critique 05/05 Jackson "branche V6 a Databento")
+        # Le parquet V4 contient 456 features (bars_since_swing, wick_pct, im_smt,
+        # cluster_at_*, naked_poc, ctx_*) ABSENTES du DMP. Sans ca les blocs 7-16
+        # de bias_v6 + votes 11-16 de regime_v6 sont dead code. Cache 60s pour eviter
+        # read_parquet a chaque poll (lourd I/O).
+        self._v4_bar_cache: Dict[str, dict] = {}  # sym -> bar dict
+        self._v4_bar_cache_ts: Dict[str, float] = {}  # sym -> last load epoch
+        # Tracking source bar pour audit J+1 (R3 code-reviewer)
+        self._latest_v6_bar_source: str = "INIT"
 
         # 🆕 FIX 24/04 : kill-switch auto SELL (re-activation SELL ce soir).
         # 🆕 FIX 24/04 soir (audit market-analyst #4) : par SYMBOLE, seuil DD
@@ -558,9 +579,8 @@ class PaperTrader:
 
         Fix 11/05 : skip trades `invalidated=True` (cleanup phantom DMP Gold 10/05).
         Convention alignee avec `DASHBOARD/api/paper_tracker.py` qui filtre les
-        invalidated du dashboard, et `mia2_brain_v6_databento.py:_load_existing`.
-        Sans ce filtre, stats_today recompte les 3 trades phantom du 10/05
-        (NQ -$124.50 + ES +$40,480.50 phantom + ES -$40,557 phantom) au boot Bot 1.
+        invalidated du dashboard. Sans ce filtre, stats_today recompte le trade
+        fantome (meme avec pnl_usd=0 apres cleanup) = 1 trade comptabilise.
         """
         if os.path.exists(self.log_file):
             with open(self.log_file, "r") as f:
@@ -593,11 +613,6 @@ class PaperTrader:
         Lecture dashboard data.banner. Fallback **99999.0** (pas 0.0) si dashboard
         mort / banner manquant = sentinel CRIT force watchdog kill.
         Pattern aligne `check_stream_subscribe_alive` (mia_watchdog.py:354).
-
-        FIX 07/05 (Jackson "voyants verts mais bot mort") : ajout cle "ts"
-        dans la lookup. Banner schema actuel utilise `ts` (pas `ts_ms`/`bar_ts_ms`).
-        Ce mismatch faisait retourner 99999.0 systematiquement -> Bot 1 jamais
-        actif depuis le renommage. BUG SILENCIEUX (voyant Bot OK vert).
         """
         try:
             from datetime import datetime, timezone
@@ -606,7 +621,9 @@ class PaperTrader:
             banner = data.get("banner", {}) if isinstance(data, dict) else {}
             for sym in ("ES", "NQ"):
                 b = banner.get(sym.lower(), {})
-                # FIX 07/05 : "ts" est le champ actuel banner (etait "ts_ms"/"bar_ts_ms" anciennement)
+                # FIX 08/05: meme bug que Bot 1 (mia_paper_trader.py:594) - banner field
+                # actuel = "ts" (pas "ts_ms"/"bar_ts_ms"). Sans cet alias = fallback 99999
+                # = STALE CRITICAL faux + watchdog restart loop sans fin.
                 ts_ms = b.get("ts") or b.get("ts_ms") or b.get("bar_ts_ms")
                 if ts_ms:
                     age = (now_ms - float(ts_ms)) / 1000
@@ -639,9 +656,9 @@ class PaperTrader:
         self.today_trades = []
         self.trade_count = 0
         self.date_str = current_date
-        self.log_file = os.path.join(DATA_DIR, f"{self.date_str}_trades.jsonl")
-        self.snapshot_file = os.path.join(DATA_DIR, f"{self.date_str}_snapshots.jsonl")
-        self._traded_signals_file = os.path.join(DATA_DIR, f"{self.date_str}_traded_signals.txt")
+        self.log_file = os.path.join(DATA_DIR, f"{self.date_str}_v6_trades.jsonl")
+        self.snapshot_file = os.path.join(DATA_DIR, f"{self.date_str}_v6_snapshots.jsonl")
+        self._traded_signals_file = os.path.join(DATA_DIR, f"{self.date_str}_v6_traded_signals.txt")
         self._traded_signal_ids = set()
         self._funnel = self._funnel_blank(current_date)
         # Fix mineur #2 (code-reviewer 22/04) : ne PAS reset _last_close_ts ni
@@ -1122,11 +1139,17 @@ class PaperTrader:
         }
 
     def _funnel_save_eod(self, date_str: str) -> None:
-        """Ecrit un snapshot journalier avant rollover pour historique."""
+        """Ecrit un snapshot journalier avant rollover pour historique.
+
+        Fix 11/05 : suffix `_v6` pour ne pas ecraser le funnel Bot 1
+        (mia_paper_trader.py partage `FUNNEL_LOG_DIR` mais ecrit `funnel_{date}.json`).
+        Sans suffix, le dernier qui sauvegarde au EOD CME (18:00 ET) ecrasait
+        l'autre = perte historique funnel V6.
+        """
         try:
             snap = self._funnel_snapshot()
             snap["saved_iso"] = datetime.now(timezone.utc).isoformat()
-            fp = os.path.join(FUNNEL_LOG_DIR, f"funnel_{date_str}.json")
+            fp = os.path.join(FUNNEL_LOG_DIR, f"funnel_{date_str}_v6.json")
             with open(fp, "w", encoding="utf-8") as f:
                 json.dump(snap, f, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -1160,9 +1183,7 @@ class PaperTrader:
         if not price:
             return None
 
-        # 07/05 — Update range_pos history pour TREND DAY detection (audit walk-forward).
-        # Update meme si pas de trade pris (rolling buffer 60 bars).
-        # Defensive : range_pos peut etre None ou string, on filter.
+        # 07/05 — Update range_pos history pour TREND DAY detection (audit walk-forward)
         try:
             _rp_now = reg.get("range_pos")
             if _rp_now is not None:
@@ -1170,7 +1191,8 @@ class PaperTrader:
                 if 0.0 <= _rp_val <= 100.0:
                     self._range_pos_history[symbol].append(_rp_val)
         except (TypeError, ValueError):
-            pass  # silencieux : pas critique pour le trading
+            pass
+
 
         # 🆕 04/05 Phase 1 OBSERVE-ONLY widgets V4 (FIX position 04/05 soir) :
         # observation AVANT les gates pour collecter sur TOUS les polls (meme
@@ -1213,6 +1235,61 @@ class PaperTrader:
         # infra (dashboard down, symbol off), pas des rejets de regle metier.
         self._funnel_new_poll()
 
+        # 🆕 V6 BRAIN OVERRIDE (04/05 fix P1-1+P1-2 + 05/05 fix V4 source)
+        # PRIORITE V4 ENRICHED PARQUET (456 features Databento) — Jackson 05/05
+        # "branche V6 a Databento". Sans cette lecture, les blocs 7-16 bias_v6 +
+        # votes 11-16 regime_v6 sont dead code (features V4 specifiques absentes du DMP).
+        # Fallback : DMP JSONL si V4 indispo (latence accept).
+        _v6_bar_v4 = self._load_last_bar_v4(symbol)  # V4 ENRICHED parquet (456 cols)
+        _v6_source = "V4"
+        if not _v6_bar_v4:
+            # FIX R3 code-reviewer : emit FALLBACK pour visibilite prod
+            # Sans cet emit, les decisions V6 sont prises sur DMP sans warning =
+            # dead code 10 buckets V4 silencieux comme avant le fix V4 source.
+            _v6_bot_data = data.get("bot", {})
+            _v6_bar_v4 = _v6_bot_data.get("last_bars", {}).get(sym, {})
+            _v6_source = "DMP_BOT"
+            if not _v6_bar_v4:
+                _v6_bar_v4 = self._read_last_jsonl_bar(symbol)
+                _v6_source = "DMP_JSONL"
+            if _v2log and _v6_bar_v4:
+                _v2log.emit("V6_V4_FALLBACK_DMP",
+                            sym=symbol,
+                            fallback_source=_v6_source,
+                            reason="V4_parquet_unavailable_or_stale")
+        self._latest_v6_bias = None  # reset chaque check_entry
+        self._latest_v6_bar_source = _v6_source  # tracking pour state.json + audit J+1
+        if _v6_bar_v4:
+            try:
+                from CORE.regime_engine_v6 import compute_regime as _compute_regime_v6
+                from CORE.bias_calculator_v6 import compute_bias as _compute_bias_v6
+                _r6 = _compute_regime_v6(_v6_bar_v4)
+                _b6 = _compute_bias_v6(_v6_bar_v4)
+                # Override regime avec V6 enrichi (16 votes : 10 standard + Votes 11-16)
+                reg["mode"] = _r6.mode
+                reg["favor"] = _r6.favor
+                reg["regime_actionable"] = int(_r6.is_actionable)
+                reg["regime_confidence"] = _r6.confidence
+                reg["mode_trend_votes"] = _r6.trend_votes
+                reg["mode_range_votes"] = _r6.range_votes
+                reg["vol_regime"] = _r6.vol_regime
+                # Expose bias V6 dans reg (consumable par market_ctx logs + gate)
+                reg["bias_v6_score"] = round(_b6.score_signed, 3)
+                reg["bias_v6_clarity"] = round(_b6.bias_clarity, 3)
+                reg["bias_v6_direction"] = _b6.direction
+                # Stocke bias_v6 sur self pour gate downstream
+                self._latest_v6_bias = _b6
+                # Log first-time visibilite (rate limited 60s)
+                if _v2log:
+                    _v2log.emit("BRAIN_V6_ACTIVE", sym=symbol,
+                                regime_mode=_r6.mode, regime_favor=_r6.favor,
+                                bias_v6_score=round(_b6.score_signed, 3),
+                                bias_v6_dir=_b6.direction)
+            except Exception as _e:
+                if _v2log:
+                    _v2log.emit("GENERIC_MAJEUR",
+                                msg=f"V6 brain override fail (fallback V1): {_e}")
+
         # 🆕 STEP 0 (03/05 Jackson "FILTRE LE PLUS HAUT NIVEAU") — REGIME GATE STRICT
         # Bot 1 dashboard-follower = beaucoup faux signaux. Filtre regime cap les
         # plus mauvais. Skip FULL si regime non-actionable (pas TREND/RANGE clair OU
@@ -1245,7 +1322,7 @@ class PaperTrader:
             # Direction match check : signal direction doit etre coherent avec regime favor
             # Note : action sera connu apres STEP 3 (conseil_global). On check ici la direction
             # potentielle via conseil_action.
-            # FIX 05/05 Option B : lit executable_action (gate freshness 4 bars).
+            # FIX 05/05 Option B : executable_action (gate freshness 4 bars vs UI 2 bars).
             _conseil = data.get("conseil_global", {}).get(sym, {})
             conseil_action_pre = _conseil.get("executable_action", _conseil.get("action", "ATTENDRE"))
             if conseil_action_pre == "ACHAT" and regime_favor_local == "SHORT":
@@ -1298,17 +1375,13 @@ class PaperTrader:
             pass  # fail-safe : si module plante, ne pas bloquer le bot
 
         # 3. Conseil Global action
-        # FIX 05/05 (Option B audit freshness) : utilise `executable_action` (gate
-        # freshness 4 bars) au lieu de `action` (UI freshness 2 bars). Le UI reste
-        # ATTENDRE apres 2 bars (anti-FOMO 22/04), mais le bot peut tradeer un
-        # signal stable jusqu'a 4 bars. Audit empirique 05/05 NQ : 188 candidats
-        # raw=ACHAT PRUDENT etaient etouffes par limite 2 bars.
-        # Fallback `action` pour backward compat si executable_action absent.
+        # FIX 05/05 Option B : `executable_action` (gate freshness 4 bars) au lieu
+        # de `action` (UI freshness 2 bars). Audit empirique 188 raw=ACHAT PRUDENT
+        # NQ etouffes par limite 2 bars. Fallback `action` pour backward compat.
         conseil = data.get("conseil_global", {}).get(sym, {})
         display_action = conseil.get("action", "ATTENDRE")
         action = conseil.get("executable_action", display_action)
-        # R4 code-reviewer 05/05 : log RESCUED quand exec autorise mais display force
-        # ATTENDRE. Permet audit J+1 : count des trades debloques par Option B.
+        # R4 code-reviewer 05/05 : trace RESCUED pour audit J+1.
         if action != "ATTENDRE" and display_action == "ATTENDRE" and _v2log:
             try:
                 _v2log.emit("GATE_CONSEIL_EXEC_RESCUED",
@@ -1450,6 +1523,197 @@ class PaperTrader:
                                 action=action,
                                 **market_ctx)
             return None
+
+        # 🆕 V6 GATE BIAS_V6_CONTRADICTION (04/05 fix code-reviewer P1-2 NOGO)
+        # Si bias_v6 enrichi V4 contredit fortement la direction du signal,
+        # rejeter. Tolerance : score_v6 doit etre dans le sens du signal OU
+        # dans la zone neutre |score| < 0.20 (apres normalisation FACTOR=0.5).
+        # Cette gate transforme `bias_v6` de DEAD CODE en gate decisionnel reel.
+        # Anti-flip-flop : seuil 0.20 absolu (pas 0.10) pour eviter rejection
+        # sur barres ambivalentes.
+        b6 = self._latest_v6_bias  # set par V6 brain override AVANT STEP 0
+        BIAS_V6_CONTRA_THRESHOLD = 0.20
+        if b6 is not None:
+            b6_score = b6.score_signed
+            if direction == "LONG" and b6_score < -BIAS_V6_CONTRA_THRESHOLD:
+                self._funnel_reject("6_conf_mtf", "v6_bias_contradicts_long",
+                                    symbol=symbol,
+                                    direction=direction,
+                                    v6_score=round(b6_score, 3),
+                                    v6_clarity=round(b6.bias_clarity, 3),
+                                    v6_direction=b6.direction,
+                                    threshold=-BIAS_V6_CONTRA_THRESHOLD,
+                                    action=action,
+                                    signal_id=signal_id,
+                                    **market_ctx)
+                return None
+            if direction == "SHORT" and b6_score > BIAS_V6_CONTRA_THRESHOLD:
+                self._funnel_reject("6_conf_mtf", "v6_bias_contradicts_short",
+                                    symbol=symbol,
+                                    direction=direction,
+                                    v6_score=round(b6_score, 3),
+                                    v6_clarity=round(b6.bias_clarity, 3),
+                                    v6_direction=b6.direction,
+                                    threshold=BIAS_V6_CONTRA_THRESHOLD,
+                                    action=action,
+                                    signal_id=signal_id,
+                                    **market_ctx)
+                return None
+
+        # 🆕 V6 GATE BIG ORDER OPPOSITE AT PRICE (05/05 backtest +$155 / +0.078 PF)
+        # Decouverte 05/05 : Trade #2 Bot 1 -$87 entry @ 27931 avec
+        # `dist_big_ask_nearest_up = 0` = vendeur institutionnel PILE au prix.
+        # Backtest 111 trades historiques : reject si big_*_nearest <= 0t (TOL=0 strict)
+        # Cumule avec V6 bias gate : PnL +193 -> +605 ($, +213%), PF 1.05 -> 1.24, WR 40.5% -> 44.3%.
+        # TOL=0 strict : a TOL>=1, on tue trop de wins (le big order proche est utile comme S/R).
+        # Source : bar_row_dict.dist_big_ask_nearest_up / dist_big_bid_nearest_dn
+        # MAIS le bar est lu plus bas (ligne 1349). Pour ce gate, utiliser _v6_bar_v4
+        # capture en debut check_entry (override block).
+        TOL_BIG_AT_PRICE = 0
+        big_dist_ask_up = (_v6_bar_v4 or {}).get("dist_big_ask_nearest_up")
+        big_dist_bid_dn = (_v6_bar_v4 or {}).get("dist_big_bid_nearest_dn")
+        if direction == "LONG" and big_dist_ask_up is not None:
+            try:
+                d = float(big_dist_ask_up)
+                if 0 <= d <= TOL_BIG_AT_PRICE:
+                    self._funnel_reject("6_conf_mtf", "v6_big_ask_at_price",
+                                        symbol=symbol, direction=direction,
+                                        big_ask_dist=d,
+                                        threshold=TOL_BIG_AT_PRICE,
+                                        action=action, signal_id=signal_id,
+                                        **market_ctx)
+                    return None
+            except (TypeError, ValueError):
+                pass
+        if direction == "SHORT" and big_dist_bid_dn is not None:
+            try:
+                d = float(big_dist_bid_dn)
+                if -TOL_BIG_AT_PRICE <= d <= 0:
+                    self._funnel_reject("6_conf_mtf", "v6_big_bid_at_price",
+                                        symbol=symbol, direction=direction,
+                                        big_bid_dist=d,
+                                        threshold=-TOL_BIG_AT_PRICE,
+                                        action=action, signal_id=signal_id,
+                                        **market_ctx)
+                    return None
+            except (TypeError, ValueError):
+                pass
+
+        # 🆕 V6 GATE NO CHASING — anti stop-hunt (05/05 backtest +$551 / +0.19 PF)
+        # Stat empirique 111 trades :
+        #   LONG  CHASE (d_swH 0..15t)  : N=16  WR=31.2%  PnL=-$168
+        #   LONG  PULLBACK (d_swH > 15) : N=63  WR=41.3%  PnL=+$212
+        #   SHORT CHASE (d_swL -15..0)  : N=7   WR=14.3%  PnL=-$373 (N FAIBLE = R6)
+        #   SHORT PULLBACK (d_swL <-15) : N=25  WR=52.0%  PnL=+$522
+        # FIX R6 code-reviewer : SHORT CHASE N=7 = data mining trap. TOL=15
+        # plus conservateur sur SHORT (au lieu de 20) jusqu'a N>=20.
+        # FIX R8 code-reviewer (HIGH PRIO) : skip CHASE si higher_low recent
+        # (bars_since_last_swing_low <= 10) = stair-step setup valide.
+        # Idem skip si wick rejection (bar_lower_wick_pct > 0.4).
+        # Ces 2 features sont MAINTENANT dispo via V4 enriched (avant: ABSENT du DMP).
+        TOL_CHASE_LONG = 20
+        TOL_CHASE_SHORT = 15  # plus conservateur (R6: N=7 non-significatif)
+        WICK_THRESHOLD = 0.4
+        BARS_SINCE_HL_THRESHOLD = 10
+
+        d_swH = (_v6_bar_v4 or {}).get("dist_swing_high") or (_v6_bar_v4 or {}).get("dist_last_swing_high_pct")
+        d_swL = (_v6_bar_v4 or {}).get("dist_swing_low") or (_v6_bar_v4 or {}).get("dist_last_swing_low_pct")
+
+        # Skip CHASE conditions (raffinement V4)
+        # FIX agent re-audit : emit V6_CHASE_SKIPPED INFO pour audit J+1.
+        # Sans emit, impossible de tracer combien de CHASE sont evites par R8.
+        skip_chase = False
+        skip_reason = None
+        if direction == "LONG":
+            bars_since_low = (_v6_bar_v4 or {}).get("bars_since_last_swing_low")
+            if bars_since_low is not None:
+                try:
+                    if float(bars_since_low) <= BARS_SINCE_HL_THRESHOLD:
+                        skip_chase = True; skip_reason = "hl_recent"  # higher low recent = stair-step OK
+                except (TypeError, ValueError):
+                    pass
+            if not skip_chase:
+                wick_low = (_v6_bar_v4 or {}).get("bar_lower_wick_pct")
+                if wick_low is not None:
+                    try:
+                        if float(wick_low) > WICK_THRESHOLD:
+                            skip_chase = True; skip_reason = "wick_rejection"  # wick rejection support = entry valide
+                    except (TypeError, ValueError):
+                        pass
+        elif direction == "SHORT":
+            bars_since_high = (_v6_bar_v4 or {}).get("bars_since_last_swing_high")
+            if bars_since_high is not None:
+                try:
+                    if float(bars_since_high) <= BARS_SINCE_HL_THRESHOLD:
+                        skip_chase = True; skip_reason = "hl_recent"
+                except (TypeError, ValueError):
+                    pass
+            if not skip_chase:
+                wick_up = (_v6_bar_v4 or {}).get("bar_upper_wick_pct")
+                if wick_up is not None:
+                    try:
+                        if float(wick_up) > WICK_THRESHOLD:
+                            skip_chase = True; skip_reason = "wick_rejection"
+                    except (TypeError, ValueError):
+                        pass
+
+        if skip_chase and _v2log:
+            _v2log.emit("V6_CHASE_SKIPPED",
+                        sym=symbol, direction=direction,
+                        reason=skip_reason)
+
+        # 🆕 V6 GATE VOL_Z LOW (Phase 11 PEPITE #2 — anti-faux-breakout)
+        # Trade #1 ce matin : RVOL 0.23 = volume_z ~ -1.4 = breakout sans volume
+        # = faux breakout systematique. Ce gate filtre les entries ou volume_z<-1.5.
+        # FIX R2 re-audit code-reviewer (05/05) : seuil -1.0 trop sensible
+        # (16% bars rejetees sur distribution standard). -1.5 cible la queue
+        # (6.7%, alignee sur cas reel motivant z=-1.4). Re-tester apres 100
+        # trades validation, descendre vers -1.0 si trop permissif.
+        # Densite volume_z : 100% sur V4 enriched.
+        VOL_Z_THRESHOLD = -1.5
+        volume_z = (_v6_bar_v4 or {}).get("volume_z")
+        if volume_z is not None:
+            try:
+                v = float(volume_z)
+                if v < VOL_Z_THRESHOLD:
+                    self._funnel_reject("6_conf_mtf", "v6_volume_z_too_low",
+                                        symbol=symbol, direction=direction,
+                                        volume_z=round(v, 2),
+                                        threshold=VOL_Z_THRESHOLD,
+                                        action=action, signal_id=signal_id,
+                                        **market_ctx)
+                    return None
+            except (TypeError, ValueError):
+                pass
+
+        if not skip_chase:
+            if direction == "LONG" and d_swH is not None:
+                try:
+                    d = float(d_swH)
+                    if 0 <= d <= TOL_CHASE_LONG:
+                        self._funnel_reject("6_conf_mtf", "v6_chase_long_near_swing_high",
+                                            symbol=symbol, direction=direction,
+                                            dist_swing_high=d,
+                                            threshold=TOL_CHASE_LONG,
+                                            action=action, signal_id=signal_id,
+                                            **market_ctx)
+                        return None
+                except (TypeError, ValueError):
+                    pass
+            if direction == "SHORT" and d_swL is not None:
+                try:
+                    d = float(d_swL)
+                    if -TOL_CHASE_SHORT <= d <= 0:
+                        self._funnel_reject("6_conf_mtf", "v6_chase_short_near_swing_low",
+                                            symbol=symbol, direction=direction,
+                                            dist_swing_low=d,
+                                            threshold=-TOL_CHASE_SHORT,
+                                            action=action, signal_id=signal_id,
+                                            **market_ctx)
+                        return None
+                except (TypeError, ValueError):
+                    pass
+
         self._funnel_pass("6_conf_mtf")
 
         # ─── Prerequis commun STEP 6bis + 7 : lecture bar DMP ────────────
@@ -1632,13 +1896,11 @@ class PaperTrader:
             self._funnel_pass("6cinq_entry_quality")
 
         # ─── 6six. ChaseTopGate (05/05/2026 — walk-forward Lopez DSR=0.72) ────
-        # Bloque LONG si range_pos >= 60 (= chase top du range RTH).
-        # Audit empirique 90 trades : 80% des SL ont range_pos>=60 vs 55% des TP.
-        # Walk-forward 5-fold LONG-only : delta +$1264, 33 SL evites, 6 TP perdus
-        # (ratio 5.5x), DSR=0.72 > Lopez seuil 0.5.
-        # SHORT non filtre (audit montre filter symetrique casse les SHORT).
-        # R3 code-reviewer : kill-switch via env var MIA_CHASE_TOP_GATE_ENABLED.
-        # R2 code-reviewer : log enrichi avec price_ref pour audit RESCUED J+7.
+        # Bloque LONG si range_pos >= 60 (chase top du range RTH).
+        # Audit empirique 90 trades + walk-forward 5-fold LONG-only :
+        # delta +$1264, ratio 5.5x SL/TP evites, DSR=0.72 > Lopez seuil 0.5.
+        # SHORT non filtre (filter symetrique casse les SHORT).
+        # R3 kill-switch + R2 enriched log (price_ref pour audit RESCUED J+7).
         if _CHASE_TOP_GATE_ENABLED and direction == "LONG":
             range_pos_check = reg.get("range_pos", 50)
             try:
@@ -1646,13 +1908,10 @@ class PaperTrader:
             except (TypeError, ValueError):
                 range_pos_val = 50
             if range_pos_val >= _CHASE_TOP_THRESHOLD:
-                # 07/05 TREND DAY OVERRIDE (audit walk-forward 12 folds : LONG @ 70-90%
-                # range_pos en TREND day = +1.31t mean_pnl mieux que non-trend, 9/12 folds
-                # NQ delta positif). Si trend day confirmed → bypass au lieu de reject.
-                rp_history = list(self._range_pos_history.get(symbol, []))
+                # 07/05 TREND DAY OVERRIDE (audit walk-forward) : bypass si trend confirmed
+                rp_history = list(getattr(self, "_range_pos_history", {}).get(symbol, []))
                 td_ok, td_reason = _is_trend_day(direction, reg, rp_history)
                 if td_ok:
-                    # Bypass ChaseTopGate, log telemetry pour audit J+30
                     if _v2log:
                         try:
                             _v2log.emit("GATE_CHASE_TOP_TREND_DAY_BYPASS",
@@ -1670,8 +1929,6 @@ class PaperTrader:
                             pass
                     self._funnel_pass("6six_chase_top")
                 else:
-                    # R2 : enregistre price_ref pour audit RESCUED offline (script J+7
-                    # parse les blocks et matche prix t+30min pour mesurer false-block).
                     price_ref = bar_row_dict.get("price") or bar_row_dict.get("close") or 0
                     self._funnel_reject("6six_chase_top", "chase_top_long_range_high",
                                         symbol=symbol, direction=direction,
@@ -1685,13 +1942,9 @@ class PaperTrader:
             else:
                 self._funnel_pass("6six_chase_top")
 
-        # ─── Observe-only tracker SHORT au bottom (05/05 — audit J+14) ────────
-        # Risque miroir ChaseTopGate : SHORT au low pourrait etre piège pareil.
-        # Audit empirique n=32 SHORT dit NOGO block (ratio 1.6x, DSR<0), mais
-        # sample sous Lopez seuil n>=100. Tracker observe-only : log les SHORT
-        # pris a range_pos<=30 pour mesurer WR vs baseline sur 2-4 semaines.
-        # Aucun block. Audit J+14 : si WR_chase_bottom < WR_baseline - 15%,
-        # deployer ChaseBottomGate SHORT.
+        # ─── Observe-only tracker SHORT au bottom (audit J+14) ────────────────
+        # Risque miroir : SHORT au low pourrait etre piege. Audit n=32 dit NOGO
+        # block mais sample sous Lopez n>=100. Track sans bloquer.
         if direction == "SHORT" and _v2log:
             try:
                 rp_short = reg.get("range_pos", 50)
@@ -1706,9 +1959,9 @@ class PaperTrader:
                 pass
 
         # ─── Observe-only EDGE RETEST tracker (06/05 — V4 Phase B+++ Edge Zones)
-        # Setup ICT : zone edge cree par bar massive -> retest 70% de chance.
-        # Track les SHORT vers edge_sell + LONG vers edge_buy (touche < 0.10%).
-        # Audit J+14 : WR vs baseline. Si fort signal -> proposer setup actif Bot V6.
+        # Setup ICT : push violent cree zone edge -> retest 70% chance.
+        # Tracker SHORT vers edge_sell + LONG vers edge_buy (touche < 0.10%).
+        # Audit J+14 : WR vs baseline pour decider integration future setup actif.
         if _v2log:
             try:
                 price_now = bar_row_dict.get("price") or bar_row_dict.get("close") or 0
@@ -1919,6 +2172,98 @@ class PaperTrader:
             "conseil_bear_pts": conseil.get("bear_points", 0),
         }
 
+    def _load_last_bar_v4(self, symbol: str, cache_ttl_sec: float = 60.0) -> Optional[dict]:
+        """Charge la derniere barre V4 ENRICHIED (Databento 456 features) pour le symbol.
+
+        FIX CRITIQUE 05/05 (Jackson "branche V6 a Databento") : sans cette lecture,
+        les blocs 7-16 bias_v6 + votes 11-16 regime_v6 sont dead code (les features
+        V4 specifiques type bars_since_swing, wick_pct, im_smt, cluster_at_*, naked_poc,
+        ctx_* sont ABSENTES du DMP JSONL Sierra Chart).
+
+        Pattern copie de databento_paper_trader_v2.py:load_last_bar (Bot 2 V2).
+        Cache 60s pour eviter read_parquet I/O a chaque poll (V4 update toutes 5 min).
+
+        Args:
+            symbol: 'NQ' ou 'ES'
+            cache_ttl_sec: max age cache local avant relecture (defaut 60s)
+
+        Returns:
+            dict bar V4 enrichi (456 features) ou None si parquet indisponible.
+        """
+        # Cache hit ?
+        last_load = self._v4_bar_cache_ts.get(symbol, 0)
+        if time.time() - last_load < cache_ttl_sec:
+            cached = self._v4_bar_cache.get(symbol)
+            if cached:
+                return cached
+
+        # Lecture parquet
+        try:
+            import pandas as pd
+            now_utc = datetime.now(timezone.utc)
+            candidates = []
+            for offset in (0, -1):  # mois courant + mois precedent
+                m = now_utc.month + offset
+                y = now_utc.year
+                if m < 1:
+                    m += 12
+                    y -= 1
+                fp = os.path.join(
+                    V4_DATASET_ROOT,
+                    f"symbol={symbol}.c.0",
+                    f"year={y}",
+                    f"month={m:02d}",
+                    "data.parquet",
+                )
+                if os.path.exists(fp):
+                    candidates.append(fp)
+            if not candidates:
+                return None
+            df = pd.read_parquet(candidates[0])
+            if df.empty:
+                return None
+            df["ts_event"] = pd.to_datetime(df["ts_event"], utc=True, errors="coerce")
+            df = df.dropna(subset=["ts_event"]).sort_values("ts_event")
+            bar = df.iloc[-1].to_dict()
+            # Convertir Timestamp pandas en str ISO pour JSON safety downstream
+            ts_ev = bar.get("ts_event")
+            if hasattr(ts_ev, "isoformat"):
+                bar["ts_event_iso"] = ts_ev.isoformat()
+
+            # FIX R2 code-reviewer : staleness check (pipeline V4 cycle 5 min)
+            # Si bar V4 > 600s = pipeline V4 down ou retard -> emit STALE et
+            # retourne None pour forcer fallback DMP (3 gates basent dessus).
+            STALE_THRESHOLD_SEC = 600
+            try:
+                if hasattr(ts_ev, "timestamp"):
+                    bar_age_sec = (datetime.now(timezone.utc) - ts_ev.to_pydatetime()).total_seconds()
+                else:
+                    bar_age_sec = 0
+                if bar_age_sec > STALE_THRESHOLD_SEC:
+                    if _v2log:
+                        _v2log.emit("V6_V4_BAR_STALE",
+                                    sym=symbol,
+                                    age_sec=int(bar_age_sec),
+                                    threshold=STALE_THRESHOLD_SEC)
+                    # FIX agent re-audit : invalider cache aussi pour ne pas
+                    # retourner cached stale au prochain appel < 60s.
+                    self._v4_bar_cache.pop(symbol, None)
+                    self._v4_bar_cache_ts.pop(symbol, None)
+                    return None  # force fallback DMP
+                bar["v4_bar_age_sec"] = round(bar_age_sec, 1)
+            except Exception:
+                pass
+
+            # Cache (uniquement si bar fresh)
+            self._v4_bar_cache[symbol] = bar
+            self._v4_bar_cache_ts[symbol] = time.time()
+            return bar
+        except Exception as e:
+            if _v2log:
+                _v2log.emit("GENERIC_MAJEUR",
+                            msg=f"V4 enriched bar load fail {symbol}: {e}")
+            return None
+
     def _load_recent_trades(self, days: int = 10, post_levier_only: bool = True) -> list:
         """Helper : charge trades historiques des N derniers jours (incl today).
 
@@ -1936,9 +2281,11 @@ class PaperTrader:
         # Date pivot LEVIER #1 deploy (Jackson 04/05 soir)
         LEVIER_PIVOT_DATE = _date(2026, 5, 4)
 
-        all_files = sorted(glob(os.path.join(DATA_DIR, "*_trades.jsonl")))
-        # Exclure databento_paper trades (Bot 2/3, pas Bot 1)
-        all_files = [f for f in all_files if "databento" not in os.path.basename(f).lower()]
+        # FIX 05/05 cohérence Bot 2 V6 : ne charger QUE les trades V6
+        # (pattern {date}_v6_trades.jsonl) pour ne pas calculer wr_dynamic
+        # avec les trades Bot 1 — ils ont des bias/regime/feature tracking
+        # différents (signal_engine vs bias_v6).
+        all_files = sorted(glob(os.path.join(DATA_DIR, "*_v6_trades.jsonl")))
         all_files = all_files[-days:]
         all_trades = []
         for fp in all_files:
@@ -2316,17 +2663,13 @@ class PaperTrader:
 
         # 12/05 FIX entry_price (cf INCIDENT_LOG 2026-05-12 03:30) : recuperer
         # fill_price REEL broker via get_last_fill_price() au lieu de signal_price.
-        # Resout race condition _handle_dtc_fill is_parent (code mort).
-        # Si fill_price=0 (timeout DTC ou non-disponible), fallback signal_price.
         fill_price_real = 0.0
         if not getattr(self, "dry_run", False) and parent_id:
             try:
                 fill_price_real = self.dtc.get_last_fill_price(parent_id) or 0.0
             except Exception:
                 fill_price_real = 0.0
-        # Entry effectif : fill broker prioritaire, fallback signal si fill=0
         entry_price_effective = fill_price_real if fill_price_real > 0 else signal["entry_price"]
-        # Drift signal vs fill (tracking audit)
         entry_drift_ticks = 0.0
         if fill_price_real > 0:
             _dir_sign = 1 if signal["direction"] == "LONG" else -1
@@ -2338,16 +2681,16 @@ class PaperTrader:
                                 signal_price=signal["entry_price"],
                                 fill_price=fill_price_real,
                                 drift_ticks=entry_drift_ticks,
-                                bot="bot1_dmp")
+                                bot="bot2_v6")
                 except Exception:
                     pass
 
         position = {
             "symbol": symbol,
             "direction": signal["direction"],
-            "entry_price": entry_price_effective,  # 12/05 FIX : fill_price reel (fallback signal)
-            "signal_price": signal["entry_price"],  # 12/05 FIX : tracking signal_price separe
-            "entry_drift_ticks": entry_drift_ticks,  # 12/05 FIX : audit drift signal vs fill
+            "entry_price": entry_price_effective,  # 12/05 FIX : fill_price reel
+            "signal_price": signal["entry_price"],  # 12/05 FIX : tracking signal separe
+            "entry_drift_ticks": entry_drift_ticks,  # 12/05 FIX : audit drift
             "entry_time": now.isoformat(),
             "entry_ts": now.timestamp(),
             "sl_price": signal["sl_price"],
@@ -2490,45 +2833,6 @@ class PaperTrader:
         # Write state.json pour dashboard bridge
         self._write_state()
 
-    def _read_live_trade_price(self, symbol: str) -> Optional[float]:
-        """Lit le prix tick le plus recent depuis LIVE_CACHE Databento.
-
-        FIX 05/05 (Jackson "anomalie PnL Sim3 vs dashboard") : Bot 1 lisait
-        uniquement le banner dashboard alimente par bars JSONL DMP 1m. Pendant
-        la formation d'une bar, le banner gardait le prix close de la derniere
-        bar (lag jusqu'a 60s). Sierra Chart broker tracke en tick reel ->
-        divergence observee 78T (SC) vs 9T (dashboard) sur trade #2 ce matin.
-
-        Solution : lire en priorite `LIVE_CACHE/{NQ,ES}_c_0_last_trade.json`
-        ecrit par MIA-Live-OHLCV stream Databento (latence ~500ms).
-        Fallback sur banner si stream down ou file stale.
-
-        Returns:
-            float price si frais (age < 5s), None sinon (-> fallback banner).
-        """
-        try:
-            cache_dir = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)),
-                "DATA", "LIVE_CACHE",
-            )
-            safe_sym = symbol.replace("/", "_").replace(".", "_")
-            # Bot 1 sur futures continus = ES.c.0 / NQ.c.0
-            fname = f"{safe_sym}_c_0_last_trade.json"
-            path = os.path.join(cache_dir, fname)
-            with open(path, "r", encoding="utf-8") as f:
-                data_lt = json.load(f)
-            captured_ts = data_lt.get("captured_at_ts", 0)
-            age = time.time() - captured_ts
-            if age > 5.0:
-                # Stream stale -> ne pas utiliser, fallback banner
-                return None
-            price = data_lt.get("price")
-            if price is None or price <= 0:
-                return None
-            return float(price)
-        except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError, TypeError):
-            return None
-
     def check_exit(self, data, symbol):
         """Verifie SL/TP sur la position ouverte."""
         if symbol not in self.positions:
@@ -2536,13 +2840,8 @@ class PaperTrader:
 
         pos = self.positions[symbol]
         sym = symbol.lower()
-        # FIX 05/05 (Jackson "anomalie PnL Sim3 vs dashboard") : prix LIVE
-        # tick prioritaire (latence 500ms) sinon fallback banner JSONL DMP 1m
-        # (lag 0-60s). Cf _read_live_trade_price docstring.
-        price = self._read_live_trade_price(symbol)
-        if price is None:
-            banner = data.get("banner", {})
-            price = banner.get(sym, {}).get("price", 0)
+        banner = data.get("banner", {})
+        price = banner.get(sym, {}).get("price", 0)
         if not price:
             return
 
@@ -2560,11 +2859,7 @@ class PaperTrader:
             pos["mae"] = round(excursion, 1)
 
         # PnL unrealized (pour state.json live)
-        # FIX 10/05 (audit code-reviewer Phase 0.3.a) : ancien
-        # `TICK_VALUE.get(symbol, TICK_SIZE)` faisait fallback au TICK_SIZE
-        # (=0.25) au lieu d'un tick_value -> bug semantique latent.
-        # get_tick_value() utilise CORE/constants.py source unique.
-        tv = get_tick_value(symbol)
+        tv = TICK_VALUE.get(symbol, TICK_SIZE)
         pos["current_price"] = price
         pos["unrealized_pnl_ticks"] = round(excursion, 1)
         pos["unrealized_pnl_usd"] = round(excursion * tv * pos.get("n_micros", 3), 2)
@@ -2728,24 +3023,20 @@ class PaperTrader:
             if price <= pos["tp_price"]:
                 hit_tp = True
 
-        # Timeout — 11/05 J3 REVERT post-backtest (R2 agent backtest-runner).
-        # AVANT (origine) : 120 bars (2h). FIX initial 30 bars = NOGO empirique.
-        # Backtest 114 trades 6 sessions 24/04-05/05 :
-        #   timeout=30  -> -$386 (44% TP coupes, Bot 1 trend-following pas mean-rev)
-        #   timeout=60  -> +$583 (sweet spot : 25/27 TP gardes, 15 SL evacues)
-        #   timeout=120 ->  -$40 (baseline original, SL pourrissent au-dela 60)
-        # Verdict R2 : SWEET SPOT 60 bars (1h). Bot 1 = trend-following archetype,
-        # PAS mean-reversion comme Bot 3. "30 MN PARTOUT" Jackson 08/05 = OK Bot 3
-        # mais PAS Bot 1 (commentaire pre-fix "trend-following 2h legitime" empirique).
-        # Pattern 11 evite : aligner aveuglement = uniformisation forcee (cf
-        # feedback_pre_deploy_3_questions.md - backtest obligatoire avant deploy).
+        # Timeout — 11/05 Jackson "30 MN PARTOUT" Option A alignement Bot 1+2+3.
+        # AVANT : 120 bars (2h). APRES : 30 bars (30 min) cohérent Bot 3 + literature
+        # pro mean-reversion (Raschke/Brooks 5-15 bars max).
         # DESACTIVE en session Asia (faible volatilite, setups longs OK).
         try:
             from CORE import eco_calendar as _eco
             _is_asia = _eco.current_session_label() == "Asia"
         except Exception:
-            _is_asia = False  # fail-safe : timeout 60 bars actif si import casse
-        timeout = (not _is_asia) and pos["bars_held"] >= 60
+            _is_asia = False  # fail-safe : timeout 30 bars actif si import casse
+        # 11/05 J3 REVERT defense (R2 agent backtest Bot 1 NOGO timeout=30).
+        # Bot 2 V6 NOT backteste = revert prudent a 120 bars (origine) en attendant
+        # R2b dedie. R2 verdict Bot 1 : timeout=30 -$386 / timeout=60 +$583 / timeout=120 baseline.
+        # Bot 2 V6 archetype V6 brain enrichi = potentiellement different.
+        timeout = (not _is_asia) and pos["bars_held"] >= 120
 
         if hit_tp or hit_sl or timeout:
             self._close_trade(symbol, price, "TP" if hit_tp else "SL" if hit_sl else "TIMEOUT")
@@ -2966,10 +3257,7 @@ class PaperTrader:
             pnl_ticks = round((pos["entry_price"] - exit_price) / TICK_SIZE, 1)
 
         # PnL $ (3 micros)
-        # FIX 10/05 (audit code-reviewer Phase 0.3.a) : ancien
-        # `TICK_VALUE.get(symbol, TICK_SIZE)` faisait fallback au TICK_SIZE
-        # (=0.25) au lieu d'un tick_value -> bug semantique latent sur PnL final.
-        tv = get_tick_value(symbol)
+        tv = TICK_VALUE.get(symbol, TICK_SIZE)
         n_mic = pos.get("n_micros", 3)
         pnl_usd = round(pnl_ticks * tv * n_mic, 2)
 
@@ -3462,15 +3750,18 @@ class PaperTrader:
 
                 consec_errors = 0  # reset sur tick OK
 
-                # FIX URGENT 06/05 : emit BOT_HEARTBEAT toutes 30s (watchdog).
-                # mia_watchdog cherche cet event dans events_*_paper.jsonl,
-                # sans lui le bot est tue cycliquement (13 restarts/jour observe).
-                # last_bar_age = age (sec) de la derniere bar DMP JSONL processee.
+                # FIX URGENT 06/05 (Jackson "TROP DE REDEMARAGE") : emit BOT_HEARTBEAT
+                # toutes 30s. Sans ca, mia_watchdog ne trouve pas l'event dans
+                # events_*_paper_v6.jsonl -> SOURCE_CRIT -> restart cyclique
+                # 15-25 min (34 restarts/jour observe).
                 hb_now = time.time()
                 if hb_now - last_heartbeat > 30:
-                    last_bar_age = self._compute_last_bar_age_for_heartbeat(data)
+                    try:
+                        last_bar_age = self._compute_last_bar_age_for_heartbeat(data)
+                    except Exception:
+                        last_bar_age = 0.0
                     if _v2log:
-                        _v2log.emit("BOT_HEARTBEAT", last_bar_age=last_bar_age, bot="bot1_dmp")
+                        _v2log.emit("BOT_HEARTBEAT", last_bar_age=last_bar_age, bot="bot2_v6_brain")
                     last_heartbeat = hb_now
 
                 time.sleep(POLL_INTERVAL)
@@ -3556,7 +3847,7 @@ class PaperTrader:
 def show_stats(symbol=None):
     """Affiche les stats de tous les jours."""
     import glob as g
-    files = sorted(g.glob(os.path.join(DATA_DIR, "*_trades.jsonl")))
+    files = sorted(g.glob(os.path.join(DATA_DIR, "*_v6_trades.jsonl")))
     if not files:
         print("Aucun trade enregistre.")
         return

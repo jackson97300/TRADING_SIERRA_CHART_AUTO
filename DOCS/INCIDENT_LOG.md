@@ -46,6 +46,175 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-05-12 03:00 — [VALIDATION_MISS] — Mode --use-mq-lite ne charge pas DMP JSONL → 6 features V4 enriched 100% NaN
+
+**Contexte** : Investigation veto swing_proximity 12/05. Découverte que `range_pos`, `profile_shape`, `trend_day_probability`, `bars_in_va`, `cvd_day_dir`, `dist_mq_call_0dte` toutes 100% NaN dans V4 enriched parquet (9716 bars NQ mai 2026), alors qu'OK dans Sierra DMP JSONL.
+
+**Ce qui a mal tourné** : commit 03/05 Plan B regime_engine partage a étendu `DMP_MQ_FIELDS` dans `build_dataset_v4_dmp_databento.py:517-547` à 45 cols (ajout 28 features regime/profile/CVD/VWAP). MAIS `load_mq_levels.py:43-54` (utilisé en mode `--use-mq-lite`) n'expose toujours que 17 cols MQ basics. En mode `--use-mq-lite` ([build_dataset_v4_dmp_databento.py:922-934](CORE/build_dataset_v4_dmp_databento.py#L922-L934)), le pipeline charge MQ_Lite ET set `dmp = pd.DataFrame()` (vide) → skip merge DMP JSONL → 28 cols Sierra-only absentes silencieusement.
+
+Le R3 fix code-reviewer 03/05 ([build_dataset_v4_dmp_databento.py:1013-1028](CORE/build_dataset_v4_dmp_databento.py#L1013-L1028)) détecte les features manquantes et skip `regime_engine` avec `regime_mode=UNKNOWN`, mais n'a jamais alerté car les features manquantes étaient considérées comme "design choice" pas comme bug.
+
+**Cause racine** : extension `DMP_MQ_FIELDS` sans synchroniser `load_mq_levels.py`. Mode `--use-mq-lite` utilisé en backfill ET live (`live_pipeline.py:232 --use-mq-lite` hardcoded).
+
+**Impact** : 
+- `regime_actionable = 0% des bars` (vs 18.3% post-fix) → **filtre `BOT3_REGIME_SKIP` (Plan B Jackson 03/05) = CODE MORT en production depuis 9 jours**. Bot 3 trade SANS filtre regime depuis le 03/05.
+- `dist_mq_call_0dte` aussi 100% NaN car aucun fichier MQ_Lite scsf pour mai 2026 (`DATA/mq_levels/NQ/year=2026/month=5/...` vide, seuls fichiers 28/04 ES+NQ).
+
+**Leçon** : 
+1. Toute extension d'une LISTE de cols partagée entre plusieurs loaders doit être synchronisée atomiquement dans tous les loaders.
+2. Test post-extension : grep counts NaN sur 1 jour de parquet, alerter si > seuil.
+3. Filtre/gate dont l'activation dépend de features → tester empiriquement le taux d'activation (`grep is_actionable=True` sur 24h).
+
+**Trigger prevention** :
+- Toute modif `DMP_MQ_FIELDS` (ou équivalent listes) → grep tous loaders (`load_*`, `read_*`) qui consomment cette liste → vérifier sync.
+- Quality validator ML : ajouter check "100% NaN columns" comme red flag bloquant.
+
+**Fix déployé 12/05 ~02:30 UTC** : 
+- `CORE/build_dataset_v4_dmp_databento.py:921-955` : en mode `--use-mq-lite`, charge AUSSI DMP JSONL (28 cols Sierra-only, drop cols MQ doublons). Validé sur 1 jour rebuild 11/05 : 5/6 features remplies, `regime_actionable=18.3%` (vs 0% avant).
+- `dist_mq_call_0dte` reste 100% NaN — bug data source distinct (scsf_MIA_MQ_Lite à redéployer VPS).
+
+**À faire post-fix** : rebuild V4 enriched complet (mai + historique 12 mois MGC) pour purger l'ancien build cassé.
+
+**Reviewed** : self + 2 agents (general-purpose + code-reviewer) cross-check convergent.
+
+### 2026-05-12 03:30 — [VALIDATION_MISS] — Race condition entry_price=signal_price 3 bots
+
+**Contexte** : Investigation trade Bot 3 NQ 12/05 02:54:51 — pnl rapporté +$142.50 vs Sierra fill réel -$120 (écart $262.50 par trade). Audit empirique log `LIVE_REF_USED` 02:54:51 : `signal_price=29314.5, live_ref=29357.75, drift_ticks=173.0`.
+
+**Ce qui a mal tourné** : Bot 3 (et Bot 1 + Bot 2 V6 par design partagé) stocke `pos.entry_price = signal["entry_price"]` au lieu de `pos.entry_price = fill_price` (DTC AverageFillPrice broker). La branche `_handle_dtc_fill is_parent` ([mia_paper_trader.py:2210-2225](CORE/mia_paper_trader.py#L2210-L2225), équivalent Bot 2 V6 + Bot 3) qui devait fix entry_price avec fill réel est **CODE MORT** à cause d'une race condition :
+- `send_market_order` envoie parent ORDER puis `parent_event.wait(timeout=2.0)`
+- Sierra renvoie ORDER_UPDATE Status=7 instantanément (Sim)
+- `_recv_loop` daemon → `_handle_dtc_fill` lookup `_order_to_symbol.get(parent_id)` → **VIDE** (registration ligne 2436-2442 vient APRES send_market_order return)
+- → branche `is_parent` retourne sans mettre à jour entry_price
+- `entry_price` reste à `signal["entry_price"]` à vie
+
+**Cause racine** : design initial OK quand drift signal↔fill négligeable (1-5t). Devenu critique quand directive Jackson 08/05 ("Bot 3 doit lire V4 enriched malgré lag 18 min") a introduit latence 18-24 min → drift jusqu'à 173 ticks. Bot 1 + Bot 2 V6 même bug latent mais invisible (sources fraîches DMP).
+
+**Impact** : 44 trades Bot 3 historiques sur 8j (WR 38.6%, +$166 rapporté) = stats potentiellement TOUTES fausses. Compte broker Sim1 vraie perte ≠ dashboard. Bot 1 + Bot 2 V6 impact négligeable (drift typique 1-5t).
+
+**Découverte collatérale** : `_emit("BOT3_TRADE_OPEN", price=signal.price_entry_ref)` log faux entry depuis le début (44 trades). MFE tracking via `load_last_bar` 1min rate pics intra-bar.
+
+**Leçon** : 
+1. Tout `entry_price` stocké doit venir du fill réel broker (DTC AverageFillPrice), pas du signal_price calculé.
+2. Toute race condition `_handle_*` qui dépend d'un dict registré APRÈS `send_market_order` return est code mort potentiel — tester empiriquement via grep événements `*_FILL_RECORDED` sur 10+ trades.
+3. Bug invisible si conditions normales (drift faible) — devient catastrophique sous conditions extrêmes (latence pipeline) → besoin tests sous conditions worst-case.
+
+**Trigger prevention** :
+- Avant tout deploy bot avec source data lag > 5 min, vérifier que `entry_price === fill_price DTC` (grep BOT_ENTRY_FILL_RECORDED dans 5 premiers trades shadow).
+- Si fill_price retourné par `send_market_order` = 0, log CRITIQUE `BOT_FILL_PRICE_MISSING` et reject signal (pas de fallback signal_price silencieux).
+- Si drift signal↔live_ref > seuil (NQ=20t/ES=8t/MGC=30t), reject trade via `BOT_DRIFT_REJECT`.
+
+**Fix déployé 12/05 ~03:30 UTC** : 
+- `BOT/dtc_connector.py` : `_last_fill_prices` dict persistent (non-pop) + méthode `get_last_fill_price(parent_id)`
+- 3 bots : récupèrent fill_price via `get_last_fill_price()` après `send_market_order` return
+- `entry_price = fill_price if fill_price > 0 else signal["entry_price"]` (fallback safe)
+- Drift reject + 2 codes log nouveaux (`BOT_DRIFT_REJECT`, `BOT_ENTRY_FILL_RECORDED`)
+- 44 trades Bot 3 historiques marqués `_CONTAMINATED_` (à reset après validation shadow)
+
+**Reviewed** : self + agent code-reviewer + agent market-analyst (validation thresholds drift)
+
+### 2026-05-12 01:30 — [COMMENT_FALSE] — Bot 2 V6 "V4 enrichi 456 features" = mensonge architectural
+
+**Contexte** : Investigation alertes dashboard "DMP_JSONL_STALE / DOWNLOAD_STALE_POST_FETCH" (12/05 00:24-00:35 UTC). Jackson demande "vérifie que les 3 bots tournent et lisent données fraîches".
+
+**Ce qui a mal tourné** : Audit empirique révèle que Bot 2 V6 (`mia2_brain_v6_databento.py`) **NE LIT JAMAIS V4 enriched parquet** en pratique. Sur 8 jours d'historique (05/05→12/05) : ratio V4_BAR_STALE / total_events = **31.2% en moyenne** sur les cycles, mais sur les 6 trades du 11/05 (+$507, 83.3% WR), **100% étaient pris en FALLBACK_DMP** (audit `CORE/research/audit_bot2v6_source_attribution.py`). Les 5 features V4-only (`bars_since_last_swing_*`, `bar_*_wick_pct`, `volume_z`) skip silencieusement → 5 gates V6 (CHASE long/short near swing, VOL_Z too low, wick rejection bypass) **ne se déclenchent jamais**.
+
+**Cause racine** : 
+1. `DATABENTO_DELAY_MIN=15` + cycle pipeline live 5 min + PHASE_B retraite mois entier 7-10 min = latence pipeline V4 enriched réelle = **18-24 min worst case**, threshold STALE 600s INCOMPATIBLE.
+2. Commentaire `mia2_brain_v6_databento.py:2180` "features V4 spécifiques ABSENTES du DMP" est FACTUELLEMENT FAUX (5 features V4-only seulement, DMP a 262 cols vs V4 56 cols).
+3. Label dashboard `dashboard.js:4326` "Brain V6 · V4 enrichi 456 features · 21 blocs bias + 16 votes regime + 4 gates" laisse croire Bot 2 V6 = Databento alors qu'il est DMP Sierra en pratique.
+4. Asymétrie source Bot 1/Bot 2 V6 voulue par Jackson (Bot 1 = Sierra, Bot 2 = Databento) **n'existe pas** : Bot 2 V6 lit DMP comme Bot 1.
+
+**Constat positif** : architecture **fonctionne quand même** car Bot 2 V6 a stratégies différentes (regime_engine 16-votes + bias_calculator 21-blocs + conseil + 4 gates + trail TR40_20 + SLTP V6) qui surperforment Bot 1 sur DMP commun (WR 84.6% vs 69.6%, mean pnl 3.2x). L'edge V6 vient des STRATÉGIES, pas des DONNÉES.
+
+**Vraie asymétrie Databento** : préservée via **Bot 3 MP** (`databento_paper_trader_v2.py`) qui utilise `live_cache.enrich_bar` (V4 enriched parquet + LIVE_CACHE Databento ms-level + mode `STRICT` abort si stale).
+
+**Leçon** : 
+1. Tout label dashboard affirmant une source de données doit être vérifié EMPIRIQUEMENT par grep events log avant déploiement.
+2. Tout commentaire affirmant absence de feature dans DMP doit être validé par `grep DMP_Writer.h`.
+3. Si latence pipeline > threshold STALE, fallback silencieux = mensonge architectural même si techniquement "fail-safe".
+
+**Trigger prevention** :
+- Avant d'affirmer "Bot X lit source Y", lire le ratio `events_*_<bot>.jsonl | grep FALLBACK / grep TOTAL` sur 7j minimum.
+- Avant d'ajouter un commentaire "features X ABSENTES de Y", grep le code source de Y pour confirmer.
+- Avant d'ajouter un fallback silencieux, ajouter un emit `<BOT>_DATA_SOURCE_SWITCH` à chaque transition + compteur visible dashboard.
+- Pas de label dashboard sans validation empirique 24h.
+
+**Recommandation actée par Jackson** : ne PAS refactor Bot 1 sur Databento (pas rationnel de casser un bot qui marche). Fix label dashboard pour cesser le mensonge. Considérer refactor Bot 2 V6 vers vrai Databento POST-MGC GO (option live_enricher service).
+
+**Reviewed** : self (audit empirique trades 11/05 + cross-check 2 agents general-purpose + code-reviewer) + Jackson (décision status quo).
+
+### 2026-05-11 18:00 — [VALIDATION_MISS] — log_catalog.py dupliqué CORE/ + BOT/ → silent emit reject
+
+**Contexte** : Deploy Solution D2 ladder Bot 3 phase 1a (mode OBSERVE) + 1b (mode ACTION). Ajout codes log BOT3_LADDER_* (TICK, WOULD_LOCK, SL_MODIFIED, NO_SL_ALERT, etc.) dans `CORE/log_catalog.py`. SCP fait, hash VPS = local. Mais 0 emit BOT3_LADDER_* dans logs malgre fonction _bot3_check_trailing_ladder appelee (champ `ladder_executed_paliers` cree dans pos).
+
+**Ce qui a mal tourne** : `log_catalog.py` existe en DOUBLE sur VPS :
+- `C:\TRADING_SIERRA_CHART_AUTO\CORE\log_catalog.py` (j'ai SCP ici)
+- `C:\TRADING_SIERRA_CHART_AUTO\BOT\log_catalog.py` (PAS SCP, ancien)
+
+Le process Bot 3 fait `sys.path.insert(0, BOT_DIR)` ligne 137 (pour `from bot_config import INSTRUMENTS`). Cela place BOT/ AVANT CORE/ dans sys.path. Quand `logging_v2.py` (depuis CORE/) fait `from log_catalog import resolve`, Python prend la PREMIERE occurrence dans sys.path = `BOT/log_catalog.py` (ancien sans BOT3_LADDER_*).
+
+`logging_v2.py:resolve(code)` leve `KeyError("Code de log inconnu")` → catch dans `_v2log.emit(...)` → catch global dans `_emit(...)` qui print stderr (jamais dans events_/execution_jsonl).
+
+**Cause racine** : duplication fichiers log_catalog non documente. Le SCP vers CORE/ seulement ne suffit pas pour processes qui ont BOT/ en sys.path haute priorite.
+
+**Lecon** : pour TOUT module utilise par multiple bots (logging_v2, log_catalog, dtc_connector), verifier presence duplicate sur VPS (`Get-ChildItem -Recurse -Filter <module>.py`). Si duplique, SCP toutes les copies OU mieux : supprimer les duplicates et garder une seule source.
+
+**Trigger prevention** : 
+1. AVANT SCP module commun (log_catalog, logging_v2, dtc_connector), executer `ssh VPS 'Get-ChildItem C:/TRADING_SIERRA_CHART_AUTO -Recurse -Filter <module>.py'`. Si > 1 result → SCP toutes les copies.
+2. Test post-SCP : `ssh VPS 'python -c "from logging_v2 import get_logger; log = get_logger(\"test\"); log.emit(\"NOUVEAU_CODE\", a=1)"'`. Si KeyError → log_catalog pas dans le bon path.
+3. BACKLOG long terme : supprimer duplicate log_catalog.py BOT/ et utiliser uniquement CORE/log_catalog.py.
+
+**Mitigation appliquee 11/05 18:00** : SCP log_catalog.py vers BOT/log_catalog.py aussi (hash match VPS = local maintenant). Restart Bot 3 attendu apres close position ES en cours.
+
+**Reviewed** : self (auto-investigation via test direct Python sur VPS)
+
+---
+
+### 2026-05-11 13:00 — [COMMENT_FALSE] — Pipeline V4 enriched ne contient pas `ctx_trend_day_score` malgré docs
+
+**Contexte** : feature-engineer scan 462 features V4 enriched NQ mai 2026 pour construire Range Detector V4. Identifie `trend_day_probability` comme label candidat range/trend.
+
+**Ce qui a mal tourne** :
+1. `trend_day_probability` = **100% NaN** dans `nq_mai_v4_fresh.parquet` (8834 rows). Documenté ailleurs (`CORE/15/MIA_PIPELINE_RECAP.md:275`) comme "Constante 0.15 (mort)" — source C++ DMP morte.
+2. Le **replacement documenté** `ctx_trend_day_score` (dans `CORE/rolling_features.py:299`) est **ABSENT du V4 enriched parquet**.
+3. Cause : `CORE/build_dataset_v4_phase_b.py` n'importe pas `rolling_features.py`. Seul l'ancien pipeline V1 (`CORE/15/mia_bench.py`, `mia_sim.py`) appelle `RollingFeatures`. **Refactor V1 → V4 a oublié d'intégrer RollingFeatures**.
+
+**Cause racine** : pipeline V4 enriched build_dataset_v4_phase_b.py utilise `phase_b_helpers` + `phase_b_plus_engine` + `phase_b_plus_plus_engine` + `phase_b_rolling_inputs` + `phase_b_vwap_diff` + `phase_b_option_c_plus` mais PAS `rolling_features.py`. Les ~26 features `ctx_*` calculees par RollingFeatures (dont ctx_trend_day_score, ctx_climax_signal, ctx_delta_exhaustion, etc.) ne sont jamais ajoutees au V4.
+
+**Lecon** : checker la presence empirique des features V4 attendues AVANT de les utiliser comme label ou input ML. Pas se fier aux docs/README de pipeline historiques. Le V4 enriched contient ~462 cols mais pas tout ce qui est documenté.
+
+**Trigger prevention** : avant d'utiliser une feature `ctx_*` du V4 enriched : (1) verifier presence pyarrow.read_parquet().columns, (2) verifier non-NaN sur sample, (3) verifier source pipeline qui calcule.
+
+**Mitigation appliquee** :
+- feature-engineer a construit label manuel `trend_score_fwd_60m` (= |close[t+60] - close[t]| / (max-min sur 60 bars fwd)) au lieu d'utiliser ctx_trend_day_score absent. Workaround pour Range Detector V4.
+
+**Reviewed** : self (auto-investigation suite scan feature-engineer)
+
+**Backlog** : integrer `RollingFeatures` (ou au moins extraire ctx_trend_day_score) dans `build_dataset_v4_phase_b.py`. Rebuild V4 enriched parquet. Effort : ~1-2h dev + 4-6h rebuild (selon historique).
+
+---
+
+### 2026-05-11 10:00 — [VALIDATION_MISS] — Audit profond Bot 2 V6 fabrique avec stats fausses (verdict OPTION A STOP errone)
+
+**Contexte** : Jackson a demande analyse Bot 2 V6 (mia2_brain_v6_databento.py 3871 LOC). J'ai produit `DOCS/AUDIT_PROFOND_BOT2_V6.md` la nuit du 10-11/05 avec verdict "OPTION A STOPPER immediatement" + 6 raisons empiriques (-$2,783 / 30j, 56 trades, WR 21.4%, V4 stale 10j, 50% gates dead code, profile_shape absent).
+
+**Ce qui a mal tourne** : tous les chiffres etaient FAUX :
+- **Stats reelles V6** : +$868.50 / 9 trades / 5 jours / WR 77.8% (verifie via `*_v6_trades.jsonl`)
+- **V4 mai 2026** : 6.1MB ES + 7.3MB NQ MIS A JOUR ce matin (pas stale 10j)
+- **profile_shape, bars_in_va, day_type, single_print_count, poc_bar_dist, trend_day_probability** : TOUS PRESENTS dans V4 ES mai (verifie via pyarrow)
+- **Gates V6 ACTIFS** (verifie via state_v6.json funnel) : v6_big_ask_at_price=33, v6_chase=73, v6_bias_contradicts=5, regime_loser_profile_shape=14
+
+**Cause racine** : (a) sub-agent Explore a lu colonnes V4 incomplet ou parquet stale au moment audit, (b) chiffre -$2,783 vient probablement de stats globales mixees (Bot 1 + Bot 2 V1 + Bot 2 V6) lues dans dashboard briefing, sans cross-checker `*_v6_trades.jsonl`, (c) j'ai accepte la sortie agent sans verifier empiriquement avec pandas + state_v6.json. Faute de cross-validation = Pattern 11 du protocole agent (croire le verdict agent sans tester).
+
+**Lecon** : audit produisant verdict STOP/KILL sur bot rentable DOIT cross-check : (1) trades jsonl reels du bot, (2) state.json funnel reel, (3) parquet schema empirique (pyarrow.read_parquet().columns). Ne JAMAIS produire verdict OPTION A sur chiffres tiers (briefing dashboard, audit agent unique) sans grep direct.
+
+**Trigger prevention** : tout audit produisant verdict avec montant PnL et nb trades doit citer le fichier source EXACT (`*_v6_trades.jsonl` line N). Si verdict = STOP/KILL, exiger 2 sources convergentes (trades jsonl + state.json funnel).
+
+**Reviewed** : self (Jackson a demande re-verification empirique, qui a revele l'erreur)
+
+---
+
 ### 2026-05-10 22:40 — [VALIDATION_MISS] — DMP C++ binary ES/NQ pollue DATA/ES/*.jsonl avec bars Gold (chart MGC ajoute sans audit cpp.md)
 
 **Contexte** : Phase 5bis ajout MGC.v.0 cote Python (databento_live_stream + bot_config + mia_sltp). Jackson a aussi ajoute l'etude DMP sur le chart Gold Sierra Chart pour collecter bars MGC. Resultat : Bot 1 a logue 2 trades fantomes ES (+$40,481 puis -$40,557 net -$76) + Bot 2 V6 1 trade (+$40,481). Total 5 trades phantom retroactivement (incluant 2 NQ 25/04 pattern freeze cache identique).

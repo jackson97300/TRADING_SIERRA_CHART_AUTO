@@ -92,9 +92,35 @@ class DTCConnector:
         self._oco_pairs: dict = {}       # {tp_cid: sl_cid, sl_cid: tp_cid}
         self._oco_processed: set = set() # Ordres déjà traités
         self._server_order_ids: dict = {} # {client_order_id: server_order_id}
+        # 04/05 Etape 2 (anti-slippage) : capture LastFillPrice parent pour slip metric
+        # + reprice eventuel SL/TP. Lu par send_market_order apres parent_event.wait.
+        self._parent_fill_prices: dict = {}  # {parent_id: fill_price}  (pop apres usage interne)
+        # 12/05 FIX RACE CONDITION entry_price (cf INCIDENT_LOG 2026-05-12 03:30) :
+        # _last_fill_prices conserve le fill_price APRES pop interne, accessible aux
+        # bots callers via get_last_fill_price(parent_id). Resout le bug entry_price =
+        # signal_price faux quand drift signal<->fill important (Bot 3 V4 stale 18min).
+        self._last_fill_prices: dict = {}  # {parent_id: fill_price} (persistent, non-pop)
+        self._last_fill_lock = threading.Lock()
+        # 04/05 H5 : RequestID counter pour Type 203 cancel (projet 1 fait pareil).
+        self._request_id_counter: int = 1
+        # 04/05 H6 (CAUSE RACINE ORPHELINS BOT 3) : tracker trade_account par CID.
+        # Bug avant fix : OCO auto cancel utilisait default "Sim3" alors que Bot 3
+        # = Sim1 -> SC ignore silencieusement -> orphelins. Solution : capturer le TA
+        # depuis msg ORDER_UPDATE et le passer aux cancels.
+        self._order_trade_accounts: dict = {}  # {cid: trade_account}
+        # 01/05 ROLLBACK : tentative fix CANCEL_FAILED_RETRY via _cancelled_order_ids
+        # set. Soupcon d'avoir cause Bot 1 orphan post-fix (Jackson observed). Le faux
+        # positif log etait inoffensif (juste bruyant). On preserve _verify_cancel
+        # comportement original (re-cancel + log). Cf BACKLOG : Type 300 query Open Orders.
+        self._cancelled_order_ids: set = set()  # vestigial, vide
 
         # P0-6 : Events pour attendre fill parent avant TP/SL
         self._parent_fill_events: dict = {}  # {parent_id: threading.Event}
+
+        # P0-A (06/05) : lock pour serialiser les requests Type 300 OPEN_ORDERS.
+        # 2 callers concurrents (boot recovery + check_timeout etape 6.5/9) peuvent
+        # s'ecraser sur self._pending_open_orders_query -> corruption / events perdus.
+        self._open_orders_query_lock = threading.Lock()
 
         # Market data — prix temps reel par symbole
         self._last_prices: dict = {}    # {symbol: {"bid": 0, "ask": 0, "last": 0, "ts": 0}}
@@ -104,6 +130,14 @@ class DTCConnector:
         self.on_fill: Optional[Callable] = None
         self.on_position_update: Optional[Callable] = None
         self.on_disconnect: Optional[Callable] = None
+        # FIX 06/05 soir (BUG STRUCTUREL Bot 3 — Jackson "PAS DE DETTE") :
+        # `on_order_update` callback expose le msg DICT brut (Type 301 ORDER_UPDATE)
+        # pour permettre aux callers de parser eux-memes (cid_type routing, status
+        # intermediaire, etc). Bot 3 hookera dessus pour capturer fills TP/SL/Type 209.
+        # Bot 1/2 continuent a utiliser `on_fill(OrderFill)` — comportement inchange.
+        # Avant ce fix : Bot 3 assignait self.dtc.on_order_update mais l'attribut
+        # n'existait pas dans le connector → silently ignore → 100% des fills perdus.
+        self.on_order_update: Optional[Callable] = None
 
     def connect(self) -> bool:
         """Connecte au serveur DTC de Sierra Chart."""
@@ -133,10 +167,15 @@ class DTCConnector:
                     self._last_heartbeat = time.time()
                     # Reset OCO state pour nouvelle session
                     self._oco_processed.clear()
-                    # Thread recv
+                    self._cancelled_order_ids.clear()  # rollback 01/05 — vestigial
+                    # Thread recv — P1.2 (06/05) : daemon=False + drain au disconnect
+                    # pour ne pas tuer le thread net pendant le traitement d'un fill TP/SL.
+                    # Sans ce fix, SIGTERM watchdog → main exit → daemon thread mort
+                    # avant que _handle_order_update ait consume le 301 → OCO manuel rate
+                    # → orphelin. Le drain est fait dans disconnect() (join timeout 3s).
                     if self._recv_thread is None or not self._recv_thread.is_alive():
                         self._recv_thread = threading.Thread(
-                            target=self._recv_loop, daemon=True)
+                            target=self._recv_loop, daemon=False, name="DTC_recv_loop")
                         self._recv_thread.start()
                     return True
 
@@ -148,23 +187,70 @@ class DTCConnector:
                 self.connected = False
             return False
 
-    def disconnect(self):
-        """Deconnexion propre."""
+    def disconnect(self, drain_timeout: float = 3.0):
+        """Deconnexion propre.
+
+        P1.2 (06/05) : drain le _recv_loop avant exit pour eviter de couper
+        au milieu d'un Type 301 (TP/SL fill) qui arrive juste avant SIGTERM.
+        Sans drain, OCO manuel ne s'execute pas → orphelin.
+
+        Args:
+            drain_timeout : seconds max d'attente du drain. 0 = pas de drain (pour
+                             tests / cas catastrophiques). Default 3.0 sec.
+        """
         self._running = False
         with self.lock:
             self.connected = False
+        # Fermer le socket APRES avoir flag _running=False : le _recv_loop sortira
+        # naturellement (via msg=None de _recv) au prochain tour.
         if self.sock:
             try:
                 self.sock.close()
             except Exception:
                 pass
             self.sock = None
+        # Drain du recv thread si vivant et drain_timeout > 0
+        if drain_timeout > 0 and self._recv_thread is not None and self._recv_thread.is_alive():
+            try:
+                self._recv_thread.join(timeout=drain_timeout)
+                if self._recv_thread.is_alive():
+                    logger.warning(f"[DTC] recv_thread drain timeout ({drain_timeout}s) — thread still alive")
+                    if _v2log:
+                        try:
+                            _v2log.emit("DTC_DISCONNECT_DRAIN_TIMEOUT", drain_sec=drain_timeout)
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.error(f"[DTC] disconnect drain error: {e}")
 
     def send_market_order(self, symbol: str, side: int, quantity: int = 1,
                            sl_price: float = 0, tp_price: float = 0,
-                           trade_account: str = "Sim3") -> tuple:
+                           trade_account: str = "Sim3",
+                           signal_ref_price: float = 0,
+                           sl_ticks: int = 0,
+                           tp_ticks: int = 0,
+                           tick_size: float = 0.25,
+                           auto_reprice_threshold_ticks: int = 5) -> tuple:
         """
         Envoie un ordre market + bracket SL/TP (3 ordres separes).
+
+        04/05 Etape 2 anti-slippage long terme (Plan agent) :
+          - Si signal_ref_price > 0 ET sl_ticks/tp_ticks > 0 : on capture le
+            LastFillPrice du parent apres ACK et on calcule le slip vs ref.
+          - Si slip > auto_reprice_threshold_ticks : on RECALCULE sl/tp depuis
+            le fill_price reel AVANT d'envoyer les childs.
+          - Pattern conforme FIX B-1 (02/05) : on intervient AVANT envoi childs,
+            zone non couverte par l'interdiction de recalc post-childs.
+          - Emet BRACKET_SLIP_METRIC systematiquement (slip mesure + ref_source).
+
+        Args (compat retro Bot 1 V1 inchangee si nouveaux params absents) :
+            sl_price, tp_price : prix absolus calcules par le caller (depuis ref).
+            signal_ref_price : prix de reference utilise par le caller pour calc.
+                               Si 0, pas de slip metric, pas de reprice.
+            sl_ticks, tp_ticks : distances en ticks (utilises pour reprice).
+                                  Si 0, pas de reprice possible (fallback prix donnes).
+            tick_size : pour calcul slip + reprice. Default 0.25 (ES/NQ).
+            auto_reprice_threshold_ticks : seuil declenchement reprice. 5 par default.
 
         Returns:
             (parent_id, tp_cid, sl_cid) ou ("", "", "") si echec
@@ -178,6 +264,9 @@ class DTCConnector:
         # P0-6 : creer event pour attendre fill parent
         parent_event = threading.Event()
         self._parent_fill_events[parent_id] = parent_event
+
+        # 04/05 H6 : pre-register trade_account pour parent (TP/SL ajoutes plus bas)
+        self._order_trade_accounts[parent_id] = trade_account
 
         # 1. Parent MARKET
         self._send({
@@ -209,6 +298,7 @@ class DTCConnector:
                     except Exception:
                         pass
                 self._parent_fill_events.pop(parent_id, None)
+                self._parent_fill_prices.pop(parent_id, None)
                 # Tenter de cancel le parent au cas ou
                 sid = self._server_order_ids.get(parent_id)
                 if sid:
@@ -220,6 +310,68 @@ class DTCConnector:
                     })
                 return ("", "", "")
             self._parent_fill_events.pop(parent_id, None)
+
+            # 04/05 Etape 2 : capture fill_price + slip metric + reprice eventuel
+            fill_price = self._parent_fill_prices.pop(parent_id, 0.0)
+            # 12/05 FIX : persister fill_price dans _last_fill_prices pour callers
+            # (Bot 1/2 V6/3) qui appellent get_last_fill_price() apres return.
+            # Resout race condition _handle_dtc_fill is_parent (code mort).
+            if fill_price > 0:
+                with self._last_fill_lock:
+                    self._last_fill_prices[parent_id] = fill_price
+            slip_t = 0.0
+            reprice_done = False
+            if signal_ref_price > 0 and fill_price > 0:
+                slip_t = abs(fill_price - signal_ref_price) / tick_size
+                # Emit slip metric systematique (tous les trades)
+                if _v2log:
+                    try:
+                        _v2log.emit("BRACKET_SLIP_METRIC",
+                                    sym=symbol, parent_id=parent_id,
+                                    signal_ref_price=signal_ref_price,
+                                    fill_price=fill_price,
+                                    slip_ticks=round(slip_t, 1),
+                                    side="LONG" if side == BUY else "SHORT")
+                    except Exception:
+                        pass
+                # Reprice si slip excessif ET on a les ticks pour recalculer
+                if slip_t > auto_reprice_threshold_ticks and sl_ticks > 0 and tp_ticks > 0:
+                    side_str = "LONG" if side == BUY else "SHORT"
+                    try:
+                        from CORE.execution.tpsl_pricer import calc_bracket_prices
+                    except ImportError:
+                        from execution.tpsl_pricer import calc_bracket_prices  # type: ignore
+                    new_sl, new_tp = calc_bracket_prices(
+                        side_str, fill_price, sl_ticks, tp_ticks, tick_size
+                    )
+                    logger.info(
+                        f"[DTC] AUTO_REPRICE slip={slip_t:.1f}t "
+                        f"signal_ref={signal_ref_price} fill={fill_price} "
+                        f"old_sl={sl_price} new_sl={new_sl} "
+                        f"old_tp={tp_price} new_tp={new_tp}"
+                    )
+                    if _v2log:
+                        try:
+                            _v2log.emit("BRACKET_REPRICE",
+                                        sym=symbol, parent_id=parent_id,
+                                        slip_ticks=round(slip_t, 1),
+                                        signal_ref=signal_ref_price,
+                                        fill_price=fill_price,
+                                        old_sl=sl_price, new_sl=new_sl,
+                                        old_tp=tp_price, new_tp=new_tp)
+                        except Exception:
+                            pass
+                    sl_price = new_sl
+                    tp_price = new_tp
+                    reprice_done = True
+
+            # 04/05 H6 + race condition fix : pre-register TA + OCO pair AVANT envoi.
+            # Sinon, si TP fill ultra-rapide (596ms observe NQ), le _handle_order_update
+            # voit le fill avant que _order_trade_accounts/oco_pairs soient peuples
+            # -> cancel auto OCO echoue silencieusement.
+            self._order_trade_accounts[tp_cid] = trade_account
+            self._order_trade_accounts[sl_cid] = trade_account
+            self.register_oco_pair(tp_cid, sl_cid)
 
             # TP LIMIT (pas d'OCOGroup1 — ne marche pas)
             self._send({
@@ -254,15 +406,262 @@ class DTCConnector:
                 "OpenCloseTrade": 2,
             })
 
-            # Enregistrer la paire OCO pour annulation manuelle
-            self.register_oco_pair(tp_cid, sl_cid)
-
             logger.info(f"Bracket sent: parent={parent_id} "
                         f"TP={tp_cid}@{tp_price} SL={sl_cid}@{sl_price}")
 
             return (parent_id, tp_cid, sl_cid)
 
         return (parent_id, "", "")
+
+    def get_last_fill_price(self, parent_id: str) -> float:
+        """Retourne le fill_price reel broker (AverageFillPrice DTC) du parent ORDER.
+
+        12/05 FIX (cf INCIDENT_LOG 2026-05-12 03:30) : appele par les bots APRES
+        send_market_order() return pour obtenir le fill_price reel et stocker
+        pos['entry_price'] = fill_price. Resout la race condition ou la branche
+        is_parent de _handle_dtc_fill etait code mort (lookup _order_to_symbol
+        vide car registration vient apres send_market_order return).
+
+        Args:
+            parent_id: ClientOrderID du parent (returne par send_market_order).
+
+        Returns:
+            fill_price: prix d'execution reel broker, ou 0.0 si non disponible
+            (timeout, parent_id inconnu, fill_price=0 dans ORDER_UPDATE).
+
+        Le caller doit gerer le cas fill_price=0.0 (fallback signal_price).
+        """
+        with self._last_fill_lock:
+            return self._last_fill_prices.get(parent_id, 0.0)
+
+    def request_position_blocking(self, symbol_contract: str,
+                                    trade_account: str = "Sim3",
+                                    timeout: float = 3.0) -> Optional[int]:
+        """Demande la position broker via Type 305 + wait response Type 306.
+
+        Bloquant avec timeout 3s. Retourne signed qty (>0=long, <0=short, 0=flat)
+        ou None si timeout / pas connecte.
+
+        FIX 30/04 (Jackson "pas de dette") : R3 review code-reviewer #1 — eviter
+        FLIP si partial fill broker. Pattern flatten_nq_sim2.py:41-47.
+
+        Args:
+            symbol_contract : ex "ESM26-CME"
+            trade_account : compte broker
+            timeout : seconds max wait pour reponse Type 306
+
+        Returns:
+            signed qty broker, ou None si pas de reponse / pas connecte
+        """
+        # P2.1 (06/05) : delegue a request_position_with_avg_price puis ne retourne que qty
+        # (compat retro avec les ~10 callers existants — Bot 1, Bot 2, _bot3_check_timeout).
+        result = self.request_position_with_avg_price(symbol_contract, trade_account, timeout)
+        if result is None:
+            return None
+        return result[0]
+
+    def request_position_with_avg_price(self, symbol_contract: str,
+                                          trade_account: str = "Sim3",
+                                          timeout: float = 3.0) -> Optional[tuple]:
+        """P2.1 (06/05) : version retournant (qty, avg_price) pour reconstruire entry_price reel
+        au boot recovery. Pattern Type 305 + 306 (AverageFillPrice ou AveragePrice).
+
+        Returns:
+            (signed_qty, avg_fill_price) ou None si timeout / pas connecte.
+            avg_fill_price = 0.0 si broker n'envoie pas le champ (defensif).
+        """
+        if not self.connected:
+            return None
+
+        # Setup callback temporaire avec Event pour capturer la reponse
+        position_event = threading.Event()
+        position_holder = {"qty": None, "avg_price": 0.0}
+        original_callback = self.on_position_update
+
+        def temp_callback(msg):
+            try:
+                msg_sym = str(msg.get("Symbol", ""))
+                if symbol_contract == msg_sym or symbol_contract in msg_sym or msg_sym in symbol_contract:
+                    qty = msg.get("Quantity", 0)
+                    # SC envoie tantot AverageFillPrice tantot AveragePrice (DTC spec strict
+                    # = AveragePrice, mais SC populate les 2). Defensif sur les 2.
+                    avg_p = msg.get("AverageFillPrice") or msg.get("AveragePrice") or 0.0
+                    if qty is not None:
+                        position_holder["qty"] = int(qty)
+                        try:
+                            position_holder["avg_price"] = float(avg_p) if avg_p else 0.0
+                        except (TypeError, ValueError):
+                            position_holder["avg_price"] = 0.0
+                        position_event.set()
+            except (TypeError, ValueError):
+                pass
+            if original_callback:
+                try:
+                    original_callback(msg)
+                except Exception:
+                    pass
+
+        self.on_position_update = temp_callback
+        try:
+            self._send({
+                "Type": DTC_POSITION_REQUEST,  # 305
+                "RequestID": int(time.time() * 1000) % 100000,
+                "TradeAccount": trade_account,
+            })
+            if position_event.wait(timeout=timeout):
+                return (position_holder["qty"], position_holder["avg_price"])
+            return None
+        finally:
+            self.on_position_update = original_callback
+
+    def request_open_orders_blocking(self, trade_account: str = "Sim3",
+                                       symbol_filter: Optional[str] = None,
+                                       timeout: float = 3.0) -> Optional[list]:
+        """P0.1 (06/05) : query Type 300 REQUEST_OPEN_ORDERS, collecte 301 jusqu'a NoOrders=1.
+
+        Critique pour anti-orphelin :
+          - Au boot recovery : reconstitue tp_cid/sl_cid/sl_price/tp_cap_price reels
+            depuis Working orders broker (sinon pos placeholder = None partout).
+          - Avant Type 209/210 flatten : identifier les Working orders a cancel via 203
+            (Type 209 ne cancel PAS les working orders sans position — observe 06/05).
+          - Apres flatten : verifier 0 working orders restants, sinon BOT3_ORPHAN_DETECTED.
+
+        Args:
+            trade_account : compte broker (Sim1/Sim2/Sim3)
+            symbol_filter : si fourni, ne retourne que les ordres matching ce contract (ex "ESM26-CME")
+            timeout : seconds max wait pour reponses 301 (cumul, pas par msg)
+
+        Returns:
+            list[dict] avec champs au minimum :
+              {ClientOrderID, ServerOrderID, Symbol, OrderStatus, BuySell,
+               OrderType, Price1, StopPrice, Quantity, TradeAccount}
+            Status pertinents : 2 (Open/Accepted), 4 (Working). Filles 7 + Cancelled 8 ignores.
+            None si timeout / pas connecte.
+
+        Note Sierra Chart : Type 300 envoie 1 message Type 301 par order, puis un dernier
+        avec NoOrders=1. On collecte jusqu'a NoOrders ou jusqu'a expiration timeout.
+        """
+        if not self.connected:
+            return None
+
+        # P0-A (06/05) : serialiser les queries Type 300 concurrentes.
+        # Le sentinel _pending_open_orders_query etait un attribut sur self —
+        # 2 callers parallele s'ecrasaient mutuellement (events perdus, dict corrompu).
+        # Tentative acquire non-bloquant — si une autre query est en cours, on
+        # attend max `timeout` puis abandonne (None) plutot que de bloquer
+        # le caller qui peut etre dans un hot path (etape 6.5 timeout).
+        if not self._open_orders_query_lock.acquire(timeout=timeout):
+            if _v2log:
+                try:
+                    _v2log.emit("OPEN_ORDERS_QUERY_LOCK_TIMEOUT",
+                                trade_account=trade_account)
+                except Exception:
+                    pass
+            return None
+
+        # State partage entre callback et caller
+        orders_collected: list = []
+        completion_event = threading.Event()
+        rid = self._request_id_counter
+        self._request_id_counter += 1
+
+        # Le _recv_loop appelle deja _handle_order_update sur Type 301.
+        # On tape sur ce dispatch via un attribut temporaire que _handle_order_update
+        # consultera. Pattern non-invasif (pas de modif du _recv_loop).
+        # Sous lock : un seul query a la fois -> pas de corruption.
+        sentinel_attr = "_pending_open_orders_query"
+        setattr(self, sentinel_attr, {
+            "request_id": rid,
+            "trade_account": trade_account,
+            "symbol_filter": symbol_filter,
+            "orders": orders_collected,
+            "event": completion_event,
+        })
+
+        try:
+            # P0-C (06/05) : NE PAS envoyer "Symbol" dans le Type 300.
+            # La spec DTC officielle (s_OpenOrdersRequest) ne reconnait que
+            # RequestID + TradeAccount + ServerOrderID (optionnel). Ajouter Symbol
+            # peut faire que SC retourne 0 orders silencieusement (interpretation
+            # stricte). On filter cote client dans _handle_order_update + ici en
+            # post-process pour garantir le bon scope.
+            req = {
+                "Type": DTC_OPEN_ORDERS_REQUEST,  # 300
+                "RequestID": rid,
+                "TradeAccount": trade_account,
+            }
+            self._send(req)
+
+            # Attente que NoOrders=1 set le flag, OU timeout
+            if completion_event.wait(timeout=timeout):
+                # Dedup par ClientOrderID au cas ou SC envoie des updates multiples
+                seen = set()
+                deduped = []
+                for o in orders_collected:
+                    cid = o.get("ClientOrderID", "")
+                    if cid and cid not in seen:
+                        seen.add(cid)
+                        deduped.append(o)
+                return deduped
+            # Timeout : retourne ce qu'on a collecte (peut etre incomplet mais utile)
+            logger.warning(f"[DTC] request_open_orders timeout ({timeout}s) "
+                           f"— returning {len(orders_collected)} partial orders")
+            if _v2log:
+                try:
+                    _v2log.emit("OPEN_ORDERS_QUERY_TIMEOUT",
+                                trade_account=trade_account, partial_count=len(orders_collected))
+                except Exception:
+                    pass
+            return list(orders_collected) if orders_collected else None
+        finally:
+            # Nettoyer le sentinel meme en cas d'exception, puis release lock
+            try:
+                delattr(self, sentinel_attr)
+            except AttributeError:
+                pass
+            try:
+                self._open_orders_query_lock.release()
+            except RuntimeError:
+                pass  # Lock pas detenu (ex: si exception avant acquire reussi)
+
+    def send_close_market(self, symbol: str, side: int, quantity: int,
+                           trade_account: str = "Sim3") -> str:
+        """Envoie un MARKET CLOSE (Type 208 + OpenCloseTrade=2).
+
+        Pas de brackets associes (ferme une position existante). Utilise par
+        _check_exit_dtc Bot 2 quand le live price touche TP/SL mais que le
+        broker Sim2 ne fait pas fill (low volume Asia).
+
+        Args:
+            symbol : ex "ESM26-CME"
+            side : BUY (1) ou SELL (2) — DOIT etre l'opposite de la position courante
+            quantity : nombre de contrats (= n_micros position)
+            trade_account : compte broker
+
+        Returns:
+            close_id : ClientOrderID genere ou "" si pas connecte
+
+        FIX 30/04 (Jackson) : avant ce patch, _check_exit_dtc cancellait les
+        brackets mais n'envoyait pas de market close → position orpheline
+        si Sim2 sluggish (cas observe nuit du 30/04 sur ES SHORT 7197.50).
+        """
+        if not self.connected:
+            return ""
+        close_id = f"MIA_CLOSE_{uuid.uuid4().hex[:8]}"
+        self._send({
+            "Type": DTC_MARKET_ORDER,  # 208
+            "Symbol": symbol,
+            "ClientOrderID": close_id,
+            "OrderType": MARKET,  # 1
+            "BuySell": side,
+            "Quantity": quantity,
+            "TradeAccount": trade_account,
+            "IsAutomatedOrder": 1,
+            "OpenCloseTrade": 2,  # CLOSE
+            "TimeInForce": 0,
+        })
+        logger.info(f"Close market sent: cid={close_id} side={side} qty={quantity} {symbol}")
+        return close_id
 
     def cancel_order(self, order_id: str, trade_account: str = "Sim3") -> bool:
         """
@@ -272,18 +671,32 @@ class DTCConnector:
         annule effectivement l'ordre. Sans lui, le cancel est ignore
         silencieusement. Valide en Sim3 le 02/04/2026.
 
-        Double envoi par securite (le 2e est ignore si le 1er a marche).
+        ROLLBACK 29/04 soir (verdict code-reviewer NOGO sur retry bloquant) :
+        retirer le `time.sleep(1.0)` qui bloquait le `_recv_loop` thread,
+        garantissant que le SID ne pouvait JAMAIS etre resolu pendant
+        l'attente (le seul thread capable de peupler `_server_order_ids`
+        etait endormi). Le mecanisme `_verify_cancel` Timer ligne 604 fait
+        deja le retry SID 1s plus tard de maniere non-bloquante : si le
+        SID est maintenant disponible, re-cancel avec SID. C'est le bon
+        endroit pour la resolution tardive.
+
+        Double envoi par securite (le 2e est ignore si le 1er a marche),
+        avec re-check SID entre les deux envois pour capter un
+        ORDER_UPDATE qui arriverait dans la fenetre 0.3s SANS bloquer.
         """
         if not self.connected:
             return False
 
+        server_id = self._server_order_ids.get(order_id, "")
+        # 04/05 H5 : RequestID requis pour SC Sim (projet 1 confirme le faisait).
+        rid = self._request_id_counter
+        self._request_id_counter += 1
         msg = {
             "Type": DTC_CANCEL_ORDER,
+            "RequestID": rid,
             "ClientOrderID": order_id,
             "TradeAccount": trade_account,
         }
-        # ServerOrderID OBLIGATOIRE pour cancel effectif
-        server_id = self._server_order_ids.get(order_id, "")
         if server_id:
             msg["ServerOrderID"] = server_id
         else:
@@ -291,8 +704,18 @@ class DTCConnector:
 
         self._send(msg)
         time.sleep(0.3)
+        # Re-check SID entre les 2 envois (capter ORDER_UPDATE qui arrive
+        # dans la fenetre 0.3s entre les 2 sends sans bloquer le thread).
+        if not server_id:
+            server_id = self._server_order_ids.get(order_id, "")
+            if server_id:
+                msg["ServerOrderID"] = server_id
+                logger.info(f"Cancel SID resolved between sends: {order_id} -> {server_id}")
+        # Nouveau RequestID pour le 2eme envoi (projet 1 incremente a chaque envoi)
+        msg["RequestID"] = self._request_id_counter
+        self._request_id_counter += 1
         self._send(msg)  # Double envoi securite
-        logger.info(f"Cancel sent (x2): CID={order_id} SID={server_id}")
+        logger.info(f"Cancel sent (x2 with RequestID): CID={order_id} SID={server_id} RID={rid}")
         return True
 
     def subscribe_market_data(self, symbol: str, request_id: int = None):
@@ -487,32 +910,109 @@ class DTCConnector:
         """
         Traite un update d'ordre (fill, cancel, etc.).
         Gere l'OCO manuel : quand TP ou SL est filled, annule l'opposé.
+
+        FIX 06/05 soir (Jackson "PAS DE DETTE") : appel callback on_order_update
+        EN AMONT pour permettre aux consumers (Bot 3) de router le msg DICT brut
+        avant le traitement interne (parent_event, OCO, on_fill). Le callback
+        recoit TOUS les Type 301 (status 2/4/7/8), c'est au consumer de filtrer.
+        Pattern non-invasif : si callback throw, on log mais continue le flow normal.
         """
+        # FIX 06/05 soir : callback on_order_update AVANT tout traitement interne.
+        # Critique pour Bot 3 qui a besoin de cid_type routing (parent/tp/sl/flatten).
+        # Try/except defensif : un crash callback ne doit JAMAIS casser le flow DTC.
+        if self.on_order_update is not None:
+            try:
+                self.on_order_update(msg)
+            except Exception as e:
+                logger.error(f"on_order_update callback error: {e}")
+                # Pas de re-raise : le callback ne doit pas casser _recv_loop.
+                # _v2log si dispo pour traceabilite
+                if _v2log:
+                    try:
+                        _v2log.emit("ON_ORDER_UPDATE_CALLBACK_ERR",
+                                    cid=str(msg.get("ClientOrderID", ""))[:30],
+                                    err=str(e)[:200])
+                    except Exception:
+                        pass
+
         try:
             order_status = msg.get("OrderStatus", 0)
             client_order_id = msg.get("ClientOrderID", "")
             server_order_id = msg.get("ServerOrderID", "")
-            fill_price = (msg.get("AverageFillPrice", 0) or
-                         msg.get("LastFillPrice", 0) or
-                         msg.get("Price1", 0))
+
+            # P0.1 (06/05) : si une query Type 300 OPEN_ORDERS est en cours, collecte
+            # les Type 301 working orders (status 2/4) dans le buffer dedie + detecte
+            # NoOrders=1 (signal de fin) pour set l'event de completion.
+            pending_query = getattr(self, "_pending_open_orders_query", None)
+            if pending_query is not None:
+                try:
+                    no_orders = bool(msg.get("NoOrders", False) or msg.get("NoOrders", 0))
+                    msg_ta = msg.get("TradeAccount", "")
+                    msg_sym = str(msg.get("Symbol", ""))
+                    sym_filter = pending_query.get("symbol_filter") or ""
+                    # Si SC indique fin de stream → set event
+                    if no_orders:
+                        pending_query["event"].set()
+                    elif client_order_id and order_status in (2, 4, "Open", "Working"):
+                        ta_match = (not pending_query.get("trade_account")
+                                    or msg_ta == pending_query["trade_account"])
+                        sym_match = (not sym_filter
+                                     or sym_filter == msg_sym
+                                     or sym_filter in msg_sym
+                                     or msg_sym in sym_filter)
+                        if ta_match and sym_match:
+                            pending_query["orders"].append({
+                                "ClientOrderID": client_order_id,
+                                "ServerOrderID": server_order_id,
+                                "Symbol": msg_sym,
+                                "OrderStatus": order_status,
+                                "BuySell": msg.get("BuySell", 0),
+                                "OrderType": msg.get("OrderType", 0),
+                                "Price1": msg.get("Price1", 0) or 0,
+                                "StopPrice": msg.get("StopPrice", 0) or 0,
+                                "Quantity": msg.get("OrderQuantity") or msg.get("Quantity") or 0,
+                                "TradeAccount": msg_ta,
+                                "OpenCloseTrade": msg.get("OpenCloseTrade", 0),
+                            })
+                except Exception:
+                    pass  # Toute exception ici NE doit PAS casser le flow normal _handle_order_update
+            # FIX 29/04 : `or 0` au lieu de default param (defensif si SC
+            # envoie "AverageFillPrice": null sur les ORDER_UPDATE intermediaires).
+            fill_price = (msg.get("AverageFillPrice") or
+                         msg.get("LastFillPrice") or
+                         msg.get("Price1") or 0)
 
             # Tracker le ServerOrderID pour cancel ulterieur
             if client_order_id and server_order_id:
                 self._server_order_ids[client_order_id] = server_order_id
+            # 04/05 H6 : tracker TradeAccount pour cancels OCO/timeout corrects.
+            msg_ta = msg.get("TradeAccount", "")
+            if client_order_id and msg_ta:
+                self._order_trade_accounts[client_order_id] = msg_ta
+
+            # 01/05 ROLLBACK : tentative tracking cancels confirmes desactivee
+            # apres observation orphan Bot 1 post-fix. Investigation requise avant
+            # ré-implémenter (Type 300 query, ou Status code mapping precis).
 
             # Status 7 = Filled (PAS 2 — 2 = Open/Accepted)
             # Valide en Sim3 02/04/2026 : status passe 2→4→7
+            # FIX 29/04 : `or 0` defensif identique
             is_filled = (order_status == 7 or
                          order_status == "Filled" or
-                         (msg.get("FilledQuantity", 0) > 0 and
+                         ((msg.get("FilledQuantity") or 0) > 0 and
                           order_status not in (2, "Open")))
 
             # Fix audit logs V2 22/04 : detecter fill partiel (status != 7 MAIS
             # FilledQuantity > 0 ET < OrderQuantity). Bug silencieux classique
             # — si broker file 2/3 micros, bot place SL/TP pour 3 lots alors
             # que position = 2 → SL hit partiel → orphan.
-            filled_qty = msg.get("FilledQuantity", 0)
-            expected_qty = msg.get("OrderQuantity", 0)
+            # FIX 29/04 (Jackson + audit forensique) : `dict.get(key, default)`
+            # ne retourne PAS le default si la cle existe avec valeur null.
+            # SC envoie ORDER_UPDATE intermediaires avec FilledQuantity: null
+            # → `None > 0` = TypeError → _recv_loop plante → fills perdus →
+            # position fantome (bug observe Bot 2 Sim2 28-29/04).
+            filled_qty = msg.get("FilledQuantity") or 0
+            expected_qty = msg.get("OrderQuantity") or 0
             if (filled_qty > 0 and expected_qty > 0 and
                     filled_qty < expected_qty and not is_filled):
                 if _v2log:
@@ -528,8 +1028,32 @@ class DTCConnector:
                         pass
 
             if is_filled and fill_price and fill_price > 100:
+                # 🆕 01/05/2026 soir — DEBUG TEMPORAIRE (Jackson "DTC c'est special")
+                # Verification empirique que Sierra Chart envoie TOUJOURS le Symbol
+                # natif dans s_OrderUpdate Filled. Si confirme : Option 5 (utiliser
+                # fill.symbol natif) au lieu de Option 4 (callback pre-register).
+                # A retirer apres 5-10 trades observes (validation N>=3).
+                dtc_symbol_raw = msg.get("Symbol", "")
+                dtc_trade_account = msg.get("TradeAccount", "")
+                if _v2log:
+                    try:
+                        _v2log.emit("DTC_FILL_SYMBOL_DEBUG",
+                                    cid=client_order_id,
+                                    symbol_raw=dtc_symbol_raw,
+                                    symbol_present=bool(dtc_symbol_raw),
+                                    trade_account=dtc_trade_account,
+                                    fill_price=fill_price,
+                                    is_parent=client_order_id.startswith("MIA_P_"),
+                                    msg_keys=list(msg.keys()))
+                    except Exception:
+                        pass
+
                 # P0-6 : signaler l'event parent si c'est un parent order
                 if client_order_id.startswith("MIA_P_") and client_order_id in self._parent_fill_events:
+                    # 04/05 Etape 2 : capture fill_price pour slip metric + reprice
+                    fill_price_for_parent = float(fill_price or 0)
+                    if fill_price_for_parent > 0:
+                        self._parent_fill_prices[client_order_id] = fill_price_for_parent
                     self._parent_fill_events[client_order_id].set()
 
                 # Notifier le bot du fill
@@ -539,7 +1063,7 @@ class DTCConnector:
                         symbol=msg.get("Symbol", ""),
                         side=msg.get("BuySell", 0),
                         fill_price=fill_price,
-                        quantity=msg.get("FilledQuantity", 0) or msg.get("OrderQuantity", 0),
+                        quantity=(msg.get("FilledQuantity") or msg.get("OrderQuantity") or 0),
                         timestamp=time.time(),
                         is_filled=True,
                     )
@@ -556,8 +1080,13 @@ class DTCConnector:
                         logger.info(f"OCO: {exit_type} {client_order_id} filled @ {fill_price}"
                                     f" → Cancel {opposite_cid}")
 
-                        # Annuler l'ordre oppose immediatement
-                        self.cancel_order(opposite_cid)
+                        # 04/05 H6 FIX : passer le TradeAccount correct (Sim1/Sim2/Sim3)
+                        # depuis le msg ORDER_UPDATE. Sans ce fix, default "Sim3" etait
+                        # utilise -> SC ignorait cancel pour Sim1/Sim2 -> orphelins.
+                        ta_for_cancel = (self._order_trade_accounts.get(opposite_cid)
+                                         or msg.get("TradeAccount")
+                                         or "Sim3")
+                        self.cancel_order(opposite_cid, trade_account=ta_for_cancel)
 
                         # Securite : verifier apres 1s que le cancel a marche
                         threading.Timer(1.0, self._verify_cancel,
@@ -573,23 +1102,27 @@ class DTCConnector:
         contre orphan OCO (DNA V1 02/04 bug). Si malgre 2 cancels + verify
         un fill arrive pour cet order_id plus tard, c'est un orphan reel.
 
-        [TODO P3] Vraie detection orphan necessite :
-          1. Apres cancel, demander Open Orders (Type 300) au broker
-          2. Si order_id present dans response → cancel has not worked
-          3. Emettre OCO_ORPHAN_DETECTED CRITIQUE + retry N fois
-        Pour l'instant : emit ALERTE "cancel incertain" (re-cancel en cours).
+        01/05 ROLLBACK fix _cancelled_order_ids : tentative skip silencieux
+        sur cancels confirmes a possiblement cause orphan Bot 1 post-deploy.
+        Comportement RESTAURE a etat pre-fix : re-cancel systematique + log.
+        Le log CANCEL_FAILED_RETRY/OCO_ORPHAN_DETECTED est verbeux mais sans
+        risque fonctionnel. Re-investiguer Type 300 Open Orders query au calme.
         """
         server_id = self._server_order_ids.get(order_id, "")
+        # 04/05 H6 FIX : utiliser le TradeAccount tracke (Sim1/2/3) au lieu de "Sim3" hardcode.
+        ta_for_cancel = self._order_trade_accounts.get(order_id, "Sim3")
         if server_id:
             # Re-envoyer le cancel par securite
             msg = {
                 "Type": DTC_CANCEL_ORDER,
+                "RequestID": self._request_id_counter,
                 "ClientOrderID": order_id,
                 "ServerOrderID": server_id,
-                "TradeAccount": "Sim3",
+                "TradeAccount": ta_for_cancel,
             }
+            self._request_id_counter += 1
             self._send(msg)
-            logger.info(f"Verify cancel (securite): {order_id} SID={server_id}")
+            logger.info(f"Verify cancel (securite): {order_id} SID={server_id} TA={ta_for_cancel}")
             # V2 log : cancel incertain, signal de vigilance operateur
             if _v2log:
                 # CANCEL_FAILED_RETRY : re-cancel lance car cancel initial incertain
