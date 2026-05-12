@@ -7,6 +7,44 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- [2026-05-12 02:30 UTC investigation V4 enriched] **6 features V4 enriched cassées 100% NaN** | 4-6h fix + audit Bot 3 | HIGH | PROPOSED — Découverte lors investigation veto swing_proximity (Jackson "investigue 100% NaN"). Colonnes EXISTENT dans schema parquet mais 100% NaN sur 9716 barres NQ mai 2026 :
+  - `range_pos` — REDONDANT (alternative OK : `pct_in_range` 0% NaN, `position_in_range` 0.7% NaN). Drop col residuelle du schema.
+  - `profile_shape` — calculé par `apply_game_changers` PHASE_B → ne tourne pas / sauvegarde rate
+  - `trend_day_probability` — idem `apply_game_changers`
+  - `bars_in_va` — calculé par `market_profile_engine` PHASE_B → idem
+  - `cvd_day_dir` — calculé par `delta_engine` ou cumulative → idem
+  - `dist_mq_call_0dte` — MenthorQ levels lookup → levels pas attachés correctement
+  
+  **Cause probable** : commit `de1d843` (10/05) "Chantier 5bis3 P1 Regime engine call order Phase A->B" + fix `apply_game_changers iloc[0]->post_ib row` = régression silencieuse sur engines PHASE_B (jamais détectée car Bot 1/Bot 2 V6 lisent Sierra DMP qui calcule ces features OK).
+  
+  **Impact actuel** :
+  - Bot 1 + Bot 2 V6 : AUCUN (utilisent Sierra DMP, features OK)
+  - Bot 3 (Databento V4 enriched) : POTENTIEL gates silencieusement neutralisés. Si `setup_engine.py` lit `profile_shape`, `trend_day_probability`, `bars_in_va`, `cvd_day_dir`, `dist_mq_call_0dte` → gates skip avec None.
+  
+  **Action** : (1) Grep `CORE/setup_engine.py` pour identifier quelles features cassées Bot 3 essaye d'utiliser (silent skip). (2) Reproduire localement le PHASE_B et debug pourquoi `apply_game_changers` ne calcule pas. (3) Refixer + tests parité bit-for-bit + rebuild V4 enriched 8j (May 2026).
+
+- [2026-05-12 02:00 UTC veto audit] **Veto SHORT bottom range_pos NOGO empirique** | DONE | REJECTED — Audit 35 SHORT trades 8j (05/05→12/05). Veto range_pos<=30 OR dist_swing_low proche aurait fait perdre **-$2499/8j** (88.6% trades bloqués = 25 TP/TRAIL ratés -$2517 vs 6 SL évités +$306 économisés). Bot 1 + Bot 2 V6 tradent SHORT au "bottom" en mode **continuation de trend baissier** (RANGE_POS=0 souvent artefact OVN/early-session, pas vrai bottom). Tracker `SHORT_AT_BOTTOM_OBSERVED` confirmé observe-only justifié. Règle 11/05 Jackson swing_proximity = conceptuellement valide en mean-rev mais NOGO en trend day. **Décision** : NE PAS activer veto. Pattern 11 V1 rechute évitée.
+
+- [2026-05-12 00:38 UTC midnight transient] **Pipeline graceful start day** | 30 min | MEDIUM | PROPOSED — Chaque transition jour UTC (00:00 UTC), Databento Historical API n'a pas encore les bars day=N → CONVERT_TRADES FAIL 5+ iter consécutifs → 28+ DMP_JSONL_STALE alertes transient pendant ~25 min. Solution : `live_pipeline.py` mode "graceful midnight" qui retry avec `partial_end = max(00:30, now-10min)` pendant les 30 premières min UTC, ou suppress emit DMP_JSONL_STALE si current_time < 00:30 UTC (= grâce pour transition). Observé 12/05 00:14-00:34 UTC.
+
+- [2026-05-12 R1 incident] **Rebuild MGC backfill — pas de concurrence pipeline live** | 1h fix scheduler | HIGH | PROPOSED — Mon `.bat` rebuild MGC 14 mois lancé 20:33 UTC le 11/05 a tourné en parallèle du `MIA-LivePipeline` → conflit DuckDB I/O probable (race conditions parquet read/write). Tué à 00:35 UTC. À refaire pendant fenêtre nuit calme : (a) Stop MIA-LivePipeline avant rebuild, (b) Run rebuild MGC, (c) Restart MIA-LivePipeline. OR scheduler dans `live_pipeline_loop.py` qui détecte rebuild MGC en cours et passe en idle mode.
+
+- [2026-05-11 J3 Phase B+R3+market-analyst Gold] **Calibration EDGE_THRESHOLD_PCT MGC + 5 features Gold critiques** | total 6-8h | TRES HIGH J4-pré | PROPOSED
+  1. **`im_dxy_corr_60d`** — rolling correlation 60 bars Gold/DXY futures (DX). Litt. pro : -0.45 normal, swing à 0 en stress. **OBLIGATOIRE avant J4 training** : citation market-analyst "modèle ML Gold sans DXY = aveugle à 60% variance directionnelle". DXY pas dans pipeline actuel (`constants.py:233` commentaire "Futur : SI Silver ou DXY ?"). Effort : ajouter DX au databento_download + intermarket_features Gold pair.
+  2. **`im_real_yields_proxy`** — ZN/ZB momentum proxy TIPS (Gold inverse-corrélé real yields).
+  3. **`im_silver_lead_lag`** — SI/MGC ratio (Silver leads Gold 10-30 min breakouts précieux).
+  4. **`mgc_asia_london_overlap_vol`** — 70% volume Gold sur overlap London-NY (14:00-16:00 UTC).
+  5. **`mgc_session_break_acceleration`** — 13:30 ET US open Gold re-pricing dollar+yields.
+  - Aussi : EDGE_THRESHOLD_PCT["MGC"]=1500 calibré sur avril 2026 stress VIX>30 = fragile cross-regime. Extend R3 script `validate_mgc_edge_threshold.py` pour bucketize par VIX (<15, 15-25, >25). Alerte mensuel hors [0.5%, 5%].
+
+- [2026-05-11 J3 R5 incident] **Recovery `_recover_open_positions()` Bot 1 + Bot 2 V6** | 2h dev + agent review | CRITIQUE | PROPOSED — Bot 1 (`mia_paper_trader.py:399`) + Bot 2 V6 init `self.positions = {}` HARDCODE vide au boot. Aucun reload state.json. Chaque restart en plein trade = orphan position broker garanti. Pattern Bot 3 (`_bot3_recover_open_positions`) à copier. Incident confirmé 11/05 : trade ES Bot 1 17:43:07 perdu post-restart 20:10 (Sim3 broker-side = orphan).
+
+- [2026-05-11 J3 R2] **Backtest dédié Bot 2 V6 timeout (R2b)** | 1h backtest-runner | MEDIUM | PROPOSED — Suite R2 verdict Bot 1 NOGO timeout=30 (-$386 sur 114 trades). Bot 2 V6 = archetype V6 brain enrichi nouveau, à backtester séparément. Si NOGO → revert défense 120 confirmé. Bot 2 V6 actuellement reverted à 120 par défense.
+
+- [2026-05-11 J3] **Anti-bug `tick=tick` pour futurs symboles** | 1.5h | HIGH | PROPOSED
+  - Lint guard `tools/check_tick_hardcode.py` étendre : bloquer commit si nouveau symbole sans entries `SYMBOL_TO_TICK_SIZE` + `EDGE_THRESHOLD_PCT` + `BIG_ORDER_TIERS`.
+  - Test régression cross-instrument : run dataset_builder sur 1j nouveau symbole + dumper distribution `dist_swing_high_ticks` median + p99. Comparer ratio vs ES (doit être ~tick_ratio_inverse). Si ratio hors [0.5x, 2x] → tick mal propagé. Run avant ajout MNG (tick 0.001) / MCL (tick 0.01) futurs.
+
 - [2026-05-02 09:15] **PATCH R4 deploye Bot 2 Sim2** | DEPLOYED | HIGH | reviews 2 rounds code-reviewer ULTRATHINK GO + market-analyst PATCH SAFE pour trading lundi. Actions follow-up market-analyst :
   - [2026-05-02] Widget dashboard `slip_entry_ticks` mediane/p95/distribution rolling 20 trades | 30 min UI | MEDIUM | PROPOSED
   - [2026-05-02] Recalculer PF/Sharpe historiques avec slip_entry estime — quantifier gap paper/backtest | 1h script | HIGH | PROPOSED — peut expliquer sub-PF 7 semaines
@@ -190,4 +228,81 @@ APRES `apply_game_changers`. Effort 30 min + test non-regression ES/NQ.
 
 ### Effort total Chantier 5bis3 : 1h30
 Priorite : faible (non-bloquant Phase 2). A faire avant trading live MGC.
+
+
+## Chantier 5bis3 Partie 2 — EdgeZones algorithm refactor (deferred 11/05/2026)
+
+### Cause racine
+`edge_zones_engine._detect_stacks_for_bar` cherche cells **adjacentes au tick natif**
+(p+tick pour buy, p-tick pour sell). Sur MGC tick=0.10, footprint est SPARSE :
+peu de cells consecutives, donc `cells.get(p_above)` retourne None majoritairement
+→ `is_imb=False` partout → 0 stacks detectes.
+
+Verification empirique mars 2026 (28k bars MGC) :
+- 5903 cellules totales
+- Imbalance distribution (quand bid>0 ET ask>=bid) : p50=200%, p95=700%, p99=1000%
+- Donc les imbalances EXISTENT, c'est l'algo cells-adjacent qui ne match pas.
+
+### Solution proposee (refactor)
+Bucket le footprint MGC en macro-tick (5 ticks = 0.50) AVANT detection adjacence :
+- Aggregate ask_vol/bid_vol par bucket macro-tick
+- Detect imbalance sur ces buckets densifies
+- Tick natif preserve pour autres features qui consomment footprint
+
+Effort : 2-3h (refactor `_detect_stacks_for_bar` + tests + recalibrate seuils MGC).
+
+Variables :
+- `EDGE_DETECTION_TICK = {"ES": None, "NQ": None, "MGC": 0.50}` (None = tick natif)
+- Modifier `apply_edge_zones` pour passer le macro-tick a `_detect_stacks_for_bar`
+- `_detect_stacks_for_bar` fait rebucket interne si macro-tick != tick natif
+
+### Priorite : BASSE
+3 features (`bar_edge_buy_fire`, `bar_edge_sell_fire`, `n_edge_*_active`) sont
+non-critiques pour BN V2/V3, Bot 3 levels, RuleEngine. Phase 2 backtests
+fonctionnent sans.
+
+A faire dans une session dediee aux features Gold edge (avec tests pre/post
+recalibrage seuils 600 -> X% adaptatif).
+
+
+## Phase 2 Backtests MGC — Plan execution (10/05/2026)
+
+### Datasets prets
+- ES : `DATA/DATASETS/ES_dataset_v5e_clean.parquet` (357k bars × 469 cols, post-Chantier 5bis3 P1)
+- MGC : `DATA/DATASETS/MGC_dataset_v5e_clean.parquet` (rebuild en cours VPS, 336k bars x 405 cols attendu post-Regime fix)
+
+### Strategies a backtester sur MGC
+
+| # | Strategie | Module | Methode |
+|---|---|---|---|
+| 1 | BN V2 multi-tier signaux | `CORE/bn_engine.py:BNEngine` | Replay sur bars + signaux + simu OCO |
+| 2 | BN V3 Dow + Holy Grail | `CORE/bn_v3_engine.py:BNV3Engine` | Idem |
+| 3 | RuleEngine 16 regles | `CORE/rule_engine.py:RuleEngine` | Score >threshold = signal |
+| 4 | Bot 3 levels Sidak | `CORE/bot3_*` | 13 niveaux heritage + 4 Sidak + 3 COMBOS_BOOSTED |
+
+### Garde-fous methodologiques OBLIGATOIRES (cf incident 28/04 DATA_MINING_TRAP)
+
+1. **Walk-forward 12 folds** Lopez-compliant (1 mois test / 11 mois train rolling)
+2. **DSR** via `CORE/dsr_calculator.py` (Bailey-Lopez 2012, Pearson kurtosis)
+3. **n_trades ≥ 100** par strategie par fold
+4. **Concentration ≤ 33%** : pas plus d'un tiers du PnL sur un seul setup/level
+5. **Costs MGC inclus** : slippage entry ~1 tick ($0.10) + commission Topstep ~$0.85 RT
+6. **Pre-RTH filter** : option ON (RTH gold 08:30-13:30 ET only) vs option OFF (24h trading)
+7. **Verdict ml-trainer agent** : GO/RESERVES/NOGO avant tout deploiement
+
+### Sequencement
+
+**Etape 1** : verifier MGC dataset post-rebuild (regime_* revived)
+**Etape 2** : backtest BN V2 sur ES + MGC (comparaison cross-instrument)
+**Etape 3** : backtest BN V3 idem
+**Etape 4** : backtest RuleEngine idem
+**Etape 5** : backtest Bot 3 levels
+**Etape 6** : verdict ml-trainer + recommandation strategie optimale MGC
+**Etape 7** : recalibration seuils MGC empirique (Chantier 2+3)
+**Etape 8** : paper trading MGC (Chantier 6)
+
+### Effort estime
+- Etapes 1-5 : ~10-15h compute + dev (12 folds × 4 strategies × 2 instruments)
+- Etape 6 ml-trainer review : 30 min
+- Etapes 7-8 : variable selon resultats
 
