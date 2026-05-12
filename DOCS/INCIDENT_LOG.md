@@ -46,6 +46,37 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-05-12 10:00 — [INVESTIGATION] — Cat A features cross-check 3 agents : verdict + plan
+
+**Contexte** : Apres rebuild V4 enriched mai 2026 (Cat B 88.5%->36.3% NaN -52pp), Cat A features residuelles 100% NaN persistent. Dispatch 3 agents code-reviewer en parallele pour audit.
+
+**Findings consolides (cross-check 3 agents + audit empirique VPS)** :
+
+**1. atr_regime_zscore_60d** : Cause = `min_periods=13800 bars` rolling 60j × 1380 bars CME 24h, mais Phase B charge `load_v4_partition(month)` mois isole → jamais atteint. Mars/Avril ont 53.4% non-NaN (rolling devient valide a mi-mois), Mai 1109 bars vu en local par agent (faux : VPS 9977 bars post-rebuild). Verite : 9977 < 13800 quand mois isole. Fix : Option B reduire `min_periods` 4140 (3j) OU Option A cross-month load (architecture pipeline incremental). ETA 1h-4h.
+
+**2. Roll features (`roll_phase`, `days_since_roll`, `bars_since_roll`)** : `detect_roll` cherche discontinuite `instrument_id` mais NQM26 actif depuis mi-mars → group_id=0 partout sur avril+mai → NaN. **Deja dans ML_EXCLUDE** (lignes 77, 322, 418 build_dataset_v4_dmp_databento.py). Pas impact bots, juste audit cosmetique. Fix Option A calendrier CME hardcode H/M/U/Z. ETA 2h BACKLOG basse priorite.
+
+**3. MQ Lite RAW features** (`dist_mq_call/put/hvl`, `dist_gex_*`, `dist_blind_*`, `dist_1d_min/max`) : **MISSION INITIALE INCORRECTE**. Ces features sont **ABSENTES par DESIGN** (drop intentionnel post-normalisation en `_pct`). Les versions `_pct` sont les vraies features ML : **0% NaN sur la plupart, 22% sur `_call_0dte`/`_hvl_0dte` due a source MenthorQ null**. Seul vrai bug : `dist_mq_call_0dte` et `dist_mq_hvl_0dte` survivent au drop quand 100% NaN raw. Pollution colonnaire mineure. Fix : add a `MQ_COLS_TO_DROP` ligne 942 OU filter dans `add_pct_normalized_distances`. ETA 5 min.
+
+**4. Long bars features (6 cols)** : Engine `phase_b_plus_engine.py` existe, `apply_phase_b_plus` orchestre correctement. **Vu empirique VPS post-rebuild** : `long_up_bar` (2628/9992 non-zero NQ) + `long_dn_bar` (2535) **OK**. MAIS `n_long_up_zones_active`, `dist_long_up_nearest_pct`, `n_long_up_cluster_*` **100% NaN** → `add_long_extension_lines` ne tourne pas OU ses colonnes ne sont pas mergees dans final parquet (write_partitioned bug). **Investigation engine fine necessaire**. Edge Jackson primaire impactee. ETA 1-2h investigation + fix.
+
+**5. `im_ltr_slope_diff`** : **NON IMPLEMENTABLE pipeline V4 Databento**. `large_trader_ratio` est feature DMP Sierra (CFTC COT-like), pas Databento. Deja dans PROHIBITED_FEATURES ligne 321 avec commentaire explicite "100% NaN (large_trader_ratio non dispo Databento)". **Accept NaN definitif**. 0 effort.
+
+**Critique mentor (Agent 1)** : Agent fait notion utile que les Cat A features `atr_zscore`, `roll_*` sont deja dans ML_EXCLUDE → impact ML/bots = NUL. Cosmetique audit seulement. Reformulation priorites :
+- HAUTE : `n_long_*_zones_active` + `dist_long_*_nearest_pct` (Edge Jackson)
+- MOYENNE : `atr_regime_zscore_60d` (utile filter regime mais marginal)
+- BASSE : Roll features, MQ_0dte residuel (already ML_EXCLUDE / cosmetique)
+- NULLE : `im_ltr_slope_diff` (accept NaN)
+
+**Plan recommande** (par priorite) :
+1. Investigation `add_long_extension_lines` engine — pourquoi 100% NaN apres apply_phase_b_plus ?
+2. Quick fix Option B `atr_regime_zscore_60d min_periods=4140`
+3. Backlog reste Cat A (roll, MQ_0dte residuel, IM)
+
+**Validation J+1** : test 14:00 UTC `regime_actionable` pendant RTH. Si ressuscite >10% → Cat B fix suffit. Si toujours 0% → Cat A bloquants prioritaires.
+
+**Reviewed** : self + 3 agents code-reviewer parallele (cross-check confirme cause racine 3 groupes Cat A) + empirique audit_long_bars_post_rebuild.py.
+
 ### 2026-05-12 09:20 — [VALIDATION_MISS] — Rebuild V4 enriched mai 2026 confirme partial fix + identifie Cat A residuelle
 
 **Contexte** : Bot 1+Bot 2 V6 trade SHORT correctement (DMP Sierra OK) mais Bot 3 prend LONGs contre-tendance dans marché baissier. Audit features V4 enriched 12/05 06:54 UTC : 88.5% NaN sur 17 features regime critiques. Fix `--use-mq-lite` deploye 02:30 UTC ne touche que les nouvelles bars → parquet existant cassé.
