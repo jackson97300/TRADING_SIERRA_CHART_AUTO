@@ -321,6 +321,34 @@ def apply_rvol(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# INCREMENTAL WINDOW HELPERS (Phase 1b - 13/05/2026)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def compute_window_cutoff(df_existing: pd.DataFrame, window_days: int) -> pd.Timestamp | None:
+    """Compute cutoff timestamp for window-based incremental rebuild.
+
+    Refacto Phase 1b (13/05/2026) : separe les bars "kept" (intacts) des
+    bars "rebuild" (window N derniers jours). Pure function, testable
+    isolement.
+
+    Args:
+        df_existing : DataFrame existant (parquet partition complete)
+        window_days : nombre de jours de la window rolling
+
+    Returns:
+        pd.Timestamp UTC du cutoff (bars >= cutoff seront re-process)
+        None si df_existing vide (signal mode full rebuild)
+    """
+    if df_existing.empty or "ts_event" not in df_existing.columns:
+        return None
+    ts_max = df_existing["ts_event"].max()
+    ts_min = df_existing["ts_event"].min()
+    cutoff = ts_max - pd.Timedelta(days=window_days)
+    # Cap au ts_min : si window > toute la donnee, retombe sur full rebuild equivalent
+    return max(cutoff, ts_min)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN PROCESSING (1 partition)
 # ═══════════════════════════════════════════════════════════════════════════════
 

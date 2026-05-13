@@ -50,3 +50,43 @@ def test_load_trades_for_window_returns_subset_of_month():
     ]
     assert len(df_window) == len(df_month_in_range), \
         f"Window missing trades: {len(df_window)} vs {len(df_month_in_range)}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 2 — compute_window_cutoff edge cases
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_compute_window_cutoff_empty_df_returns_none():
+    """Empty df -> cutoff = None (signal full rebuild mode)."""
+    from build_dataset_v4_phase_b import compute_window_cutoff
+
+    df_empty = pd.DataFrame({"ts_event": pd.to_datetime([], utc=True)})
+    cutoff = compute_window_cutoff(df_empty, window_days=3)
+    assert cutoff is None, "Empty df must return None cutoff"
+
+
+def test_compute_window_cutoff_3d_window():
+    """3-day window: cutoff = last_ts - 3 days."""
+    from build_dataset_v4_phase_b import compute_window_cutoff
+
+    ts_max = pd.Timestamp("2026-05-13T22:00:00", tz="UTC")
+    ts_range = pd.date_range(end=ts_max, periods=10000, freq="1min", tz="UTC")
+    df = pd.DataFrame({"ts_event": ts_range})
+
+    cutoff = compute_window_cutoff(df, window_days=3)
+    expected = ts_max - pd.Timedelta(days=3)
+    assert cutoff == expected, f"Cutoff {cutoff} != {expected}"
+
+
+def test_compute_window_cutoff_window_larger_than_data_caps_to_min_ts():
+    """If window > data span: cutoff = ts_min (full rebuild equivalent)."""
+    from build_dataset_v4_phase_b import compute_window_cutoff
+
+    ts_max = pd.Timestamp("2026-05-13T22:00:00", tz="UTC")
+    # Only 1 day of data
+    ts_range = pd.date_range(end=ts_max, periods=1440, freq="1min", tz="UTC")
+    df = pd.DataFrame({"ts_event": ts_range})
+
+    cutoff = compute_window_cutoff(df, window_days=30)
+    # When window > data, cutoff capped to ts_min (rebuild all)
+    assert cutoff == df["ts_event"].min(), "Cutoff must cap to ts_min when window > data"
