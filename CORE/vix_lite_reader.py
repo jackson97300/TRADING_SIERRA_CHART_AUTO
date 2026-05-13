@@ -248,6 +248,128 @@ def enrich_vix_lite(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ============================================================
+# API STREAMING (Chantier 3 Live Enricher Phase 3a Jour 5)
+# ============================================================
+# Convention API streaming-aware Option D : ajout EN PARALLELE de la batch
+# (additive-only, ne touche pas enrich_vix_lite/load_vix_lite_jsonl).
+#
+# vix_lite est PILOTE STATELESS : features pure row-level (sanity filter,
+# distance level - close, regime classification, GEX nearest, above_hvl).
+# Aucun rolling state. Convention VixLiteState vide reservee pour evolution.
+#
+# Plan agent verdict 13/05/2026 nuit : pilote stateless valide UNIQUEMENT
+# l'outillage (tools/test_engine_parity.py + factory pattern). Le vrai test
+# Pattern 11 (sérialisation, warmup R2, drift EMA) sera Lundi engine N°2
+# stateful (e.g. EMA(vix_level, 60) wrapper).
+#
+# DRY garanti : batch enrich_vix_lite() vectorise rapide N'EST PAS modifie.
+# Le streaming fait la meme transformation row-by-row pour live_enricher.
+from dataclasses import dataclass
+
+
+@dataclass
+class VixLiteState:
+    """State pilote stateless (Phase 3a Jour 5 reframe Plan agent).
+
+    AUCUN state rolling : features pure row-level (sign(close - vwap),
+    distance level - close, regime classification, above_hvl boolean).
+    Reservé pour evolution future (e.g. EMA vix_level historique, regime
+    transition counter pour debounce).
+
+    Convention : factory pattern via state.get_engine_state("vix_lite", VixLiteState)
+    dans live_enricher.py _process_bar_cycle pour valider l'API uniforme.
+    """
+    pass
+
+
+def _filter_range_inplace(d: dict, col: str, lo: float, hi: float) -> None:
+    """Sanity filter aligne batch enrich_vix_lite() : si v hors [lo,hi] -> NaN.
+
+    Convention pandas .between(lo, hi) (inclusive). Si v est None/NaN, no-op.
+    """
+    v = d.get(col)
+    if v is None:
+        return
+    try:
+        # pd.isna gere NaN et None
+        if pd.isna(v):
+            return
+        if not (lo <= v <= hi):
+            d[col] = np.nan
+    except (TypeError, ValueError):
+        d[col] = np.nan
+
+
+def enrich_vix_lite_streaming(row: dict, state: VixLiteState) -> dict:
+    """API streaming vix_lite : enrich 1 row VIX (pilote Chantier 3 Jour 5).
+
+    Reproduit fidelement enrich_vix_lite() (batch) en mode row-by-row.
+    Convention DRY : pour test parite, batch_fn(df) appelee independamment
+    via vectorise rapide (vs streaming iterrows lent). Le streaming est
+    appele par live_enricher dans _process_bar_cycle.
+
+    Args:
+        row : dict avec inputs VIX (vix_level, vix_call, vix_put, vix_hvl,
+              vix_1d_min/max, vix_call_0dte, vix_put_0dte, vix_hvl_0dte,
+              vix_gamma_wall_0dte, vix_gex_0..9).
+        state : VixLiteState (non utilise pilote stateless, requis pour
+                convention API uniforme).
+
+    Returns:
+        dict enriched avec : sanity-filtered inputs + vix_regime +
+        dist_vix_call/put/hvl + dist_vix_*_0dte + dist_vix_gamma_wall_0dte +
+        dist_vix_gex_nearest_up/dn + vix_above_hvl + vix_above_hvl_0dte.
+    """
+    out = dict(row)
+
+    # 1. Sanity filter aligne enrich_vix_lite() (P0-1 audit 13/05)
+    _filter_range_inplace(out, "vix_level", VIX_LEVEL_MIN, VIX_LEVEL_MAX)
+    for col in (
+        "vix_call", "vix_put", "vix_hvl", "vix_1d_min", "vix_1d_max",
+        "vix_call_0dte", "vix_put_0dte", "vix_hvl_0dte", "vix_gamma_wall_0dte",
+    ):
+        _filter_range_inplace(out, col, VIX_MQ_MIN, VIX_MQ_MAX)
+    for i in range(10):
+        _filter_range_inplace(out, f"vix_gex_{i}", VIX_MQ_MIN, VIX_MQ_MAX)
+
+    # 2. vix_regime (float64 aligne enrich_vix_lite P0-3)
+    vl = out.get("vix_level")
+    out["vix_regime"] = float(compute_vix_regime(vl))
+
+    # 3. dist_vix_* (level - vix_level), aligne enrich_vix_lite _diff()
+    def _diff_row(level_col: str) -> Optional[float]:
+        v = out.get(level_col)
+        if v is None or vl is None:
+            return np.nan
+        try:
+            if pd.isna(v) or pd.isna(vl):
+                return np.nan
+        except (TypeError, ValueError):
+            return np.nan
+        return float(v) - float(vl)
+
+    out["dist_vix_call"] = _diff_row("vix_call")
+    out["dist_vix_put"] = _diff_row("vix_put")
+    out["dist_vix_hvl"] = _diff_row("vix_hvl")
+    out["dist_vix_call_0dte"] = _diff_row("vix_call_0dte")
+    out["dist_vix_put_0dte"] = _diff_row("vix_put_0dte")
+    out["dist_vix_hvl_0dte"] = _diff_row("vix_hvl_0dte")
+    out["dist_vix_gamma_wall_0dte"] = _diff_row("vix_gamma_wall_0dte")
+
+    # 4. dist_vix_gex_nearest_up/dn
+    gex = [out.get(f"vix_gex_{i}") for i in range(10)]
+    up, dn = compute_vix_gex_distances(vl, gex)
+    out["dist_vix_gex_nearest_up"] = up if up is not None else np.nan
+    out["dist_vix_gex_nearest_dn"] = dn if dn is not None else np.nan
+
+    # 5. above_hvl booleans (int)
+    out["vix_above_hvl"] = compute_vix_above_hvl(vl, out.get("vix_hvl"))
+    out["vix_above_hvl_0dte"] = compute_vix_above_hvl(vl, out.get("vix_hvl_0dte"))
+
+    return out
+
+
+# ============================================================
 # TESTS INLINE (run direct python -m vix_lite_reader)
 # ============================================================
 

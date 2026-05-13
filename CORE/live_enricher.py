@@ -259,11 +259,25 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 if k != "ts_event":
                     payload[f"mq_{k}" if not k.startswith("mq_") else k] = v
 
-        # Inject VIX snapshot (passthrough Phase 3a)
+        # Inject VIX snapshot (passthrough Phase 3a) + appel engine streaming Jour 5
+        # Plug factory pattern : state.get_engine_state("vix_lite", VixLiteState)
+        # Validation convention API streaming (Plan agent reframe Jour 5).
         if inputs["vix"]:
-            for k, v in inputs["vix"].items():
-                if k not in ("ts_event", "schema_version"):
-                    payload[k] = v
+            vix_row = dict(inputs["vix"])
+            try:
+                from vix_lite_reader import enrich_vix_lite_streaming, VixLiteState
+                vix_state = state.get_engine_state("vix_lite", factory=VixLiteState)
+                vix_enriched = enrich_vix_lite_streaming(vix_row, vix_state)
+                # Merge dans payload (sans dupliquer ts_event/schema_version)
+                for k, v in vix_enriched.items():
+                    if k not in ("ts_event", "schema_version"):
+                        payload[k] = v
+            except Exception as e:
+                # Fallback passthrough si engine streaming echoue (fail-loud emit)
+                logger.warning(f"vix_lite streaming fail {symbol}: {e}, fallback passthrough")
+                for k, v in vix_row.items():
+                    if k not in ("ts_event", "schema_version"):
+                        payload[k] = v
 
         # Inject trades stats minimales (Phase 3a passthrough)
         trades_df = inputs["trades_df"]
