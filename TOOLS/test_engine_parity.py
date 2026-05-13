@@ -495,10 +495,134 @@ def _test_vix_ema_60():
     return {"level1": report1, "level2": report2, "level3": report3, "all_pass": all_pass}
 
 
+def _test_session_metadata():
+    """Test sub-engine #1 add_session_metadata (Chantier 3 Phase 3b Lundi).
+
+    Stateless engine row-level pur. 3 niveaux parite :
+      Niveau 1 : parite batch vs streaming
+      Niveau 2 : pickle roundtrip state (state vide)
+      Niveau 3 : warmup R2 (trivial vu stateless mais test toujours)
+    """
+    from phase_b_helpers import (
+        add_session_metadata,
+        add_session_metadata_streaming,
+        SessionMetadataState,
+    )
+    import numpy as np
+    import pandas as pd
+
+    # Synth DataFrame : 200 bars 1-min couvrant Asia + London + US + after-hours
+    # avec cross-day boundary (test asia_start logique session_date_trading)
+    start = pd.Timestamp("2026-05-12 22:00:00", tz="UTC")  # 18:00 ET dim soir
+    ts_range = pd.date_range(start, periods=200, freq="5min").tz_localize(None)
+    df = pd.DataFrame({"ts_event": ts_range})
+
+    print(f"\nTest session_metadata parite sur {len(df)} rows synth...")
+
+    # FIX P0-2 audit 13/05 nuit : matrice bounds (couvre None + ES/NQ + MGC).
+    # Test parite doit valider que batch et streaming convergent pour CHAQUE
+    # configuration bounds. Anti faux PASS "happy path bounds=None only".
+    MGC_BOUNDS = {"asia_start": 1080, "us_start": 510, "us_after_start": 810}  # 08:30-13:30 RTH gold
+    bounds_matrix = [
+        ("default_None", None),
+        ("ES_NQ_explicit", {"asia_start": 1080, "us_start": 570, "us_after_start": 960}),
+        ("MGC_gold_RTH", MGC_BOUNDS),
+    ]
+
+    all_level1_pass = True
+    for bounds_name, bounds_cfg in bounds_matrix:
+        print(f"\n--- NIVEAU 1 : parite batch vs streaming (bounds={bounds_name}) ---")
+
+        def batch_fn(d, _bcfg=bounds_cfg):
+            return add_session_metadata(d, bounds=_bcfg)
+
+        def stream_fn(row, state, _bcfg=bounds_cfg):
+            return add_session_metadata_streaming(row, state, bounds=_bcfg)
+
+        report_b = test_engine_parity(
+            engine_name=f"session_metadata[{bounds_name}]",
+            batch_fn=batch_fn,
+            streaming_fn=stream_fn,
+            state_factory=SessionMetadataState,
+            input_df=df,
+            float_atol=1e-9,
+        )
+        if report_b["status"] != "PASS":
+            all_level1_pass = False
+
+    # FIX P0-2 (suite) : valider raise KeyError sur bounds partiel (fail-loud)
+    print("\n--- NIVEAU 1 BIS : fail-loud bounds partiel (KeyError explicite) ---")
+    partial_bounds = {"asia_start": 1080}  # manque us_start + us_after_start
+    raised_batch = False
+    raised_stream = False
+    try:
+        add_session_metadata(df.copy(), bounds=partial_bounds)
+    except KeyError:
+        raised_batch = True
+    try:
+        state_partial = SessionMetadataState()
+        add_session_metadata_streaming(df.iloc[0].to_dict(), state_partial, bounds=partial_bounds)
+    except KeyError:
+        raised_stream = True
+    if raised_batch and raised_stream:
+        print("[OK] batch + stream raise KeyError explicite sur bounds partiel (anti Pattern 11)")
+    else:
+        print(f"[FAIL] silent fallback persiste : batch_raised={raised_batch} stream_raised={raised_stream}")
+        all_level1_pass = False
+
+    # Le rapport principal utilise bounds=None (compat compat outil downstream)
+    def batch_fn_default(d):
+        return add_session_metadata(d, bounds=None)
+
+    def stream_fn_default(row, state):
+        return add_session_metadata_streaming(row, state, bounds=None)
+
+    report1 = test_engine_parity(
+        engine_name="session_metadata",
+        batch_fn=batch_fn_default,
+        streaming_fn=stream_fn_default,
+        state_factory=SessionMetadataState,
+        input_df=df,
+        float_atol=1e-9,
+        verbose=False,
+    )
+    if not all_level1_pass:
+        report1["status"] = "FAIL"
+
+    print("\n--- NIVEAU 2 : pickle roundtrip state ---")
+    sample_row = df.iloc[0].to_dict()
+    report2 = test_state_pickle_roundtrip(
+        engine_name="session_metadata",
+        streaming_fn=stream_fn,
+        state_factory=SessionMetadataState,
+        sample_row=sample_row,
+    )
+
+    print("\n--- NIVEAU 3 : warmup R2 (continu vs restart) ---")
+    report3 = test_warmup_parity(
+        engine_name="session_metadata",
+        streaming_fn=stream_fn,
+        state_factory=SessionMetadataState,
+        input_df=df,
+        restart_at_idx=100,
+        float_atol=1e-9,
+    )
+
+    all_pass = (
+        report1.get("status") == "PASS"
+        and report2.get("status") == "PASS"
+        and report3.get("status") == "PASS"
+    )
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL session_metadata : {'ALL 3 LEVELS PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"level1": report1, "level2": report2, "level3": report3, "all_pass": all_pass}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--engine", default="vix_lite",
-                        choices=["vix_lite", "vix_ema_60", "all"])
+                        choices=["vix_lite", "vix_ema_60", "session_metadata", "all"])
     args = parser.parse_args()
 
     if args.engine in ("vix_lite", "all"):
@@ -508,6 +632,11 @@ def main():
 
     if args.engine in ("vix_ema_60", "all"):
         report = _test_vix_ema_60()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("session_metadata", "all"):
+        report = _test_session_metadata()
         if report and not report.get("all_pass"):
             sys.exit(1)
 

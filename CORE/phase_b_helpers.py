@@ -38,6 +38,58 @@ TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — caller doit passer tick explicit
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# DEFAULT BOUNDS (per-symbol session windows, en minutes ET depuis minuit)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Aligne sur les defaults documentes dans add_session_metadata + add_ib_features.
+# Si caller ne passe pas bounds, on utilise ES/NQ defaults.
+DEFAULT_BOUNDS_ES_NQ = {
+    "asia_start": 1080,      # 18:00 ET (= overnight start, session +1 day)
+    "us_start": 570,         # 09:30 ET (RTH start ES/NQ)
+    "us_after_start": 960,   # 16:00 ET (RTH end / after-hours start)
+}
+
+# Cles obligatoires pour bounds (utilise par _resolve_bounds anti-fallback silencieux)
+_BOUNDS_REQUIRED_KEYS = ("asia_start", "us_start", "us_after_start")
+
+
+def _resolve_bounds(bounds: dict | None) -> dict:
+    """FIX P0-1 audit code-reviewer (13/05 nuit) : harmonise batch + stream.
+
+    Source UNIQUE de verite pour bounds. Evite silent fallback Pattern 11 :
+      - Si bounds is None : retourne copie DEFAULT_BOUNDS_ES_NQ
+      - Si bounds est dict partiel (cle manquante) : RAISE KeyError explicite
+        (fail-loud cohesion lessons.md anti silent default)
+      - Si bounds dict complet : retourne tel quel
+
+    Cf incident `.claude/rules/lessons.md` Gamma hardcode 0.0 fallback +
+    `tick-size-policy.md` anti-pattern #3 (silent fallback = bug garanti).
+
+    Args:
+        bounds : None ou dict (potentiellement partiel).
+
+    Returns:
+        dict complet avec toutes les cles requises.
+
+    Raises:
+        KeyError : si bounds dict partiel (cle requise manquante).
+    """
+    if bounds is None:
+        return dict(DEFAULT_BOUNDS_ES_NQ)
+    if not isinstance(bounds, dict):
+        raise TypeError(
+            f"bounds must be dict or None (got {type(bounds).__name__})"
+        )
+    missing = [k for k in _BOUNDS_REQUIRED_KEYS if k not in bounds]
+    if missing:
+        raise KeyError(
+            f"bounds dict missing required keys: {missing}. "
+            f"Required: {list(_BOUNDS_REQUIRED_KEYS)}. "
+            f"Use DEFAULT_BOUNDS_ES_NQ as template ou passer None pour defaults."
+        )
+    return bounds
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 1. SESSION HELPERS (ET timezone)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -51,23 +103,113 @@ def add_session_metadata(df: pd.DataFrame, bounds: dict | None = None) -> pd.Dat
     Permet sess_high/low de couvrir la session entiere (overnight inclus).
     """
     df = df.copy()
+    # FIX P0-1 audit 13/05 nuit : _resolve_bounds harmonise batch + stream,
+    # raise KeyError explicite si bounds partiel (anti silent fallback Pattern 11).
+    b = _resolve_bounds(bounds)
     ts_et = df["ts_event"].dt.tz_localize("UTC").dt.tz_convert(ET) if df["ts_event"].dt.tz is None else df["ts_event"].dt.tz_convert(ET)
     df["date_et"] = ts_et.dt.date
     df["mins_et"] = ts_et.dt.hour * 60 + ts_et.dt.minute
     # Session trading date = date+1 si on est apres asia_start
-    asia_start = (bounds or {"asia_start": 1080})["asia_start"]
     df["session_date_trading"] = np.where(
-        df["mins_et"] >= asia_start,
+        df["mins_et"] >= b["asia_start"],
         (ts_et + pd.Timedelta(days=1)).dt.date,
         df["date_et"],
     )
     # Cash session = us_start -> us_after_start (defaults ES 09:30-16:00, MGC 08:30-13:30)
-    us_start = (bounds or {"us_start": 570})["us_start"]
-    us_after_start = (bounds or {"us_after_start": 960})["us_after_start"]
-    df["is_cash_session"] = ((df["mins_et"] >= us_start) & (df["mins_et"] < us_after_start)).astype("int8")
+    df["is_cash_session"] = ((df["mins_et"] >= b["us_start"]) & (df["mins_et"] < b["us_after_start"])).astype("int8")
     # IB window = us_start -> us_start+60 (1ere heure de RTH : 09:30-10:30 ES, 08:30-09:30 MGC)
-    df["is_ib_window"] = ((df["mins_et"] >= us_start) & (df["mins_et"] < us_start + 60)).astype("int8")
+    df["is_ib_window"] = ((df["mins_et"] >= b["us_start"]) & (df["mins_et"] < b["us_start"] + 60)).astype("int8")
     return df
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# API STREAMING sub-engine #1 (Chantier 3 Phase 3b Lundi)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Pattern uniforme Plan agent Option D : engine streaming-aware avec @dataclass
+# State + apply_*_streaming(row, state) -> dict. DRY garanti via tests parite.
+#
+# add_session_metadata est STATELESS : transformations row-level pures
+# (timezone UTC->ET, hour/minute extraction, comparaison seuils bounds).
+# AUCUN state rolling. SessionMetadataState reserve evolution future.
+from dataclasses import dataclass
+
+
+@dataclass
+class SessionMetadataState:
+    """State sub-engine #1 phase_b_helpers — STATELESS (factory uniforme).
+
+    Aucun state rolling. Convention uniforme avec engines stateful Phase 3b+.
+    """
+    pass
+
+
+def add_session_metadata_streaming(
+    row: dict,
+    state: SessionMetadataState,
+    bounds: dict | None = None,
+) -> dict:
+    """API streaming sub-engine #1 (Chantier 3 Phase 3b Lundi).
+
+    Reproduit fidelement add_session_metadata() en mode row-by-row :
+      ts_event UTC -> ET timezone conversion
+      mins_et = hour * 60 + minute
+      date_et = ts_et.date()
+      session_date_trading = date_et + 1 jour si mins_et >= asia_start, sinon date_et
+      is_cash_session = 1 si us_start <= mins_et < us_after_start
+      is_ib_window = 1 si us_start <= mins_et < us_start + 60
+
+    Args:
+        row : dict avec 'ts_event' (pandas.Timestamp ou datetime).
+        state : SessionMetadataState (factory uniforme, non utilise).
+        bounds : dict overrides asia_start/us_start/us_after_start (default ES/NQ).
+
+    Returns:
+        dict row + {date_et, mins_et, session_date_trading, is_cash_session,
+        is_ib_window}.
+    """
+    out = dict(row)
+    # FIX P0-1 audit 13/05 nuit : utilise _resolve_bounds (idem batch), raise
+    # KeyError explicite si dict partiel au lieu de silent fallback default.
+    b = _resolve_bounds(bounds)
+
+    ts = out.get("ts_event")
+    if ts is None:
+        out["date_et"] = None
+        out["mins_et"] = None
+        out["session_date_trading"] = None
+        out["is_cash_session"] = 0
+        out["is_ib_window"] = 0
+        return out
+
+    # Convertir UTC -> ET
+    if isinstance(ts, pd.Timestamp):
+        if ts.tz is None:
+            ts_et = ts.tz_localize("UTC").tz_convert(ET)
+        else:
+            ts_et = ts.tz_convert(ET)
+    else:
+        # datetime non-pandas : convertir via pd.Timestamp
+        ts_pd = pd.Timestamp(ts)
+        if ts_pd.tz is None:
+            ts_et = ts_pd.tz_localize("UTC").tz_convert(ET)
+        else:
+            ts_et = ts_pd.tz_convert(ET)
+
+    mins_et = ts_et.hour * 60 + ts_et.minute
+    date_et = ts_et.date()
+
+    # session_date_trading : date+1 si mins_et >= asia_start
+    if mins_et >= b["asia_start"]:
+        session_date_trading = (ts_et + pd.Timedelta(days=1)).date()
+    else:
+        session_date_trading = date_et
+
+    out["date_et"] = date_et
+    out["mins_et"] = mins_et
+    out["session_date_trading"] = session_date_trading
+    out["is_cash_session"] = 1 if (b["us_start"] <= mins_et < b["us_after_start"]) else 0
+    out["is_ib_window"] = 1 if (b["us_start"] <= mins_et < b["us_start"] + 60) else 0
+    return out
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
