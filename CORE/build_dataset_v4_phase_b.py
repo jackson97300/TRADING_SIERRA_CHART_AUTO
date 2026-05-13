@@ -65,6 +65,9 @@ from market_profile_rolling import apply_market_profile_rolling, MARKET_PROFILE_
 from phase_d_dalton_levels import apply_phase_d_dalton_levels, PHASE_D_GENERATED
 from phase_b_vwap_diff import apply_vwap_diff, VWAP_DIFF_GENERATED
 from phase_b_option_c_plus import apply_option_c_plus_transforms, OPTION_C_PLUS_GENERATED
+# Phase D Gold features (MGC only) + VIX cross-join (depuis ES JSONL)
+from gold_phase_d_features import apply_gold_phase_d, load_ohlcv_databento, GOLD_PHASE_D_FEATURES
+from vix_cross_join import add_vix_cross_join
 import game_changers as gc
 
 DATASET_ROOT = ROOT / "DATA" / "datasets" / "v4_enriched"
@@ -129,6 +132,47 @@ def load_trades_for_month(symbol: str, year: int, month: int) -> pd.DataFrame:
             d["ts_event"] = d["ts_event"].dt.tz_localize("UTC")
         dfs.append(d)
     return pd.concat(dfs, ignore_index=True)
+
+
+def load_trades_for_window(symbol: str, start_ts: pd.Timestamp, end_ts: pd.Timestamp) -> pd.DataFrame:
+    """Charge les Trades pour une fenetre [start_ts, end_ts) au lieu du mois entier.
+
+    Refacto Phase 1b (13/05/2026) : reduit IO 5x sur cycle incremental window 3j.
+    Iterer sur les jours UTC touches par la fenetre seulement (au lieu du mois entier),
+    puis filter strict sur le range timestamps.
+
+    Args:
+        symbol : ES, NQ, MGC (format court, sans .c.0)
+        start_ts : timestamp UTC inclusif
+        end_ts : timestamp UTC exclusif
+
+    Returns:
+        DataFrame trades sur [start_ts, end_ts) avec colonnes [ts_event, price, size, side]
+        DataFrame vide si aucun trade dispo.
+    """
+    db_ticker = get_databento_ticker(symbol)
+    # Normaliser tz UTC (defense input non-tz-aware)
+    if start_ts.tzinfo is None:
+        start_ts = start_ts.tz_localize("UTC")
+    if end_ts.tzinfo is None:
+        end_ts = end_ts.tz_localize("UTC")
+    # Iterer sur les jours UTC dans la fenetre (inclus partial day si fenetre traverse minuit)
+    days = pd.date_range(start_ts.normalize(), end_ts.normalize(), freq="D", tz="UTC")
+    dfs = []
+    for day_ts in days:
+        y, m, d = day_ts.year, day_ts.month, day_ts.day
+        pattern = str(TRADES_ROOT / f"symbol={db_ticker}" / f"year={y}" / f"month={m}" / f"day={d}" / "*.parquet")
+        for f in glob.glob(pattern):
+            df = pd.read_parquet(f, columns=["ts_event", "price", "size", "side"])
+            if df["ts_event"].dt.tz is None:
+                df["ts_event"] = df["ts_event"].dt.tz_localize("UTC")
+            dfs.append(df)
+    if not dfs:
+        return pd.DataFrame()
+    df_all = pd.concat(dfs, ignore_index=True)
+    # Filter strict sur [start_ts, end_ts)
+    mask = (df_all["ts_event"] >= start_ts) & (df_all["ts_event"] < end_ts)
+    return df_all[mask].reset_index(drop=True)
 
 
 def write_v4_atomic(df: pd.DataFrame, symbol: str, year: int, month: int, original_cols: set):
@@ -331,8 +375,12 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     print(f"  After Phase B+++: {df.shape[1]} cols ({n_bpp} B+++ features)")
 
     # Bloc 3 #1 Edge Zones (footprint cellule + extension lines manager)
+    # 11/05 J3 FIX BUG GOLD : passer tick=tick au footprint_builder.
+    # Avant ce fix, MGC (tick=0.10) utilisait default tick=0.25 -> bucketize
+    # incorrect -> cellules sparse -> 0% fire rate edge_zones (4 features mortes).
+    # ES/NQ inchanges car tick=0.25 = default.
     if not trades_df.empty:
-        footprint = build_footprint_per_bar(trades_df, df["ts_event"])
+        footprint = build_footprint_per_bar(trades_df, df["ts_event"], tick=tick)
         df = apply_edge_zones(df, footprint, symbol=symbol, tick=tick)
     else:
         # No trades : initialise Edge Zones cols a 0
@@ -405,6 +453,42 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
         df = pd.concat([df, df_regime], axis=1)
         actionable_pct = df["regime_actionable"].mean() * 100 if "regime_actionable" in df.columns else 0
         print(f"  After Regime engine: {df.shape[1]} cols (actionable {actionable_pct:.1f}%)")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # MGC-only enrichments : VIX cross-join + Gold Phase D features (12/05/2026)
+    # ─────────────────────────────────────────────────────────────────────────
+    # VIX : absent du parquet MGC car pipeline Databento (pas DMP JSONL Sierra).
+    # Cross-join depuis ES JSONL (vix_level/vix_regime communs CBOE).
+    # Gold Phase D : 4 features intermarket + session (6E, ZN, ZB, sessions UTC/ET).
+    if symbol == "MGC":
+        # 1. VIX cross-join (depuis ES JSONL vix_level/vix_regime)
+        n_before_vix = df.shape[1]
+        df = add_vix_cross_join(df)
+        n_vix_added = df.shape[1] - n_before_vix
+        print(f"  After VIX cross-join: {df.shape[1]} cols (+{n_vix_added} VIX features)")
+
+        # 2. Gold Phase D : 4 features intermarket + session
+        try:
+            ts_min = pd.to_datetime(df["ts_event"]).min()
+            ts_max = pd.to_datetime(df["ts_event"]).max()
+            # Marge 60+ bars pour rolling windows (real_yields proxy, dxy_corr)
+            start_load = (ts_min - pd.Timedelta(days=1)).to_pydatetime().replace(tzinfo=None)
+            end_load = (ts_max + pd.Timedelta(days=1)).to_pydatetime().replace(tzinfo=None)
+
+            df_6e = load_ohlcv_databento("6E.c.0", pd.Timestamp(start_load), pd.Timestamp(end_load))
+            df_zn = load_ohlcv_databento("ZN.c.0", pd.Timestamp(start_load), pd.Timestamp(end_load))
+            df_zb = load_ohlcv_databento("ZB.c.0", pd.Timestamp(start_load), pd.Timestamp(end_load))
+
+            print(f"  Gold Phase D loaders : 6E={len(df_6e)} bars, ZN={len(df_zn)}, ZB={len(df_zb)}")
+
+            df = apply_gold_phase_d(df, df_6e=df_6e, df_zn=df_zn, df_zb=df_zb)
+            n_gpd = sum(1 for c in df.columns if c in GOLD_PHASE_D_FEATURES)
+            print(f"  After Gold Phase D: {df.shape[1]} cols ({n_gpd} gold features)")
+        except Exception as e:
+            print(f"  [WARN] Gold Phase D failed: {e}. Setting features to NaN.")
+            for col in GOLD_PHASE_D_FEATURES:
+                if col not in df.columns:
+                    df[col] = np.nan
 
     # Sanity stats
     if "open_type" in df.columns:
