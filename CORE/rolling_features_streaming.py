@@ -165,6 +165,21 @@ class RollingFeaturesState:
     # Pour ctx_delta_exhaustion : max(|delta_bar|) sur 10 derniers
     delta_abs_long: deque = field(default_factory=lambda: deque(maxlen=10))
 
+    # ─── GROUPE C (6 Market Profile advanced) ──────────────────────────────
+    # ctx_poc_migration_10 : slope poc_position sur 10
+    poc_position_long: deque = field(default_factory=lambda: deque(maxlen=10))
+    # ctx_va_developing_10 : va_width - shift 10 (long+1=11)
+    va_width_long_plus: deque = field(default_factory=lambda: deque(maxlen=11))
+    # ctx_rotation_factor_20 : cross VPOC sur 20 (changes 0/1)
+    vpoc_side_changes_20: deque = field(default_factory=lambda: deque(maxlen=20))
+    prev_vpoc_side: Optional[int] = None
+    has_seen_first_vpoc_side: bool = False
+    # ctx_failed_auction : inside_cur_va lookback 3, 4, 5
+    inside_va_short_plus: deque = field(default_factory=lambda: deque(maxlen=6))
+    # ctx_excess_high/low_bars : near_high/low rolling sum sur 60
+    near_high_60: deque = field(default_factory=lambda: deque(maxlen=60))
+    near_low_60: deque = field(default_factory=lambda: deque(maxlen=60))
+
 
 def add_rolling_features_basic_streaming(
     row: dict,
@@ -702,4 +717,182 @@ def add_rolling_features_medium_streaming(
         out["ctx_mq_put_call_ratio"] = np.nan
 
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Sub-engine #8 — GROUPE C (6 Market Profile advanced features)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def add_rolling_features_advanced_streaming(
+    row: dict,
+    state: RollingFeaturesState,
+    short: int = 3,
+    mid: int = 5,
+    long: int = 10,
+) -> dict:
+    """Sub-engine #8 — 6 features GROUPE C Market Profile streaming.
+
+    Features (Steidlmayer / Dalton) :
+      ctx_poc_migration_10    - slope poc_position 10 barres
+      ctx_va_width            - largeur Value Area (composite intermediate)
+      ctx_va_developing_10    - delta VA width sur 10 (acceptance/rejection)
+      ctx_ib_extension_ratio  - distance hors IB / (IB_range/2)
+      ctx_rotation_factor_20  - count cross VPOC sur 20 (range vs trend day)
+      ctx_failed_auction      - sortie+retour VA en <5 barres (reversal)
+      ctx_excess_high_bars    - bars pres session high (rolling 60)
+      ctx_poor_high           - bool excess_high_bars < 3 (unfinished auction)
+      ctx_excess_low_bars     - idem low
+      ctx_poor_low            - bool
+
+    Total : 6 features principales + 4 derivees = 10 sorties.
+    """
+    out = dict(row)
+
+    # ─── Inputs ────────────────────────────────────────────────────────────
+    poc_position = _safe_float(out.get("poc_position"))
+    dist_cur_vah = _safe_float(out.get("dist_cur_vah"))
+    dist_cur_val = _safe_float(out.get("dist_cur_val"))
+    dist_cur_vpoc = _safe_float(out.get("dist_cur_vpoc"))
+    ib_range_ticks = _safe_float(out.get("ib_range_ticks"))
+    dist_ib_high = _safe_float(out.get("dist_ib_high"))
+    dist_ib_low = _safe_float(out.get("dist_ib_low"))
+    inside_cur_va = out.get("inside_cur_va")
+    dist_sess_high = _safe_float(out.get("dist_sess_high"))
+    dist_sess_low = _safe_float(out.get("dist_sess_low"))
+    atr = _safe_float(out.get("atr"))
+
+    # Cast inside_cur_va (batch fillna(0).astype(int))
+    try:
+        inside_int = int(inside_cur_va) if inside_cur_va is not None else 0
+    except (TypeError, ValueError):
+        inside_int = 0
+
+    # ─── 27. ctx_poc_migration_10 ──────────────────────────────────────────
+    state.poc_position_long.append(poc_position)
+    out["ctx_poc_migration_10"] = _linreg_slope(list(state.poc_position_long))
+
+    # ─── 28a. ctx_va_width (composite intermediate) ────────────────────────
+    if dist_cur_vah is not None and dist_cur_val is not None:
+        va_width = abs(dist_cur_vah) + abs(dist_cur_val)
+    else:
+        va_width = np.nan
+    out["ctx_va_width"] = va_width
+
+    # ─── 28b. ctx_va_developing_10 ─────────────────────────────────────────
+    # Mirror batch : va_width - va_width.shift(10)
+    state.va_width_long_plus.append(va_width if not pd.isna(va_width) else None)
+    if len(state.va_width_long_plus) >= 11 and not pd.isna(va_width):
+        prev_va_width = state.va_width_long_plus[0]
+        if prev_va_width is not None:
+            out["ctx_va_developing_10"] = va_width - prev_va_width
+        else:
+            out["ctx_va_developing_10"] = np.nan
+    else:
+        out["ctx_va_developing_10"] = np.nan
+
+    # ─── 29. ctx_ib_extension_ratio ────────────────────────────────────────
+    # Mirror batch : max_ext = max(|dist_ib_high|, |dist_ib_low|)
+    #                ratio = max_ext / (ib_range / 2)
+    if (
+        ib_range_ticks is not None and ib_range_ticks != 0
+        and (dist_ib_high is not None or dist_ib_low is not None)
+    ):
+        d_high_abs = abs(dist_ib_high) if dist_ib_high is not None else 0.0
+        d_low_abs = abs(dist_ib_low) if dist_ib_low is not None else 0.0
+        max_ext = max(d_high_abs, d_low_abs)
+        out["ctx_ib_extension_ratio"] = max_ext / (ib_range_ticks / 2.0)
+    else:
+        out["ctx_ib_extension_ratio"] = np.nan
+
+    # ─── 30. ctx_rotation_factor_20 ────────────────────────────────────────
+    # Mirror batch : vpoc_side = (dist_cur_vpoc > 0).astype(int)
+    #                vpoc_cross = (vpoc_side != vpoc_side.shift(1)).astype(float)
+    #                rolling(20, min_p=5).sum()
+    # Stockage CHANGES (0/1) directement comme side_flip_count_10.
+    if dist_cur_vpoc is not None:
+        vpoc_side_int = 1 if dist_cur_vpoc > 0 else 0
+    else:
+        vpoc_side_int = None
+    if not state.has_seen_first_vpoc_side:
+        # Premier bar : virtual flip = 1 (IEEE 754 NaN != value)
+        state.vpoc_side_changes_20.append(1)
+        state.has_seen_first_vpoc_side = True
+    else:
+        curr_none = vpoc_side_int is None
+        prev_none = state.prev_vpoc_side is None
+        if curr_none or prev_none:
+            state.vpoc_side_changes_20.append(1)
+        elif vpoc_side_int != state.prev_vpoc_side:
+            state.vpoc_side_changes_20.append(1)
+        else:
+            state.vpoc_side_changes_20.append(0)
+    state.prev_vpoc_side = vpoc_side_int
+    # min_periods=5 mirror batch
+    if len(state.vpoc_side_changes_20) >= 5:
+        out["ctx_rotation_factor_20"] = float(sum(state.vpoc_side_changes_20))
+    else:
+        out["ctx_rotation_factor_20"] = np.nan
+
+    # ─── 31. ctx_failed_auction ────────────────────────────────────────────
+    # Mirror batch : pour lookback in [3, 4, 5] :
+    #   was_in = inside.shift(lookback)
+    #   min_inside = inside.rolling(lookback, min_p=1).min()
+    #   failed |= (inside == 1) & (was_in == 1) & (min_inside == 0)
+    # On stocke les inside_int dans un deque maxlen=6 (lookback max 5 + 1).
+    state.inside_va_short_plus.append(inside_int)
+    failed = 0
+    inside_list = list(state.inside_va_short_plus)
+    n = len(inside_list)
+    if inside_int == 1 and n >= 2:
+        for lookback in (3, 4, 5):
+            if n < lookback + 1:
+                continue  # pas assez d'historique
+            # was_in : inside[t - lookback] = inside_list[-(lookback+1)]
+            was_in_idx = n - 1 - lookback
+            if was_in_idx < 0:
+                continue
+            was_in = inside_list[was_in_idx]
+            # min_inside : rolling(lookback) ending at current bar
+            window_inside = inside_list[n - lookback:n]
+            min_inside = min(window_inside)
+            if was_in == 1 and min_inside == 0:
+                failed = 1
+                break
+    out["ctx_failed_auction"] = failed
+
+    # ─── 32a. ctx_excess_high_bars + ctx_poor_high ─────────────────────────
+    # Mirror batch : near_high = (|dist_sess_high| / atr < 0.04).astype(float)
+    #                excess_high_bars = near_high.rolling(60, min_p=10).sum()
+    #                poor_high = (excess_high_bars < 3).astype(float)
+    if dist_sess_high is not None and atr is not None and atr != 0:
+        near_high_curr = 1.0 if abs(dist_sess_high) / atr < 0.04 else 0.0
+    else:
+        near_high_curr = None  # NaN
+    state.near_high_60.append(near_high_curr)
+    near_high_vals = [v for v in state.near_high_60 if v is not None]
+    if len(near_high_vals) >= 10:
+        excess_high = float(sum(near_high_vals))
+        out["ctx_excess_high_bars"] = excess_high
+        out["ctx_poor_high"] = 1.0 if excess_high < 3 else 0.0
+    else:
+        out["ctx_excess_high_bars"] = np.nan
+        out["ctx_poor_high"] = 0.0  # batch default 0 si col absente/incalculable
+
+    # ─── 32b. ctx_excess_low_bars + ctx_poor_low ───────────────────────────
+    if dist_sess_low is not None and atr is not None and atr != 0:
+        near_low_curr = 1.0 if abs(dist_sess_low) / atr < 0.04 else 0.0
+    else:
+        near_low_curr = None
+    state.near_low_60.append(near_low_curr)
+    near_low_vals = [v for v in state.near_low_60 if v is not None]
+    if len(near_low_vals) >= 10:
+        excess_low = float(sum(near_low_vals))
+        out["ctx_excess_low_bars"] = excess_low
+        out["ctx_poor_low"] = 1.0 if excess_low < 3 else 0.0
+    else:
+        out["ctx_excess_low_bars"] = np.nan
+        out["ctx_poor_low"] = 0.0
+
+    return out
+
 

@@ -1466,6 +1466,109 @@ def _test_rolling_features_medium():
     return {"all_pass": all_pass}
 
 
+def _test_rolling_features_advanced():
+    """Test sub-engine #8 GROUPE C Market Profile (6 features + 4 derivees).
+
+    Chain basic + medium + advanced. Verifie parite atol 1e-6 sur les 10 sorties.
+    """
+    from rolling_features_streaming import (
+        add_rolling_features_basic_streaming,
+        add_rolling_features_medium_streaming,
+        add_rolling_features_advanced_streaming,
+        RollingFeaturesState,
+    )
+    from rolling_features import RollingFeatures
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(11)
+    n = 300
+    df = pd.DataFrame({
+        "ts": np.arange(n) * 60 * 1000,
+        "price": 5800 + np.cumsum(np.random.randn(n) * 0.5),
+        "delta_bar": np.random.randint(-100, 100, n).astype(float),
+        "total_vol": np.random.randint(500, 2000, n).astype(float),
+        "vwap_slope_10": np.random.randn(n) * 0.1,
+        "dist_vwap_d": np.random.randn(n) * 2,
+        "cvd_day": np.cumsum(np.random.randint(-50, 50, n)).astype(float),
+        "atr": np.full(n, 8.0),
+        "diag_imbalance": np.random.uniform(-1, 1, n),
+        "finish_strength": np.random.uniform(-100, 100, n),
+        "va_position_pct": np.random.uniform(0, 1, n),
+        "ib_position_pct": np.random.uniform(0, 1, n),
+        "vwap_d_side": np.random.choice([-1, 1], n),
+        "large_trader_ratio": np.random.uniform(0, 1, n),
+        "ib_range_atr": np.random.uniform(0.3, 1.5, n),
+        "ib_broken_up": np.random.choice([0, 1], n),
+        "ib_broken_down": np.random.choice([0, 1], n),
+        "dist_vwap_d_atr": np.random.uniform(-0.5, 0.5, n),
+        "delta_day_dir": np.random.choice([-1, 0, 1], n),
+        "dist_sess_high": np.random.uniform(-15, 0, n),
+        "dist_sess_low": np.random.uniform(0, 15, n),
+        "ib_range_ticks": np.random.uniform(10, 50, n),
+        "dist_mq_put": np.random.uniform(-50, 0, n),
+        "dist_mq_call": np.random.uniform(0, 50, n),
+        # GROUPE C inputs additionnels
+        "poc_position": np.random.uniform(-1, 1, n),
+        "dist_cur_vah": np.random.uniform(-10, 0, n),
+        "dist_cur_val": np.random.uniform(0, 10, n),
+        "dist_cur_vpoc": np.random.uniform(-5, 5, n),
+        "dist_ib_high": np.random.uniform(-20, 5, n),
+        "dist_ib_low": np.random.uniform(-5, 20, n),
+        "inside_cur_va": np.random.choice([0, 1], n),
+    })
+
+    rf = RollingFeatures(short=3, mid=5, long=10, symbol="ES")
+    batch_df = rf.compute(df.copy())
+
+    state = RollingFeaturesState()
+    stream_rows = []
+    for _, row in df.iterrows():
+        r1 = add_rolling_features_basic_streaming(row.to_dict(), state)
+        r2 = add_rolling_features_medium_streaming(r1, state, symbol="ES")
+        r3 = add_rolling_features_advanced_streaming(r2, state)
+        stream_rows.append(r3)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest rolling_features_advanced parite sur {n} rows synth...")
+
+    cols_check = [
+        "ctx_poc_migration_10", "ctx_va_width", "ctx_va_developing_10",
+        "ctx_ib_extension_ratio", "ctx_rotation_factor_20",
+        "ctx_failed_auction",
+        "ctx_excess_high_bars", "ctx_poor_high",
+        "ctx_excess_low_bars", "ctx_poor_low",
+    ]
+    print("\n--- NIVEAU 1 : parite batch vs streaming (10 sorties GROUPE C) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT batch={col in batch_df.columns} stream={col in stream_df.columns}")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        status = "PASS" if max_diff < 1e-6 and nan_mismatch == 0 else "FAIL"
+        print(f"  {col:35s} {status} max_diff={max_diff:.6e} nan_mismatch={nan_mismatch}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where((np.abs(diff) > 1e-6) & ~nan_both)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL rolling_features_advanced : "
+          f"{'ALL 1 LEVEL PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -1749,7 +1852,8 @@ def main():
                                  "ib_features", "session_high_low",
                                  "volume_profile", "rvol_inputs", "ib_atr",
                                  "rolling_features_basic",
-                                 "rolling_features_medium", "all"])
+                                 "rolling_features_medium",
+                                 "rolling_features_advanced", "all"])
     args = parser.parse_args()
 
     if args.engine in ("vix_lite", "all"):
