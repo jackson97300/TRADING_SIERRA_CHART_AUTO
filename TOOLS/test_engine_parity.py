@@ -1852,6 +1852,68 @@ def _test_rolling_features_session_confluence():
     return {"all_pass": all_pass}
 
 
+def _test_rvol_engine():
+    """Test sub-engine RvolEngine streaming (10 features rvol_*)."""
+    from rvol_streaming import add_rvol_engine_streaming, RvolEngineState
+    from rvol import RvolEngine
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(31)
+    n = 300
+    start = pd.Timestamp("2026-05-12 13:00:00", tz="UTC")
+    df = pd.DataFrame({
+        "ts": [int((start + pd.Timedelta(minutes=i)).value // 1_000_000) for i in range(n)],
+        "total_vol": np.random.randint(100, 3000, n).astype(float),
+        "delta_pct": np.random.uniform(-0.3, 0.3, n),
+        "finish_strength": np.random.uniform(-50, 50, n),
+    })
+
+    engine = RvolEngine()
+    batch_df = engine.compute(df.copy())
+
+    state = RvolEngineState()
+    stream_rows = []
+    for _, row in df.iterrows():
+        stream_rows.append(add_rvol_engine_streaming(row.to_dict(), state))
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest rvol_engine parite sur {n} rows synth...")
+
+    cols_check = [
+        "rvol", "rvol_zscore", "rvol_regime",
+        "rvol_buy", "rvol_sell", "rvol_buy_strong", "rvol_sell_strong",
+        "rvol_absorb_buy", "rvol_absorb_sell", "rvol_extreme",
+    ]
+    print("\n--- NIVEAU 1 : parite batch vs streaming (10 features rvol_*) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:30s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        status = "PASS" if max_diff < 1e-6 and nan_mismatch == 0 else "FAIL"
+        print(f"  {col:30s} {status} max_diff={max_diff:.6e} nan_mismatch={nan_mismatch}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where((np.abs(diff) > 1e-6) & ~nan_both)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL rvol_engine : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -2139,6 +2201,7 @@ def main():
                                  "rolling_features_advanced",
                                  "rolling_features_delta_div",
                                  "rolling_features_session_confluence",
+                                 "rvol_engine",
                                  "all"])
     args = parser.parse_args()
 
@@ -2204,6 +2267,11 @@ def main():
 
     if args.engine in ("rolling_features_session_confluence", "all"):
         report = _test_rolling_features_session_confluence()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("rvol_engine", "all"):
+        report = _test_rvol_engine()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
