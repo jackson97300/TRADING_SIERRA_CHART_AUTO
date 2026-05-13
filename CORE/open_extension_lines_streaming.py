@@ -8,11 +8,12 @@ restent visibles tant que non-touches par bar futur).
 Convention SC reproduite (mirror color/long extension lines) :
   - Open futures (08:30 ET, mins_et=510) : zone tracee au prix open
   - Open cash (09:30 ET, mins_et=570) : zone tracee au prix open
-  - Zone touchee si bar_low <= level <= bar_high (overlap)
-  - Zone touchee = desactivee (mais gardee pour stats)
-  - Multi-jours : zones d'opens des jours precedents restent visibles
-    jusqu'a etre touchees (cf chart manuel Jackson 13/05 avec multiples
-    niveaux opens horizontaux superposes)
+  - Zone touchee si bar_low <= level <= bar_high (overlap) -> desactivee
+  - **Zone gardee JUSQU'A LA NOUVELLE OPEN du lendemain** (Jackson 14/05) :
+    zone open_830 jour J meurt a 08:30 ET J+1 (quand new zone created)
+    zone open_930 jour J meurt a 09:30 ET J+1
+  - Avantage : info disponible 24/24, overnight touch valide (test du
+    niveau cash open de la veille pendant Asia/London = signal important).
 
 Features generees (4) :
   open_830_zone_active     : count zones open_830 actives (multi-jours)
@@ -47,8 +48,13 @@ class OpenExtensionLinesState:
     """State streaming Open Extension Lines.
 
     Pickle-safe : 2 ExtensionLineBuffer + scalars primitifs.
-    Multi-jours : les buffers accumulent les zones jusqu'a max_zones_per_side
-    (default 100) ou jusqu'a touche prix.
+
+    Lifecycle (option 2 Jackson 14/05) :
+      - 08:30 ET J : add zone open_830 dans buf_830 (desactive zones precedentes)
+      - 09:30 ET J : add zone open_930 dans buf_930 (desactive zones precedentes)
+      - Pendant la journee + overnight : zones touchees -> desactivees (overlap)
+      - 08:30 ET J+1 : nouvelle zone open_830 -> ancienne (J) desactivee
+      - 09:30 ET J+1 : nouvelle zone open_930 -> ancienne (J) desactivee
     """
     current_date: Optional[Any] = None     # date_et de la session courante
     buf_830: ExtensionLineBuffer = field(default_factory=ExtensionLineBuffer)
@@ -103,8 +109,9 @@ def add_open_extension_lines_streaming(
     c = _safe_float(out.get("close"))
 
     # ─── 1. Reset flags session si nouveau jour ────────────────────────────
-    # NB : on NE reset PAS les buffers (les zones precedentes restent visibles
-    # jusqu'a touche ou prune max_age - mirror comportement SC sur chart Jackson)
+    # NB : on ne reset PAS les buffers - les zones du jour precedent
+    # restent actives jusqu'a leur touche prix OU jusqu'a creation de la
+    # nouvelle zone same-side a 08:30 / 09:30 ET J+1 (Jackson option 2).
     if date_et != state.current_date:
         state.current_date = date_et
         state.captured_830_today = False
@@ -118,11 +125,17 @@ def add_open_extension_lines_streaming(
         state.buf_930.update_with_bar(state.bar_idx, l, h)
 
     # ─── 3. Capture open_830 a mins_et=510 (08:30 ET = futures cash open) ─
+    # FIX Jackson 14/05 option 2 : a la nouvelle open, desactive les zones
+    # open_830 du jour precedent encore actives (= remplacement par nouvelle).
     if (
         mins_et == 510
         and not state.captured_830_today
         and not np.isnan(o)
     ):
+        # Desactiver zones precedentes encore actives (jour J-1 ou avant)
+        for z in state.buf_830.zones:
+            z.active = False
+        # Ajouter nouvelle zone du jour
         state.buf_830.add_zone(state.bar_idx, [float(o)], "buy")
         state.captured_830_today = True
 
@@ -132,6 +145,10 @@ def add_open_extension_lines_streaming(
         and not state.captured_930_today
         and not np.isnan(o)
     ):
+        # Desactiver zones precedentes encore actives
+        for z in state.buf_930.zones:
+            z.active = False
+        # Ajouter nouvelle zone du jour
         state.buf_930.add_zone(state.bar_idx, [float(o)], "buy")
         state.captured_930_today = True
 

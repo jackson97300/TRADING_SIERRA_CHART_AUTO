@@ -2797,57 +2797,78 @@ def _test_open_extension_lines():
         print(f"  Apres mins=510 jour 1 : zone NON capturee : FAIL")
         all_pass = False
 
-    # Test 2 : zone toujours active a la fin du jour 1 (prix jamais touche)
-    print("\n--- Test 2 : zone active fin jour 1 (prix never touch) ---")
+    # Test 2 : zone reste active toute la journee jour 1 (jamais touchee)
+    print("\n--- Test 2 : zone active fin jour 1 (jamais touchee) ---")
     j1_last = df[df["date_et"] == pd.Timestamp("2026-05-12").date()].index[-1]
     at_eod_j1 = out_df.iloc[j1_last]
     if at_eod_j1["open_830_zone_active"] >= 1:
         print(f"  Fin jour 1 : open_830_zone_active={at_eod_j1['open_830_zone_active']} : PASS")
     else:
-        print(f"  Fin jour 1 : zone perdue (devrait persister) : FAIL")
+        print(f"  Fin jour 1 : zone perdue : FAIL")
         all_pass = False
 
-    # Test 3 : zone jour 1 ENCORE active debut jour 2 (avant 08:30)
-    print("\n--- Test 3 : zone jour 1 persiste au debut jour 2 ---")
-    j2_early = df[(df["date_et"] == pd.Timestamp("2026-05-13").date()) & (df["mins_et"] == 100)].index[0]
+    # Test 3 (Jackson option 2) : zone jour 1 PERSISTE overnight + debut jour 2 (AVANT 08:30 J+1)
+    print("\n--- Test 3 : zone jour 1 PERSISTE overnight (option 2 Jackson) ---")
+    j2_early = df[
+        (df["date_et"] == pd.Timestamp("2026-05-13").date())
+        & (df["mins_et"] == 100)
+    ].index[0]
     at_early_j2 = out_df.iloc[j2_early]
     if at_early_j2["open_830_zone_active"] >= 1:
-        print(f"  Debut jour 2 (avant 08:30) : open_830_zone_active={at_early_j2['open_830_zone_active']} : PASS")
+        print(f"  Debut jour 2 (01:40 ET, avant 08:30) : open_830_zone_active={at_early_j2['open_830_zone_active']} : PASS")
     else:
-        print(f"  Debut jour 2 : zone jour 1 perdue : FAIL")
+        print(f"  Debut jour 2 (01:40 ET) : open_830_zone_active=0 (devrait persister) : FAIL")
         all_pass = False
 
     # Test 4 : Zone jour 2 desactivee apres touche a 13:00 (mins_et=780)
-    print("\n--- Test 4 : zone jour 2 desactivee apres touche a 13:00 ---")
+    print("\n--- Test 4 : zone jour 2 desactivee par TOUCHE a 13:00 ---")
     j2_touch = df[(df["date_et"] == pd.Timestamp("2026-05-13").date()) & (df["mins_et"] == 780)].index[0]
-    # AVANT la touche : zone active
     before_touch = out_df.iloc[j2_touch - 1]
     after_touch = out_df.iloc[j2_touch]
     print(f"  Bar avant touche : open_830_zone_active={before_touch['open_830_zone_active']}")
     print(f"  Bar de la touche  : open_830_zone_active={after_touch['open_830_zone_active']}")
     if before_touch["open_830_zone_active"] > after_touch["open_830_zone_active"]:
-        print(f"  Touche correctement desactive 1 zone : PASS")
+        print(f"  Touche correctement desactive zone : PASS")
     else:
         print(f"  Touche n'a PAS desactive : FAIL")
         all_pass = False
 
-    # Test 5 : Apres 3 jours, count zones actives = 2 (jour 1 + jour 3, jour 2 touche)
-    print("\n--- Test 5 : multi-jours accumulation ---")
-    end = out_df.iloc[-1]
-    expected_active = 2  # jour 1 (5800) + jour 3 (5820), jour 2 (5810) touche
-    if end["open_830_zone_active"] == expected_active:
-        print(f"  Fin 3 jours : {end['open_830_zone_active']} zones (attendu {expected_active}) : PASS")
+    # Test 5 : zone jour 2 REMPLACE jour 1 a 08:30 ET jour 2
+    # Avant 08:30 J+1 : zone jour 1 active (test 3 confirme)
+    # A 08:30 J+1 : nouvelle zone creee, ancienne (jour 1) desactivee
+    # Count_active = 1 (juste la nouvelle, ancienne morte)
+    print("\n--- Test 5 : Jour 2 08:30 ET remplace zone jour 1 (count=1) ---")
+    j2_510 = df[
+        (df["date_et"] == pd.Timestamp("2026-05-13").date())
+        & (df["mins_et"] == 510)
+    ].index[0]
+    just_before_j2_open = out_df.iloc[j2_510 - 1]
+    just_after_j2_open = out_df.iloc[j2_510]
+    print(f"  Bar avant 08:30 j2 : open_830_zone_active={just_before_j2_open['open_830_zone_active']} (jour 1 encore active)")
+    print(f"  Bar 08:30 j2 : open_830_zone_active={just_after_j2_open['open_830_zone_active']} (nouvelle remplace ancienne)")
+    if just_before_j2_open["open_830_zone_active"] == 1 and just_after_j2_open["open_830_zone_active"] == 1:
+        print(f"  Replacement OK (1 -> 1, ancienne desactivee + nouvelle active) : PASS")
     else:
-        print(f"  Fin 3 jours : {end['open_830_zone_active']} zones (attendu {expected_active}) : FAIL")
+        print(f"  Replacement FAIL")
         all_pass = False
 
     # Test 6 : dist_open_830_zone_pct non-NaN quand active
-    print("\n--- Test 6 : dist_open_830_zone_pct non-NaN ---")
+    print("\n--- Test 6 : dist_open_830_zone_pct non-NaN quand active ---")
     after_510_dist = out_df.iloc[j1_510 + 1]["dist_open_830_zone_pct"]
     if not pd.isna(after_510_dist):
         print(f"  dist_open_830_zone_pct apres 510 : {after_510_dist:.4f}% : PASS")
     else:
         print(f"  dist_open_830_zone_pct apres 510 : NaN (attendu valeur) : FAIL")
+        all_pass = False
+
+    # Test 7 : fin jour 3 -> count_active=1 (jour 3 seulement, jour 1 remplacee par jour 2,
+    # jour 2 touchee donc morte, jour 3 remplace jour 2 a 08:30)
+    print("\n--- Test 7 : Fin jour 3 = 1 zone active (option 2 = pas accumulation) ---")
+    end = out_df.iloc[-1]
+    if end["open_830_zone_active"] == 1:
+        print(f"  Fin jour 3 : open_830_zone_active=1 : PASS (jour 3 seulement)")
+    else:
+        print(f"  Fin jour 3 : open_830_zone_active={end['open_830_zone_active']} (attendu 1) : FAIL")
         all_pass = False
 
     print(f"\n{'=' * 70}")
