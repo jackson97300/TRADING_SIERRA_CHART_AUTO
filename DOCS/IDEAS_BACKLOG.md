@@ -7,6 +7,28 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[PRIORITE 2 — Jackson 2026-05-13]** **Feature `bn_state` machine d'etat (Battle Navale haussiere/baissiere/neutre)** | 4-6h dev + agent review | HIGH | PROPOSED (concept valide Jackson "OK")
+  - **Concept** : detection automatique etat BN base sur theorie Dow + paliers franchis. Reference screenshot ancien Jackson 10 niveaux escalier ascendant.
+  - **6 etats** : `BN_HAUSSIER_ACTIF` / `BN_HAUSSIER_PAUSE` / `BN_BAISSIER_ACTIF` / `BN_BAISSIER_PAUSE` / `NEUTRE` / `BN_INVALIDATION`
+  - **4 nouvelles cols V4** : `bn_state`, `bn_paliers_count`, `bn_recharge_zone`, `bn_last_pivot_ts`, `bn_distance_from_start_ticks`
+  - **Logique** : detection pivots (3 swing highs/lows alignes) -> START -> tracking sequence HH/HL + franchissements niveaux structurels (Wall_0DTE, BL_5, GEX_3) + Long_Up/Dn_Bar validation + invalidation si close < previous_swing_low.
+  - **Implementation** : nouveau module `CORE/bn_state_engine.py` + integration `build_dataset_v4_phase_b.py` + widget dashboard "BN State" dans Indicateurs Trading Manuel.
+  - **Sequencing** : APRES Phase 1 pipeline V4 incremental + Phase 2 OFA enrichissement (priorite 1).
+
+- **[REJECTED EMPIRIQUE 2026-05-13]** **Pipeline V4 incremental window-based** | tente 4h | TRES HIGH | REJECTED
+  - **Probleme initial** : pipeline V4 lag 30-48min -> dashboard OFA tombe en mode degrade DMP-seul -> features V4 absentes.
+  - **Tentative 1 (window 3j seul, 25x speedup)** : 188 cols cumulatives divergent vs full mode (atr_regime_zscore_60d, asia_*, swings, day_type, ctx_*_rolling). Window 3j INSUFFISANT car certaines features lookback 60j+. **NOGO ZERO regression.**
+  - **Tentative 2 (window 3j + context 60j)** : ZERO regression theorique MAIS pipeline 1074s vs 309s full = **3.5x PLUS LENT**. Cause : Phase B+++ (bottleneck) traite 21M trades sur 63j vs 10M sur 30j. **NOGO performance.**
+  - **Conclusion empirique** : refacto window-based mathematiquement impossible a concilier avec ZERO regression sans degrader perf. Le pipeline V4 a un cout fixe trades-based qu'on ne peut pas reduire sans casser features rolling longues.
+  - **Mitigation deja deployee (Phase 1c)** : `_V4_STALE_SEC = 600 -> 2700` accepte lag 45min -> dashboard ES OFA marche. Lag Databento Historical 15-30min reste structurel inherent.
+  - **Code conserve** : commit 1d92eb9 `apply_all_engines` extraction (code cleaner, ZERO regression idempotence prouvee 1 mois bit-for-bit). Helpers `load_trades_for_window` + `compute_window_cutoff` + `process_partition_incremental` restent dans le code mais NON ACTIVES en prod.
+  - **A archiver** : DOCS/plans/2026-05-13-phase-1b-pipeline-v4-incremental.md (plan ecrit, rejet documente ici).
+
+- **[BACKLOG futur]** **Enrichissement Order Flow Avancé dashboard** | 2h | HIGH | PROPOSED
+  - Independent du pipeline V4 lag. Ajouter widgets : clusters volumique, bid/ask imbalance par bar, absorption velocity, big_orders momentum sliding 5 bars.
+  - Tous deja calcules V4 enriched, juste exposer dans `build_order_flow_advanced` + frontend.
+  - Activable une fois pipeline V4 stable (Phase 1c deja deployee = OK pour ES).
+
 - [2026-05-12 02:30 UTC investigation V4 enriched] **6 features V4 enriched cassées 100% NaN** | 4-6h fix + audit Bot 3 | HIGH | PROPOSED — Découverte lors investigation veto swing_proximity (Jackson "investigue 100% NaN"). Colonnes EXISTENT dans schema parquet mais 100% NaN sur 9716 barres NQ mai 2026 :
   - `range_pos` — REDONDANT (alternative OK : `pct_in_range` 0% NaN, `position_in_range` 0.7% NaN). Drop col residuelle du schema.
   - `profile_shape` — calculé par `apply_game_changers` PHASE_B → ne tourne pas / sauvegarde rate

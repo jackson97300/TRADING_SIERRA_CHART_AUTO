@@ -135,3 +135,34 @@ def test_apply_all_engines_idempotent_on_same_input():
             v2 = out2[col].fillna(-999.0).values
             assert np.allclose(v1, v2, rtol=1e-9, atol=1e-12, equal_nan=True), \
                 f"Non-deterministic column {col}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 4 — process_partition_incremental orchestrator
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_process_partition_incremental_returns_ok_status():
+    """process_partition_incremental retourne status OK sur partition existante."""
+    from build_dataset_v4_phase_b import process_partition_incremental
+
+    result = process_partition_incremental("ES", 2026, 4, window_days=3, write=False)
+    if result.get("status") == "SKIP":
+        pytest.skip(f"No data {result}")
+
+    assert result["status"] == "OK"
+    assert result["mode"] == "incremental"
+    assert result["n_bars"] > 0
+    assert result["n_kept"] >= 0
+    assert result["n_rebuild"] > 0
+    assert result["n_kept"] + result["n_rebuild"] == result["n_bars"], \
+        "n_kept + n_rebuild != n_bars (split incoherent)"
+
+
+def test_process_partition_incremental_fallback_to_full_when_parquet_absent():
+    """Si parquet n'existe pas, fallback transparent sur process_partition full."""
+    from build_dataset_v4_phase_b import process_partition_incremental
+
+    # Mois lointain qui n'existe surement pas
+    result = process_partition_incremental("ES", 2024, 1, window_days=3, write=False)
+    # Soit fallback full ok (status OK + pas de mode incremental), soit SKIP
+    assert result["status"] in ("OK", "SKIP"), f"Unexpected status {result}"

@@ -564,6 +564,186 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     }
 
 
+def _load_v4_cross_month(symbol: str, ts_start: pd.Timestamp, ts_end: pd.Timestamp) -> pd.DataFrame:
+    """Load v4 enriched cross-month pour seed les rolling features.
+
+    Returns df concatene des partitions mois necessaires pour couvrir [ts_start, ts_end).
+    """
+    dfs = []
+    # Iterate months from ts_start.month to ts_end.month
+    cur = ts_start.replace(day=1)
+    end_month = ts_end.replace(day=1)
+    while cur <= end_month:
+        df_m = load_v4_partition(symbol, cur.year, cur.month)
+        if not df_m.empty:
+            dfs.append(df_m)
+        # Next month
+        if cur.month == 12:
+            cur = cur.replace(year=cur.year + 1, month=1)
+        else:
+            cur = cur.replace(month=cur.month + 1)
+    if not dfs:
+        return pd.DataFrame()
+    df_all = pd.concat(dfs, ignore_index=True)
+    if df_all["ts_event"].dt.tz is None:
+        df_all["ts_event"] = df_all["ts_event"].dt.tz_localize("UTC")
+    mask = (df_all["ts_event"] >= ts_start) & (df_all["ts_event"] < ts_end)
+    return df_all[mask].copy().reset_index(drop=True)
+
+
+def process_partition_incremental(
+    symbol: str,
+    year: int,
+    month: int,
+    window_days: int = 3,
+    context_days: int = 60,
+    write: bool = True,
+) -> dict:
+    """Pipeline incremental window-based + pre-load context (Phase 1b - 13/05/2026).
+
+    ════════════════════════════════════════════════════════════════════════
+    STATUS : REJECTED EMPIRIQUE 13/05/2026 - NON UTILISE EN PROD
+    ════════════════════════════════════════════════════════════════════════
+    Tente 2x avec resultats empiriques (memory project_pipeline_incremental_backlog) :
+    - Tentative 1 (window 3j seul) : 25x speedup MAIS 188 cols regression
+      (atr_regime_zscore_60d, asia_*, swings, ctx_*_rolling, day_type)
+      car certaines features ont lookback 60j+ → window 3j insuffisant.
+      NOGO Jackson "ZERO regression".
+    - Tentative 2 (window 3j + context 60j ici) : ZERO regression theorique
+      MAIS 1074s vs 309s full = 3.5x PLUS LENT car Phase B+++ doit traiter
+      21M trades sur 63j. NOGO performance.
+
+    Mitigation effective deployee : Phase 1c `_V4_STALE_SEC = 2700` accepte
+    lag pipeline V4 jusqu'a 45min. Dashboard OFA marche.
+
+    Fonction conservee comme code dormant pour usage offline ponctuel ou
+    iteration future si Databento LIVE feed remplace Historical.
+
+    ════════════════════════════════════════════════════════════════════════
+
+    Au lieu de retraiter le mois entier comme process_partition,
+    re-processe seulement les `window_days` derniers jours MAIS charge
+    `context_days` jours d'historique en amont pour seeder les rolling
+    features (atr_regime_zscore_60d necessite 60j de RTH bars).
+
+    Workflow :
+      1. Load parquet existant + parquets cross-month pour 60j contexte
+      2. Compute cutoff_write = ts_max - window_days
+         cutoff_context_start = ts_max - (window_days + context_days)
+      3. df_input = bars [cutoff_context_start, ts_max] (60+3 jours)
+      4. df_kept = bars [start_month, cutoff_write) -- intact, non-touche
+      5. apply_all_engines sur df_input (engines voient 63j de contexte)
+      6. Extract df_rebuilt = bars [cutoff_write, ts_max] depuis df_input enriched
+      7. Concat df_kept + df_rebuilt + write atomique
+
+    Args:
+        symbol : ES, NQ, MGC
+        year, month : partition cible
+        window_days : N derniers jours a re-processer + WRITE (default 3)
+        context_days : N jours d'historique pour seed rolling (default 60)
+        write : True pour ecrire le parquet, False pour dry-run
+
+    Returns:
+        dict avec status, mode, n_bars, n_kept, n_rebuild, n_context, elapsed_s
+    """
+    t0 = time.time()
+    print(f"\n[{symbol} {year}-{month:02d}] Start INCREMENTAL window={window_days}d context={context_days}d")
+
+    df_existing = load_v4_partition(symbol, year, month)
+    if df_existing.empty:
+        print(f"  [INFO] Parquet absent, fallback full rebuild")
+        return process_partition(symbol, year, month, write=write)
+
+    cutoff_write = compute_window_cutoff(df_existing, window_days=window_days)
+    if cutoff_write is None:
+        print(f"  [INFO] Cutoff None, fallback full rebuild")
+        return process_partition(symbol, year, month, write=write)
+
+    ts_max = df_existing["ts_event"].max()
+    cutoff_context_start = ts_max - pd.Timedelta(days=window_days + context_days)
+
+    # Load contexte cross-month [cutoff_context_start, cutoff_write)
+    # Cela charge les bars du mois courant + mois precedent(s) pour rolling seed
+    df_context = _load_v4_cross_month(symbol, cutoff_context_start, cutoff_write)
+    df_rebuild_input = df_existing[df_existing["ts_event"] >= cutoff_write].copy().reset_index(drop=True)
+    df_kept = df_existing[df_existing["ts_event"] < cutoff_write].copy().reset_index(drop=True)
+
+    n_kept = len(df_kept)
+    n_rebuild = len(df_rebuild_input)
+    n_context = len(df_context)
+    print(f"  Split: kept={n_kept} bars (intact, ts<{cutoff_write}) | context={n_context} bars ({context_days}d) | rebuild={n_rebuild} bars (window {window_days}d)")
+
+    if df_rebuild_input.empty:
+        print(f"  [WARN] Window empty, nothing to rebuild")
+        return {"status": "SKIP", "reason": "empty_window"}
+
+    # Capture original cols (cols non-PhaseB) pour test parite write_v4_atomic
+    n_cols_orig = len(df_existing.columns)
+    original_cols = set(df_existing.columns) - PHASE_B_GENERATED - \
+                    {c for c in df_existing.columns if c.startswith(INTERMARKET_PREFIX)}
+
+    # df_input = context + rebuild (engines voient 60+3 jours total)
+    if not df_context.empty:
+        df_input = pd.concat([df_context, df_rebuild_input], ignore_index=True) \
+                      .sort_values("ts_event").reset_index(drop=True)
+    else:
+        df_input = df_rebuild_input
+
+    # Load trades pour [cutoff_context_start, ts_max] (couvre context + rebuild)
+    trades_input = load_trades_for_window(symbol, cutoff_context_start, ts_max + pd.Timedelta(minutes=1))
+    print(f"  Loaded {len(trades_input):,} trades for context+rebuild ({context_days+window_days}d)")
+
+    # Apply engines
+    tick = get_tick_size(symbol)
+    try:
+        from CORE.constants import get_session_boundaries
+    except ImportError:
+        from constants import get_session_boundaries
+    bounds = get_session_boundaries(symbol)
+
+    # Drop Phase B cols du df_input (pour eviter doublons quand engines re-calculent)
+    drop_phase_b = [c for c in df_input.columns if c in PHASE_B_GENERATED]
+    if drop_phase_b:
+        df_input = df_input.drop(columns=drop_phase_b)
+
+    df_input_enriched = apply_all_engines(df_input, trades_input, symbol, tick, bounds)
+    print(f"  After all engines on context+rebuild: {df_input_enriched.shape[1]} cols")
+
+    # Extract WRITE bars (rebuild) du resultat enrichi
+    df_rebuilt = df_input_enriched[df_input_enriched["ts_event"] >= cutoff_write].copy().reset_index(drop=True)
+
+    # Align cols df_kept et df_rebuilt
+    all_cols = sorted(set(df_kept.columns) | set(df_rebuilt.columns))
+    df_kept_aligned = df_kept.reindex(columns=all_cols)
+    df_rebuilt_aligned = df_rebuilt.reindex(columns=all_cols)
+    df_final = pd.concat([df_kept_aligned, df_rebuilt_aligned], ignore_index=True) \
+                  .sort_values("ts_event") \
+                  .reset_index(drop=True)
+
+    n_bars = len(df_final)
+    n_cols_final = len(df_final.columns)
+    print(f"  Final: {n_bars} bars x {n_cols_final} cols")
+
+    if write:
+        write_v4_atomic(df_final, symbol, year, month, original_cols)
+        print(f"  [WRITE] OK (kept {n_kept} bars intact, rebuilt {n_rebuild} bars via {n_context} bars context)")
+
+    elapsed = time.time() - t0
+    print(f"[{symbol} {year}-{month:02d}] Done in {elapsed:.1f}s (INCREMENTAL window={window_days}d context={context_days}d)")
+    return {
+        "status": "OK",
+        "mode": "incremental",
+        "symbol": symbol, "year": year, "month": month,
+        "n_bars": n_bars,
+        "n_kept": n_kept,
+        "n_rebuild": n_rebuild,
+        "n_context": n_context,
+        "n_cols_orig": n_cols_orig,
+        "n_cols_final": n_cols_final,
+        "elapsed_s": elapsed,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # INTERMARKET (cross ES + NQ apres process individuel)
 # ═══════════════════════════════════════════════════════════════════════════════
