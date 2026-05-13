@@ -2703,6 +2703,159 @@ def _test_phase_b_plus_color():
     return {"all_pass": all_pass}
 
 
+def _test_open_extension_lines():
+    """Test sub-engine open_extension_lines (4 features NEW Jackson).
+
+    NOUVELLE feature (pas dans le batch) - tests COMPORTEMENT attendu :
+      1. Zone capturee a mins_et=510 (08:30 ET) et mins_et=570 (09:30 ET)
+      2. Zone reste active tant que pas de bar avec L<=level<=H (overlap)
+      3. Zone desactivee a la 1ere bar futur qui la touche (= mort)
+      4. Multi-jours : zones d'opens precedents persistent jusqu'a touche
+    """
+    from open_extension_lines_streaming import (
+        add_open_extension_lines_streaming,
+        OpenExtensionLinesState,
+    )
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(101)
+    # Synth 3 jours x 1440 bars (24h chacun)
+    # Conditions deterministes pour valider comportement :
+    #   - Jour 1 : open_830 a 5800.0, prix ne le touche JAMAIS (zone reste active)
+    #   - Jour 2 : open_830 a 5810.0, prix le touche a 13:00 (zone desactivee)
+    #   - Jour 3 : open_830 a 5820.0, prix ne le touche pas
+    bars = []
+    for day in range(3):
+        date = pd.Timestamp("2026-05-12") + pd.Timedelta(days=day)
+        for mins in range(1440):
+            h = mins // 60
+            m = mins % 60
+            ts = pd.Timestamp(date) + pd.Timedelta(hours=h, minutes=m)
+            bars.append({
+                "ts_event": ts,
+                "date_et": date.date(),
+                "mins_et": mins,
+            })
+    n = len(bars)
+    df = pd.DataFrame(bars)
+
+    # Prix synthetique : oscille autour de la valeur de l'open_830 du jour
+    # Jour 1 : oscille entre 5803-5807 (jamais 5800)
+    # Jour 2 : oscille entre 5805-5815 (touche 5810 a 13:00)
+    # Jour 3 : oscille entre 5823-5827 (jamais 5820)
+    prices = []
+    for i, bar in enumerate(bars):
+        day = (bar["ts_event"] - pd.Timestamp("2026-05-12")).days
+        # mins offset dans le jour
+        mins_in_day = bar["mins_et"]
+        if day == 0:
+            # Jour 1 : open_830 = 5800, prix dans [5803, 5807]
+            if mins_in_day == 510:
+                prices.append(5800.0)
+            else:
+                prices.append(5803.0 + (mins_in_day % 5))
+        elif day == 1:
+            # Jour 2 : open_830 = 5810, prix entre [5815, 5818] (above) puis
+            # touche 5810 EXACTEMENT a mins=780 (13:00 ET), re-monte apres.
+            if mins_in_day == 510:
+                prices.append(5810.0)
+            elif mins_in_day == 780:
+                prices.append(5810.3)  # bar [5809.8, 5810.8] touche 5810 (overlap)
+            elif mins_in_day < 780:
+                prices.append(5815.0 + (mins_in_day % 4))  # [5815, 5818]
+            else:
+                prices.append(5816.0 + (mins_in_day % 3))  # [5816, 5818]
+        else:
+            # Jour 3 : open_830 = 5820, prix dans [5823, 5827]
+            if mins_in_day == 510:
+                prices.append(5820.0)
+            else:
+                prices.append(5823.0 + (mins_in_day % 5))
+    df["open"] = prices
+    df["close"] = df["open"]
+    df["high"] = df["open"] + 0.5
+    df["low"] = df["open"] - 0.5
+
+    state = OpenExtensionLinesState()
+    rows = []
+    for _, row in df.iterrows():
+        rows.append(add_open_extension_lines_streaming(row.to_dict(), state))
+    out_df = pd.DataFrame(rows)
+
+    print(f"\nTest open_extension_lines comportement sur {n} bars synth (3 jours)...")
+
+    all_pass = True
+
+    # Test 1 : zone capturee a mins_et=510 jour 1
+    print("\n--- Test 1 : capture zone a mins_et=510 jour 1 ---")
+    j1_510 = df[(df["date_et"] == pd.Timestamp("2026-05-12").date()) & (df["mins_et"] == 510)].index[0]
+    after_510 = out_df.iloc[j1_510 + 1]
+    if after_510["open_830_zone_active"] >= 1:
+        print(f"  Apres mins=510 jour 1 : open_830_zone_active={after_510['open_830_zone_active']} : PASS")
+    else:
+        print(f"  Apres mins=510 jour 1 : zone NON capturee : FAIL")
+        all_pass = False
+
+    # Test 2 : zone toujours active a la fin du jour 1 (prix jamais touche)
+    print("\n--- Test 2 : zone active fin jour 1 (prix never touch) ---")
+    j1_last = df[df["date_et"] == pd.Timestamp("2026-05-12").date()].index[-1]
+    at_eod_j1 = out_df.iloc[j1_last]
+    if at_eod_j1["open_830_zone_active"] >= 1:
+        print(f"  Fin jour 1 : open_830_zone_active={at_eod_j1['open_830_zone_active']} : PASS")
+    else:
+        print(f"  Fin jour 1 : zone perdue (devrait persister) : FAIL")
+        all_pass = False
+
+    # Test 3 : zone jour 1 ENCORE active debut jour 2 (avant 08:30)
+    print("\n--- Test 3 : zone jour 1 persiste au debut jour 2 ---")
+    j2_early = df[(df["date_et"] == pd.Timestamp("2026-05-13").date()) & (df["mins_et"] == 100)].index[0]
+    at_early_j2 = out_df.iloc[j2_early]
+    if at_early_j2["open_830_zone_active"] >= 1:
+        print(f"  Debut jour 2 (avant 08:30) : open_830_zone_active={at_early_j2['open_830_zone_active']} : PASS")
+    else:
+        print(f"  Debut jour 2 : zone jour 1 perdue : FAIL")
+        all_pass = False
+
+    # Test 4 : Zone jour 2 desactivee apres touche a 13:00 (mins_et=780)
+    print("\n--- Test 4 : zone jour 2 desactivee apres touche a 13:00 ---")
+    j2_touch = df[(df["date_et"] == pd.Timestamp("2026-05-13").date()) & (df["mins_et"] == 780)].index[0]
+    # AVANT la touche : zone active
+    before_touch = out_df.iloc[j2_touch - 1]
+    after_touch = out_df.iloc[j2_touch]
+    print(f"  Bar avant touche : open_830_zone_active={before_touch['open_830_zone_active']}")
+    print(f"  Bar de la touche  : open_830_zone_active={after_touch['open_830_zone_active']}")
+    if before_touch["open_830_zone_active"] > after_touch["open_830_zone_active"]:
+        print(f"  Touche correctement desactive 1 zone : PASS")
+    else:
+        print(f"  Touche n'a PAS desactive : FAIL")
+        all_pass = False
+
+    # Test 5 : Apres 3 jours, count zones actives = 2 (jour 1 + jour 3, jour 2 touche)
+    print("\n--- Test 5 : multi-jours accumulation ---")
+    end = out_df.iloc[-1]
+    expected_active = 2  # jour 1 (5800) + jour 3 (5820), jour 2 (5810) touche
+    if end["open_830_zone_active"] == expected_active:
+        print(f"  Fin 3 jours : {end['open_830_zone_active']} zones (attendu {expected_active}) : PASS")
+    else:
+        print(f"  Fin 3 jours : {end['open_830_zone_active']} zones (attendu {expected_active}) : FAIL")
+        all_pass = False
+
+    # Test 6 : dist_open_830_zone_pct non-NaN quand active
+    print("\n--- Test 6 : dist_open_830_zone_pct non-NaN ---")
+    after_510_dist = out_df.iloc[j1_510 + 1]["dist_open_830_zone_pct"]
+    if not pd.isna(after_510_dist):
+        print(f"  dist_open_830_zone_pct apres 510 : {after_510_dist:.4f}% : PASS")
+    else:
+        print(f"  dist_open_830_zone_pct apres 510 : NaN (attendu valeur) : FAIL")
+        all_pass = False
+
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL open_extension_lines : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -2997,6 +3150,7 @@ def main():
                                  "phase_b_plus",
                                  "phase_b_plus_long",
                                  "phase_b_plus_color",
+                                 "open_extension_lines",
                                  "all"])
     args = parser.parse_args()
 
@@ -3097,6 +3251,11 @@ def main():
 
     if args.engine in ("phase_b_plus_color", "all"):
         report = _test_phase_b_plus_color()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("open_extension_lines", "all"):
+        report = _test_open_extension_lines()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
