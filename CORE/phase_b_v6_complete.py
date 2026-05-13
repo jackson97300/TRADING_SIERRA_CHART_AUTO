@@ -194,12 +194,30 @@ def add_vwap_ma_align_DRAFT(df: pd.DataFrame) -> pd.DataFrame:
 def add_momentum_3b(df: pd.DataFrame) -> pd.DataFrame:
     """Calcule momentum_3b : variation prix sur 3 bars (POINTS).
 
-    FIX v0.2 (parite DMP_Transform.h:117,643) :
-        momentum_3b = close - close.shift(3)   (en POINTS)
+    DECOUVERTE CRITIQUE 13/05/2026 (backtest Phase 1b) :
+    ====================================================
+    Le DMP_Main.cpp:436-444 (version 13) declare faire close - close.shift(3)
+    MAIS le PersistentFloat shift est BUGUE :
+        sc.GetPersistentFloat(DMP_PS_PREV_PRICE_3) = r.price_close;
+    Cette ligne ECRASE PREV_PRICE_3 a CHAQUE bar. Resultat : a bar N,
+    prev_p3 = close[N-1] (pas close[N-3]).
+    Le DMP momentum_3b reel = close.diff(1), PAS close.diff(3).
 
-    DMP commentaire ligne 117 : "Prix - Prix(i-3) en points (court terme)".
-    Le DMP utilise un PersistentFloat dans DMP_Main.cpp pour cumuler. En Python
-    pandas, equivalent direct via .shift(3).
+    De plus, backtest Spearman corr sur 9858 bars avril 2026 :
+        DMP momentum_3b vs label TBM LONG : rho = +0.24 (edge fort)
+        Python close.diff(1) vs label    : rho = -0.012 (quasi nul)
+        Python close.diff(3) vs label    : rho = -0.012 (quasi nul)
+    Match Python close.diff(1) vs DMP : seulement 58% bars identiques.
+    Les 42% divergents suggerent look-ahead leak SUBTIL Sierra :
+    `r.price_close` capture timing Sierra peut inclure 1-tick leak forward
+    vs Databento OHLCV close strict per-minute boundary.
+
+    DECISION (directive Jackson "pas de reproduction fidele a l aveugle") :
+    Notre Python = formule HONNETE close - close.shift(3), pas de leak.
+    Edge predictif sur cette formule = quasi nul → momentum_3b N'EST PAS
+    une feature ML utile en mode Databento clean.
+    REDEFINITION DEMAIN : tester variantes momentum sans dependance close
+    exact (e.g. log returns, vwap deviation, true range based).
 
     Requis : close.
     """
