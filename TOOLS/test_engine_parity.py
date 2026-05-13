@@ -2877,6 +2877,109 @@ def _test_open_extension_lines():
     return {"all_pass": all_pass}
 
 
+def _test_sessions_swings_simple():
+    """Test sub-engine sessions_swings_simple (38 features NON-LOOKAHEAD).
+
+    Comparaison batch add_session_metadata_v2 + add_session_highs_lows +
+    add_session_opens + add_premium_discount.
+    """
+    from sessions_swings_simple_streaming import (
+        add_sessions_swings_simple_streaming,
+        make_sessions_swings_simple_state,
+    )
+    from sessions_swings_engine import (
+        add_session_metadata_v2, add_session_highs_lows,
+        add_session_opens, add_premium_discount,
+    )
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(113)
+    n = 4320  # 3 jours
+    bars = []
+    start = pd.Timestamp("2026-05-12 00:00:00", tz="UTC")
+    for i in range(n):
+        ts = start + pd.Timedelta(minutes=i)
+        bars.append({"ts_event": ts.tz_localize(None)})
+    df = pd.DataFrame(bars)
+    df["open"] = 5800 + np.cumsum(np.random.randn(n) * 0.2)
+    df["high"] = df["open"] + np.random.uniform(0.1, 1.5, n)
+    df["low"] = df["open"] - np.random.uniform(0.1, 1.5, n)
+    df["close"] = df["open"] + np.random.randn(n) * 0.5
+    # sess_high/sess_low pour premium_discount (running cumulative session_date_trading)
+    # Pour simplifier le synth, on prend running par date_et calendar
+    df["__date_et"] = pd.to_datetime(df["ts_event"]).dt.date
+    df["sess_high"] = df.groupby("__date_et")["high"].cummax()
+    df["sess_low"] = df.groupby("__date_et")["low"].cummin()
+    df = df.drop(columns="__date_et")
+
+    # BATCH chain
+    batch_df = df.copy()
+    batch_df = add_session_metadata_v2(batch_df)
+    batch_df = add_session_highs_lows(batch_df, tick=0.25)
+    batch_df = add_session_opens(batch_df)
+    batch_df = add_premium_discount(batch_df)
+
+    # STREAM
+    state = make_sessions_swings_simple_state("ES")
+    stream_rows = []
+    for _, row in df.iterrows():
+        stream_rows.append(add_sessions_swings_simple_streaming(row.to_dict(), state))
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest sessions_swings_simple parite sur {n} rows synth (3 jours)...")
+
+    cols_check = [
+        # Session metadata (5 booleans + session_id)
+        "session_id", "is_in_asia", "is_in_london", "is_in_us_cash", "is_in_us_after",
+        # Session highs/lows (16)
+        "asia_high", "asia_low", "london_high", "london_low",
+        "us_high", "us_low", "after_high", "after_low",
+        "dist_asia_high_pct", "dist_asia_low_pct",
+        "dist_london_high_pct", "dist_london_low_pct",
+        "dist_us_high_pct", "dist_us_low_pct",
+        "dist_after_high_pct", "dist_after_low_pct",
+        # Session opens (12)
+        "asia_open", "london_open", "ny_open", "after_open",
+        "dist_asia_open_pct", "dist_london_open_pct",
+        "dist_ny_open_pct", "dist_after_open_pct",
+        "above_asia_open", "above_london_open",
+        "above_ny_open", "above_after_open",
+        # Premium/Discount (3)
+        "pct_in_range", "premium_zone", "discount_zone",
+    ]
+
+    print(f"\n--- NIVEAU 1 : parite batch vs streaming ({len(cols_check)} features) ---")
+    all_pass = True
+    fail_cols = []
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:30s} MANQUANT batch={col in batch_df.columns} stream={col in stream_df.columns}")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        atol = 1e-3 if "pct" in col else 1e-6
+        status = "PASS" if max_diff < atol and nan_mismatch == 0 else "FAIL"
+        print(f"  {col:30s} {status} max_diff={max_diff:.4e} nan_mm={nan_mismatch}")
+        if status == "FAIL":
+            all_pass = False
+            fail_cols.append(col)
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    if fail_cols:
+        print(f"  Failed columns : {fail_cols[:5]}{'...' if len(fail_cols)>5 else ''}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL sessions_swings_simple : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -3172,6 +3275,7 @@ def main():
                                  "phase_b_plus_long",
                                  "phase_b_plus_color",
                                  "open_extension_lines",
+                                 "sessions_swings_simple",
                                  "all"])
     args = parser.parse_args()
 
@@ -3277,6 +3381,11 @@ def main():
 
     if args.engine in ("open_extension_lines", "all"):
         report = _test_open_extension_lines()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("sessions_swings_simple", "all"):
+        report = _test_sessions_swings_simple()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
