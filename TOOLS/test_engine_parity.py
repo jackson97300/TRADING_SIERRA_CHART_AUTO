@@ -3223,6 +3223,97 @@ def _test_vwap_diff():
     return {"all_pass": all_pass}
 
 
+def _test_footprint_builder():
+    """Test sub-engine footprint_builder streaming (HELPER, 0 features ML).
+
+    Verifie parite : batch build_footprint_per_bar(trades, bar_starts) vs
+    stream build_footprint_cells_streaming(trades_in_window) bar par bar.
+    """
+    from footprint_builder_streaming import build_footprint_cells_streaming
+    from footprint_builder import build_footprint_per_bar
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(137)
+    # Synth 100 bars 1-min + 5000 trades aleatoires
+    n_bars = 100
+    n_trades = 5000
+    start = pd.Timestamp("2026-05-12 13:00:00", tz="UTC")
+    bar_starts = pd.Series([start + pd.Timedelta(minutes=i) for i in range(n_bars + 1)])
+
+    trades = []
+    for _ in range(n_trades):
+        # Timestamp aleatoire dans la fenetre des bars
+        offset_min = np.random.uniform(0, n_bars)
+        ts = start + pd.Timedelta(minutes=offset_min)
+        price = round(5800 + np.random.uniform(-10, 10), 2)
+        size = np.random.randint(1, 50)
+        side = np.random.choice(["A", "B", "N"], p=[0.45, 0.45, 0.10])
+        trades.append({"ts_event": ts, "price": price, "size": size, "side": side})
+    trades_df = pd.DataFrame(trades).sort_values("ts_event").reset_index(drop=True)
+
+    print(f"\nTest footprint_builder parite sur {n_bars} bars + {n_trades} trades synth...")
+
+    # BATCH
+    batch_footprint = build_footprint_per_bar(trades_df, bar_starts.iloc[:-1], tick=0.25)
+
+    # STREAM bar par bar
+    # Pour chaque bar i, prendre trades dans [bar_starts[i], bar_starts[i+1])
+    stream_footprint = {}
+    for i in range(n_bars):
+        bar_start_ts = bar_starts.iloc[i]
+        bar_end_ts = bar_starts.iloc[i + 1]
+        mask = (trades_df["ts_event"] >= bar_start_ts) & (trades_df["ts_event"] < bar_end_ts)
+        trades_in_bar = trades_df[mask][["price", "size", "side"]].to_dict("records")
+        cells = build_footprint_cells_streaming(trades_in_bar, tick=0.25)
+        if cells:
+            stream_footprint[i] = cells
+
+    print(f"\n--- NIVEAU 1 : parite cells per bar (batch vs stream) ---")
+    all_pass = True
+    n_bars_batch = len(batch_footprint)
+    n_bars_stream = len(stream_footprint)
+    print(f"  Bars avec cells : batch={n_bars_batch}, stream={n_bars_stream}")
+    if n_bars_batch != n_bars_stream:
+        print(f"  FAIL : nombre de bars different")
+        all_pass = False
+
+    # Compare cells par bar
+    mismatches = 0
+    cells_compared = 0
+    for bar_idx in batch_footprint:
+        if bar_idx not in stream_footprint:
+            mismatches += 1
+            continue
+        batch_cells = batch_footprint[bar_idx]
+        stream_cells = stream_footprint[bar_idx]
+        if set(batch_cells.keys()) != set(stream_cells.keys()):
+            print(f"    bar {bar_idx} : prix buckets different "
+                  f"batch={len(batch_cells)}, stream={len(stream_cells)}")
+            mismatches += 1
+            continue
+        for price in batch_cells:
+            cells_compared += 1
+            for key in ("ask_vol", "bid_vol", "total_vol", "n_trades"):
+                bv = batch_cells[price][key]
+                sv = stream_cells[price][key]
+                if abs(bv - sv) > 1e-6:
+                    print(f"    bar {bar_idx} price {price} {key}: batch={bv} stream={sv}")
+                    mismatches += 1
+                    break
+
+    print(f"  Cells comparees : {cells_compared}")
+    print(f"  Mismatches : {mismatches}")
+    if mismatches > 0:
+        all_pass = False
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL footprint_builder : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -3521,6 +3612,7 @@ def main():
                                  "sessions_swings_simple",
                                  "sessions_swings_lag",
                                  "vwap_diff",
+                                 "footprint_builder",
                                  "all"])
     args = parser.parse_args()
 
@@ -3641,6 +3733,11 @@ def main():
 
     if args.engine in ("vwap_diff", "all"):
         report = _test_vwap_diff()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("footprint_builder", "all"):
+        report = _test_footprint_builder()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
