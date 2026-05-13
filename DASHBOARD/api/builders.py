@@ -6,12 +6,20 @@ pour le frontend. Toutes les distances sont converties en prix absolus.
 import logging
 from typing import List, Optional, Tuple
 
+from CORE.bias_calculator import calc_confidence, compute_bias  # 3.7.9 (24/04) source unique biais
+# 11/05 J2b MGC integration : get_tick_size strict (source unique CORE/constants).
+# TICK_SIZE legacy de readers = default ES/NQ 0.25 hardcode (cf rules/tick-size-policy.md).
+# Pour MGC (tick=0.10), il FAUT lire dynamiquement le tick par symbole.
+try:
+    from CORE.constants import get_tick_size as _get_tick_size_strict
+except ImportError:
+    from constants import get_tick_size as _get_tick_size_strict  # fallback path
 from DASHBOARD.api.readers import (
     DAY_TYPE_LABELS,
     OPEN_TYPE_LABELS,
     PROFILE_SHAPE_LABELS,
     RVOL_REGIME_LABELS,
-    TICK_SIZE,
+    TICK_SIZE,  # legacy 0.25 default, conserve pour helpers tick-agnostic existants
     VIX_REGIME_LABELS,
     dist_to_price,
     get_field,
@@ -21,6 +29,20 @@ from DASHBOARD.api.readers import (
     rvol_to_regime,
     vix_dist_to_price,
 )
+
+
+def _tick_for(symbol):
+    """Helper tick-size par symbole (ES/NQ=0.25, MGC=0.10).
+
+    Fallback safe sur TICK_SIZE (0.25) si symbole inconnu — pour ne pas casser
+    les call sites legacy. Le warning est emit cote constants.get_tick_size.
+    """
+    if symbol is None:
+        return TICK_SIZE
+    try:
+        return _get_tick_size_strict(symbol)
+    except (KeyError, ValueError):
+        return TICK_SIZE
 
 
 def _nullable_round(val, ndigits=4):
@@ -40,25 +62,9 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════
 
 
-def _calc_confidence(score: float, factors: list[dict]) -> float:
-    """Confiance = consensus facteurs + amplitude score.
-
-    Malus si peu de facteurs actifs (< 3).
-    """
-    if not factors:
-        return 0.0
-    bulls = sum(1 for f in factors if f.get("icon") == "bull")
-    bears = sum(1 for f in factors if f.get("icon") == "bear")
-    active = bulls + bears
-    if active == 0:
-        return 0.0
-    consensus = max(bulls, bears) / active
-    amplitude = min(abs(score) * 2, 1.0)
-    confidence = consensus * 0.6 + amplitude * 0.4
-    # Malus si trop peu de facteurs — 1 facteur seul ne vaut pas 84%
-    if active < 3:
-        confidence *= active / 3
-    return min(confidence, 1.0)
+# _calc_confidence DEPLACE dans CORE/bias_calculator.py (3.7.9 — 24/04)
+# Alias pour retrocompat interne builders.py (ancien appel ligne ~363)
+_calc_confidence = calc_confidence
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -98,8 +104,11 @@ def build_instrument_status(bot_data: dict, symbol: str) -> dict:
 # ═══════════════════════════════════════════════════════════════
 
 
-def build_price_banner(bar_es: dict, bar_nq: dict) -> dict:
-    """Bandeau prix live ES + NQ."""
+def build_price_banner(bar_es: dict, bar_nq: dict, bar_mgc: Optional[dict] = None) -> dict:
+    """Bandeau prix live ES + NQ + MGC (11/05 J2b).
+
+    bar_mgc kwarg optionnel (retro-compat). Si None, slot mgc absent du banner.
+    """
     def _instrument(bar: dict) -> dict:
         if not bar:
             return {"price": 0, "atr": 0, "change_pct": 0, "session": "N/A"}
@@ -110,6 +119,13 @@ def build_price_banner(bar_es: dict, bar_nq: dict) -> dict:
         range_pct = 0.0
         if sess_range > 0:
             range_pct = round(dist_sess_low / sess_range * 100, 1)
+        # FIX 08/05 (incident Bot 1 07/05 + Bot 2 V6 08/05) : emettre 3 alias
+        # `ts`, `ts_ms`, `bar_ts_ms` pour eviter regression silent quand un
+        # consommateur cherche un nom different. Cause = renommage progressif
+        # `ts_ms` -> `ts` non propage dans tous les bots = last_bar_age=99999
+        # = STALE CRITICAL faux + watchdog restart loop.
+        # Source unique : bar.get("ts"). Alias purement defensifs.
+        ts_value = bar.get("ts", 0)
         return {
             "price": price,
             "bar_high": get_field(bar, "bar_high", price),
@@ -118,13 +134,21 @@ def build_price_banner(bar_es: dict, bar_nq: dict) -> dict:
             "session": get_str_field(bar, "session_id", "N/A"),
             "session_range": sess_range,
             "range_position_pct": range_pct,
-            "ts": bar.get("ts", 0),
+            "ts": ts_value,
+            # Alias retro-compat (anciens consommateurs Bot 1/2 V6) - meme valeur
+            "ts_ms": ts_value,
+            "bar_ts_ms": ts_value,
         }
 
-    return {
+    result = {
         "es": _instrument(bar_es),
         "nq": _instrument(bar_nq),
     }
+    # 11/05 J2b MGC : ajout slot banner MGC si dispo.
+    # Frontend doit savoir si "mgc" est present (peut etre absent en retro-compat).
+    if bar_mgc:
+        result["mgc"] = _instrument(bar_mgc)
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -155,339 +179,69 @@ def build_regime_context(bar: dict) -> dict:
     momentum_5 = get_field(bar, "momentum_5b", 0.0)
     ma_trend = get_int_field(bar, "ma_trend", 0)
 
-    # Bias (inspire du V1 calculate_bias)
-    score = 0.0
-    factors = []
+    # ═══════════════════════════════════════════════════════════════
+    # BIAS — 3.7.9 (24/04) : source unique CORE/bias_calculator.py
+    # ═══════════════════════════════════════════════════════════════
+    # Logique identique a la version inline V1 (validee 37/37 tests unitaires +
+    # parite empirique sur 10 barres reelles). Remplace 170 lignes inline par
+    # un appel pur + extraction des champs. Le module est aussi utilise par
+    # CORE/mia_paper_trader.py pour le gate directionnel STEP 6bis
+    # (cohérence bot/dashboard garantie).
+    bias_result = compute_bias(bar)
 
-    # Position dans range 1D (30%)
+    # Variables utilisees plus loin dans le dict sortant (pos, dist_vwap, etc.)
     pos = get_field(bar, "range_pos", 50.0)
-    new_high = get_int_field(bar, "new_swing_high", 0)
-    new_low = get_int_field(bar, "new_swing_low", 0)
-    delta_day = get_field(bar, "delta_day", 0.0)
-    if pos >= 80:
-        # Breakout detection : nouveau high + delta positif = expansion, pas un top
-        if new_high and delta_day > 0:
-            score += 0.10
-            factors.append({"icon": "bull", "text": f"Position 1D: {pos:.0f}% (BREAKOUT UP)"})
-        else:
-            score -= 0.30
-            factors.append({"icon": "bear", "text": f"Position 1D: {pos:.0f}% (TOP)"})
-    elif pos <= 20:
-        if new_low and delta_day < 0:
-            score -= 0.10
-            factors.append({"icon": "bear", "text": f"Position 1D: {pos:.0f}% (BREAKDOWN)"})
-        else:
-            score += 0.30
-            factors.append({"icon": "bull", "text": f"Position 1D: {pos:.0f}% (BOTTOM)"})
-    else:
-        factors.append({"icon": "neutral", "text": f"Position 1D: {pos:.0f}% (MIDDLE)"})
-
-    # OrderFlow — base sur le delta cumule du jour (stable) + delta barre (confirmation)
-    delta_pct = get_field(bar, "delta_pct", 0.0)
-    delta_day_dir = get_int_field(bar, "delta_day_dir", 0)
-    # Le delta jour donne la tendance. Le delta barre confirme ou contredit.
-    if delta_day_dir > 0 and delta_pct > 0.05:
-        score += 0.25
-        factors.append({"icon": "bull", "text": f"OrderFlow: jour ACHETEUR + barre {delta_pct:+.1%}"})
-    elif delta_day_dir < 0 and delta_pct < -0.05:
-        score -= 0.25
-        factors.append({"icon": "bear", "text": f"OrderFlow: jour VENDEUR + barre {delta_pct:+.1%}"})
-    elif delta_day_dir > 0:
-        score += 0.10
-        factors.append({"icon": "bull", "text": f"OrderFlow: jour ACHETEUR (barre neutre {delta_pct:+.1%})"})
-    elif delta_day_dir < 0:
-        score -= 0.10
-        factors.append({"icon": "bear", "text": f"OrderFlow: jour VENDEUR (barre neutre {delta_pct:+.1%})"})
-    else:
-        factors.append({"icon": "neutral", "text": f"OrderFlow: neutre ({delta_pct:+.1%})"})
-
-    # VWAP position (20%) — dist_vwap_d = (VWAP-prix)/tick, positif = VWAP au-dessus = bear
     dist_vwap = get_field(bar, "dist_vwap_d", 0.0)
-    if dist_vwap < -15:
-        score += 0.20
-        factors.append({"icon": "bull", "text": f"VWAP: {dist_vwap:.1f}t (PRIX AU-DESSUS)"})
-    elif dist_vwap > 15:
-        score -= 0.20
-        factors.append({"icon": "bear", "text": f"VWAP: +{dist_vwap:.1f}t (PRIX EN-DESSOUS)"})
-    else:
-        factors.append({"icon": "neutral", "text": f"VWAP: {dist_vwap:+.1f}t (PROCHE)"})
+    delta_day_dir = get_int_field(bar, "delta_day_dir", 0)
 
-    # VWAP slope (15%)
-    if vwap_slope_10 > 2:
-        score += 0.15
-        factors.append({"icon": "bull", "text": f"VWAP Slope: {vwap_slope_10:+.1f} (HAUSSIER)"})
-    elif vwap_slope_10 < -2:
-        score -= 0.15
-        factors.append({"icon": "bear", "text": f"VWAP Slope: {vwap_slope_10:+.1f} (BAISSIER)"})
-    else:
-        factors.append({"icon": "neutral", "text": f"VWAP Slope: {vwap_slope_10:+.1f} (PLAT)"})
-
-    # CVD direction (10%)
-    cvd_dir = get_int_field(bar, "cvd_day_dir", 0)
-    if cvd_dir == 1:
-        score += 0.10
-        factors.append({"icon": "bull", "text": "CVD: ACCUMULATION"})
-    elif cvd_dir == -1:
-        score -= 0.10
-        factors.append({"icon": "bear", "text": "CVD: DISTRIBUTION"})
-
-    # ── Divergence Quality Score ──
-    # Une div seule = bruit. Une div avec contexte = sniper shot.
+    # Extraction des champs bias pour retrocompat dashboard
+    score = bias_result.score_signed
+    bias_dict = bias_result.to_dashboard_dict()
+    bias = bias_dict["bias"]
+    bias_label = bias_dict["bias_label"]
+    factors = bias_dict["bias_factors"]
     delta_div = get_int_field(bar, "delta_divergence", 0)
-    div_quality = 0.0
-    div_factors = []
+    div_quality = bias_result.div_quality
+    div_grade = bias_result.div_grade
+    div_factors = bias_result.div_factors
+    is_trending = bias_result.is_trending
 
-    if delta_div:
-        # 1. Extension VWAP (le facteur le plus important)
-        vwap_stretch = abs(dist_vwap)
-        if vwap_stretch > 200:
-            div_quality += 3.0
-            div_factors.append(f"VWAP stretch extreme ({vwap_stretch:.0f}t)")
-        elif vwap_stretch > 80:
-            div_quality += 2.0
-            div_factors.append(f"VWAP stretch fort ({vwap_stretch:.0f}t)")
-        elif vwap_stretch > 30:
-            div_quality += 1.0
-            div_factors.append(f"VWAP stretch modere ({vwap_stretch:.0f}t)")
-        # <50t = div sans extension = bruit
-
-        # 2. Range position extreme
-        if pos >= 90 or pos <= 10:
-            div_quality += 2.0
-            div_factors.append(f"Range extreme ({pos:.0f}%)")
-        elif pos >= 80 or pos <= 20:
-            div_quality += 1.0
-            div_factors.append(f"Range eleve ({pos:.0f}%)")
-
-        # 3. Sess/ATR etendu (le marche a deja beaucoup bouge)
-        if atr_ratio > 1.3:
-            div_quality += 1.5
-            div_factors.append(f"Session etendue ({atr_ratio:.2f}x ATR)")
-        elif atr_ratio > 1.0:
-            div_quality += 0.5
-            div_factors.append(f"Session active ({atr_ratio:.2f}x ATR)")
-
-        # 4. VIX eleve = mouvements plus amples = div plus significative
-        if vix > 25:
-            div_quality += 1.0
-            div_factors.append(f"VIX eleve ({vix:.1f})")
-        elif vix > 20:
-            div_quality += 0.5
-            div_factors.append(f"VIX modere ({vix:.1f})")
-
-        # 5. VWAP triple align CONTRE la direction du prix = mean reversion
-        # Prix au-dessus des 3 VWAPs (dist_vwap < 0) = overextended haut
-        if dist_vwap < -100 and vwap_d_side == 1 and vwap_w_side == 1 and vwap_m_side == 1:
-            div_quality += 1.5
-            div_factors.append("Triple VWAP au-dessous (mean reversion)")
-        elif dist_vwap > 100 and vwap_d_side == -1 and vwap_w_side == -1 and vwap_m_side == -1:
-            div_quality += 1.5
-            div_factors.append("Triple VWAP au-dessus (mean reversion)")
-
-        # 6. RVOL qui baisse = le push se fait sans conviction
-        rvol = get_field(bar, "rvol", 1.0)
-        if rvol < 0.7:
-            div_quality += 1.0
-            div_factors.append(f"Volume faible ({rvol:.2f}x) = push sans conviction")
-
-    # Seuils de qualite divergence
-    # 0-2 = bruit, 3-5 = moderee, 6-8 = forte, 9+ = extreme
-    div_grade = "NONE"
-    if div_quality >= 6:
-        div_grade = "EXTREME"
-    elif div_quality >= 4:
-        div_grade = "FORTE"
-    elif div_quality >= 3:
-        div_grade = "MODEREE"
-    elif delta_div:
-        div_grade = "FAIBLE"
-
-    # Appliquer le score de divergence au bias — SEULEMENT hors tendance forte
-    # Fix 09/04 : ne pas fade un breakout en trending. Trending detecte via
-    # VWAP slope fort + delta_day dans le sens du move.
-    trending_up = vwap_slope_10 > 5 and delta_day_dir > 0
-    trending_dn = vwap_slope_10 < -5 and delta_day_dir < 0
-    is_trending = trending_up or trending_dn
-
-    if div_quality >= 5 and not is_trending:
-        div_bias = 0.0
-        if pos >= 70 and dist_vwap < -50:
-            div_bias = -min(div_quality / 20.0, 0.35)
-            factors.append({"icon": "bear", "text": f"DIV {div_grade}: prix overextended haut ({div_quality:.0f}/10)"})
-        elif pos <= 30 and dist_vwap > 50:
-            div_bias = min(div_quality / 20.0, 0.35)
-            factors.append({"icon": "bull", "text": f"DIV {div_grade}: prix overextended bas ({div_quality:.0f}/10)"})
-        score += div_bias
-    elif div_quality >= 5 and is_trending:
-        # Divergence forte mais on est en breakout — NE PAS fade
-        factors.append({"icon": "neutral", "text": f"DIV {div_grade} ignoree — trending (slope={vwap_slope_10:+.1f})"})
-    elif div_quality >= 3:
-        factors.append({"icon": "neutral", "text": f"DIV {div_grade}: contexte insuffisant ({div_quality:.0f}/10)"})
-
-    score = max(-1.0, min(1.0, score))  # borner le score
-
-    if score > 0.25:
-        bias, bias_label = "BULLISH", "HAUSSIER"
-    elif score < -0.25:
-        bias, bias_label = "BEARISH", "BAISSIER"
-    else:
-        bias, bias_label = "NEUTRAL", "NEUTRE"
-
-    # Mode marche (TREND vs RANGE) — systeme de votes pro (10 criteres)
-    trend_votes = 0
-    range_votes = 0
-    regime_details = []
-
-    # 1. IB Breakout — le plus fiable (ignorer si IB pas encore formee)
-    ib_up = get_int_field(bar, "ib_broken_up", 0)
-    ib_dn = get_int_field(bar, "ib_broken_down", 0)
-    ib_range = get_field(bar, "ib_range_ticks", 0.0)
-    if ib_up or ib_dn:
-        trend_votes += 2
-        regime_details.append("IB cassee " + ("UP" if ib_up else "DOWN"))
-    elif ib_range > 0:
-        range_votes += 1
-        regime_details.append("IB intacte")
-    # Si ib_range == 0, l'IB n'est pas encore formee — pas de vote
-
-    # 2. Day Type (Market Profile)
-    # FIX 22/04/2026 : mapping corrige vs readers.py DAY_TYPE_LABELS
-    # Bug detecte : code 3=NEUTRAL, 2=NORM_VARIATION (42% des jours).
-    # Auparavant 3 etait classe "Normal Variation" (faux) et 2 "Neutral" (faux).
-    # DMP enum : 0=NonTrend, 1=Normal, 2=NormVariation, 3=Neutral, 4=Trend
-    day_type = get_int_field(bar, "day_type", 0)
-    if day_type == 4:  # Trend Day (19%)
-        trend_votes += 2
-        regime_details.append("Day Type: Trend")
-    elif day_type == 2:  # Norm Variation (42%, ext 1 cote = directionnel)
-        trend_votes += 1
-        regime_details.append("Day Type: Norm Variation")
-    elif day_type == 1:  # Normal (respect IB, range 2%)
-        range_votes += 1
-        regime_details.append("Day Type: Normal")
-    elif day_type == 3:  # Neutral (ext 2 cotes + close milieu, 30% whipsaw)
-        range_votes += 1
-        regime_details.append("Day Type: Neutral")
-    # day_type == 0 (NonTrend, 7%) : pas de vote, marche comprime
-
-    # 3. Single Prints — empreinte de conviction
-    single_prints = get_int_field(bar, "single_print_count", 0)
-    if single_prints > 10:
-        trend_votes += 1
-        regime_details.append(f"Single prints: {single_prints} (fort)")
-    elif single_prints < 3:
-        range_votes += 1
-        regime_details.append(f"Single prints: {single_prints} (faible)")
-
-    # 4. VWAP Slope — pente du VWAP
-    vwap_sl = abs(vwap_slope_10)
-    if vwap_sl > 5:
-        trend_votes += 1
-        regime_details.append(f"VWAP slope: {vwap_slope_10:+.1f} (directionnel)")
-    elif vwap_sl < 1:
-        range_votes += 1
-        regime_details.append(f"VWAP slope: {vwap_slope_10:+.1f} (plat)")
-
-    # 5. Sess/ATR
-    if atr_ratio > 1.2:
-        trend_votes += 1
-        regime_details.append(f"Sess/ATR: {atr_ratio:.2f}x (expansion)")
-    elif atr_ratio < 0.6:
-        range_votes += 1
-        regime_details.append(f"Sess/ATR: {atr_ratio:.2f}x (compression)")
-
-    # 6. Open Type — OD/OTD = trend, ORR = range
-    open_type = get_int_field(bar, "open_type", 0)
-    if open_type in (1, 2):  # OD up/down
-        trend_votes += 1
-        regime_details.append("Open Drive")
-    elif open_type in (3, 4):  # OTD
-        trend_votes += 1
-        regime_details.append("Open Test Drive")
-    elif open_type in (5, 6):  # ORR
-        range_votes += 1
-        regime_details.append("Open Rejection Reverse")
-
-    # 7. Profile Shape — P-shape (1) et b-shape (2) = directionnel ; D-shape (0) et Double Dist (3) = range
-    profile_shape = get_int_field(bar, "profile_shape", -1)
-    if profile_shape in (1, 2):
-        trend_votes += 1
-        regime_details.append("Profile shape: directionnel (" + ("P" if profile_shape == 1 else "b") + "-Shape)")
-    elif profile_shape in (0, 3):
-        range_votes += 1
-        regime_details.append("Profile shape: range (" + ("D-Shape" if profile_shape == 0 else "Double Dist") + ")")
-
-    # 8. POC distance — POC qui migre = trend
-    poc_dist = get_field(bar, "poc_bar_dist", 0.0)
-    if poc_dist > 30:
-        trend_votes += 1
-        regime_details.append(f"POC distant: {poc_dist:.0f} barres (migration)")
-    elif poc_dist < 5:
-        range_votes += 1
-        regime_details.append(f"POC proche: {poc_dist:.0f} barres (statique)")
-
-    # 9. Bars in VA — prix dans la VA = range
-    bars_va = get_field(bar, "bars_in_va", 0.0)
-    if bars_va > 60:
-        range_votes += 1
-        regime_details.append(f"Bars in VA: {bars_va:.0f}% (confine)")
-    elif bars_va < 30:
-        trend_votes += 1
-        regime_details.append(f"Bars in VA: {bars_va:.0f}% (hors VA)")
-
-    # 10. Trend Day Probability
-    tdp = get_field(bar, "trend_day_probability", 0.5)
-    if tdp > 0.65:
-        trend_votes += 1
-        regime_details.append(f"Trend prob: {tdp:.0%}")
-    elif tdp < 0.3:
-        range_votes += 1
-        regime_details.append(f"Trend prob: {tdp:.0%} (faible)")
-
-    # Verdict — seuil a 4 votes pour conviction
-    if trend_votes >= 5:
-        mode = "TREND"
-    elif range_votes >= 5:
-        mode = "RANGE"
-    elif trend_votes >= range_votes + 2:
-        mode = "TREND"
-    elif range_votes >= trend_votes + 2:
-        mode = "RANGE"
-    else:
+    # 🆕 03/05 (Plan B Action 3) : refactor pour appeler regime_engine.compute_regime
+    # SOURCE UNIQUE : Bot 1 dashboard + Bot 2/3 regime_engine partagent meme logique +
+    # meme calibration optimale (vol_extreme=5.5, mode_strong=3, etc. — grid search 14j).
+    # Anti-Pattern 11 V1 : 1 verdict regime, pas 2 implementations divergentes.
+    regime_actionable = 0
+    regime_confidence_val = 0.0
+    try:
+        from CORE.regime_engine import compute_regime
+        regime_result = compute_regime(bar)
+        mode = regime_result.mode
+        favor = regime_result.favor
+        vol_regime = regime_result.vol_regime
+        trend_votes = regime_result.trend_votes
+        range_votes = regime_result.range_votes
+        regime_details = regime_result.details
+        regime_actionable = int(regime_result.is_actionable)
+        regime_confidence_val = regime_result.confidence
+    except Exception as e:
+        import logging
+        logging.error(f"regime_engine fail in build_regime_context: {e}")
+        # Fallback safe (mode=NORMAL favor=NEUTRE = pas de gate active)
         mode = "NORMAL"
-
-    # Direction a favoriser
-    if mode == "RANGE":
-        if pos >= 70:
-            favor = "SHORT"
-        elif pos <= 30:
-            favor = "LONG"
-        else:
-            favor = "NEUTRE"
-    elif bias == "BULLISH":
-        favor = "LONG"
-    elif bias == "BEARISH":
-        favor = "SHORT"
-    else:
         favor = "NEUTRE"
+        vol_regime = "NORMAL"
+        trend_votes = 0
+        range_votes = 0
+        regime_details = ["regime_engine_fail"]
 
-    # Override coherence : evite LONG quand la structure est bearish
+    # Override coherence bias : evite LONG quand la structure est bearish (3+ facteurs bear)
+    # Cette logique est preservee cote dashboard (compute_bias officiel) plutot que regime_engine.
     bear_factors = sum(1 for f in factors if f.get("icon") == "bear")
     bull_factors = sum(1 for f in factors if f.get("icon") == "bull")
     if favor == "LONG" and bear_factors >= 3:
-        favor = "NEUTRE"  # Range bas MAIS structure bearish = pas un rebond
+        favor = "NEUTRE"
     elif favor == "SHORT" and bull_factors >= 3:
-        favor = "NEUTRE"  # Range haut MAIS structure bullish = pas un top
-
-    # Volatilite regime
-    if atr_ratio >= 2.0:
-        vol_regime = "EXTREME"
-    elif atr_ratio >= 1.2:
-        vol_regime = "HIGH"
-    elif atr_ratio >= 0.5:
-        vol_regime = "NORMAL"
-    else:
-        vol_regime = "LOW"
+        favor = "NEUTRE"
 
     return {
         "vix": vix,
@@ -518,6 +272,10 @@ def build_regime_context(bar: dict) -> dict:
         "mode_details": regime_details,
         "favor": favor,
         "vol_regime": vol_regime,
+        # 🆕 03/05 (Bot 1 STEP 0 STRICT) : expose is_actionable + confidence
+        # pour permettre Bot 1 (mia_paper_trader.py) de filtrer trades hors regime.
+        "regime_actionable": regime_actionable,
+        "regime_confidence": round(regime_confidence_val, 2),
         "range_pos": round(pos, 1),
         "_price": get_field(bar, "price", 0.0),
         # Divergence
@@ -572,8 +330,12 @@ def build_session_open(bar: dict) -> dict:
 # ═══════════════════════════════════════════════════════════════
 
 
-def build_options_levels(bar: dict) -> dict:
-    """Murs options MQ + GEX en prix absolus."""
+def build_options_levels(bar: dict, symbol: Optional[str] = None) -> dict:
+    """Murs options MQ + GEX en prix absolus.
+
+    11/05 J2b MGC : kwarg `symbol` optionnel (retro-compat, default None = TICK_SIZE
+    legacy 0.25 ES/NQ). Si symbol fourni → tick dynamique via _tick_for.
+    """
     if not bar:
         return {}
 
@@ -581,7 +343,8 @@ def build_options_levels(bar: dict) -> dict:
     next_wall_dist = get_field(bar, "next_wall_dist_ticks", 0.0)
     next_wall_is_call = get_int_field(bar, "next_wall_is_call", 0)
     wall_sign = 1 if next_wall_is_call else -1
-    next_wall_price = round(price + wall_sign * next_wall_dist * TICK_SIZE, 2) if price else None
+    _tick = _tick_for(symbol) if symbol else TICK_SIZE  # retro-compat ES/NQ
+    next_wall_price = round(price + wall_sign * next_wall_dist * _tick, 2) if price else None
 
     return {
         "call_wall_price": dist_to_price(bar, "dist_mq_call"),
@@ -982,11 +745,20 @@ def build_intermarket(bar_es: dict, bar_nq: dict) -> dict:
     nq_dir = get_int_field(bar_nq, "delta_day_dir", 0) if bar_nq else 0
     cross_delta = 1 if (es_dir == nq_dir and es_dir != 0) else 0
 
+    # SMT divergence : prefere V4 `im_smt_divergence` si dispo (signe -1/0/+1),
+    # fallback swing-based DMP (binaire 0/1) sinon. Audit R6 : assure une
+    # seule source de verite SMT dans le payload (vs widget order_flow_advanced).
+    im_smt_es = get_int_field(bar_es, "im_smt_divergence", 0) if bar_es else 0
+    im_smt_nq = get_int_field(bar_nq, "im_smt_divergence", 0) if bar_nq else 0
     es_new_h = get_int_field(bar_es, "new_swing_high", 0) if bar_es else 0
     nq_new_h = get_int_field(bar_nq, "new_swing_high", 0) if bar_nq else 0
     es_new_l = get_int_field(bar_es, "new_swing_low", 0) if bar_es else 0
     nq_new_l = get_int_field(bar_nq, "new_swing_low", 0) if bar_nq else 0
-    smt = 1 if (es_new_h != nq_new_h or es_new_l != nq_new_l) else 0
+    if im_smt_es != 0 or im_smt_nq != 0:
+        # V4 : valeur signee, prendre l'instrument actif (NQ priorite si conflit)
+        smt = 1 if (im_smt_nq != 0 or im_smt_es != 0) else 0
+    else:
+        smt = 1 if (es_new_h != nq_new_h or es_new_l != nq_new_l) else 0
 
     # SMT enrichi : direction de la divergence
     smt_direction = "NONE"
@@ -1248,7 +1020,12 @@ def build_advisory(regime: dict, session_open: dict) -> dict:
 _GAMMA_THRESHOLD_MIN_TICKS: float = 10.0   # plancher seuil (evite desactiver sur ATR bas)
 _GAMMA_THRESHOLD_MAX_TICKS: float = 80.0   # plafond seuil (evite derive sur ATR extreme)
 _GAMMA_THRESHOLD_ATR_RATIO: float = 0.5    # seuil = 0.5 × ATR (demi range de barre typique)
-_GAMMA_CAP_BULL_BEAR: int = 3              # cap applique sur bull_pts / bear_pts si mur proche
+_GAMMA_CAP_BULL_BEAR: int = 4              # cap applique sur bull_pts / bear_pts si mur proche
+# FIX 28/04 13:15 (Jackson "deploy toutes sessions") :
+# Ancien cap=3 forcait verdict ATTENDRE 100% en zone gamma car ACHAT PRUDENT
+# necessite bull_pts >= 4. Nouveau cap=4 permet ACHAT PRUDENT mais bloque ACHAT
+# (>= 5). Garde la philosophie "moins de recos > contre-trader" tout en
+# permettant signaux modestes en zone gamma.
 _GAMMA_DEFAULT_ATR: float = 30.0           # fallback ATR si absent de la barre
 
 
@@ -1340,18 +1117,35 @@ def _gamma_gate_check(
 # pendant plusieurs barres (9h05, 9h15 etc) car conditions toujours
 # vraies. Humain croit voir nouveau signal → FOMO trade late = perdant.
 # Fix : distinguer EVENEMENT (transition False→True) de ETAT (persistance).
+#
+# UPDATE 05/05/2026 (Option B audit market-analyst + empirique 188 EXPIRED NQ
+# avec raw_active aujourd'hui) : DISSOCIER seuil DISPLAY (UI anti-FOMO) du
+# seuil EXECUTION (gate paper tradabilite).
+#   - DISPLAY=2 : UI affiche "EXPIRED" apres 2 bars (bug 22/04 reste corrige)
+#   - EXECUTION=4 : gate paper accepte le signal jusqu'a 4 bars (debloque
+#     ~half des candidats raw_active EXPIRED qui etaient etouffes)
+#   Le bot 1 lit `executable_action` (basee sur freshness_exec), pas `action`
+#   (basee sur freshness_display).
 _SIGNAL_STATE = {}  # {symbol: {"action": str, "first_bar_ts": int, "signal_id": str, "last_seen_ts": int}}
-_MAX_SIGNAL_AGE_BARS = 2  # barres max avant EXPIRED (timeframe 1min)
+_MAX_SIGNAL_AGE_BARS_DISPLAY = 2    # UI : EXPIRED apres 2 bars (timeframe 1min) — anti-FOMO affichage
+_MAX_SIGNAL_AGE_BARS_EXECUTION = 4  # Gate paper : EXPIRED apres 4 bars — anti-chase late entry
+# Backward-compat alias (deprecated, garde pour eviter casser un import externe)
+_MAX_SIGNAL_AGE_BARS = _MAX_SIGNAL_AGE_BARS_DISPLAY
 
 
 def _evaluate_signal_freshness(symbol: str, action: str, bar_ts_ms: int) -> dict:
     """State machine transition vs persistance.
 
-    Retourne {freshness: NEW|PERSISTENT|EXPIRED|IDLE, age_bars: int, signal_id: str}.
-    NEW       = transition ATTENDRE/autre → signal actif (evenement tradable)
-    PERSISTENT = meme signal, age 1-MAX → encore affichable mais pas tradable
-    EXPIRED   = meme signal, age > MAX → action forcee ATTENDRE, pas tradable
-    IDLE      = pas de signal (ATTENDRE/CONFLIT)
+    Retourne dict avec 2 freshness :
+      - freshness     = UI display (seuil DISPLAY=2 bars)
+      - freshness_exec = gate paper (seuil EXECUTION=4 bars)
+    Plus age_bars + signal_id partages.
+
+    Etats possibles (chaque freshness independamment) :
+      NEW        = transition ATTENDRE/autre → signal actif (evenement tradable)
+      PERSISTENT = meme signal, age 1-MAX → encore affichable mais pas tradable
+      EXPIRED    = meme signal, age > MAX → action forcee ATTENDRE, pas tradable
+      IDLE       = pas de signal (ATTENDRE/CONFLIT)
     """
     import uuid as _uuid
     prev = _SIGNAL_STATE.get(symbol, {"action": "ATTENDRE", "first_bar_ts": 0, "signal_id": None, "last_seen_ts": 0})
@@ -1360,17 +1154,27 @@ def _evaluate_signal_freshness(symbol: str, action: str, bar_ts_ms: int) -> dict
 
     if not is_active:
         _SIGNAL_STATE[symbol] = {"action": action, "first_bar_ts": 0, "signal_id": None, "last_seen_ts": bar_ts_ms}
-        return {"freshness": "IDLE", "age_bars": 0, "signal_id": None}
+        return {"freshness": "IDLE", "freshness_exec": "IDLE", "age_bars": 0, "signal_id": None}
 
     if action != prev["action"]:
         new_id = _uuid.uuid4().hex[:8]
         _SIGNAL_STATE[symbol] = {"action": action, "first_bar_ts": bar_ts_ms, "signal_id": new_id, "last_seen_ts": bar_ts_ms}
-        return {"freshness": "NEW", "age_bars": 0, "signal_id": new_id}
+        return {"freshness": "NEW", "freshness_exec": "NEW", "age_bars": 0, "signal_id": new_id}
 
     age_bars = int((bar_ts_ms - prev["first_bar_ts"]) / 60000)
-    freshness = "NEW" if age_bars == 0 else ("PERSISTENT" if age_bars <= _MAX_SIGNAL_AGE_BARS else "EXPIRED")
+    if age_bars == 0:
+        fresh_display = "NEW"
+        fresh_exec = "NEW"
+    else:
+        fresh_display = "PERSISTENT" if age_bars <= _MAX_SIGNAL_AGE_BARS_DISPLAY else "EXPIRED"
+        fresh_exec = "PERSISTENT" if age_bars <= _MAX_SIGNAL_AGE_BARS_EXECUTION else "EXPIRED"
     _SIGNAL_STATE[symbol] = {**prev, "last_seen_ts": bar_ts_ms}
-    return {"freshness": freshness, "age_bars": age_bars, "signal_id": prev["signal_id"]}
+    return {
+        "freshness": fresh_display,
+        "freshness_exec": fresh_exec,
+        "age_bars": age_bars,
+        "signal_id": prev["signal_id"],
+    }
 
 
 def build_conseil_global(
@@ -1425,13 +1229,18 @@ def build_conseil_global(
         bear_pts += 1
     checks.append(f"Range: {pos:.0f}%")
 
-    # 5. MTF (poids 2 si 4/4, 1 si 3/4)
+    # 5. MTF (poids 2 si 4/4, 1 si 3/4, 1 si 2/4 — fix 28/04 marche indecis)
+    # FIX 28/04 (Jackson "deploy toutes sessions Asia/Londres/US") :
+    # ancien seuil >= 3 trop strict marche neutral (NEUTRAL bias 40% bars 27/04 = 0 pts MTF).
+    # Nouveau seuil >= 2 donne 1 pt → permet bull_pts atteindre 4 (ACHAT PRUDENT eligible).
+    # 24/04 (PF 2.64) avait MTF >= 3 fréquemment, le fix ne casse pas cette journée.
+    # 27/04 marche indecis : 735 bars bull=3 deviendraient bull=4 → ~50 candidats post-filtres aval.
     mtf_bulls = regime.get("mtf_bulls", 0)
     mtf_bears = regime.get("mtf_bears", 0)
-    if mtf_bulls >= 3:
+    if mtf_bulls >= 2:
         mtf_w = 2 if mtf_bulls == 4 else 1
         bull_pts += mtf_w
-    if mtf_bears >= 3:
+    if mtf_bears >= 2:
         mtf_w = 2 if mtf_bears == 4 else 1
         bear_pts += mtf_w
     checks.append(f"MTF: {regime.get('mtf_verdict', 'N/A')}")
@@ -1454,6 +1263,15 @@ def build_conseil_global(
     if block_short:
         bear_pts = min(bear_pts, _GAMMA_CAP_BULL_BEAR)
     checks.extend(gamma_warnings)
+
+    # NOTE 04/05 : widgets V4 (cluster_signal, big_signal, smt_signal, npoc_signal)
+    # restent en MODE OBSERVE-ONLY (verdict market-analyst NOGO Phase 3 directe).
+    # Le swap Option 1 (sources live au lieu de mortes) est applique cote
+    # build_order_flow_advanced pour exposition dashboard. Les compteurs cumulatifs
+    # sont logges via _observe_v4_widgets dans mia_paper_trader (Bot 1) pour
+    # audit J+7 + walk-forward DSR avant integration en gate (Phase 3).
+    # Cf market-analyst audit 04/05 : "NOGO sur Phase 3 immediate (3/4 features
+    # avec problemes empiriques). GO Phase 1 OBSERVE-ONLY 60 jours avant decision".
 
     # PATCH 22/04/2026 : Ajout BN footprint events aux checks (visibilite trader)
     # Ne modifie PAS bull_pts/bear_pts (pour eviter pattern 11 hardcoded).
@@ -1492,39 +1310,80 @@ def build_conseil_global(
     else:
         action = "ATTENDRE"
 
-    # PATCH 22/04/2026 : BLOCK SELL signals
-    # Audit market-analyst 22/04 : SELL PF=0.00 sur ES (0/6 wins), PF=0.60 NQ.
-    # Jackson a bust son compte Topstep sur SELL trade (news imprevue).
-    # Revalidation obligatoire sur v4 propre mi-mai avant re-activation.
+    # PATCH 22/04/2026 → LEVE 24/04/2026 : SELL ré-activé (paper seulement).
+    #
+    # HISTORIQUE :
+    #   22/04 : Jackson bust Topstep LIVE sur trade SELL (news imprevue). Audit
+    #     market-analyst 22/04 → PF SELL=0.00 ES (0/6 wins), PF 0.60 NQ.
+    #     Decision : SELL DISABLED en attendant validation v4 propre mi-mai.
+    #   24/04 (ce soir) : analyse 23/04 montre 0 trade pris journee complete
+    #     (4026 polls → 3884 conseil_attendre). Cause : NQ baisse 400pt +
+    #     ES baisse 60pt → 50-70% des signaux etaient SELL → tous etouffes.
+    #     Base statistique 6 trades = Bayesien inutilisable (IC95% enorme).
+    #
+    # DECISION 24/04 (Jackson valide + Claude audit) :
+    #   Re-activer SELL EN PAPER UNIQUEMENT pour collecter distribution WR/PF
+    #   empirique propre. On est deja sous safety nets multiples :
+    #     - DTC Sim3 (pas de $ reel)
+    #     - Paper trader (pas de routing broker)
+    #     - Gates bias + SLTP + payoff toujours actifs en aval
+    #
+    # CONDITION DE RE-DESACTIVATION (auto) :
+    #   Si apres N>=50 trades SELL empiriques : PF_sell < 0.5 ET WR_sell < 0.40
+    #   → re-disable. Monitoring manuel chaque fin de journee + review vendredi.
+    #
+    # TODO V2CLEAN : deplacer ce flag dans V2CLEAN/config.py comme
+    #   ENABLE_SELL_PAPER=True / ENABLE_SELL_LIVE=False pour separer proprement.
+    # Cf memory feedback_config_centralise.md.
     if action in ("VENTE", "VENTE PRUDENTE"):
-        original_action = action
-        action = "ATTENDRE"
-        checks.append(f"SELL DISABLED (audit 22/04 : PF=0.00 ES / PF=0.60 NQ)")
-        checks.append(f"  Signal original : {original_action} ({bear_pts} bear pts)")
-        checks.append(f"  Re-activation apres validation v4 propre")
+        checks.append(f"SELL active (paper, re-activation 24/04 pour collecte stats)")
+        checks.append(f"  Si PF<0.5 apres N>=50 SELL → re-disable auto")
 
     # v1.5 (22/04) State machine transition vs persistance
+    # v2 (05/05) Option B : seuils dissocies DISPLAY (2 bars) vs EXECUTION (4 bars)
     symbol_key = str(bar.get("sym", "UNKNOWN")).upper()
     bar_ts_ms = int(bar.get("ts", 0))
+    # R2 code-reviewer 05/05 : fail-loud si sym manque. Sans ce guard, tous les
+    # symbols UNKNOWN partagent le meme _SIGNAL_STATE -> corruption cross-symbol
+    # (un signal NQ ecrase un signal ES si tous les deux UNKNOWN).
+    if symbol_key == "UNKNOWN":
+        return {
+            "action": "ATTENDRE", "executable_action": "ATTENDRE",
+            "bull_points": 0, "bear_points": 0,
+            "reason": "bar.sym manquant",
+            "checks": ["bar.sym manquant — fail-loud guard R2"],
+            "gamma_block_long": False, "gamma_block_short": False,
+            "freshness": "IDLE", "freshness_exec": "IDLE",
+            "age_bars": 0, "signal_id": None, "raw_action": "ATTENDRE",
+        }
     state = _evaluate_signal_freshness(symbol_key, action, bar_ts_ms)
 
-    # EXPIRED : force action → ATTENDRE (signal perime, plus tradable)
+    # display_action (UI) : EXPIRED apres 2 bars → ATTENDRE (anti-FOMO 22/04)
     if state["freshness"] == "EXPIRED":
-        checks.append(f"SIGNAL EXPIRE apres {state['age_bars']} barres (max {_MAX_SIGNAL_AGE_BARS})")
-        checks.append(f"  Action forcee → ATTENDRE (signal non tradable, conditions persistantes)")
+        checks.append(f"SIGNAL EXPIRE UI apres {state['age_bars']} barres (max display {_MAX_SIGNAL_AGE_BARS_DISPLAY})")
         display_action = "ATTENDRE"
     else:
         display_action = action
 
+    # executable_action (gate paper) : EXPIRED apres 4 bars → ATTENDRE
+    # Le bot lit ce champ (pas `action`) → debloque ~half des candidats stables
+    # qui etaient etouffes par la limite UI 2 bars (audit empirique 188 NQ 05/05).
+    if state["freshness_exec"] == "EXPIRED":
+        executable_action = "ATTENDRE"
+    else:
+        executable_action = action
+
     return {
-        "action": display_action,
+        "action": display_action,                # UI (legacy, dashboard)
+        "executable_action": executable_action,  # Gate paper (Bot 1, V6, etc.)
         "bull_points": bull_pts,
         "bear_points": bear_pts,
         "reason": f"{bull_pts} bull / {bear_pts} bear",
         "checks": checks,
         "gamma_block_long": block_long,
         "gamma_block_short": block_short,
-        "freshness": state["freshness"],
+        "freshness": state["freshness"],          # UI freshness
+        "freshness_exec": state["freshness_exec"],# Gate freshness
         "age_bars": state["age_bars"],
         "signal_id": state["signal_id"],
         "raw_action": action,  # action avant expiration (pour debug)
@@ -1599,12 +1458,15 @@ def build_trade_suggestion(bar: dict, symbol: str, regime: dict, options: dict) 
     tp_ticks = round(sl_ticks * 2.0, 1)
     price = get_field(bar, "price", 0.0)
 
+    # 11/05 J2b MGC : tick par symbole (ES/NQ=0.25, MGC=0.10).
+    # _tick_for(symbol) fallback TICK_SIZE si symbole inconnu = ES/NQ inchanges.
+    _tick = _tick_for(symbol)
     if favor == "LONG":
-        sl_price = round(price - sl_ticks * TICK_SIZE, 2)
-        tp_price = round(price + tp_ticks * TICK_SIZE, 2)
+        sl_price = round(price - sl_ticks * _tick, 2)
+        tp_price = round(price + tp_ticks * _tick, 2)
     elif favor == "SHORT":
-        sl_price = round(price + sl_ticks * TICK_SIZE, 2)
-        tp_price = round(price - tp_ticks * TICK_SIZE, 2)
+        sl_price = round(price + sl_ticks * _tick, 2)
+        tp_price = round(price - tp_ticks * _tick, 2)
     else:
         sl_price = None
         tp_price = None
@@ -1672,3 +1534,601 @@ def build_signals_journal(bot_data: dict) -> dict:
         "recent_trades": sj.get("recent_trades", []),
         "recent_rejections": sj.get("recent_rejections", []),
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Builder MANUAL INDICATORS (Jackson trading manuel — 04/05/2026)
+# Audit market-analyst : top 6 indicateurs pertinents pour decision <5s
+# Phase 1 = quick wins
+# ═══════════════════════════════════════════════════════════════
+
+
+def build_manual_indicators(bar: dict) -> dict:
+    """Indicateurs trading manuel pour Jackson — decision <5s.
+
+    Phase 1 (4 widgets) :
+      A. VWAP triple align + slope direction
+      B. RVOL zscore (gauge -2/+3)
+      C. Delta divergence clean (badge BUY/SELL/OFF + force)
+      D. Next wall distance + side (MenthorQ)
+
+    Phase 3 (filtre conditionnel) :
+      E. Trapped @ niveau (banner alert si proche niveau)
+      F. POC migration vitesse + position
+
+    Cf market-analyst audit 04/05 + memory feedback_extraction_expertise_jackson.
+    """
+    if not bar:
+        return {}
+
+    # ─── A. VWAP triple align + slope ────────────────────────────
+    vwap_d_side = get_int_field(bar, "vwap_d_side", 0)  # +1/-1
+    vwap_w_side = get_int_field(bar, "vwap_w_side", 0)
+    vwap_m_side = get_int_field(bar, "vwap_m_side", 0)
+    vwap_triple_align = get_int_field(bar, "vwap_triple_align", 0)  # 1 si tous alignes
+    vwap_slope_10 = get_field(bar, "vwap_slope_10", 0.0)
+    vwap_slope_10_dir = get_int_field(bar, "vwap_slope_10_dir", 0)  # +1/0/-1
+
+    # ─── B. RVOL zscore ──────────────────────────────────────────
+    rvol = get_field(bar, "rvol", 0.0)
+    rvol_zscore = get_field(bar, "rvol_zscore", 0.0)
+    # Classification visuelle
+    if rvol_zscore >= 2.0:
+        rvol_zone = "EXCEPTIONAL"      # vert vif
+    elif rvol_zscore >= 1.0:
+        rvol_zone = "ELEVATED"         # vert
+    elif rvol_zscore >= -0.5:
+        rvol_zone = "NORMAL"           # gris
+    else:
+        rvol_zone = "LOW"              # rouge (no-trade)
+
+    # ─── C. Delta divergence (DMP brut + V4 enrichi 04/05) ────────
+    # `delta_divergence` est dans DMP brut (signe +1/-1/0) ET dans V4.
+    # V4 enrichit avec `n_delta_div_*_zones_active` pour mesurer la force.
+    # Les cles DMP `_clean` n'existent pas (audit R5), donc on utilise
+    # le brut + zones V4 quand dispo.
+    div_value = get_int_field(bar, "delta_divergence", 0)  # +1/-1/0
+    n_div_buy_zones = get_int_field(bar, "n_delta_div_buy_zones_active", 0)   # V4 only
+    n_div_sell_zones = get_int_field(bar, "n_delta_div_sell_zones_active", 0)  # V4 only
+    n_div_zones = n_div_buy_zones + n_div_sell_zones
+    if n_div_zones > 0:
+        # V4 frais : force basee sur nombre de zones actives (proxy intensite)
+        div_strength = min(n_div_zones * 25.0, 100.0)  # cap 4 zones
+    elif div_value != 0:
+        # DMP seul : signal binaire, force conservatrice 50
+        div_strength = 50.0
+    else:
+        div_strength = 0.0
+    if div_value > 0 and div_strength >= 25:
+        div_signal = "BUY"
+    elif div_value < 0 and div_strength >= 25:
+        div_signal = "SELL"
+    else:
+        div_signal = "OFF"
+
+    # ─── D. Next wall (V4/DMP : convention DMP_Transform.h:508) ───────
+    # CalcDistTicks = (level - price) / tick_size (DEJA EN TICKS dans le JSONL).
+    # Convention : dist > 0 = level au-dessus (resistance), dist < 0 = en-dessous (support).
+    # Mur valide :
+    #   - CALL au-dessus (dist_mq_call > 0) = vraie resistance
+    #   - PUT en-dessous (dist_mq_put < 0) = vrai support
+    # Sinon le strike est ITM (pas un mur exploitable).
+    # Fallback DMP `next_wall_*` si V4 absent ou aucun mur cote correct.
+    dist_mq_call = get_field(bar, "dist_mq_call", 0.0)   # deja en ticks
+    dist_mq_put = get_field(bar, "dist_mq_put", 0.0)
+    # Garder seulement les murs exploitables (call above, put below)
+    call_dist_ticks = dist_mq_call if dist_mq_call > 0 else 99999.0
+    put_dist_ticks = abs(dist_mq_put) if dist_mq_put < 0 else 99999.0
+    if call_dist_ticks < 99999.0 or put_dist_ticks < 99999.0:
+        if call_dist_ticks <= put_dist_ticks:
+            next_wall_dist_ticks = call_dist_ticks
+            next_wall_is_call = 1
+        else:
+            next_wall_dist_ticks = put_dist_ticks
+            next_wall_is_call = 0
+    else:
+        # Aucun mur cote correct -> Fallback DMP (deja signe-aware)
+        next_wall_dist_ticks = get_field(bar, "next_wall_dist_ticks", 0.0)
+        next_wall_is_call = get_int_field(bar, "next_wall_is_call", 0)
+    wall_side = "CALL" if next_wall_is_call else "PUT"
+    wall_reaction_zone = abs(next_wall_dist_ticks) <= 8.0 if next_wall_dist_ticks else False
+
+    # ─── E. Trapped @ niveau (Phase 3) ───────────────────────────
+    trapped_buyers_at_res = get_int_field(bar, "bn_trapped_buyers_at_resistance", 0)
+    trapped_sellers_at_sup = get_int_field(bar, "bn_trapped_sellers_at_support", 0)
+    n_trap_buy_zones = get_int_field(bar, "n_trapped_buyers_zones_active", 0)
+    n_trap_sell_zones = get_int_field(bar, "n_trapped_sellers_zones_active", 0)
+    if trapped_buyers_at_res:
+        trapped_signal = "TRAPPED_BUYERS"   # bias SHORT (acheteurs piéges en haut)
+    elif trapped_sellers_at_sup:
+        trapped_signal = "TRAPPED_SELLERS"  # bias LONG (vendeurs piéges en bas)
+    else:
+        trapped_signal = "OFF"
+
+    # ─── F. POC migration vitesse + position (Phase 3) ───────────
+    poc_mig_dir = get_int_field(bar, "poc_migration_dir", 0)
+    poc_mig_speed = get_field(bar, "ctx_poc_migration_10", 0.0)
+    poc_position = get_field(bar, "poc_position", 0.5)  # 0-1
+    dist_cur_vpoc = get_field(bar, "dist_cur_vpoc", 0.0)
+    if poc_mig_speed > 0.5:
+        poc_state = "MIGRATING_UP"
+    elif poc_mig_speed < -0.5:
+        poc_state = "MIGRATING_DN"
+    else:
+        poc_state = "STABLE"
+
+    # ─── Absorption @ niveau (V4 prioritaire avec _at_level direct) ──
+    # V4 fournit bn_absorb_*_at_level qui combine deja la condition niveau.
+    # Fallback DMP bn_absorb_* + bool_near_level si V4 absent.
+    absorb_bid_at_level = get_int_field(bar, "bn_absorb_bid_at_level", 0)
+    absorb_ask_at_level = get_int_field(bar, "bn_absorb_ask_at_level", 0)
+    if absorb_bid_at_level or absorb_ask_at_level:
+        absorb_signal = "BID_DEFENDED" if absorb_bid_at_level else "ASK_DEFENDED"
+    else:
+        # Fallback DMP
+        absorb_bid = get_int_field(bar, "bn_absorb_bid", 0)
+        absorb_ask = get_int_field(bar, "bn_absorb_ask", 0)
+        near_level = get_int_field(bar, "bool_near_level", 0)
+        if absorb_bid and near_level:
+            absorb_signal = "BID_DEFENDED"
+        elif absorb_ask and near_level:
+            absorb_signal = "ASK_DEFENDED"
+        else:
+            absorb_signal = "OFF"
+
+    return {
+        # A. VWAP align
+        "vwap_d_side": vwap_d_side,
+        "vwap_w_side": vwap_w_side,
+        "vwap_m_side": vwap_m_side,
+        "vwap_triple_align": vwap_triple_align,
+        "vwap_slope_10": round(vwap_slope_10, 4),
+        "vwap_slope_10_dir": vwap_slope_10_dir,
+        # B. RVOL
+        "rvol": round(rvol, 2),
+        "rvol_zscore": round(rvol_zscore, 2),
+        "rvol_zone": rvol_zone,
+        # C. Delta divergence clean
+        "div_signal": div_signal,
+        "div_strength": round(div_strength, 1),
+        "div_clean_active": int(div_signal != "OFF"),
+        # D. Next wall
+        "next_wall_dist_ticks": round(next_wall_dist_ticks, 1) if next_wall_dist_ticks else None,
+        "next_wall_side": wall_side,
+        "wall_reaction_zone": wall_reaction_zone,
+        # E. Trapped @ niveau
+        "trapped_signal": trapped_signal,
+        "trapped_zones_buy": n_trap_buy_zones,
+        "trapped_zones_sell": n_trap_sell_zones,
+        # F. POC migration
+        "poc_state": poc_state,
+        "poc_migration_dir": poc_mig_dir,
+        "poc_migration_speed": round(poc_mig_speed, 3),
+        "poc_position": round(poc_position, 2),
+        "dist_cur_vpoc_ticks": round(dist_cur_vpoc, 1),
+        # Absorption @ niveau (bonus)
+        "absorb_signal": absorb_signal,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Builder ORDER FLOW AVANCE (V4 enriched — bonus widgets 04/05)
+# 4 widgets : cluster_distance, big_orders, smt_divergence, naked_poc
+# Source : DATA/datasets/v4_enriched/ (Databento + features pipeline)
+# ═══════════════════════════════════════════════════════════════
+
+
+def build_order_flow_advanced(bar: dict) -> dict:
+    """Indicateurs order flow avances issus du parquet V4 enriched.
+
+    4 widgets bonus (cf demande Jackson 04/05) :
+      H. Cluster acheteur/vendeur (distance + niveau touche)
+      I. Gros ordres bid/ask (dominance + tier + max volume)
+      J. SMT divergence ES/NQ (inter-marche)
+      K. Naked POC (distance + age max)
+
+    Toutes les distances V4 sont en pourcentage du prix (`*_pct`).
+    Pour affichage on garde le % brut, plus stable que conversion ticks
+    (pas besoin de connaitre tick_size cote dashboard).
+
+    Returns : dict prefixe `of_*` pour eviter collision avec mi_*.
+    """
+    if not bar:
+        return {}
+
+    # ─── H. Cluster volumique @ niveau (REFACTOR 04/05 — features live) ──
+    # Anciennes sources cluster_at_high/low sont mortes (ES 0.18% / NQ 0%) car
+    # phase_b_plus_plus_engine threshold ML strict (250/70) tue la feature live.
+    # Empirique mai 2026 sur 1109 barres : on swap pour features deja live :
+    #   - n_big_ask_v2_t1 ≥ 1 (29% ES / 7% NQ) = gros ordres ASK = resistance
+    #   - n_big_bid_v2_t1 ≥ 1 (29% ES / 8% NQ) = gros ordres BID = support
+    #   - near_resistance_level / near_support_level = niveau structurel (HVL/POC/VWAP/BL)
+    #   - bn_trapped_*_at_resistance/support = trap haute conviction
+    # Semantique preservee : "concentration volume @ niveau structurel".
+    n_big_ask_t1 = get_int_field(bar, "n_big_ask_v2_t1", 0)
+    n_big_bid_t1 = get_int_field(bar, "n_big_bid_v2_t1", 0)
+    near_res = get_int_field(bar, "near_resistance_level", 0)
+    near_sup = get_int_field(bar, "near_support_level", 0)
+    trap_buy_res = get_int_field(bar, "bn_trapped_buyers_at_resistance", 0)
+    trap_sell_sup = get_int_field(bar, "bn_trapped_sellers_at_support", 0)
+    # Bonus contextuel preserve : nb clusters detectes (peut rester pour info)
+    n_clusters = get_int_field(bar, "n_cluster_groups", 0)
+    # Distances aux gros ordres (en %, vivant cote V4) — vars locales section H
+    # (les vars `dist_big_ask_pct` / `dist_big_bid_pct` sont redefinies section I).
+    _dist_big_ask_h = get_field(bar, "dist_big_ask_nearest_pct", 0.0)
+    _dist_big_bid_h = get_field(bar, "dist_big_bid_nearest_pct", 0.0)
+
+    # Side cluster proche : compare distances aux gros ordres ASK vs BID
+    # ASK pres = resistance acheteurs / BID pres = support vendeurs
+    if _dist_big_ask_h > 0 and (_dist_big_bid_h == 0
+                                 or _dist_big_ask_h < _dist_big_bid_h):
+        cluster_nearest_side = "ASK"
+        cluster_nearest_dist_pct = round(_dist_big_ask_h, 3)
+    elif _dist_big_bid_h > 0:
+        cluster_nearest_side = "BID"
+        cluster_nearest_dist_pct = round(_dist_big_bid_h, 3)
+    else:
+        cluster_nearest_side = "OFF"
+        cluster_nearest_dist_pct = 0.0
+
+    # Signal compose : trap @ niveau = haute conviction reversal (rare event Lopez)
+    # Sinon big orders @ niveau structurel = AT_RES / AT_SUP normal
+    if trap_buy_res:
+        cluster_signal = "TRAP_BUY_AT_RES"      # bearish reversal probable
+    elif trap_sell_sup:
+        cluster_signal = "TRAP_SELL_AT_SUP"     # bullish reversal probable
+    elif n_big_ask_t1 >= 1 and near_res:
+        cluster_signal = "AT_RESISTANCE"        # gros ordres ASK pres niveau
+    elif n_big_bid_t1 >= 1 and near_sup:
+        cluster_signal = "AT_SUPPORT"           # gros ordres BID pres niveau
+    else:
+        cluster_signal = "OFF"
+
+    # ─── I. Gros ordres bid/ask ──────────────────────────────────
+    big_buy_dom = get_field(bar, "big_buy_dominance", 0.0)   # ratio 0-1
+    big_sell_dom = get_field(bar, "big_sell_dominance", 0.0)
+    # Total counts par tier (T1 = plus gros volume)
+    n_big_buy_t1 = get_int_field(bar, "n_big_buy_t1", 0)
+    n_big_buy_t2 = get_int_field(bar, "n_big_buy_t2", 0)
+    n_big_sell_t1 = get_int_field(bar, "n_big_sell_t1", 0)
+    n_big_sell_t2 = get_int_field(bar, "n_big_sell_t2", 0)
+    n_big_buy_total = n_big_buy_t1 + n_big_buy_t2 + \
+        get_int_field(bar, "n_big_buy_t3", 0) + get_int_field(bar, "n_big_buy_t4", 0)
+    n_big_sell_total = n_big_sell_t1 + n_big_sell_t2 + \
+        get_int_field(bar, "n_big_sell_t3", 0) + get_int_field(bar, "n_big_sell_t4", 0)
+    max_big_ask_vol = get_int_field(bar, "max_big_ask_vol_in_bar", 0)
+    max_big_bid_vol = get_int_field(bar, "max_big_bid_vol_in_bar", 0)
+    dist_big_ask_pct = get_field(bar, "dist_big_ask_nearest_pct", 0.0)
+    dist_big_bid_pct = get_field(bar, "dist_big_bid_nearest_pct", 0.0)
+
+    # Side dominant + signal compose
+    # big_buy_dominance > 0.65 = pression acheteuse forte (ordres > vendeurs)
+    if big_buy_dom >= 0.65 and n_big_buy_t1 >= 1:
+        big_signal = "BUY_AGGRESSIVE"
+        big_side = "BUY"
+    elif big_sell_dom >= 0.65 and n_big_sell_t1 >= 1:
+        big_signal = "SELL_AGGRESSIVE"
+        big_side = "SELL"
+    elif big_buy_dom >= 0.55:
+        big_signal = "BUY_LEAN"
+        big_side = "BUY"
+    elif big_sell_dom >= 0.55:
+        big_signal = "SELL_LEAN"
+        big_side = "SELL"
+    else:
+        big_signal = "BALANCED"
+        big_side = "NEUTRAL"
+
+    # ─── J. SMT divergence ES/NQ (REFACTOR 04/05 — features live) ──
+    # Ancienne source `im_smt_divergence` est morte (ES 0% / NQ 0.5% mai 2026)
+    # car seuils ticks bruts hardcodes 10t mal calibres (cf pipeline V4 builder
+    # commentaire "ES 99.93% zeros (seuils 10pts hardcodes)" ligne 154).
+    # Swap pour `im_delta_day_divergence` : (sign_t - sign_o)/2 antisymetrique
+    # mathematique, fire 21.7% ES + NQ avec miroir parfait (ES +1 ↔ NQ -1).
+    # Semantique preservee : "decoupling directionnel ES/NQ" = concept ICT.
+    im_delta_div = get_int_field(bar, "im_delta_day_divergence", 0)  # -1/0/+1
+    if im_delta_div > 0:
+        smt_signal = "BULL"      # ES/NQ desync favorable acheteurs
+    elif im_delta_div < 0:
+        smt_signal = "BEAR"
+    else:
+        smt_signal = "OFF"
+
+    # ─── K. Naked POC ────────────────────────────────────────────
+    dist_npoc_pct = get_field(bar, "dist_naked_poc_nearest_pct", 0.0)
+    n_npoc_active = get_int_field(bar, "n_naked_poc_active", 0)
+    n_npoc_close = get_int_field(bar, "n_naked_poc_within_0_5pct", 0)
+    npoc_age_max = get_int_field(bar, "naked_poc_age_max_days", 0)
+
+    # ─── L. Cluster strength (Phase 2 enrichissement OFA 13/05/2026) ──
+    # Force du cluster present = nombre de clusters + niveaux structurels touches
+    # cluster_strength : 0=off, 1=light (1 cluster), 2=medium (2+ clusters),
+    #                    3=heavy (cluster + near_level)
+    if n_clusters >= 2 and (near_res or near_sup):
+        cluster_strength = 3
+        cluster_strength_label = "HEAVY"
+    elif n_clusters >= 1 and (near_res or near_sup):
+        cluster_strength = 2
+        cluster_strength_label = "MEDIUM"
+    elif n_clusters >= 1:
+        cluster_strength = 1
+        cluster_strength_label = "LIGHT"
+    else:
+        cluster_strength = 0
+        cluster_strength_label = "OFF"
+
+    # ─── M. Bid/Ask imbalance par bar (Phase 2 13/05/2026) ──────────
+    # Delta normalise : (buy_vol - sell_vol) / total_vol = imbalance [-1, +1]
+    # Plus stable que delta_bar absolu (depend du volume).
+    # Seuils (code-reviewer reserve R2 13/05) : abaissés de ±0.3/±0.6 a
+    # ±0.2/±0.4 pour 1-min bars liquides ES/NQ ou imbalance > 50% rare.
+    delta_bar = get_field(bar, "delta_bar", 0.0)
+    bar_volume = get_field(bar, "volume", 0.0)
+    if bar_volume > 0:
+        imbalance = delta_bar / bar_volume
+        imbalance = max(-1.0, min(1.0, imbalance))  # clamp [-1, +1]
+    else:
+        imbalance = 0.0
+    # Label visuel
+    if imbalance >= 0.4:
+        imbalance_label = "BUY_STRONG"
+    elif imbalance >= 0.2:
+        imbalance_label = "BUY_LIGHT"
+    elif imbalance <= -0.4:
+        imbalance_label = "SELL_STRONG"
+    elif imbalance <= -0.2:
+        imbalance_label = "SELL_LIGHT"
+    else:
+        imbalance_label = "BALANCED"
+
+    # ─── N. Absorption velocity (Phase 2 13/05/2026) ────────────────
+    # Mesure agressivite absorption : nombre d'events absorb au niveau dans
+    # les N dernieres barres / window. V4 expose bn_absorb_bid_at_level et
+    # bn_absorb_ask_at_level (booleens bar courante). On combine avec _streak_5
+    # ou comptage rolling pour estimer velocity.
+    absorb_bid_now = get_int_field(bar, "bn_absorb_bid_at_level", 0)
+    absorb_ask_now = get_int_field(bar, "bn_absorb_ask_at_level", 0)
+    # Stack absorb counter (rolling 5 bars proxy via ctx_absorption_streak_5)
+    absorb_streak = get_int_field(bar, "ctx_absorption_streak_5", 0)
+    # FIX code-reviewer R3 13/05 : formule additive lineaire vs multiplicative.
+    # `(absorb_now * (1 + streak/5))` etait instable : si streak=5 et absorb=1
+    # → velocity = 2 (HIGH) meme sans nouvel event. Additif plus interpretable.
+    absorb_velocity = (absorb_bid_now + absorb_ask_now) + 0.2 * absorb_streak
+    if absorb_velocity >= 2.0:
+        velocity_label = "VERY_HIGH"
+    elif absorb_velocity >= 1.5:
+        velocity_label = "HIGH"
+    elif absorb_velocity >= 1.0:
+        velocity_label = "MODERATE"
+    elif absorb_velocity >= 0.4:
+        velocity_label = "LIGHT"  # streak only (legacy absorption visible)
+    else:
+        velocity_label = "OFF"
+    velocity_side = "BID" if absorb_bid_now else "ASK" if absorb_ask_now else "NONE"
+
+    # ─── O. Big orders momentum sliding (Phase 2 13/05/2026) ────────
+    # Somme T1+T2+T3 buy vs sell sur la bar courante (proxy momentum).
+    # V4 expose n_big_buy_t1/t2/t3 et n_big_sell_t1/t2/t3 par bar.
+    # Le "sliding 5 bars" necessiterait acces a historique → on utilise les
+    # ratio buy_dom et sell_dom (dejacalcules sur window phase B+++) comme
+    # proxy momentum directionnel.
+    big_buy_tier_sum = n_big_buy_t1 + n_big_buy_t2 + get_int_field(bar, "n_big_buy_t3", 0)
+    big_sell_tier_sum = n_big_sell_t1 + n_big_sell_t2 + get_int_field(bar, "n_big_sell_t3", 0)
+    if big_buy_tier_sum + big_sell_tier_sum > 0:
+        momentum_ratio = (big_buy_tier_sum - big_sell_tier_sum) / (big_buy_tier_sum + big_sell_tier_sum)
+    else:
+        momentum_ratio = 0.0
+    momentum_total = big_buy_tier_sum + big_sell_tier_sum
+    # FIX code-reviewer R4 13/05 : seuils RUSH abaisses 5->3, LEAN 2->2 inchange.
+    # n_big_buy_t1+t2+t3 souvent 0-2 par 1-min bar V4 -> total>=5 quasi-jamais.
+    if momentum_total >= 3 and momentum_ratio >= 0.6:
+        momentum_label = "BUY_RUSH"
+    elif momentum_total >= 3 and momentum_ratio <= -0.6:
+        momentum_label = "SELL_RUSH"
+    elif momentum_total >= 2 and momentum_ratio >= 0.2:
+        momentum_label = "BUY_LEAN"
+    elif momentum_total >= 2 and momentum_ratio <= -0.2:
+        momentum_label = "SELL_LEAN"
+    elif momentum_total >= 1:
+        momentum_label = "ACTIVE"
+    else:
+        momentum_label = "QUIET"
+
+    # Signal : Naked POC proche (<0.2%) = aimant fort, age >5j = haute conviction
+    if dist_npoc_pct > 0 and dist_npoc_pct <= 0.2 and npoc_age_max >= 5:
+        npoc_signal = "MAGNET_STRONG"
+    elif dist_npoc_pct > 0 and dist_npoc_pct <= 0.5:
+        npoc_signal = "MAGNET_NEAR"
+    elif n_npoc_active > 0:
+        npoc_signal = "PRESENT"
+    else:
+        npoc_signal = "OFF"
+
+    return {
+        # H. Cluster (refactor 04/05 — sources live big_t1 + near_*_level + trapped)
+        "cluster_signal": cluster_signal,
+        "cluster_nearest_side": cluster_nearest_side,
+        "cluster_nearest_dist_pct": cluster_nearest_dist_pct,
+        "cluster_count": n_clusters,
+        "cluster_trap_buy": trap_buy_res,
+        "cluster_trap_sell": trap_sell_sup,
+        "cluster_near_res": near_res,
+        "cluster_near_sup": near_sup,
+        "cluster_big_ask_t1": n_big_ask_t1,
+        "cluster_big_bid_t1": n_big_bid_t1,
+        # I. Big orders
+        "big_signal": big_signal,
+        "big_side": big_side,
+        "big_buy_dom": round(big_buy_dom, 2),
+        "big_sell_dom": round(big_sell_dom, 2),
+        "big_buy_count": n_big_buy_total,
+        "big_sell_count": n_big_sell_total,
+        "big_buy_t1": n_big_buy_t1,
+        "big_sell_t1": n_big_sell_t1,
+        "big_max_ask_vol": max_big_ask_vol,
+        "big_max_bid_vol": max_big_bid_vol,
+        "big_dist_ask_pct": round(dist_big_ask_pct, 3),
+        "big_dist_bid_pct": round(dist_big_bid_pct, 3),
+        # J. SMT (refactor 04/05 — source im_delta_day_divergence)
+        "smt_signal": smt_signal,
+        "smt_value": im_delta_div,           # principal signal (-1/0/+1)
+        "smt_delta_day": im_delta_div,       # garde pour compat dashboard JS
+        # K. Naked POC
+        "npoc_signal": npoc_signal,
+        "npoc_dist_pct": round(dist_npoc_pct, 3),
+        "npoc_active": n_npoc_active,
+        "npoc_close": n_npoc_close,
+        "npoc_age_max_days": npoc_age_max,
+        # L. Cluster strength (Phase 2 13/05/2026)
+        "cluster_strength": cluster_strength,
+        "cluster_strength_label": cluster_strength_label,
+        # M. Bid/Ask imbalance par bar (Phase 2 13/05/2026)
+        "imbalance": round(imbalance, 3),
+        "imbalance_label": imbalance_label,
+        # N. Absorption velocity (Phase 2 13/05/2026)
+        "absorb_velocity": round(absorb_velocity, 2),
+        "absorb_velocity_label": velocity_label,
+        "absorb_velocity_side": velocity_side,
+        # O. Big orders momentum sliding (Phase 2 13/05/2026)
+        "big_momentum_ratio": round(momentum_ratio, 3),
+        "big_momentum_total": momentum_total,
+        "big_momentum_label": momentum_label,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Builder ACTIVE SETUPS (Phase 2 — banner alerts composite)
+# Audit market-analyst : 4 setups composites haut conviction
+# ═══════════════════════════════════════════════════════════════
+
+
+def detect_active_setups(bar: dict) -> List[dict]:
+    """Detecte les setups composites actifs sur la barre courante.
+
+    4 setups (cf audit market-analyst 04/05) :
+      1. SHORT haut conviction (trapped buyers + POC dn + div SELL + VWAP dn)
+      2. LONG breakout (IB broken up + RVOL elevated + VWAP triple align up)
+      3. MEAN REVERSION (range day + VA extreme + div active)
+      4. NO-TRADE (RVOL low + VIX low + profile mixte + bars_in_va high)
+
+    Returns : liste de setups actifs avec metadata (name, side, conviction, reasons).
+    """
+    if not bar:
+        return []
+
+    setups: List[dict] = []
+
+    # ─── Variables partagees ─────────────────────────────────────
+    trapped_buyers = get_int_field(bar, "bn_trapped_buyers_at_resistance", 0)
+    trapped_sellers = get_int_field(bar, "bn_trapped_sellers_at_support", 0)
+    poc_mig_speed = get_field(bar, "ctx_poc_migration_10", 0.0)
+    div_clean = get_int_field(bar, "delta_divergence_clean", 0)
+    div_buy = get_int_field(bar, "delta_div_buy_clean", 0)
+    div_sell = get_int_field(bar, "delta_div_sell_clean", 0)
+    div_strength = get_field(bar, "delta_div_strength", 0.0)
+    vwap_slope = get_field(bar, "vwap_slope_10", 0.0)
+    vwap_triple_align = get_int_field(bar, "vwap_triple_align", 0)
+    vwap_d_side = get_int_field(bar, "vwap_d_side", 0)
+    dist_swing_high = get_field(bar, "dist_swing_high", 999.0)
+    dist_swing_low = get_field(bar, "dist_swing_low", 999.0)
+    ib_broken_up = get_int_field(bar, "ib_broken_up", 0)
+    ib_broken_down = get_int_field(bar, "ib_broken_down", 0)
+    ib_is_narrow = get_int_field(bar, "ib_is_narrow", 0)
+    rvol_zscore = get_field(bar, "rvol_zscore", 0.0)
+    next_wall_dist = get_field(bar, "next_wall_dist_ticks", 0.0)
+    open_bias_conf = get_field(bar, "open_bias_conf", 0.0)
+    profile_shape = get_int_field(bar, "profile_shape", 0)
+    va_position = get_field(bar, "va_position_pct", 0.5)
+    bars_in_va = get_int_field(bar, "bars_in_va", 0)
+    vix_regime = get_int_field(bar, "vix_regime", 1)
+
+    # ─── Setup #1 : SHORT haut conviction ────────────────────────
+    short_reasons = []
+    if trapped_buyers:
+        short_reasons.append("Trapped buyers @ resistance")
+    if poc_mig_speed < -0.3:
+        short_reasons.append(f"POC migrating dn ({poc_mig_speed:.2f})")
+    if div_clean and div_sell and div_strength >= 60:
+        short_reasons.append(f"Delta div SELL ({div_strength:.0f})")
+    if vwap_slope < 0:
+        short_reasons.append("VWAP slope dn")
+    if dist_swing_high <= 5.0:
+        short_reasons.append(f"Swing high {dist_swing_high:.0f}t")
+    # Setup actif si >= 4 conditions sur 5
+    if len(short_reasons) >= 4:
+        setups.append({
+            "name": "SHORT_HIGH_CONVICTION",
+            "side": "SHORT",
+            "conviction": "HIGH",
+            "n_reasons": len(short_reasons),
+            "reasons": short_reasons,
+            "color": "#e57373",  # rouge
+        })
+
+    # ─── Setup #2 : LONG breakout ────────────────────────────────
+    long_reasons = []
+    if ib_broken_up:
+        long_reasons.append("IB broken UP")
+    if rvol_zscore >= 1.5:
+        long_reasons.append(f"RVOL z={rvol_zscore:.1f}")
+    if vwap_triple_align and vwap_d_side > 0:
+        long_reasons.append("VWAP triple align UP")
+    if next_wall_dist >= 15:
+        long_reasons.append(f"Next wall {next_wall_dist:.0f}t (espace)")
+    if open_bias_conf >= 0.6:
+        long_reasons.append(f"Open bias conf {open_bias_conf:.2f}")
+    if len(long_reasons) >= 4:
+        setups.append({
+            "name": "LONG_BREAKOUT",
+            "side": "LONG",
+            "conviction": "HIGH",
+            "n_reasons": len(long_reasons),
+            "reasons": long_reasons,
+            "color": "#4caf50",  # vert
+        })
+
+    # ─── Setup #3 : MEAN REVERSION (range day) ───────────────────
+    fade_reasons = []
+    if profile_shape == 3:  # range
+        fade_reasons.append("Profile shape RANGE")
+    if va_position >= 0.85 or va_position <= 0.15:
+        side_fade = "SHORT" if va_position >= 0.85 else "LONG"
+        fade_reasons.append(f"VA extreme ({va_position:.2f})")
+    if div_clean and div_strength >= 50:
+        fade_reasons.append("Delta div active")
+    if rvol_zscore < 1.0:
+        fade_reasons.append(f"RVOL calme z={rvol_zscore:.1f}")
+    if ib_is_narrow:
+        fade_reasons.append("IB narrow")
+    if len(fade_reasons) >= 4 and (va_position >= 0.85 or va_position <= 0.15):
+        side_fade = "SHORT" if va_position >= 0.85 else "LONG"
+        setups.append({
+            "name": "FADE_EXTREME",
+            "side": side_fade,
+            "conviction": "MEDIUM",
+            "n_reasons": len(fade_reasons),
+            "reasons": fade_reasons,
+            "color": "#ffa726",  # orange
+        })
+
+    # ─── Setup #4 : NO-TRADE filter ─────────────────────────────
+    notrade_reasons = []
+    if rvol_zscore < -0.5:
+        notrade_reasons.append(f"RVOL low z={rvol_zscore:.1f}")
+    if vix_regime == 0:  # LOW
+        notrade_reasons.append("VIX regime LOW")
+    if profile_shape == 0:  # mixte
+        notrade_reasons.append("Profile mixte")
+    if bars_in_va >= 30:
+        notrade_reasons.append(f"Bars in VA = {bars_in_va}")
+    if len(notrade_reasons) >= 3:
+        setups.append({
+            "name": "NO_TRADE_ZONE",
+            "side": "NEUTRAL",
+            "conviction": "FILTER",
+            "n_reasons": len(notrade_reasons),
+            "reasons": notrade_reasons,
+            "color": "#9e9e9e",  # gris
+        })
+
+    return setups

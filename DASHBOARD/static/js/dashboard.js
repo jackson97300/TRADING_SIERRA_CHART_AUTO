@@ -770,6 +770,439 @@
     var currentPollInterval = POLL_INTERVAL;
     var MAX_POLL_INTERVAL = 60000; // 60s max
 
+    // ════════════════════════════════════════════════════════════════
+    // Manual Trading Indicators (Jackson 04/05/2026)
+    // Phase 1 widgets : VWAP align, RVOL z, Delta div, Next wall
+    // Phase 3 widgets : Trapped @ niveau, POC migration, Absorption
+    // Phase 2 banner : active setups composites
+    // ════════════════════════════════════════════════════════════════
+    if (typeof window.miCurrentSym === "undefined") window.miCurrentSym = "ES";
+    if (typeof window.miSetupSeen === "undefined") window.miSetupSeen = {};   // anti-spam son
+
+    function _miSetDot(elId, side) {
+        var el = $(elId);
+        if (!el) return;
+        el.className = "mi-dot " + (side > 0 ? "mi-dot-up" : side < 0 ? "mi-dot-dn" : "mi-dot-idle");
+    }
+
+    function renderManualIndicators() {
+        var sym = window.miCurrentSym || "ES";
+        var dat = (window.data && window.data[sym.toLowerCase()]) || {};
+        var mi = dat.manual_indicators;
+        if (!mi) return;
+
+        // A. VWAP triple align + slope
+        _miSetDot("mi-vwap-d", mi.vwap_d_side || 0);
+        _miSetDot("mi-vwap-w", mi.vwap_w_side || 0);
+        _miSetDot("mi-vwap-m", mi.vwap_m_side || 0);
+        var slopeEl = $("mi-vwap-slope");
+        if (slopeEl) {
+            var dir = mi.vwap_slope_10_dir || 0;
+            slopeEl.textContent = dir > 0 ? "↗" : dir < 0 ? "↘" : "→";
+            slopeEl.className = "mi-slope " + (dir > 0 ? "mi-slope-up" : dir < 0 ? "mi-slope-dn" : "mi-slope-flat");
+        }
+
+        // B. RVOL gauge (-2 a +3)
+        var rvolEl = $("mi-rvol-val");
+        var fillEl = $("mi-rvol-fill");
+        if (rvolEl) rvolEl.textContent = (mi.rvol_zscore != null ? mi.rvol_zscore.toFixed(1) : "--");
+        if (fillEl) {
+            var z = mi.rvol_zscore || 0;
+            // Gauge : -2 a +3 mappe a 0% a 100%, milieu (0) a 33%
+            var pct = Math.max(0, Math.min(100, ((z + 2) / 5) * 100));
+            fillEl.style.width = pct + "%";
+            var color = mi.rvol_zone === "EXCEPTIONAL" ? "#4caf50"
+                : mi.rvol_zone === "ELEVATED" ? "#8bc34a"
+                : mi.rvol_zone === "LOW" ? "#e57373" : "#9e9e9e";
+            fillEl.style.background = color;
+        }
+
+        // C. Delta divergence
+        var divBadge = $("mi-div-badge");
+        var divStr = $("mi-div-strength");
+        if (divBadge) {
+            divBadge.textContent = mi.div_signal || "OFF";
+            divBadge.className = "mi-badge " +
+                (mi.div_signal === "BUY" ? "mi-badge-buy"
+                    : mi.div_signal === "SELL" ? "mi-badge-sell"
+                    : "mi-badge-off");
+        }
+        if (divStr) divStr.textContent = (mi.div_strength != null ? mi.div_strength.toFixed(0) : "--");
+
+        // D. Next wall
+        var wallDist = $("mi-wall-dist");
+        var wallSide = $("mi-wall-side");
+        var wallW = $("mi-wall");
+        if (wallDist) wallDist.textContent = (mi.next_wall_dist_ticks != null ? Math.abs(mi.next_wall_dist_ticks).toFixed(0) + "t" : "--");
+        if (wallSide) {
+            wallSide.textContent = mi.next_wall_side || "--";
+            wallSide.className = "mi-badge " + (mi.next_wall_side === "CALL" ? "mi-badge-call" : mi.next_wall_side === "PUT" ? "mi-badge-put" : "mi-badge-off");
+        }
+        if (wallW) {
+            if (mi.wall_reaction_zone) wallW.classList.add("mi-widget-react");
+            else wallW.classList.remove("mi-widget-react");
+        }
+
+        // E. Trapped @ niveau (Phase 3)
+        var trapBadge = $("mi-trapped-badge");
+        var trapZones = $("mi-trapped-zones");
+        if (trapBadge) {
+            if (mi.trapped_signal === "TRAPPED_BUYERS") {
+                trapBadge.textContent = "TRAP BUY";
+                trapBadge.className = "mi-badge mi-badge-trapped-buy";
+            } else if (mi.trapped_signal === "TRAPPED_SELLERS") {
+                trapBadge.textContent = "TRAP SELL";
+                trapBadge.className = "mi-badge mi-badge-trapped-sell";
+            } else {
+                trapBadge.textContent = "OFF";
+                trapBadge.className = "mi-badge mi-badge-off";
+            }
+        }
+        if (trapZones) {
+            trapZones.textContent = "B" + (mi.trapped_zones_buy || 0) + "/S" + (mi.trapped_zones_sell || 0);
+        }
+
+        // F. POC migration (Phase 3)
+        var pocBadge = $("mi-poc-state");
+        var pocSpeed = $("mi-poc-speed");
+        if (pocBadge) {
+            if (mi.poc_state === "MIGRATING_UP") {
+                pocBadge.textContent = "↑ MIG";
+                pocBadge.className = "mi-badge mi-badge-poc-up";
+            } else if (mi.poc_state === "MIGRATING_DN") {
+                pocBadge.textContent = "↓ MIG";
+                pocBadge.className = "mi-badge mi-badge-poc-dn";
+            } else {
+                pocBadge.textContent = "STABLE";
+                pocBadge.className = "mi-badge mi-badge-off";
+            }
+        }
+        if (pocSpeed) {
+            pocSpeed.textContent = "v" + (mi.poc_migration_speed != null ? mi.poc_migration_speed.toFixed(2) : "--")
+                + " p" + (mi.poc_position != null ? mi.poc_position.toFixed(2) : "--");
+        }
+
+        // Bonus : Absorption @ niveau
+        var absBadge = $("mi-absorb-badge");
+        if (absBadge) {
+            if (mi.absorb_signal === "BID_DEFENDED") {
+                absBadge.textContent = "BID DEF";
+                absBadge.className = "mi-badge mi-badge-buy";
+            } else if (mi.absorb_signal === "ASK_DEFENDED") {
+                absBadge.textContent = "ASK DEF";
+                absBadge.className = "mi-badge mi-badge-sell";
+            } else {
+                absBadge.textContent = "OFF";
+                absBadge.className = "mi-badge mi-badge-off";
+            }
+        }
+    }
+
+    // ─── Order Flow Avance V4 (cluster/big/SMT/naked_poc) — 04/05 ───
+    function renderOrderFlowAdvanced() {
+        var sym = window.miCurrentSym || "ES";
+        var dat = (window.data && window.data[sym.toLowerCase()]) || {};
+        var ofa = dat.order_flow_advanced;
+        if (!ofa) return;
+
+        // H. Cluster acheteur/vendeur
+        var cBadge = $("ofa-cluster-badge");
+        var cDist = $("ofa-cluster-dist");
+        if (cBadge) {
+            var cMap = {
+                "TRAP_BUY_AT_RES": ["TRAP @ RES", "mi-badge-trapped-buy"],
+                "TRAP_SELL_AT_SUP": ["TRAP @ SUP", "mi-badge-trapped-sell"],
+                "AT_RESISTANCE": ["@ RES", "mi-badge-sell"],
+                "AT_SUPPORT": ["@ SUP", "mi-badge-buy"],
+                "OFF": ["OFF", "mi-badge-off"]
+            };
+            var pair = cMap[ofa.cluster_signal] || cMap["OFF"];
+            cBadge.textContent = pair[0];
+            cBadge.className = "mi-badge " + pair[1];
+        }
+        if (cDist) {
+            if (ofa.cluster_nearest_side === "OFF") {
+                cDist.textContent = "--";
+            } else {
+                cDist.textContent = ofa.cluster_nearest_side + " "
+                    + (ofa.cluster_nearest_dist_pct != null ? ofa.cluster_nearest_dist_pct.toFixed(2) + "%" : "--");
+            }
+        }
+
+        // I. Gros ordres bid/ask
+        var bBadge = $("ofa-big-badge");
+        var bDetail = $("ofa-big-detail");
+        if (bBadge) {
+            var bMap = {
+                "BUY_AGGRESSIVE": ["BUY AGG", "mi-badge-buy"],
+                "SELL_AGGRESSIVE": ["SELL AGG", "mi-badge-sell"],
+                "BUY_LEAN": ["BUY", "mi-badge-buy"],
+                "SELL_LEAN": ["SELL", "mi-badge-sell"],
+                "BALANCED": ["BAL", "mi-badge-off"]
+            };
+            var pairB = bMap[ofa.big_signal] || bMap["BALANCED"];
+            bBadge.textContent = pairB[0];
+            bBadge.className = "mi-badge " + pairB[1];
+        }
+        if (bDetail) {
+            // Format : T1 buy/sell + dom%
+            var dom = (ofa.big_side === "BUY" ? ofa.big_buy_dom : ofa.big_side === "SELL" ? ofa.big_sell_dom : 0.5);
+            bDetail.textContent = "T1 " + (ofa.big_buy_t1 || 0) + "/" + (ofa.big_sell_t1 || 0)
+                + " · " + (dom != null ? (dom * 100).toFixed(0) + "%" : "--");
+        }
+
+        // J. SMT divergence ES/NQ
+        var sBadge = $("ofa-smt-badge");
+        var sDetail = $("ofa-smt-detail");
+        if (sBadge) {
+            if (ofa.smt_signal === "BULL") {
+                sBadge.textContent = "BULL";
+                sBadge.className = "mi-badge mi-badge-buy";
+            } else if (ofa.smt_signal === "BEAR") {
+                sBadge.textContent = "BEAR";
+                sBadge.className = "mi-badge mi-badge-sell";
+            } else {
+                sBadge.textContent = "OFF";
+                sBadge.className = "mi-badge mi-badge-off";
+            }
+        }
+        if (sDetail) {
+            sDetail.textContent = "Δd " + (ofa.smt_delta_day != null ? ofa.smt_delta_day : 0);
+        }
+
+        // K. Naked POC
+        var nBadge = $("ofa-npoc-badge");
+        var nDetail = $("ofa-npoc-detail");
+        if (nBadge) {
+            var nMap = {
+                "MAGNET_STRONG": ["MAGNET++", "mi-badge-warn"],
+                "MAGNET_NEAR": ["MAGNET", "mi-badge-call"],
+                "PRESENT": ["PRESENT", "mi-badge-off"],
+                "OFF": ["OFF", "mi-badge-off"]
+            };
+            var pairN = nMap[ofa.npoc_signal] || nMap["OFF"];
+            nBadge.textContent = pairN[0];
+            nBadge.className = "mi-badge " + pairN[1];
+        }
+        if (nDetail) {
+            if (ofa.npoc_signal === "OFF") {
+                nDetail.textContent = "--";
+            } else {
+                nDetail.textContent = (ofa.npoc_dist_pct != null ? ofa.npoc_dist_pct.toFixed(2) + "%" : "--")
+                    + " · " + (ofa.npoc_age_max_days || 0) + "j";
+            }
+        }
+
+        // L. Cluster strength (Phase 2 enrichissement 13/05/2026)
+        var csBadge = $("ofa-cluster-strength-badge");
+        var csDetail = $("ofa-cluster-strength-detail");
+        if (csBadge) {
+            var csMap = {
+                "HEAVY":  ["HEAVY",  "mi-badge-warn"],
+                "MEDIUM": ["MEDIUM", "mi-badge-call"],
+                "LIGHT":  ["LIGHT",  "mi-badge-off"],
+                "OFF":    ["OFF",    "mi-badge-off"]
+            };
+            var pairCS = csMap[ofa.cluster_strength_label] || csMap["OFF"];
+            csBadge.textContent = pairCS[0];
+            csBadge.className = "mi-badge " + pairCS[1];
+        }
+        if (csDetail) {
+            csDetail.textContent = "n=" + (ofa.cluster_count || 0)
+                + (ofa.cluster_near_res ? " @RES" : ofa.cluster_near_sup ? " @SUP" : "");
+        }
+
+        // M. Bid/Ask imbalance par bar (Phase 2 13/05/2026)
+        var iBadge = $("ofa-imbalance-badge");
+        var iDetail = $("ofa-imbalance-detail");
+        if (iBadge) {
+            var iMap = {
+                "BUY_STRONG":  ["BUY+++", "mi-badge-buy"],
+                "BUY_LIGHT":   ["BUY",    "mi-badge-buy"],
+                "SELL_STRONG": ["SELL+++","mi-badge-sell"],
+                "SELL_LIGHT":  ["SELL",   "mi-badge-sell"],
+                "BALANCED":    ["BAL",    "mi-badge-off"]
+            };
+            var pairI = iMap[ofa.imbalance_label] || iMap["BALANCED"];
+            iBadge.textContent = pairI[0];
+            iBadge.className = "mi-badge " + pairI[1];
+        }
+        if (iDetail) {
+            var imb = ofa.imbalance;
+            iDetail.textContent = (imb != null ? (imb >= 0 ? "+" : "") + (imb * 100).toFixed(0) + "%" : "--");
+        }
+
+        // N. Absorption velocity (Phase 2 13/05/2026)
+        var vBadge = $("ofa-velocity-badge");
+        var vDetail = $("ofa-velocity-detail");
+        if (vBadge) {
+            var vMap = {
+                "VERY_HIGH": ["EXTREME", "mi-badge-warn"],
+                "HIGH":      ["HIGH",    "mi-badge-call"],
+                "MODERATE":  ["MOD",     "mi-badge-off"],
+                "LIGHT":     ["LIGHT",   "mi-badge-off"],
+                "OFF":       ["OFF",     "mi-badge-off"]
+            };
+            var pairV = vMap[ofa.absorb_velocity_label] || vMap["OFF"];
+            vBadge.textContent = pairV[0];
+            vBadge.className = "mi-badge " + pairV[1];
+        }
+        if (vDetail) {
+            var side = ofa.absorb_velocity_side;
+            vDetail.textContent = (ofa.absorb_velocity != null ? ofa.absorb_velocity.toFixed(1) : "--")
+                + (side && side !== "NONE" ? " (" + side + ")" : "");
+        }
+
+        // O. Big orders momentum (Phase 2 13/05/2026)
+        var mBadge = $("ofa-momentum-badge");
+        var mDetail = $("ofa-momentum-detail");
+        if (mBadge) {
+            var mMap = {
+                "BUY_RUSH":  ["BUY RUSH",  "mi-badge-buy"],
+                "SELL_RUSH": ["SELL RUSH", "mi-badge-sell"],
+                "BUY_LEAN":  ["BUY",       "mi-badge-buy"],
+                "SELL_LEAN": ["SELL",      "mi-badge-sell"],
+                "ACTIVE":    ["ACTIVE",    "mi-badge-off"],
+                "QUIET":     ["QUIET",     "mi-badge-off"]
+            };
+            var pairM = mMap[ofa.big_momentum_label] || mMap["QUIET"];
+            mBadge.textContent = pairM[0];
+            mBadge.className = "mi-badge " + pairM[1];
+        }
+        if (mDetail) {
+            var ratio = ofa.big_momentum_ratio;
+            var total = ofa.big_momentum_total;
+            mDetail.textContent = "n=" + (total || 0)
+                + (ratio != null ? " r=" + (ratio >= 0 ? "+" : "") + ratio.toFixed(2) : "");
+        }
+    }
+
+    function renderActiveSetups() {
+        var sym = window.miCurrentSym || "ES";
+        var dat = (window.data && window.data[sym.toLowerCase()]) || {};
+        var setups = dat.active_setups || [];
+        var banner = $("manual-setups-banner");
+        // Mise a jour cell setup actif (synthese dans la card)
+        var setupBadge = $("mi-setup-badge");
+        var setupConv = $("mi-setup-conv");
+        if (setupBadge) {
+            if (!setups || setups.length === 0) {
+                setupBadge.textContent = "AUCUN";
+                setupBadge.className = "mi-badge mi-badge-off";
+                if (setupConv) setupConv.textContent = "--";
+            } else {
+                var top = setups.slice().sort(function (a, b) { return (b.n_reasons || 0) - (a.n_reasons || 0); })[0];
+                var labelMap = {
+                    "SHORT_HIGH_CONVICTION": "SHORT",
+                    "LONG_BREAKOUT": "LONG BO",
+                    "FADE_EXTREME": "FADE",
+                    "NO_TRADE_ZONE": "NO TRADE",
+                };
+                var classMap2 = {
+                    "SHORT_HIGH_CONVICTION": "mi-badge-sell",
+                    "LONG_BREAKOUT": "mi-badge-buy",
+                    "FADE_EXTREME": "mi-badge-warn",
+                    "NO_TRADE_ZONE": "mi-badge-off",
+                };
+                setupBadge.textContent = labelMap[top.name] || top.name;
+                setupBadge.className = "mi-badge " + (classMap2[top.name] || "mi-badge-off");
+                if (setupConv) setupConv.textContent = top.n_reasons + " reasons · " + top.conviction;
+            }
+        }
+        if (!banner) return;
+        if (!setups || setups.length === 0) {
+            banner.classList.add("hidden");
+            banner.innerHTML = "";
+            return;
+        }
+        // Prendre le setup avec le plus de raisons (haut conviction first)
+        setups.sort(function (a, b) { return (b.n_reasons || 0) - (a.n_reasons || 0); });
+        var s = setups[0];
+        var classMap = {
+            "SHORT_HIGH_CONVICTION": "msb-short",
+            "LONG_BREAKOUT": "msb-long",
+            "FADE_EXTREME": "msb-fade",
+            "NO_TRADE_ZONE": "msb-notrade",
+        };
+        var nameLabel = {
+            "SHORT_HIGH_CONVICTION": "🔻 SHORT haut conviction",
+            "LONG_BREAKOUT": "🔼 LONG breakout",
+            "FADE_EXTREME": "↩️ FADE extreme",
+            "NO_TRADE_ZONE": "⏸ NO-TRADE",
+        };
+        banner.className = "manual-setups-banner " + (classMap[s.name] || "msb-fade");
+        var reasonsHtml = (s.reasons || []).map(function (r) {
+            return '<span class="msb-reason">' + r + '</span>';
+        }).join("");
+        banner.innerHTML =
+            '<span class="msb-name">' + (nameLabel[s.name] || s.name) + ' [' + sym + ']</span>'
+            + '<span style="opacity:0.85;">' + (s.side || "") + ' · ' + (s.conviction || "") + ' · ' + s.n_reasons + ' raisons</span>'
+            + reasonsHtml;
+        banner.classList.remove("hidden");
+
+        // Anti-spam son : ne sonne qu'une fois par setup unique (60s cooldown)
+        var key = sym + "_" + s.name;
+        var nowSec = Math.floor(Date.now() / 1000);
+        var lastSeen = window.miSetupSeen[key] || 0;
+        if (s.name !== "NO_TRADE_ZONE" && (nowSec - lastSeen) > 60) {
+            window.miSetupSeen[key] = nowSec;
+            try {
+                if (typeof window.playPaperSound === "function") {
+                    window.playPaperSound("setup");
+                }
+            } catch (e) { /* silent */ }
+            // 05/05 : TTS Alerte vocale FR ("Alerte achat sur ES" / "Alerte vente sur NQ")
+            // Respecte le mute global (btn-sound-toggle) — meme localStorage que les sons.
+            try {
+                var soundOn = localStorage.getItem("mia_sound_enabled") !== "off";
+                if (soundOn && typeof window.speakSetupAlert === "function") {
+                    window.speakSetupAlert(s.name, sym);
+                }
+            } catch (e) { /* silent */ }
+        }
+    }
+
+    // ─── TTS Alerte vocale (Web Speech API native, gratuit) ─────────────────
+    // Pas de toggle separe : utilise le mute global btn-sound-toggle (mia_sound_enabled).
+    window.speakSetupAlert = function (setupName, sym) {
+        if (!window.speechSynthesis) return;
+        // Re-check mute (defense en profondeur si l'appelant n'a pas check)
+        if (localStorage.getItem("mia_sound_enabled") === "off") return;
+        var phrase = "";
+        if (setupName === "LONG_BREAKOUT") phrase = "Alerte achat sur " + sym;
+        else if (setupName === "SHORT_HIGH_CONVICTION") phrase = "Alerte vente sur " + sym;
+        else if (setupName === "FADE_EXTREME") phrase = "Alerte fade sur " + sym;
+        else return; // pas d'alerte vocale pour NO_TRADE_ZONE
+        try {
+            window.speechSynthesis.cancel();
+            var u = new SpeechSynthesisUtterance(phrase);
+            u.lang = "fr-FR";
+            u.rate = 1.05;
+            u.volume = 1.0;
+            var voices = window.speechSynthesis.getVoices();
+            var frVoice = voices.find(function (v) { return v.lang && v.lang.indexOf("fr") === 0; });
+            if (frVoice) u.voice = frVoice;
+            window.speechSynthesis.speak(u);
+        } catch (e) { /* silent */ }
+    };
+
+    // Toggle ES / NQ pour les indicateurs manuels
+    document.addEventListener("DOMContentLoaded", function () {
+        ["ES", "NQ"].forEach(function (s) {
+            var btn = document.getElementById("mi-toggle-" + s.toLowerCase());
+            if (btn) {
+                btn.addEventListener("click", function () {
+                    window.miCurrentSym = s;
+                    document.querySelectorAll(".mi-toggle-btn").forEach(function (b) { b.classList.remove("active"); });
+                    btn.classList.add("active");
+                    renderManualIndicators();
+                    renderActiveSetups();
+                    renderOrderFlowAdvanced();
+                });
+            }
+        });
+    });
+
     function fetchDashboard() {
         fetchWithAuth(API_BASE + "/api/dashboard", { method: "GET" })
             .then(function (r) { return r.json(); })
@@ -808,6 +1241,9 @@
                     }
                 }
                 renderBanner();
+                renderManualIndicators();    // 04/05 — Phase 1+3 widgets trading manuel
+                renderActiveSetups();         // 04/05 — Phase 2 banner setups composites
+                renderOrderFlowAdvanced();    // 04/05 — Bonus 4 widgets V4 (cluster/big/SMT/npoc)
                 renderCurrentPage();
                 renderSidebarStatus();
                 renderWarnings();
@@ -815,6 +1251,8 @@
                 updateChartBar();
                 injectEduIcons();
                 fetchPaperTrades();
+                fetchPaperV2();  // 02/05 : Bot 2 V2 SetupEngine state.json
+                fetchPaperV3();  // 03/05 : Bot 3 MP Market Profile state.json
                 // Reset caches avec TTL
                 if (Date.now() - ctaLastLoad > 300000) { ctaLoaded = false; }
                 if (Date.now() - vpLastLoad > 60000) { vpLoaded = false; }
@@ -935,7 +1373,15 @@
         $("banner-es-atr").textContent = "ATR " + fmt(b.es.atr, 1);
         $("banner-nq-atr").textContent = "ATR " + fmt(b.nq.atr, 1);
         $("banner-session").textContent = b.es.session || b.nq.session || "--";
-        $("banner-time").textContent = new Date().toLocaleTimeString("fr-FR");
+        // 06/05 FIX banner-time : afficher heure ET (alignee session label) + UTC
+        // pour eviter confusion "14:44 Paris + London" (etait Paris local UTC+2).
+        // Sessions DMP raisonnent en ET (Asia 18-03, London 03-09, US 09-18).
+        var nowUtc = new Date();
+        var etOpts = { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/New_York" };
+        var utcOpts = { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" };
+        var etStr = nowUtc.toLocaleTimeString("en-US", etOpts);
+        var utcStr = nowUtc.toLocaleTimeString("en-US", utcOpts);
+        $("banner-time").textContent = etStr + " ET / " + utcStr + " UTC";
     }
 
     function renderSidebarStatus() {
@@ -3929,25 +4375,43 @@
         _updateSoundToggleUI();
     }
 
-    // Toggle bot affiche (29/04 — A/B testing dual bot)
+    // Toggle bot affiche (29/04 — A/B testing dual bot ; 03/05 — extension Bot 3 MP)
     if (typeof window.currentPaperBot === "undefined") window.currentPaperBot = "bot1";
-    if (typeof window.paperDataAll === "undefined") window.paperDataAll = { bot1_dmp: null, bot2_db: null };
+    if (typeof window.paperDataAll === "undefined") window.paperDataAll = { bot1_dmp: null, bot2_db: null, bot3_mp: null };
 
     window.setPaperBot = function (which) {
         window.currentPaperBot = which;
         var b1 = document.getElementById("paper-bot-toggle-1");
         var b2 = document.getElementById("paper-bot-toggle-2");
+        var b3 = document.getElementById("paper-bot-toggle-3");
         var label = document.getElementById("paper-bot-active-label");
+        // Reset tous
+        [b1, b2, b3].forEach(function (b) {
+            if (b) { b.classList.remove("active"); b.setAttribute("aria-selected", "false"); }
+        });
+        // 05/05 : show/hide cards bot-specifiques selon selection (Jackson :
+        // les 2 tableaux Bot 2 V2 + Bot 3 MP sur la page accueil sont confus,
+        // chaque bot doit avoir SON tableau visible UNIQUEMENT dans son onglet).
+        // 06/05 REVERT Jackson : garder card v3 hidden hors onglet Bot 3.
+        // Position Bot 3 signalee par badge "1 OPEN" sur le bouton toggle
+        // (cf _updateBotToggleBadges + paper-bot-toggle-3-badge dans index.html).
+        var v2Card = document.getElementById("paper-v2-card");
+        var v3Card = document.getElementById("paper-v3-card");
+        if (v2Card) v2Card.style.display = (which === "bot2") ? "" : "none";
+        if (v3Card) v3Card.style.display = (which === "bot3") ? "" : "none";
+
         if (which === "bot1") {
             if (b1) { b1.classList.add("active"); b1.setAttribute("aria-selected", "true"); }
-            if (b2) { b2.classList.remove("active"); b2.setAttribute("aria-selected", "false"); }
             if (label) label.textContent = "DMP JSONL Sierra Chart · 262 features";
             paperData = window.paperDataAll.bot1_dmp || {};
-        } else {
+        } else if (which === "bot2") {
             if (b2) { b2.classList.add("active"); b2.setAttribute("aria-selected", "true"); }
-            if (b1) { b1.classList.remove("active"); b1.setAttribute("aria-selected", "false"); }
-            if (label) label.textContent = "Databento V4 enrichi · 421 features · Lopez meta-labeling";
+            if (label) label.textContent = "Brain V6 · V4 enrichi 456 features · 21 blocs bias + 16 votes regime + 4 gates";
             paperData = window.paperDataAll.bot2_db || {};
+        } else if (which === "bot3") {
+            if (b3) { b3.classList.add("active"); b3.setAttribute("aria-selected", "true"); }
+            if (label) label.textContent = "Bot 3 MP · 13 niveaux Tier 1/2/3 · Sim1 Phase PAPER_FULL";
+            paperData = window.paperDataAll.bot3_mp || {};
         }
         if (currentPage === "paper") renderPaperPage();
     };
@@ -3962,13 +4426,22 @@
         return 0;
     }
 
-    // Met a jour les badges OPEN sur les boutons toggle Bot 1/Bot 2
+    // Met a jour les badges OPEN sur les boutons toggle Bot 1/Bot 2/Bot 3
     function _updateBotToggleBadges() {
         var data = window.paperDataAll || {};
         var n1 = _countBotOpen(data.bot1_dmp);
         var n2 = _countBotOpen(data.bot2_db);
+        // Bot 3 : compte positions actives via paperV3Data.positions_with_countdown
+        var n3 = 0;
+        var v3 = window.paperV3Data || {};
+        if (v3.positions_with_countdown) {
+            ["NQ", "ES"].forEach(function (s) {
+                if (v3.positions_with_countdown[s]) n3++;
+            });
+        }
         var b1 = document.getElementById("paper-bot-toggle-1-badge");
         var b2 = document.getElementById("paper-bot-toggle-2-badge");
+        var b3 = document.getElementById("paper-bot-toggle-3-badge");
         if (b1) {
             if (n1 > 0) { b1.style.display = "inline-block"; b1.textContent = n1 + " OPEN"; }
             else { b1.style.display = "none"; }
@@ -3977,9 +4450,36 @@
             if (n2 > 0) { b2.style.display = "inline-block"; b2.textContent = n2 + " OPEN"; }
             else { b2.style.display = "none"; }
         }
+        if (b3) {
+            if (n3 > 0) { b3.style.display = "inline-block"; b3.textContent = n3 + " OPEN"; }
+            else { b3.style.display = "none"; }
+        }
         // FIX 30/04 (Jackson) : dots statut bot dans le toggle
         _updateBotStatusDot("paper-bot-toggle-1-status-dot", data.bot1_dmp);
         _updateBotStatusDot("paper-bot-toggle-2-status-dot", data.bot2_db);
+        // Bot 3 : utilise paperV3Data (state_age_sec via .state.ts_utc si dispo)
+        _updateBotStatusDot("paper-bot-toggle-3-status-dot", _bot3StatusEnvelope());
+    }
+
+    function _bot3StatusEnvelope() {
+        // Convertit window.paperV3Data en format attendu par _updateBotStatusDot
+        var v3 = window.paperV3Data || {};
+        if (!v3 || !v3.available) return null;
+        var ts = v3.ts_utc;
+        var ageSec = null;
+        if (ts) {
+            try {
+                ageSec = (Date.now() - new Date(ts).getTime()) / 1000;
+            } catch (e) { ageSec = null; }
+        }
+        // FIX 06/05 (Jackson) : seuil 120s aligne Bot 1/2 (paper_tracker.py).
+        // Bot 3 _persist_state n'ecrit que sur evt (touch/fill/boot), pas heartbeat
+        // regulier -> 60s = trop strict, dot rouge alors que bot vivant.
+        return {
+            paper_trader_alive: ageSec != null && ageSec < 120,
+            state_age_sec: ageSec,
+            state: v3.state || {},
+        };
     }
 
     // FIX 30/04 (Jackson) : dot vert pulse / orange pause / rouge down
@@ -4015,6 +4515,523 @@
         dot.title = title;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // BOT 2 V2 (SetupEngine 11 setups, deploye 02/05/2026 dimanche soir)
+    // ═══════════════════════════════════════════════════════════════
+    window.paperV2Data = null;
+    var _paperV2Errors = 0;
+    var _paperV2CountdownTimer = null;
+
+    function fetchPaperV2() {
+        fetchWithAuth(API_BASE + "/api/paper_v2_state", { method: "GET" })
+            .then(function (r) {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.json();
+            })
+            .then(function (d) {
+                _paperV2Errors = 0;
+                window.paperV2Data = d;
+                if (currentPage === "paper") renderPaperV2Section();
+            })
+            .catch(function (err) {
+                _paperV2Errors++;
+                if (_paperV2Errors < 5) console.warn("Paper V2 fetch error:", err);
+            });
+    }
+
+    function _formatCountdown(sec) {
+        if (sec == null || sec < 0) return "—";
+        var m = Math.floor(sec / 60);
+        var s = sec % 60;
+        return m + "m " + (s < 10 ? "0" : "") + s + "s";
+    }
+
+    function _renderPositionV2(sym, pos) {
+        if (!pos) return '<div class="v2-pos v2-pos-empty"><strong>' + sym + '</strong> : aucune position</div>';
+        var pnlTicks = "—";
+        if (pos.entry_price && window.paperV2LastPrices && window.paperV2LastPrices[sym]) {
+            // Pas dispo : on affiche juste les infos de la position
+        }
+        var trailStatus = pos.trailing_activated ? "✓ ACTIF @ " + (pos.trailing_stop_price || "?") : "—";
+        var sessionLabel = pos.session_label_entry || "—";
+        var countdown = _formatCountdown(pos.seconds_until_timeout);
+        return (
+            '<div class="v2-pos v2-pos-active" data-sym="' + sym + '" data-timeout-sec="' + (pos.seconds_until_timeout || 0) + '">' +
+            '<div class="v2-pos-header"><strong>' + sym + ' ' + (pos.side || "?") + '</strong> ' +
+            '<span class="v2-session-badge">' + sessionLabel + '</span></div>' +
+            '<div class="v2-pos-row"><span>Setup:</span><strong>' + (pos.setups || []).join(' + ') + '</strong></div>' +
+            '<div class="v2-pos-row"><span>Entry:</span><strong>' + (pos.entry_price || "?") + '</strong></div>' +
+            '<div class="v2-pos-row"><span>SL:</span><strong>' + (pos.sl_price || "?") + '</strong></div>' +
+            '<div class="v2-pos-row"><span>TP cap:</span><strong>' + (pos.tp_cap_price || "?") + '</strong></div>' +
+            '<div class="v2-pos-row"><span>Trailing:</span><strong>' + trailStatus + '</strong></div>' +
+            '<div class="v2-pos-row"><span>MFE / MAE:</span><strong>' + (pos.mfe_ticks || 0) + 't / ' + (pos.mae_ticks || 0) + 't</strong></div>' +
+            '<div class="v2-pos-row v2-countdown-row"><span>⏱ Timeout dans:</span>' +
+            '<strong class="v2-countdown" id="v2-countdown-' + sym + '">' + countdown + '</strong></div>' +
+            '</div>'
+        );
+    }
+
+    function _renderSetupStatsV2(stats) {
+        if (!stats || Object.keys(stats).length === 0) {
+            return '<div class="v2-stats-empty">Aucun trade Phase 1 collecte (en attente premiers triggers)</div>';
+        }
+        var rows = '';
+        Object.keys(stats).forEach(function (name) {
+            var s = stats[name];
+            var pnlClass = s.pnl_total_usd > 0 ? "v2-pos-pnl" : "v2-neg-pnl";
+            var sessions = Object.keys(s.sessions || {}).map(function (sess) {
+                return sess + ":" + s.sessions[sess];
+            }).join(", ");
+            var exits = Object.keys(s.exit_reasons || {}).map(function (r) {
+                return r + ":" + s.exit_reasons[r];
+            }).join(", ");
+            var soloConf = "solo:" + (s.n_solo || 0) + " conf:" + (s.n_confluence || 0);
+            rows += (
+                '<tr>' +
+                '<td>' + name + '</td>' +
+                '<td>' + s.n_trades + '</td>' +
+                '<td>' + s.wr_pct + '%</td>' +
+                '<td class="' + pnlClass + '">$' + s.pnl_total_usd + '</td>' +
+                '<td>' + s.pnl_avg_usd + '</td>' +
+                '<td>' + s.mfe_avg_ticks + 't</td>' +
+                '<td>' + s.mae_avg_ticks + 't</td>' +
+                '<td>' + soloConf + '</td>' +
+                '<td>' + sessions + '</td>' +
+                '<td>' + exits + '</td>' +
+                '</tr>'
+            );
+        });
+        return (
+            '<table class="v2-stats-table">' +
+            '<thead><tr><th>Setup</th><th>N</th><th>WR</th><th>PnL Total</th><th>PnL/trade</th>' +
+            '<th>MFE avg</th><th>MAE avg</th><th>Solo/Conf</th><th>Sessions</th><th>Exits</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>'
+        );
+    }
+
+    function renderPaperV2Section() {
+        var container = $("paper-v2-section");
+        if (!container) return;
+        var d = window.paperV2Data || {};
+        if (!d.available) {
+            container.innerHTML = '<div class="v2-banner v2-banner-down">Bot V2 non actif (state.json absent)</div>';
+            return;
+        }
+        var positions = d.positions_with_countdown || {};
+        var stats = d.setup_stats || {};
+        var modeBadge = d.phase_1_free_run
+            ? '<span class="v2-badge v2-badge-free">FREE_RUN Phase 1</span>'
+            : '<span class="v2-badge v2-badge-risk">RISK_ON</span>';
+        container.innerHTML = (
+            '<div class="v2-header">' +
+            '<h3>🤖 Bot 2 V2 — SetupEngine</h3>' +
+            modeBadge +
+            '<span class="v2-info">Trading window: ' + (d.trading_window_utc || "—") + ' UTC</span>' +
+            '<span class="v2-info">Compte: ' + (d.trade_account || "—") + '</span>' +
+            '</div>' +
+            '<div class="v2-positions-grid">' +
+            _renderPositionV2("NQ", positions.NQ) +
+            _renderPositionV2("ES", positions.ES) +
+            '</div>' +
+            '<h4>Reussite par setup (cumul session)</h4>' +
+            _renderSetupStatsV2(stats)
+        );
+
+        // Demarrer le countdown timer si pas deja actif
+        if (!_paperV2CountdownTimer) {
+            _paperV2CountdownTimer = setInterval(_tickPaperV2Countdowns, 1000);
+        }
+    }
+
+    function _tickPaperV2Countdowns() {
+        // Decremente les countdowns visuellement chaque seconde sans refetch
+        ["NQ", "ES"].forEach(function (sym) {
+            var el = $("v2-countdown-" + sym);
+            if (!el) return;
+            var posEl = el.closest(".v2-pos-active");
+            if (!posEl) return;
+            var sec = parseInt(posEl.getAttribute("data-timeout-sec") || "0", 10) - 1;
+            if (sec < 0) sec = 0;
+            posEl.setAttribute("data-timeout-sec", sec);
+            el.textContent = _formatCountdown(sec);
+            // Visual warning si <60s
+            if (sec < 60) el.classList.add("v2-countdown-warn");
+            else el.classList.remove("v2-countdown-warn");
+        });
+        // Bot 3 countdowns aussi (meme tick 1s, evite second timer)
+        ["NQ", "ES"].forEach(function (sym) {
+            var el = $("v3-countdown-" + sym);
+            if (!el) return;
+            var posEl = el.closest(".v3-pos-active");
+            if (!posEl) return;
+            var sec = parseInt(posEl.getAttribute("data-timeout-sec") || "0", 10) - 1;
+            if (sec < 0) sec = 0;
+            posEl.setAttribute("data-timeout-sec", sec);
+            el.textContent = _formatCountdown(sec);
+            if (sec < 60) el.classList.add("v3-countdown-warn");
+            else el.classList.remove("v3-countdown-warn");
+        });
+        // 06/05 Jackson : countdown generique zone principale (Bot 1 + Bot 2 + Bot 3)
+        // Calcule remaining = (ts_open + timeout_min*60) - now() — robuste vs decompte sec/sec
+        // (resiste au refresh dashboard, pas de drift, pas de desync entre bots).
+        var mainCountdowns = document.querySelectorAll('[data-paper-countdown="1"]');
+        var nowMs = Date.now();
+        mainCountdowns.forEach(function (el) {
+            var tsOpen = el.getAttribute("data-ts-open");
+            // 11/05 FIX BUG : default 30 min (etait 60 obsolete pre "30 MN PARTOUT" 08/05)
+            var timeoutMin = parseInt(el.getAttribute("data-timeout-min") || "30", 10);
+            if (!tsOpen) return;
+            try {
+                var openMs = new Date(tsOpen).getTime();
+                if (isNaN(openMs)) return;
+                var elapsedSec = Math.floor((nowMs - openMs) / 1000);
+                var remainingSec = (timeoutMin * 60) - elapsedSec;
+                if (remainingSec < 0) remainingSec = 0;
+                el.textContent = _formatCountdown(remainingSec);
+                // Couleurs visuelles : vert >30min, orange 15-30min, rouge <15min, violet <60s
+                el.classList.remove("paper-countdown-green", "paper-countdown-orange",
+                                    "paper-countdown-red", "paper-countdown-warn");
+                if (remainingSec < 60) {
+                    el.classList.add("paper-countdown-warn");
+                } else if (remainingSec < 15 * 60) {
+                    el.classList.add("paper-countdown-red");
+                } else if (remainingSec < 30 * 60) {
+                    el.classList.add("paper-countdown-orange");
+                } else {
+                    el.classList.add("paper-countdown-green");
+                }
+            } catch (e) { /* ignore */ }
+        });
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════
+    // BOT 3 MP (Market Profile, deploye 03/05/2026 dimanche soir)
+    // 13 niveaux Tier 1/2/3 sur Sim1 (compte isole), Phase 1 OBSERVE_ONLY.
+    // ═══════════════════════════════════════════════════════════════
+    window.paperV3Data = null;
+    var _paperV3Errors = 0;
+
+    function fetchPaperV3() {
+        fetchWithAuth(API_BASE + "/api/paper_v3_state", { method: "GET" })
+            .then(function (r) {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.json();
+            })
+            .then(function (d) {
+                _paperV3Errors = 0;
+                window.paperV3Data = d;
+
+                // 06/05 FIX Jackson "1 TRADE EN COURE ET FERMER MAIS ON NE VOIS PAS HISTORIQUE D ETRADE
+                // ET LE MNL RESTE A ZERO" : normaliser paperV3Data vers format Bot 1/2
+                // pour que renderPaperPage() (zone principale page paper) affiche
+                // correctement la position courante + closed_today + stats_today
+                // quand Jackson clique sur l'onglet Bot 3.
+                // Sans ce fix : window.paperDataAll.bot3_mp etait null, paperData={}
+                // -> "Aucune position ouverte", pas d'historique, PnL=0.
+                var positionsV3 = d.positions_with_countdown || {};
+                var openBySymbol = {};
+                Object.keys(positionsV3).forEach(function (sym) {
+                    var p = positionsV3[sym];
+                    if (!p) return;
+                    var TICK = 0.25;
+                    var slTicks = (p.sl_price != null && p.entry_price != null && p.entry_price > 0)
+                        ? Math.round(Math.abs(p.sl_price - p.entry_price) / TICK) : null;
+                    var tpTicks = (p.tp_cap_price != null && p.entry_price != null && p.entry_price > 0)
+                        ? Math.round(Math.abs(p.tp_cap_price - p.entry_price) / TICK) : null;
+                    openBySymbol[sym] = {
+                        direction: p.side,
+                        entry_price: p.entry_price,
+                        sl_price: p.sl_price,
+                        tp_price: p.tp_cap_price,
+                        sl_ticks: slTicks,
+                        tp_ticks: tpTicks,
+                        rr_ratio: (slTicks && tpTicks && slTicks > 0) ? (tpTicks / slTicks) : null,
+                        n_micros: p.n_contracts || 3,
+                        entry_time: p.ts_open,
+                        mfe: p.mfe_ticks,
+                        mae: p.mae_ticks,
+                        signal_id: p.signal_id,
+                        level: p.level,
+                        action: p.action,
+                    };
+                });
+                var stateAge = null;
+                if (d.ts_utc) {
+                    try { stateAge = Math.round((Date.now() - new Date(d.ts_utc).getTime()) / 1000); }
+                    catch (e) { /* ignore */ }
+                }
+                var bot3Normalized = {
+                    state: {
+                        open_by_symbol: openBySymbol,
+                        closed_today: d.closed_today || [],
+                        stats_today: d.stats_today || {},
+                        trade_account: d.trade_account || "Sim1",
+                    },
+                    // 13/05 FIX section "7/30 derniers jours" vide Bot 3 (Jackson)
+                    stats_7d: d.stats_7d,
+                    stats_30d: d.stats_30d,
+                    paper_trader_alive: d.available || false,
+                    state_age_sec: stateAge,
+                };
+                if (typeof window.paperDataAll === "undefined") {
+                    window.paperDataAll = { bot1_dmp: null, bot2_db: null, bot3_mp: null };
+                }
+                window.paperDataAll.bot3_mp = bot3Normalized;
+                // Si onglet Bot 3 actif, refresh paperData + render principal
+                if (window.currentPaperBot === "bot3") {
+                    paperData = bot3Normalized;
+                    if (currentPage === "paper") renderPaperPage();
+                }
+                if (currentPage === "paper") renderPaperV3Section();
+            })
+            .catch(function (err) {
+                _paperV3Errors++;
+                if (_paperV3Errors < 5) console.warn("Paper V3 fetch error:", err);
+            });
+    }
+
+    function _renderPositionV3(sym, pos) {
+        if (!pos) return '<div class="v3-pos v3-pos-empty"><strong>' + sym + '</strong> : aucun contact actif</div>';
+        // FIX 06/05 : state.json Bot 3 stocke `pos.level` (pas `level_name`)
+        var levelLabel = pos.level || pos.level_name || "?";
+        var tier = pos.level_tier || pos.tier || "?";
+        var side = pos.side || "?";
+        var action = pos.action || "?";   // REJECTION / BREAKOUT
+        var conf = pos.confidence != null ? pos.confidence : "—";
+        // FIX 06/05 : afficher SL/TP price absolus (state.json a sl_price + tp_cap_price)
+        var slPrice = pos.sl_price != null ? pos.sl_price : null;
+        var tpPrice = pos.tp_cap_price != null ? pos.tp_cap_price : (pos.tp_price != null ? pos.tp_price : null);
+        var slTicks = pos.sl_ticks != null ? pos.sl_ticks + "t" : "—";
+        var atrMult = pos.atr_multiplier != null ? "x" + pos.atr_multiplier : "";
+        var trailStatus = pos.trailing_activated ? "✓ ACTIF @ " + (pos.trailing_stop_price || "?") : "—";
+        var countdown = _formatCountdown(pos.seconds_until_timeout);
+        var sessionLabel = pos.session_label_entry || "—";
+        var actionBadge = action === "BREAKOUT"
+            ? '<span class="v3-action-badge v3-action-breakout">BREAK</span>'
+            : '<span class="v3-action-badge v3-action-rejection">REJECT</span>';
+        var slLine = slPrice != null
+            ? slPrice + " (" + slTicks + ")"
+            : (slTicks + " " + atrMult);
+        var tpLine = tpPrice != null ? tpPrice : "—";
+        return (
+            '<div class="v3-pos v3-pos-active" data-sym="' + sym + '" data-timeout-sec="' + (pos.seconds_until_timeout || 0) + '">' +
+            '<div class="v3-pos-header"><strong>' + sym + ' ' + side + '</strong> ' + actionBadge +
+            '<span class="v3-tier-badge v3-tier-' + tier + '">T' + tier + '</span>' +
+            '<span class="v3-session-badge">' + sessionLabel + '</span></div>' +
+            '<div class="v3-pos-row"><span>Niveau:</span><strong>' + levelLabel + '</strong></div>' +
+            '<div class="v3-pos-row"><span>Confidence:</span><strong>' + conf + '/100</strong></div>' +
+            '<div class="v3-pos-row"><span>Entry:</span><strong>' + (pos.entry_price || "?") + '</strong></div>' +
+            '<div class="v3-pos-row"><span>SL:</span><strong>' + slLine + '</strong></div>' +
+            '<div class="v3-pos-row"><span>TP:</span><strong>' + tpLine + '</strong></div>' +
+            '<div class="v3-pos-row"><span>Trailing:</span><strong>' + trailStatus + '</strong></div>' +
+            '<div class="v3-pos-row"><span>MFE / MAE:</span><strong>' + (pos.mfe_ticks || 0) + 't / ' + (pos.mae_ticks || 0) + 't</strong></div>' +
+            '<div class="v3-pos-row v3-countdown-row"><span>⏱ Timeout dans:</span>' +
+            '<strong class="v3-countdown" id="v3-countdown-' + sym + '">' + countdown + '</strong></div>' +
+            '</div>'
+        );
+    }
+
+    function _renderLevelStatsV3(stats) {
+        if (!stats || Object.keys(stats).length === 0) {
+            return '<div class="v3-stats-empty">Aucun contact niveau collecte (en attente premiers triggers)</div>';
+        }
+        // Tri : par n_contacts desc
+        var entries = Object.keys(stats).map(function (k) {
+            return [k, stats[k]];
+        }).sort(function (a, b) {
+            return (b[1].n_contacts || 0) - (a[1].n_contacts || 0);
+        });
+        var rows = '';
+        entries.forEach(function (e) {
+            var name = e[0];
+            var s = e[1];
+            var goPct = s.n_contacts > 0 ? Math.round((s.n_go / s.n_contacts) * 100) : 0;
+            var pnlClass = (s.pnl_total_usd || 0) > 0 ? "v3-pos-pnl" : "v3-neg-pnl";
+            var rejLive = s.rejection_rate_live != null ? s.rejection_rate_live + "%" : "—";
+            var rejBase = s.baseline_rej != null ? s.baseline_rej + "%" : "—";
+            var pfLive = s.pf != null ? s.pf : "—";
+            var pfBase = s.baseline_pf != null ? s.baseline_pf : "—";
+            rows += (
+                '<tr>' +
+                '<td>' + name + '</td>' +
+                '<td><span class="v3-tier-mini v3-tier-' + (s.tier || 1) + '">T' + (s.tier || 1) + '</span></td>' +
+                '<td>' + (s.n_contacts || 0) + '</td>' +
+                '<td>' + (s.n_go || 0) + '</td>' +
+                '<td>' + goPct + '%</td>' +
+                '<td>' + rejLive + ' <span class="v3-baseline">/ ' + rejBase + '</span></td>' +
+                '<td>' + pfLive + ' <span class="v3-baseline">/ ' + pfBase + '</span></td>' +
+                '<td class="' + pnlClass + '">$' + (s.pnl_total_usd || 0) + '</td>' +
+                '<td>' + (s.avg_confidence != null ? s.avg_confidence : "—") + '</td>' +
+                '</tr>'
+            );
+        });
+        return (
+            '<table class="v3-stats-table">' +
+            '<thead><tr><th>Niveau</th><th>Tier</th><th>Contacts</th><th>GO</th><th>GO%</th>' +
+            '<th>Rej% live/base</th><th>PF live/base</th><th>PnL Total</th><th>Conf avg</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>'
+        );
+    }
+
+    function _renderRecentDecisionsV3(decisions) {
+        if (!decisions || decisions.length === 0) {
+            return '<div class="v3-decisions-empty">Aucune decision recente (en attente premiers contacts)</div>';
+        }
+        var rows = '';
+        // Reverse pour afficher la plus recente en haut
+        var sorted = decisions.slice().reverse();
+        sorted.forEach(function (d) {
+            var ts = d.ts || d.bar_ts || "?";
+            // Tronque ts pour affichage compact (ISO → HH:MM:SS)
+            var tsShort = ts;
+            if (typeof ts === "string" && ts.indexOf("T") >= 0) {
+                tsShort = ts.split("T")[1].slice(0, 8);
+            }
+            var decClass = d.decision === "GO"
+                ? "v3-dec-go"
+                : (d.decision && d.decision.indexOf("VETO") === 0 ? "v3-dec-veto" : "v3-dec-skip");
+            var decLabel = d.decision === "GO" ? "✓ GO" : (d.reason || d.decision || "?");
+            rows += (
+                '<tr class="' + decClass + '">' +
+                '<td>' + tsShort + '</td>' +
+                '<td>' + (d.symbol || d.sym || "?") + '</td>' +
+                '<td>' + (d.level_name || d.level || "?") + '</td>' +
+                '<td>' + decLabel + '</td>' +
+                '</tr>'
+            );
+        });
+        return (
+            '<table class="v3-decisions-table">' +
+            '<thead><tr><th>Heure</th><th>Sym</th><th>Niveau</th><th>Decision / Reason</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>'
+        );
+    }
+
+    function renderPaperV3Section() {
+        var container = $("paper-v3-section");
+        if (!container) return;
+        var d = window.paperV3Data || {};
+        if (!d.available) {
+            container.innerHTML = '<div class="v3-banner v3-banner-down">Bot 3 MP non actif (state.json absent)</div>';
+            return;
+        }
+        var positions = d.positions_with_countdown || {};
+        var levelStats = d.level_stats || {};
+        var decisions = d.recent_decisions || [];
+        var phase = d.phase || "OBSERVE_ONLY";
+        var phaseClass = phase === "OBSERVE_ONLY" ? "v3-phase-observe" : "v3-phase-paper";
+        var phaseBadge = '<span class="v3-badge ' + phaseClass + '">' + phase + '</span>';
+        var modeFlags = [];
+        if (d.trade_rejections) modeFlags.push("REJECTIONS");
+        if (d.trade_breakouts) modeFlags.push("BREAKOUTS");
+        if (d.tier2_enabled) modeFlags.push("TIER2");
+        if (d.tier3_enabled) modeFlags.push("TIER3");
+        var flagsBadge = modeFlags.length
+            ? '<span class="v3-info v3-flags">' + modeFlags.join(" + ") + '</span>'
+            : '';
+
+        // Counters today
+        var contactsTotal = (d.n_contacts_today && (d.n_contacts_today.NQ || 0) + (d.n_contacts_today.ES || 0)) || 0;
+        var goTotal = (d.n_go_today && (d.n_go_today.NQ || 0) + (d.n_go_today.ES || 0)) || 0;
+        var skipTotal = (d.n_skip_today && (d.n_skip_today.NQ || 0) + (d.n_skip_today.ES || 0)) || 0;
+        var vetoTotal = (d.n_veto_today && (d.n_veto_today.NQ || 0) + (d.n_veto_today.ES || 0)) || 0;
+        var counters = (
+            '<div class="v3-counters">' +
+            '<span class="v3-counter v3-counter-contacts">Contacts: <strong>' + contactsTotal + '</strong></span>' +
+            '<span class="v3-counter v3-counter-go">GO: <strong>' + goTotal + '</strong></span>' +
+            '<span class="v3-counter v3-counter-skip">SKIP: <strong>' + skipTotal + '</strong></span>' +
+            '<span class="v3-counter v3-counter-veto">VETO: <strong>' + vetoTotal + '</strong></span>' +
+            '</div>'
+        );
+
+        // FIX Jackson 06/05 : journal trades fermes du jour (closed_today)
+        var closedToday = d.closed_today || [];
+        var tradeCountToday = d.trade_count_today || 0;
+
+        container.innerHTML = (
+            '<div class="v3-header">' +
+            '<h3>📐 Bot 3 MP — Market Profile (13 niveaux)</h3>' +
+            phaseBadge +
+            flagsBadge +
+            '<span class="v3-info">Trading window: ' + (d.trading_window_utc || "—") + ' UTC</span>' +
+            '<span class="v3-info">Compte: ' + (d.trade_account || "Sim1") + '</span>' +
+            '<span class="v3-info">Trades cloturés aujourd\'hui: <strong>' + tradeCountToday + '</strong></span>' +
+            '</div>' +
+            counters +
+            '<div class="v3-positions-grid">' +
+            _renderPositionV3("NQ", positions.NQ) +
+            _renderPositionV3("ES", positions.ES) +
+            '</div>' +
+            '<h4>Trades cloturés aujourd\'hui (' + closedToday.length + ', cap 50)</h4>' +
+            _renderClosedTradesV3(closedToday) +
+            '<h4>Niveaux Market Profile (cumul session)</h4>' +
+            _renderLevelStatsV3(levelStats) +
+            '<h4>Decisions recentes (20 dernieres) <span class="v3-feed-live">LIVE</span></h4>' +
+            _renderRecentDecisionsV3(decisions)
+        );
+        // Le timer countdown est partage avec Bot 2 (_tickPaperV2Countdowns)
+        // qui boucle aussi sur ["NQ","ES"] elements v3-countdown-*
+    }
+
+    // FIX Jackson 06/05 : tableau trades cloturés du jour Bot 3 (closed_today)
+    function _renderClosedTradesV3(closed) {
+        if (!closed || !closed.length) {
+            return '<div class="v3-empty">Aucun trade cloturé aujourd\'hui</div>';
+        }
+        // Ordre chrono inverse (plus recent en haut)
+        var sorted = closed.slice().reverse();
+        var rows = sorted.map(function (t) {
+            var ts = t.ts_close ? new Date(t.ts_close).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" }) + " UTC" : "?";
+            // pnl_known=False (TIMEOUT Bot 3 sans fill propage) -> afficher "—"
+            // pour ne pas polluer le total P&L dashboard avec faux flat.
+            // Schema aligne Bot 1/2 : `pnl_usd`, `duration_sec` (vs Bot 3 prev `pnl_dollars`/`duration_s`).
+            // pnl_estimated=true (FIX 07/05 Solution A) : suffix "*" pour distinguer
+            // estim (close bar approx) vs known (TP/SL fill capture).
+            var pnlKnown = t.pnl_known !== false && t.pnl_ticks != null;
+            var pnlEstimated = t.pnl_estimated === true;
+            var estSuffix = pnlEstimated ? '*' : '';
+            var pnl = pnlKnown ? Number(t.pnl_ticks).toFixed(2) + 't' + estSuffix : "—";
+            var pnlUsdVal = (t.pnl_usd != null) ? t.pnl_usd : t.pnl_dollars;
+            var pnlUsd = pnlKnown && pnlUsdVal != null ? '$' + Number(pnlUsdVal).toFixed(2) + estSuffix : "—";
+            var pnlClass = !pnlKnown ? "v3-pnl-flat" :
+                           (t.pnl_ticks > 0) ? "v3-pnl-pos" :
+                           (t.pnl_ticks < 0) ? "v3-pnl-neg" : "v3-pnl-flat";
+            var durSec = t.duration_sec != null ? t.duration_sec : t.duration_s;
+            var dur = durSec != null ? (durSec >= 60 ? Math.round(durSec / 60) + "m" : durSec + "s") : "?";
+            var reasonClass = (t.reason === "TP") ? "v3-reason-tp" :
+                              (t.reason === "SL") ? "v3-reason-sl" :
+                              (t.reason && t.reason.indexOf("TIMEOUT") >= 0) ? "v3-reason-timeout" : "";
+            // Schema Bot 3 JSONL (source de verite) utilise `symbol` (pas `sym`)
+            // pour alignement avec Bot 1/2 audit cross-bot.
+            var symLabel = t.symbol || t.sym || "?";
+            return (
+                '<tr>' +
+                '<td>' + ts + '</td>' +
+                '<td><strong>' + symLabel + '</strong></td>' +
+                '<td>' + (t.side || "?") + '</td>' +
+                '<td>' + (t.level || "?") + '</td>' +
+                '<td>' + (t.entry_price != null ? t.entry_price : "?") + '</td>' +
+                '<td>' + (t.exit_price != null ? t.exit_price : "—") + '</td>' +
+                '<td><span class="' + reasonClass + '">' + (t.reason || "?") + '</span></td>' +
+                '<td class="' + pnlClass + '"><strong>' + pnl + '</strong></td>' +
+                '<td class="' + pnlClass + '">' + pnlUsd + '</td>' +
+                '<td>' + dur + '</td>' +
+                '</tr>'
+            );
+        }).join("");
+        return (
+            '<div class="v3-closed-trades">' +
+            '<table class="v3-table"><thead>' +
+            '<tr>' +
+            '<th>Heure (UTC)</th><th>Sym</th><th>Side</th><th>Niveau</th>' +
+            '<th>Entry</th><th>Exit</th><th>Reason</th><th>P&L ticks</th><th>P&L $</th><th>Durée</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>' +
+            '</div>'
+        );
+    }
+
     function fetchPaperTrades() {
         // FIX 29/04 (Jackson) : utilise endpoint dual pour avoir bot1 + bot2.
         fetchWithAuth(API_BASE + "/api/paper_trades_dual", { method: "GET" })
@@ -4024,18 +5041,36 @@
             })
             .then(function (d) {
                 paperFetchErrors = 0;
+                // FIX 08/05 oscillation Bot 3 : preserver bot3_mp (set par fetchPaperV3
+                // dans une autre source). Avant : on ecrasait paperDataAll a chaque fetch
+                // -> paperDataAll.bot3_mp passait a undefined -> "0 trades $0"
+                // -> next tick fetchPaperV3 re-set -> "5 trades -$60"
+                // -> oscillation visible UI permanente.
+                var prev_bot3 = (window.paperDataAll && window.paperDataAll.bot3_mp) || null;
                 window.paperDataAll = {
                     bot1_dmp: d.bot1_dmp || null,
                     bot2_db: d.bot2_db || null,
+                    bot3_mp: prev_bot3,  // preserve dernier fetch fetchPaperV3
                 };
                 // FIX 30/04 (Jackson "ON AURAIS DU A VOIR UN TIMER") : stocker
                 // eco_status partage par les 2 bots pour afficher "Bot reprend
                 // dans HH:MM" pendant les pauses session (close US, weekend, FOMC).
                 window.paperEcoStatus = d.eco_status || null;
-                // Affecte paperData selon bot actif
-                paperData = window.paperDataAll[
-                    window.currentPaperBot === "bot1" ? "bot1_dmp" : "bot2_db"
-                ] || {};
+                // FIX 08/05 oscillation Bot 3 : ne PAS toucher paperData quand
+                // currentPaperBot === "bot3". L'endpoint /api/paper_trades_dual ne retourne
+                // PAS bot3 data (seul fetchPaperV3 le fait). Si on reset paperData ici,
+                // pendant les 200-500ms entre les 2 fetches paperData={} -> "0 trades $0"
+                // puis bascule. Bot 2 stable car bot2_db retourne par cet endpoint direct.
+                if (window.currentPaperBot === "bot3") {
+                    // Bot 3 gere par fetchPaperV3 cycle separe — skip update ici
+                    _updateBotToggleBadges();
+                    return;
+                }
+                if (window.currentPaperBot === "bot1") {
+                    paperData = window.paperDataAll.bot1_dmp || {};
+                } else {
+                    paperData = window.paperDataAll.bot2_db || {};
+                }
                 _detectTradeEvents(paperData && paperData.state);
                 renderPaperBadge();
                 _updateBotToggleBadges();  // FIX 29/04 : badges OPEN sur toggle
@@ -4144,6 +5179,12 @@
 
     function renderPaperPage() {
         if (!paperData) return;
+        // 06/05 Jackson : assurer que le timer countdown 1s tourne sur page paper
+        // (avant : demarre uniquement dans renderPaperV2Section, donc countdowns
+        // Bot 1 + Bot 3 zone principale jamais update si onglet Bot 2 jamais ouvert)
+        if (!_paperV2CountdownTimer) {
+            _paperV2CountdownTimer = setInterval(_tickPaperV2Countdowns, 1000);
+        }
         var state = paperData.state || {};
 
         // ── Statut trader
@@ -4238,48 +5279,48 @@
                     var dir = _isLong(p.direction) ? 'BUY' : 'SELL';
                     var dirColor = _isLong(p.direction) ? 'var(--green)' : 'var(--red)';
 
-                    // FIX 30/04 v5 (Jackson "GROS DECALAGE PnL Sierra vs dashboard") :
-                    // recalculer P/L unrealized live a partir du banner price (DMP, latency
-                    // ~5s) au lieu du current_price state.json Bot 2 (Databento V4, latency
-                    // ~1min entre 2 bars). Cas observe : SHORT 7239 + state.current_price=7234.50
-                    // (vieux) → +18t affiche ; mais banner=7239.75 (live) → -3t reel.
-                    // Decalage potentiel = lag bar Bot 2 entre 2 polls.
-                    var bannerPrice = null;
-                    try {
-                        // 🆕 v97 FIX 01/05 : window.data.banner a des cles LOWERCASE
-                        // (es/nq via build_price_banner builders.py:109) mais sym ici
-                        // est UPPERCASE (ES/NQ) depuis state.open_by_symbol.
-                        // v96 lookup [sym] = undefined → bannerPrice null → fallback
-                        // p.current_price (stale Bot 2 Databento ~1min) → P/L figé.
-                        var symLow = (sym || "").toLowerCase();
-                        if (window.data && window.data.banner && window.data.banner[symLow]) {
-                            bannerPrice = window.data.banner[symLow].price;
-                        }
-                    } catch (e) { /* ignore */ }
-                    var unrealized, unrealizedTicks, livePriceUsed;
+                    // FIX 01/05 v100 (Jackson "BOT 1 DASHBOARD +21$ ALORS QUE SIERRA -1t") :
+                    // INVERSION du fix v5 30/04, devenu OBSOLETE depuis le refactor
+                    // LIVE override Bot 2 (01/05 14:57). Avant : Bot 2 current_price
+                    // venait du parquet stale 30 min → banner plus frais → fix v5 utilisait
+                    // banner. Aujourd'hui :
+                    //   - Bot 1 Sierra DTC : current_price = DTC live tick (<1s frais)
+                    //   - Bot 2 Databento : current_price = LIVE cache (~60s, refactor 01/05)
+                    //   - banner DMP JSONL : ~60s lag (bar 1m close)
+                    // → state.current_price est PLUS FRAIS que banner pour les 2 bots.
+                    // → utiliser unrealized_pnl_usd state.json par defaut (calcule par
+                    //   le bot avec sa propre source live, deja correct).
                     var TICK = 0.25;
                     var TICK_VAL = (sym === "ES") ? 1.25 : 0.50;
                     var nMicros = p.n_micros || 3;
-                    // 🆕 v96 FIX 30/04/2026 (Jackson "DASHBOARD COMPTE 1 CONTRAT
-                    // ALORS QU ON TRADE A 3 CONTRATS"). Sierra Chart affiche le
-                    // P/L TOTAL en ticks (16t/contrat * 3 = 48T). v95 affichait
-                    // 16t (par contrat) → desalignement visuel x3 vs SC. Fix :
-                    // multiplier les ticks par n_micros pour matcher SC.
-                    // unrealized USD est correct (deja * nMicros ligne 4253).
-                    // Convention Python `unrealized_pnl_ticks` reste PAR contrat
-                    // (mia_paper_trader.py:1781) → multiplier aussi en fallback.
-                    if (bannerPrice && p.entry_price) {
-                        var sign = _isLong(p.direction) ? 1 : -1;
-                        var ticksPerContract = Math.round(((bannerPrice - p.entry_price) / TICK) * sign);
-                        unrealizedTicks = ticksPerContract * nMicros;  // TOTAL aligne SC
-                        unrealized = Math.round(ticksPerContract * TICK_VAL * nMicros * 100) / 100;
-                        livePriceUsed = bannerPrice;
-                    } else {
-                        // Fallback : valeurs state.json (peuvent etre obsoletes)
-                        unrealized = (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null) ? p.unrealized_pnl_usd : 0;
-                        var fallbackPerContract = (p.unrealized_pnl_ticks !== undefined && p.unrealized_pnl_ticks !== null) ? p.unrealized_pnl_ticks : null;
-                        unrealizedTicks = (fallbackPerContract !== null) ? Math.round(fallbackPerContract * nMicros) : null;
+                    var unrealized, unrealizedTicks, livePriceUsed;
+                    // SOURCE PRIORITAIRE : state.json (calculs faits cote bot avec live source)
+                    if (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null
+                        && p.current_price !== undefined && p.current_price !== null) {
+                        unrealized = p.unrealized_pnl_usd;
+                        var perContract = (p.unrealized_pnl_ticks !== undefined && p.unrealized_pnl_ticks !== null) ? p.unrealized_pnl_ticks : 0;
+                        unrealizedTicks = Math.round(perContract * nMicros);  // TOTAL aligne SC
                         livePriceUsed = p.current_price;
+                    } else {
+                        // Fallback rare : state.json incomplet → recalc depuis banner
+                        var bannerPrice = null;
+                        try {
+                            var symLow = (sym || "").toLowerCase();
+                            if (window.data && window.data.banner && window.data.banner[symLow]) {
+                                bannerPrice = window.data.banner[symLow].price;
+                            }
+                        } catch (e) { /* ignore */ }
+                        if (bannerPrice && p.entry_price) {
+                            var sign = _isLong(p.direction) ? 1 : -1;
+                            var ticksPerContract = Math.round(((bannerPrice - p.entry_price) / TICK) * sign);
+                            unrealizedTicks = ticksPerContract * nMicros;
+                            unrealized = Math.round(ticksPerContract * TICK_VAL * nMicros * 100) / 100;
+                            livePriceUsed = bannerPrice;
+                        } else {
+                            unrealized = 0;
+                            unrealizedTicks = 0;
+                            livePriceUsed = p.entry_price || 0;
+                        }
                     }
                     var upnlColor = unrealized >= 0 ? 'var(--green)' : 'var(--red)';
 
@@ -4308,7 +5349,12 @@
                         (p.bars_held !== undefined && p.bars_held !== null ? '<div style="grid-column:1/-1;color:var(--text-disabled);font-size:0.75rem;">Bars : ' + p.bars_held + '</div>' : '') +
                         (p.sl_wall ? '<div style="grid-column:1/-1;color:var(--text-secondary);">Wall SL : <strong>' + p.sl_wall + '</strong>' + (p.sl_tier ? ' (' + p.sl_tier + ')' : '') + (p.tp_wall ? ' · Wall TP : <strong>' + p.tp_wall + '</strong>' : '') + '</div>' : '') +
                         (p.rr_ratio ? '<div style="grid-column:1/-1;color:var(--text-secondary);">R:R : <strong>' + p.rr_ratio.toFixed(2) + '</strong>' + (p.expected_payoff_usd !== undefined ? ' · E[$] : <strong>$' + p.expected_payoff_usd.toFixed(2) + '</strong>' : '') + '</div>' : '') +
-                        (p.entry_time ? '<div style="grid-column:1/-1;color:var(--text-disabled);font-size:0.75rem;margin-top:4px;">Ouvert : ' + p.entry_time + '</div>' : '') +
+                        // 06/05 Jackson : chrono countdown timeout defile chaque seconde
+                        // 11/05 FIX BUG : timeout_min lu depuis payload position (p.timeout_min)
+                        // sinon fallback 30 (Bot 1+2+3 ont tous "30 MN PARTOUT" depuis 08/05).
+                        // Etait hardcode 60 = affichait "46m" sur trades de 17min (bug visible).
+                        (p.entry_time ? '<div style="grid-column:1/-1;color:var(--orange,#ff9800);font-size:0.85rem;margin-top:4px;">⏱ Timeout dans : <strong class="paper-countdown" data-paper-countdown="1" data-ts-open="' + p.entry_time + '" data-timeout-min="' + (p.timeout_min || 30) + '">--:--</strong></div>' : '') +
+                        (p.entry_time ? '<div style="grid-column:1/-1;color:var(--text-disabled);font-size:0.75rem;margin-top:2px;">Ouvert : ' + p.entry_time + '</div>' : '') +
                         '</div>' +
                         '</div>';
                 });
@@ -4343,8 +5389,21 @@
                 closedToday.slice().reverse().forEach(function (t) {
                     var dirTxt = _isLong(t.direction) ? 'BUY' : 'SELL';
                     var dirColor = _isLong(t.direction) ? 'var(--green)' : 'var(--red)';
-                    var pnl = t.pnl_usd || 0;
-                    var pnlC = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+                    // FIX 07/05 (Jackson "C SUSPECT 0 PILE") : respecter pnl_known
+                    // pour TIMEOUT Bot 3 (fill 209 jamais remonte). Affiche "—" au
+                    // lieu de "$0.00" mensonger.
+                    // pnl_estimated=true (Solution A) : afficher "$X.XX*" pour
+                    // distinguer estim (close bar) vs known (TP/SL fill capture).
+                    var pnlKnown = t.pnl_known !== false && t.pnl_ticks != null;
+                    var pnlEstimated = t.pnl_estimated === true;
+                    var pnl = pnlKnown ? (t.pnl_usd || 0) : null;
+                    var pnlC = !pnlKnown ? 'var(--text-secondary)' :
+                               (pnl >= 0 ? 'var(--green)' : 'var(--red)');
+                    var estSuffix = pnlEstimated ? '*' : '';
+                    var pnlTicksDisplay = pnlKnown ? (t.pnl_ticks != null ? t.pnl_ticks : 0) + estSuffix : "—";
+                    var pnlUsdDisplay = pnlKnown ?
+                        ((pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2) + estSuffix) :
+                        "—";
                     var reason = t.exit_reason || '?';
                     var reasonColor = reason === 'TP' ? 'var(--green)' : (reason === 'SL' ? 'var(--red)' : 'var(--text-secondary)');
                     var exitTime = t.exit_time ? (t.exit_time.substring(11, 19)) : '?';
@@ -4353,10 +5412,10 @@
                         '<td style="text-align:center;font-weight:700;">' + t.symbol + '</td>' +
                         '<td style="text-align:center;color:' + dirColor + ';">' + dirTxt + '</td>' +
                         '<td style="text-align:center;">' + fmtPrice(t.entry_price) + '</td>' +
-                        '<td style="text-align:center;">' + fmtPrice(t.exit_price) + '</td>' +
+                        '<td style="text-align:center;">' + (t.exit_price != null ? fmtPrice(t.exit_price) : "—") + '</td>' +
                         '<td style="text-align:center;color:' + reasonColor + ';font-weight:700;">' + reason + '</td>' +
-                        '<td style="text-align:center;">' + (t.pnl_ticks || 0) + '</td>' +
-                        '<td style="text-align:center;color:' + pnlC + ';font-weight:700;">' + (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2) + '</td>' +
+                        '<td style="text-align:center;">' + pnlTicksDisplay + '</td>' +
+                        '<td style="text-align:center;color:' + pnlC + ';font-weight:700;">' + pnlUsdDisplay + '</td>' +
                         '<td style="text-align:center;color:var(--text-disabled);">' + (t.duration_sec ? Math.round(t.duration_sec / 60) + 'min' : '?') + '</td>' +
                         '</tr>';
                 });
@@ -4377,12 +5436,21 @@
             var maxTrades = state.max_trades_per_day || 9999;
             var maxTradesDisplay = (maxTrades >= 9999) ? '∞' : maxTrades;
             var maxAtteint = (maxTrades < 9999 && count >= maxTrades);
+            // 🆕 04/05 LEVIER #2 : affiche config circuit breaker + compteur progressif
+            var cbCfg = state.circuit_breaker_config || {};
+            var cbThreshold = cbCfg.losses_threshold || 0;
+            var cbPauseMin = cbCfg.pause_min || 0;
+            var cbActive = cbCfg.active || false;
+            var cbCfgLabel = cbActive ?
+                ('Circuit: ' + cbThreshold + ' SL → pause ' + cbPauseMin + ' min') :
+                'Circuit: désactivé';
             var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">';
             html += '<div style="padding:8px;border:1px solid var(--border);border-radius:6px;">' +
                 '<div style="color:var(--text-secondary);font-size:0.75rem;">Trades du jour</div>' +
                 '<div style="font-size:1.125rem;font-weight:700;margin-top:3px;">' + count + ' / ' + maxTradesDisplay + '</div>' +
                 (maxAtteint ? '<div style="color:var(--red);font-size:0.75rem;margin-top:2px;">Max atteint</div>' :
                  (maxTrades >= 9999 ? '<div style="color:var(--text-disabled);font-size:0.7rem;margin-top:2px;">Illimite (paper)</div>' : '')) +
+                '<div style="font-size:0.7rem;color:var(--text-disabled);margin-top:4px;border-top:1px solid var(--border);padding-top:4px;">' + cbCfgLabel + '</div>' +
                 '</div>';
             ['ES', 'NQ'].forEach(function (sym) {
                 var cs = cooldown[sym] || {};
@@ -4397,8 +5465,16 @@
                 } else if (cd > 0) {
                     html += '<div style="color:#ff9800;font-weight:700;margin-top:3px;">⏳ Cooldown ' + Math.round(cd / 60) + ' min</div>';
                 } else {
-                    html += '<div style="color:var(--green);margin-top:3px;">✓ Pret</div>' +
-                        (losses > 0 ? '<div style="font-size:0.75rem;color:var(--text-disabled);">' + losses + ' pertes consec.</div>' : '');
+                    html += '<div style="color:var(--green);margin-top:3px;">✓ Pret</div>';
+                }
+                // 🆕 LEVIER #2 : compteur progressif perte consec (warning visuel avant trigger)
+                if (cbActive && cbThreshold > 0) {
+                    var ratio = losses / cbThreshold;
+                    var lossColor = ratio >= 0.99 ? 'var(--red)' :
+                                    ratio >= 0.66 ? '#ff9800' :
+                                    ratio >= 0.33 ? '#ffc107' : 'var(--text-disabled)';
+                    html += '<div style="font-size:0.7rem;color:' + lossColor + ';margin-top:4px;border-top:1px solid var(--border);padding-top:4px;">' +
+                            'SL consec: <strong>' + losses + '/' + cbThreshold + '</strong></div>';
                 }
                 html += '</div>';
             });
@@ -5450,6 +6526,63 @@
             body: "Les CTA (Commodity Trading Advisors) sont des <strong>fonds systematiques qui gerent des centaines de milliards</strong>. Ils suivent les tendances mecaniquement. Ce tableau montre leur position sur 10 instruments : positive = LONG, negative = SHORT. Le z-score 3 mois mesure a quel point leur position est extreme par rapport a l'historique recent.",
             action: "Quand les CTA sont massivement SHORT et le marche monte, ils doivent racheter = short squeeze violent. Un z-score &gt;1.5 = position crowded, risque de retournement. Un changement rapide (&gt;0.3/jour) = les algos detectent un changement de regime.",
         },
+        // ─── Manual Indicators (Jackson 04/05/2026) ───
+        "mi-vwap-tip": {
+            title: "VWAP Triple Align",
+            body: "Les <strong>3 dots D/W/M</strong> montrent la position du prix par rapport au VWAP <strong>Daily, Weekly et Monthly</strong>. Vert = au-dessus (bias acheteur institutionnel), rouge = en-dessous (bias vendeur), gris = neutre. La <strong>fleche</strong> indique la pente du VWAP daily sur les 10 dernieres barres : ↗ trend up, ↘ trend dn, → flat.",
+            action: "Trade <strong>DANS le sens des 3 dots alignes</strong>. 3 verts + ↗ = trend up institutionnel, prefere LONG sur replis. 3 rouges + ↘ = trend dn, prefere SHORT sur rebonds. Mix de couleurs = pas d'edge directionnel clair, attends ou scalpe les deux cotes.",
+        },
+        "mi-rvol-tip": {
+            title: "RVOL z-score",
+            body: "<strong>RVOL = volume actuel vs moyenne historique</strong> a la meme heure. Le z-score le normalise : -2 = tres calme, 0 = normal, +2 = exceptionnel. La gauge se colore : rouge (&lt;-0.5 = mort), gris (0-1 = normal), vert (&gt;1 = eleve), vert vif (&gt;2 = exceptionnel).",
+            action: "Trade <strong>SEULEMENT en zone verte (z&gt;1)</strong> = il y a de la conviction. Z &lt;-0.5 = no-trade, le marche dort. Z &gt;2 + niveau cle touche = barre de retournement / breakout probable. Evite les scalps quand la gauge est grise.",
+        },
+        "mi-divergence-tip": {
+            title: "Delta Divergence (clean)",
+            body: "Detecte une <strong>divergence entre delta et prix</strong> : prix monte mais delta baisse (acheteurs essoufles → signal SELL) ou prix baisse mais delta monte (vendeurs essoufles → signal BUY). La <strong>force 0-100</strong> mesure l'amplitude. Seuil d'affichage &gt;50.",
+            action: "<strong>BUY/SELL avec force &gt;60</strong> = signal reversal robuste. <strong>Toujours combiner</strong> avec un niveau touche (swing, VWAP, MQ wall) pour valider l'entree. Seul = bruit, jamais standalone. Force &lt;50 = ignoree.",
+        },
+        "mi-wall-tip": {
+            title: "Next Wall (MenthorQ)",
+            body: "Distance en ticks vers le <strong>prochain mur MenthorQ</strong> (Call resistance ou Put support). <strong>CALL</strong> = mur au-dessus (resistance), <strong>PUT</strong> = mur en-dessous (support). Le widget pulse en orange quand la distance est &lt;8 ticks = zone de reaction probable.",
+            action: "<strong>&lt;8 ticks d'un wall</strong> = zone reaction : prefere fade (mean reversion). <strong>&gt;15 ticks</strong> = espace pour courir, breakout favorable. Wall <strong>CALL &lt;8t</strong> = setup SHORT. Wall <strong>PUT &lt;8t</strong> = setup LONG. Les walls sont de vrais murs gamma defendus.",
+        },
+        "mi-trapped-tip": {
+            title: "Trapped Traders @ niveau",
+            body: "Detecte les <strong>acheteurs/vendeurs piegers a un niveau cle</strong>. <strong>TRAP BUY</strong> (rouge) = acheteurs piegers en haut → bias SHORT (ils devront vendre). <strong>TRAP SELL</strong> (vert) = vendeurs piegers en bas → bias LONG (ils devront racheter). Les compteurs B/S = nombre de zones actives.",
+            action: "<strong>Trapped + Divergence dans le meme sens = setup haut conviction</strong>. Exemple : TRAP BUY @ swing high + DIV SELL = SHORT premium (les gros acheteurs vont devoir capituler). Setup classique Wyckoff/SMT, edge documente. Combine TOUJOURS avec un niveau structurel.",
+        },
+        "mi-poc-tip": {
+            title: "POC Migration",
+            body: "Le <strong>POC = Point Of Control</strong>, le prix avec le plus gros volume traite. La migration mesure la direction de deplacement du POC sur 10 dernieres barres. <strong>v</strong> = vitesse de migration, <strong>p</strong> = position du POC dans le range [0=bas, 1=haut]. Etats : UP (↑MIG), DN (↓MIG), STABLE.",
+            action: "<strong>POC migre UP avec p&lt;0.5</strong> = accumulation, signal LONG. <strong>POC migre DN avec p&gt;0.5</strong> = distribution, signal SHORT. <strong>POC stable + p extreme</strong> (&gt;0.85 ou &lt;0.15) = range, fade les extremes. La vitesse v&gt;0.5 indique migration forte.",
+        },
+        "mi-absorb-tip": {
+            title: "Absorption @ niveau",
+            body: "Detecte une <strong>absorption d'ordres au niveau</strong>. <strong>BID DEFENDED</strong> (vert) = main forte qui ACHETE pour defendre un support → bias LONG. <strong>ASK DEFENDED</strong> (rouge) = main forte qui VEND pour defendre une resistance → bias SHORT. S'active SEULEMENT si prix proche d'un niveau (&lt;5 ticks).",
+            action: "<strong>BID DEF + niveau</strong> = base solide pour LONG (bounce attendu). <strong>ASK DEF + niveau</strong> = top solide pour SHORT (rejet attendu). <strong>Combine avec Trapped traders</strong> pour confirmation max. Pattern Bookmap classique : on voit la grosse main qui absorbe l'agression.",
+        },
+        // ─── Order Flow Avance V4 (04/05/2026 — refactor sources live) ───
+        "ofa-cluster-tip": {
+            title: "Volume concentre @ niveau structurel",
+            body: "Detecte une <strong>concentration de gros ordres</strong> (T1 institutionnels) a proximite d'un niveau structurel (HVL, POC, VWAP, Break Level MenthorQ). <strong>ASK</strong> (rouge) = gros ordres ASK pres = resistance vendeurs. <strong>BID</strong> (vert) = gros ordres BID pres = support acheteurs. <strong>TRAP_BUY_AT_RES</strong> ou <strong>TRAP_SELL_AT_SUP</strong> = en plus, traders piegers du mauvais cote = setup reversal premium.",
+            action: "<strong>AT_RESISTANCE / AT_SUPPORT</strong> = niveau a surveiller, attends confirmation absorption + divergence. <strong>TRAP_BUY_AT_RES</strong> = SHORT haut conviction (acheteurs piegers vont capituler vers SL). <strong>TRAP_SELL_AT_SUP</strong> = LONG haut conviction. Distance &lt;0.05% = reaction quasi-immediate.",
+        },
+        "ofa-big-tip": {
+            title: "Gros ordres (Big Orders T1-T4)",
+            body: "Compte les <strong>gros ordres executes</strong> par tier (T1=tres gros, T4=moyen). <strong>big_buy_dominance</strong> = ratio achats/(achats+ventes). <strong>BUY_AGGRESSIVE</strong> (dom &gt;0.65 + au moins 1 T1) = acheteurs institutionnels actifs. <strong>SELL_AGGRESSIVE</strong> = vendeurs idem. <strong>BUY_LEAN/SELL_LEAN</strong> = pression sans T1, plus faible. <strong>BALANCED</strong> = pas d'edge.",
+            action: "<strong>BUY_AGGRESSIVE + niveau touche + RVOL eleve</strong> = breakout institutionnel, suis le mouvement. <strong>SELL_AGGRESSIVE @ resistance</strong> = distribution, prefere SHORT. Les T1 sont rares mais devoilent la main des fonds. <strong>BALANCED</strong> = no-trade pour scalpers, attends qu'un cote prenne le dessus.",
+        },
+        "ofa-smt-tip": {
+            title: "Divergence directionnelle ES/NQ",
+            body: "Compare la <strong>direction du delta journalier</strong> ES vs NQ. Quand le delta d'un instrument flippe de signe mais pas l'autre = divergence inter-marches. <strong>BULL</strong> (vert) = ES delta+ / NQ delta- ou inverse → un instrument achete, l'autre non → smart money concept ICT. <strong>BEAR</strong> (rouge) = situation symetrique inverse. Formule (sign_ES - sign_NQ)/2 antisymetrique : si BULL sur ES, automatiquement BEAR sur NQ.",
+            action: "Le SMT est <strong>un signal contextuel</strong>, pas un timing tool. <strong>BULL + RVOL eleve + VWAP align</strong> = trend up confirmer institutionnellement. <strong>BEAR sans confirmation delta_bar</strong> = juste du noise. Combine avec niveaux et order flow pour timer l'entree. Fire ~22% des barres.",
+        },
+        "ofa-npoc-tip": {
+            title: "Naked POC (POC orphelin)",
+            body: "Un <strong>Naked POC</strong> = POC d'une session passee qui n'a JAMAIS ete retouche depuis. Le marche a tendance a y revenir (effet aimant magnetique documente). <strong>MAGNET++</strong> = naked POC &lt;0.2% ET age &gt;5 jours = aimant tres puissant. <strong>MAGNET</strong> = &lt;0.5%. <strong>PRESENT</strong> = naked POC actif mais loin. Le widget affiche distance + age max — la direction (haut/bas) n'est PAS exposee, repere-la sur le chart.",
+            action: "<strong>MAGNET++ proche</strong> = forte probabilite de retracement vers le POC dans la session. Identifie sa direction sur le chart (au-dessus/au-dessous) et trade dans le sens du retracement. Plus l'age est eleve plus la magnetic action est puissante (5j+ = quasi-certain qu'on va y revenir). <strong>OFF</strong> = pas de naked POC notable, ignore.",
+        },
     };
 
     function initEduMode() {
@@ -5594,6 +6727,16 @@
             if (!el) return;
             var label = el.querySelector(".big-box-label");
             if (label) attachIcon(label, m.key);
+        });
+
+        // Manual indicators widgets (Jackson 04/05) — pastilles via data-mi-tip
+        // Refactor card 04/05 : .mi-widget renomme en .mi-cell
+        document.querySelectorAll(".mi-cell[data-mi-tip]").forEach(function (cell) {
+            var key = cell.getAttribute("data-mi-tip");
+            if (!key) return;
+            // Attache l'icone "i" sur le label (cell-label) pour rester compact
+            var labelEl = cell.querySelector(".mi-cell-label");
+            attachIcon(labelEl || cell, key);
         });
     }
 
@@ -5867,10 +7010,12 @@
                     "ABSENT": { emoji: "⚫", color: "#616161", label: "ABS" }
                 };
                 var conf = statusMap[data.worst_status] || statusMap["ABSENT"];
-                // Trouver la pire source pour afficher son age
+                // Trouver la pire source LIVE (exclure historical pipeline) pour afficher son age
+                // 06/05 FIX : pipeline parquet v4 historique pollue avec WARN ~8min constant
                 var worstSrc = null;
                 var priority = { "OK": 0, "WARN": 1, "CRIT": 2, "ABSENT": 3 };
                 (data.sources || []).forEach(function (s) {
+                    if (s.is_historical) return; // skip historical sources
                     if (!worstSrc || priority[s.status] > priority[worstSrc.status]) worstSrc = s;
                 });
                 var ageDisplay = "n/a";
@@ -5899,6 +7044,110 @@
         }
         updateDataFreshness();
         setInterval(updateDataFreshness, 5000);
+
+        // Voyant sante bots (08/05 incident Bot 2 V6 STALE 24h non detecte)
+        // Banner rouge si CRIT/DOWN, orange si WARN, masque sinon.
+        function updateBotsHealth() {
+            fetch("/api/bots/health").then(function (r) { return r.json(); }).then(function (data) {
+                var el = $("bots-health-alert");
+                if (!el || !data || !data.bots) return;
+                var bgMap = {
+                    "OK":   { bg: null, label: null },
+                    "WARN": { bg: "#FF8C00", label: "AVERTISSEMENT" },
+                    "CRIT": { bg: "#D50000", label: "ALERTE CRITIQUE" },
+                    "DOWN": { bg: "#7B1FA2", label: "BOT MORT" }
+                };
+                var conf = bgMap[data.worst_status] || bgMap["OK"];
+                if (!conf.bg) {
+                    el.style.display = "none";
+                    return;
+                }
+                // Liste les bots problematiques
+                var problems = (data.bots || []).filter(function (b) {
+                    return b.status === "WARN" || b.status === "CRIT" || b.status === "DOWN";
+                });
+                var lines = problems.map(function (b) {
+                    return "[" + b.status + "] " + b.name + " - " + b.reason;
+                });
+                el.innerHTML = "&#9888;&#65039; " + conf.label + " : " + lines.join(" | ");
+                el.style.background = conf.bg;
+                el.style.display = "block";
+                el.title = "Cliquer pour details bots health\n\n" + (data.bots || []).map(function (b) {
+                    var lba = b.last_bar_age_sec !== null ? Math.round(b.last_bar_age_sec) + "s" : "n/a";
+                    return "[" + b.status + "] " + b.name + " - " + b.reason + " - last_bar_age=" + lba;
+                }).join("\n");
+                el.onclick = function () {
+                    window.open("/api/bots/health", "_blank");
+                };
+            }).catch(function () {
+                var el = $("bots-health-alert");
+                if (el) el.style.display = "none";
+            });
+        }
+        updateBotsHealth();
+        setInterval(updateBotsHealth, 30000);
+
+        // Bouton score Bots Health permanent (Jackson 08/05 "ou est le bouton precisement")
+        // Affiche X/Y dans header en permanence + click = run manual /api/admin/health_check_global
+        function updateBotsHealthBadge() {
+            fetch("/api/bots/health").then(function (r) { return r.json(); }).then(function (data) {
+                var el = $("banner-bots-health");
+                if (!el) return;
+                var n_total = (data.bots || []).length;
+                var n_ok = (data.bots || []).filter(function (b) { return b.status === "OK"; }).length;
+                var statusMap = {
+                    "OK":   { emoji: "🟢", color: "#00C853" },
+                    "WARN": { emoji: "🟠", color: "#FF8C00" },
+                    "CRIT": { emoji: "🔴", color: "#D50000" },
+                    "DOWN": { emoji: "🟣", color: "#7B1FA2" }
+                };
+                var conf = statusMap[data.worst_status] || statusMap["OK"];
+                el.textContent = conf.emoji + " BOTS " + n_ok + "/" + n_total;
+                el.style.color = conf.color;
+                el.title = "Click pour run manual.\n\n" + (data.bots || []).map(function (b) {
+                    return "[" + b.status + "] " + b.name + " - " + (b.reason || "?");
+                }).join("\n");
+            }).catch(function () {
+                var el = $("banner-bots-health");
+                if (el) { el.textContent = "⚫ BOTS n/a"; el.style.color = "#616161"; }
+            });
+        }
+        updateBotsHealthBadge();
+        setInterval(updateBotsHealthBadge, 15000);
+
+        // Click handler bouton bots = run manual + popup resume
+        var _botsHealthBtn = $("banner-bots-health");
+        if (_botsHealthBtn) {
+            _botsHealthBtn.addEventListener("click", function () {
+                _botsHealthBtn.textContent = "⏳ BOTS run...";
+                fetchWithAuth(API_BASE + "/api/admin/health_check_global", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                }).then(function (r) {
+                    if (!r.ok) throw new Error("HTTP " + r.status + " (owner required)");
+                    return r.json();
+                }).then(function (d) {
+                    var lines = [];
+                    lines.push("=== Controle General Bots ===");
+                    lines.push("Score: " + (d.score || "?"));
+                    lines.push("Worst: " + (d.worst_status || "?"));
+                    lines.push("");
+                    (d.checks || []).forEach(function (c) {
+                        if (c.status === "OK") return; // afficher seulement issues
+                        lines.push("[" + c.status + "] " + c.name);
+                        lines.push("  " + (c.details || ""));
+                        if (c.fix_suggestion) lines.push("  fix: " + c.fix_suggestion);
+                    });
+                    if (lines.length === 4) {
+                        lines.push("Aucun probleme detecte. Tous OK.");
+                    }
+                    alert(lines.join("\n"));
+                    updateBotsHealthBadge();
+                }).catch(function (err) {
+                    alert("Erreur: " + err.message);
+                    updateBotsHealthBadge();
+                });
+            });
+        }
 
         // Keyboard shortcuts
         var pages = ["overview", "options", "orderflow", "profile", "levels", "signals", "cta", "menthorq", "performance", "alerts"];
@@ -6157,7 +7406,7 @@
         html += '<thead><tr style="background:rgba(33,150,243,0.1);">';
         html += '<th style="padding:8px 12px;text-align:left;color:#42a5f5;font-size:0.8125rem;">' + title + '</th>';
         html += '<th style="padding:8px 12px;text-align:right;color:#42a5f5;font-size:0.8125rem;">Bot 1 DMP</th>';
-        html += '<th style="padding:8px 12px;text-align:right;color:#42a5f5;font-size:0.8125rem;">Bot 2 DB</th>';
+        html += '<th style="padding:8px 12px;text-align:right;color:#42a5f5;font-size:0.8125rem;">Bot 2 V6</th>';
         html += '</tr></thead><tbody>';
         html += _row("N trades", b1.n, b2.n);
         if (b1.n || b2.n) {
@@ -6214,7 +7463,7 @@
         html += '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:rgba(255,255,255,0.02);border-radius:8px;overflow:hidden;">';
         html += '<thead><tr style="background:rgba(33,150,243,0.1);"><th style="padding:8px 12px;text-align:left;color:#42a5f5;">Anomalies</th>' +
                 '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 1 DMP</th>' +
-                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 2 DB</th></tr></thead><tbody>';
+                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 2 V6</th></tr></thead><tbody>';
         html += _row("Max SL streak", b1.max_loss_streak, b2.max_loss_streak);
         html += _row("Slippage entry avg", b1.slip_entry_avg, b2.slip_entry_avg);
         html += _row("Slippage exit avg", b1.slip_exit_avg, b2.slip_exit_avg);
@@ -6300,7 +7549,7 @@
         // FIX 29/04 soir : init aussi compare bots (meme section admin)
         initCompareBots();
 
-        ["1", "2"].forEach(function (botId) {
+        ["1", "2", "3"].forEach(function (botId) {
             ["start", "stop", "restart"].forEach(function (action) {
                 var btn = $("btn-svc-" + botId + "-" + action);
                 if (btn && !btn._bound) {
@@ -6321,7 +7570,7 @@
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 if (!d || !d.services) return;
-                ["1", "2"].forEach(function (botId) {
+                ["1", "2", "3"].forEach(function (botId) {
                     var svc = d.services[botId];
                     var el = $("svc-state-" + botId);
                     if (!el || !svc) return;
