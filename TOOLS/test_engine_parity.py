@@ -1569,6 +1569,149 @@ def _test_rolling_features_advanced():
     return {"all_pass": all_pass}
 
 
+def _test_rolling_features_delta_div():
+    """Test sub-engine #9 GROUPE D delta divergence reconstruction (4 features).
+
+    Note importante :
+      - delta_div_buy_clean, delta_div_sell_clean, delta_divergence_clean :
+        parite exacte attendue (atol 0 sur integers).
+      - delta_div_strength : DIVERGENCE batch/stream attendue (batch winsorize
+        au quantile 0.995 sur full DataFrame = forward-looking impossible
+        en stream). Stream output raw |delta_bar|. Tolerance acceptable :
+        equal SI raw value <= clip_high batch, sinon stream > batch.
+    """
+    from rolling_features_streaming import (
+        add_rolling_features_basic_streaming,
+        add_rolling_features_medium_streaming,
+        add_rolling_features_advanced_streaming,
+        add_rolling_features_delta_div_streaming,
+        RollingFeaturesState,
+    )
+    from rolling_features import RollingFeatures
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(17)
+    # Synth 2 sessions CME (cross 18:00 ET = 22:00 UTC)
+    # Day 1 : 13:00-21:55 UTC (= 09:00-17:55 ET, same trading date)
+    # Day 2 : 22:00 UTC d1 onwards = trading_date d2 (next day)
+    bars = []
+    start_d1 = pd.Timestamp("2026-05-12 13:00:00", tz="UTC")
+    for i in range(540):  # 9 heures = 540 bars
+        ts = start_d1 + pd.Timedelta(minutes=i)
+        bars.append({
+            "ts": int(ts.value // 1_000_000),
+            "ts_event": ts.tz_localize(None),
+        })
+    # Day 2 start at 22:00 UTC (= 18:00 ET = trigger session change)
+    start_d2 = pd.Timestamp("2026-05-12 22:00:00", tz="UTC")
+    for i in range(480):
+        ts = start_d2 + pd.Timedelta(minutes=i)
+        bars.append({
+            "ts": int(ts.value // 1_000_000),
+            "ts_event": ts.tz_localize(None),
+        })
+    n = len(bars)
+    df = pd.DataFrame(bars)
+    df["price"] = 5800 + np.cumsum(np.random.randn(n) * 0.5)
+    df["bar_high"] = df["price"] + np.random.uniform(0, 1, n)
+    df["bar_low"] = df["price"] - np.random.uniform(0, 1, n)
+    df["delta_bar"] = np.random.randint(-100, 100, n).astype(float)
+    # Inputs minimum pour batch compute() ne crashe pas
+    df["total_vol"] = np.random.randint(500, 2000, n).astype(float)
+    df["vwap_slope_10"] = 0.0
+    df["dist_vwap_d"] = 0.0
+    df["cvd_day"] = np.cumsum(df["delta_bar"])
+    df["atr"] = 8.0
+    df["diag_imbalance"] = 0.0
+    df["finish_strength"] = 0.0
+    df["va_position_pct"] = 0.5
+    df["ib_position_pct"] = 0.5
+    df["vwap_d_side"] = 1
+    df["large_trader_ratio"] = 0.3
+    df["ib_range_atr"] = 0.5
+    df["ib_broken_up"] = 0
+    df["ib_broken_down"] = 0
+    df["dist_vwap_d_atr"] = 0.0
+    df["delta_day_dir"] = 0
+    df["dist_sess_high"] = -5.0
+    df["dist_sess_low"] = 5.0
+    df["ib_range_ticks"] = 20.0
+
+    rf = RollingFeatures(short=3, mid=5, long=10, symbol="ES")
+    batch_df = rf.compute(df.copy())
+
+    state = RollingFeaturesState()
+    stream_rows = []
+    for _, row in df.iterrows():
+        out = add_rolling_features_delta_div_streaming(row.to_dict(), state)
+        stream_rows.append(out)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest rolling_features_delta_div parite sur {n} rows synth (2 sessions CME)...")
+
+    # PARITE EXACTE sur 3 features (atol 0)
+    cols_exact = [
+        "delta_div_buy_clean", "delta_div_sell_clean", "delta_divergence_clean"
+    ]
+    print("\n--- NIVEAU 1 : parite EXACTE batch vs streaming (3 features int) ---")
+    all_pass = True
+    for col in cols_exact:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        status = "PASS" if max_diff == 0 and nan_mismatch == 0 else "FAIL"
+        n_active_batch = int((b != 0).sum())
+        n_active_stream = int((s != 0).sum())
+        print(f"  {col:35s} {status} max_diff={max_diff:.6e} "
+              f"active batch/stream: {n_active_batch}/{n_active_stream}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where(np.abs(diff) > 1e-9)[0][:5]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    # PARITE PARTIELLE sur delta_div_strength (divergence p99.5 documentee)
+    print("\n--- NIVEAU 2 : delta_div_strength (DIVERGENCE p99.5 documentee) ---")
+    b_str = batch_df["delta_div_strength"].astype("float64").values
+    s_str = stream_df["delta_div_strength"].astype("float64").values
+    # Sur les valeurs ACTIVES (>0), batch <= stream (batch clip vers le bas)
+    active_mask = (s_str > 0) | (b_str > 0)
+    # Verifier que :
+    # 1. batch == 0 IFF stream == 0 (positions actives = identiques)
+    # 2. quand actives : batch <= stream (clip vers le bas)
+    pos_match = ((b_str > 0) == (s_str > 0)).all()
+    if pos_match:
+        # Compare active values : batch <= stream attendu
+        violation = ((b_str > s_str + 1e-9) & active_mask).sum()
+        max_clip = float(np.nanmax(s_str - b_str)) if active_mask.any() else 0.0
+        n_active = int(active_mask.sum())
+        print(f"  positions actives match : OK ({n_active} bars)")
+        print(f"  max clip batch (stream - batch) : {max_clip:.4f}")
+        print(f"  violations (batch > stream) : {violation}")
+        strength_ok = violation == 0
+    else:
+        n_mismatch_pos = int(((b_str > 0) != (s_str > 0)).sum())
+        print(f"  positions actives MISMATCH : {n_mismatch_pos} bars")
+        strength_ok = False
+    print(f"  Niveau 2 status : {'PASS' if strength_ok else 'FAIL'}")
+
+    all_pass = all_pass and strength_ok
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL rolling_features_delta_div : "
+          f"{'PASS (3 exact + 1 partial documente)' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -1853,7 +1996,8 @@ def main():
                                  "volume_profile", "rvol_inputs", "ib_atr",
                                  "rolling_features_basic",
                                  "rolling_features_medium",
-                                 "rolling_features_advanced", "all"])
+                                 "rolling_features_advanced",
+                                 "rolling_features_delta_div", "all"])
     args = parser.parse_args()
 
     if args.engine in ("vix_lite", "all"):
@@ -1903,6 +2047,16 @@ def main():
 
     if args.engine in ("rolling_features_medium", "all"):
         report = _test_rolling_features_medium()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("rolling_features_advanced", "all"):
+        report = _test_rolling_features_advanced()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("rolling_features_delta_div", "all"):
+        report = _test_rolling_features_delta_div()
         if report and not report.get("all_pass"):
             sys.exit(1)
 

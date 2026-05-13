@@ -180,6 +180,14 @@ class RollingFeaturesState:
     near_high_60: deque = field(default_factory=lambda: deque(maxlen=60))
     near_low_60: deque = field(default_factory=lambda: deque(maxlen=60))
 
+    # ─── GROUPE D (Delta divergence reconstruction SC ID33) ────────────────
+    # Reset par trading_date CME (18:00 ET = 22:00 UTC cutoff)
+    current_trading_date: Optional[Any] = None
+    daily_high_running: Optional[float] = None  # cummax bar_high par session
+    daily_low_running: Optional[float] = None   # cummin bar_low par session
+    # prev_trading_date : pour same_session check (batch trading_date == shift(1))
+    prev_trading_date: Optional[Any] = None
+
 
 def add_rolling_features_basic_streaming(
     row: dict,
@@ -894,5 +902,148 @@ def add_rolling_features_advanced_streaming(
         out["ctx_poor_low"] = 0.0
 
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Sub-engine #9 — GROUPE D (Delta divergence reconstruction SC ID33 - 4 features)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reproduit fidelement Sierra Chart "Daily OHLC" ID33 "LINKED TO DELTA DIVERGENCE"
+# (SG2=High cumulatif, SG3=Low cumulatif par trading session CME).
+#
+# Formule SC exacte (mirror batch ligne 484-489) :
+#   BUY  : AND(daily_low  < daily_low[-1],  delta_b >= 0) & same_session
+#   SELL : AND(daily_high > daily_high[-1], delta_b <= 0) & same_session
+#
+# DIVERGENCE BATCH/STREAM DOCUMENTEE :
+# delta_div_strength batch fait quantile(0.995) sur TOUTES les valeurs actives
+# du DataFrame (forward-looking). En stream impossible sans buffer infini.
+# Decision : streaming output raw_strength SANS clip. Distribution shift
+# acceptable (intensite max naturellement bornee par |delta_bar| qui est
+# deja borne en pratique).
+
+
+from datetime import timedelta, timezone as dt_timezone
+from datetime import datetime as dt_datetime
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _ET_TZ = _ZoneInfo("America/New_York")
+except ImportError:
+    _ET_TZ = None
+
+
+def _ts_to_trading_date_cme(ts_ms: float):
+    """Convertit ts_ms epoch -> trading_date CME (18:00 ET cutoff).
+
+    Mirror batch ligne 461-467 :
+      dt_utc = pd.to_datetime(ts_ms, unit='ms', utc=True)
+      dt_et = dt_utc.tz_convert('America/New_York')
+      shift_day = 1 si hour_ET >= 18 sinon 0
+      trading_date = dt_et.normalize().date() + shift_day_days
+    """
+    if ts_ms is None or pd.isna(ts_ms):
+        return None
+    try:
+        ts_int = int(ts_ms)
+    except (TypeError, ValueError):
+        return None
+    if _ET_TZ is None:
+        return None
+    dt_utc = dt_datetime.fromtimestamp(ts_int / 1000.0, tz=dt_timezone.utc)
+    dt_et = dt_utc.astimezone(_ET_TZ)
+    if dt_et.hour >= 18:
+        return (dt_et + timedelta(days=1)).date()
+    return dt_et.date()
+
+
+def add_rolling_features_delta_div_streaming(
+    row: dict,
+    state: RollingFeaturesState,
+) -> dict:
+    """Sub-engine #9 — 4 features GROUPE D delta divergence streaming.
+
+    Features :
+      delta_div_buy_clean    - 1 si new daily low ET delta_b >= 0
+      delta_div_sell_clean   - 1 si new daily high ET delta_b <= 0
+      delta_divergence_clean - buy - sell (-1/0/+1)
+      delta_div_strength     - magnitude |delta_b| si div active (SANS clip
+                                stream, divergence vs batch p99.5 documentee)
+
+    Args:
+        row : dict avec bar_high, bar_low, delta_bar, ts.
+        state : RollingFeaturesState mutable.
+
+    Returns:
+        dict row + 4 features.
+    """
+    out = dict(row)
+
+    bar_high = _safe_float(out.get("bar_high"))
+    bar_low = _safe_float(out.get("bar_low"))
+    delta_b = _safe_float(out.get("delta_bar"))
+    if delta_b is None:
+        delta_b = 0.0  # batch fillna(0)
+    ts = _safe_float(out.get("ts"))
+
+    # 1. Calcul trading_date_CME
+    trading_date = _ts_to_trading_date_cme(ts)
+    if trading_date is None or bar_high is None or bar_low is None:
+        # Inputs critiques manquants -> output 0 (batch ligne 502-505)
+        out["delta_div_buy_clean"] = 0
+        out["delta_div_sell_clean"] = 0
+        out["delta_divergence_clean"] = 0
+        out["delta_div_strength"] = 0.0
+        return out
+
+    # 2. same_session = trading_date == prev_trading_date
+    same_session = (
+        state.prev_trading_date is not None
+        and trading_date == state.prev_trading_date
+    )
+
+    # 3. Reset state si nouvelle session
+    if trading_date != state.current_trading_date:
+        state.current_trading_date = trading_date
+        state.daily_high_running = None
+        state.daily_low_running = None
+
+    # 4. Snapshot AVANT update : ce sont les daily_high/low de la bar PRECEDENTE
+    # (mirror batch shift(1) sur cummax/cummin)
+    prev_dh = state.daily_high_running
+    prev_dl = state.daily_low_running
+
+    # 5. Update daily running avec bar courante (mirror cummax/cummin)
+    if state.daily_high_running is None or bar_high > state.daily_high_running:
+        state.daily_high_running = bar_high
+    if state.daily_low_running is None or bar_low < state.daily_low_running:
+        state.daily_low_running = bar_low
+
+    # 6. Conditions divergence (mirror batch formule SC exacte)
+    div_buy = 0
+    div_sell = 0
+    if same_session and prev_dl is not None and prev_dh is not None:
+        # BUY : new daily low + buyers en embuscade (delta >= 0)
+        if state.daily_low_running < prev_dl and delta_b >= 0:
+            div_buy = 1
+        # SELL : new daily high + sellers en embuscade (delta <= 0)
+        if state.daily_high_running > prev_dh and delta_b <= 0:
+            div_sell = 1
+
+    out["delta_div_buy_clean"] = div_buy
+    out["delta_div_sell_clean"] = div_sell
+    out["delta_divergence_clean"] = div_buy - div_sell
+
+    # 7. delta_div_strength : magnitude |delta_b| si div active
+    # NB : pas de winsorization p99.5 en stream (forward-looking impossible)
+    # Distribution shift vs batch documente.
+    if div_buy or div_sell:
+        out["delta_div_strength"] = abs(delta_b)
+    else:
+        out["delta_div_strength"] = 0.0
+
+    # 8. Update prev_trading_date pour same_session next bar
+    state.prev_trading_date = trading_date
+
+    return out
+
 
 
