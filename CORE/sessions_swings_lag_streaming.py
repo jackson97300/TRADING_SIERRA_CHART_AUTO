@@ -18,6 +18,25 @@ Pour features derivees (dist_last_swing_high_pct, bars_since) :
   sur dist_*_pct (close[i] vs close[i-10] differs).
 
 Spike origin features : SANS lag (lookback 3 only, pas lookahead).
+
+DIVERGENCE SEMANTIQUE BATCH/STREAM DOCUMENTEE (liquidity_sweep_*_lag5) :
+  Batch utilise swing_h_price[i] = ffilled depuis dernier swing detecte
+  avec LOOKAHEAD (= batch voit le futur pour confirmer pivot).
+  Stream utilise state.last_swing_high.price = dernier swing CONFIRME
+  (= lag-10, sans lookahead - C'EST LE COMPORTEMENT LIVE REEL).
+
+  Consequence : stream emit plus de sweeps (swing_h_price plus ancien
+  -> break plus facile). Ex : 4x plus de fires sur synth 1440 bars.
+
+  Cette divergence est INHERENTE a la convention LAG-N pour les features
+  derivees. Le batch est inatteignable en inference (lookahead impossible).
+  Stream = comportement bot live correct.
+
+  DISTRIBUTION SHIFT ML : training batch vs inference stream sur les
+  sweep_*_lag5 features. ml-trainer review obligatoire AVANT deploy live
+  (similar pattern : volume_profile commit 0a6cf7b).
+
+  Mirror pattern aussi dans dist_last_swing_high/low_pct, bars_since_*.
 """
 from __future__ import annotations
 

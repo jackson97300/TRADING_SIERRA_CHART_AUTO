@@ -46,6 +46,29 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-05-14 23:00 — [SCOPE_CREEP] — Sessions_swings_lag liquidity_sweep divergence batch (lookahead swing_h) vs stream (lag-10 swing_h)
+
+**Contexte** : Chantier 3 Phase 3b semaine 3, commit sessions_swings_lag_streaming.py (ebea05b). Code-reviewer audit identifie P0 sur convention sweep timing.
+
+**Ce qui diverge** :
+- Batch `liquidity_sweep_high_lag5` utilise `swing_h_price[i]` = ffilled depuis pivot detecte avec LOOKAHEAD (window centered [k-10, k+10] vu integralement)
+- Stream utilise `state.last_swing_high.price` = dernier pivot CONFIRME a bar i (= avec lag-10, j+10 <= i requis)
+- Stream a un swing_h_price PLUS ANCIEN -> break (high > sh) plus facile -> 4x plus de sweep fires (synth 11 batch vs 44 stream).
+
+**Cause racine** : convention LAG-N inherente. Le batch peut savoir le futur. Le stream live ne peut pas. Donc impossible d'obtenir parite stricte sur les features qui CONSOMMENT swing_h/l_price.
+
+**Lecon** : tout sub-engine streaming dont les features derivees consomment un swing/pivot price detecte avec lookahead AURA une divergence semantique avec batch. C'est la BONNE semantique pour live (= utiliser dernier pivot confirme). Mais il faut documenter le distribution shift ML.
+
+**Trigger prevention** : avant deploy live sub-engines stream, identifier toutes les features qui consomment des prix de pivots/swings detectes avec lookahead. Lister explicitement dans la docstring du module + INCIDENT_LOG. Mandate ml-trainer review pour quantifier impact distribution shift (KS test feature par feature, comparaison batch vs stream sur dataset reel).
+
+**Sub-engines concernes** (a date) :
+- volume_profile (commit 0a6cf7b) : cur_vpoc batch constant vs stream running
+- sessions_swings_lag (commit ebea05b) : sweep + dist_last_swing_*_pct + bars_since_*
+
+**Reviewed** : code-reviewer (P0 detecte) + self (documentation + INCIDENT_LOG)
+
+---
+
 ### 2026-05-13 14:30 — [SCOPE_CREEP] — Sub-engine #4 volume_profile divergence design batch (constant intraday) vs stream (running VPOC)
 
 **Contexte** : Chantier 3 Phase 3b Mardi, implementation `add_volume_profile_features_streaming` apres sub-engines #1/#2/#3 termines avec parite atol=1e-9.

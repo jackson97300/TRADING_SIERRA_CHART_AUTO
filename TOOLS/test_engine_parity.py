@@ -3109,6 +3109,31 @@ def _test_sessions_swings_lag():
         if status == "FAIL":
             all_pass = False
 
+    # ─── NIVEAU 3b INFO : LIQUIDITY SWEEP divergence semantique (audit P0) ─
+    # DIVERGENCE INTRINSEQUE batch/stream (similaire volume_profile commit 0a6cf7b) :
+    #   - Batch utilise swing_h_price[i] = ffilled depuis dernier swing detecte
+    #     avec LOOKAHEAD (= pivot evalue avec window centered futur)
+    #   - Stream utilise state.last_swing_high.price = dernier swing CONFIRME
+    #     (= lag-10, sans lookahead - comportement live reel)
+    #   - Stream over-fire sweeps car swing_h_price plus ancien -> break plus
+    #     facile a satisfaire.
+    #
+    # C'EST LE BON COMPORTEMENT LIVE (bot live ne peut pas connaitre pivots
+    # futurs). Distribution shift ML inherent : training batch vs inference
+    # stream. ml-trainer review obligatoire avant deploy live (cf
+    # ml-trainer review pour volume_profile aussi).
+    print(f"\n--- NIVEAU 3b INFO : LIQUIDITY SWEEP divergence semantique documentee ---")
+    for col in ("liquidity_sweep_high_lag5", "liquidity_sweep_low_lag5"):
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT")
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        n_batch = int((b != 0).sum())
+        n_stream = int((s != 0).sum())
+        print(f"  {col:35s} INFO batch={n_batch} fires, stream={n_stream} fires "
+              f"(divergence semantique documentee, pas parite stricte)")
+
     # ─── NIVEAU 4 INFO : dist_*_pct features (semantique stream differente) ─
     # Pas de parite stricte (close[i] vs close[i+N] differs). Verifier juste
     # qu'on emit des valeurs raisonnables.
@@ -3117,7 +3142,6 @@ def _test_sessions_swings_lag():
         "dist_last_swing_high_pct", "dist_last_swing_low_pct",
         "bars_since_last_swing_high", "bars_since_last_swing_low",
         "last_swing_high_session", "last_swing_low_session",
-        "liquidity_sweep_high_lag5", "liquidity_sweep_low_lag5",
         "dist_last_spike_origin_pct", "bars_since_last_spike",
     ):
         if col not in stream_df.columns:
