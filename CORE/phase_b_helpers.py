@@ -432,6 +432,271 @@ def add_ib_features_streaming(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# API STREAMING sub-engine #3 (Chantier 3 Phase 3b Mardi)
+# ═══════════════════════════════════════════════════════════════════════════════
+# add_session_high_low STATEFUL : 2 axes de cumulatif parallele
+#   - sess_high/low : groupby session_date_trading (CME futures dim 18h -> ven 17h)
+#   - cash_high/low : groupby date_et AND is_cash_session=1 (RTH 09:30-16:00 ET)
+#
+# Anti-leak / parite batch :
+#   - cash_high/low = NaN si is_cash_session=0 (mirror df.where(cash_mask))
+#   - is_new_*_high/low = 0 sur first bar de session (mirror prev.shift(1).isna())
+#   - is_new_cash_high/low = 0 si gap cash (prev row NOT cash, mirror NaN shift)
+#
+# Edge case GAP cash (halt mid-session) :
+#   En batch : df.where(cash_mask)["cash_high"].shift(1) -> NaN si prev bar
+#   etait hors cash, donc is_new_cash_high = 0 meme si high > prev_state.
+#   En stream : track state.prev_output_cash_high (NaN si prev row pas cash).
+
+
+@dataclass
+class SessionHighLowState:
+    """State sub-engine #3 add_session_high_low — 2 axes parallele.
+
+    Reset automatique :
+      - sess_*  : nouvelle session_date_trading (CME futures)
+      - cash_*  : nouvelle date_et (RTH cash)
+
+    Track prev_output_cash_high pour matcher exactement le comportement
+    batch shift(1) sur output masque (anti edge case halt cash).
+    """
+    # CME futures session (dim 18h ET -> ven 17h ET, contigu)
+    current_session_date_trading: Optional[Any] = None
+    sess_high: Optional[float] = None
+    sess_low: Optional[float] = None
+    sess_n_bars: int = 0
+
+    # Cash session RTH (09:30-16:00 ET, peut avoir gap halt)
+    current_date_et: Optional[Any] = None
+    cash_high: Optional[float] = None
+    cash_low: Optional[float] = None
+    cash_n_bars: int = 0
+    # FIX edge case parite : prev row output cash_high/low (NaN si pas cash)
+    # mirror batch df.groupby("date_et")["cash_high"].shift(1) qui propage NaN
+    prev_output_cash_high: Optional[float] = None
+    prev_output_cash_low: Optional[float] = None
+
+
+def add_session_high_low_streaming(
+    row: dict,
+    state: SessionHighLowState,
+    tick: float = TICK_SIZE,
+) -> dict:
+    """API streaming sub-engine #3 add_session_high_low (Chantier 3 Phase 3b).
+
+    Reproduit fidelement add_session_high_low() batch sur 12 features :
+      sess_high, sess_low, dist_sess_high_pct, dist_sess_low_pct,
+      is_new_sess_high, is_new_sess_low,
+      cash_high, cash_low, dist_cash_high_pct, dist_cash_low_pct,
+      is_new_cash_high, is_new_cash_low.
+
+    Args:
+        row : dict avec session_date_trading + date_et + is_cash_session
+              + high/low/close. Requiert add_session_metadata_streaming AVANT.
+        state : SessionHighLowState mutable.
+        tick : tick size (unused mais conserve pour signature symetrique).
+
+    Returns:
+        dict row + 12 features.
+
+    Raises:
+        ValueError si session_date_trading ou date_et absent (ordre engines).
+    """
+    out = dict(row)
+
+    # Fail-loud ordre engines (anti silent miscompute Pattern 11)
+    session_date_trading = out.get("session_date_trading")
+    if session_date_trading is None:
+        raise ValueError(
+            "add_session_high_low_streaming requires 'session_date_trading' in row. "
+            "Call add_session_metadata_streaming BEFORE."
+        )
+    date_et = out.get("date_et")
+    if date_et is None:
+        raise ValueError(
+            "add_session_high_low_streaming requires 'date_et' in row. "
+            "Call add_session_metadata_streaming BEFORE."
+        )
+
+    high = out.get("high")
+    low = out.get("low")
+    close = out.get("close")
+    # FIX P1-B audit code-reviewer : coercion explicite int pour gerer bool/float
+    # (is_cash_session peut etre np.True_, np.int8, 1.0, etc. selon pipeline).
+    # `or 0` protege contre None implicite.
+    try:
+        _ics_raw = out.get("is_cash_session", 0)
+        is_cash_session = int(_ics_raw) if _ics_raw is not None else 0
+    except (TypeError, ValueError):
+        is_cash_session = 0
+
+    # NOTE P1-A audit : divergence theorique close==0 (batch produit inf,
+    # stream produit NaN). Probabilite zero sur futures ES/NQ/MGC (prix
+    # toujours > 0). Garde defensive maintenue pour eviter ZeroDivisionError
+    # Python (numpy le tolere mais Python natif raise). Test atol 1e-9
+    # ignorerait NaN-vs-NaN ; pas de fix prod tant que close=0 impossible.
+
+    # ─── PARTIE 1 : SESSION HIGH/LOW (CME futures session) ──────────────────
+    # Reset state si nouvelle session_date_trading
+    if session_date_trading != state.current_session_date_trading:
+        state.current_session_date_trading = session_date_trading
+        state.sess_high = None
+        state.sess_low = None
+        state.sess_n_bars = 0
+
+    # Snapshot prev AVANT update (pour is_new_sess_high/low)
+    prev_sess_high = state.sess_high
+    prev_sess_low = state.sess_low
+
+    # Update state si high/low valides
+    if high is not None and low is not None:
+        try:
+            if not (pd.isna(high) or pd.isna(low)):
+                hf, lf = float(high), float(low)
+                if state.sess_high is None or hf > state.sess_high:
+                    state.sess_high = hf
+                if state.sess_low is None or lf < state.sess_low:
+                    state.sess_low = lf
+                state.sess_n_bars += 1
+        except (TypeError, ValueError):
+            pass
+
+    sess_high_out = state.sess_high if state.sess_high is not None else np.nan
+    sess_low_out = state.sess_low if state.sess_low is not None else np.nan
+    out["sess_high"] = sess_high_out
+    out["sess_low"] = sess_low_out
+
+    # dist_sess_*_pct
+    if close is not None and not pd.isna(close) and float(close) != 0.0:
+        cf = float(close)
+        out["dist_sess_high_pct"] = (
+            (sess_high_out - cf) / cf * 100 if not pd.isna(sess_high_out) else np.nan
+        )
+        out["dist_sess_low_pct"] = (
+            (cf - sess_low_out) / cf * 100 if not pd.isna(sess_low_out) else np.nan
+        )
+    else:
+        out["dist_sess_high_pct"] = np.nan
+        out["dist_sess_low_pct"] = np.nan
+
+    # is_new_sess_high/low (event detection)
+    # Batch : prev = shift(1) dans session_date_trading group.
+    # First bar de session -> prev None -> force 0.
+    # Subsequent bars : new si high > prev OU low < prev.
+    is_new_sh = 0
+    is_new_sl = 0
+    if prev_sess_high is not None and high is not None and not pd.isna(high):
+        try:
+            if float(high) > prev_sess_high:
+                is_new_sh = 1
+        except (TypeError, ValueError):
+            pass
+    if prev_sess_low is not None and low is not None and not pd.isna(low):
+        try:
+            if float(low) < prev_sess_low:
+                is_new_sl = 1
+        except (TypeError, ValueError):
+            pass
+    out["is_new_sess_high"] = is_new_sh
+    out["is_new_sess_low"] = is_new_sl
+
+    # ─── PARTIE 2 : CASH HIGH/LOW (RTH 09:30-16:00 ET) ──────────────────────
+    # Reset state si nouvelle date_et (cash est ANCRE sur date_et calendar,
+    # contrairement a session_date_trading qui couvre dim->ven)
+    if date_et != state.current_date_et:
+        state.current_date_et = date_et
+        state.cash_high = None
+        state.cash_low = None
+        state.cash_n_bars = 0
+        state.prev_output_cash_high = None
+        state.prev_output_cash_low = None
+
+    # Update state UNIQUEMENT pendant cash session
+    if (
+        is_cash_session == 1
+        and high is not None
+        and low is not None
+    ):
+        try:
+            if not (pd.isna(high) or pd.isna(low)):
+                hf, lf = float(high), float(low)
+                if state.cash_high is None or hf > state.cash_high:
+                    state.cash_high = hf
+                if state.cash_low is None or lf < state.cash_low:
+                    state.cash_low = lf
+                state.cash_n_bars += 1
+        except (TypeError, ValueError):
+            pass
+
+    # Output cash_high/low : NaN si is_cash_session=0 (mirror df.where(cash_mask))
+    if is_cash_session == 1 and state.cash_high is not None:
+        cash_high_out = state.cash_high
+        cash_low_out = state.cash_low
+    else:
+        cash_high_out = np.nan
+        cash_low_out = np.nan
+    out["cash_high"] = cash_high_out
+    out["cash_low"] = cash_low_out
+
+    # dist_cash_*_pct
+    if close is not None and not pd.isna(close) and float(close) != 0.0:
+        cf = float(close)
+        out["dist_cash_high_pct"] = (
+            (cash_high_out - cf) / cf * 100 if not pd.isna(cash_high_out) else np.nan
+        )
+        out["dist_cash_low_pct"] = (
+            (cf - cash_low_out) / cf * 100 if not pd.isna(cash_low_out) else np.nan
+        )
+    else:
+        out["dist_cash_high_pct"] = np.nan
+        out["dist_cash_low_pct"] = np.nan
+
+    # is_new_cash_high/low : mirror batch shift(1) sur OUTPUT cash_high
+    # Si prev_output_cash_high == NaN (= prev row pas en cash ou first bar)
+    # -> force 0 meme si high > state.cash_high (edge case gap halt).
+    is_new_ch = 0
+    is_new_cl = 0
+    prev_out_ch = state.prev_output_cash_high
+    prev_out_cl = state.prev_output_cash_low
+    if (
+        is_cash_session == 1
+        and prev_out_ch is not None
+        and not pd.isna(prev_out_ch)
+        and high is not None
+        and not pd.isna(high)
+    ):
+        try:
+            if float(high) > prev_out_ch:
+                is_new_ch = 1
+        except (TypeError, ValueError):
+            pass
+    if (
+        is_cash_session == 1
+        and prev_out_cl is not None
+        and not pd.isna(prev_out_cl)
+        and low is not None
+        and not pd.isna(low)
+    ):
+        try:
+            if float(low) < prev_out_cl:
+                is_new_cl = 1
+        except (TypeError, ValueError):
+            pass
+    out["is_new_cash_high"] = is_new_ch
+    out["is_new_cash_low"] = is_new_cl
+
+    # Update prev_output_* pour next row (apres avoir produit is_new_*)
+    state.prev_output_cash_high = (
+        cash_high_out if not pd.isna(cash_high_out) else None
+    )
+    state.prev_output_cash_low = (
+        cash_low_out if not pd.isna(cash_low_out) else None
+    )
+
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 3. SESSION HIGH/LOW (cumulative)
 # ═══════════════════════════════════════════════════════════════════════════════
 

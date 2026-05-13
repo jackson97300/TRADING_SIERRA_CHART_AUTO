@@ -722,11 +722,190 @@ def _test_ib_features():
     return {"level1": report1, "level2": report2, "level3": report3, "all_pass": all_pass}
 
 
+def _test_session_high_low():
+    """Test sub-engine #3 add_session_high_low (2 axes parallele).
+
+    Couvre :
+      - Reset session_date_trading (CME futures)
+      - Reset date_et (cash RTH)
+      - Anti-leak cash_high/low = NaN hors cash session
+      - is_new_sess_high/low + is_new_cash_high/low events
+      - Edge case GAP cash (halt mid-session) : critique pour parite shift(1)
+    """
+    from phase_b_helpers import (
+        add_session_metadata,
+        add_session_high_low,
+        add_session_high_low_streaming,
+        SessionHighLowState,
+    )
+    import numpy as np
+    import pandas as pd
+
+    # Synth 3 jours x 480 bars/jour, 09:00-17:00 ET, varying highs to trigger events
+    bars = []
+    base_price = 5800.0
+    for day_offset in range(3):
+        start_et = pd.Timestamp(f"2026-05-1{2 + day_offset} 13:00:00", tz="UTC")  # 09:00 ET
+        for i in range(480):
+            ts = start_et + pd.Timedelta(minutes=i)
+            # Oscillation pour tester is_new events (parfois high monte, parfois pas)
+            wave = np.sin(i / 30.0) * 2.0
+            high = base_price + i * 0.05 + wave + day_offset * 5
+            low = high - 0.5
+            close = (high + low) / 2
+            bars.append({
+                "ts_event": ts.tz_localize(None),
+                "high": high,
+                "low": low,
+                "close": close,
+            })
+
+    df = pd.DataFrame(bars)
+    df = add_session_metadata(df, bounds=None)
+
+    print(f"\nTest session_high_low parite sur {len(df)} rows synth (3 jours)...")
+
+    def batch_fn(d):
+        return add_session_high_low(d.copy(), tick=0.25, bounds=None)
+
+    def stream_fn(row, state):
+        return add_session_high_low_streaming(row, state, tick=0.25)
+
+    print("\n--- NIVEAU 1 : parite batch vs streaming ---")
+    report1 = test_engine_parity(
+        engine_name="session_high_low",
+        batch_fn=batch_fn,
+        streaming_fn=stream_fn,
+        state_factory=SessionHighLowState,
+        input_df=df,
+        float_atol=1e-9,
+    )
+
+    print("\n--- NIVEAU 2 : pickle roundtrip state NON-VIDE (mid-cash) ---")
+    # Warmup pour avoir state cash_high/low + sess_high/low populated
+    # Row ~60 = 10:00 ET = milieu cash session jour 1
+    state_test = SessionHighLowState()
+    for i, (_, row) in enumerate(df.iterrows()):
+        if i >= 100:
+            break
+        stream_fn(row.to_dict(), state_test)
+    print(f"  state apres 100 bars : "
+          f"sess_high={state_test.sess_high}, sess_low={state_test.sess_low}, "
+          f"cash_high={state_test.cash_high}, cash_low={state_test.cash_low}, "
+          f"sess_n={state_test.sess_n_bars}, cash_n={state_test.cash_n_bars}")
+    assert state_test.sess_high is not None, "P0 : sess_high doit etre non-None apres 100 bars"
+    assert state_test.cash_high is not None, "P0 : cash_high doit etre non-None apres 100 bars (mid-cash)"
+    assert state_test.sess_n_bars >= 100, "P0 : sess_n_bars >= 100"
+    assert state_test.cash_n_bars > 0, "P0 : au moins quelques cash bars"
+
+    sample_row = df.iloc[100].to_dict()  # mid-cash session
+    report2 = test_state_pickle_roundtrip(
+        engine_name="session_high_low",
+        streaming_fn=stream_fn,
+        state_factory=SessionHighLowState,
+        sample_row=sample_row,
+    )
+
+    print("\n--- NIVEAU 3 : warmup R2 restart cross-session ---")
+    # Restart idx 500 = milieu jour 2 (apres reset session_date_trading)
+    report3 = test_warmup_parity(
+        engine_name="session_high_low",
+        streaming_fn=stream_fn,
+        state_factory=SessionHighLowState,
+        input_df=df,
+        restart_at_idx=500,
+        float_atol=1e-9,
+    )
+
+    # ─── NIVEAU 4 (BONUS) : Edge case GAP cash (halt mid-session) ───────────
+    # Verifier que cash_high NaN sur ligne halt + is_new_cash_high=0 ligne post-halt
+    # meme si high > cash_high cumule.
+    print("\n--- NIVEAU 4 BONUS : edge case GAP cash (halt mid-session) ---")
+    bars_halt = []
+    start_et = pd.Timestamp("2026-05-15 13:00:00", tz="UTC")  # 09:00 ET
+    base = 5800.0
+    for i in range(480):
+        ts = start_et + pd.Timedelta(minutes=i)
+        high = base + i * 0.1
+        low = high - 0.5
+        bars_halt.append({
+            "ts_event": ts.tz_localize(None),
+            "high": high, "low": low, "close": (high + low) / 2,
+        })
+    df_halt = pd.DataFrame(bars_halt)
+    df_halt = add_session_metadata(df_halt, bounds=None)
+    # Forcer halt : is_cash_session=0 sur 5 bars en plein milieu cash
+    cash_mask = df_halt["is_cash_session"] == 1
+    cash_indices = df_halt.index[cash_mask].tolist()
+    halt_idx = cash_indices[len(cash_indices) // 2:len(cash_indices) // 2 + 5]
+    df_halt.loc[halt_idx, "is_cash_session"] = 0
+
+    batch_halt = add_session_high_low(df_halt.copy(), tick=0.25, bounds=None)
+    state_halt = SessionHighLowState()
+    stream_rows = []
+    for _, r in df_halt.iterrows():
+        out = stream_fn(r.to_dict(), state_halt)
+        stream_rows.append(out)
+    stream_halt = pd.DataFrame(stream_rows)
+
+    # Check parite sur les 12 features y compris pendant le halt
+    cols_check = [
+        "sess_high", "sess_low", "cash_high", "cash_low",
+        "dist_sess_high_pct", "dist_sess_low_pct",
+        "dist_cash_high_pct", "dist_cash_low_pct",
+        "is_new_sess_high", "is_new_sess_low",
+        "is_new_cash_high", "is_new_cash_low",
+    ]
+    max_diff_halt = 0.0
+    failed_cols = []
+    for col in cols_check:
+        if col not in stream_halt.columns or col not in batch_halt.columns:
+            failed_cols.append(f"{col}:missing")
+            continue
+        b = batch_halt[col].astype("float64").values
+        s = stream_halt[col].astype("float64").values
+        # NaN compare equal
+        diff = np.abs(np.where(np.isnan(b) & np.isnan(s), 0, np.where(np.isnan(b) | np.isnan(s), 1e9, b - s)))
+        col_max = float(np.nanmax(diff))
+        if col_max > 1e-9:
+            failed_cols.append(f"{col}:diff={col_max:.6e}")
+        max_diff_halt = max(max_diff_halt, col_max)
+
+    # Specifique : verifier que cash_high == NaN sur lignes halt
+    halt_cash_high_batch = batch_halt.loc[halt_idx, "cash_high"]
+    halt_cash_high_stream = stream_halt.loc[halt_idx, "cash_high"]
+    assert halt_cash_high_batch.isna().all(), \
+        f"batch cash_high doit etre NaN pendant halt : {halt_cash_high_batch.tolist()}"
+    assert halt_cash_high_stream.isna().all(), \
+        f"stream cash_high doit etre NaN pendant halt : {halt_cash_high_stream.tolist()}"
+
+    report4_status = "PASS" if max_diff_halt < 1e-9 and not failed_cols else "FAIL"
+    print(f"  halt_idx={list(halt_idx)} cash_high all NaN : OK")
+    print(f"  max_diff sur 12 features (halt edge) : {max_diff_halt:.6e}")
+    print(f"  failed_cols : {failed_cols}")
+    print(f"  GAP CASH PARITE : {report4_status}")
+    report4 = {"status": report4_status, "max_diff": max_diff_halt, "failed_cols": failed_cols}
+
+    all_pass = (
+        report1.get("status") == "PASS"
+        and report2.get("status") == "PASS"
+        and report3.get("status") == "PASS"
+        and report4["status"] == "PASS"
+    )
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL session_high_low : {'ALL 4 LEVELS PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {
+        "level1": report1, "level2": report2, "level3": report3,
+        "level4_halt": report4, "all_pass": all_pass,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--engine", default="vix_lite",
                         choices=["vix_lite", "vix_ema_60", "session_metadata",
-                                 "ib_features", "all"])
+                                 "ib_features", "session_high_low", "all"])
     args = parser.parse_args()
 
     if args.engine in ("vix_lite", "all"):
@@ -746,6 +925,11 @@ def main():
 
     if args.engine in ("ib_features", "all"):
         report = _test_ib_features()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("session_high_low", "all"):
+        report = _test_session_high_low()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
