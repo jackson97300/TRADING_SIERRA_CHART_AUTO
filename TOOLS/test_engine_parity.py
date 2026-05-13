@@ -1712,6 +1712,146 @@ def _test_rolling_features_delta_div():
     return {"all_pass": all_pass}
 
 
+def _test_rolling_features_session_confluence():
+    """Test sub-engine #10 GROUPE E (12 features finales rolling_features).
+
+    Chain pipeline COMPLET basic+medium+advanced+delta_div+session_confluence.
+    """
+    from rolling_features_streaming import (
+        add_rolling_features_basic_streaming,
+        add_rolling_features_medium_streaming,
+        add_rolling_features_advanced_streaming,
+        add_rolling_features_delta_div_streaming,
+        add_rolling_features_session_confluence_streaming,
+        RollingFeaturesState,
+    )
+    from rolling_features import RollingFeatures
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(23)
+    # Synth 1 jour avec 3 sessions (Asia 0, London 1, US 2)
+    bars = []
+    start = pd.Timestamp("2026-05-12 13:00:00", tz="UTC")
+    for i in range(600):
+        ts = start + pd.Timedelta(minutes=i)
+        if i < 200:
+            session = 0  # Asia
+        elif i < 400:
+            session = 1  # London
+        else:
+            session = 2  # US
+        bars.append({
+            "ts": int(ts.value // 1_000_000),
+            "ts_event": ts.tz_localize(None),
+            "session": session,
+        })
+    n = len(bars)
+    df = pd.DataFrame(bars)
+    df["price"] = 5800 + np.cumsum(np.random.randn(n) * 0.5)
+    df["bar_high"] = df["price"] + np.random.uniform(0, 1, n)
+    df["bar_low"] = df["price"] - np.random.uniform(0, 1, n)
+    df["delta_bar"] = np.random.randint(-100, 100, n).astype(float)
+    df["total_vol"] = np.random.randint(500, 2000, n).astype(float)
+    df["vwap_slope_10"] = 0.0
+    df["dist_vwap_d"] = 0.0
+    df["cvd_day"] = np.cumsum(df["delta_bar"])
+    df["atr"] = 8.0
+    df["diag_imbalance"] = np.random.uniform(-1, 1, n)
+    df["finish_strength"] = np.random.uniform(-100, 100, n)
+    df["va_position_pct"] = 0.5
+    df["ib_position_pct"] = 0.5
+    df["vwap_d_side"] = 1
+    df["large_trader_ratio"] = 0.3
+    df["ib_range_atr"] = 0.5
+    df["ib_broken_up"] = 0
+    df["ib_broken_down"] = 0
+    df["dist_vwap_d_atr"] = 0.0
+    df["delta_day_dir"] = 0
+    df["dist_sess_high"] = -5.0
+    df["dist_sess_low"] = 5.0
+    df["ib_range_ticks"] = 20.0
+    df["ib_complete"] = (df["session"] == 2).astype(int)
+    # Inputs trapped traders (synth aleatoire)
+    df["retest_high_delta_div"] = np.random.choice([0, 1], n, p=[0.95, 0.05])
+    df["bars_since_retest_high"] = np.random.randint(0, 20, n)
+    df["retest_low_delta_div"] = np.random.choice([0, 1], n, p=[0.95, 0.05])
+    df["bars_since_retest_low"] = np.random.randint(0, 20, n)
+    df["cvd_day_dir"] = np.random.choice([-1, 0, 1], n)
+    df["momentum_5b"] = np.random.uniform(-15, 15, n)
+    df["dist_swing_low"] = np.random.uniform(0, 50, n)
+    df["dist_swing_high"] = -np.random.uniform(0, 50, n)
+    # Inputs divergence confluence
+    df["dist_mq_call"] = 100.0
+    df["dist_mq_put"] = -100.0
+    df["dist_mq_hvl"] = 50.0
+    df["dist_cur_vah"] = -10.0
+    df["dist_cur_val"] = 10.0
+    df["dist_ib_high"] = -8.0
+    df["dist_ib_low"] = 8.0
+    df["vix_regime"] = np.random.choice([0, 1, 2], n)
+    df["bool_gex_flip_zone"] = np.random.choice([0, 1], n)
+    df["bn_absorb_bid"] = np.random.choice([0, 1], n, p=[0.9, 0.1])
+    df["bn_absorb_ask"] = np.random.choice([0, 1], n, p=[0.9, 0.1])
+    df["rvol_zscore"] = np.random.uniform(-3, 3, n)
+
+    rf = RollingFeatures(short=3, mid=5, long=10, symbol="ES")
+    batch_df = rf.compute(df.copy())
+
+    state = RollingFeaturesState()
+    stream_rows = []
+    for _, row in df.iterrows():
+        r0 = add_rolling_features_basic_streaming(row.to_dict(), state)
+        r1 = add_rolling_features_medium_streaming(r0, state, symbol="ES")
+        r2 = add_rolling_features_advanced_streaming(r1, state)
+        r3 = add_rolling_features_delta_div_streaming(r2, state)
+        r4 = add_rolling_features_session_confluence_streaming(r3, state)
+        stream_rows.append(r4)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest rolling_features_session_confluence parite sur {n} rows synth...")
+
+    cols_check = [
+        # TRAPPED TRADERS (2)
+        "ctx_double_top_trap", "ctx_momentum_exhaustion",
+        # SESSION-SPECIFIC (3)
+        "ctx_cvd_session", "ctx_rvol_session", "ctx_session_phase",
+        # DIVERGENCE RECENCE (3)
+        "ctx_bars_since_div", "ctx_div_density_20", "ctx_div_at_swing",
+        # DIVERGENCE CONFLUENCE (4)
+        "div_at_key_level_ticks", "div_confluence_dmp",
+        "div_regime_proxy_ok", "div_confluence_with_regime",
+    ]
+    print("\n--- NIVEAU 1 : parite batch vs streaming (12 features GROUPE E) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT batch={col in batch_df.columns} stream={col in stream_df.columns}")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        status = "PASS" if max_diff < 1e-6 and nan_mismatch == 0 else "FAIL"
+        print(f"  {col:35s} {status} max_diff={max_diff:.6e} nan_mismatch={nan_mismatch}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where((np.abs(diff) > 1e-6) & ~nan_both)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL rolling_features_session_confluence : "
+          f"{'ALL 1 LEVEL PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -1997,7 +2137,9 @@ def main():
                                  "rolling_features_basic",
                                  "rolling_features_medium",
                                  "rolling_features_advanced",
-                                 "rolling_features_delta_div", "all"])
+                                 "rolling_features_delta_div",
+                                 "rolling_features_session_confluence",
+                                 "all"])
     args = parser.parse_args()
 
     if args.engine in ("vix_lite", "all"):
@@ -2057,6 +2199,11 @@ def main():
 
     if args.engine in ("rolling_features_delta_div", "all"):
         report = _test_rolling_features_delta_div()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("rolling_features_session_confluence", "all"):
+        report = _test_rolling_features_session_confluence()
         if report and not report.get("all_pass"):
             sys.exit(1)
 

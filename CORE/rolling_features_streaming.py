@@ -188,6 +188,18 @@ class RollingFeaturesState:
     # prev_trading_date : pour same_session check (batch trading_date == shift(1))
     prev_trading_date: Optional[Any] = None
 
+    # ─── GROUPE E (Trapped traders + session-specific + confluence) ────────
+    # Session reset detection
+    current_session: Optional[int] = None  # 0=Asia 1=London 2=US
+    # ctx_cvd_session : delta cumsum reset par session
+    cvd_session_running: float = 0.0
+    # ctx_rvol_session : rolling 30 mean dans la session
+    vol_session_window: deque = field(default_factory=lambda: deque(maxlen=30))
+    # ctx_bars_since_div : compteur depuis last divergence
+    bars_since_last_div: Optional[int] = None  # None si aucune div vue
+    # ctx_div_density_20 : sum divergences sur 20
+    div_fired_long: deque = field(default_factory=lambda: deque(maxlen=20))
+
 
 def add_rolling_features_basic_streaming(
     row: dict,
@@ -1044,6 +1056,247 @@ def add_rolling_features_delta_div_streaming(
     state.prev_trading_date = trading_date
 
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Sub-engine #10 — GROUPE E (Trapped traders + session-specific + confluence)
+# ═══════════════════════════════════════════════════════════════════════════════
+# 12 features finales du module rolling_features.py.
+# Note : div_forward_return_20b NON portable streaming (lookahead -20).
+#
+# Convention pipeline complet :
+#   basic -> medium -> advanced -> delta_div -> session_confluence
+
+
+def add_rolling_features_session_confluence_streaming(
+    row: dict,
+    state: RollingFeaturesState,
+) -> dict:
+    """Sub-engine #10 — 12 features GROUPE E streaming.
+
+    Features :
+      TRAPPED TRADERS (2) :
+        ctx_double_top_trap      - retest swing + div + confirmation
+        ctx_momentum_exhaustion  - mouvement fort + rejet intra-barre
+
+      SESSION-SPECIFIC (3) :
+        ctx_cvd_session    - cumsum delta reset par session
+        ctx_rvol_session   - volume / rolling_mean 30 dans session
+        ctx_session_phase  - phase fine (0-7 enum)
+
+      DIVERGENCE RECENCE (3) :
+        ctx_bars_since_div - barres depuis last delta_divergence_clean
+        ctx_div_density_20 - sum divergences sur 20
+        ctx_div_at_swing   - confluence div + swing proximity
+
+      DIVERGENCE CONFLUENCE (4) :
+        div_at_key_level_ticks   - min dist niveaux cles si div active
+        div_confluence_dmp       - score 0-4 (DMP pur)
+        div_regime_proxy_ok      - regime favorable proxies
+        div_confluence_with_regime - score 0-5 (DMP + regime)
+
+    Convention NaN/None : fallback explicite 0/NaN selon batch.
+    """
+    out = dict(row)
+
+    # ─── Inputs ────────────────────────────────────────────────────────────
+    rhdv = _safe_float(out.get("retest_high_delta_div")) or 0
+    bsrh = _safe_float(out.get("bars_since_retest_high"))
+    if bsrh is None or pd.isna(bsrh):
+        bsrh = 999.0
+    rldv = _safe_float(out.get("retest_low_delta_div")) or 0
+    bsrl = _safe_float(out.get("bars_since_retest_low"))
+    if bsrl is None or pd.isna(bsrl):
+        bsrl = 999.0
+    cvd_dir = _safe_float(out.get("cvd_day_dir")) or 0
+    diag = _safe_float(out.get("diag_imbalance")) or 0
+    mom = _safe_float(out.get("momentum_5b")) or 0
+    finish = _safe_float(out.get("finish_strength")) or 0
+    session_raw = out.get("session")
+    delta = _safe_float(out.get("delta_bar")) or 0
+    vol = _safe_float(out.get("total_vol")) or 0
+    ts = _safe_float(out.get("ts"))
+    ib_complete = _safe_float(out.get("ib_complete")) or 0
+    dist_swing_low = _safe_float(out.get("dist_swing_low"))
+    dist_swing_high = _safe_float(out.get("dist_swing_high"))
+    vix_regime = _safe_float(out.get("vix_regime")) or 0
+    gex_flip = _safe_float(out.get("bool_gex_flip_zone")) or 0
+    bn_absorb_bid = _safe_float(out.get("bn_absorb_bid")) or 0
+    bn_absorb_ask = _safe_float(out.get("bn_absorb_ask")) or 0
+    rvol_zscore = _safe_float(out.get("rvol_zscore"))
+    rvol_raw = _safe_float(out.get("rvol"))
+    # Use delta_divergence_clean from GROUPE D (chain pipeline)
+    dd = _safe_float(out.get("delta_divergence_clean")) or 0
+
+    # Cast session int
+    try:
+        session = int(session_raw) if session_raw is not None else -1
+    except (TypeError, ValueError):
+        session = -1
+
+    # ─── 39. ctx_double_top_trap ────────────────────────────────────────────
+    # Mirror batch ligne 554-556 :
+    #   dt_bear = (rhdv==1) & (bsrh<=5) & ((cvd_dir==-1) | (diag<0))
+    #   dt_bull = (rldv==1) & (bsrl<=5) & ((cvd_dir==1) | (diag>0))
+    dt_bear = (rhdv == 1) and (bsrh <= 5) and ((cvd_dir == -1) or (diag < 0))
+    dt_bull = (rldv == 1) and (bsrl <= 5) and ((cvd_dir == 1) or (diag > 0))
+    if dt_bear:
+        out["ctx_double_top_trap"] = -1.0
+    elif dt_bull:
+        out["ctx_double_top_trap"] = 1.0
+    else:
+        out["ctx_double_top_trap"] = 0.0
+
+    # ─── 40. ctx_momentum_exhaustion ───────────────────────────────────────
+    # Mirror batch ligne 566-569 :
+    #   bear_exhaust = (mom<-8) & (finish>10) -> BUY (1)
+    #   bull_exhaust = (mom>8) & (finish<-10) -> SELL (-1)
+    if mom < -8 and finish > 10:
+        out["ctx_momentum_exhaustion"] = 1.0
+    elif mom > 8 and finish < -10:
+        out["ctx_momentum_exhaustion"] = -1.0
+    else:
+        out["ctx_momentum_exhaustion"] = 0.0
+
+    # ─── 36. ctx_cvd_session ────────────────────────────────────────────────
+    # Mirror batch ligne 580-583 : delta.groupby(session_change.cumsum()).cumsum()
+    # Reset cumsum a chaque changement de session.
+    if session != state.current_session:
+        state.cvd_session_running = 0.0
+        state.current_session = session
+        # Reset vol_session_window aussi
+        state.vol_session_window.clear()
+    state.cvd_session_running += delta
+    out["ctx_cvd_session"] = state.cvd_session_running
+
+    # ─── 37. ctx_rvol_session ──────────────────────────────────────────────
+    # Mirror batch ligne 595-600 : rolling(30, min_p=5).mean() dans la session
+    # Si session_avg > 0 : vol / session_avg, sinon 1.0
+    state.vol_session_window.append(vol)
+    vol_vals_session = [v for v in state.vol_session_window if v > 0]
+    # Note : batch utilise .mean() qui ignore NaN. Synth vol > 0 toujours.
+    # min_periods=5 mirror batch
+    if len(state.vol_session_window) >= 5:
+        session_avg = sum(state.vol_session_window) / len(state.vol_session_window)
+        if session_avg > 0:
+            out["ctx_rvol_session"] = vol / session_avg
+        else:
+            out["ctx_rvol_session"] = 1.0
+    else:
+        out["ctx_rvol_session"] = 1.0
+
+    # ─── 38. ctx_session_phase ─────────────────────────────────────────────
+    # Mirror batch ligne 608-625 (simplified)
+    # 0=Asia, 2=London, 4=IB_Formation US default, 5=Mid_AM si ib_complete=1
+    phase = 0
+    if session == 0:
+        phase = 0  # Asia
+    elif session == 1:
+        phase = 2  # London
+    elif session == 2:
+        phase = 4  # default IB_Formation
+        if ib_complete == 1:
+            phase = 5  # Mid_AM par defaut post-IB
+    out["ctx_session_phase"] = phase
+
+    # ─── 33. ctx_bars_since_div ────────────────────────────────────────────
+    # ATTENTION BATCH BUG (rolling_features.py ligne 514-518) :
+    #   cumfire = div_fired.cumsum()
+    #   last_fire_idx = cumfire.where(div_fired == 1).ffill()  # stocke cumfire, pas l'index
+    #   bars_since = cumfire - last_fire_idx                    # toujours 0 entre divs
+    # Resultat batch : NaN tant qu'aucune div vue, puis 0 partout apres.
+    # La variable est dead-code (jamais utilisee semantiquement par le bot).
+    #
+    # Pour PARITE batch on reproduit le bug : NaN si aucune div, 0 sinon.
+    # Le compteur REEL (correct semantically) est trace dans state.bars_since_last_div
+    # mais n'est PAS exporte. Bug a fixer dans batch dans une session dediee.
+    div_fired_this_bar = 1 if dd != 0 else 0
+    state.div_fired_long.append(div_fired_this_bar)
+    if div_fired_this_bar == 1:
+        state.bars_since_last_div = 0
+    elif state.bars_since_last_div is not None:
+        state.bars_since_last_div += 1
+    # Mirror batch BUG : 0 si div vue, NaN sinon
+    if state.bars_since_last_div is not None:
+        out["ctx_bars_since_div"] = 0.0
+    else:
+        out["ctx_bars_since_div"] = np.nan
+
+    # ─── 34. ctx_div_density_20 ────────────────────────────────────────────
+    # Mirror batch ligne 522 : div_fired.rolling(20, min_p=1).sum()
+    out["ctx_div_density_20"] = float(sum(state.div_fired_long))
+
+    # ─── 35. ctx_div_at_swing ──────────────────────────────────────────────
+    # Mirror batch ligne 527-537 :
+    #   near_swing_low = |dist_swing_low|.fillna(999) < 15
+    #   near_swing_high = |dist_swing_high|.fillna(999) < 15
+    #   +1 si (dd==1) & near_swing_low, -1 si (dd==-1) & near_swing_high
+    near_sl = (abs(dist_swing_low) < 15) if dist_swing_low is not None else False
+    near_sh = (abs(dist_swing_high) < 15) if dist_swing_high is not None else False
+    if dd == 1 and near_sl:
+        out["ctx_div_at_swing"] = 1.0
+    elif dd == -1 and near_sh:
+        out["ctx_div_at_swing"] = -1.0
+    else:
+        out["ctx_div_at_swing"] = 0.0
+
+    # ─── 41. div_at_key_level_ticks ────────────────────────────────────────
+    # Mirror batch ligne 636-651 : min(|dist_*|) parmi 14 niveaux si div active
+    dist_cols = [
+        "dist_mq_call", "dist_mq_put", "dist_mq_hvl",
+        "dist_mq_call_0dte", "dist_mq_put_0dte",
+        "dist_swing_high", "dist_swing_low",
+        "dist_cur_vah", "dist_cur_val",
+        "dist_ib_high", "dist_ib_low",
+        "dist_blind_nearest_up", "dist_blind_nearest_dn",
+        "next_wall_dist_ticks",
+    ]
+    dist_vals = []
+    for c in dist_cols:
+        v = _safe_float(out.get(c))
+        if v is not None:
+            dist_vals.append(abs(v))
+    if dd != 0 and dist_vals:
+        out["div_at_key_level_ticks"] = min(dist_vals)
+    else:
+        out["div_at_key_level_ticks"] = np.nan
+
+    # ─── 42. div_confluence_dmp ────────────────────────────────────────────
+    # Mirror batch ligne 655-680 : score 0-4 (DMP pur)
+    div_active = 1 if dd != 0 else 0
+    at_level = 0
+    div_level_val = out.get("div_at_key_level_ticks")
+    if (
+        div_level_val is not None and not pd.isna(div_level_val)
+        and div_level_val < 20 and dd != 0
+    ):
+        at_level = 1
+    # absorb : div buy + bn_absorb_bid OU div sell + bn_absorb_ask
+    absorb_score = 0
+    if dd == 1 and bn_absorb_bid > 0:
+        absorb_score = 1
+    elif dd == -1 and bn_absorb_ask > 0:
+        absorb_score = 1
+    # rvol_score : |rvol_zscore| >= 2 OU rvol >= 2 (selon col dispo)
+    rvol_score = 0
+    if rvol_zscore is not None and abs(rvol_zscore) >= 2.0 and dd != 0:
+        rvol_score = 1
+    elif rvol_raw is not None and rvol_raw >= 2.0 and dd != 0:
+        rvol_score = 1
+    out["div_confluence_dmp"] = div_active + at_level + absorb_score + rvol_score
+
+    # ─── 44. div_regime_proxy_ok ───────────────────────────────────────────
+    # Mirror batch ligne 700-705 : vix_regime>=1 ET bool_gex_flip_zone==0
+    out["div_regime_proxy_ok"] = 1 if (vix_regime >= 1 and gex_flip == 0) else 0
+
+    # ─── 45. div_confluence_with_regime ────────────────────────────────────
+    # Mirror batch ligne 707-711 : div_confluence_dmp + div_regime_proxy_ok
+    out["div_confluence_with_regime"] = (
+        out["div_confluence_dmp"] + out["div_regime_proxy_ok"]
+    )
+
+    return out
+
 
 
 
