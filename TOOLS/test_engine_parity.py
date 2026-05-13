@@ -2980,6 +2980,162 @@ def _test_sessions_swings_simple():
     return {"all_pass": all_pass}
 
 
+def _test_sessions_swings_lag():
+    """Test sub-engine sessions_swings_lag (17 features LAG-N).
+
+    Convention LAG-N : stream emit pour ROW i la value pour pivot/event
+    confirme jusqu'a present. Test parite avec shift N=10 pour swings.
+
+    Spike origin = lookback 3 only -> pas de lag, parite directe sur columns.
+    """
+    from sessions_swings_lag_streaming import (
+        add_sessions_swings_lag_streaming,
+        make_sessions_swings_lag_state,
+    )
+    from sessions_swings_simple_streaming import (
+        add_sessions_swings_simple_streaming,
+        make_sessions_swings_simple_state,
+    )
+    from sessions_swings_engine import (
+        add_session_metadata_v2, add_swing_features_v2,
+        add_liquidity_sweep, add_equal_swings,
+        add_spike_origin_features,
+    )
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(127)
+    n = 1440  # 1 jour
+    bars = []
+    start = pd.Timestamp("2026-05-12 00:00:00", tz="UTC")
+    for i in range(n):
+        ts = start + pd.Timedelta(minutes=i)
+        bars.append({"ts_event": ts.tz_localize(None)})
+    df = pd.DataFrame(bars)
+    # Synth avec swings prononces : sinusoide + bruit pour generer pivots
+    # Amplitude 30 points sur cycle de 100 bars -> prominence >> 0.1% (5.8 pts)
+    x = np.arange(n)
+    sine = 30 * np.sin(x * 2 * np.pi / 100)  # cycle 100 bars
+    base = 5800 + sine + np.cumsum(np.random.randn(n) * 0.2)
+    df["close"] = base
+    df["open"] = base + np.random.randn(n) * 0.3
+    df["high"] = np.maximum(df["open"], df["close"]) + np.random.uniform(0.5, 3.0, n)
+    df["low"] = np.minimum(df["open"], df["close"]) - np.random.uniform(0.5, 3.0, n)
+
+    # BATCH chain
+    batch_df = df.copy()
+    batch_df = add_session_metadata_v2(batch_df)
+    batch_df = add_swing_features_v2(batch_df)
+    batch_df = add_liquidity_sweep(batch_df)
+    batch_df = add_equal_swings(batch_df, symbol="ES", tick=0.25)
+    batch_df = add_spike_origin_features(batch_df)
+
+    # STREAM chain : simple_streaming (pour session_id) puis lag_streaming
+    state_simple = make_sessions_swings_simple_state("ES")
+    state_lag = make_sessions_swings_lag_state("ES")
+    stream_rows = []
+    for _, row in df.iterrows():
+        r1 = add_sessions_swings_simple_streaming(row.to_dict(), state_simple)
+        r2 = add_sessions_swings_lag_streaming(r1, state_lag)
+        stream_rows.append(r2)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest sessions_swings_lag parite sur {n} rows synth (1 jour, ES)...")
+
+    N = 10
+
+    # ─── NIVEAU 1 : Features SWING booleens LAG-10 (parite shift exact) ─────
+    print(f"\n--- NIVEAU 1 : SWING booleens LAG-{N} (batch[i] == stream[i+{N}]) ---")
+    cols_swing_lag = [
+        ("swing_high_active_lag10", N),
+        ("swing_low_active_lag10", N),
+    ]
+    all_pass = True
+    for col, lag in cols_swing_lag:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values[:-lag] if lag > 0 else batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values[lag:] if lag > 0 else stream_df[col].astype("float64").values
+        diff = np.abs(b - s)
+        max_diff = float(np.nanmax(diff))
+        n_batch_fires = int((b != 0).sum())
+        n_stream_fires = int((s != 0).sum())
+        status = "PASS" if max_diff < 1e-6 else "FAIL"
+        print(f"  {col:35s} {status} max_diff={max_diff:.4e} "
+              f"fires batch/stream:{n_batch_fires}/{n_stream_fires}")
+        if status == "FAIL":
+            all_pass = False
+
+    # ─── NIVEAU 2 : equal swings (depend swings) - shift N test ────────────
+    print(f"\n--- NIVEAU 2 : Equal swings (depend swings, shift N=10) ---")
+    for col in ("equal_highs_detected", "equal_lows_detected"):
+        if col not in batch_df.columns:
+            continue
+        b = batch_df[col].astype("float64").values[:-N]
+        s = stream_df[col].astype("float64").values[N:]
+        diff = np.abs(b - s)
+        max_diff = float(np.nanmax(diff))
+        n_batch = int((b != 0).sum())
+        n_stream = int((s != 0).sum())
+        status = "PASS" if max_diff < 1e-6 else "FAIL"
+        print(f"  {col:35s} {status} max_diff={max_diff:.4e} "
+              f"batch/stream:{n_batch}/{n_stream}")
+        if status == "FAIL":
+            all_pass = False
+
+    # ─── NIVEAU 3 : SPIKE features (PAS lookahead, parite directe) ──────────
+    print(f"\n--- NIVEAU 3 : SPIKE features (lookback 3 only, parite directe) ---")
+    cols_spike = [
+        "spike_detected_lag3",
+        "n_spike_origins_active",
+        "n_spike_origins_cluster_within_0_2pct",
+    ]
+    for col in cols_spike:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        diff = np.abs(b - s)
+        max_diff = float(np.nanmax(diff))
+        n_batch = int((b != 0).sum())
+        n_stream = int((s != 0).sum())
+        status = "PASS" if max_diff < 1e-6 else "FAIL"
+        print(f"  {col:35s} {status} max_diff={max_diff:.4e} "
+              f"batch/stream:{n_batch}/{n_stream}")
+        if status == "FAIL":
+            all_pass = False
+
+    # ─── NIVEAU 4 INFO : dist_*_pct features (semantique stream differente) ─
+    # Pas de parite stricte (close[i] vs close[i+N] differs). Verifier juste
+    # qu'on emit des valeurs raisonnables.
+    print(f"\n--- NIVEAU 4 INFO : dist features (NON parite stricte, semantique stream) ---")
+    for col in (
+        "dist_last_swing_high_pct", "dist_last_swing_low_pct",
+        "bars_since_last_swing_high", "bars_since_last_swing_low",
+        "last_swing_high_session", "last_swing_low_session",
+        "liquidity_sweep_high_lag5", "liquidity_sweep_low_lag5",
+        "dist_last_spike_origin_pct", "bars_since_last_spike",
+    ):
+        if col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT stream")
+            continue
+        s_vals = stream_df[col].dropna()
+        if len(s_vals) > 0:
+            print(f"  {col:35s} stream emit non-NaN {len(s_vals)} rows")
+        else:
+            print(f"  {col:35s} stream emit ALL NaN")
+
+    print(f"\n  Niveau 1+2+3 status (parite stricte) : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL sessions_swings_lag : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -3276,6 +3432,7 @@ def main():
                                  "phase_b_plus_color",
                                  "open_extension_lines",
                                  "sessions_swings_simple",
+                                 "sessions_swings_lag",
                                  "all"])
     args = parser.parse_args()
 
@@ -3386,6 +3543,11 @@ def main():
 
     if args.engine in ("sessions_swings_simple", "all"):
         report = _test_sessions_swings_simple()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("sessions_swings_lag", "all"):
+        report = _test_sessions_swings_lag()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
