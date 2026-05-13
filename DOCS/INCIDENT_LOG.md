@@ -46,6 +46,93 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-05-13 14:30 — [SCOPE_CREEP] — Sub-engine #4 volume_profile divergence design batch (constant intraday) vs stream (running VPOC)
+
+**Contexte** : Chantier 3 Phase 3b Mardi, implementation `add_volume_profile_features_streaming` apres sub-engines #1/#2/#3 termines avec parite atol=1e-9.
+
+**Ce qui ne match pas** :
+- Batch `add_volume_profile_features(df, trades_df)` : groupby session_date_trading sur trades_df ENTIER -> calcule VPOC UNE fois fin de session -> broadcast cur_vpoc CONSTANT sur 480 bars du jour.
+- Stream live equivalent : VPOC doit etre disponible INTRADAY (bot utilise cur_vpoc comme reference contextuelle bar par bar). Donc running VPOC qui evolue a chaque nouveau trade.
+- Consequence : parite row-by-row batch/stream IMPOSSIBLE sur features cur_vpoc/vah/val/pdh/pdl/inside_value_area/poc_migration_dir/8x dist_*_pct (= 14 features sur 16 du sub-engine #4 divergent intraday).
+- Parite VRAIE uniquement sur LAST BAR de chaque session (running VPOC = final session VPOC).
+
+**Cause racine** : design batch fait pour OFFLINE training (broadcast post-session). Design stream fait pour LIVE inference (running intraday).
+
+**Lecon** : tout sub-engine qui DEPEND DE TRADES (pas seulement OHLCV par barre) a ce probleme. Decision design :
+  A. Stream = running VPOC intraday + parite test "last bar of session" uniquement
+  B. Stream = NaN jusqu'a fin session + frozen = feature inutile intraday
+  C. Stream = running + batch refait en running mode (additive-only constraint = NO)
+
+**Choix retenu** : option A. Stream produit running VPOC, test parite sur last-bar-of-session uniquement.
+
+**Implication ML** : v4 dataset training utilise batch (cur_vpoc constant intraday). Live utilise running. **Distribution shift potentiel** sur features cur_vpoc-dependent. A mitiger par :
+  - Option future : ajouter feature `cur_vpoc_running` (live-style) au batch (calcule en rolling cumulative sur trades_df) pour matcher inference.
+  - Court terme : flag a Jackson, decision si re-train avec running ou continuer constant. ML-trainer review obligatoire avant deploy live.
+
+**Trigger prevention** : tout sub-engine streaming qui depend de trades/cumulatif intraday declenche un audit "running vs frozen" + flag distribution shift. Ne JAMAIS deployer en live sans ml-trainer review du delta features intraday.
+
+**Reviewed** : self (decision design en cours, validation ml-trainer obligatoire avant deploy production sub-engine #4)
+
+---
+
+### 2026-05-13 00:30 — [VALIDATION_MISS] — Fix dashboard Bot 3 stats 7j/30j deploye sans test empirique reel → crash TypeError
+
+**Contexte** : Jackson screenshot section 7/30j vide Bot 3 → diagnostic → fix code-reviewer GO-AVEC-RESERVES → deploy VPS → restart → Jackson signale "ON VOIS TOUJOURS PAS DONNER DES TRADE LES REBRIQUE SON VIERGE".
+
+**Ce qui a mal tourne** :
+- `compute_stats_period(7, "*_databento_v3_trades.jsonl")` levait `TypeError: '>' not supported between instances of 'NoneType' and 'int'` ligne 198 : `t.get("pnl_ticks", 0) > 0`.
+- Cause : Bot 3 v3 logge des trades `RECOVERED_TIMEOUT` (anti-zombie 2-stage boot) avec `pnl_ticks=null` + `pnl_usd=null`. Le `.get("pnl_ticks", 0)` retourne `None` (cle existe avec valeur null), PAS le default 0. Soustraction None > 0 → TypeError.
+- Verification empirique post-fix : 69 trades total 7j, **12 avec pnl_ticks=null** (signal_id `RECOVERED_*`, `outcome: RECOVERED_TIMEOUT`), 57 numeriques.
+- Endpoint `/api/paper_v3_state` levait 500 silencieusement → frontend `paperData.stats_7d` undefined → branche "Pas de donnees historiques" persistante apres "deploy reussi".
+
+**Cause racine** :
+1. **STEP 1-3 module-review-protocol saute** : j'ai lu le code (`compute_stats_period`) mais n'ai PAS execute le walk-through 3 scenarios + n'ai PAS fait test empirique sur les vrais fichiers `*_databento_v3_trades.jsonl` VPS AVANT deploy.
+2. **Code-reviewer brief incomplet** : j'ai briefe l'agent sur la logique theorique (pattern glob, exclusion Bot 1/2, cache-bust) mais pas demande "y a-t-il des differences de schema entre `*_trades.jsonl` Bot 1 et `*_databento_v3_trades.jsonl` Bot 3 ?". Agent a valide la logique sans verifier schema concret. Faux negative du review.
+3. **Feedback_pre_deploy_3_questions.md (24/04 soir) viole point 3** : "testé empiriquement sur data reelle ?" → NON.
+4. **feedback_validation_miss_patterns.md (24/04)** : pattern recurrent, "verifier empiriquement que code/methode defini est REELLEMENT appele en prod". Pareil ici : j'aurais du run `compute_stats_period` localement avec data VPS clone AVANT SCP.
+
+**Lecon** :
+- **AVANT toute modif dashboard backend qui appelle une fonction existante sur un nouveau pattern de donnees**, exiger : test Python direct sur VPS via SSH `python -c "from ... import f; print(f(args))"` AVANT SCP + restart.
+- **Brief code-reviewer doit inclure schemas concrets** : "Bot 1 trades.jsonl schema = X, Bot 2 schema = Y, Bot 3 schema = Z, diffs ?". Sinon review = validation logique deconnectee.
+- **JAMAIS faire confiance a "deja en prod sur Bot 1/2 donc OK pour Bot 3"** sans verifier que les datasets de Bot 3 sont structurellement equivalents.
+
+**Trigger prevention** :
+- Tout deploy backend dashboard qui reuse une fonction sur nouveau pattern de fichiers → smoke test Python remote OBLIGATOIRE avant SCP.
+- Si l'API plante apres restart : check `LOGS/errors/errors_*_dashboard.jsonl` derniers 10 lignes pour TypeError/KeyError → indication immediate schema mismatch.
+
+**Reviewed** : self (mea culpa explicite). Fix supplementaire applique + re-deploy + test empirique cette fois OK (57 trades, WR 66.7%, PF 1.51, PnL +$1486.5).
+
+### 2026-05-12 16:15 — [VALIDATION_MISS] — Bot 3 MGC integration : regression duplication bot3_config + dicts rollover MGC
+
+**Contexte** : Integration Bot 3 Gold (MGC) deploy VPS aujourd'hui. 5 fix successifs apres reviews (R1+R2+R3) + 8 fichiers SCP + restart service. Service stable pid=10920 mais 0 events MGC observes.
+
+**Ce qui a mal tourne** :
+- Apres deploy initial, **7 restarts service consecutifs** (pid 3804, 5256, 8972, etc.) tous crashes avec `KeyError: 'MGC'` ligne 2193 `databento_paper_trader_v2.py` : `RB[sym].get("max_trades_per_day")`.
+- Cause racine du crash : `RISK_BOT3` dict ne contenait pas la cle "MGC". Fix applique a `CORE/bot3_config.py` mais le service Python charge `BOT/bot3_config.py` (sys.path BOT en premier) qui n'avait PAS le fix → silent divergence 2 sources.
+- Pattern miroir incident 11/05 deja documente (`feedback_bot3_data_source_v4_enriched.md` + memory `bot3_config duplication`).
+- Apres sync forcee `BOT/` + `CORE/` (~25KB chaque, identiques hash), KeyError disparu mais **0 events MGC quand meme** : 0 BOT3_REGIME_OBSERVE, 0 BOT3_BAR_STALE (parquet stale 22h+), 0 BOT3G_DECISION_*. Code path skip MGC en silence AVANT `load_last_bar` ou apres sans emit.
+
+**Cause racine** :
+1. **Duplication non-protegee** : 2 sources de verite `bot3_config.py` (CORE/ + BOT/) sans symlink ni `__init__.py` partage. Sync manuelle SCP requise = drift garanti tot ou tard.
+2. **Audit pre-deploy incomplet** : 5 cap dicts (RISK_BOT3, ATR_BASELINE, SYMBOL_CONFIG, MAX_DRIFT_TICKS, RiskManager.counters) ajoutes MGC en 2 rounds successifs (round 1 manque RISK_BOT3 + cap counters → KeyError, round 2 ajoute mais d'autres dicts pas verifies empiriquement).
+3. **Manque test pre-deploy local** : Bot 3 lance localement avec SYMBOLS_BOT3=["MGC"] aurait detecte KeyError instantanement avant SCP.
+
+**Lecon** :
+- **Une seule source de verite** pour les configs partagees Bot. Soit `from CORE.bot3_config import *` partout (depreciate BOT/bot3_config.py), soit symlink dur. Sync 2-locations = pattern 11.
+- **Grep cross-dicts** avant deploy : `grep -n '\\[sym\\]' BOT/*.py CORE/*.py | grep -v "def "` → enumerer TOUS les acces dict-par-symbole, verifier MGC present partout.
+- **Smoke test local minimal** : `python -c "from BOT.databento_paper_trader_v2 import _bot3_poll_cycle; ..."` avec MGC en SYMBOLS_BOT3 → DOIT pas raise KeyError.
+- **Run pid uptime gate post-deploy** : verifier J+10min PID stable + 0 PY_EXCEPTION_HOT_PATH avant declarer OK. Si exception → rollback immediat, pas patch successif.
+
+**Trigger prevention** : avant tout deploy nouveau symbole sur bot existant :
+1. Grep `dict.*sym` + `dict\[symbol\]` dans le bot file pour enumerer TOUS dicts par-symbol
+2. Verifier les 2 locations (CORE/ + BOT/) ont les memes clefs (`diff CORE/bot3_config.py BOT/bot3_config.py`)
+3. Test local smoke avec le nouveau symbole en SYMBOLS_BOT3 actif
+4. Post-deploy : grep PY_EXCEPTION_HOT_PATH dans events 10min apres restart → 0 obligatoire
+
+**Note ouverte** : pid 10920 0 events MGC depuis fix → cause secondaire a investiguer (probable `load_last_bar` retourne None sans emit OU MGC parquet path mismatch `.v.0` vs `.c.0` masque le bar stale).
+
+**Reviewed** : self + Jackson (vérification empirique logs VPS post-restart) + code-reviewer R1+R2+R3 rounds pre-deploy.
+
 ### 2026-05-12 10:00 — [INVESTIGATION] — Cat A features cross-check 3 agents : verdict + plan
 
 **Contexte** : Apres rebuild V4 enriched mai 2026 (Cat B 88.5%->36.3% NaN -52pp), Cat A features residuelles 100% NaN persistent. Dispatch 3 agents code-reviewer en parallele pour audit.

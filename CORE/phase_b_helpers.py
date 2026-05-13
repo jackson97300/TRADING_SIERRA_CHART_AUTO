@@ -24,9 +24,10 @@ Auteur : Phase B Session 1 (2026-04-26)
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import date as date_cls
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -131,7 +132,7 @@ def add_session_metadata(df: pd.DataFrame, bounds: dict | None = None) -> pd.Dat
 # add_session_metadata est STATELESS : transformations row-level pures
 # (timezone UTC->ET, hour/minute extraction, comparaison seuils bounds).
 # AUCUN state rolling. SessionMetadataState reserve evolution future.
-from dataclasses import dataclass
+# (dataclass/field deja importes top-of-module)
 
 
 @dataclass
@@ -763,6 +764,238 @@ def add_open_cash_price1030(df: pd.DataFrame, bounds: dict | None = None) -> pd.
     df = df.merge(open_cash, on="date_et", how="left")
     df = df.merge(price_1030, on="date_et", how="left")
     return df
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# API STREAMING sub-engine #4 (Chantier 3 Phase 3b Mardi soir)
+# ═══════════════════════════════════════════════════════════════════════════════
+# add_volume_profile_features STATEFUL : 16 features VPOC/VAH/VAL/PDH/PDL
+# Plus complexe que sub-engines #1-3 :
+#   1. Depend de TRADES (pas seulement OHLCV) : trades_in_window list
+#   2. State maintient running price_volume dict cumulatif intraday
+#   3. Reset session_date_trading : transfert cur_* -> prev_* (frozen)
+#
+# DIVERGENCE BATCH/STREAM DOCUMENTEE (INCIDENT_LOG 2026-05-13 14:30) :
+#   - Batch : cur_vpoc CONSTANT per session (calcule fin de session sur ALL trades)
+#   - Stream : cur_vpoc EVOLUE intraday (running VPOC sur trades accumules)
+#   - Parite VRAIE uniquement sur LAST BAR de chaque session
+#   - Feature distribution shift potentiel intraday : ml-trainer review obligatoire
+#     avant deploy production.
+#
+# Edge cases :
+#   - Premiere bar de session : price_volume vide -> cur_vpoc = NaN
+#   - Session sans trades : cur_vpoc/vah/val = NaN (gere par compute_volume_profile_dict)
+#   - prev_* = NaN pour la PREMIERE session vue (pas de session precedente)
+
+
+@dataclass
+class VolumeProfileState:
+    """State sub-engine #4 add_volume_profile_features.
+
+    Maintient :
+      - current_session_date_trading : pour detecter rotation
+      - price_volume : dict cumulatif {price_bucket -> size} pour session courante
+      - pdh/pdl_running : max/min des trades de la session courante
+      - prev_* : stats session precedente (frozen apres rotation)
+      - cur_* cache (recompute on demand depuis price_volume)
+
+    Pickle-safe : dict primitif, floats, Any pour date.
+    """
+    current_session_date_trading: Optional[Any] = None
+    # Running cumulative pour session courante
+    price_volume: Dict[float, float] = field(default_factory=dict)
+    pdh_running: Optional[float] = None
+    pdl_running: Optional[float] = None
+    # Previous session FROZEN stats (transferred at session boundary)
+    prev_vpoc: Optional[float] = None
+    prev_vah: Optional[float] = None
+    prev_val: Optional[float] = None
+    prev_pdh: Optional[float] = None
+    prev_pdl: Optional[float] = None
+    # Diagnostic
+    n_trades_session: int = 0
+
+
+def add_volume_profile_features_streaming(
+    row: dict,
+    state: VolumeProfileState,
+    trades_in_window: Optional[list] = None,
+    tick: float = TICK_SIZE,
+    value_area_pct: float = 70.0,
+) -> dict:
+    """API streaming sub-engine #4 add_volume_profile_features.
+
+    Reproduit add_volume_profile_features() batch sur 16 features avec
+    RUNNING VPOC intraday (vs batch constant intraday — voir INCIDENT_LOG).
+
+    Args:
+        row : dict avec session_date_trading + close. Requiert add_session_metadata
+              AVANT (ordre engines).
+        state : VolumeProfileState mutable.
+        trades_in_window : list[dict] {price, size} - trades depuis la barre
+              precedente. None ou [] = pas de nouveaux trades (cur_* preserve).
+        tick : tick size (0.25 ES/NQ, 0.10 MGC).
+        value_area_pct : % volume cible Value Area (70% default Steidlmayer).
+
+    Returns:
+        dict row + 16 features :
+          cur_vpoc, cur_vah, cur_val, cur_pdh, cur_pdl,
+          prev_vpoc, prev_vah, prev_val, pdh, pdl,
+          inside_value_area, poc_migration_dir,
+          dist_cur_vpoc_pct, dist_cur_vah_pct, dist_cur_val_pct,
+          dist_prev_vpoc_pct, dist_prev_vah_pct, dist_prev_val_pct,
+          dist_pdh_pct, dist_pdl_pct
+
+    Raises:
+        ValueError si session_date_trading absent.
+    """
+    out = dict(row)
+
+    session_date_trading = out.get("session_date_trading")
+    if session_date_trading is None:
+        raise ValueError(
+            "add_volume_profile_features_streaming requires 'session_date_trading' "
+            "in row. Call add_session_metadata_streaming BEFORE."
+        )
+
+    # 1. Detection rotation session -> transfert cur_* vers prev_*
+    if session_date_trading != state.current_session_date_trading:
+        # Finaliser la session precedente (si existante) : compute final VPOC depuis
+        # price_volume et transferer dans prev_* (frozen).
+        if state.current_session_date_trading is not None and state.price_volume:
+            final_vp = compute_volume_profile_dict(state.price_volume, value_area_pct)
+            state.prev_vpoc = (
+                final_vp["vpoc"] if not pd.isna(final_vp["vpoc"]) else None
+            )
+            state.prev_vah = (
+                final_vp["vah"] if not pd.isna(final_vp["vah"]) else None
+            )
+            state.prev_val = (
+                final_vp["val"] if not pd.isna(final_vp["val"]) else None
+            )
+            state.prev_pdh = state.pdh_running
+            state.prev_pdl = state.pdl_running
+        # Reset running pour nouvelle session
+        state.current_session_date_trading = session_date_trading
+        state.price_volume = {}
+        state.pdh_running = None
+        state.pdl_running = None
+        state.n_trades_session = 0
+
+    # 2. Accumuler trades_in_window dans price_volume
+    if trades_in_window:
+        for trade in trades_in_window:
+            price = trade.get("price")
+            size = trade.get("size")
+            if price is None or size is None:
+                continue
+            try:
+                pf = float(price)
+                sf = float(size)
+                if pd.isna(pf) or pd.isna(sf) or sf <= 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            # Bucket par tick
+            bucket = round(pf / tick) * tick
+            state.price_volume[bucket] = state.price_volume.get(bucket, 0.0) + sf
+            # Update pdh/pdl running (sur prix de trade, pas bar high/low)
+            if state.pdh_running is None or pf > state.pdh_running:
+                state.pdh_running = pf
+            if state.pdl_running is None or pf < state.pdl_running:
+                state.pdl_running = pf
+            state.n_trades_session += 1
+
+    # 3. Compute running VPOC depuis state.price_volume
+    if state.price_volume:
+        cur_vp = compute_volume_profile_dict(state.price_volume, value_area_pct)
+        cur_vpoc = cur_vp["vpoc"]
+        cur_vah = cur_vp["vah"]
+        cur_val = cur_vp["val"]
+    else:
+        cur_vpoc = np.nan
+        cur_vah = np.nan
+        cur_val = np.nan
+
+    cur_pdh = state.pdh_running if state.pdh_running is not None else np.nan
+    cur_pdl = state.pdl_running if state.pdl_running is not None else np.nan
+    prev_vpoc = state.prev_vpoc if state.prev_vpoc is not None else np.nan
+    prev_vah = state.prev_vah if state.prev_vah is not None else np.nan
+    prev_val = state.prev_val if state.prev_val is not None else np.nan
+    prev_pdh = state.prev_pdh if state.prev_pdh is not None else np.nan
+    prev_pdl = state.prev_pdl if state.prev_pdl is not None else np.nan
+
+    # 4. Output features de base
+    out["cur_vpoc"] = cur_vpoc
+    out["cur_vah"] = cur_vah
+    out["cur_val"] = cur_val
+    out["cur_pdh"] = cur_pdh
+    out["cur_pdl"] = cur_pdl
+    out["prev_vpoc"] = prev_vpoc
+    out["prev_vah"] = prev_vah
+    out["prev_val"] = prev_val
+    out["pdh"] = prev_pdh  # nom batch : pdh = previous day high
+    out["pdl"] = prev_pdl
+
+    # 5. Derivees ML-usable (mirror batch ligne 879-892)
+    close = out.get("close")
+    # inside_value_area : close entre VAL et VAH
+    if (
+        close is not None and not pd.isna(close)
+        and not pd.isna(cur_val) and not pd.isna(cur_vah)
+    ):
+        try:
+            cf = float(close)
+            out["inside_value_area"] = 1 if (cf >= cur_val and cf <= cur_vah) else 0
+        except (TypeError, ValueError):
+            out["inside_value_area"] = 0
+    else:
+        out["inside_value_area"] = 0
+
+    # poc_migration_dir : sign(cur_vpoc - prev_vpoc)
+    if not pd.isna(cur_vpoc) and not pd.isna(prev_vpoc):
+        diff = cur_vpoc - prev_vpoc
+        if diff > 0:
+            out["poc_migration_dir"] = 1
+        elif diff < 0:
+            out["poc_migration_dir"] = -1
+        else:
+            out["poc_migration_dir"] = 0
+    else:
+        out["poc_migration_dir"] = 0
+
+    # Distances pct (8 features) : (close - level) / close * 100
+    if close is not None and not pd.isna(close):
+        try:
+            cf = float(close)
+            if cf != 0.0:
+                def _dist(level):
+                    return (cf - level) / cf * 100 if not pd.isna(level) else np.nan
+                out["dist_cur_vpoc_pct"] = _dist(cur_vpoc)
+                out["dist_cur_vah_pct"] = _dist(cur_vah)
+                out["dist_cur_val_pct"] = _dist(cur_val)
+                out["dist_prev_vpoc_pct"] = _dist(prev_vpoc)
+                out["dist_prev_vah_pct"] = _dist(prev_vah)
+                out["dist_prev_val_pct"] = _dist(prev_val)
+                out["dist_pdh_pct"] = _dist(prev_pdh)
+                out["dist_pdl_pct"] = _dist(prev_pdl)
+            else:
+                for k in ("dist_cur_vpoc_pct", "dist_cur_vah_pct", "dist_cur_val_pct",
+                          "dist_prev_vpoc_pct", "dist_prev_vah_pct", "dist_prev_val_pct",
+                          "dist_pdh_pct", "dist_pdl_pct"):
+                    out[k] = np.nan
+        except (TypeError, ValueError):
+            for k in ("dist_cur_vpoc_pct", "dist_cur_vah_pct", "dist_cur_val_pct",
+                      "dist_prev_vpoc_pct", "dist_prev_vah_pct", "dist_prev_val_pct",
+                      "dist_pdh_pct", "dist_pdl_pct"):
+                out[k] = np.nan
+    else:
+        for k in ("dist_cur_vpoc_pct", "dist_cur_vah_pct", "dist_cur_val_pct",
+                  "dist_prev_vpoc_pct", "dist_prev_vah_pct", "dist_prev_val_pct",
+                  "dist_pdh_pct", "dist_pdl_pct"):
+            out[k] = np.nan
+
+    return out
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

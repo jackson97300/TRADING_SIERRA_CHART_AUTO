@@ -62,6 +62,60 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-13 15:00 — FEATURE Chantier 3 Phase 3b — sub-engine #4 volume_profile streaming (RUNNING VPOC intraday)
+
+**Categorie** : FEATURE
+**Impact prod** : OFFLINE pour l'instant (Live Enricher en cours de construction) -> LIVE futur quand service deploye
+**Fichier(s)** :
+- `CORE/phase_b_helpers.py:768-998` (add_volume_profile_features_streaming + VolumeProfileState)
+- `TOOLS/test_engine_parity.py:904-1160` (_test_volume_profile 3 niveaux + P1.1 fix)
+- `DOCS/INCIDENT_LOG.md` entry 2026-05-13 14:30 (decision design batch vs stream)
+**Schema/version** : 16 features (cur/prev x vpoc/vah/val/pdh/pdl + inside_VA + poc_migration_dir + 8 dist_*_pct)
+**Reviewer(s) agent** : code-reviewer GO-AVEC-RESERVES (0 P0, 3 P1, 5 P2). P1.1 fix applique pre-commit.
+
+### Quoi
+Sub-engine #4 streaming pour Live Enricher. Reproduit `add_volume_profile_features()` batch avec une DIVERGENCE INTENTIONNELLE : VPOC running intraday (vs batch constant per session). State maintient `price_volume` dict cumulatif + transfert prev_* a la rotation session.
+
+### Pourquoi
+Bot live a besoin de cur_vpoc INTRADAY (decisions bar par bar). Batch produit le snapshot offline (training V4 dataset). Choix design : option A (running) car option B (NaN jusqu'a fin session) rend la feature inutile intraday.
+
+### DISTRIBUTION SHIFT — Risque ML majeur (P1.2 audit)
+
+**14 features (cur_vpoc-dependent) ont une distribution DIFFERENTE en inference (running) vs training (constant)** :
+- cur_vpoc, cur_vah, cur_val (running evolue)
+- inside_value_area passe 1->0->1 plusieurs fois intraday (vs constant batch)
+- 8 dist_*_pct heritent du shift
+
+**ml-trainer review OBLIGATOIRE AVANT toute integration v4 inference** (cf .claude/rules/critical-tasks-review.md critere 2 ML pipeline). Mandat explicite a fournir :
+- Quantifier KS test feature par feature (running vs batch sur 3 sessions ES + 3 sessions NQ)
+- p99 distance + impact PF backtest live-mode vs train-mode
+- Verdict GO/NOGO + recommandation : re-train running-mode OU accepter shift OU ajouter `cur_vpoc_running` au batch
+
+**Status actuel** : feature CODEE + TESTEE mais NON-INTEGREE en pipeline V4 inference. Backlog : ml-trainer review avant deploy live.
+
+### Validation pre-deploy
+- 3 niveaux tests PASS :
+  - Niveau 1 : parite last-bar-of-session sur 3 sessions (1260 bars + 27599 trades synth), atol 1e-6 sur pdh/pdl exacts + atol 0.25 (1 tick) sur VPOC/VAH/VAL (tie-break dict insertion order)
+  - Niveau 2 : pickle roundtrip state mid-session (4628 trades, 24 buckets price_volume)
+  - Niveau 3 : rotation session detection + transfert prev_vpoc=5806.25
+- P1.1 audit fix : test loophole sur derniere bar (trades [bar_419, bar_419+60s) etaient draines sans appel stream -> tolerance 0.25 masquait potentiellement bug). Convention corrigee : window=[bar_i, bar_(i+1)), derniere bar = +1min. Assertion `trade_idx == len(trades_arr)` valide aucune perte.
+
+### Backlog post-commit
+- **P1.2 (avant deploy live)** : ml-trainer review distribution shift. Sans GO -> ne PAS integrer en V4 inference.
+- **P1.3 (perf)** : compute_volume_profile_dict O(n) a chaque bar. Optimization cache vpoc bucket (recompute uniquement si update). Differable J+1 post-deploy.
+- **P2.1** : extraire `VALUE_AREA_PCT = 70.0` dans `CORE/constants.py`.
+- **P2.2** : consolider try/except cast en helper `_safe_float()`.
+
+### Revert plan
+Sub-engine isole (additive only). Pour rollback : retirer les 2 ajouts (streaming function + dataclass) du fichier `CORE/phase_b_helpers.py`. La fonction batch existante n'a pas ete touchee.
+
+### Liens
+- INCIDENT_LOG : 2026-05-13 14:30 [SCOPE_CREEP] divergence design batch (constant) vs stream (running VPOC)
+- Memory : - (a creer si distribution shift confirme post ml-trainer)
+- Review agent : code-reviewer GO-AVEC-RESERVES, 3 P1 (P1.1 fixe, P1.2+P1.3 backlog)
+
+---
+
 ## 2026-05-13 11:30 — FEATURE Phase 2a — integration vix_lite_reader dans pipeline V4 (parallel vix_* DMP)
 
 **Categorie** : FEATURE

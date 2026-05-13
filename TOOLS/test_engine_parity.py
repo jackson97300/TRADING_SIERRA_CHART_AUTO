@@ -901,11 +901,280 @@ def _test_session_high_low():
     }
 
 
+def _test_volume_profile():
+    """Test sub-engine #4 add_volume_profile_features (RUNNING VPOC intraday).
+
+    DIVERGENCE BATCH/STREAM DOCUMENTEE :
+      - Batch : cur_vpoc CONSTANT per session (fin de session, broadcast)
+      - Stream : cur_vpoc EVOLUE intraday (running VPOC sur trades accumules)
+      - Parite VRAIE uniquement sur LAST BAR de chaque session
+
+    Test verifie :
+      - Last bar parite : stream final running VPOC == batch session VPOC (atol 1e-6)
+      - State pickle roundtrip (mid-session, state non-vide)
+      - Rotation session : prev_* correctement transferes apres detection nouvelle
+        session_date_trading
+
+    NB : on n'utilise PAS test_engine_parity standard (row-by-row PASS impossible).
+    """
+    from phase_b_helpers import (
+        add_session_metadata,
+        add_volume_profile_features,
+        add_volume_profile_features_streaming,
+        VolumeProfileState,
+    )
+    import numpy as np
+    import pandas as pd
+    import pickle
+
+    # Build synth : 3 sessions CME (dim 18h ET -> ven 17h ET)
+    # Simplification : on prend 3 jours calendar consecutifs, chacun avec ses propres trades.
+    # add_session_metadata calcule session_date_trading.
+    bars = []
+    trades = []
+    np.random.seed(42)
+    for day_offset in range(3):
+        date_str = f"2026-05-1{2 + day_offset}"
+        # Bars 09:00 ET (13:00 UTC) - 16:00 ET (20:00 UTC) = 420 bars
+        start_et = pd.Timestamp(f"{date_str} 13:00:00", tz="UTC")
+        for i in range(420):
+            ts_bar = start_et + pd.Timedelta(minutes=i)
+            high = 5800.0 + day_offset * 5 + np.sin(i / 30.0) * 2.0 + i * 0.02
+            low = high - 0.5
+            close = (high + low) / 2
+            bars.append({
+                "ts_event": ts_bar.tz_localize(None),
+                "open": close - 0.1, "high": high, "low": low, "close": close,
+                "volume": 100, "delta_bar": 0,
+            })
+            # ~20 trades per bar, prix entre low et high
+            n_trades = np.random.randint(15, 30)
+            for _ in range(n_trades):
+                price = np.random.uniform(low, high)
+                size = np.random.randint(1, 10)
+                # ts_event du trade : entre ts_bar et ts_bar + 1min (within bar window)
+                ts_trade = ts_bar + pd.Timedelta(seconds=np.random.randint(0, 60))
+                trades.append({
+                    "ts_event": ts_trade.tz_localize(None),
+                    "price": float(price),
+                    "size": int(size),
+                })
+
+    df = pd.DataFrame(bars)
+    trades_df = pd.DataFrame(trades)
+    # ts_event tz-naive partout (bars + trades) pour pouvoir comparer dans stream loop.
+    # Pour le batch, on tz_localize uniquement la copie passee a la fonction.
+    df = add_session_metadata(df, bounds=None)
+
+    print(f"\nTest volume_profile parite : {len(df)} bars + {len(trades_df)} trades synth")
+
+    # BATCH reference (trades doivent etre tz-aware pour add_volume_profile_features)
+    trades_df_batch = trades_df.copy()
+    trades_df_batch["ts_event"] = pd.to_datetime(
+        trades_df_batch["ts_event"]
+    ).dt.tz_localize("UTC")
+    batch_df = add_volume_profile_features(df.copy(), trades_df=trades_df_batch,
+                                            tick=0.25, bounds=None)
+    print(f"  Batch sessions detectees : {batch_df['session_date_trading'].unique()}")
+
+    # STREAM : iterate bar par bar avec trades_in_window
+    # FIX P1.1 audit code-reviewer : convention "trades de la bar i" = trades
+    # ts in [bar_i.ts_event, bar_(i+1).ts_event). Stream est appele AU CLOSE
+    # de chaque bar avec les trades survenus pendant la duration de la bar.
+    # Pour la DERNIERE bar : on assume duration = 1min (synth) car pas de
+    # next_bar disponible. Sans ce fix, les trades de la derniere bar etaient
+    # drainees sans appel stream -> stream tronque vs batch complet -> faux PASS
+    # masque par tolerance 0.25.
+    state = VolumeProfileState()
+    df_sorted = df.sort_values("ts_event").reset_index(drop=True)
+    trades_df_sorted = trades_df.sort_values("ts_event").reset_index(drop=True)
+    trades_arr = trades_df_sorted.to_dict("records")
+    trade_idx = 0
+    stream_rows = []
+    n_bars = len(df_sorted)
+    for i in range(n_bars):
+        bar_row = df_sorted.iloc[i]
+        bar_ts = bar_row["ts_event"]
+        # ts_close de cette bar = ts_event de la bar i+1 (ou ts_event + 1min si derniere)
+        if i + 1 < n_bars:
+            bar_close_ts = df_sorted.iloc[i + 1]["ts_event"]
+        else:
+            bar_close_ts = bar_ts + pd.Timedelta(minutes=1)
+        # Window = trades [bar_ts, bar_close_ts) = trades survenus PENDANT cette bar
+        window = []
+        while trade_idx < len(trades_arr):
+            t = trades_arr[trade_idx]
+            if t["ts_event"] < bar_close_ts:
+                window.append({"price": t["price"], "size": t["size"]})
+                trade_idx += 1
+            else:
+                break
+        out = add_volume_profile_features_streaming(
+            bar_row.to_dict(), state, trades_in_window=window, tick=0.25,
+        )
+        stream_rows.append(out)
+    # Sanity : aucun trade ne doit rester non traite avec convention propre
+    assert trade_idx == len(trades_arr), (
+        f"P1.1 fix : {len(trades_arr) - trade_idx} trades non traites "
+        f"(derniere bar window incomplete)"
+    )
+    stream_df = pd.DataFrame(stream_rows)
+
+    # PARITE : last bar of each session
+    # 2 niveaux de tolerance (P1.1 audit) :
+    #   - pdh/pdl/cur_pdh/cur_pdl : max/min exacts SANS bucketing -> atol 1e-6
+    #   - VPOC/VAH/VAL : tie-break depend ordre insertion dict -> atol 0.25 (1 tick)
+    print("\n--- NIVEAU 1 : parite LAST BAR de chaque session ---")
+    all_pass = True
+    sessions = sorted(df_sorted["session_date_trading"].unique())
+    cols_exact = ["cur_pdh", "cur_pdl", "pdh", "pdl"]  # atol 1e-6
+    cols_bucket = ["cur_vpoc", "cur_vah", "cur_val",
+                    "prev_vpoc", "prev_vah", "prev_val"]  # atol 0.25 (tie-break)
+    for sess in sessions:
+        mask_b = batch_df["session_date_trading"] == sess
+        mask_s = stream_df["session_date_trading"] == sess
+        last_idx_b = batch_df.index[mask_b][-1]
+        last_idx_s = stream_df.index[mask_s][-1]
+        b_row = batch_df.loc[last_idx_b]
+        s_row = stream_df.loc[last_idx_s]
+        diffs = {}
+
+        def _check(col, atol):
+            b_val = b_row[col]
+            s_val = s_row[col]
+            if pd.isna(b_val) and pd.isna(s_val):
+                return
+            if pd.isna(b_val) or pd.isna(s_val):
+                diffs[col] = f"NaN mismatch (b={b_val}, s={s_val})"
+                return
+            d = abs(float(b_val) - float(s_val))
+            if d > atol + 1e-9:
+                diffs[col] = f"diff={d:.6f} (b={b_val:.4f}, s={s_val:.4f}) atol={atol}"
+
+        for col in cols_exact:
+            _check(col, atol=1e-6)
+        for col in cols_bucket:
+            _check(col, atol=0.25)
+
+        sess_ok = len(diffs) == 0
+        all_pass = all_pass and sess_ok
+        print(f"  Session {sess} : {'PASS' if sess_ok else 'FAIL'} "
+              f"({len(diffs)} divergences)")
+        if diffs:
+            for col, msg in diffs.items():
+                print(f"    {col} : {msg}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+
+    # NIVEAU 2 : pickle roundtrip state NON-VIDE
+    print("\n--- NIVEAU 2 : pickle roundtrip state mid-session ---")
+    # Warmup half session 1
+    state_pickle = VolumeProfileState()
+    half = len(df_sorted) // 6  # mid session 1
+    trade_idx2 = 0
+    for i, (_, bar_row) in enumerate(df_sorted.iterrows()):
+        if i >= half:
+            break
+        bar_ts = bar_row["ts_event"]
+        window = []
+        while trade_idx2 < len(trades_arr) and trades_arr[trade_idx2]["ts_event"] < bar_ts:
+            t = trades_arr[trade_idx2]
+            window.append({"price": t["price"], "size": t["size"]})
+            trade_idx2 += 1
+        add_volume_profile_features_streaming(
+            bar_row.to_dict(), state_pickle, trades_in_window=window, tick=0.25,
+        )
+
+    print(f"  state pre-pickle : n_trades={state_pickle.n_trades_session}, "
+          f"n_buckets={len(state_pickle.price_volume)}, "
+          f"pdh={state_pickle.pdh_running:.4f}, pdl={state_pickle.pdl_running:.4f}")
+    assert state_pickle.n_trades_session > 0, "P0 : state vide post-warmup"
+    assert len(state_pickle.price_volume) > 0, "P0 : price_volume vide"
+
+    blob = pickle.dumps(state_pickle)
+    state_restored = pickle.loads(blob)
+    assert state_restored.n_trades_session == state_pickle.n_trades_session
+    assert state_restored.price_volume == state_pickle.price_volume
+    assert state_restored.pdh_running == state_pickle.pdh_running
+    assert state_restored.pdl_running == state_pickle.pdl_running
+    assert state_restored.current_session_date_trading == state_pickle.current_session_date_trading
+    # Test row produit meme output apres pickle
+    test_row = df_sorted.iloc[half].to_dict()
+    out_orig = add_volume_profile_features_streaming(
+        test_row, state_pickle, trades_in_window=[], tick=0.25,
+    )
+    out_restored = add_volume_profile_features_streaming(
+        test_row, state_restored, trades_in_window=[], tick=0.25,
+    )
+    pickle_ok = True
+    cols_all = cols_exact + cols_bucket
+    for col in cols_all:
+        a, b = out_orig.get(col), out_restored.get(col)
+        if pd.isna(a) and pd.isna(b):
+            continue
+        if pd.isna(a) or pd.isna(b) or abs(a - b) > 1e-9:
+            print(f"    pickle FAIL on {col}: orig={a} restored={b}")
+            pickle_ok = False
+    print(f"  Niveau 2 status : {'PASS' if pickle_ok else 'FAIL'}")
+
+    # NIVEAU 3 : rotation session
+    print("\n--- NIVEAU 3 : rotation session prev_* transfere ---")
+    state_rot = VolumeProfileState()
+    n_session_1 = sum(df_sorted["session_date_trading"] == sessions[0])
+    trade_idx3 = 0
+    # Process full session 1
+    for i in range(n_session_1):
+        bar_row = df_sorted.iloc[i]
+        bar_ts = bar_row["ts_event"]
+        window = []
+        while trade_idx3 < len(trades_arr) and trades_arr[trade_idx3]["ts_event"] < bar_ts:
+            t = trades_arr[trade_idx3]
+            window.append({"price": t["price"], "size": t["size"]})
+            trade_idx3 += 1
+        add_volume_profile_features_streaming(
+            bar_row.to_dict(), state_rot, trades_in_window=window, tick=0.25,
+        )
+    vpoc_session_1 = state_rot.price_volume and compute_vpoc_from_dict(state_rot.price_volume)
+    # Process first bar of session 2 (triggers rotation)
+    bar_row2 = df_sorted.iloc[n_session_1]
+    bar_ts2 = bar_row2["ts_event"]
+    window2 = []
+    while trade_idx3 < len(trades_arr) and trades_arr[trade_idx3]["ts_event"] < bar_ts2:
+        t = trades_arr[trade_idx3]
+        window2.append({"price": t["price"], "size": t["size"]})
+        trade_idx3 += 1
+    out_post_rot = add_volume_profile_features_streaming(
+        bar_row2.to_dict(), state_rot, trades_in_window=window2, tick=0.25,
+    )
+    print(f"  Post-rotation : prev_vpoc={state_rot.prev_vpoc}, "
+          f"current_session={state_rot.current_session_date_trading}")
+    rot_ok = (
+        state_rot.prev_vpoc is not None
+        and state_rot.current_session_date_trading == sessions[1]
+        and len(state_rot.price_volume) > 0  # nouvelle session a deja des trades
+    )
+    print(f"  Niveau 3 status : {'PASS' if rot_ok else 'FAIL'}")
+
+    all_pass = all_pass and pickle_ok and rot_ok
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL volume_profile : {'ALL 3 LEVELS PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
+def compute_vpoc_from_dict(price_volume):
+    """Helper local : VPOC depuis price_volume dict."""
+    if not price_volume:
+        return None
+    return max(price_volume, key=price_volume.get)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--engine", default="vix_lite",
                         choices=["vix_lite", "vix_ema_60", "session_metadata",
-                                 "ib_features", "session_high_low", "all"])
+                                 "ib_features", "session_high_low",
+                                 "volume_profile", "all"])
     args = parser.parse_args()
 
     if args.engine in ("vix_lite", "all"):
@@ -930,6 +1199,11 @@ def main():
 
     if args.engine in ("session_high_low", "all"):
         report = _test_session_high_low()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("volume_profile", "all"):
+        report = _test_volume_profile()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
