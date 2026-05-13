@@ -62,6 +62,73 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-13 11:30 — FEATURE Phase 2a — integration vix_lite_reader dans pipeline V4 (parallel vix_* DMP)
+
+**Categorie** : FEATURE
+**Impact prod** : OFFLINE (pipeline V4 build, pas de Bot/Dashboard impact direct)
+**Fichier(s)** :
+- `CORE/build_dataset_v4_dmp_databento.py:984-1027` (nouvelle etape 4ter — asof merge backward 5min)
+- `CORE/vix_lite_reader.py` (3 P0 fixes appliques : sanity range, dtype float64, vix_regime cast float)
+**Schema/version** : parquet V4 +32 colonnes `vixl_*` (10 levels + 10 gex + 1 regime + 7 dist + 2 above_hvl + 2 dist_gex)
+**Reviewer(s) agent** : code-reviewer GO-AVEC-RESERVES → 3 P0 corriges (sanity [5,150] aligne DMP, dtype object → float64, vix_regime int → float64)
+
+### Quoi
+Suite directe de l'entry 11:05 (VIX_Lite.cpp v1.3). Le pipeline V4 charge maintenant les donnees VIX_Lite JSONL en parallele des `vix_*` du DMP_MQ_FIELDS. Toutes les colonnes VIX_Lite sont prefixees `vixl_*` (rename `vix_ → vixl_` substring) pour eviter conflit nom avec DMP. Merge asof backward, tolerance 5min (VIX bouge 1/min RTH, fige hors RTH).
+
+Couvre 32 features VIX cote Python (+1 vs DMP qui en a 17 + 11 dist_vix_*) :
+- 10 levels bruts (`vixl_level`, `vixl_call`, `vixl_put`, `vixl_hvl`, `vixl_1d_min`, `vixl_1d_max`, `vixl_call_0dte`, `vixl_gamma_wall_0dte`, `vixl_put_0dte`, `vixl_hvl_0dte`)
+- 10 GEX flatten (`vixl_gex_0` a `vixl_gex_9`)
+- 1 regime categoriel (`vixl_regime` 0..3, aligne DMP_Transform.h)
+- 7 distances `dist_vixl_*` (call, put, hvl, call_0dte, put_0dte, hvl_0dte, gamma_wall_0dte)
+- 2 distances GEX (`dist_vixl_gex_nearest_up/dn`)
+- 2 booleans (`vixl_above_hvl`, `vixl_above_hvl_0dte`)
+
+**Sanity ranges** alignes DMP_Reader.h + VIX_Lite.cpp guards :
+- `vix_level` ∈ [5, 200] (low historique 9.14 + protect crash)
+- `vix MQ levels` ∈ [5, 150] (covid 2020 peak 82.69 + niveaux MQ peuvent stress 85-95)
+
+### Pourquoi
+Phase 2a du plan strategique Bot 2 V6 full Databento. Permet J+7 d'audit comparatif `vix_level` (DMP) vs `vixl_level` (VIX_Lite) avant cutover Phase 2b. Le DMP cross-chart peut renvoyer valeurs obsoletes cachees quand sg vide (cf bug sg7 HVL_0DTE observe 13/05 → fallback fusion C++ v1.3). VIX_Lite host mode est plus rigoureux + +1 feature `gamma_wall_0dte`.
+
+### Impact attendu
+- **Backward compat** : Phase 2a TOTALEMENT NON-DESTRUCTIVE. Les `vix_*` du DMP_MQ_FIELDS restent inchanges. Si VIX_Lite absent ou parse echec → try/except large → pipeline continue sans `vixl_*` (les colonnes seront absentes, downstream gere NaN ou skip).
+- **Volume parquet** : +32 colonnes float64 sur ~302K bars/mois ≈ +75 MB/mois output. Acceptable.
+- **Test empirique** : 11 lignes VIX_Lite reelles VPS → 32 cols enriched → merge_asof OK sur 61 bars dummy. Sample :
+  ```
+  vixl_level=17.97, vixl_regime=1.0, vixl_call=25.0,
+  dist_vixl_call_0dte=2.03, vixl_above_hvl=0
+  ```
+
+### Validation pre-deploy
+- [x] Tests unitaires `vix_lite_reader.py` : 3 tests inline OK (`compute_vix_regime`, `compute_vix_gex_distances`, `_test_load_real_data`)
+- [x] Test merge asof empirique : 25/61 bars couvertes (premier dump 14:37 + gap rebuild → bars hors tolerance 5min NaN, comportement attendu)
+- [x] Review code-reviewer GO-AVEC-RESERVES → 3 P0 appliques avant commit
+- [ ] J+1 backfill 1 jour : verifier que pipeline V4 produit un parquet avec colonnes `vixl_*` non-NaN sur >95% des bars RTH
+- [ ] J+7 audit comparatif `vix_*` (DMP) vs `vixl_*` (VIX_Lite) sur meme bars : p50/p99 abs diff, % mismatch → decision cutover Phase 2b
+
+### Revert plan
+```bash
+# Annuler Phase 2a : retirer le bloc 4ter du pipeline V4
+git revert <commit_hash>
+# OU manuel : supprimer lignes 984-1027 dans build_dataset_v4_dmp_databento.py
+# Les vix_* du DMP_MQ_FIELDS restent intacts → pipeline continue comme avant
+```
+
+### Deployed at 2026-05-13 11:30 (PC local, pas VPS)
+Pas de deploy VPS pour cette modif (pipeline tourne sur PC local Jackson). Premier rebuild manuel J+1 pour validation.
+
+### Suivi post-deploy
+- J+1 (2026-05-14) : 1er rebuild pipeline V4 avec mode Phase 2a → verif coverage `vixl_*` > 95% RTH
+- J+7 (2026-05-20) : audit comparatif vix_* DMP vs vixl_* VIX_Lite (script `tools/compare_vix_vs_vixl.py` a creer)
+- J+14 : decision cutover Phase 2b si convergence < 0.01 (precision %.4f DMP) sur > 99% bars
+
+### Liens
+- Entry precedente 11:05 : VIX_Lite.cpp v1.3 + vix_lite_reader.py
+- Review code-reviewer : 3 P0 (sanity range, dtype object, regime float64), 6 P1 (script compare, vectorisation, try narrow scope, sys.path top-level, commentaire schema, robustesse path Hive)
+- Plan strategique : `project_bot2v6_dmp_in_practice.md` + memoire `feedback_bot3_data_source_v4_enriched.md`
+
+---
+
 ## 2026-05-13 11:05 — FEATURE VIX_Lite.cpp v1.3 — etude C++ dediee dump VIX + 19 niveaux MQ Gamma VIX
 
 **Categorie** : FEATURE

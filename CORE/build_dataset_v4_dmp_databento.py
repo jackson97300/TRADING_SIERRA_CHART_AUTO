@@ -919,13 +919,41 @@ def build_for_symbol(symbol: str, start: date, end: date,
     print(f"        {len(trades)} 1-min bars trades")
 
     # 3. MQ features : MQ_Lite levels (nouveau) ou DMP JSONL (legacy)
+    # FIX 12/05/2026 (cross-check 2 agents) : en mode mq_lite, le pipeline ne
+    # chargeait QUE les niveaux MQ (17 cols) et SAUTAIT le DMP JSONL. Resultat
+    # 28 cols Sierra-only (regime/profile/CVD/VWAP/momentum) absentes
+    # silencieusement → regime_engine guard skip → regime_actionable=0 100%
+    # → filtre BOT3_REGIME_SKIP code mort en production. Fix : toujours charger
+    # le DMP JSONL pour features Sierra non-MQ, MQ_Lite reste source unique
+    # pour les NIVEAUX (dist_mq_*, dist_gex_*, etc.).
     if use_mq_lite:
         sys.path.insert(0, str(ROOT / "CORE"))
         from load_mq_levels import load_mq_levels  # lazy import
         print("  [3/6] Load MQ_Lite levels (Hive partitioned)...")
         mq_levels = load_mq_levels(symbol, start, end)
         print(f"        {len(mq_levels)} levels rows")
-        dmp = pd.DataFrame()  # vide → skip merge legacy
+        # FIX 12/05 : charge aussi DMP JSONL pour les 28 features Sierra-only
+        # (regime/profile/CVD/VWAP/momentum/IB). Drop les cols MQ qui sont
+        # remises ensuite via attach_mq_distances (4bis) pour eviter doublon.
+        print("  [3bis/6] Load DMP JSONL pour features Sierra non-MQ...")
+        dmp_full = load_dmp_jsonl(symbol, start, end)
+        if not dmp_full.empty:
+            # Cols MQ-related a EXCLURE (recalculees par attach_mq_distances)
+            MQ_COLS_TO_DROP = [
+                "dist_mq_call", "dist_mq_put", "dist_mq_hvl",
+                "dist_mq_call_0dte", "dist_mq_put_0dte", "dist_mq_hvl_0dte",
+                "dist_1d_min_ticks", "dist_1d_max_ticks",
+                "dist_gex_nearest_up", "dist_gex_nearest_dn",
+                "dist_blind_nearest_up", "dist_blind_nearest_dn",
+                "gex_cluster_count",
+                "bool_above_mq_call", "bool_above_mq_hvl", "bool_gex_flip_zone",
+                "dist_vix_gex_nearest_up", "dist_vix_gex_nearest_dn",
+            ]
+            dmp = dmp_full.drop(columns=[c for c in MQ_COLS_TO_DROP if c in dmp_full.columns])
+            print(f"        {len(dmp)} bars DMP (Sierra-only: {len(dmp.columns)-1} cols)")
+        else:
+            dmp = pd.DataFrame()
+            print(f"        [WARN] DMP JSONL vide (Sierra inactif?) → 28 features regime/profile manquantes")
     else:
         print("  [3/6] Load DMP JSONL MQ features...")
         mq_levels = pd.DataFrame()
@@ -952,6 +980,47 @@ def build_for_symbol(symbol: str, start: date, end: date,
         from load_mq_levels import attach_mq_distances
         print("  [4bis/6] Asof merge MQ_Lite levels + compute distances...")
         df = attach_mq_distances(df, mq_levels, tick_size=get_tick_size(symbol))
+
+    # 4ter. VIX_Lite (Phase 2a — decouplage progressif des vix_* du DMP full).
+    # But strategique 13/05/2026 : Bot 2 V6 full Databento. VIX_Lite est une etude
+    # C++ dediee (CPP/MIA_REFACTORED/VIX_Lite.cpp v1.3) qui dump VIX + 19 niveaux
+    # MQ Gamma VIX dans DATA/vix_levels/year=*/month=*/day=*/vix.jsonl.
+    # Auto-detect : si fichiers VIX_Lite presents pour la periode → merge en
+    # PARALLELE avec prefixe vixl_* (pas de conflit avec vix_* DMP). Phase 2b
+    # ulterieure = retirer les vix_* du DMP_MQ_FIELDS apres audit comparatif J+7.
+    try:
+        sys.path.insert(0, str(ROOT / "CORE"))
+        from vix_lite_reader import load_vix_lite_jsonl, enrich_vix_lite
+        print("  [4ter/6] Load VIX_Lite (Phase 2a parallel vix_* DMP)...")
+        vix_lite_df = load_vix_lite_jsonl(start, end)
+        if not vix_lite_df.empty:
+            vix_lite_df = enrich_vix_lite(vix_lite_df)
+            # Rename : vix_X → vixl_X et dist_vix_X → dist_vixl_X (prefix unique)
+            # Garde ts_event tel quel pour merge_asof.
+            rename_map = {
+                c: c.replace("vix_", "vixl_", 1)
+                for c in vix_lite_df.columns
+                if "vix_" in c and c != "ts_event"
+            }
+            vix_lite_df = (
+                vix_lite_df.drop(columns=["schema_version"], errors="ignore")
+                            .rename(columns=rename_map)
+            )
+            # Asof merge backward, tolerance 5min (VIX bouge 1/min RTH, fige hors RTH)
+            df = pd.merge_asof(
+                df.sort_values("ts_event").reset_index(drop=True),
+                vix_lite_df.sort_values("ts_event").reset_index(drop=True),
+                on="ts_event",
+                direction="backward",
+                tolerance=pd.Timedelta(minutes=5),
+            )
+            print(f"        {len(vix_lite_df)} VIX_Lite rows merged (+{len(rename_map)} vixl_* cols)")
+        else:
+            print(f"        [INFO] aucun fichier VIX_Lite pour {start}..{end} (skip)")
+    except ImportError as e:
+        print(f"        [WARN] vix_lite_reader import failed: {e}")
+    except Exception as e:
+        print(f"        [WARN] VIX_Lite merge failed: {e}")
 
     # 5. Fill no-trade bars + flag
     print("  [5/6] Compute derived features...")

@@ -27,7 +27,16 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
+
+# Sanity ranges alignes DMP_Reader.h:2103-2113 + VIX_Lite.cpp v1.3 :
+#   vix_level : prix VIX cash 5..200 (low historique 9.14 + crash protect)
+#   vix MQ levels : 5..150 (covid 2020 peak 82.69 + niveaux MQ peuvent monter 85-95)
+VIX_LEVEL_MIN = 5.0
+VIX_LEVEL_MAX = 200.0
+VIX_MQ_MIN    = 5.0
+VIX_MQ_MAX    = 150.0
 
 ROOT = Path(__file__).resolve().parents[1]
 VIX_LITE_ROOT = ROOT / "DATA" / "vix_levels"
@@ -174,8 +183,31 @@ def enrich_vix_lite(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
 
-    # Regime
-    out["vix_regime"] = out["vix_level"].apply(compute_vix_regime)
+    # FIX P0-1 (audit code-reviewer 13/05/2026) : sanity filter aligne DMP_Reader.h
+    # + VIX_Lite.cpp v1.3 guards. Si JSONL contient une valeur out-of-range (bug
+    # C++ guard ou MenthorQ reset post-16h), on aligne sur DMP_INVALID → NaN.
+    # Evite divergence J+7 audit vix vs vixl sur edge cases.
+    if "vix_level" in out.columns:
+        out["vix_level"] = out["vix_level"].where(
+            out["vix_level"].between(VIX_LEVEL_MIN, VIX_LEVEL_MAX), np.nan
+        )
+    mq_level_cols = [
+        "vix_call", "vix_put", "vix_hvl", "vix_1d_min", "vix_1d_max",
+        "vix_call_0dte", "vix_put_0dte", "vix_hvl_0dte", "vix_gamma_wall_0dte",
+    ]
+    for col in mq_level_cols:
+        if col in out.columns:
+            out[col] = out[col].where(out[col].between(VIX_MQ_MIN, VIX_MQ_MAX), np.nan)
+    # GEX VIX (sg9-sg18) : meme range que MQ levels
+    for i in range(10):
+        col = f"vix_gex_{i}"
+        if col in out.columns:
+            out[col] = out[col].where(out[col].between(VIX_MQ_MIN, VIX_MQ_MAX), np.nan)
+
+    # FIX P0-3 (audit code-reviewer) : vix_regime en float64 pour s'aligner sur
+    # DMP_Transform.h:683-689 qui ecrit f.vix_regime = 1.0f (float). Sinon J+7
+    # audit dtype mismatch (int64 vs float64) → faux positif d'incoherence.
+    out["vix_regime"] = out["vix_level"].apply(compute_vix_regime).astype("float64")
 
     # Distance GEX nearest up/dn
     gex_cols = [f"vix_gex_{i}" for i in range(10)]
@@ -187,10 +219,13 @@ def enrich_vix_lite(df: pd.DataFrame) -> pd.DataFrame:
     out["dist_vix_gex_nearest_up"] = dists[0]
     out["dist_vix_gex_nearest_dn"] = dists[1]
 
-    # Distances aux niveaux MQ (en points VIX, pas ticks — convention DMP_Transform.h:679)
+    # Distances aux niveaux MQ (en points VIX, pas ticks — convention DMP_Transform.h:679
+    # dist = level - vix_level, signe positif si level au-dessus).
+    # FIX P0-2 (audit code-reviewer) : dtype float64 explicit quand colonne absente
+    # (sinon pd.Series([None]*N) crée dtype object → casse parquet writer).
     def _diff(level_col):
         if level_col not in out.columns:
-            return pd.Series([None] * len(out), index=out.index)
+            return pd.Series(np.nan, index=out.index, dtype="float64")
         return out[level_col] - out["vix_level"]
 
     out["dist_vix_call"] = _diff("vix_call")
