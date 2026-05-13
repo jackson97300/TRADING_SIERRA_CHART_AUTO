@@ -3136,6 +3136,69 @@ def _test_sessions_swings_lag():
     return {"all_pass": all_pass}
 
 
+def _test_vwap_diff():
+    """Test sub-engine vwap_diff streaming (5 features stateless)."""
+    from vwap_diff_streaming import add_vwap_diff_streaming, VwapDiffState
+    from phase_b_vwap_diff import apply_vwap_diff
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(131)
+    n = 300
+    df = pd.DataFrame({
+        "dist_vwap_d_pct": np.random.uniform(-2, 2, n),
+        "dist_vwap_w_pct": np.random.uniform(-3, 3, n),
+        "dist_vwap_m_pct": np.random.uniform(-5, 5, n),
+        "dist_vwap_d_sd1u_pct": np.random.uniform(-2, 0, n),
+        "dist_vwap_w_sd1u_pct": np.random.uniform(-3, 0, n),
+        "dist_vwap_d_sd1d_pct": np.random.uniform(0, 2, n),
+        "dist_vwap_w_sd1d_pct": np.random.uniform(0, 3, n),
+    })
+
+    batch_df = apply_vwap_diff(df.copy())
+
+    state = VwapDiffState()
+    stream_rows = []
+    for _, row in df.iterrows():
+        stream_rows.append(add_vwap_diff_streaming(row.to_dict(), state))
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest vwap_diff parite sur {n} rows synth...")
+
+    cols_check = [
+        "vwap_w_minus_d_pct",
+        "vwap_m_minus_w_pct",
+        "vwap_w_sd1u_minus_d_sd1u_pct",
+        "vwap_w_sd1d_minus_d_sd1d_pct",
+        "vwap_w_d_aligned",
+    ]
+    print("\n--- NIVEAU 1 : parite batch vs streaming (5 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        atol = 1e-3 if "pct" in col else 1e-6
+        status = "PASS" if max_diff < atol and nan_mismatch == 0 else "FAIL"
+        print(f"  {col:35s} {status} max_diff={max_diff:.4e} nan_mm={nan_mismatch}")
+        if status == "FAIL":
+            all_pass = False
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL vwap_diff : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -3433,6 +3496,7 @@ def main():
                                  "open_extension_lines",
                                  "sessions_swings_simple",
                                  "sessions_swings_lag",
+                                 "vwap_diff",
                                  "all"])
     args = parser.parse_args()
 
@@ -3548,6 +3612,11 @@ def main():
 
     if args.engine in ("sessions_swings_lag", "all"):
         report = _test_sessions_swings_lag()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("vwap_diff", "all"):
+        report = _test_vwap_diff()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
