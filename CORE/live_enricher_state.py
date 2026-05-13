@@ -24,6 +24,7 @@ Auteur : MIA Trading System V2
 from __future__ import annotations
 
 import pickle
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -55,6 +56,11 @@ class LiveEnricherState:
     de dicts au lieu de pd.DataFrame croissant via concat. Evite O(N) copy
     par append -> O(N^2) cumulative sur 60j (=2.2 GB/heure de copies).
 
+    FIX P0-2 Jour 4 review (audit 13/05 nuit) : ajoute `_lock` thread-safety
+    pour mutation concurrent main loop (append_bar/update) vs snapshot_loop
+    (save_state pickle sur deque en cours de mutation = corruption ou
+    exception). Utiliser `with state.lock:` autour de mutations + read pickle.
+
     Acces via property `bars_df` qui materialise pd.DataFrame a la demande
     depuis le deque. Engines streaming peuvent acceder bars_df normalement.
     """
@@ -73,6 +79,33 @@ class LiveEnricherState:
     # Stats running
     n_bars_processed: int = 0
     n_trades_processed: int = 0
+
+    # FIX P0-2 Jour 4 : lock thread-safety pour mutex append/snapshot concurrent
+    # Note : field(repr=False) pour ne pas inclure lock dans repr (verbose) +
+    # pas exclu pickle car threading.RLock est picklable depuis Python 3.4+.
+    # Utilisation : `with state.lock: state.append_bar(...)` cote main loop,
+    # `with state.lock: pickle.dump(state, f)` cote snapshot thread.
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+
+    @property
+    def lock(self) -> threading.RLock:
+        """Public access au RLock pour use externe `with state.lock:`."""
+        return self._lock
+
+    def __getstate__(self) -> dict:
+        """Exclude _lock du pickle (threading.RLock pas serializable Python 3.13+).
+
+        Au reload via load_state(), __setstate__ recree un nouveau _lock.
+        Comportement attendu : redemarrage = new process = nouveau lock OK.
+        """
+        state = self.__dict__.copy()
+        state.pop("_lock", None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore state + recree _lock (anti pickle threading)."""
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
 
     @property
     def bars_df(self) -> pd.DataFrame:
