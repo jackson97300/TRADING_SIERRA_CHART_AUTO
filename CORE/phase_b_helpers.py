@@ -1127,6 +1127,126 @@ def add_volume_profile_features(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# API STREAMING sub-engine #5a (Chantier 3 Phase 3b Mercredi) — add_rvol_inputs
+# ═══════════════════════════════════════════════════════════════════════════════
+# add_rvol_inputs est STATELESS : transformations row-level pures (range_size,
+# finish_strength, delta_pct, total_vol, ts). RvolInputsState reserve pour
+# evolution future (factory uniforme avec sub-engines #1-4).
+
+
+@dataclass
+class RvolInputsState:
+    """State sub-engine #5a — STATELESS (factory uniforme)."""
+    pass
+
+
+def add_rvol_inputs_streaming(
+    row: dict,
+    state: RvolInputsState,
+    tick: float = TICK_SIZE,
+) -> dict:
+    """API streaming sub-engine #5a add_rvol_inputs.
+
+    Reproduit add_rvol_inputs() batch sur 5 features :
+      range_size, finish_strength, delta_pct, total_vol, ts (ms epoch UTC).
+
+    Stateless : pas de dependence inter-row.
+
+    Args:
+        row : dict avec high, low, open, close, volume, delta_bar, ts_event.
+        state : RvolInputsState (stateless, conserve symetrie API).
+        tick : tick size (unused mais conserve signature symetrique).
+
+    Returns:
+        dict row + 5 features.
+    """
+    out = dict(row)
+
+    # 1. range_size = high - low
+    high = out.get("high")
+    low = out.get("low")
+    op = out.get("open")
+    close = out.get("close")
+    try:
+        if high is not None and low is not None and not (pd.isna(high) or pd.isna(low)):
+            range_size = float(high) - float(low)
+        else:
+            range_size = np.nan
+    except (TypeError, ValueError):
+        range_size = np.nan
+    out["range_size"] = range_size
+
+    # 2. finish_strength = (close - open) / range_size * 100, fillna(0)
+    # Batch convention : range_size==0 -> NaN puis fillna(0)
+    try:
+        if (op is not None and close is not None and range_size is not None
+                and not pd.isna(range_size) and range_size != 0.0):
+            opf = float(op)
+            cf = float(close)
+            if pd.isna(opf) or pd.isna(cf):
+                fs = 0.0
+            else:
+                fs = (cf - opf) / range_size * 100.0
+                if pd.isna(fs):
+                    fs = 0.0
+        else:
+            fs = 0.0
+    except (TypeError, ValueError):
+        fs = 0.0
+    out["finish_strength"] = fs
+
+    # 3. delta_pct = delta_bar / volume, fillna(0)
+    volume = out.get("volume")
+    delta_bar = out.get("delta_bar")
+    try:
+        if (volume is not None and delta_bar is not None
+                and not pd.isna(volume) and not pd.isna(delta_bar)
+                and float(volume) != 0.0):
+            dp = float(delta_bar) / float(volume)
+            if pd.isna(dp):
+                dp = 0.0
+        else:
+            dp = 0.0
+    except (TypeError, ValueError):
+        dp = 0.0
+    out["delta_pct"] = dp
+
+    # 4. total_vol = float(volume)
+    try:
+        if volume is not None and not pd.isna(volume):
+            out["total_vol"] = float(volume)
+        else:
+            out["total_vol"] = np.nan
+    except (TypeError, ValueError):
+        out["total_vol"] = np.nan
+
+    # 5. ts = ts_event ms epoch (UTC). Batch convention :
+    #    si tz-naive -> tz_localize("UTC") puis int64 // 1e6
+    #    si tz-aware -> int64 // 1e6 direct
+    ts_event = out.get("ts_event")
+    if isinstance(ts_event, pd.Timestamp):
+        if ts_event.tz is None:
+            ts_ms = int(ts_event.tz_localize("UTC").value // 1_000_000)
+        else:
+            ts_ms = int(ts_event.value // 1_000_000)
+        out["ts"] = ts_ms
+    elif ts_event is not None:
+        try:
+            ts = pd.Timestamp(ts_event)
+            if ts.tz is None:
+                ts_ms = int(ts.tz_localize("UTC").value // 1_000_000)
+            else:
+                ts_ms = int(ts.value // 1_000_000)
+            out["ts"] = ts_ms
+        except (TypeError, ValueError):
+            out["ts"] = None
+    else:
+        out["ts"] = None
+
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 6. RVOL PRE-COMPUTE (delta_pct, finish_strength, range_size)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1152,6 +1272,113 @@ def add_rvol_inputs(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame:
     else:
         df["ts"] = (df["ts_event"].astype("int64") // 1_000_000).astype("int64")
     return df
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# API STREAMING sub-engine #5b (Chantier 3 Phase 3b Mercredi) — add_ib_atr
+# ═══════════════════════════════════════════════════════════════════════════════
+# add_ib_atr STATEFUL : rolling mean(ib_range) sur lookback_days jours precedents.
+# Convention shift(1) BATCH : le jour COURANT n'est PAS inclus dans le rolling.
+# Donc le state contient UNIQUEMENT les sessions PASSEES (closes), pas la session
+# courante. La capture de ib_range de la session courante se fait lors de la
+# rotation (detection nouveau date_et).
+#
+# Dependence ordre engines : sub-engine #2 (ib_features) AVANT sub-engine #5b
+# (ib_atr) — sinon ib_range absent du row. Convention pipeline.
+#
+# Edge case : si ib_range = NaN sur une session (pas d'IB complet), on n'ajoute
+# PAS au deque (skip session, mirror batch groupby first skipna).
+
+
+@dataclass
+class IbAtrState:
+    """State sub-engine #5b add_ib_atr — rolling ib_range jours passes.
+
+    Maintient :
+      - daily_ib_ranges : liste (date, ib_range) max lookback_days entries, FIFO
+      - current_date : date_et de la session en cours (pas encore close)
+      - current_session_ib_range : ib_range capture pour session courante
+        (transfert vers daily_ib_ranges a la rotation)
+
+    Pickle-safe : liste de tuples (date, float), date, Optional[float].
+    """
+    daily_ib_ranges: list = field(default_factory=list)  # list[(date, ib_range)]
+    current_date: Optional[Any] = None
+    current_session_ib_range: Optional[float] = None
+    lookback_days: int = 14
+
+
+def add_ib_atr_streaming(
+    row: dict,
+    state: IbAtrState,
+    lookback_days: int = 14,
+) -> dict:
+    """API streaming sub-engine #5b add_ib_atr.
+
+    Reproduit add_ib_atr() batch : ib_atr = mean(ib_range) sur les
+    lookback_days jours PRECEDENTS (shift(1) batch). min_periods=3.
+
+    Args:
+        row : dict avec date_et + ib_range. Requiert add_session_metadata +
+              add_ib_features AVANT (ordre engines).
+        state : IbAtrState mutable.
+        lookback_days : nombre de jours pour le rolling (default 14).
+
+    Returns:
+        dict row + {ib_atr}.
+
+    Raises:
+        ValueError si date_et absent (ordre engines).
+    """
+    out = dict(row)
+    date_et = out.get("date_et")
+    if date_et is None:
+        raise ValueError(
+            "add_ib_atr_streaming requires 'date_et' in row. "
+            "Call add_session_metadata_streaming BEFORE."
+        )
+
+    # Sync lookback (au cas ou caller change le parametre entre appels)
+    if state.lookback_days != lookback_days:
+        state.lookback_days = lookback_days
+        # Trim deque si reduction
+        if len(state.daily_ib_ranges) > lookback_days:
+            state.daily_ib_ranges = state.daily_ib_ranges[-lookback_days:]
+
+    # 1. Detection rotation date_et -> transfert current_session_ib_range
+    # vers daily_ib_ranges (= jour CLOS)
+    if date_et != state.current_date:
+        if (state.current_date is not None
+                and state.current_session_ib_range is not None
+                and not pd.isna(state.current_session_ib_range)):
+            state.daily_ib_ranges.append(
+                (state.current_date, float(state.current_session_ib_range))
+            )
+            # FIFO : trim a lookback_days
+            if len(state.daily_ib_ranges) > lookback_days:
+                state.daily_ib_ranges = state.daily_ib_ranges[-lookback_days:]
+        state.current_date = date_et
+        state.current_session_ib_range = None
+
+    # 2. Capture ib_range pour la session courante (UNE seule fois par session)
+    # Mirror batch groupby("date_et")["ib_range"].first() avec skipna=True default
+    if state.current_session_ib_range is None:
+        ib_range = out.get("ib_range")
+        if ib_range is not None and not pd.isna(ib_range):
+            try:
+                state.current_session_ib_range = float(ib_range)
+            except (TypeError, ValueError):
+                pass
+
+    # 3. Output ib_atr = mean(daily_ib_ranges values) si len >= 3 sinon NaN
+    # NB : on n'inclut PAS current_session_ib_range (= shift(1) batch)
+    if len(state.daily_ib_ranges) >= 3:
+        values = [v for (_, v) in state.daily_ib_ranges]
+        out["ib_atr"] = sum(values) / len(values)
+    else:
+        out["ib_atr"] = np.nan
+
+    return out
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

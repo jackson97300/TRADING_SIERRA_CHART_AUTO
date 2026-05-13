@@ -1169,12 +1169,289 @@ def compute_vpoc_from_dict(price_volume):
     return max(price_volume, key=price_volume.get)
 
 
+def _test_rvol_inputs():
+    """Test sub-engine #5a add_rvol_inputs (STATELESS).
+
+    5 features pures row-level :
+      range_size, finish_strength, delta_pct, total_vol, ts (ms epoch UTC)
+
+    Pas de state -> tests Niveau 1 parite + Niveau 2 pickle factory uniforme.
+    Pas de Niveau 3 warmup (rien a restorer).
+    """
+    from phase_b_helpers import (
+        add_rvol_inputs,
+        add_rvol_inputs_streaming,
+        RvolInputsState,
+    )
+    import numpy as np
+    import pandas as pd
+
+    # Synth 240 bars avec varying delta + range pour stresser fillna(0) sur range=0
+    bars = []
+    np.random.seed(7)
+    start = pd.Timestamp("2026-05-12 13:00:00")
+    for i in range(240):
+        ts = start + pd.Timedelta(minutes=i)
+        high = 5800.0 + np.sin(i / 30.0) * 3.0
+        # Stress edge cases : 5% des bars avec range=0 (high=low)
+        if i % 20 == 0:
+            low = high
+        else:
+            low = high - np.random.uniform(0.25, 2.0)
+        op = (high + low) / 2 - 0.1
+        close = (high + low) / 2 + 0.05
+        volume = np.random.randint(0, 500)  # 5% avec volume=0
+        delta_bar = np.random.randint(-100, 100)
+        bars.append({
+            "ts_event": ts, "open": op, "high": high, "low": low, "close": close,
+            "volume": volume, "delta_bar": delta_bar,
+        })
+    df = pd.DataFrame(bars)
+    print(f"\nTest rvol_inputs parite sur {len(df)} rows synth...")
+
+    def batch_fn(d):
+        return add_rvol_inputs(d.copy(), tick=0.25)
+
+    def stream_fn(row, state):
+        return add_rvol_inputs_streaming(row, state, tick=0.25)
+
+    print("\n--- NIVEAU 1 : parite batch vs streaming ---")
+    report1 = test_engine_parity(
+        engine_name="rvol_inputs",
+        batch_fn=batch_fn,
+        streaming_fn=stream_fn,
+        state_factory=RvolInputsState,
+        input_df=df,
+        float_atol=1e-9,
+    )
+
+    print("\n--- NIVEAU 2 : pickle roundtrip state (STATELESS) ---")
+    # State stateless = trivial mais valide convention factory uniforme
+    sample_row = df.iloc[10].to_dict()
+    report2 = test_state_pickle_roundtrip(
+        engine_name="rvol_inputs",
+        streaming_fn=stream_fn,
+        state_factory=RvolInputsState,
+        sample_row=sample_row,
+    )
+
+    all_pass = (
+        report1.get("status") == "PASS"
+        and report2.get("status") == "PASS"
+    )
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL rvol_inputs : {'2 LEVELS PASS (stateless)' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"level1": report1, "level2": report2, "all_pass": all_pass}
+
+
+def _test_ib_atr():
+    """Test sub-engine #5b add_ib_atr (rolling 14 jours, shift(1)).
+
+    Convention batch : ib_atr du jour J = mean(ib_range jours [J-14, J-1])
+    avec min_periods=3.
+
+    Tests :
+      Niveau 1 : parite batch/stream sur 20 jours synth (warmup + post-warmup)
+      Niveau 2 : pickle roundtrip state non-vide (apres 5 jours)
+      Niveau 3 : restart mid-window (state daily_ib_ranges populated)
+    """
+    from phase_b_helpers import (
+        add_session_metadata,
+        add_ib_features,
+        add_ib_atr,
+        add_ib_atr_streaming,
+        IbAtrState,
+        add_session_metadata_streaming,
+        add_ib_features_streaming,
+        SessionMetadataState,
+        IBState,
+    )
+    import numpy as np
+    import pandas as pd
+    import pickle
+
+    # Synth 20 jours x 480 bars/jour, IB window 09:30-10:30 ET
+    bars = []
+    np.random.seed(13)
+    for day_offset in range(20):
+        day_num = 12 + day_offset
+        # Wrap mois si > 31
+        if day_num <= 31:
+            date_str = f"2026-05-{day_num:02d}"
+        else:
+            date_str = f"2026-06-{day_num - 31:02d}"
+        start_et = pd.Timestamp(f"{date_str} 13:00:00")  # 09:00 ET tz-naive
+        # Varying IB range chaque jour pour tester rolling mean
+        ib_range_target = 8.0 + np.random.uniform(-2.0, 4.0)
+        for i in range(480):
+            ts = start_et + pd.Timedelta(minutes=i)
+            if 30 <= i < 90:  # 09:30-10:30 ET = IB window
+                # Forcer range observe = ib_range_target sur cette session
+                phase = (i - 30) / 60.0
+                high = 5800.0 + day_offset * 2 + phase * ib_range_target
+                low = 5800.0 + day_offset * 2
+            else:
+                high = 5800.0 + day_offset * 2 + np.random.uniform(-0.5, 0.5)
+                low = high - 0.5
+            close = (high + low) / 2
+            bars.append({
+                "ts_event": ts, "high": high, "low": low, "close": close,
+                "volume": 100, "delta_bar": 0, "open": close - 0.1,
+            })
+    df = pd.DataFrame(bars)
+    print(f"\nTest ib_atr parite sur {len(df)} rows synth (20 jours)...")
+
+    # BATCH : chain session_metadata -> ib_features -> ib_atr
+    df_batch = add_session_metadata(df.copy(), bounds=None)
+    df_batch = add_ib_features(df_batch, tick=0.25, bounds=None)
+    df_batch = add_ib_atr(df_batch, lookback_days=14)
+
+    # STREAM : chain ordre engines
+    state_meta = SessionMetadataState()
+    state_ib = IBState()
+    state_atr = IbAtrState()
+    stream_rows = []
+    for _, bar in df.iterrows():
+        r1 = add_session_metadata_streaming(bar.to_dict(), state_meta, bounds=None)
+        r2 = add_ib_features_streaming(r1, state_ib, tick=0.25, bounds=None)
+        r3 = add_ib_atr_streaming(r2, state_atr, lookback_days=14)
+        stream_rows.append(r3)
+    df_stream = pd.DataFrame(stream_rows)
+
+    # Niveau 1 parite ib_atr
+    print("\n--- NIVEAU 1 : parite batch vs streaming (ib_atr only) ---")
+    b = df_batch["ib_atr"].astype("float64").values
+    s = df_stream["ib_atr"].astype("float64").values
+    nan_both = np.isnan(b) & np.isnan(s)
+    nan_diff = np.isnan(b) ^ np.isnan(s)
+    diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+    max_diff = float(np.nanmax(np.abs(diff)))
+    nan_mismatch_count = int(nan_diff.sum())
+    level1_ok = max_diff < 1e-9 and nan_mismatch_count == 0
+    print(f"  rows={len(df)}, max_diff={max_diff:.6e}, nan_mismatch={nan_mismatch_count}")
+    print(f"  Niveau 1 status : {'PASS' if level1_ok else 'FAIL'}")
+    if not level1_ok:
+        # Diagnostic : afficher 5 premieres divergences
+        for idx in np.where(np.abs(diff) > 1e-9)[0][:5]:
+            print(f"    idx={idx} batch={b[idx]} stream={s[idx]} "
+                  f"date_et={df_batch.iloc[idx]['date_et']}")
+
+    # Niveau 2 : pickle roundtrip post-warmup
+    print("\n--- NIVEAU 2 : pickle roundtrip state apres 5 jours ---")
+    state_test_meta = SessionMetadataState()
+    state_test_ib = IBState()
+    state_test_atr = IbAtrState()
+    # 5 jours * 480 bars = 2400 bars
+    for i, (_, bar) in enumerate(df.iterrows()):
+        if i >= 2400:
+            break
+        r1 = add_session_metadata_streaming(bar.to_dict(), state_test_meta, bounds=None)
+        r2 = add_ib_features_streaming(r1, state_test_ib, tick=0.25, bounds=None)
+        add_ib_atr_streaming(r2, state_test_atr, lookback_days=14)
+    print(f"  state pre-pickle : daily_ib_ranges count={len(state_test_atr.daily_ib_ranges)}, "
+          f"current_date={state_test_atr.current_date}, "
+          f"current_session_ib_range={state_test_atr.current_session_ib_range}")
+    assert len(state_test_atr.daily_ib_ranges) >= 3, (
+        f"P0 : state.daily_ib_ranges doit avoir >=3 entries apres 5 jours "
+        f"(actuel: {len(state_test_atr.daily_ib_ranges)})"
+    )
+
+    blob = pickle.dumps(state_test_atr)
+    state_restored = pickle.loads(blob)
+    assert state_restored.daily_ib_ranges == state_test_atr.daily_ib_ranges
+    assert state_restored.current_date == state_test_atr.current_date
+    assert state_restored.current_session_ib_range == state_test_atr.current_session_ib_range
+    assert state_restored.lookback_days == state_test_atr.lookback_days
+
+    # Test row produit meme output apres pickle
+    test_row_input = df.iloc[2400].to_dict()
+    r1t = add_session_metadata_streaming(test_row_input, SessionMetadataState(), bounds=None)
+    r2t = add_ib_features_streaming(r1t, IBState(), tick=0.25, bounds=None)
+    # Inject ib_range from batch for fair compare (we want only ib_atr divergence)
+    # Actually just use the chained streaming row
+    out_orig = add_ib_atr_streaming(r2t, state_test_atr, lookback_days=14)
+    out_restored = add_ib_atr_streaming(r2t, state_restored, lookback_days=14)
+    pickle_ok = True
+    if pd.isna(out_orig["ib_atr"]) and pd.isna(out_restored["ib_atr"]):
+        pass
+    elif (pd.isna(out_orig["ib_atr"]) or pd.isna(out_restored["ib_atr"])
+            or abs(out_orig["ib_atr"] - out_restored["ib_atr"]) > 1e-9):
+        print(f"    pickle FAIL ib_atr: orig={out_orig['ib_atr']} "
+              f"restored={out_restored['ib_atr']}")
+        pickle_ok = False
+    print(f"  Niveau 2 status : {'PASS' if pickle_ok else 'FAIL'}")
+
+    # Niveau 3 : continuite vs restart pickle au jour 10 (state non trivial)
+    print("\n--- NIVEAU 3 : warmup R2 restart cross-session (jour 10) ---")
+    # Continuous run from scratch
+    state_cont_meta = SessionMetadataState()
+    state_cont_ib = IBState()
+    state_cont_atr = IbAtrState()
+    cont_rows = []
+    for _, bar in df.iterrows():
+        r1 = add_session_metadata_streaming(bar.to_dict(), state_cont_meta, bounds=None)
+        r2 = add_ib_features_streaming(r1, state_cont_ib, tick=0.25, bounds=None)
+        r3 = add_ib_atr_streaming(r2, state_cont_atr, lookback_days=14)
+        cont_rows.append(r3)
+    cont_df = pd.DataFrame(cont_rows)
+    cont_atr_final = cont_df["ib_atr"].values
+
+    # Restart : run jusqu'a idx 4800 (10 jours), pickle, load, continue
+    idx_restart = 4800
+    state_r1_meta = SessionMetadataState()
+    state_r1_ib = IBState()
+    state_r1_atr = IbAtrState()
+    for i in range(idx_restart):
+        bar = df.iloc[i]
+        r1 = add_session_metadata_streaming(bar.to_dict(), state_r1_meta, bounds=None)
+        r2 = add_ib_features_streaming(r1, state_r1_ib, tick=0.25, bounds=None)
+        add_ib_atr_streaming(r2, state_r1_atr, lookback_days=14)
+    # Save+Load atr state (others ok for free)
+    state_r1_atr_restored = pickle.loads(pickle.dumps(state_r1_atr))
+    state_r1_meta_restored = pickle.loads(pickle.dumps(state_r1_meta))
+    state_r1_ib_restored = pickle.loads(pickle.dumps(state_r1_ib))
+    restart_rows = []
+    for i in range(idx_restart, len(df)):
+        bar = df.iloc[i]
+        r1 = add_session_metadata_streaming(bar.to_dict(), state_r1_meta_restored, bounds=None)
+        r2 = add_ib_features_streaming(r1, state_r1_ib_restored, tick=0.25, bounds=None)
+        r3 = add_ib_atr_streaming(r2, state_r1_atr_restored, lookback_days=14)
+        restart_rows.append(r3)
+    restart_df = pd.DataFrame(restart_rows)
+
+    # Compare cont vs restart sur tail
+    cont_tail = cont_df.iloc[idx_restart:]["ib_atr"].astype("float64").values
+    restart_atr = restart_df["ib_atr"].astype("float64").values
+    nan_both3 = np.isnan(cont_tail) & np.isnan(restart_atr)
+    nan_diff3 = np.isnan(cont_tail) ^ np.isnan(restart_atr)
+    diff3 = np.where(nan_both3, 0.0, np.where(nan_diff3, 1e9, cont_tail - restart_atr))
+    max_diff3 = float(np.nanmax(np.abs(diff3)))
+    nan_mismatch3 = int(nan_diff3.sum())
+    level3_ok = max_diff3 < 1e-9 and nan_mismatch3 == 0
+    print(f"  rows compare={len(cont_tail)}, max_diff={max_diff3:.6e}, "
+          f"nan_mismatch={nan_mismatch3}")
+    print(f"  Niveau 3 status : {'PASS' if level3_ok else 'FAIL'}")
+
+    all_pass = level1_ok and pickle_ok and level3_ok
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL ib_atr : {'ALL 3 LEVELS PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {
+        "level1": {"status": "PASS" if level1_ok else "FAIL", "max_diff": max_diff},
+        "level2": {"status": "PASS" if pickle_ok else "FAIL"},
+        "level3": {"status": "PASS" if level3_ok else "FAIL", "max_diff": max_diff3},
+        "all_pass": all_pass,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--engine", default="vix_lite",
                         choices=["vix_lite", "vix_ema_60", "session_metadata",
                                  "ib_features", "session_high_low",
-                                 "volume_profile", "all"])
+                                 "volume_profile", "rvol_inputs", "ib_atr",
+                                 "all"])
     args = parser.parse_args()
 
     if args.engine in ("vix_lite", "all"):
@@ -1204,6 +1481,16 @@ def main():
 
     if args.engine in ("volume_profile", "all"):
         report = _test_volume_profile()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("rvol_inputs", "all"):
+        report = _test_rvol_inputs()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("ib_atr", "all"):
+        report = _test_ib_atr()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
