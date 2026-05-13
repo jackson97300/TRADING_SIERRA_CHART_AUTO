@@ -62,6 +62,271 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-13 11:05 — FEATURE VIX_Lite.cpp v1.3 — etude C++ dediee dump VIX + 19 niveaux MQ Gamma VIX
+
+**Categorie** : FEATURE
+**Impact prod** : OFFLINE (collecte uniquement, decouplage progressif du DMP full pour Bot 2 V6 full-Databento)
+**Fichier(s)** :
+- `CPP/MIA_REFACTORED/VIX_Lite.cpp` (nouveau, ~370 LOC)
+- VPS deploy : `C:/SIERRA CHART TRADING/ACS_Source/VIX_Lite.cpp` + `C:/TRADING_SIERRA_CHART_AUTO/CPP/MIA_REFACTORED/VIX_Lite.cpp`
+- DLL Sierra : `C:/SIERRA CHART TRADING/Data/VIX_Lite_64.dll`
+**Schema/version** : nouveau schema `vix_levels_1.1` (output `DATA/vix_levels/year=YYYY/month=M/day=D/vix.jsonl`)
+**Reviewer(s) agent** : code-reviewer GO-AVEC-RESERVES (3 P0 fixes appliques : (1) vix_level via GetChartBaseData en cross-chart safe, (2) VIX_MQ_MAX 80→150 pour niveaux MQ legitimes en stress, (3) timestamp precision ms preserve)
+
+### Quoi
+Etude C++ ACSIL dediee, attachee sur Chart 15 (VIX_CGI[M]), dump 1 ligne/min :
+- 1 prix VIX courant (sc.Close[sc.Index] en host)
+- 8 niveaux MQ Gamma : vix_call, vix_put, vix_hvl, vix_1d_min, vix_1d_max, vix_call_0dte, vix_put_0dte, vix_hvl_0dte
+- **1 niveau supplementaire vs DMP** : vix_gamma_wall_0dte (sg8, absent du DMP_ReadVIX)
+- 10 niveaux GEX VIX (vix_gex[0..9])
+
+Total 20 valeurs / ligne. Schema `vix_levels_1.1`.
+
+**Fallback fusion MenthorQ** (v1.3) : quand 2 niveaux 0DTE sont au meme prix sur le chart (ex: "Put Support 0DTE & HVL 0DTE: 16.00"), MenthorQ fusionne le label visuellement et vide le subgraph secondaire. Le C++ recopie automatiquement la valeur du principal :
+- sg7 HVL_0DTE vide & sg6 Put_0DTE valide → HVL_0DTE = Put_0DTE
+- sg8 Gamma_Wall_0DTE vide & sg5 Call_0DTE valide → Gamma_Wall_0DTE = Call_0DTE
+
+Quand les niveaux sont differents, on garde la vraie valeur lue (pas d'ecrasement).
+
+### Pourquoi
+Objectif strategique Jackson 13/05/2026 : **Bot 2 V6 full Databento**. Pipeline V4 enriched a 20-35min lag inherent (Databento Historical API + batch). Plan revise = DMP++ Databento Python pour ~440 features tactiques (footprint, BN, color, big orders, edge zones, regime, etc. tous deja recodes en Python) + Sierra MQ Lite + VIX Lite pour ~34 features structurelles (MenthorQ niveaux + VIX). VIX_Lite est la 1ere brique : decouple les 17 features VIX du DMP full. A terme, MQ Lite + VIX Lite suffiront cote Sierra.
+
+Avantages vs DMP_ReadVIX :
+- Etude C++ separee, DLL isolee (si plante, MQ_Lite + DMP continuent)
+- Schema simple JSONL (pas de pollution dans 262 colonnes DMP)
+- Fallback fusion MenthorQ proprement gere (DMP renvoie valeurs obsoletes cachees quand sg vide)
+- +1 feature : vix_gamma_wall_0dte (absent du DMP)
+- Pattern host normal (sc.Close[sc.Index], GetStudyArrayUsingID) plus rigoureux que cross-chart DMP qui lit valeurs historiques
+
+### Impact attendu
+- **Bot 2 V6 / pipeline V4** : pas d'impact immediat (DMP continue a fournir vix_*). Etape suivante = adapter `build_dataset_v4_dmp_databento.py` pour basculer source VIX du DMP_MQ_FIELDS vers `DATA/vix_levels/*.jsonl`.
+- **Volume disque** : 1 ligne/min × ~600 bytes × 1440 min/jour = ~860 KB/jour, ~310 MB/an. Acceptable (DMP fait GB).
+- **Performance ACSIL** : negligeable (~20 GetStudyArrayUsingID + 1 sc.Close + 1 fopen/min, guard BHCS_BAR_HAS_CLOSED + last_bar dedup).
+
+### Validation pre-deploy
+- [x] Audit code-reviewer GO-AVEC-RESERVES (3 P0 fixes appliques)
+- [x] Compile Sierra remote build : `The build succeeded`, DLL `VIX_Lite_64.dll` 918 528 octets
+- [x] Test empirique attach Chart 15 : 4 itérations v1.0→v1.3, dernier dump valide :
+  ```json
+  {"ts":1778684640000,"schema_version":"vix_levels_1.1","vix_level":17.9600,
+   "vix_call":25.0000,"vix_put":17.0000,"vix_hvl":21.5000,
+   "vix_1d_min":16.3600,"vix_1d_max":19.5200,
+   "vix_call_0dte":20.0000,"vix_gamma_wall_0dte":20.0000,
+   "vix_put_0dte":16.0000,"vix_hvl_0dte":16.0000,
+   "vix_gex":[18.0000,17.5000,19.0000,18.5000,16.5000,15.0000,20.5000,15.5000,21.0000,30.0000]}
+  ```
+  Match 100% avec screenshot chart 15 Jackson (collision MQ_Gamma fusion bien recopiee).
+
+### Revert plan
+```powershell
+# Sierra Chart : detach VIX_Lite study de Chart 15
+# Optional : supprimer VPS files
+ssh Administrator@212.28.179.199 'del "C:\SIERRA CHART TRADING\ACS_Source\VIX_Lite.cpp" "C:\SIERRA CHART TRADING\Data\VIX_Lite_64.dll" "C:\TRADING_SIERRA_CHART_AUTO\CPP\MIA_REFACTORED\VIX_Lite.cpp"'
+# Pipeline V4 continue a lire les vix_* du DMP JSONL inchange
+```
+
+### Deployed at 2026-05-13 11:05 (heure VPS ET)
+- Compile remote build : OK
+- Attach Chart 15 : OK
+- Dump premier : 14:37 UTC v1.0 (sg7=null pre-fix fusion)
+- Dump apres fix v1.3 : 15:04 UTC (sg7=16.00 fusion OK, sg8 gamma_wall_0dte=20.00 fusion OK)
+
+### Suivi post-deploy
+- J+1 (2026-05-14) : verifier comportement quand HVL_0DTE != Put_0DTE → sg7 devrait contenir la vraie valeur (pas le fallback)
+- J+7 : volume disque accumule + zero null sur 17/19 niveaux non-fusionnes
+- J+30 : integration pipeline V4 Python loader effective
+
+### Liens
+- Review code-reviewer : 3 P0 fixes (lecture vix_level, range MQ_MAX, timestamp precision)
+- Memoire `project_bot2v6_dmp_in_practice.md` : architecture cible full Databento
+- Plan revise : DMP++ Databento Python (~440 features tactiques) + Sierra MQ_Lite + VIX_Lite (~34 features structurelles)
+
+---
+
+## 2026-05-13 01:00 — FIX Dashboard Indicateurs Trading Manuel + Order Flow Avance vide (bump V4_STALE_SEC 600→2700s)
+
+**Categorie** : FIX
+**Impact prod** : DASHBOARD (read-only display, aucune modif moteur decision)
+**Fichier(s)** :
+- `DASHBOARD/api/v4_reader.py:40` (`_V4_STALE_SEC = 600` → `2700`)
+- `DASHBOARD/api/v4_reader.py:265+` (compteur skip telemetrie `_merge_skip_count`)
+**Schema/version** : N/A
+**Reviewer(s) agent** : code-reviewer GO-AVEC-RESERVES → 4 reserves R1-R4 corrigees (R1 bump 2700s vs 1800s pour couvrir lag pic 48min observe, R2 doc cas-limite near_*_level, R3 entry CHANGELOG, R4 telemetrie compteur skip cumule)
+
+### Quoi
+Jackson screenshot 13/05 : Indicateurs Trading Manuel Phase 3 + Order Flow Avance tout OFF/0 alors que pipeline V4 enriched tourne et features V4 dispos. Cause racine : `_V4_STALE_SEC=600s` safety dans `merge_dmp_v4` skip le merge quand `DMP_ts - V4_ts > 10min`. Pipeline V4 batch interne 30-48min de lag (Databento Historical delay 15min + Phase_B retraitement mois entier ~3min + iter 5min) → safety toujours active → dashboard tombe en mode degrade DMP-seul → features V4 absentes du bar_enriched. Fix : bumper seuil a 2700s (45min) qui couvre 95% des cas empiriques observes.
+
+### Pourquoi
+Empirique 13/05 23:30 UTC : V4 ts=22:42, DMP ts=22:45, diff=2880s → skip → "Pas de donnees historiques" + tous widgets V4 a 0. V4_ONLY_FEATURES (cluster, big_orders, im_delta_day_divergence, naked_poc, near_*_level, trapped_*_at_*, bn_absorb_*_at_level) sont des signaux d'EVENEMENTS PAR-BAR, pas niveaux de prix qui derivent en 45min → compromis safety acceptable.
+
+### Impact attendu
+- Metriques : section "Indicateurs Trading Manuel" Phase 3 (trapped, absorption, div_clean) + "Order Flow Avance" (cluster, big_orders, smt, naked_poc) affichent valeurs reelles 95% du temps au lieu de OFF/0 50% du temps.
+- Effet de bord : aucun. 0 modif code bots. 0 modif code decisionnel/risk/exec. Patch read-only display dashboard.
+- Dette tech : `near_resistance_level`/`near_support_level` dans whitelist peuvent etre faux a 45min stale + move directionnel fort. A traiter post-refacto pipeline V4 incremental (IDEAS_BACKLOG priorite 1).
+
+### Validation pre-deploy
+- [x] Grep cross-codebase : `merge_dmp_v4` + `_V4_STALE_SEC` utilises uniquement `v4_reader.py` + `app.py` → ZERO impact bots Bot 1/2/3
+- [x] Review agent code-reviewer GO-AVEC-RESERVES → 4 reserves corrigees
+- [x] Test empirique compute merge avec V4 stale 48min : merge skip confirme, fallback DMP brut OK
+- [ ] Post-deploy : verifier compteur `_merge_skip_count` (log WARN toutes 10 skip) → si croit > 6/h, lag pipeline trop haut, considerer bump 3600s ou prioriser refacto incremental
+
+### Revert plan
+```bash
+# Rollback rapide :
+git checkout HEAD~1 -- DASHBOARD/api/v4_reader.py
+scp DASHBOARD/api/v4_reader.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/api/"
+ssh Administrator@212.28.179.199 "nssm restart MIA-Dashboard"
+```
+
+### Deployed at (a remplir apres deploy VPS)
+TODO
+
+### Suivi post-deploy
+- J+1 : verifier Jackson voit features V4 dans Indicateurs + OFA via hard refresh dashboard
+- J+7 : grep `LOGS/errors/*_dashboard.jsonl` pour compteur `V4 stale skip cumule` → si > 100/jour, bump seuil ou refacto pipeline
+- J+30 : N/A
+
+### Liens
+- INCIDENT_LOG : voir entries 13/05 lies
+- IDEAS_BACKLOG : entry PRIORITE 1 13/05 (refacto pipeline V4 incremental qui resoudra ce probleme a la racine)
+- Review agent : code-reviewer GO-AVEC-RESERVES R1-R4 (toutes corrigees)
+
+### Dette technique residuelle
+1. `near_*_level` flags peuvent etre faux a 45min stale + move directionnel fort (cas-limite R2). A documenter cas usage Jackson + potentiellement exclure de V4_ONLY_FEATURES post-refacto incremental.
+2. Pipeline V4 lag racine reste 30-48min. Refacto incremental BUILD_V4 + PHASE_B = solution durable (IDEAS_BACKLOG P1).
+
+---
+
+## 2026-05-13 09:00 — FIX Dashboard section "7/30 derniers jours" vide pour Bot 3 MP
+
+**Categorie** : FIX
+**Impact prod** : DASHBOARD (read-only display, aucune modif moteur decision)
+**Fichier(s)** :
+- `DASHBOARD/api/paper_tracker.py` (compute_stats_period docstring L187, get_bot3_payload L562-587 +stats_7d/30d)
+- `DASHBOARD/static/js/dashboard.js` (bot3Normalized L4682-4694 +stats_7d/30d)
+- `DASHBOARD/static/index.html` (cache-bust dashboard.css v=76→77, dashboard.js v=125→126)
+**Schema/version** : N/A (pas de schema bot)
+**Reviewer(s) agent** : code-reviewer GO-AVEC-RESERVES → 4 reserves corrigees (docstring update + cache-bust + entry CHANGELOG ; pas de try/except defensive over-engineering, pas de log catalog read-only)
+
+### Quoi
+Bot 3 MP dashboard affichait "Pas de donnees historiques" dans sections 7j/30j alors que Bot 3 a ~30+ trades sur 5 derniers jours actifs (06/07/08/11/12 mai). `get_bot3_payload()` ne calculait que `stats_today`, omettait `stats_7d`/`stats_30d` contrairement a `_build_bot_payload()` Bot 1/Bot 2. Fix : appel `compute_stats_period(7|30, "*_databento_v3_trades.jsonl")` cote backend + propagation cote frontend `bot3Normalized`.
+
+### Pourquoi
+Asymetrie historique : Bot 3 a son propre payload builder `get_bot3_payload` (initial pour level_stats / recent_decisions Phase 1 OBSERVE-ONLY) qui n'a jamais ete aligne avec Bot 1/Bot 2 pour stats periodes. Fichiers trades source de verite `*_databento_v3_trades.jsonl` existent et sont correctement exclus du glob Bot 1 (`is_bot1_pattern` filtre `databento`). Pattern glob ne collisionne pas avec Bot 2 V1 archive (`*_databento_trades.jsonl` suffix different).
+
+### Impact attendu
+- Metriques : section "7 derniers jours" + "30 derniers jours" Bot 3 affiche maintenant trades/WR/PF/PnL + breakdown ES/NQ
+- Effet de bord : aucun. 0 modif code Bot 1/Bot 2 (code path inchange). 0 modif code decisionnel/risk/exec.
+
+### Validation pre-deploy
+- [x] Lecture code 3 fichiers + comparaison patterns Bot 1/Bot 2 vs Bot 3
+- [x] Verification pattern glob `*_databento_v3_trades.jsonl` matche bons fichiers VPS (5 fichiers 06-12/05, ~50KB total)
+- [x] Verification absence cross-pollution (Bot 2 `*_databento_trades.jsonl` suffix different, _iter_trades_from_files exclusion deja en place)
+- [x] Review agent: code-reviewer GO-AVEC-RESERVES (4 reserves corrigees)
+- [x] Test empirique : `compute_stats_period` deja en prod Bot 1/Bot 2 depuis 29/04 sans incident
+
+### Revert plan
+```bash
+# Rollback git ou SCP version precedente :
+git checkout HEAD~1 -- DASHBOARD/api/paper_tracker.py DASHBOARD/static/js/dashboard.js DASHBOARD/static/index.html
+scp DASHBOARD/api/paper_tracker.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/api/"
+scp DASHBOARD/static/js/dashboard.js Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/static/js/"
+scp DASHBOARD/static/index.html Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/static/"
+ssh Administrator@212.28.179.199 "nssm restart MIA-Dashboard"
+```
+
+### Deployed at 2026-05-12 18:55 UTC (V1) + 2026-05-13 00:30 UTC (V2 fix complementaire)
+
+**V1 (18:55)** : SCP 3 fichiers + restart MIA-Dashboard. Service Running mais Jackson signale "rubriques toujours vierges".
+
+**V2 (00:30)** : crash silencieux `TypeError: '>' not supported between instances of 'NoneType' and 'int'` dans `compute_stats_period` ligne 198 sur trades Bot 3 v3 `RECOVERED_TIMEOUT` (pnl_ticks=null). 12/69 trades 7j affectes. Endpoint plantait → frontend voyait stats_7d undefined → branche "Pas de donnees".
+
+**Fix V2** : `paper_tracker.py:compute_stats_period` ajout filter `[t for t in trades_raw if isinstance(t.get("pnl_ticks"), (int, float)) and t.get("pnl_ticks") == t.get("pnl_ticks")]` (numeric + exclude NaN). Aligne sur `_is_numeric_pnl` de `_compute_stats_today_from_trades` deja existant. Re-SCP + restart.
+
+**Test empirique post-fix V2** : `compute_stats_period(7, "*_databento_v3_trades.jsonl")` → 57 trades, WR 66.7%, PF 1.51, PnL +$1486.5 (ES: 28 trades PF 2.62, NQ: 29 PF 1.38). OK.
+
+### Suivi post-deploy
+- J+1 : verifier Jackson voit bien les stats 7j/30j Bot 3 dans dashboard (hard refresh requis)
+- J+7 : N/A (read-only)
+- J+30 : N/A
+
+### Liens
+- INCIDENT_LOG : entry 2026-05-13 00:30 `VALIDATION_MISS` (deploy V1 sans test empirique reel → bug)
+- Memory : `feedback_pre_deploy_3_questions.md` (24/04 viole), `feedback_validation_miss_patterns.md` (24/04)
+- Review agent : code-reviewer V1 GO-AVEC-RESERVES (faux negatif sur schema diff Bot 1 vs Bot 3 RECOVERED_TIMEOUT)
+
+### Dette technique residuelle
+`compute_stats_period` (L201) et `_renderPaperStatsPeriod` (L5024) hardcodent `("ES", "NQ")` dans la boucle by_symbol. Quand Bot 3 tradera MGC empiriquement (Phase 2+), il faudra etendre les 2 boucles a MGC. Aujourd'hui 0 trade MGC observe = pas bloquant.
+
+---
+
+## 2026-05-12 17:00 — FEATURE Bot 3 GOLD (MGC) integration Phase 1 OBSERVE-ONLY
+
+**Categorie** : FEATURE
+**Impact prod** : PAPER (Bot 3 — Sim1)
+**Fichier(s)** :
+- `CORE/databento_paper_trader_v2.py` (SYMBOLS+MGC L167, SYMBOL_TO_CONTRACT L168, load_last_bar fix .v.0 L175-216, _bot3_positions+MGC L370, bot3_gold_engine instancie L358, counters MGC L373-378, dispatcher poll_cycle L2236-2274, checkpoint OBSERVE-ONLY unifie L2275-2295)
+- `CORE/bot3_config.py` (GUARD_RAILS_BOT3[MGC] L160-188, RISK_BOT3[MGC] L188-194, ATR_BASELINE[MGC] L211, MAX_DRIFT_TICKS[MGC]=30 deja en place)
+- `CORE/bot3_gold_engine.py` (methode evaluate(bar, sym) -> (Bot3Signal|None, list[DecisionLog]) L210-285)
+- `CORE/bot3_gold_config.py` (TRADE_ACCOUNT_BOT3G="Sim1" L29 — corrige etait Sim3)
+- `CORE/log_catalog.py` (10 codes BOT3G_* L541-550)
+- `DOCS/BOT_CHANGELOG.md` (cette entry)
+**Schema/version** : Bot 3 v3.1 (multi-instrument ES+NQ+MGC) — Phase 1 OBSERVE-ONLY MGC
+**Reviewer(s) agent** : code-reviewer (round 1 GO-AVEC-RESERVES R1+R2+R3 → fixes appliques)
+
+### Quoi
+Extension Bot 3 a MGC (Micro Gold COMEX) via Bot3GoldEngine dedie (8 scenarios dynamiques NEUTRAL S1-S8). Le moteur ES/NQ (Bot3Engine MP) reste inchange. Dispatcher dans `_bot3_poll_cycle` route selon le symbole. Phase 1 OBSERVE-ONLY : detection contacts + logging, AUCUNE execution DTC.
+
+### Pourquoi
+Jackson directive 12/05/2026 : "BOT 1 SIM3, BOT 2 SIM2, BOT 3 SIM1 trade ES+NQ+MGC". Bot 3 d'abord car 5 fichiers `bot3_gold_*.py` deja codes + backtest 4 mois (PF 1.185, 159 trades, balanced LONG/SHORT 53/47%, S7 GS_RATIO dominant). PF marginal < 1.3 seuil → Phase 1 OBSERVE 1 semaine avant Phase 2 paper.
+
+### Impact attendu
+- **Detection** : ~10-20 contacts/jour MGC (estimation backtest extrapole) sur 36 niveaux NEUTRAL (Tier 1 = 9 niveaux activés Phase 2)
+- **Logs** : codes BOT3G_DECISION_GO/SKIP/VETO emis dans LOGS/decisions/. Codes MAJEUR (MACRO_OVERRIDE, VETO_LONDON_FIX, HEDGE_TRIGGER) tracables via grep.
+- **Zero impact ES/NQ** : code path separe via dispatcher (regression-safe verifie via tests empiriques 6/6).
+- **Bug fix collateral CRITIQUE** : `load_last_bar()` utilise desormais `get_databento_ticker(symbol)` au lieu de hardcode `.c.0` → fix MGC qui aurait sinon perdu 50-99% des bars 6 mois rollover GC (cf .claude/rules/lessons.md). ES/NQ comportement identique (retour `.c.0`).
+
+### Validation pre-deploy
+- [x] Tests unitaires: 6/6 smoke + 4/4 post-fix (imports, evaluate API, dispatcher, log_catalog)
+- [x] Backtest preservation: NA (extension symbole sans modif moteur ES/NQ) — backtest Gold 159 trades PF 1.185 deja documente DOCS/EDGE_REPORT_GOLD_MGC_RTH.md
+- [x] Review agent: code-reviewer round 1 GO-AVEC-RESERVES (R1 checkpoint OBSERVE-ONLY dupli, R2 dist_pct_at_touch=0.0 hardcode, R3 fallback silencieux import) → 3 fixes appliques + round 2 a faire
+- [x] Test empirique: `python -X utf8 -c "from databento_paper_trader_v2 import DatabentoPaperTraderV2; t=DatabentoPaperTraderV2(dry_run=True); print(t._bot3_positions)"` → `{'NQ': None, 'ES': None, 'MGC': None}`
+
+### Nouveaux logs (10 codes BOT3G_*)
+| Code | Niveau | Categorie | Template |
+|---|---|---|---|
+| BOT3G_BOOT_READY | INFO | events | Bot3 Gold boot pret : phase={phase} observe_only={observe_only} |
+| BOT3G_LEVEL_CONTACT | INFO | decisions | Bot3G contact niveau : {level} tier={tier} dist={dist} |
+| BOT3G_DECISION_GO | INFO | decisions | Bot3G GO : {level} {side} scenario={scenario} conf={conf} |
+| BOT3G_DECISION_SKIP | INFO | decisions | Bot3G SKIP : {level} reason={reason} macro={macro} |
+| BOT3G_MACRO_OVERRIDE | MAJEUR | decisions | Bot3G macro override : {level} side_propose={side} → action={action} |
+| BOT3G_VETO_LONDON_FIX | MAJEUR | decisions | Bot3G VETO London Fix : {level} window={window} |
+| BOT3G_TRADE_OPEN | INFO | trading | Bot3G trade ouvert : MGC {level} {side} qty={qty} @ {price} |
+| BOT3G_TRADE_CLOSE | INFO | trading | Bot3G trade ferme : MGC {level} reason={reason} pnl={pnl}t |
+| BOT3G_INTERMARKET | INFO | decisions | Bot3G intermarket : DXY={dxy} real_yield={ry} gs_z={gsz} |
+| BOT3G_HEDGE_TRIGGER | MAJEUR | decisions | Bot3G HEDGE actif : Bot2 NQ={nq} ES={es} → LONG MGC qty={qty} |
+
+### Revert plan
+```bash
+# Rollback rapide (kill switch Gold sans toucher ES/NQ)
+# 1. Editer CORE/bot3_gold_config.py : BOT3G_OBSERVE_ONLY=True (deja par defaut Phase 1)
+# 2. OU disable au niveau dispatcher : commenter ligne sym=="MGC" dans _bot3_poll_cycle
+#    et garder seulement self.bot3_engine.evaluate(bar_dict, sym)
+# 3. Git revert si besoin :
+git revert <commit_hash>   # cette entry
+# Effets attendus : MGC redevient inactif, ES/NQ continuent normalement
+```
+
+### Deployed at
+(a remplir apres deploy VPS + restart MIA-DataBento-Paper-V2)
+
+### Suivi post-deploy
+**J+1** : grep LOGS/decisions/decisions_YYYYMMDD_*.jsonl | grep BOT3G_DECISION_GO → compter signaux + verifier balance LONG/SHORT
+**J+7** : audit pre-Phase 2 → calculer PF hypothetique (would_GO + simu SL/TP) + ratio veto London Fix / RTH / Vol_mort
+**J+30** : decision Phase 2 PAPER actif si PF >= 1.3 sur >= 50 contacts simulés
+
+---
+
 ## 2026-05-12 03:50 — FIX RACE CONDITION entry_price 3 bots + features V4 enriched
 
 **Categorie** : FIX (CRITIQUE)
