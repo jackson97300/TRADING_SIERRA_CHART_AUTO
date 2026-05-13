@@ -370,6 +370,139 @@ def enrich_vix_lite_streaming(row: dict, state: VixLiteState) -> dict:
 
 
 # ============================================================
+# ENGINE N°2 PILOTE STATEFUL — EMA(vix_level, 60)
+# ============================================================
+# Phase 3a Jour 5 (suite Plan agent recommendation engine N°2 stateful trivial).
+#
+# Convention API streaming-aware Option D VALIDEE definitivement par ce pilote :
+#   1. State serialise pickle proprement (pas threading.RLock dans state)
+#   2. Warmup R2 parity OK (continu == restart au milieu apres pickle save+load)
+#   3. Pickle roundtrip OK (state apres N appels == state reloaded)
+#
+# Wrapper EMA(vix_level, span=60) = exponential moving average sur prix VIX.
+# Utile en regime smoothing (transitions vix_regime moins bruite via EMA).
+# Formule Wilder : ema[t] = alpha * x[t] + (1-alpha) * ema[t-1]
+#                  avec alpha = 2/(span+1) = 2/61 ≈ 0.0328 pour span=60.
+
+@dataclass
+class VixEmaState:
+    """State pilote stateful (Plan agent recommandation engine N°2).
+
+    Maintient last_ema (float | None pour cold start) entre appels streaming.
+
+    Attribut UNIQUE : last_ema. Volontairement minimal pour forcer tests :
+      - Sérialisation pickle (last_ema = float OK, threading.Lock NOT OK)
+      - Warmup R2 (continu vs restart : last_ema reload identique)
+      - Drift IEEE 754 cumulatif (EMA = sum(alpha * x * (1-alpha)^k) → calcul incremental)
+
+    Convention NaN : ignore_na=True (saute les NaN, ne propage pas le decay).
+      Aligne sur `pd.ewm(span=span, adjust=False, ignore_na=True).mean()`.
+      Justification : si VIX_Lite scsf restart 5 min sur VPS, on a un NaN gap.
+      Avec ignore_na=False, le state diverge pendant 24h+ (decay >99% pour span=60).
+      ignore_na=True traite NaN comme "no info" -> garde state, attend next non-NaN.
+
+    Convention : factory pattern via state.get_engine_state("vix_ema_60", VixEmaState).
+    """
+    last_ema: Optional[float] = None
+    span: int = 60  # EMA span (alpha = 2/(span+1))
+
+    def __post_init__(self):
+        # FIX P1-3 audit code-reviewer : validation span avant utilisation
+        if not isinstance(self.span, int) or self.span < 2:
+            raise ValueError(
+                f"VixEmaState.span must be int >= 2 (got {self.span}). "
+                f"span=1 donne alpha=1 (EMA = derniere valeur, inutile)."
+            )
+
+    @property
+    def alpha(self) -> float:
+        return 2.0 / (self.span + 1)
+
+
+def apply_vix_ema_streaming(row: dict, state: VixEmaState) -> dict:
+    """API streaming EMA(vix_level) (engine N°2 pilote stateful).
+
+    Calcule vix_level_ema_60 incremental :
+      ema[t] = alpha * vix_level[t] + (1-alpha) * ema[t-1]
+      Cold start : ema[0] = vix_level[0]
+
+    Si vix_level est NaN/None : passe-through (no update state).
+    Si state.last_ema is None : init avec vix_level courant.
+
+    Args:
+        row : dict avec 'vix_level' (float, deja sanity-filtered par
+              enrich_vix_lite_streaming).
+        state : VixEmaState mutable (last_ema updated).
+
+    Returns:
+        dict row + 'vix_level_ema_60' (float | None si pas encore initialise).
+    """
+    out = dict(row)
+    vl = out.get("vix_level")
+
+    # Handle NaN/None : passe-through
+    try:
+        if vl is None or pd.isna(vl):
+            out["vix_level_ema_60"] = state.last_ema  # peut etre None si jamais init
+            return out
+    except (TypeError, ValueError):
+        out["vix_level_ema_60"] = state.last_ema
+        return out
+
+    vl_f = float(vl)
+
+    # Cold start init
+    if state.last_ema is None:
+        state.last_ema = vl_f
+        out["vix_level_ema_60"] = vl_f
+        return out
+
+    # Incremental EMA update
+    a = state.alpha
+    new_ema = a * vl_f + (1.0 - a) * state.last_ema
+    state.last_ema = new_ema
+    out["vix_level_ema_60"] = new_ema
+    return out
+
+
+def apply_vix_ema_batch(df: pd.DataFrame, span: int = 60) -> pd.DataFrame:
+    """API batch EMA(vix_level) : oracle pandas ewm directement (perf + DRY).
+
+    FIX P0-1 audit code-reviewer 13/05 nuit : initialement, on appelait
+    streaming dans une boucle (DRY claim Plan agent). MAIS la convention NaN
+    de notre streaming (ignore_na=True : saute NaN, garde state) divergeait
+    silencieusement vs pandas default (ignore_na=False : decay multiplie par
+    gap NaN). max_diff post-NaN = 7.26e-3 >> 1e-9.
+
+    Decision : `apply_vix_ema_streaming` PRESERVE le state apres NaN (utile
+    en prod si gap data Databento 5 min). On aligne le batch sur la MEME
+    convention via pandas `ewm(span, adjust=False, ignore_na=True)`.
+
+    Vrai DRY : le batch est l'oracle, le streaming doit matcher exactement.
+    Test parite valide cette egalite.
+
+    Args:
+        df : DataFrame avec 'vix_level'.
+        span : EMA span (default 60, alpha = 2/(span+1)).
+
+    Returns:
+        df + 'vix_level_ema_60' colonne (perf O(N) pandas vectorise, ~100ms
+        pour 86k rows vs 30s iterrows naive).
+    """
+    out = df.copy()
+    if "vix_level" not in out.columns:
+        raise KeyError("'vix_level' manquant pour apply_vix_ema_batch")
+    # Convention ignore_na=True alignee streaming (cf docstring VixEmaState).
+    # adjust=False = formule recurrente ema[t] = alpha * x + (1-alpha) * ema[t-1]
+    # (vs adjust=True qui fait sum infinite series normalisee, plus precis mais
+    # different + ne supporte pas streaming).
+    out[f"vix_level_ema_{span}"] = (
+        out["vix_level"].ewm(span=span, adjust=False, ignore_na=True).mean()
+    )
+    return out
+
+
+# ============================================================
 # TESTS INLINE (run direct python -m vix_lite_reader)
 # ============================================================
 
