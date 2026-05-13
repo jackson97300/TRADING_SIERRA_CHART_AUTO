@@ -2383,6 +2383,120 @@ def _test_edge_zones():
     return {"all_pass": all_pass}
 
 
+def _test_phase_b_plus():
+    """Test sub-engine phase_b_plus streaming (74 features NON-LOOKAHEAD)."""
+    from phase_b_plus_streaming import (
+        add_phase_b_plus_streaming,
+        make_phase_b_plus_state,
+    )
+    from phase_b_plus_engine import (
+        add_volume_spike_features, add_rotation_features,
+        add_vwap_features, add_ovn_features, add_open_features,
+        add_news_features,
+    )
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(73)
+    # Synth 3 jours x 1440 bars/jour pour couvrir OVN + RTH + news times
+    n = 4320  # 3 jours
+    bars = []
+    start = pd.Timestamp("2026-05-12 00:00:00", tz="UTC")
+    for i in range(n):
+        ts = start + pd.Timedelta(minutes=i)
+        bars.append({"ts_event": ts.tz_localize(None)})
+    df = pd.DataFrame(bars)
+    df["open"] = 5800 + np.cumsum(np.random.randn(n) * 0.2)
+    df["high"] = df["open"] + np.random.uniform(0.1, 1.5, n)
+    df["low"] = df["open"] - np.random.uniform(0.1, 1.5, n)
+    df["close"] = df["open"] + np.random.randn(n) * 0.5
+    df["volume"] = np.random.randint(50, 2000, n).astype(float)
+
+    # BATCH : chain les fonctions NON-LOOKAHEAD
+    batch_df = df.copy()
+    batch_df = add_volume_spike_features(batch_df, symbol="ES")
+    batch_df = add_rotation_features(batch_df, tick=0.25)
+    batch_df = add_vwap_features(batch_df)
+    batch_df = add_ovn_features(batch_df, tick=0.25)
+    batch_df = add_open_features(batch_df)
+    batch_df = add_news_features(batch_df)
+
+    # STREAM
+    state = make_phase_b_plus_state("ES")
+    stream_rows = []
+    for _, row in df.iterrows():
+        stream_rows.append(add_phase_b_plus_streaming(row.to_dict(), state, tick=0.25))
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest phase_b_plus parite sur {n} rows synth (3 jours)...")
+
+    # Features a tester (NON-LOOKAHEAD)
+    cols_check = [
+        # Volume spike
+        "vol_spike_up", "vol_spike_dn", "vol_zscore_20",
+        # Rotation
+        "rotation_up", "rotation_dn",
+        # VWAP D
+        "vwap_d", "vwap_d_sd1u", "vwap_d_sd1d", "vwap_d_sd2u", "vwap_d_sd2d",
+        "vwap_d_sd3u", "vwap_d_sd3d",
+        "dist_vwap_d_pct", "dist_vwap_d_sd1u_pct", "dist_vwap_d_sd1d_pct",
+        "dist_vwap_d_sd2u_pct", "dist_vwap_d_sd2d_pct",
+        "vwap_d_cross_up", "vwap_d_cross_dn",
+        "vwap_d_sd1_above", "vwap_d_sd1_below",
+        "vwap_d_sd2_above", "vwap_d_sd2_below",
+        # VWAP W
+        "vwap_w", "vwap_w_sd1u", "vwap_w_sd1d", "vwap_w_sd2u", "vwap_w_sd2d",
+        "dist_vwap_w_pct", "dist_vwap_w_sd1u_pct",
+        # VWAP M
+        "vwap_m", "vwap_m_sd1u", "vwap_m_sd1d",
+        "dist_vwap_m_pct",
+        # OVN
+        "ovn_high", "ovn_low", "ovn_range_ticks",
+        "dist_ovn_high_pct", "dist_ovn_low_pct",
+        "ovn_broken_up", "ovn_broken_dn",
+        # Opens
+        "open_830_et", "open_930_et",
+        "dist_open_830_pct", "dist_open_930_pct",
+        "above_open_830", "above_open_930",
+        # News
+        "is_news_715", "is_news_730", "is_news_830", "is_news_845",
+        "is_news_900", "is_news_930",
+        "within_news_715_5m", "within_news_830_5m", "within_news_930_5m",
+        "mins_since_news", "mins_to_next_news",
+    ]
+
+    print("\n--- NIVEAU 1 : parite batch vs streaming (54 features echantillonnees) ---")
+    all_pass = True
+    fail_cols = []
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:32s} MANQUANT batch={col in batch_df.columns} stream={col in stream_df.columns}")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        # Tolerance plus large sur VWAP (float32 cast batch + accumulator drift)
+        atol = 1e-3 if "vwap" in col or "dist_vwap" in col else 1e-6
+        status = "PASS" if max_diff < atol and nan_mismatch < 10 else "FAIL"
+        print(f"  {col:32s} {status} max_diff={max_diff:.4e} nan_mm={nan_mismatch}")
+        if status == "FAIL":
+            all_pass = False
+            fail_cols.append(col)
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    if fail_cols:
+        print(f"  Failed columns : {fail_cols[:5]}{'...' if len(fail_cols)>5 else ''}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL phase_b_plus : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -2674,6 +2788,7 @@ def main():
                                  "amd",
                                  "game_changers",
                                  "edge_zones",
+                                 "phase_b_plus",
                                  "all"])
     args = parser.parse_args()
 
@@ -2759,6 +2874,11 @@ def main():
 
     if args.engine in ("edge_zones", "all"):
         report = _test_edge_zones()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("phase_b_plus", "all"):
+        report = _test_phase_b_plus()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
