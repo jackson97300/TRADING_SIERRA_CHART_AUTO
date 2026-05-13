@@ -2283,6 +2283,106 @@ def _test_game_changers():
     return {"all_pass": all_pass}
 
 
+def _test_edge_zones():
+    """Test sub-engine edge_zones streaming (8 features ML imbalance stacks)."""
+    from edge_zones_streaming import (
+        add_edge_zones_streaming,
+        make_edge_zones_state,
+    )
+    from edge_zones_engine import apply_edge_zones
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(67)
+    n = 200
+    df = pd.DataFrame({
+        "ts_event": pd.date_range("2026-05-12 13:00:00", periods=n, freq="1min"),
+        "price": 5800 + np.cumsum(np.random.randn(n) * 0.3),
+    })
+    df["high"] = df["price"] + np.random.uniform(0, 2, n)
+    df["low"] = df["price"] - np.random.uniform(0, 2, n)
+    df["close"] = df["price"]
+
+    # Synth footprint : pour ~30% des bars, generer cellules avec
+    # imbalance >600% (BUY ou SELL) sur 2-4 prix consecutifs
+    footprint = {}
+    tick = 0.25
+    for i in range(n):
+        cells = {}
+        # Prix de base bucketise au tick
+        p_base = round(df["close"].iloc[i] / tick) * tick
+        # Genere 5-10 cellules autour du base price
+        for offset in range(-5, 6):
+            p = round(p_base + offset * tick, 4)
+            cells[p] = {
+                "ask_vol": float(np.random.randint(10, 200)),
+                "bid_vol": float(np.random.randint(10, 200)),
+            }
+        # Injection forcee d'un stack BUY (ask_above >> bid_p) sur 30% des bars
+        if i % 7 == 0:
+            # Force 3 cellules consecutives avec imbalance >600%
+            start_off = np.random.randint(-3, 2)
+            for k in range(3):
+                p = round(p_base + (start_off + k) * tick, 4)
+                if p in cells:
+                    cells[p]["bid_vol"] = 5.0  # bas
+                    # Cellule au-dessus avec ask_vol gros
+                    p_above = round(p + tick, 4)
+                    if p_above in cells:
+                        cells[p_above]["ask_vol"] = 100.0  # 100/5 * 100 = 2000% >> 600
+        footprint[i] = cells
+
+    # BATCH
+    batch_df = apply_edge_zones(df.copy(), footprint, symbol="ES", tick=tick)
+
+    # STREAM
+    state = make_edge_zones_state("ES")
+    stream_rows = []
+    for i, (_, row) in enumerate(df.iterrows()):
+        cells_i = footprint.get(i, {})
+        stream_rows.append(add_edge_zones_streaming(row.to_dict(), state, cells_i))
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest edge_zones parite sur {n} rows synth (30% bars avec stack force)...")
+
+    cols_check = [
+        "bar_edge_buy_fire", "bar_edge_sell_fire",
+        "bar_edge_buy_zone_size", "bar_edge_sell_zone_size",
+        "n_edge_buy_active", "n_edge_sell_active",
+        "dist_edge_buy_nearest_pct", "dist_edge_sell_nearest_pct",
+    ]
+    print("\n--- NIVEAU 1 : parite batch vs streaming (8 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:32s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        status = "PASS" if max_diff < 1e-6 and nan_mismatch == 0 else "FAIL"
+        # Stats : combien de fires/zones detectees
+        n_fires = int((s != 0).sum()) if "fire" in col else None
+        extra = f"(n_fires={n_fires})" if n_fires is not None else ""
+        print(f"  {col:32s} {status} max_diff={max_diff:.6e} nan_mm={nan_mismatch} {extra}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where((np.abs(diff) > 1e-6) & ~nan_both)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL edge_zones : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -2573,6 +2673,7 @@ def main():
                                  "rvol_engine",
                                  "amd",
                                  "game_changers",
+                                 "edge_zones",
                                  "all"])
     args = parser.parse_args()
 
@@ -2653,6 +2754,11 @@ def main():
 
     if args.engine in ("game_changers", "all"):
         report = _test_game_changers()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("edge_zones", "all"):
+        report = _test_edge_zones()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
