@@ -2074,6 +2074,215 @@ def _test_amd():
     return {"all_pass": all_pass}
 
 
+def _test_game_changers():
+    """Test sub-engine game_changers streaming (5 features Market Profile).
+
+    Parite design :
+      - open_type/zone/direction/bias_conf : frozen POST-IB -> parite EXACTE
+        sur toutes les bars apres ib_close_min.
+      - day_type : RUNNING en stream vs batch (sess_high/low/close finaux).
+        Parite VRAIE uniquement sur LAST BAR de chaque jour.
+    """
+    from game_changers_streaming import (
+        add_game_changers_streaming,
+        GameChangersState,
+    )
+    import sys
+    sys.path.insert(0, "CORE")  # batch import build_dataset_v4_phase_b
+    from build_dataset_v4_phase_b import apply_game_changers
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(53)
+    # Synth 3 jours x 720 bars/jour (12h trading)
+    bars = []
+    for day_offset in range(3):
+        date_str = f"2026-05-{12 + day_offset:02d}"
+        start_et = pd.Timestamp(f"{date_str} 00:00:00")  # 00:00 ET
+        # On simule 720 bars = 12h
+        for i in range(720):
+            ts = start_et + pd.Timedelta(minutes=i)
+            mins_et = ts.hour * 60 + ts.minute
+            bars.append({
+                "ts_event": ts,
+                "date_et": pd.Timestamp(date_str).date(),
+                "mins_et": mins_et,
+            })
+    n = len(bars)
+    df = pd.DataFrame(bars)
+    df["price"] = 5800 + np.cumsum(np.random.randn(n) * 0.3)
+    df["close"] = df["price"]
+    df["high"] = df["price"] + np.random.uniform(0, 1, n)
+    df["low"] = df["price"] - np.random.uniform(0, 1, n)
+
+    # Inputs requis par batch + stream
+    # open_cash = close de la 1ere bar a us_start (mins_et=570 = 09:30 ET)
+    # price_1030 = close de la bar a us_start+60 (mins_et=630)
+    # ib_high/low broadcast post-IB (mins_et >= 630)
+    df["open_cash"] = df.groupby("date_et")["close"].transform(
+        lambda x: x[df.loc[x.index, "mins_et"] == 570].iloc[0]
+        if (df.loc[x.index, "mins_et"] == 570).any() else np.nan
+    )
+    df["price_1030"] = df.groupby("date_et")["close"].transform(
+        lambda x: x[df.loc[x.index, "mins_et"] == 630].iloc[0]
+        if (df.loc[x.index, "mins_et"] == 630).any() else np.nan
+    )
+    # IB high/low : max/min de [09:30, 10:30) broadcast
+    ib_window = (df["mins_et"] >= 570) & (df["mins_et"] < 630)
+    df["ib_high"] = df.groupby("date_et").apply(
+        lambda g: g["high"].where(ib_window.loc[g.index]).max()
+    ).reindex(df["date_et"]).values
+    df["ib_low"] = df.groupby("date_et").apply(
+        lambda g: g["low"].where(ib_window.loc[g.index]).min()
+    ).reindex(df["date_et"]).values
+    # Mask ib_high/low avant ib_close
+    df.loc[df["mins_et"] < 630, "ib_high"] = np.nan
+    df.loc[df["mins_et"] < 630, "ib_low"] = np.nan
+    # ib_atr fixed
+    df["ib_atr"] = 8.0
+    # sess_high/low running (cumulative par date)
+    df["sess_high"] = df.groupby("date_et")["high"].cummax()
+    df["sess_low"] = df.groupby("date_et")["low"].cummin()
+    # prev_vah/val/vpoc + pdh/pdl frozen per jour (constants)
+    df["prev_vah"] = 5805.0
+    df["prev_val"] = 5790.0
+    df["prev_vpoc"] = 5797.0
+    df["pdh"] = 5810.0
+    df["pdl"] = 5788.0
+
+    # BATCH
+    batch_df = apply_game_changers(df.copy(), symbol="ES")
+
+    # STREAM
+    state = GameChangersState()
+    stream_rows = []
+    for _, row in df.iterrows():
+        stream_rows.append(add_game_changers_streaming(row.to_dict(), state, symbol="ES"))
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest game_changers parite sur {n} rows synth (3 jours)...")
+
+    # NIVEAU 1 : parite EXACTE sur 4 features frozen POST-IB
+    # On compare uniquement les bars POST-IB (mins_et >= 630) car avant
+    # batch retourne 0 default + stream retourne UNKNOWN (init)
+    post_ib_mask = df["mins_et"] >= 630
+    cols_exact = ["open_type", "open_zone", "open_direction", "open_bias_conf"]
+    print("\n--- NIVEAU 1 : parite EXACTE POST-IB (4 features frozen) ---")
+    all_pass = True
+    for col in cols_exact:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:25s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df.loc[post_ib_mask, col].astype("float64").values
+        s = stream_df.loc[post_ib_mask, col].astype("float64").values
+        diff = np.abs(b - s)
+        max_diff = float(np.nanmax(diff))
+        status = "PASS" if max_diff < 1e-6 else "FAIL"
+        print(f"  {col:25s} {status} max_diff={max_diff:.6e}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where(diff > 1e-6)[0][:3]
+            for idx in idx_diff:
+                real_idx = post_ib_mask[post_ib_mask].index[idx]
+                print(f"    idx={real_idx} date={df.loc[real_idx, 'date_et']} "
+                      f"batch={b[idx]} stream={s[idx]}")
+
+    # NIVEAU 2 : day_type LAST BAR de chaque jour (parite running == batch frozen)
+    print("\n--- NIVEAU 2 : day_type LAST BAR each day (running vs batch final) ---")
+    last_bar_idx = df.groupby("date_et").apply(lambda g: g.index[-1]).values
+    day_type_ok = True
+    for idx in last_bar_idx:
+        b_dt = batch_df.loc[idx, "day_type"]
+        s_dt = stream_df.loc[idx, "day_type"]
+        if b_dt != s_dt:
+            print(f"    date={df.loc[idx, 'date_et']} idx={idx} "
+                  f"batch={b_dt} stream={s_dt}")
+            day_type_ok = False
+    print(f"  Last-bar day_type parite : {'PASS' if day_type_ok else 'FAIL'}")
+
+    # NIVEAU 3 : test MGC (FIX P0 audit code-reviewer)
+    # Sur MGC ib_close_min=570 (vs ES=630). Verifier que stream utilise bien
+    # get_session_boundaries au lieu de hardcode (precedent bug=510 fix).
+    print("\n--- NIVEAU 3 : MGC parite (FIX P0 ib_close_min) ---")
+    # Synth MGC : us_start=510, ib_close_min=570
+    bars_mgc = []
+    for day_offset in range(2):
+        date_str = f"2026-05-{12 + day_offset:02d}"
+        start_et = pd.Timestamp(f"{date_str} 00:00:00")
+        for i in range(720):
+            ts = start_et + pd.Timedelta(minutes=i)
+            mins_et = ts.hour * 60 + ts.minute
+            bars_mgc.append({
+                "ts_event": ts,
+                "date_et": pd.Timestamp(date_str).date(),
+                "mins_et": mins_et,
+            })
+    n_mgc = len(bars_mgc)
+    df_mgc = pd.DataFrame(bars_mgc)
+    df_mgc["price"] = 2400 + np.cumsum(np.random.randn(n_mgc) * 0.1)
+    df_mgc["close"] = df_mgc["price"]
+    df_mgc["high"] = df_mgc["price"] + np.random.uniform(0, 0.5, n_mgc)
+    df_mgc["low"] = df_mgc["price"] - np.random.uniform(0, 0.5, n_mgc)
+    # MGC us_start=510 (cash open 08:30), price_1030_equivalent = mins_et=570 (09:30)
+    df_mgc["open_cash"] = df_mgc.groupby("date_et")["close"].transform(
+        lambda x: x[df_mgc.loc[x.index, "mins_et"] == 510].iloc[0]
+        if (df_mgc.loc[x.index, "mins_et"] == 510).any() else np.nan
+    )
+    df_mgc["price_1030"] = df_mgc.groupby("date_et")["close"].transform(
+        lambda x: x[df_mgc.loc[x.index, "mins_et"] == 570].iloc[0]
+        if (df_mgc.loc[x.index, "mins_et"] == 570).any() else np.nan
+    )
+    ib_window_mgc = (df_mgc["mins_et"] >= 510) & (df_mgc["mins_et"] < 570)
+    df_mgc["ib_high"] = df_mgc.groupby("date_et").apply(
+        lambda g: g["high"].where(ib_window_mgc.loc[g.index]).max()
+    ).reindex(df_mgc["date_et"]).values
+    df_mgc["ib_low"] = df_mgc.groupby("date_et").apply(
+        lambda g: g["low"].where(ib_window_mgc.loc[g.index]).min()
+    ).reindex(df_mgc["date_et"]).values
+    df_mgc.loc[df_mgc["mins_et"] < 570, "ib_high"] = np.nan
+    df_mgc.loc[df_mgc["mins_et"] < 570, "ib_low"] = np.nan
+    df_mgc["ib_atr"] = 3.0
+    df_mgc["sess_high"] = df_mgc.groupby("date_et")["high"].cummax()
+    df_mgc["sess_low"] = df_mgc.groupby("date_et")["low"].cummin()
+    df_mgc["prev_vah"] = 2402.0
+    df_mgc["prev_val"] = 2395.0
+    df_mgc["prev_vpoc"] = 2398.0
+    df_mgc["pdh"] = 2405.0
+    df_mgc["pdl"] = 2393.0
+
+    batch_mgc = apply_game_changers(df_mgc.copy(), symbol="MGC")
+    state_mgc = GameChangersState()
+    stream_mgc_rows = []
+    for _, row in df_mgc.iterrows():
+        stream_mgc_rows.append(add_game_changers_streaming(row.to_dict(), state_mgc, symbol="MGC"))
+    stream_mgc_df = pd.DataFrame(stream_mgc_rows)
+
+    # Verifier que ib_close_min=570 sur MGC (et pas l'ancien bug 510)
+    assert state_mgc.ib_close_min == 570, (
+        f"P0 MGC ib_close_min doit etre 570, got {state_mgc.ib_close_min}"
+    )
+    # Parite POST-IB sur 4 features frozen
+    post_ib_mgc = df_mgc["mins_et"] >= 570
+    mgc_ok = True
+    for col in ["open_type", "open_zone", "open_direction"]:
+        b = batch_mgc.loc[post_ib_mgc, col].astype("float64").values
+        s = stream_mgc_df.loc[post_ib_mgc, col].astype("float64").values
+        diff_max = float(np.nanmax(np.abs(b - s)))
+        if diff_max > 1e-6:
+            print(f"  MGC {col} FAIL max_diff={diff_max}")
+            mgc_ok = False
+    print(f"  MGC ib_close_min state={state_mgc.ib_close_min} (attendu 570) : OK")
+    print(f"  MGC parite POST-IB 4 features : {'PASS' if mgc_ok else 'FAIL'}")
+
+    all_pass = all_pass and day_type_ok and mgc_ok
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL game_changers : "
+          f"{'ALL LEVELS PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -2363,6 +2572,7 @@ def main():
                                  "rolling_features_session_confluence",
                                  "rvol_engine",
                                  "amd",
+                                 "game_changers",
                                  "all"])
     args = parser.parse_args()
 
@@ -2438,6 +2648,11 @@ def main():
 
     if args.engine in ("amd", "all"):
         report = _test_amd()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("game_changers", "all"):
+        report = _test_game_changers()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
