@@ -81,9 +81,43 @@ _last_bar_ts: dict[str, str] = {sym: "?" for sym in SYMBOLS}
 # Un thread separe flush sur disque toutes les 0.5s (eviter explose I/O sur
 # >100 trades/sec en heures actives).
 import threading
+from collections import deque
 _last_trade_by_sym: dict[str, dict] = {}
 _trades_received: dict[str, int] = {sym: 0 for sym in SYMBOLS}
 _trade_lock = threading.Lock()
+
+# Chantier 2 (13/05/2026 nuit) : BUFFER ROLLING TRADES pour Chantier 3 Live Enricher.
+# Plan strategique migration Bot 2 V6 full Databento : on persiste TOUS les trades
+# (pas juste le dernier) dans un buffer rolling JSONL pour permettre :
+#   1. Replay historique 7j (debug + audit)
+#   2. Calcul streaming footprint/big_orders/edge_zones (Chantier 3)
+#
+# Architecture (anti-degradation latence ms _last_trade_by_sym) :
+#   - Callback TradeMsg : append trade au deque thread-safe (zero I/O)
+#   - Thread separe _flush_trade_buffer_loop : drain deques + append JSONL toutes 5s
+#   - Thread separe _purge_old_trades_loop : delete files > 7 jours quotidien
+#
+# Volume estime : ES ~50k + NQ ~80k + MGC ~5k = ~135k trades/jour x ~200 bytes
+#   = ~27 MB/jour x 7 jours = ~190 MB (acceptable, configurable).
+TRADE_BUFFER_FLUSH_INTERVAL_SEC = 5
+TRADE_BUFFER_PURGE_DAYS = 7
+TRADE_BUFFER_DIR = CACHE_DIR / "trades"
+TRADE_BUFFER_DIR.mkdir(parents=True, exist_ok=True)
+# FIX P1.1 code-reviewer 13/05 nuit : maxlen plafond memoire (anti-OOM si flush
+# thread plante / disque plein). 500K trades ≈ ~3-4h worst-case ES open active,
+# ~100 MB plafond total 3 syms (500K x 200 bytes x 3 = 300 MB). Si maxlen atteint
+# deque evict silencieusement le plus ancien (FIFO), un log WARN est emis.
+TRADE_BUFFER_MAXLEN = 500_000
+_trade_buffer_by_sym: dict[str, deque] = {
+    sym: deque(maxlen=TRADE_BUFFER_MAXLEN) for sym in SYMBOLS
+}
+_trade_buffer_lock = threading.Lock()
+_trades_persisted_count: dict[str, int] = {sym: 0 for sym in SYMBOLS}
+_trade_buffer_dropped: dict[str, int] = {sym: 0 for sym in SYMBOLS}  # FIX P1.3
+# FIX P1.3 : tracker echecs consecutifs write par symbol pour eviter accumulation
+# infinie en cas de disque plein. Drop trades apres 3 echecs consecutifs.
+_trade_buffer_write_fails: dict[str, int] = {sym: 0 for sym in SYMBOLS}
+TRADE_BUFFER_MAX_WRITE_FAILS = 3
 
 # 04/05 watchdog auto-reconnect : timestamp dernier callback recu (TOUS types)
 # Sert a detecter websocket dead (ack/system messages updaten ce ts).
@@ -223,17 +257,23 @@ def _build_callback(client_ref):
                 # Side est un enum databento Side (Ask/Bid/None) → cast str pour JSON
                 side_raw = getattr(record, "side", None)
                 side_str = str(side_raw) if side_raw is not None else "?"
+                trade_dict = {
+                    "symbol": sym,
+                    "instrument_id": inst_id,
+                    "price": price,
+                    "size": int(record.size) if record.size else 0,
+                    "side": side_str,
+                    "ts_event_ns": ts_event_ns,
+                    "captured_at_ts": time.time(),
+                }
                 with _trade_lock:
-                    _last_trade_by_sym[sym] = {
-                        "symbol": sym,
-                        "instrument_id": inst_id,
-                        "price": price,
-                        "size": int(record.size) if record.size else 0,
-                        "side": side_str,
-                        "ts_event_ns": ts_event_ns,
-                        "captured_at_ts": time.time(),
-                    }
+                    _last_trade_by_sym[sym] = trade_dict
                     _trades_received[sym] = _trades_received.get(sym, 0) + 1
+                # Chantier 2 (13/05/2026 nuit) : append au buffer rolling
+                # pour persistance JSONL (Chantier 3 Live Enricher input).
+                # deque thread-safe, zero I/O cost dans callback.
+                with _trade_buffer_lock:
+                    _trade_buffer_by_sym[sym].append(trade_dict)
                 # 04/05 SOIR fix #1 : watchdog ne regarde QUE data marche reelle
                 with _data_lock:
                     _last_data_ts[sym] = time.time()
@@ -283,6 +323,146 @@ def _flush_trade_cache_loop(interval_s: float = 0.5):
                 last_log = time.time()
         except Exception as e:
             logger.exception(f"flush_trade_cache_loop error: {e}")
+
+
+def _flush_trade_buffer_loop(interval_s: float = TRADE_BUFFER_FLUSH_INTERVAL_SEC):
+    """Thread daemon : drain _trade_buffer_by_sym et append JSONL.
+
+    Chantier 2 (13/05/2026 nuit) : persistance Trades pour Chantier 3
+    Live Enricher input. Format JSONL append-only, rotation quotidienne.
+
+    Output path :
+        DATA/LIVE_CACHE/trades/{sym_safe}/{YYYYMMDD}.jsonl
+
+    Critique : ne PAS bloquer le callback principal. Drain rapide via
+    deque pop + I/O batchee (regroupe trades par jour avant write).
+    """
+    last_log = time.time()
+    while _running:
+        try:
+            time.sleep(interval_s)
+            # 1. Drain tous les deques (rapide, sous lock court)
+            drained: dict[str, list[dict]] = {}
+            with _trade_buffer_lock:
+                for sym, buf in _trade_buffer_by_sym.items():
+                    if not buf:
+                        continue
+                    drained[sym] = []
+                    while buf:
+                        drained[sym].append(buf.popleft())
+
+            if not drained:
+                # Heartbeat log toutes les 60s meme si rien
+                if time.time() - last_log > 60:
+                    with _trade_buffer_lock:
+                        counts = dict(_trades_persisted_count)
+                    logger.info(f"trade_buffer flush idle, persisted_total={counts}")
+                    last_log = time.time()
+                continue
+
+            # 2. Group par jour UTC + append JSONL atomic
+            #    (open/write/close par batch -> reduit overhead syscall)
+            for sym, trades in drained.items():
+                safe_sym = sym.replace("/", "_").replace(".", "_")
+                sym_dir = TRADE_BUFFER_DIR / safe_sym
+                sym_dir.mkdir(parents=True, exist_ok=True)
+
+                # Bucket par YYYYMMDD UTC (rare cross-day boundary, mais possible)
+                bucket: dict[str, list[dict]] = {}
+                for t in trades:
+                    ts_ns = t.get("ts_event_ns", 0)
+                    if ts_ns <= 0:
+                        continue
+                    day_str = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc).strftime("%Y%m%d")
+                    bucket.setdefault(day_str, []).append(t)
+
+                # Write par bucket
+                for day_str, day_trades in bucket.items():
+                    fpath = sym_dir / f"{day_str}.jsonl"
+                    try:
+                        with open(fpath, "a", encoding="utf-8") as f:
+                            for t in day_trades:
+                                f.write(json.dumps(t, ensure_ascii=False, separators=(",", ":")))
+                                f.write("\n")
+                        with _trade_buffer_lock:
+                            _trades_persisted_count[sym] = (
+                                _trades_persisted_count.get(sym, 0) + len(day_trades)
+                            )
+                            _trade_buffer_write_fails[sym] = 0  # reset apres succes
+                    except OSError as e:
+                        # FIX P1.3 (audit code-reviewer 13/05 nuit) : cap retries
+                        # appendleft pour eviter accumulation infinie si disque plein.
+                        # Apres TRADE_BUFFER_MAX_WRITE_FAILS echecs consecutifs, on
+                        # DROP les trades pour eviter OOM du service.
+                        with _trade_buffer_lock:
+                            _trade_buffer_write_fails[sym] = _trade_buffer_write_fails.get(sym, 0) + 1
+                            fails = _trade_buffer_write_fails[sym]
+                        if fails <= TRADE_BUFFER_MAX_WRITE_FAILS:
+                            logger.warning(
+                                f"trade_buffer write fail #{fails}/{TRADE_BUFFER_MAX_WRITE_FAILS} "
+                                f"{fpath.name}: {e} -> re-enqueue {len(day_trades)} trades"
+                            )
+                            with _trade_buffer_lock:
+                                for t in day_trades:
+                                    _trade_buffer_by_sym[sym].appendleft(t)
+                        else:
+                            logger.error(
+                                f"trade_buffer write fail #{fails} {fpath.name}: {e} -> "
+                                f"DROP {len(day_trades)} trades (cap retries atteint, "
+                                f"anti-OOM service). Disque plein ? AV scan ?"
+                            )
+                            with _trade_buffer_lock:
+                                _trade_buffer_dropped[sym] = (
+                                    _trade_buffer_dropped.get(sym, 0) + len(day_trades)
+                                )
+
+            # Heartbeat 60s
+            if time.time() - last_log > 60:
+                with _trade_buffer_lock:
+                    counts = dict(_trades_persisted_count)
+                logger.info(f"trade_buffer flush persisted_total={counts}")
+                last_log = time.time()
+        except Exception as e:
+            logger.exception(f"flush_trade_buffer_loop error: {e}")
+
+
+def _purge_old_trades_loop(retention_days: int = TRADE_BUFFER_PURGE_DAYS):
+    """Thread daemon : delete trade buffer files > retention_days jours.
+
+    Tourne 1x par jour (sleep 24h). Au boot, run immediat pour cleanup
+    eventuel accumule.
+    """
+    first_run = True
+    while _running:
+        try:
+            if not first_run:
+                time.sleep(24 * 3600)
+            first_run = False
+
+            # Calcul cutoff YYYYMMDD (sans pandas pour eviter dep additionnelle)
+            from datetime import timedelta as _td
+            cutoff = datetime.now(timezone.utc) - _td(days=retention_days)
+            cutoff_ymd = int(cutoff.strftime("%Y%m%d"))
+
+            deleted_count = 0
+            for sym_dir in TRADE_BUFFER_DIR.iterdir():
+                if not sym_dir.is_dir():
+                    continue
+                for fpath in sym_dir.glob("*.jsonl"):
+                    try:
+                        ymd = int(fpath.stem)
+                    except ValueError:
+                        continue
+                    if ymd < cutoff_ymd:
+                        try:
+                            fpath.unlink()
+                            deleted_count += 1
+                        except OSError as e:
+                            logger.warning(f"purge {fpath.name} fail: {e}")
+            if deleted_count > 0:
+                logger.info(f"trade_buffer purge: deleted {deleted_count} files > {retention_days}j old")
+        except Exception as e:
+            logger.exception(f"purge_old_trades_loop error: {e}")
 
 
 def _post_discord_alert(message: str, channel: str = "alertes") -> None:
@@ -467,6 +647,22 @@ def main():
     flush_thread.start()
     logger.info("Trade cache flush thread started (interval 0.5s)")
 
+    # Chantier 2 (13/05/2026 nuit) : threads buffer rolling Trades pour Chantier 3.
+    # Persiste tous les Trades en JSONL daily (drain 5s, purge 7j retention).
+    flush_buffer_thread = threading.Thread(
+        target=_flush_trade_buffer_loop, daemon=True, name="TradeBufferFlush"
+    )
+    flush_buffer_thread.start()
+    logger.info(
+        f"Trade buffer flush thread started (interval {TRADE_BUFFER_FLUSH_INTERVAL_SEC}s, "
+        f"output {TRADE_BUFFER_DIR})"
+    )
+    purge_buffer_thread = threading.Thread(
+        target=_purge_old_trades_loop, daemon=True, name="TradeBufferPurge"
+    )
+    purge_buffer_thread.start()
+    logger.info(f"Trade buffer purge thread started (retention {TRADE_BUFFER_PURGE_DAYS}j)")
+
     # 04/05 : watchdog auto-reconnect + heartbeat threads (Etape 0)
     client_holder: dict = {"client": None}  # mute par boucle reconnect
     heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
@@ -528,6 +724,13 @@ def main():
                         dead.append("heartbeat_thread")
                     if not watchdog_thread.is_alive():
                         dead.append("watchdog_thread")
+                    # FIX P1.2 code-reviewer 13/05 nuit : surveiller les nouveaux
+                    # threads Chantier 2 (buffer rolling Trades) sinon mort
+                    # silencieuse -> buffer accumule -> OOM service.
+                    if not flush_buffer_thread.is_alive():
+                        dead.append("flush_buffer_thread")
+                    if not purge_buffer_thread.is_alive():
+                        dead.append("purge_buffer_thread")
                     if dead:
                         logger.critical(
                             f"DAEMON THREAD DEAD: {dead} -> sys.exit(3) pour nssm relance"
