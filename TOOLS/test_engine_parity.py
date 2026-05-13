@@ -1169,6 +1169,201 @@ def compute_vpoc_from_dict(price_volume):
     return max(price_volume, key=price_volume.get)
 
 
+def _test_rolling_features_basic():
+    """Test sub-engine #6 rolling features groupe A (13 TIER 1 features).
+
+    Niveau 1 : parite batch/stream atol 1e-9 sur 200 bars synth
+    Niveau 2 : pickle roundtrip state mid-warmup (~30 bars)
+    Niveau 3 : warmup R2 restart cross-warmup
+    """
+    from rolling_features_streaming import (
+        add_rolling_features_basic_streaming,
+        RollingFeaturesState,
+    )
+    from rolling_features import RollingFeatures
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(42)
+    n = 200
+    # Synth bars avec tous les inputs requis par batch
+    df = pd.DataFrame({
+        "ts": np.arange(n) * 60 * 1000,  # ms
+        "price": 5800 + np.cumsum(np.random.randn(n) * 0.5),
+        "delta_bar": np.random.randint(-100, 100, n).astype(float),
+        "total_vol": np.random.randint(500, 2000, n).astype(float),
+        "vwap_slope_10": np.random.randn(n) * 0.1,
+        "dist_vwap_d": np.random.randn(n) * 2,
+        "cvd_day": np.cumsum(np.random.randint(-50, 50, n)).astype(float),
+        "atr": np.full(n, 8.0),
+        "diag_imbalance": np.random.uniform(-1, 1, n),
+        "finish_strength": np.random.uniform(-100, 100, n),
+        "va_position_pct": np.random.uniform(0, 1, n),
+        "ib_position_pct": np.random.uniform(0, 1, n),
+        "vwap_d_side": np.random.choice([-1, 1], n),
+        "large_trader_ratio": np.random.uniform(0, 1, n),
+        "ib_range_atr": np.random.uniform(0.3, 1.5, n),
+        "ib_broken_up": np.random.choice([0, 1], n),
+        "ib_broken_down": np.random.choice([0, 1], n),
+        "dist_vwap_d_atr": np.random.uniform(-0.5, 0.5, n),
+        "delta_day_dir": np.random.choice([-1, 0, 1], n),
+        "dist_sess_high": np.random.uniform(-10, 0, n),
+        "dist_sess_low": np.random.uniform(0, 10, n),
+        "ib_range_ticks": np.random.uniform(10, 50, n),
+    })
+
+    # BATCH
+    rf = RollingFeatures(short=3, mid=5, long=10, symbol="ES")
+    batch_df = rf.compute(df.copy())
+
+    # STREAM
+    state = RollingFeaturesState()
+    stream_rows = []
+    for _, row in df.iterrows():
+        out = add_rolling_features_basic_streaming(row.to_dict(), state)
+        stream_rows.append(out)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest rolling_features_basic parite sur {n} rows synth...")
+
+    # NIVEAU 1 : parite sur les 13 features
+    cols_check = [
+        "ctx_price_delta_div_3", "ctx_absorption_score_5",
+        "ctx_vol_sell_buy_ratio_5", "ctx_vwap_slope_accel",
+        "ctx_cvd_recovery_rate", "ctx_price_slope_5",
+        "ctx_delta_slope_5", "ctx_delta_sum_3", "ctx_vol_z_5",
+        "ctx_diag_imbalance_mean_5", "ctx_finish_strength_mean_5",
+        "ctx_va_position_velocity", "ctx_side_flip_count_10",
+    ]
+    print("\n--- NIVEAU 1 : parite batch vs streaming (13 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT batch={col in batch_df.columns} stream={col in stream_df.columns}")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        # NaN compare equal
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        status = "PASS" if max_diff < 1e-6 and nan_mismatch == 0 else "FAIL"
+        print(f"  {col:35s} {status} max_diff={max_diff:.6e} nan_mismatch={nan_mismatch}")
+        if status == "FAIL":
+            all_pass = False
+            # Diagnostic premieres divergences
+            idx_diff = np.where((np.abs(diff) > 1e-6) & ~nan_both)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+
+    # NIVEAU 2 : pickle roundtrip
+    print("\n--- NIVEAU 2 : pickle roundtrip mid-warmup ---")
+    import pickle
+    state2 = RollingFeaturesState()
+    for i, row in df.iloc[:30].iterrows():
+        add_rolling_features_basic_streaming(row.to_dict(), state2)
+    blob = pickle.dumps(state2)
+    state2_restored = pickle.loads(blob)
+    # Verifier que les deques contiennent meme contenu
+    assert list(state2_restored.price_mid) == list(state2.price_mid)
+    assert list(state2_restored.delta_long) == list(state2.delta_long)
+    assert list(state2_restored.cvd_day_long_plus) == list(state2.cvd_day_long_plus)
+    # Test : meme row sur les 2 states -> meme output
+    test_row = df.iloc[30].to_dict()
+    out_orig = add_rolling_features_basic_streaming(test_row, state2)
+    out_rest = add_rolling_features_basic_streaming(test_row, state2_restored)
+    pickle_ok = True
+    for col in cols_check:
+        a, b_val = out_orig.get(col), out_rest.get(col)
+        if pd.isna(a) and pd.isna(b_val):
+            continue
+        if pd.isna(a) or pd.isna(b_val) or abs(a - b_val) > 1e-9:
+            print(f"  pickle FAIL on {col}: orig={a} restored={b_val}")
+            pickle_ok = False
+    print(f"  Niveau 2 status : {'PASS' if pickle_ok else 'FAIL'}")
+
+    # NIVEAU 3 : warmup R2 restart
+    print("\n--- NIVEAU 3 : warmup R2 restart idx=100 ---")
+    # Continuous
+    state_cont = RollingFeaturesState()
+    cont_rows = []
+    for _, row in df.iterrows():
+        cont_rows.append(add_rolling_features_basic_streaming(row.to_dict(), state_cont))
+    # Restart
+    state_r1 = RollingFeaturesState()
+    for i in range(100):
+        add_rolling_features_basic_streaming(df.iloc[i].to_dict(), state_r1)
+    state_r1_restored = pickle.loads(pickle.dumps(state_r1))
+    restart_rows = []
+    for i in range(100, n):
+        restart_rows.append(
+            add_rolling_features_basic_streaming(df.iloc[i].to_dict(), state_r1_restored)
+        )
+    cont_tail = pd.DataFrame(cont_rows).iloc[100:].reset_index(drop=True)
+    restart_df = pd.DataFrame(restart_rows).reset_index(drop=True)
+    level3_ok = True
+    for col in cols_check:
+        b = cont_tail[col].astype("float64").values
+        s = restart_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        if max_diff > 1e-9 or nan_diff.sum() > 0:
+            print(f"  warmup R2 FAIL on {col}: max_diff={max_diff:.6e}")
+            level3_ok = False
+    print(f"  Niveau 3 status : {'PASS' if level3_ok else 'FAIL'}")
+
+    # NIVEAU 4 : stress NaN dans vwap_d_side (FIX P1-1 audit code-reviewer)
+    # Mirror IEEE 754 NaN != anything = True. Probe que stream gere None/NaN
+    # consecutifs correctement.
+    print("\n--- NIVEAU 4 stress : vwap_d_side NaN aleatoires (P1-1 audit) ---")
+    np.random.seed(99)
+    n2 = 150
+    sides_with_nan = np.random.choice([-1, 1, np.nan], n2, p=[0.4, 0.4, 0.2])
+    df_nan = df.iloc[:n2].copy().reset_index(drop=True)
+    df_nan["vwap_d_side"] = sides_with_nan
+
+    batch_nan = rf.compute(df_nan.copy())
+    state_nan = RollingFeaturesState()
+    stream_nan_rows = []
+    for _, row in df_nan.iterrows():
+        stream_nan_rows.append(
+            add_rolling_features_basic_streaming(row.to_dict(), state_nan)
+        )
+    stream_nan_df = pd.DataFrame(stream_nan_rows)
+
+    b = batch_nan["ctx_side_flip_count_10"].astype("float64").values
+    s = stream_nan_df["ctx_side_flip_count_10"].astype("float64").values
+    nan_both = np.isnan(b) & np.isnan(s)
+    nan_diff = np.isnan(b) ^ np.isnan(s)
+    diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+    max_diff_nan = float(np.nanmax(np.abs(diff)))
+    nan_mismatch_count = int(nan_diff.sum())
+    n_nan_inputs = int(pd.isna(sides_with_nan).sum())
+    level4_ok = max_diff_nan < 1e-9 and nan_mismatch_count == 0
+    print(f"  n_nan_in_input={n_nan_inputs}/{n2}, max_diff={max_diff_nan:.6e}, "
+          f"nan_mismatch={nan_mismatch_count}")
+    print(f"  Niveau 4 status : {'PASS' if level4_ok else 'FAIL'}")
+    if not level4_ok:
+        idx_diff = np.where(np.abs(diff) > 1e-9)[0][:5]
+        for idx in idx_diff:
+            print(f"    idx={idx} batch={b[idx]} stream={s[idx]} "
+                  f"side={sides_with_nan[idx]}")
+
+    all_pass = all_pass and pickle_ok and level3_ok and level4_ok
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL rolling_features_basic : "
+          f"{'ALL 4 LEVELS PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -1451,7 +1646,7 @@ def main():
                         choices=["vix_lite", "vix_ema_60", "session_metadata",
                                  "ib_features", "session_high_low",
                                  "volume_profile", "rvol_inputs", "ib_atr",
-                                 "all"])
+                                 "rolling_features_basic", "all"])
     args = parser.parse_args()
 
     if args.engine in ("vix_lite", "all"):
@@ -1491,6 +1686,11 @@ def main():
 
     if args.engine in ("ib_atr", "all"):
         report = _test_ib_atr()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("rolling_features_basic", "all"):
+        report = _test_rolling_features_basic()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
