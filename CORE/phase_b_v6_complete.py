@@ -4,6 +4,16 @@ But strategique (13/05/2026) : decoupler Bot 2 V6 du DMP C++ full. Ce module
 ajoute les features Python qui sont LUES du DMP_MQ_FIELDS sans etre recalculees
 par les engines existants.
 
+⚠️ CONTEXTE PROJET 13/05/2026 NUIT (note Jackson) :
+   Le systeme MIA tourne ACTUELLEMENT en RULE-BASED FULL, PAS DE ML.
+   Les criteres d'evaluation Spearman corr TBM sont des criteres ML feature
+   importance. En rule-based, une feature avec rho_TBM faible peut quand meme
+   booster la WR sur un sous-ensemble de setups specifiques (filtre/regime
+   classifier/size adjustment). Donc :
+     - Garder les composites meme avec rho_TBM faible (a tester en rule-based)
+     - Mais DROP definitif si rho_FUT1 > 0.10 (leak look-ahead = dangereux
+       en rule-based COMME en ML, paper gagne / live perd).
+
 VERSION v0.2 (13/05/2026 19h) — REPRODUCTIONS FIDELES DMP_Transform.h
 ==================================================================
 Apres test parite v0.1 (echec : 32-78% match sur 9 features), revision avec
@@ -168,21 +178,24 @@ def add_sess_range_atr(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFram
 # VWAP MULTI-TIMEFRAME (D / W / M align)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def add_vwap_slope_30_DRAFT(df: pd.DataFrame) -> pd.DataFrame:
-    """⚠️ DRAFT v0.2 — NotImplementedError jusqu'a backtest demain.
+def add_vwap_slope_30_DROPPED(df: pd.DataFrame) -> pd.DataFrame:
+    """⚠️ DROPPED v0.4 (audit ml-trainer 13/05/2026 nuit).
 
-    DMP_Reader.h:1909-1914 utilise un chart VWAP 30-MIN avec slope sur 10 bars
-    (slope sur 5h market time). 3 variantes Python a tester demain :
-        v1 : 1-min * 30 bars (30 min)
-        v2 : resample 30-min puis slope 10 bars (matches DMP exactement)
-        v3 : 1-min * 150 bars (2h30 compromis)
-    Critere : Spearman corr avec target labels TP/SL hit > 0.02.
+    DMP_Reader.h:1909-1914 utilise un chart VWAP 30-MIN avec slope sur 10 bars.
 
-    FIX P1.4 code-reviewer : raise pour eviter pollution accidentelle si appel.
+    Audit empirique 13/05/2026 :
+        DMP vwap_slope_30 vs labels TBM : max|rho| = 0.007 [REJET]
+        Sur n=9860 bars ES avril 2026, rho explique 0.005% variance = bruit pur.
+
+    Audit ml-trainer : DROP. ROI dev negatif (3 variantes Python testees auraient
+    coute 2-3h pour potentiellement gagner +0.01 rho, sous le seuil PSR significatif).
+    Multi-testing trap evite (cf feedback_data_mining_trap.md).
+
+    Rouvrir UNIQUEMENT si paper Bot 2 V6 (sans cette feature) degrade PF > 0.1
+    vs baseline DMP-fed.
     """
     raise NotImplementedError(
-        "vwap_slope_30 DRAFT — backtest 3 variantes pending. "
-        "Voir docstring + setup backtest dans Phase 1b."
+        "vwap_slope_30 DROPPED v0.4 — edge DMP=0.007 (bruit), audit ml-trainer DROP."
     )
 
 
@@ -236,16 +249,17 @@ def add_vwap_triple_align(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_vwap_ma_align_DRAFT(df: pd.DataFrame) -> pd.DataFrame:
-    """⚠️ DRAFT v0.2 — NotImplementedError, depend ma_trend a finaliser.
+def add_vwap_ma_align_DROPPED(df: pd.DataFrame) -> pd.DataFrame:
+    """⚠️ DROPPED v0.4 (audit ml-trainer 13/05/2026 nuit).
 
     DMP_Transform.h:1341 : depend ma_fast/ma_slow (Sierra MA daily, params
-    inconnus). A finaliser apres backtest variantes ma_trend.
+    inconnus) + dist_vwap_d.
 
-    FIX P1.4 code-reviewer : raise pour eviter pollution accidentelle.
+    Audit empirique : DMP vwap_ma_align vs labels TBM : max|rho| = 0.010 [REJET]
+    Edge negligeable. DROP avec ma_trend (dependant).
     """
     raise NotImplementedError(
-        "vwap_ma_align DRAFT — depend ma_trend variantes en cours de backtest."
+        "vwap_ma_align DROPPED v0.4 — edge DMP=0.010 (bruit), audit ml-trainer DROP."
     )
 
 
@@ -323,6 +337,121 @@ def add_ma_trend_DRAFT(df: pd.DataFrame, fast: int = 20, slow: int = 50,
         "ma_trend DRAFT — 3 variantes SMA20/50, EMA12/26, SMA9/21 a backtester. "
         "Voir docstring + setup Phase 1b."
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMPOSITES v0.4 (13/05/2026 nuit) — remplacement intelligent GROUPE B
+# ═══════════════════════════════════════════════════════════════════════════════
+# Audit ml-trainer DROP les 3 GROUPE B (ma_trend, vwap_slope_30, vwap_ma_align)
+# car edges DMP faibles (0.007-0.029). MAIS ces 3 features capturent 3 axes
+# orthogonaux du marche (direction macro + vitesse flux + confluence). On les
+# REMPLACE par 2 composites qui COMBINENT ces axes en signaux plus predictifs.
+
+
+def add_vwap_alignment_score(df: pd.DataFrame) -> pd.DataFrame:
+    """Composite vwap_alignment_score : confluence multi-TF VWAP discretisee.
+
+    Formule v0.4 (recommandation market-analyst 13/05/2026) :
+        vwap_alignment_score = sign(vwap_d_side) + sign(vwap_w_side) + sign(vwap_m_side)
+        Range : entier {-3, -2, -1, 0, +1, +2, +3}
+
+    Pourquoi DISCRETISE entier (pas continu) :
+      1. Robuste aux outliers (vs trend_composite_score float)
+      2. Bucket trading clair (|score|>=2 = autoriser direction matching)
+      3. PAS cvd_day_dir (reset daily = bruit intraday, market-analyst caveat)
+      4. PAS flow_velocity (instable regime VIX>30, market-analyst caveat)
+
+    Semantique trading (Dalton AMT - "trend day reference") :
+        +3 = confluence haussiere parfaite (D + W + M tous bullish)
+        +2 = majorite bullish (autoriser LONG)
+        +1 = leger bias bullish (mitige)
+         0 = consolidation / pas de regime
+        -1 = leger bias bearish
+        -2 = majorite bearish (autoriser SHORT)
+        -3 = confluence baissiere parfaite
+
+    Usage Bot 2 V6 propose :
+        if abs(score) >= 2: autoriser direction matching avec score>0=LONG / <0=SHORT
+        else: eviter ou size reduite (regime range/consolidation)
+
+    Test obligatoire avant prod (market-analyst caveat) :
+        - WR Bot 2 V6 backtest 60j par bucket score
+        - Walk-forward 4 semaines train/test
+        - Separer WR LONG vs SHORT (regime baissier VIX>30 mars-mai 2026 =
+          edge artificiel possible sur SHORT only)
+        - Critere GO : WR(|score|>=2) - WR(|score|<=1) >= 10pp
+
+    RESULTAT TEST 13/05/2026 NUIT (avril 2026 ES, n=29635 bars) :
+        LONG  : delta WR(|score|>=2) - WR(|score|<=1) = -0.4pp  [NOGO]
+        SHORT : delta WR(|score|>=2) - WR(|score|<=1) = +1.9pp  [NOGO]
+    => Le composite N'A PAS de valeur comme filtre sur target TBM 30 bars/ES
+       en backtest "tous setups". MAIS en rule-based avec setups specifiques
+       (cf note context rule-based en tete du module), peut booster WR sur
+       sous-ensemble de setups. A re-tester quand Bot 2 V6 > 30 trades paper.
+
+    Requis : vwap_d_side, vwap_w_side, vwap_m_side (tous int8 -1/0/+1).
+    """
+    df = df.copy()
+    sides = []
+    for col in ("vwap_d_side", "vwap_w_side", "vwap_m_side"):
+        if col in df.columns:
+            # sign() au cas ou la colonne contient des valeurs non-discretes
+            s = np.sign(df[col].fillna(0)).astype("int8")
+            sides.append(s)
+        else:
+            sides.append(pd.Series(0, index=df.index, dtype="int8"))
+
+    df["vwap_alignment_score"] = sum(sides).astype("int8")
+    return df
+
+
+def add_trend_composite_score_DEPRECATED(df: pd.DataFrame) -> pd.DataFrame:
+    """DEPRECATED v0.4 - remplace par add_vwap_alignment_score (market-analyst).
+
+    Ancienne formule continue (cvd_day_dir + flow_velocity inclus) avait :
+      - cvd_day_dir reset daily = bruit intraday (caveat market-analyst)
+      - Continu = sensible aux outliers
+      - Pas de threshold clair pour usage filtre
+
+    Backtest empirique : |rho| = 0.011 sur TBM (REJET).
+
+    Garde pour reference. NE PAS appeler en prod.
+    """
+    raise NotImplementedError(
+        "trend_composite_score DEPRECATED v0.4 - utiliser add_vwap_alignment_score "
+        "discretise (recommandation market-analyst, robuste aux regimes VIX>30)."
+    )
+
+
+def add_flow_velocity(df: pd.DataFrame, window: int = 30) -> pd.DataFrame:
+    """Composite flow_velocity : vitesse flux institutionnel ATR-normalized.
+
+    Formule v0.4 (continue, ATR-norm) :
+        flow_velocity = cvd_session.diff(window) / atr_14m_pct
+
+    Semantique trading :
+        > 0 forte (e.g. > 500) = institutionnels achetent agressivement
+        < 0 forte (e.g. < -500) = institutionnels vendent agressivement
+        ~0 = pas de flux directionnel (consolidation)
+
+    Avantages vs DMP vwap_slope_30 :
+      1. Mesure le FLOW reel (CVD delta-based) au lieu de la slope VWAP (proxy)
+      2. ATR-normalized -> comparable ES vs NQ vs MGC
+      3. Causal honnete (cvd_session est cumsum delta_bar Trades, zero leak)
+      4. Window parametrable (default 30 bars = 30 min sur 1-min)
+
+    Requis : cvd_session, atr_14m_pct.
+    """
+    df = df.copy()
+    if "cvd_session" not in df.columns:
+        raise KeyError("[v6_complete] 'cvd_session' manquant pour flow_velocity.")
+    if "atr_14m_pct" not in df.columns:
+        raise KeyError("[v6_complete] 'atr_14m_pct' manquant pour flow_velocity.")
+
+    cvd_delta = df["cvd_session"].diff(window)
+    atr_safe = df["atr_14m_pct"].replace(0, np.nan)
+    df["flow_velocity"] = (cvd_delta / atr_safe).astype("float32")
+    return df
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
