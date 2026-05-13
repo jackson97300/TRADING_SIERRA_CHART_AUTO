@@ -538,6 +538,17 @@ LOG_CODES = {
     "BOT3_TRADE_CLOSE":         (LogLevel.INFO,    "trading",   "Bot3 trade ferme : {sym} {level} reason={reason} pnl={pnl:.1f}t mfe={mfe:.0f}t mae={mae:.0f}t dur={dur}s"),
     "BOT3_TRAILING_ACTIVATED":  (LogLevel.INFO,    "execution", "Bot3 trailing actif : {sym} sl_old={sl_old} -> sl_new={sl_new}"),
     "BOT3_OBSERVE_RECORD":      (LogLevel.INFO,    "decisions", "Bot3 observe-only : {sym} {level} would_GO={would_go} side={side} conf={conf} (no trade)"),
+    # --- Bot 3 GOLD (MGC) - 12/05/2026 ---
+    "BOT3G_BOOT_READY":         (LogLevel.INFO,    "events",    "Bot3 Gold boot pret : phase={phase} observe_only={observe_only} tier2={tier2} hedge={hedge}"),
+    "BOT3G_LEVEL_CONTACT":      (LogLevel.INFO,    "decisions", "Bot3G contact niveau : {level} tier={tier} dist={dist} prox={prox}"),
+    "BOT3G_DECISION_GO":        (LogLevel.INFO,    "decisions", "Bot3G GO : {level} {side} scenario={scenario} conf={conf} sl={sl_ticks}t macro={macro}"),
+    "BOT3G_DECISION_SKIP":      (LogLevel.INFO,    "decisions", "Bot3G SKIP : {level} reason={reason} macro={macro}"),
+    "BOT3G_MACRO_OVERRIDE":     (LogLevel.MAJEUR,  "decisions", "Bot3G macro override : {level} side_propose={side} macro_bias={macro} -> action={action}"),
+    "BOT3G_VETO_LONDON_FIX":    (LogLevel.MAJEUR,  "decisions", "Bot3G VETO London Fix : {level} window={window} ts={ts}"),
+    "BOT3G_TRADE_OPEN":         (LogLevel.INFO,    "trading",   "Bot3G trade ouvert : MGC {level} {side} scenario={scenario} qty={qty} @ {price} sl={sl}t tp_cap={tp_cap}t"),
+    "BOT3G_TRADE_CLOSE":        (LogLevel.INFO,    "trading",   "Bot3G trade ferme : MGC {level} reason={reason} pnl={pnl:.1f}t dur={dur}s"),
+    "BOT3G_INTERMARKET":        (LogLevel.INFO,    "decisions", "Bot3G intermarket : DXY_corr={dxy} real_yield={ry} gs_z={gsz} oil_g={og} macro={macro}"),
+    "BOT3G_HEDGE_TRIGGER":      (LogLevel.MAJEUR,  "decisions", "Bot3G HEDGE actif : Bot2 NQ={nq} ES={es} macro={macro} -> LONG MGC qty={qty}"),
     # ─── 🆕 09/05 (Bot 3 v2 — bucket SIDAK/COMBO_BOOSTED) ───
     "BOT3_FILTER_BYPASS_SIDAK_COMBO": (LogLevel.INFO, "decisions", "Bot3 v2 BYPASS filter regime (bucket validé cross-régime) : {sym} {level} bucket={bucket} side={sig_side} regime_favor={regime_favor} mode={regime_mode} conf={regime_confidence}"),
     "BOT3_SIDAK_SLTP_WALL_AWARE": (LogLevel.INFO, "execution", "Bot3 v2 SLTPEngine WALL-AWARE : {sym} {level} bucket={bucket} {side} sl={sl_ticks}t tp={tp_ticks}t sl_wall={sl_wall} tp_wall={tp_wall} rr={rr}"),
@@ -574,6 +585,19 @@ LOG_CODES = {
     "V6_V4_FALLBACK_DMP":        (LogLevel.ALERTE,  "events",    "V6 fallback DMP : {sym} V4 indisponible source={fallback_source} reason={reason}"),
     "V6_CHASE_SKIPPED":          (LogLevel.INFO,    "decisions", "V6 CHASE skipped (R8 raffinement) : {sym} {direction} reason={reason}"),
     "V6_VOLUME_Z_TOO_LOW":       (LogLevel.MAJEUR,  "decisions", "V6 reject : {sym} {direction} volume_z={volume_z} < {threshold} (faux-breakout pepite #2)"),
+
+    # ============================================================
+    # Chantier 3 Live Enricher (13/05/2026 nuit) — Phase 3a
+    # ============================================================
+    "ENRICHER_BOOT":               (LogLevel.INFO,    "events", "Live Enricher boot : {sym} warmup_from_v4={warmup} state_loaded={loaded}"),
+    "ENRICHER_SNAPSHOT_OK":        (LogLevel.INFO,    "events", "Enricher state snapshot OK : {sym} bars={bars} trades={trades} engines={engines}"),
+    "ENRICHER_SNAPSHOT_FAIL":      (LogLevel.CRITIQUE,"events", "Enricher state snapshot FAIL : {sym} err={err} (crash recovery compromise)"),
+    "ENRICHER_STATE_LOAD_FAIL":    (LogLevel.MAJEUR,  "events", "Enricher state load FAIL : {sym} err={err} -> cold start"),
+    "ENRICHER_STATE_SCHEMA_MISMATCH": (LogLevel.MAJEUR, "events", "Enricher state SCHEMA mismatch : {sym} loaded={loaded} expected={expected} -> cold start"),
+    "ENRICHER_BAR_PROCESSED":      (LogLevel.INFO,    "events", "Enricher bar processed : {sym} ts={ts} engines_time_ms={dt}"),
+    "ENRICHER_CYCLE_SLOW":         (LogLevel.ALERTE,  "events", "Enricher cycle SLOW : {sym} dt={dt}ms > {limit}ms (engines a optimiser)"),
+    "ENRICHER_INPUTS_INCOMPLETE":  (LogLevel.ALERTE,  "events", "Enricher inputs incomplete : {sym} missing={missing} (stream alive={alive})"),
+    "ENRICHER_WRITE_FAIL":         (LogLevel.MAJEUR,  "events", "Enricher write FAIL : {sym} path={path} err={err}"),
 }
 
 

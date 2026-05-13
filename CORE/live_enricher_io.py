@@ -108,21 +108,34 @@ def read_trades_window(
         if not fpath.exists() or fpath.stat().st_size == 0:
             continue
         try:
+            # FIX P0-1 (audit code-reviewer 13/05 nuit) : race condition
+            # lecture concurrente avec Chantier 2 writer. Le writer fait
+            # append-only mais flush peut etre partiel -> derniere ligne
+            # JSON tronque silently skipped -> dernier trade systematiquement
+            # perdu chaque cycle 1-min. Fix : read entier puis splitlines,
+            # drop derniere ligne si pas terminee par \n.
             with open(fpath, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        d = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    ts_ns = d.get("ts_event_ns")
-                    if not isinstance(ts_ns, int):
-                        continue
-                    if ts_ns < window_start_ns or ts_ns > window_end_ns:
-                        continue
-                    rows.append(d)
+                raw = f.read()
+            lines = raw.splitlines()
+            # Si fichier termine par \n, splitlines retourne toutes les lignes.
+            # Si fichier NE termine PAS par \n (write en cours), la derniere
+            # ligne est potentiellement tronquee -> drop.
+            if lines and not raw.endswith("\n"):
+                lines = lines[:-1]
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts_ns = d.get("ts_event_ns")
+                if not isinstance(ts_ns, int):
+                    continue
+                if ts_ns < window_start_ns or ts_ns > window_end_ns:
+                    continue
+                rows.append(d)
         except OSError:
             continue
 
