@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from datetime import date as date_cls
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -229,12 +229,16 @@ def add_ib_features(df: pd.DataFrame, tick: float = TICK_SIZE,
     Voir DOCS/INCIDENT_LOG.md 2026-04-27 20:30 (cascade leak features broadcast).
     """
     df = df.copy()
+    # FIX P0-1 audit sub-engine #2 : utilise _resolve_bounds (fail-loud, aligne
+    # avec sub-engine #1 + add_session_metadata). Anti regression Pattern 11
+    # silent fallback `(bounds or {...})["us_start"]`.
+    b = _resolve_bounds(bounds)
     if "date_et" not in df.columns:
-        df = add_session_metadata(df, bounds=bounds)
+        df = add_session_metadata(df, bounds=b)
 
     # IB stats par jour : max(high)/min(low) sur fenetre 1h apres us_start
     # ES/NQ : 09:30-10:30 ET, MGC : 08:30-09:30 ET (RTH gold COMEX)
-    us_start = (bounds or {"us_start": 570})["us_start"]
+    us_start = b["us_start"]
     ib_close = us_start + 60
     ib_rows = df[df["is_ib_window"] == 1]
     ib_agg = ib_rows.groupby("date_et").agg(
@@ -264,6 +268,167 @@ def add_ib_features(df: pd.DataFrame, tick: float = TICK_SIZE,
     pos = (df["close"] - df["ib_low"]) / ib_rng
     df["ib_position_pct"] = pos.where(df["ib_complete"] == 1)
     return df
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# API STREAMING sub-engine #2 (Chantier 3 Phase 3b Lundi)
+# ═══════════════════════════════════════════════════════════════════════════════
+# add_ib_features STATEFUL : maintient ib_high/low cumulative pendant IB window
+# (09:30-10:30 ET ES/NQ, 08:30-09:30 MGC), reset par session date_et.
+#
+# Anti-leak : ib_high/low masqué à NaN avant ib_complete=1 (= mins_et >= us_start+60).
+# Pendant IB window : state mis à jour bar par bar MAIS output reste NaN.
+# Après IB window : state figé, broadcast à toutes bars du jour jusqu'à reset session.
+#
+# Edge case (Pattern 11 risk) : cold start mid-IB (boot service 09:45 ET) =
+# state ib_high/low partiel (manque bars 09:30-09:44) -> divergence vs batch
+# qui voit toute la fenêtre. Mitigation : warmup_from_v4 obligatoire au boot.
+
+
+@dataclass
+class IBState:
+    """State sub-engine #2 add_ib_features — daily IB high/low cumulative.
+
+    Reset automatique à chaque nouvelle session (date_et change).
+    Pickle-safe : tous attributs serialisables.
+    """
+    current_date_et: Optional[Any] = None  # date | None
+    ib_high: Optional[float] = None
+    ib_low: Optional[float] = None
+    n_ib_bars_seen: int = 0  # diagnostic warmup partial
+
+
+def add_ib_features_streaming(
+    row: dict,
+    state: IBState,
+    tick: float = TICK_SIZE,
+    bounds: dict | None = None,
+) -> dict:
+    """API streaming sub-engine #2 add_ib_features (Chantier 3 Phase 3b).
+
+    Reproduit fidèlement add_ib_features() batch :
+      ib_high/low : max/min sur IB window (09:30-10:30 ES/NQ, 08:30-09:30 MGC)
+      ib_complete : 1 si mins_et >= us_start + 60
+      Anti-leak : ib_high/low = NaN si ib_complete=0 (output, state préservé)
+      ib_range, ib_range_ticks, ib_broken_up/dn, dist_ib_high/low_pct,
+      ib_position_pct dérivés.
+
+    Args:
+        row : dict avec ts_event + date_et + mins_et + is_ib_window + high/low/close.
+              Doit avoir été enrichi par add_session_metadata_streaming au préalable.
+        state : IBState mutable (current_date_et, ib_high, ib_low).
+        tick : tick size (0.25 ES/NQ, 0.10 MGC).
+        bounds : config bounds (idem add_session_metadata).
+
+    Returns:
+        dict row + {ib_high, ib_low, ib_range, ib_range_ticks, ib_complete,
+        ib_broken_up, ib_broken_dn, dist_ib_high_pct, dist_ib_low_pct, ib_position_pct}.
+    """
+    out = dict(row)
+    b = _resolve_bounds(bounds)
+    us_start = b["us_start"]
+    ib_close = us_start + 60
+
+    # 1. Détecter nouvelle session via date_et
+    # FIX P1.2 audit sub-engine #2 : raise explicite si date_et absent (anti
+    # silent miscompute Pattern 11 - state pollue cross-session si row sans
+    # session_metadata appele avant). Convention : ordre engines impose
+    # add_session_metadata_streaming AVANT add_ib_features_streaming.
+    date_et = out.get("date_et")
+    if date_et is None:
+        raise ValueError(
+            "add_ib_features_streaming requires 'date_et' in row. "
+            "Call add_session_metadata_streaming BEFORE add_ib_features_streaming "
+            "(ordre engines : session_metadata -> ib_features)."
+        )
+    if date_et != state.current_date_et:
+        # Reset state (nouvelle session)
+        state.current_date_et = date_et
+        state.ib_high = None
+        state.ib_low = None
+        state.n_ib_bars_seen = 0
+
+    # 2. Update state pendant IB window
+    is_ib_window = out.get("is_ib_window", 0)
+    high = out.get("high")
+    low = out.get("low")
+    if is_ib_window == 1 and high is not None and low is not None:
+        try:
+            if not (pd.isna(high) or pd.isna(low)):
+                hf, lf = float(high), float(low)
+                if state.ib_high is None or hf > state.ib_high:
+                    state.ib_high = hf
+                if state.ib_low is None or lf < state.ib_low:
+                    state.ib_low = lf
+                state.n_ib_bars_seen += 1
+        except (TypeError, ValueError):
+            pass
+
+    # 3. ib_complete
+    mins_et = out.get("mins_et")
+    ib_complete = 1 if (mins_et is not None and mins_et >= ib_close) else 0
+    out["ib_complete"] = ib_complete
+
+    # 4. Output ib_high/low (anti-leak : NaN si ib_complete=0)
+    if ib_complete == 1 and state.ib_high is not None and state.ib_low is not None:
+        ib_high_out = state.ib_high
+        ib_low_out = state.ib_low
+    else:
+        ib_high_out = np.nan
+        ib_low_out = np.nan
+    out["ib_high"] = ib_high_out
+    out["ib_low"] = ib_low_out
+
+    # 5. ib_range, ib_range_ticks (suivent le mask)
+    if not (pd.isna(ib_high_out) or pd.isna(ib_low_out)):
+        ib_range = ib_high_out - ib_low_out
+        ib_range_ticks = round(ib_range / tick)
+    else:
+        ib_range = np.nan
+        ib_range_ticks = np.nan
+    out["ib_range"] = ib_range
+    out["ib_range_ticks"] = float(ib_range_ticks) if not pd.isna(ib_range_ticks) else np.nan
+
+    # 6. ib_broken_up/dn (uniquement si ib_complete=1)
+    if ib_complete == 1 and not pd.isna(ib_high_out) and high is not None:
+        try:
+            out["ib_broken_up"] = 1 if float(high) > ib_high_out else 0
+        except (TypeError, ValueError):
+            out["ib_broken_up"] = 0
+    else:
+        out["ib_broken_up"] = 0
+    if ib_complete == 1 and not pd.isna(ib_low_out) and low is not None:
+        try:
+            out["ib_broken_dn"] = 1 if float(low) < ib_low_out else 0
+        except (TypeError, ValueError):
+            out["ib_broken_dn"] = 0
+    else:
+        out["ib_broken_dn"] = 0
+
+    # 7. dist_ib_high_pct, dist_ib_low_pct (suivent mask, NaN si pre-IB)
+    close = out.get("close")
+    if close is not None and not pd.isna(close) and float(close) != 0.0:
+        cf = float(close)
+        if not pd.isna(ib_high_out):
+            out["dist_ib_high_pct"] = (ib_high_out - cf) / cf * 100
+        else:
+            out["dist_ib_high_pct"] = np.nan
+        if not pd.isna(ib_low_out):
+            out["dist_ib_low_pct"] = (cf - ib_low_out) / cf * 100
+        else:
+            out["dist_ib_low_pct"] = np.nan
+    else:
+        out["dist_ib_high_pct"] = np.nan
+        out["dist_ib_low_pct"] = np.nan
+
+    # 8. ib_position_pct (uniquement si ib_complete=1 ET ib_range > 0)
+    if (ib_complete == 1 and not pd.isna(ib_range) and ib_range > 0
+            and close is not None and not pd.isna(close)):
+        out["ib_position_pct"] = (float(close) - ib_low_out) / ib_range
+    else:
+        out["ib_position_pct"] = np.nan
+
+    return out
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

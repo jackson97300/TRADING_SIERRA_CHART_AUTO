@@ -619,10 +619,114 @@ def _test_session_metadata():
     return {"level1": report1, "level2": report2, "level3": report3, "all_pass": all_pass}
 
 
+def _test_ib_features():
+    """Test sub-engine #2 add_ib_features (state daily IB groupby).
+
+    Plus complexe que sub-engine #1 :
+      - State : ib_high/low cumulative reset par session
+      - Anti-leak : ib_high/low NaN si ib_complete=0
+      - Edge case : changement session ET pendant IB window
+    """
+    from phase_b_helpers import (
+        add_session_metadata,
+        add_ib_features,
+        add_ib_features_streaming,
+        IBState,
+    )
+    import numpy as np
+    import pandas as pd
+
+    # Synth DataFrame : 3 jours x bars 1-min couvrant pré-IB + IB + post-IB
+    # On veut couvrir : 09:00 (pre-IB), 09:30-10:30 (IB), 10:30-16:00 (post-IB)
+    # Sur 3 jours pour tester reset session
+    bars = []
+    base_price = 5800.0
+    for day_offset in range(3):
+        start_et = pd.Timestamp(f"2026-05-1{2 + day_offset} 13:00:00", tz="UTC")  # 09:00 ET
+        # 8 heures bars 1-min = 480 bars/jour
+        for i in range(480):
+            ts = start_et + pd.Timedelta(minutes=i)
+            high = base_price + i * 0.1 + day_offset * 5
+            low = high - 0.5
+            close = (high + low) / 2
+            bars.append({"ts_event": ts.tz_localize(None), "high": high, "low": low, "close": close})
+
+    df = pd.DataFrame(bars)
+    df = add_session_metadata(df, bounds=None)  # ajout date_et, mins_et, is_ib_window
+
+    print(f"\nTest ib_features parite sur {len(df)} rows synth (3 jours)...")
+
+    bounds = None
+    def batch_fn(d):
+        return add_ib_features(d.copy(), tick=0.25, bounds=bounds)
+
+    def stream_fn(row, state):
+        return add_ib_features_streaming(row, state, tick=0.25, bounds=bounds)
+
+    print("\n--- NIVEAU 1 : parite batch vs streaming ---")
+    report1 = test_engine_parity(
+        engine_name="ib_features",
+        batch_fn=batch_fn,
+        streaming_fn=stream_fn,
+        state_factory=IBState,
+        input_df=df,
+        float_atol=1e-9,
+    )
+
+    print("\n--- NIVEAU 2 : pickle roundtrip state (NON-VIDE post-IB window) ---")
+    # FIX P0-3 audit code-reviewer : sample_row dans IB window = state non-vide
+    # apres warmup. Sinon pickle test trivial (state vide = PASS sans verifier).
+    # On utilise row 60 (= 10:00 ET, milieu IB window jour 1) pour s'assurer
+    # que state.ib_high/low sont mis a jour avant pickle test.
+    state_test = IBState()
+    for i, (_, row) in enumerate(df.iterrows()):
+        if i >= 100:
+            break
+        stream_fn(row.to_dict(), state_test)
+    print(f"  state apres 100 bars (devrait NON-vide) : {state_test.__dict__}")
+    # Assertion explicite : state DOIT etre non-vide pour valider pickle utile
+    assert state_test.ib_high is not None, (
+        f"P0-3 fix : state.ib_high doit etre non-None apres 100 bars IB. "
+        f"State : {state_test.__dict__}"
+    )
+    assert state_test.n_ib_bars_seen > 0, "P0-3 fix : n_ib_bars_seen doit etre > 0"
+    # Sample row dans IB window pour test pickle utile (state evolue)
+    sample_row = df.iloc[60].to_dict()  # ~10:00 ET = milieu IB
+    report2 = test_state_pickle_roundtrip(
+        engine_name="ib_features",
+        streaming_fn=stream_fn,
+        state_factory=IBState,
+        sample_row=sample_row,
+    )
+
+    print("\n--- NIVEAU 3 : warmup R2 (restart pendant IB window critique) ---")
+    # Restart à idx 35 (= ~09:30 ET début IB) : state.ib_high partiel pour jour 1
+    # MAIS pickle save+load -> jour 2 et 3 doivent matcher continu
+    report3 = test_warmup_parity(
+        engine_name="ib_features",
+        streaming_fn=stream_fn,
+        state_factory=IBState,
+        input_df=df,
+        restart_at_idx=500,  # après jour 1 complet, début jour 2
+        float_atol=1e-9,
+    )
+
+    all_pass = (
+        report1.get("status") == "PASS"
+        and report2.get("status") == "PASS"
+        and report3.get("status") == "PASS"
+    )
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL ib_features : {'ALL 3 LEVELS PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"level1": report1, "level2": report2, "level3": report3, "all_pass": all_pass}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--engine", default="vix_lite",
-                        choices=["vix_lite", "vix_ema_60", "session_metadata", "all"])
+                        choices=["vix_lite", "vix_ema_60", "session_metadata",
+                                 "ib_features", "all"])
     args = parser.parse_args()
 
     if args.engine in ("vix_lite", "all"):
@@ -637,6 +741,11 @@ def main():
 
     if args.engine in ("session_metadata", "all"):
         report = _test_session_metadata()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("ib_features", "all"):
+        report = _test_ib_features()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
