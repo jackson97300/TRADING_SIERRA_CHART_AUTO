@@ -2586,6 +2586,122 @@ def _test_phase_b_plus_long():
     return {"all_pass": all_pass}
 
 
+def _test_phase_b_plus_color():
+    """Test sub-engine phase_b_plus_color streaming (12 features LAG-1).
+
+    CONVENTION LAG-1 :
+      batch_df.iloc[T]["bn_color_up_fwd1"]  ==  stream_df.iloc[T+1]["bn_color_up_fwd1"]
+      Le stream emit la valeur pour bar T-1 dans le row T (= row courant).
+      Comparaison test : stream_df[1:].reset_index ==  batch_df[:-1].reset_index
+    """
+    from phase_b_plus_color_streaming import (
+        add_phase_b_plus_color_streaming,
+        make_color_bar_state,
+    )
+    from phase_b_plus_engine import (
+        add_color_features, add_color_extension_lines, add_long_updown_features,
+    )
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(89)
+    n = 500
+    df = pd.DataFrame({
+        "ts_event": pd.date_range("2026-05-13 13:00:00", periods=n, freq="1min"),
+    })
+    base = 5800.0 + np.cumsum(np.random.randn(n) * 0.5)
+    df["close"] = base
+    df["open"] = base + np.random.randn(n) * 0.3
+    df["high"] = np.maximum(df["open"], df["close"]) + np.random.uniform(0.5, 5, n)
+    df["low"] = np.minimum(df["open"], df["close"]) - np.random.uniform(0.5, 5, n)
+
+    # BATCH chain : color + color_ext + long_updown formule ES (lookahead)
+    batch_df = df.copy()
+    batch_df = add_color_features(batch_df, symbol="ES", tick=0.25)
+    batch_df = add_color_extension_lines(batch_df)
+    batch_df = add_long_updown_features(batch_df, symbol="ES", tick=0.25)
+
+    # STREAM
+    state = make_color_bar_state("ES")
+    stream_rows = []
+    for _, row in df.iterrows():
+        stream_rows.append(add_phase_b_plus_color_streaming(row.to_dict(), state))
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest phase_b_plus_color parite LAG-1 sur {n} rows synth (ES)...")
+    print("  Convention : stream_df[T+1] == batch_df[T] (shift de 1)")
+
+    # Mapping : pour chaque feature stream, on compare stream[T+1] vs batch[T]
+    # Donc stream_df[1:] (= valeurs pour T=0, 1, ..., N-2) vs batch_df[:-1]
+    cols_stream_color = [
+        "bn_color_up_fwd1", "bn_color_dn_fwd1",
+        "bn_color_up_2_fwd1", "bn_color_dn_2_fwd1",
+        "n_color_up_zones_active", "n_color_dn_zones_active",
+        "dist_color_up_nearest_pct", "dist_color_dn_nearest_pct",
+        "n_color_up_cluster_within_0_2pct", "n_color_dn_cluster_within_0_2pct",
+    ]
+    cols_stream_long_es = [
+        "long_dn_up_pattern_es", "long_up_dn_pattern_es",
+    ]
+    cols_batch_long_es = [
+        "long_dn_up_pattern", "long_up_dn_pattern",
+    ]
+
+    print("\n--- NIVEAU 1 : parite LAG-1 batch[T] vs stream[T+1] (10 features color) ---")
+    all_pass = True
+    # Stream emit en row T la valeur pour bar T-1. Donc :
+    #   stream[T]["bn_color_up_fwd1"] = valeur batch[T-1]
+    # On compare : batch[i] vs stream[i+1] pour i in [0, N-2]
+    for col in cols_stream_color:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values[:-1]  # batch[0..N-2]
+        s = stream_df[col].astype("float64").values[1:]  # stream[1..N-1]
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        atol = 1e-6
+        status = "PASS" if max_diff < atol and nan_mismatch == 0 else "FAIL"
+        n_fires = int((s != 0).sum()) if "fwd1" in col else None
+        extra = f"(fires={n_fires})" if n_fires is not None else ""
+        print(f"  {col:35s} {status} max_diff={max_diff:.4e} nan_mm={nan_mismatch} {extra}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where((np.abs(diff) > atol) & ~nan_both)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    print("\n--- NIVEAU 2 : parite LAG-1 long_updown_pattern formule ES (2 features) ---")
+    # long_dn_up_pattern_es du stream <-> long_dn_up_pattern du batch (formule ES)
+    for col_stream, col_batch in zip(cols_stream_long_es, cols_batch_long_es):
+        if col_batch not in batch_df.columns or col_stream not in stream_df.columns:
+            print(f"  {col_stream:35s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col_batch].astype("float64").values[:-1]
+        s = stream_df[col_stream].astype("float64").values[1:]
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        status = "PASS" if max_diff < 1e-6 and nan_mismatch == 0 else "FAIL"
+        n_fires = int((s != 0).sum())
+        print(f"  {col_stream:35s} {status} max_diff={max_diff:.4e} nan_mm={nan_mismatch} (fires={n_fires})")
+        if status == "FAIL":
+            all_pass = False
+
+    print(f"\n  Niveau 1+2 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL phase_b_plus_color : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -2879,6 +2995,7 @@ def main():
                                  "edge_zones",
                                  "phase_b_plus",
                                  "phase_b_plus_long",
+                                 "phase_b_plus_color",
                                  "all"])
     args = parser.parse_args()
 
@@ -2974,6 +3091,11 @@ def main():
 
     if args.engine in ("phase_b_plus_long", "all"):
         report = _test_phase_b_plus_long()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("phase_b_plus_color", "all"):
+        report = _test_phase_b_plus_color()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
