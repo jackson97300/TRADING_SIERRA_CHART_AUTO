@@ -256,8 +256,15 @@ def add_amd_streaming(
         state.last_ms = 0.0
         state.last_md = 0
 
-    # Reset propagate dir au passage Asia
+    # FIX P1 audit Plan agent : reset PO3 accumulators a CHAQUE bar Asia
+    # (mirror batch _score_po3 ligne 298-299 qui fait `if sess[i]=='Asia':
+    # had_j=False; last_ms=0.0; last_md=0` dans la boucle for, pas seulement
+    # a la transition). Protege contre pickle-replay : si state deserialise
+    # avec had_j_session=True heritage US precedent, fuite empechee.
     if session == "Asia":
+        state.had_j_session = False
+        state.last_ms = 0.0
+        state.last_md = 0
         state.prop_dir = 0
 
     sw_u = 0

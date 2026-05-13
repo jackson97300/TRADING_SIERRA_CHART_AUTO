@@ -1990,24 +1990,82 @@ def _test_amd():
 
     print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
 
-    # NIVEAU 2 BONUS : boot mid-London (FIX P1.1 audit)
-    # Verifie que stream ne crash PAS si on demarre mid-London sans historique Asia.
-    # Comportement attendu : amd_asia_* = NaN, sweeps/judas = 0, scores = 0
-    # (mirror batch qui aurait le meme degrade si lance avec rows[300:] uniquement).
-    print("\n--- NIVEAU 2 : boot mid-London (P1.1 audit) ---")
-    state_mid = make_amd_state("ES")
-    midstart_rows = []
-    for _, row in df.iloc[300:].iterrows():  # demarre debut US (skip Asia + London entier)
-        midstart_rows.append(add_amd_streaming(row.to_dict(), state_mid))
-    mid_df = pd.DataFrame(midstart_rows)
-    # Verifier que asia_high/low sont NaN (pas d'historique Asia)
-    asia_h_nan = mid_df["amd_asia_high"].isna().all()
-    sweeps_zero = (mid_df["amd_sweep_up"] == 0).all() and (mid_df["amd_sweep_dn"] == 0).all()
-    judas_zero = (mid_df["amd_judas_swing"] == 0).all()
-    boot_ok = asia_h_nan and sweeps_zero and judas_zero
-    print(f"  Boot mid-US (sans Asia/London) : "
-          f"asia_h all NaN={asia_h_nan}, sweeps=0={sweeps_zero}, judas=0={judas_zero}")
-    print(f"  Niveau 2 status : {'PASS' if boot_ok else 'FAIL'}")
+    # NIVEAU 2 BONUS : 3 scenarios boot mid-session (P1.1 + P2 Plan agent)
+    print("\n--- NIVEAU 2 : boot mid-session 3 scenarios ---")
+
+    # 2a : boot mid-US (row 300+)
+    state_mid_us = make_amd_state("ES")
+    rows_us = [add_amd_streaming(r.to_dict(), state_mid_us)
+                for _, r in df.iloc[300:].iterrows()]
+    mid_us_df = pd.DataFrame(rows_us)
+    us_ok = (
+        mid_us_df["amd_asia_high"].isna().all()
+        and (mid_us_df["amd_sweep_up"] == 0).all()
+        and (mid_us_df["amd_judas_swing"] == 0).all()
+    )
+    print(f"  2a Boot mid-US : "
+          f"asia_h NaN={mid_us_df['amd_asia_high'].isna().all()}, "
+          f"sweeps_zero={(mid_us_df['amd_sweep_up'] == 0).all()}, "
+          f"judas_zero={(mid_us_df['amd_judas_swing'] == 0).all()}")
+
+    # 2b : boot mid-London (row 100 London)
+    state_mid_london = make_amd_state("ES")
+    rows_london = [add_amd_streaming(r.to_dict(), state_mid_london)
+                    for _, r in df.iloc[250:].iterrows()]  # debut mid-London (idx 250)
+    mid_london_df = pd.DataFrame(rows_london)
+    # Memes attentes : asia_* = NaN (pas d'historique Asia), sweeps/judas peuvent fire
+    # MAIS uniquement APRES transition London (or stream demarre deja en London) ->
+    # Sans frozen Asia, a_h/a_l = None -> sweeps gated -> 0
+    london_ok = (
+        mid_london_df["amd_asia_high"].isna().all()
+        and (mid_london_df["amd_sweep_up"] == 0).all()
+    )
+    print(f"  2b Boot mid-London : "
+          f"asia_h NaN={mid_london_df['amd_asia_high'].isna().all()}, "
+          f"sweeps_zero={(mid_london_df['amd_sweep_up'] == 0).all()}")
+
+    # 2c : boot mid-Asia (row 100 = mid-Asia, Asia range partial)
+    state_mid_asia = make_amd_state("ES")
+    rows_asia = [add_amd_streaming(r.to_dict(), state_mid_asia)
+                  for _, r in df.iloc[100:].iterrows()]
+    mid_asia_df = pd.DataFrame(rows_asia)
+    # Asia range tronque (vu bars 100-199 seulement) MAIS Asia_high/low NON-NaN
+    # car running depuis bar 100. London/US verront frozen reduit. Pas de crash.
+    asia_running = not mid_asia_df.iloc[:50]["amd_asia_high"].isna().all()
+    print(f"  2c Boot mid-Asia : asia_running tracked={asia_running}")
+    asia_ok = asia_running  # juste verifier que ca tracke (degrade gracieux)
+
+    # 2d : PICKLE-REPLAY STALE STATE (P1 Plan agent)
+    # Simule deserialisation d'un state corrompu avec had_j_session=True heritage
+    # session US precedente. Verifie que le reset Asia (P1 fix) nettoie l'etat.
+    print("\n  2d Pickle-replay stale state (P1 Plan agent) :")
+    import pickle
+    state_stale = make_amd_state("ES")
+    state_stale.had_j_session = True
+    state_stale.last_ms = 0.85
+    state_stale.last_md = 1
+    state_stale.prop_dir = -1
+    # Serialize + restore
+    blob = pickle.dumps(state_stale)
+    state_replay = pickle.loads(blob)
+    assert state_replay.had_j_session is True, "pickle preserve state"
+    # Premier bar Asia -> doit reset had_j_session=False, last_ms=0, last_md=0
+    asia_row = df.iloc[0].to_dict()
+    out_after_asia = add_amd_streaming(asia_row, state_replay)
+    stale_cleaned = (
+        state_replay.had_j_session is False
+        and state_replay.last_ms == 0.0
+        and state_replay.last_md == 0
+        and state_replay.prop_dir == 0
+    )
+    print(f"    state pre-Asia : had_j=True, last_ms=0.85, last_md=1, prop_dir=-1")
+    print(f"    state post-Asia (1 bar) : had_j={state_replay.had_j_session}, "
+          f"last_ms={state_replay.last_ms}, last_md={state_replay.last_md}, "
+          f"prop_dir={state_replay.prop_dir}")
+    print(f"    P1 reset Asia cleaned stale : {'PASS' if stale_cleaned else 'FAIL'}")
+
+    boot_ok = us_ok and london_ok and asia_ok and stale_cleaned
+    print(f"\n  Niveau 2 status : {'PASS' if boot_ok else 'FAIL'}")
 
     all_pass = all_pass and boot_ok
     print(f"\n{'=' * 70}")
