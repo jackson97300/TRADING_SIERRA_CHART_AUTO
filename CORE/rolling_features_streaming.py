@@ -146,6 +146,25 @@ class RollingFeaturesState:
     # divergence prix-delta sur 3 : besoin price[t] et price[t-3]
     price_short_plus: deque = field(default_factory=lambda: deque(maxlen=4))
 
+    # ─── GROUPE B (4 MEDIUM + 3 AUDIT + 3 TIER1 + 2 DYNAMIC + 1 MQ) ────────
+    # Pour shift(5) features : dist_vwap_d, ib_position_pct
+    dist_vwap_d_mid_plus: deque = field(default_factory=lambda: deque(maxlen=6))
+    ib_pos_mid_plus: deque = field(default_factory=lambda: deque(maxlen=6))
+    # Pour range_vs_atr_10 : besoin max/min sur 10 derniers prix
+    price_long: deque = field(default_factory=lambda: deque(maxlen=10))
+    # Pour ctx_instant_absorption (rolling std delta_bar sur INSTANT_ABSORPTION_WINDOW)
+    delta_for_std: deque = field(
+        default_factory=lambda: deque(maxlen=INSTANT_ABSORPTION_WINDOW)
+    )
+    # price_diff shift 1 pour instant_absorption (price[t] - price[t-1])
+    prev_price_for_diff: Optional[float] = None
+    # Pour ctx_absorption_streak_5 : rolling sum sur 5 derniers ctx_instant_absorption
+    instant_absorb_mid: deque = field(default_factory=lambda: deque(maxlen=5))
+    # Pour ctx_large_trader_slope_5 : slope sur 5 dernieres large_trader_ratio
+    large_trader_mid: deque = field(default_factory=lambda: deque(maxlen=5))
+    # Pour ctx_delta_exhaustion : max(|delta_bar|) sur 10 derniers
+    delta_abs_long: deque = field(default_factory=lambda: deque(maxlen=10))
+
 
 def add_rolling_features_basic_streaming(
     row: dict,
@@ -420,3 +439,267 @@ def add_rolling_features_basic_streaming(
     out["ctx_side_flip_count_10"] = float(sum(state.side_changes_long))
 
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Sub-engine #7 — GROUPE B (13 features : MEDIUM + AUDIT + TIER1 + DYNAMIC + MQ)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reutilise RollingFeaturesState (etendu avec deques B). Convention pipeline :
+#   add_rolling_features_basic_streaming(row, state)    # GROUPE A 13 features
+#   add_rolling_features_medium_streaming(row, state)   # GROUPE B 13 features
+#
+# Certaines features GROUPE B utilisent les outputs GROUPE A (climax_signal
+# depend de vol_z_5 + delta_sum_3). Donc l'ordre d'appel basic AVANT medium
+# est OBLIGATOIRE. Si user appelle medium seul, fallback 0 (mirror batch
+# `df.get("col", pd.Series(0, index=df.index))`).
+
+
+def add_rolling_features_medium_streaming(
+    row: dict,
+    state: RollingFeaturesState,
+    short: int = 3,
+    mid: int = 5,
+    long: int = 10,
+    symbol: str = "ES",
+    tick_size: Optional[float] = None,
+) -> dict:
+    """Sub-engine #7 — 13 features GROUPE B streaming.
+
+    Features :
+      MEDIUM (4) : ctx_delta_sum_10, ctx_dist_vwap_velocity,
+                   ctx_range_vs_atr_10, ctx_ib_position_velocity
+      AUDIT (3) :  ctx_instant_absorption, ctx_absorption_streak_5,
+                   ctx_climax_signal
+      TIER1 (3) :  ctx_vol_slope_5, ctx_delta_exhaustion,
+                   ctx_large_trader_slope_5
+      DYNAMIC (2): ctx_trend_day_score, ctx_day_type_intensity
+      MQ (1) :     ctx_mq_put_call_ratio
+
+    Args:
+        row : dict avec les inputs DMP + outputs GROUPE A (vol_z_5, delta_sum_3).
+        state : RollingFeaturesState mutable (deques B etendues).
+        short/mid/long : fenetres (default 3, 5, 10).
+        symbol : pour tick_size si non passe (default ES=0.25).
+        tick_size : override explicite (MGC=0.10).
+
+    Returns:
+        dict row + 13 features ctx_*.
+
+    Convention NaN/None : mirror batch (NaN propagated, fallback 0 sur deps absentes).
+    """
+    out = dict(row)
+
+    if tick_size is None:
+        # Mirror batch RollingFeatures._get_tick_size
+        tick_size = 0.10 if symbol.upper() == "MGC" else 0.25
+
+    # ─── Extract inputs ─────────────────────────────────────────────────────
+    price = _safe_float(out.get("price"))
+    delta = _safe_float(out.get("delta_bar"))
+    vol = _safe_float(out.get("total_vol"))
+    atr = _safe_float(out.get("atr"))
+    dist_vwap_d = _safe_float(out.get("dist_vwap_d"))
+    ib_position_pct = _safe_float(out.get("ib_position_pct"))
+    large_trader = _safe_float(out.get("large_trader_ratio"))
+    dist_vwap_d_atr = _safe_float(out.get("dist_vwap_d_atr"))
+    ib_range_atr = _safe_float(out.get("ib_range_atr"))
+    ib_broken_up = out.get("ib_broken_up", 0)
+    ib_broken_dn = out.get("ib_broken_down", 0)
+    vwap_d_side = _safe_float(out.get("vwap_d_side"))
+    delta_day_dir = _safe_float(out.get("delta_day_dir"))
+    dist_mq_put = _safe_float(out.get("dist_mq_put"))
+    dist_mq_call = _safe_float(out.get("dist_mq_call"))
+
+    # Outputs GROUPE A si disponibles (mirror batch df.get fallback Series 0)
+    ctx_vol_z_5 = _safe_float(out.get("ctx_vol_z_5"))
+    ctx_delta_sum_3 = _safe_float(out.get("ctx_delta_sum_3"))
+
+    # ─── Update deques GROUPE B ─────────────────────────────────────────────
+    state.dist_vwap_d_mid_plus.append(dist_vwap_d)
+    state.ib_pos_mid_plus.append(ib_position_pct)
+    state.price_long.append(price)
+    state.delta_for_std.append(delta)
+    state.large_trader_mid.append(large_trader)
+    # delta_abs_long pour exhaustion
+    if delta is not None:
+        state.delta_abs_long.append(abs(delta))
+    else:
+        state.delta_abs_long.append(None)
+
+    # ─── 14. ctx_delta_sum_10 ──────────────────────────────────────────────
+    # Mirror batch : delta_bar.rolling(10, min_periods=1).sum()
+    delta_vals_long = [d for d in state.delta_long if d is not None]
+    if delta_vals_long:
+        out["ctx_delta_sum_10"] = float(sum(delta_vals_long))
+    else:
+        out["ctx_delta_sum_10"] = 0.0
+
+    # ─── 15. ctx_dist_vwap_velocity ────────────────────────────────────────
+    # Mirror batch : dist_vwap_d - dist_vwap_d.shift(5)
+    if len(state.dist_vwap_d_mid_plus) >= 6 and dist_vwap_d is not None:
+        prev_dvwap = state.dist_vwap_d_mid_plus[0]
+        if prev_dvwap is not None:
+            out["ctx_dist_vwap_velocity"] = dist_vwap_d - prev_dvwap
+        else:
+            out["ctx_dist_vwap_velocity"] = np.nan
+    else:
+        out["ctx_dist_vwap_velocity"] = np.nan
+
+    # ─── 16. ctx_range_vs_atr_10 ───────────────────────────────────────────
+    # Mirror batch : price_max = price.rolling(10, min_p=2).max()
+    #                price_min = price.rolling(10, min_p=2).min()
+    #                range_ticks = (max - min) / tick_size
+    #                ratio = range_ticks / atr (replace 0 -> NaN)
+    price_vals_long = [p for p in state.price_long if p is not None]
+    if len(price_vals_long) >= 2 and atr is not None:
+        p_max = max(price_vals_long)
+        p_min = min(price_vals_long)
+        range_ticks = (p_max - p_min) / tick_size
+        if atr != 0.0:
+            out["ctx_range_vs_atr_10"] = range_ticks / atr
+        else:
+            out["ctx_range_vs_atr_10"] = np.nan
+    else:
+        out["ctx_range_vs_atr_10"] = np.nan
+
+    # ─── 17. ctx_ib_position_velocity ──────────────────────────────────────
+    # Mirror batch : ib_position_pct - ib_position_pct.shift(5)
+    if len(state.ib_pos_mid_plus) >= 6 and ib_position_pct is not None:
+        prev_ib_pos = state.ib_pos_mid_plus[0]
+        if prev_ib_pos is not None:
+            out["ctx_ib_position_velocity"] = ib_position_pct - prev_ib_pos
+        else:
+            out["ctx_ib_position_velocity"] = np.nan
+    else:
+        out["ctx_ib_position_velocity"] = np.nan
+
+    # ─── 18. ctx_instant_absorption ────────────────────────────────────────
+    # Mirror batch : seuil dynamique = std(delta_bar, 50) * K
+    #   buy_absorb = (delta > +threshold) & (price_diff < 0)  -> -1.0 (bear)
+    #   sell_absorb = (delta < -threshold) & (price_diff > 0) -> +1.0 (bull)
+    #   else 0.0
+    # Convention rolling.std min_periods=10 (mirror batch).
+    delta_for_std_vals = [d for d in state.delta_for_std if d is not None]
+    instant_absorb = 0.0
+    if (
+        len(delta_for_std_vals) >= 10
+        and delta is not None
+        and price is not None
+        and state.prev_price_for_diff is not None
+    ):
+        # sample std (ddof=1) sur la fenetre
+        n_std = len(delta_for_std_vals)
+        m_std = sum(delta_for_std_vals) / n_std
+        var_std = sum((x - m_std) ** 2 for x in delta_for_std_vals) / (n_std - 1)
+        delta_std = var_std ** 0.5
+        threshold = delta_std * INSTANT_ABSORPTION_DELTA_K
+        price_diff_1 = price - state.prev_price_for_diff
+        if delta > threshold and price_diff_1 < 0:
+            instant_absorb = -1.0  # bear absorption
+        elif delta < -threshold and price_diff_1 > 0:
+            instant_absorb = +1.0  # bull absorption
+    out["ctx_instant_absorption"] = instant_absorb
+
+    # Update prev_price + instant_absorb deque APRES calcul
+    state.prev_price_for_diff = price
+    state.instant_absorb_mid.append(instant_absorb)
+
+    # ─── 19. ctx_absorption_streak_5 ───────────────────────────────────────
+    # Mirror batch : ctx_instant_absorption.rolling(5, min_p=1).sum()
+    out["ctx_absorption_streak_5"] = float(sum(state.instant_absorb_mid))
+
+    # ─── 20. ctx_climax_signal ─────────────────────────────────────────────
+    # Mirror batch : np.where(vol_z.abs() > 1.0, sign(delta_sum), 0.0)
+    # vol_z = ctx_vol_z_5, delta_sum = ctx_delta_sum_3 (outputs GROUPE A)
+    if ctx_vol_z_5 is not None and ctx_delta_sum_3 is not None:
+        if abs(ctx_vol_z_5) > 1.0:
+            if ctx_delta_sum_3 > 0:
+                out["ctx_climax_signal"] = 1.0
+            elif ctx_delta_sum_3 < 0:
+                out["ctx_climax_signal"] = -1.0
+            else:
+                out["ctx_climax_signal"] = 0.0
+        else:
+            out["ctx_climax_signal"] = 0.0
+    else:
+        # Mirror batch fallback : df.get("col", pd.Series(0)) -> 0
+        out["ctx_climax_signal"] = 0.0
+
+    # ─── 21. ctx_vol_slope_5 ───────────────────────────────────────────────
+    # Mirror batch : _slope(total_vol, 5)
+    out["ctx_vol_slope_5"] = _linreg_slope(list(state.vol_mid))
+
+    # ─── 22. ctx_delta_exhaustion ──────────────────────────────────────────
+    # Mirror batch : delta.abs() / delta.abs().rolling(10, min_p=2).max()
+    delta_abs_vals = [d for d in state.delta_abs_long if d is not None]
+    if len(delta_abs_vals) >= 2 and delta is not None:
+        max_delta_abs = max(delta_abs_vals)
+        if max_delta_abs != 0.0:
+            out["ctx_delta_exhaustion"] = abs(delta) / max_delta_abs
+        else:
+            out["ctx_delta_exhaustion"] = np.nan
+    else:
+        out["ctx_delta_exhaustion"] = np.nan
+
+    # ─── 23. ctx_large_trader_slope_5 ──────────────────────────────────────
+    out["ctx_large_trader_slope_5"] = _linreg_slope(list(state.large_trader_mid))
+
+    # ─── 24. ctx_trend_day_score (composite 5 criteres) ────────────────────
+    # Mirror batch : score additif clip(0.0, 1.0)
+    #   IB comprime (ib_range_atr < 0.40) : +0.20
+    #   IB casse unilateral             : +0.25
+    #   Vol accelere (vol_slope_5 > 0)  : +0.15
+    #   Prix loin VWAP (|dist_vwap_d_atr| > 0.15) : +0.20
+    #   Delta day aligne avec vwap_d_side : +0.20
+    score = 0.0
+    if ib_range_atr is not None and ib_range_atr < 0.40:
+        score += 0.20
+    # ib_broken cast bool
+    ib_up_bool = bool(ib_broken_up) if ib_broken_up is not None else False
+    ib_dn_bool = bool(ib_broken_dn) if ib_broken_dn is not None else False
+    if (ib_up_bool and not ib_dn_bool) or (ib_dn_bool and not ib_up_bool):
+        score += 0.25
+    ctx_vol_slope_5 = out.get("ctx_vol_slope_5")
+    if ctx_vol_slope_5 is not None and not (isinstance(ctx_vol_slope_5, float) and np.isnan(ctx_vol_slope_5)) and ctx_vol_slope_5 > 0:
+        score += 0.15
+    if dist_vwap_d_atr is not None and abs(dist_vwap_d_atr) > 0.15:
+        score += 0.20
+    if (
+        vwap_d_side is not None
+        and delta_day_dir is not None
+        and vwap_d_side == delta_day_dir
+    ):
+        score += 0.20
+    out["ctx_trend_day_score"] = max(0.0, min(1.0, score))
+
+    # ─── 25. ctx_day_type_intensity (signed [-1, +1]) ──────────────────────
+    # Mirror batch : dir * mag clip(-1, 1)
+    #   dir = +1 si ib_up only, -1 si ib_dn only, 0 sinon
+    #   mag = |dist_vwap_d_atr|
+    if ib_up_bool and not ib_dn_bool:
+        dir_val = 1.0
+    elif ib_dn_bool and not ib_up_bool:
+        dir_val = -1.0
+    else:
+        dir_val = 0.0
+    if dist_vwap_d_atr is not None:
+        mag = abs(dist_vwap_d_atr)
+        intensity = dir_val * mag
+        out["ctx_day_type_intensity"] = max(-1.0, min(1.0, intensity))
+    else:
+        out["ctx_day_type_intensity"] = 0.0
+
+    # ─── 26. ctx_mq_put_call_ratio ─────────────────────────────────────────
+    # Mirror batch : |dist_mq_put| / |dist_mq_call| (replace 0 -> NaN)
+    if dist_mq_put is not None and dist_mq_call is not None:
+        put_abs = abs(dist_mq_put)
+        call_abs = abs(dist_mq_call)
+        if call_abs != 0.0:
+            out["ctx_mq_put_call_ratio"] = put_abs / call_abs
+        else:
+            out["ctx_mq_put_call_ratio"] = np.nan
+    else:
+        out["ctx_mq_put_call_ratio"] = np.nan
+
+    return out
+
