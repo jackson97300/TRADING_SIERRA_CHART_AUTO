@@ -84,21 +84,83 @@ def add_range_pos(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_sess_range_atr(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame:
-    """Calcule sess_range_atr : range session normalise par ATR.
+    """Calcule sess_range_atr : range session normalise par ATR daily Wilder.
 
-    Convention DMP : sess_range_ticks = (sess_high - sess_low) / tick
-                     sess_range_atr   = sess_range_ticks / atr_ticks
+    FIX v0.3 (audit code-reviewer 13/05/2026 nuit) :
+        Backtest v0.2 (utilisant atr_14m_pct) rho=-0.018 vs DMP rho=+0.051 SHORT.
+        Test avec ATR daily Python (resample calendar day) rho=+0.03 (signe oppose).
+        Le signe oppose vient de la definition session : Sierra utilise CME
+        "trading day" (17:00 ET -> 16:00 ET), pas calendar day.
 
-    Requis : sess_high, sess_low, atr (ticks).
+    Convention DMP_Transform.h:874 + DMP_Reader.h:1969-1971 :
+        atr_ticks = r.atr_daily   (Sierra ATR Daily study sur chart ES_DAILY,
+                                   14 days, Wilder smoothing)
+        sess_range_atr = sess_range_ticks / atr_ticks
+
+    Convention Python v0.3 :
+        1. Resample bars 1-min en daily True Range groupe par `session_date_trading`
+           (deja present dans V4, defini par build_dataset_v4_dmp_databento.py).
+        2. ATR Wilder alpha=1/14 sur la serie TR daily.
+        3. Broadcast sur chaque bar 1-min de la session.
+        4. sess_range_atr = (sess_high - sess_low) / tick / atr_daily_wilder_ticks.
+
+    Requis : sess_high, sess_low, high, low, close, session_date_trading.
     """
     df = df.copy()
-    for col in ("sess_high", "sess_low", "atr"):
+    for col in ("sess_high", "sess_low", "high", "low", "close",
+                "session_date_trading"):
         if col not in df.columns:
             raise KeyError(f"[v6_complete] '{col}' manquant pour sess_range_atr.")
 
+    # 1. Daily aggregate par session_date_trading
+    daily = (
+        df.groupby("session_date_trading")
+        .agg(daily_high=("high", "max"),
+             daily_low=("low", "min"),
+             daily_close=("close", "last"))
+        .reset_index()
+    )
+    daily["prev_close"] = daily["daily_close"].shift(1)
+
+    # 2. True Range Wilder : max(H-L, |H-prev_C|, |L-prev_C|)
+    def _tr(row):
+        h, lo, pc = row["daily_high"], row["daily_low"], row["prev_close"]
+        if pd.isna(pc):
+            return h - lo
+        return max(h - lo, abs(h - pc), abs(lo - pc))
+
+    daily["tr"] = daily.apply(_tr, axis=1)
+
+    # 3. ATR Wilder alpha=1/14 (equivalent EMA span=27 mais Wilder convention)
+    #    Wilder formula : ATR[t] = (ATR[t-1] * (n-1) + TR[t]) / n
+    atr = []
+    prev_atr = None
+    for i, tr in enumerate(daily["tr"]):
+        if pd.isna(tr):
+            atr.append(np.nan)
+            continue
+        if prev_atr is None or pd.isna(prev_atr):
+            atr.append(tr)
+            prev_atr = tr
+        else:
+            new_atr = (prev_atr * 13 + tr) / 14
+            atr.append(new_atr)
+            prev_atr = new_atr
+    daily["atr_daily_wilder"] = atr
+
+    # 4. Broadcast daily ATR sur chaque bar 1-min via merge sur session_date_trading
+    df = df.merge(
+        daily[["session_date_trading", "atr_daily_wilder"]],
+        on="session_date_trading",
+        how="left",
+    )
+
+    # 5. sess_range_atr = sess_range_ticks / atr_daily_wilder_ticks
     sess_range_ticks = (df["sess_high"] - df["sess_low"]) / tick
-    atr_safe = df["atr"].replace(0, np.nan)
-    df["sess_range_atr"] = (sess_range_ticks / atr_safe).astype("float32")
+    atr_ticks = (df["atr_daily_wilder"] / tick).replace(0, np.nan)
+    df["sess_range_atr"] = (sess_range_ticks / atr_ticks).astype("float32")
+    # Cleanup colonne intermediaire
+    df = df.drop(columns=["atr_daily_wilder"])
     return df
 
 
@@ -191,41 +253,52 @@ def add_vwap_ma_align_DRAFT(df: pd.DataFrame) -> pd.DataFrame:
 # MOMENTUM / TREND
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def add_momentum_3b(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcule momentum_3b : variation prix sur 3 bars (POINTS).
+def add_momentum_3b_DROPPED(df: pd.DataFrame) -> pd.DataFrame:
+    """⚠️ DROPPED v0.3 — feature SUPPRIMEE de Bot 2 V6 full Databento.
 
-    DECOUVERTE CRITIQUE 13/05/2026 (backtest Phase 1b) :
-    ====================================================
-    Le DMP_Main.cpp:436-444 (version 13) declare faire close - close.shift(3)
-    MAIS le PersistentFloat shift est BUGUE :
-        sc.GetPersistentFloat(DMP_PS_PREV_PRICE_3) = r.price_close;
-    Cette ligne ECRASE PREV_PRICE_3 a CHAQUE bar. Resultat : a bar N,
-    prev_p3 = close[N-1] (pas close[N-3]).
-    Le DMP momentum_3b reel = close.diff(1), PAS close.diff(3).
+    ENQUETE EMPIRIQUE 13/05/2026 (commits ce2de94 + tools/backtest_momentum_variants.py
+    + audit code-reviewer Phase 1b v0.3) :
+    ======================================================================
+    PREUVE LOOK-AHEAD LEAK (audit code-reviewer test fut1/fut3/fut5) :
+        rho(DMP_momentum_3b, futur close_t+1) = 0.444   <- impossible sans leak
+        rho(DMP_momentum_3b, futur close_t+3) = 0.235
+        rho(DMP_momentum_3b, futur close_t+5) = 0.174
+    Une feature qui correle 0.44 avec retour t+1 EST MATHEMATIQUEMENT
+    un look-ahead leak (n=29635 bars, decisif statistiquement).
 
-    De plus, backtest Spearman corr sur 9858 bars avril 2026 :
-        DMP momentum_3b vs label TBM LONG : rho = +0.24 (edge fort)
-        Python close.diff(1) vs label    : rho = -0.012 (quasi nul)
-        Python close.diff(3) vs label    : rho = -0.012 (quasi nul)
-    Match Python close.diff(1) vs DMP : seulement 58% bars identiques.
-    Les 42% divergents suggerent look-ahead leak SUBTIL Sierra :
-    `r.price_close` capture timing Sierra peut inclure 1-tick leak forward
-    vs Databento OHLCV close strict per-minute boundary.
+    Backtest 11 variantes Python HONNETES (Spearman corr vs TBM labels
+    avril 2026, 29635 bars ES) :
+        DMP momentum_3b (leak confirme)          : |rho| = 0.25  [SUSPECT]
+        Best Python : v10_cvd_diff3              : |rho| = 0.02  [WEAK]
+        Toutes autres (diff_1/3/5/10, logret,    : |rho| < 0.02  [REJET]
+                       vwap_dev, atr_norm,
+                       zscore, ema, body)
 
-    DECISION (directive Jackson "pas de reproduction fidele a l aveugle") :
-    Notre Python = formule HONNETE close - close.shift(3), pas de leak.
-    Edge predictif sur cette formule = quasi nul → momentum_3b N'EST PAS
-    une feature ML utile en mode Databento clean.
-    REDEFINITION DEMAIN : tester variantes momentum sans dependance close
-    exact (e.g. log returns, vwap deviation, true range based).
+    LOCALISATION VRAIE DU BUG (correction audit) : DMP_Pipeline.h:266-286,
+    PAS DMP_Main.cpp:436-444 comme j'ai dit initialement. Le code C++ shift
+    correctement (prev_p5 <- prev_p3 ; prev_p3 <- close). Le leak vient du
+    TIMING DE CAPTURE `r.price_close` : Sierra event-driven peut capturer
+    une valeur post-close (intra-bar du bar suivant) alors que Databento
+    OHLCV close = strict per-minute boundary.
 
-    Requis : close.
+    DECISION : DROP `momentum_3b` du Bot 2 V6 full Databento.
+    Downstream A CORRIGER :
+      - CORE/primary_models/blind_level_fade.py:132,153,173 utilise
+        momentum_3b dans un filtre direction. A remplacer par close.diff(1)
+        Python OU supprimer le filtre.
+      - regime_engine_v6.py / bias_calculator_v6.py : VERIFIE grep, PAS
+        de reference a momentum_3b. AUCUN risque sur ces 2.
+
+    AUDIT META RECOMMANDE : scanner les 462 features V4 brutes pour rho_fut1
+    > 0.10, identifier autres leaks suspects. Effort cap 4h.
+
+    Requis : (none — non-callable).
     """
-    df = df.copy()
-    if "close" not in df.columns:
-        raise KeyError("[v6_complete] 'close' manquant pour momentum_3b.")
-    df["momentum_3b"] = (df["close"] - df["close"].shift(3)).astype("float32")
-    return df
+    raise NotImplementedError(
+        "momentum_3b DROPPED v0.3 — backtest 11 variantes Python max |rho|=0.02. "
+        "DMP edge |rho|=0.25 = leak suspect (commit ce2de94). "
+        "Voir tools/backtest_momentum_variants.py pour evidence."
+    )
 
 
 def add_ma_trend_DRAFT(df: pd.DataFrame, fast: int = 20, slow: int = 50,
@@ -295,26 +368,34 @@ def add_cvd_day_dir(df: pd.DataFrame) -> pd.DataFrame:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def apply_v6_complete(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame:
-    """Applique les 6 helpers GROUPE A (parite DMP_Transform.h validee).
+    """Applique les helpers GROUPE A v0.3 (backtest valide) :
+
+      cvd_day_dir       BONUS Python > DMP rho 0.030 vs 0.020
+      range_pos         RETENUE rho 0.024 ≈ DMP 0.032
+      sess_range_atr    REJET partiel mais conserve pour analyse (rho 0.018 vs 0.051 DMP)
+      vwap_w_side       BONUS Python > DMP rho 0.020 vs 0.006
+      vwap_triple_align BONUS Python > DMP rho 0.022 vs 0.006
+
+    DROPPED v0.3 :
+      momentum_3b : DMP rho 0.25 = look-ahead leak suspect, aucune variante
+                    Python honnete (11 testees) ne reproduit. DROP feature.
 
     GROUPE B (ma_trend, vwap_slope_30, vwap_ma_align) marques DRAFT
-    et NE SONT PAS appeles ici. A finaliser apres backtest variantes Python.
+    et NE SONT PAS appeles ici. A finaliser apres backtest 9 variantes.
 
     Ordre :
-      1. momentum_3b       (depend close)
-      2. cvd_day_dir       (depend cvd_session OU delta_day_dir)
-      3. range_pos         (depend close + cur_val + cur_vah)   ⚠️ Value Area
-      4. sess_range_atr    (depend sess_high/low + atr)
-      5. vwap_w_side       (depend close + vwap_w)
-      6. vwap_triple_align (depend close + vwap_d/w/m)
+      1. cvd_day_dir       (depend cvd_session)
+      2. range_pos         (depend close + cur_val + cur_vah)   ⚠️ Value Area
+      3. sess_range_atr    (depend sess_high/low + atr)
+      4. vwap_w_side       (depend close + vwap_w)
+      5. vwap_triple_align (depend close + vwap_d/w/m)
 
     Caller doit passer un df qui contient deja :
       close, vwap_d, vwap_w, vwap_m,
       sess_high, sess_low, atr,
       cur_val, cur_vah,
-      cvd_session (ou delta_day_dir comme fallback).
+      cvd_session.
     """
-    df = add_momentum_3b(df)
     df = add_cvd_day_dir(df)
     df = add_range_pos(df)
     df = add_sess_range_atr(df, tick=tick)
@@ -328,22 +409,26 @@ def apply_v6_complete(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _make_test_df(n: int = 50) -> pd.DataFrame:
-    """Df dummy avec toutes les colonnes requises GROUPE A pour tests inline."""
+    """Df dummy avec toutes les colonnes requises GROUPE A v0.3 pour tests inline."""
     rng = np.random.default_rng(42)
     base = 7400.0
     close = base + np.cumsum(rng.normal(0, 0.5, n))
     cur_vpoc = base + 0.5
     df = pd.DataFrame({
         "close": close.astype("float32"),
+        "high": (close + np.abs(rng.normal(0, 1, n))).astype("float32"),
+        "low": (close - np.abs(rng.normal(0, 1, n))).astype("float32"),
         "sess_high": np.maximum.accumulate(close).astype("float32"),
         "sess_low": np.minimum.accumulate(close).astype("float32"),
-        "atr": np.full(n, 30.0, dtype="float32"),  # 30 ticks ATR
+        "atr": np.full(n, 30.0, dtype="float32"),
         "cur_val": np.full(n, cur_vpoc - 5.0, dtype="float32"),
         "cur_vah": np.full(n, cur_vpoc + 5.0, dtype="float32"),
         "vwap_d": (base + np.cumsum(rng.normal(0, 0.1, n))).astype("float32"),
         "vwap_w": (base + np.cumsum(rng.normal(0, 0.05, n))).astype("float32"),
         "vwap_m": (base + np.cumsum(rng.normal(0, 0.02, n))).astype("float32"),
         "cvd_session": np.cumsum(rng.normal(0, 100, n)).astype("float32"),
+        # Simule 2 trading days CME (split a mi-chemin)
+        "session_date_trading": ["2026-04-01"] * (n // 2) + ["2026-04-02"] * (n - n // 2),
     })
     return df
 
@@ -358,14 +443,14 @@ def _test_range_pos_va():
     print("[OK] add_range_pos (Value Area parite DMP)")
 
 
-def _test_momentum_3b_price_delta():
-    """momentum_3b doit etre close - close.shift(3), pas delta_bar sum."""
+def _test_momentum_3b_DROPPED_raises():
+    """momentum_3b DROPPED v0.3 doit raise (faux edge DMP leak suspect)."""
     df = _make_test_df()
-    out = add_momentum_3b(df)
-    expected = df["close"] - df["close"].shift(3)
-    diff = (out["momentum_3b"] - expected).abs().dropna()
-    assert diff.max() < 1e-4, f"momentum_3b formule incorrecte, max diff={diff.max()}"
-    print("[OK] add_momentum_3b (close delta parite DMP)")
+    try:
+        add_momentum_3b_DROPPED(df)
+        print("[FAIL] add_momentum_3b_DROPPED ne raise pas")
+    except NotImplementedError:
+        print("[OK] add_momentum_3b_DROPPED raise NotImplementedError (faux edge)")
 
 
 def _test_sess_range_atr():
@@ -395,16 +480,18 @@ def _test_apply_v6_complete():
     out = apply_v6_complete(df)
     expected_new = [
         "range_pos", "sess_range_atr", "vwap_w_side",
-        "vwap_triple_align", "momentum_3b", "cvd_day_dir",
+        "vwap_triple_align", "cvd_day_dir",
     ]
     for col in expected_new:
         assert col in out.columns, f"missing {col}"
-    print(f"[OK] apply_v6_complete: +{len(expected_new)} cols GROUPE A")
+    # momentum_3b explicitement DROP v0.3
+    assert "momentum_3b" not in out.columns, "momentum_3b doit etre DROP"
+    print(f"[OK] apply_v6_complete: +{len(expected_new)} cols GROUPE A (momentum_3b DROP)")
 
 
 if __name__ == "__main__":
     _test_range_pos_va()
-    _test_momentum_3b_price_delta()
+    _test_momentum_3b_DROPPED_raises()
     _test_sess_range_atr()
     _test_vwap_triple_align_3values()
     _test_apply_v6_complete()

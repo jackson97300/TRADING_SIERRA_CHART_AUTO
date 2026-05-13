@@ -495,6 +495,22 @@ ML_EXCLUDE_FEATURES = {
     "dist_vix_gex_nearest_up",
     "gex_cluster_count_z",
     "position_in_range",
+
+    # === 2026-05-13 nuit : LEAK DMP MOMENTUM CONFIRME ===
+    # Decouvert via meta-audit tools/meta_audit_leak_features.py 13/05/2026 :
+    # rho(momentum_3b, futur close_t+1) = 0.444 (n=29635 bars ES avril 2026)
+    # Une feature qui correle 0.44 avec le retour de la barre SUIVANTE EST
+    # MATHEMATIQUEMENT un look-ahead leak (aucune formule causale honnete ne
+    # peut atteindre rho_fut1 > 0.05). Test empirique sur 11 variantes Python
+    # causales : max |rho| = 0.02 (cf tools/backtest_momentum_variants.py).
+    # CAUSE PROBABLE : timing capture r.price_close Sierra (event-driven) peut
+    # inclure 1-tick forward vs Databento OHLCV close strict per-minute boundary.
+    # Localisation code DMP : CPP/MIA_REFACTORED/DUMPER/DMP_Pipeline.h:266-286
+    # (NOT DMP_Main.cpp:436 comme initialement diagnostique).
+    # ACTION downstream : CORE/primary_models/blind_level_fade.py utilise
+    # momentum_3b. A remplacer par close.diff(N) Python honnete quand pipeline
+    # V4 sera entierement Databento (Chantier 3 Live Enricher).
+    "momentum_3b",
 }
 
 
