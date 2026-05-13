@@ -348,39 +348,39 @@ def compute_window_cutoff(df_existing: pd.DataFrame, window_days: int) -> pd.Tim
     return max(cutoff, ts_min)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# MAIN PROCESSING (1 partition)
-# ═══════════════════════════════════════════════════════════════════════════════
+def apply_all_engines(
+    df: pd.DataFrame,
+    trades_df: pd.DataFrame,
+    symbol: str,
+    tick: float,
+    bounds: dict,
+) -> pd.DataFrame:
+    """Applique tous les engines PHASE_B sur df (mode full ou window).
 
-def process_partition(symbol: str, year: int, month: int, write: bool = True) -> dict:
-    """Pipeline complet sur 1 (symbol, year, month)."""
-    t0 = time.time()
-    print(f"\n[{symbol} {year}-{month:02d}] Start")
+    Refacto Phase 1b (13/05/2026) : extraction de la sequence d'engines
+    pour permettre appel depuis process_partition (full) ET
+    process_partition_incremental (window). DRY.
 
-    df_orig = load_v4_partition(symbol, year, month)
-    if df_orig.empty:
-        print(f"  [SKIP] No data")
-        return {"status": "SKIP", "reason": "no_data"}
+    Sequence d'engines (ordre critique pour features cumulatives) :
+      helpers -> game_changers -> rvol -> B+ -> B+++ -> edge_zones ->
+      sessions_swings -> rolling_inputs -> market_profile_rolling ->
+      phase_d_dalton -> vwap_diff -> option_c_plus -> regime_engine
+      [+ MGC-only : VIX cross-join + Gold Phase D]
 
-    n_bars = len(df_orig)
-    n_cols_orig = len(df_orig.columns)
-    # Vraies colonnes originales (exclure Phase B already-generated cols si re-run)
-    original_cols = set(df_orig.columns) - PHASE_B_GENERATED - {c for c in df_orig.columns if c.startswith(INTERMARKET_PREFIX)}
-    print(f"  Loaded {n_bars} bars x {n_cols_orig} cols ({len(original_cols)} non-PhaseB)")
+    Args:
+        df : DataFrame v4 charge depuis parquet (peut etre subset window)
+        trades_df : DataFrame trades correspondant a la periode de df
+        symbol : ES, NQ, MGC
+        tick : tick_size du symbole (0.25 ES/NQ, 0.10 MGC)
+        bounds : session boundaries du symbole
 
-    # Trades pour Volume Profile
-    trades_df = load_trades_for_month(symbol, year, month)
-    print(f"  Loaded {len(trades_df):,} trades")
+    Returns:
+        df enrichi avec tous les features PHASE_B
+    """
+    n_cols_orig = len(df.columns)
 
-    # Pipeline (10/05/2026 : tick + bounds per-symbole — supporte MGC=0.10 + 08:30 RTH)
-    tick = get_tick_size(symbol)
-    try:
-        from CORE.constants import get_session_boundaries
-    except ImportError:
-        from constants import get_session_boundaries
-    bounds = get_session_boundaries(symbol)
     df = add_all_phase_b_helpers(
-        df_orig, trades_df=trades_df if not trades_df.empty else None,
+        df, trades_df=trades_df if not trades_df.empty else None,
         tick=tick, bounds=bounds,
     )
     print(f"  After helpers: {df.shape[1]} cols (+{df.shape[1]-n_cols_orig})")
@@ -403,10 +403,6 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     print(f"  After Phase B+++: {df.shape[1]} cols ({n_bpp} B+++ features)")
 
     # Bloc 3 #1 Edge Zones (footprint cellule + extension lines manager)
-    # 11/05 J3 FIX BUG GOLD : passer tick=tick au footprint_builder.
-    # Avant ce fix, MGC (tick=0.10) utilisait default tick=0.25 -> bucketize
-    # incorrect -> cellules sparse -> 0% fire rate edge_zones (4 features mortes).
-    # ES/NQ inchanges car tick=0.25 = default.
     if not trades_df.empty:
         footprint = build_footprint_per_bar(trades_df, df["ts_event"], tick=tick)
         df = apply_edge_zones(df, footprint, symbol=symbol, tick=tick)
@@ -438,7 +434,6 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     n_pd = sum(1 for c in df.columns if c in PHASE_D_GENERATED)
     print(f"  After Phase D Dalton: {df.shape[1]} cols ({n_pd} dalton features)")
 
-    # === Audit ULTRATHINK Option C+ (2026-04-27) ===
     # VWAP differentiels (5 features remplacant 10 raw vwap_w/m_*)
     df = apply_vwap_diff(df)
     n_vd = sum(1 for c in df.columns if c in VWAP_DIFF_GENERATED)
@@ -450,19 +445,13 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     print(f"  After Option C+ transforms: {df.shape[1]} cols ({n_ocp} new features)")
 
     # === Chantier 5bis3 (10/05/2026) — Regime engine en Phase B ===
-    # Phase A (build_dataset_v4_dmp_databento) skip systematiquement le regime
-    # car day_type/open_type/profile_shape/trend_day_probability n'existent
-    # PAS en Phase A (calcules par apply_game_changers en Phase B).
-    # Bug ES/NQ depuis Chantier 1 : regime_* features ABSENTES dans tous les
-    # parquets v4_enriched ES/NQ historiques.
-    # Fix : recalculer regime ICI apres game_changers/Phase B+/Phase D.
     if "open_type" in df.columns and "day_type" in df.columns:
         try:
             from regime_engine import compute_regime_dict
         except ImportError:
-            import sys
-            from pathlib import Path
-            sys.path.insert(0, str(Path(__file__).parent))
+            import sys as _sys
+            from pathlib import Path as _Path
+            _sys.path.insert(0, str(_Path(__file__).parent))
             from regime_engine import compute_regime_dict
 
         # FIX R1.3 Phase A : derive ib_formed_bool depuis ib_range_ticks (avant drop)
@@ -482,24 +471,16 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
         actionable_pct = df["regime_actionable"].mean() * 100 if "regime_actionable" in df.columns else 0
         print(f"  After Regime engine: {df.shape[1]} cols (actionable {actionable_pct:.1f}%)")
 
-    # ─────────────────────────────────────────────────────────────────────────
     # MGC-only enrichments : VIX cross-join + Gold Phase D features (12/05/2026)
-    # ─────────────────────────────────────────────────────────────────────────
-    # VIX : absent du parquet MGC car pipeline Databento (pas DMP JSONL Sierra).
-    # Cross-join depuis ES JSONL (vix_level/vix_regime communs CBOE).
-    # Gold Phase D : 4 features intermarket + session (6E, ZN, ZB, sessions UTC/ET).
     if symbol == "MGC":
-        # 1. VIX cross-join (depuis ES JSONL vix_level/vix_regime)
         n_before_vix = df.shape[1]
         df = add_vix_cross_join(df)
         n_vix_added = df.shape[1] - n_before_vix
         print(f"  After VIX cross-join: {df.shape[1]} cols (+{n_vix_added} VIX features)")
 
-        # 2. Gold Phase D : 4 features intermarket + session
         try:
             ts_min = pd.to_datetime(df["ts_event"]).min()
             ts_max = pd.to_datetime(df["ts_event"]).max()
-            # Marge 60+ bars pour rolling windows (real_yields proxy, dxy_corr)
             start_load = (ts_min - pd.Timedelta(days=1)).to_pydatetime().replace(tzinfo=None)
             end_load = (ts_max + pd.Timedelta(days=1)).to_pydatetime().replace(tzinfo=None)
 
@@ -517,6 +498,46 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
             for col in GOLD_PHASE_D_FEATURES:
                 if col not in df.columns:
                     df[col] = np.nan
+
+    return df
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN PROCESSING (1 partition)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def process_partition(symbol: str, year: int, month: int, write: bool = True) -> dict:
+    """Pipeline complet sur 1 (symbol, year, month)."""
+    t0 = time.time()
+    print(f"\n[{symbol} {year}-{month:02d}] Start")
+
+    df_orig = load_v4_partition(symbol, year, month)
+    if df_orig.empty:
+        print(f"  [SKIP] No data")
+        return {"status": "SKIP", "reason": "no_data"}
+
+    n_bars = len(df_orig)
+    n_cols_orig = len(df_orig.columns)
+    # Vraies colonnes originales (exclure Phase B already-generated cols si re-run)
+    original_cols = set(df_orig.columns) - PHASE_B_GENERATED - {c for c in df_orig.columns if c.startswith(INTERMARKET_PREFIX)}
+    print(f"  Loaded {n_bars} bars x {n_cols_orig} cols ({len(original_cols)} non-PhaseB)")
+
+    # Trades pour Volume Profile
+    trades_df = load_trades_for_month(symbol, year, month)
+    print(f"  Loaded {len(trades_df):,} trades")
+
+    # Pipeline (10/05/2026 : tick + bounds per-symbole — supporte MGC=0.10 + 08:30 RTH)
+    tick = get_tick_size(symbol)
+    try:
+        from CORE.constants import get_session_boundaries
+    except ImportError:
+        from constants import get_session_boundaries
+    bounds = get_session_boundaries(symbol)
+
+    # 13/05 Phase 1b refacto : sequence d'engines extraite dans apply_all_engines.
+    # process_partition reste l'orchestrateur full mode (load + engines + write).
+    # process_partition_incremental utilise aussi apply_all_engines sur window seul.
+    df = apply_all_engines(df_orig, trades_df, symbol, tick, bounds)
 
     # Sanity stats
     if "open_type" in df.columns:
