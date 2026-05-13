@@ -2497,6 +2497,95 @@ def _test_phase_b_plus():
     return {"all_pass": all_pass}
 
 
+def _test_phase_b_plus_long():
+    """Test sub-engine phase_b_plus_long streaming (13 features LONG NON-LOOKAHEAD).
+
+    Test sur NQ (utilise formule NQ long_updown_pattern sans lookahead).
+    Comparaison batch add_long_bar_features + add_long_extension_lines +
+    add_long_updown_features symbol='NQ'.
+    """
+    from phase_b_plus_long_streaming import (
+        add_phase_b_plus_long_streaming,
+        make_long_bar_state,
+    )
+    from phase_b_plus_engine import (
+        add_long_bar_features, add_long_extension_lines, add_long_updown_features,
+    )
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(83)
+    # Synth 500 bars avec range expansion volatile pour generer fires
+    n = 500
+    df = pd.DataFrame({
+        "ts_event": pd.date_range("2026-05-13 13:00:00", periods=n, freq="1min"),
+    })
+    # Prix avec trends + reversals pour generer LONG UP/DN patterns
+    base = 5800.0 + np.cumsum(np.random.randn(n) * 0.5)
+    df["close"] = base
+    df["open"] = base + np.random.randn(n) * 0.3
+    df["high"] = np.maximum(df["open"], df["close"]) + np.random.uniform(0.5, 5, n)
+    df["low"] = np.minimum(df["open"], df["close"]) - np.random.uniform(0.5, 5, n)
+
+    # BATCH chain : long_bar + long_ext_lines + long_updown formule NQ
+    batch_df = df.copy()
+    batch_df = add_long_bar_features(batch_df, symbol="NQ", tick=0.25)
+    batch_df = add_long_extension_lines(batch_df)
+    batch_df = add_long_updown_features(batch_df, symbol="NQ", tick=0.25)
+
+    # STREAM
+    state = make_long_bar_state("NQ")
+    stream_rows = []
+    for _, row in df.iterrows():
+        stream_rows.append(add_phase_b_plus_long_streaming(row.to_dict(), state))
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest phase_b_plus_long parite sur {n} rows synth (NQ)...")
+
+    cols_check = [
+        # Long bar (5)
+        "long_up_bar", "long_dn_bar", "bar_body_ticks",
+        "range_h_minus_lprev_ticks", "range_hprev_minus_l_ticks",
+        # Long Extension Lines (6)
+        "n_long_up_zones_active", "n_long_dn_zones_active",
+        "dist_long_up_nearest_pct", "dist_long_dn_nearest_pct",
+        "n_long_up_cluster_within_0_2pct", "n_long_dn_cluster_within_0_2pct",
+        # Long UpDown pattern NQ (2)
+        "long_dn_up_pattern", "long_up_dn_pattern",
+    ]
+    print("\n--- NIVEAU 1 : parite batch vs streaming (13 features LONG) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:35s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        # Tolerance plus large sur dist_*_pct (float64 division noise)
+        atol = 1e-6
+        status = "PASS" if max_diff < atol and nan_mismatch == 0 else "FAIL"
+        n_fires = int((s != 0).sum()) if "bar" in col or "pattern" in col else None
+        extra = f"(fires={n_fires})" if n_fires is not None else ""
+        print(f"  {col:35s} {status} max_diff={max_diff:.4e} nan_mm={nan_mismatch} {extra}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where((np.abs(diff) > atol) & ~nan_both)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL phase_b_plus_long : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -2789,6 +2878,7 @@ def main():
                                  "game_changers",
                                  "edge_zones",
                                  "phase_b_plus",
+                                 "phase_b_plus_long",
                                  "all"])
     args = parser.parse_args()
 
@@ -2879,6 +2969,11 @@ def main():
 
     if args.engine in ("phase_b_plus", "all"):
         report = _test_phase_b_plus()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("phase_b_plus_long", "all"):
+        report = _test_phase_b_plus_long()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
