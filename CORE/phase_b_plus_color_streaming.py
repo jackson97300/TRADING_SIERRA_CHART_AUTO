@@ -261,17 +261,29 @@ def add_phase_b_plus_color_streaming(
         if cond1u and cond2u and cond3u and cond4u and cond5u:
             long_up_dn_es = 1
 
-    out["long_dn_up_pattern_es"] = long_dn_up_es
-    out["long_up_dn_pattern_es"] = long_up_dn_es
+    # FIX P0 audit code-reviewer aa67475 : naming sans suffix _es pour aligner
+    # avec batch + ML training qui consomment `long_*_pattern`. Le caller
+    # doit appeler UN seul sub-engine par symbol :
+    #   ES -> phase_b_plus_color_streaming (CE module, formule lookahead)
+    #   NQ -> phase_b_plus_long_streaming  (commit b5052e7, formule direct)
+    # Sinon dernier appel ecrase. Documentation explicite ci-dessous.
+    out["long_dn_up_pattern"] = long_dn_up_es
+    out["long_up_dn_pattern"] = long_up_dn_es
 
     # ═══════════════════════════════════════════════════════════════════════
     # 4. EXTENSION LINES COLOR (mirror batch)
     # ═══════════════════════════════════════════════════════════════════════
-    # update buffers : deactivate zones touchees par bar T-1 (et toutes les
+    # update buffers : deactivate zones touchees par bar T-1 (et toesn les
     # precedentes). Convention batch : update_with_bar(i, bar_low[i], bar_high[i]).
     # En lag-1, on update avec bar T-1 (= prev1) AVANT d'ajouter sa zone.
-    # Le bar_idx utilise = state.bar_idx - 1 (= index de bar T-1 dans batch).
-    bar_idx_for_t_minus_1 = state.bar_idx  # cf increment final : pre-increment, this is T-1's idx
+    #
+    # FIX P1 audit : bar_idx_for_t_minus_1 = state.bar_idx (incremente APRES
+    # ligne 336). Au call N (row = bar N), state.bar_idx == N. La zone creee
+    # pour bar T-1 (= bar N-1 batch) est enregistree avec created_bar_idx=N
+    # au lieu de N-1 dans le batch. Off-by-one absorbe par regle anti-instant-touch
+    # ExtensionLineBuffer ligne 97 (created_bar_idx == bar_idx -> skip). Test
+    # parite empirique PASS max_diff=0 confirme equivalence observable.
+    bar_idx_for_t_minus_1 = state.bar_idx
     if state.prev1_low is not None and state.prev1_high is not None:
         state.buf_up.update_with_bar(bar_idx_for_t_minus_1,
                                       state.prev1_low, state.prev1_high)

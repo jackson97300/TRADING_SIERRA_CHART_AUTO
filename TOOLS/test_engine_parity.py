@@ -2640,8 +2640,9 @@ def _test_phase_b_plus_color():
         "dist_color_up_nearest_pct", "dist_color_dn_nearest_pct",
         "n_color_up_cluster_within_0_2pct", "n_color_dn_cluster_within_0_2pct",
     ]
+    # FIX P0 audit : stream emit `long_*_pattern` (sans suffix) - aligne batch
     cols_stream_long_es = [
-        "long_dn_up_pattern_es", "long_up_dn_pattern_es",
+        "long_dn_up_pattern", "long_up_dn_pattern",
     ]
     cols_batch_long_es = [
         "long_dn_up_pattern", "long_up_dn_pattern",
