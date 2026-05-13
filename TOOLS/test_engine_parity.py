@@ -1914,6 +1914,108 @@ def _test_rvol_engine():
     return {"all_pass": all_pass}
 
 
+def _test_amd():
+    """Test sub-engine AmdEngine streaming (18 features ICT Power of 3)."""
+    from mia_amd_streaming import add_amd_streaming, AmdEngineState, make_amd_state
+    from mia_amd import AmdEngine
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(41)
+    # Synth 3 sessions Asia(200) + London(200) + US(200)
+    n = 600
+    sessions_arr = ["Asia"] * 200 + ["London"] * 200 + ["US"] * 200
+    df = pd.DataFrame({
+        "session_id": sessions_arr,
+        "price": 5800 + np.cumsum(np.random.randn(n) * 0.4),
+        "atr": np.full(n, 8.0),
+        # Inputs ML
+        "rvol": np.random.uniform(0.5, 3.0, n),
+        "delta_pct": np.random.uniform(-0.2, 0.2, n),
+        "finish_strength": np.random.uniform(-50, 50, n),
+        "retest_high_delta_div": np.random.choice([0, 1], n, p=[0.95, 0.05]),
+        "retest_low_delta_div": np.random.choice([0, 1], n, p=[0.95, 0.05]),
+        "rvol_absorb_buy": np.random.choice([0, 1], n, p=[0.9, 0.1]),
+        "rvol_absorb_sell": np.random.choice([0, 1], n, p=[0.9, 0.1]),
+        "profile_shape": np.random.choice([0, 1, 2, 3], n),
+        "momentum_5b": np.random.uniform(-15, 15, n),
+        "ib_broken_up": np.random.choice([0, 1], n, p=[0.7, 0.3]),
+        "ib_broken_down": np.random.choice([0, 1], n, p=[0.7, 0.3]),
+        "cvd_day_dir": np.random.choice([-1, 0, 1], n),
+    })
+
+    engine = AmdEngine(symbol="ES")  # tick=0.25 par defaut
+    batch_df = engine.compute(df.copy())
+
+    # FIX P1 audit : utiliser factory make_amd_state(symbol) pour config correcte
+    # (tick + sweep_min + accum_min + judas_re per-symbole)
+    state = make_amd_state("ES")
+    stream_rows = []
+    for _, row in df.iterrows():
+        stream_rows.append(add_amd_streaming(row.to_dict(), state))
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest amd parite sur {n} rows synth (3 sessions Asia/London/US)...")
+
+    cols_check = [
+        "amd_phase", "amd_asia_range_ticks", "amd_asia_high", "amd_asia_low",
+        "amd_sweep_up", "amd_sweep_dn", "amd_sweep_depth_ticks",
+        "amd_manip_score", "amd_manip_dir", "amd_judas_swing",
+        "amd_dist_score", "amd_dist_dir", "amd_dist_confirmed",
+        "amd_reversal_prob", "amd_po3_bullish", "amd_po3_bearish",
+        "amd_po3_score", "amd_session_bias",
+    ]
+    print("\n--- NIVEAU 1 : parite batch vs streaming (18 features amd_*) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:30s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        status = "PASS" if max_diff < 1e-6 and nan_mismatch == 0 else "FAIL"
+        print(f"  {col:30s} {status} max_diff={max_diff:.6e} nan_mismatch={nan_mismatch}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where((np.abs(diff) > 1e-6) & ~nan_both)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} sess={df.iloc[idx]['session_id']} "
+                      f"batch={b[idx]} stream={s[idx]}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+
+    # NIVEAU 2 BONUS : boot mid-London (FIX P1.1 audit)
+    # Verifie que stream ne crash PAS si on demarre mid-London sans historique Asia.
+    # Comportement attendu : amd_asia_* = NaN, sweeps/judas = 0, scores = 0
+    # (mirror batch qui aurait le meme degrade si lance avec rows[300:] uniquement).
+    print("\n--- NIVEAU 2 : boot mid-London (P1.1 audit) ---")
+    state_mid = make_amd_state("ES")
+    midstart_rows = []
+    for _, row in df.iloc[300:].iterrows():  # demarre debut US (skip Asia + London entier)
+        midstart_rows.append(add_amd_streaming(row.to_dict(), state_mid))
+    mid_df = pd.DataFrame(midstart_rows)
+    # Verifier que asia_high/low sont NaN (pas d'historique Asia)
+    asia_h_nan = mid_df["amd_asia_high"].isna().all()
+    sweeps_zero = (mid_df["amd_sweep_up"] == 0).all() and (mid_df["amd_sweep_dn"] == 0).all()
+    judas_zero = (mid_df["amd_judas_swing"] == 0).all()
+    boot_ok = asia_h_nan and sweeps_zero and judas_zero
+    print(f"  Boot mid-US (sans Asia/London) : "
+          f"asia_h all NaN={asia_h_nan}, sweeps=0={sweeps_zero}, judas=0={judas_zero}")
+    print(f"  Niveau 2 status : {'PASS' if boot_ok else 'FAIL'}")
+
+    all_pass = all_pass and boot_ok
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL amd : {'ALL 2 LEVELS PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -2202,6 +2304,7 @@ def main():
                                  "rolling_features_delta_div",
                                  "rolling_features_session_confluence",
                                  "rvol_engine",
+                                 "amd",
                                  "all"])
     args = parser.parse_args()
 
@@ -2272,6 +2375,11 @@ def main():
 
     if args.engine in ("rvol_engine", "all"):
         report = _test_rvol_engine()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("amd", "all"):
+        report = _test_amd()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
