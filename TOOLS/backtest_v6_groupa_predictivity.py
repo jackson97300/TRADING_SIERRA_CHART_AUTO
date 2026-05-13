@@ -114,7 +114,9 @@ def run_backtest():
     print(f"  {len(df)} bars, {len(df.columns)} cols")
 
     # 2. Garder colonnes DMP equivalentes (renommer _dmp)
-    dmp_targets = ["range_pos", "momentum_3b", "sess_range_atr",
+    # v0.3 : momentum_3b DROPPED (leak DMP confirme rho_fut1=0.44, voir
+    # CORE/phase_b_v6_complete.py + tools/backtest_momentum_variants.py)
+    dmp_targets = ["range_pos", "sess_range_atr",
                    "vwap_w_side", "vwap_triple_align", "cvd_day_dir"]
     dmp_vals = df[dmp_targets].copy()
     dmp_vals.columns = [f"{c}_dmp" for c in dmp_targets]
