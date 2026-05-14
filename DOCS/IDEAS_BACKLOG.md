@@ -7,6 +7,12 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-15]** **`dist_mq_hvl_pct_z` z-score streaming pour parite batch** | 2-3h | MEDIUM | PROPOSED (P2 R1 BUG #1)
+  - **Source** : Code-reviewer P0+P2 R1 (commit 6b28f22) BUG #1 - `dist_mq_hvl_pct_z` n'est PAS un alias `mq_hvl_0dte`, c'est un z-score rolling normalise par symbole calcule batch (build_dataset_v4_dmp_databento.py:837).
+  - **Impact** : LOT 4 absorb tolera l'absence (skip ligne 230) → 1 input MQ_NEUTRAL manquant. Pas bloquant LOT 4 (autre niveau HVL `dist_mq_hvl_pct` deja calcule). Mais dette ML : si feature `dist_mq_hvl_pct_z` est consommee ailleurs en aval (ML training), parite cassee.
+  - **Fix** : implementer z-score streaming via buffer rolling `dist_mq_hvl_pct` historique (60-120 bars). Formule : z = (value - mean) / std. Necessite state `deque(maxlen=N)` + recalcul mean/std per-bar.
+  - **Deadline** : AVANT training reel mid-juin 2026 (parite complete).
+
 - **[DETTE 2026-05-15]** **Test cross-session reset + quantification ctx_* alive count** | 1-2h | LOW | PROPOSED (Pass 4a R2 reserves)
   - **Source** : Code-reviewer Pass 4a R2 (commit bc5f8b3) - 2 tests empiriques manquants.
   - **Test 1 cross-session** : sample 30 bars Asia -> London (ou US cash -> AH) verifier que `ctx_cvd_session` reset bien au changement de `session` value. Code par lecture correct (rolling_features_streaming.py:1171-1175) mais pas valide empiriquement.

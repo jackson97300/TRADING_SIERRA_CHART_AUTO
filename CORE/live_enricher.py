@@ -292,6 +292,22 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         # "dist_mq_put_0dte_pct"], MQ_NEUTRAL_DIST_COLS = ["dist_mq_hvl_pct",
         # "dist_mq_hvl_pct_z"]). Sans : 4 features mortes at_level + cascade
         # LOT 5 trapped_at_resistance/support (Pattern V1 silent).
+        #
+        # FIX code-reviewer P0+P2 R1 BUG #2 : convention signe BATCH =
+        # (level - close) / close * 100 (cf enrich_dataset_v5_htf.py:500).
+        # Inverse = parite cassee, ML training a appris signe batch.
+        # LOT 4 absorb utilise abs() donc neutre pour at_level, mais
+        # autres consumers signe-sensibles (above/below booleans) auraient
+        # divergence batch/stream.
+        #
+        # FIX code-reviewer P0+P2 R1 BUG #1 : dist_mq_hvl_pct_z N'EST PAS
+        # un alias de mq_hvl_0dte - c'est un z-score rolling normalise par
+        # symbole calcule dans batch (build_dataset_v4_dmp_databento.py:837).
+        # Calcul streaming necessite buffer rolling historique long terme.
+        # DECISION : NE PAS produire dist_mq_hvl_pct_z en P2 -> LOT 4 absorb
+        # tolera NaN (cf MQ_NEUTRAL_DIST_COLS list[1] = "dist_mq_hvl_pct_z"
+        # absent du payload -> skip dans boucle ligne 230).
+        # IDEAS_BACKLOG : implementer z-score streaming pour parite complete.
         _close = float(ohlcv.get("close")) if ohlcv.get("close") is not None else None
         if _close is not None and _close > 0:
             for mq_key, dist_key in (
@@ -300,14 +316,16 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 ("mq_put_support", "dist_mq_put_pct"),
                 ("mq_put_support_0dte", "dist_mq_put_0dte_pct"),
                 ("mq_hvl", "dist_mq_hvl_pct"),
-                ("mq_hvl_0dte", "dist_mq_hvl_pct_z"),  # alias batch (cf phase_b_plus_plus_absorb_streaming:47)
+                # NOTE : dist_mq_hvl_pct_z REMOVED (BUG #1 fix) - z-score rolling
+                # non-trivial, IDEAS_BACKLOG. LOT 4 tolera l'absence.
             ):
                 lvl = payload.get(mq_key)
                 if lvl is not None:
                     try:
                         lvl_f = float(lvl)
                         if not (lvl_f != lvl_f):  # not NaN
-                            payload[dist_key] = (_close - lvl_f) / _close * 100
+                            # BUG #2 fix : convention batch (level - close)/close*100
+                            payload[dist_key] = (lvl_f - _close) / _close * 100
                     except (TypeError, ValueError):
                         pass
 
