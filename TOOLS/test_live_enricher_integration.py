@@ -119,6 +119,35 @@ def run_integration_chain(payload: dict, trades_df: pd.DataFrame, state, symbol:
         )
         payload = add_delta_div_ext_streaming(payload, s_delta_div)
 
+    # Pass 2 : intermarket (ES/NQ) - simule sans partner pour test mono-symbol
+    if symbol_pure in ("ES", "NQ"):
+        from intermarket_streaming import (
+            add_intermarket_streaming,
+            IntermarketState,
+        )
+        # Pas de partner state ici (test mono-symbol) -> other_inputs=None
+        # -> intermarket retourne toutes features NaN (comportement valide).
+        if "price" not in payload and "close" in payload:
+            payload["price"] = payload["close"]
+        with state.lock:
+            s_intermarket = state.get_engine_state(
+                "intermarket",
+                factory=IntermarketState,
+            )
+            payload = add_intermarket_streaming(payload, s_intermarket, other_inputs=None)
+
+    # Pass 2 : gold_phase_d (MGC only) - skip pour ES/NQ
+    if symbol_pure == "MGC":
+        from gold_phase_d_streaming import (
+            add_gold_phase_d_streaming,
+            GoldPhaseDState,
+        )
+        with state.lock:
+            s_gold = state.get_engine_state("gold_phase_d", factory=GoldPhaseDState)
+            payload = add_gold_phase_d_streaming(
+                payload, s_gold, close_6e=None, close_zn=None, close_zb=None,
+            )
+
     return payload
 
 
@@ -202,12 +231,13 @@ def main():
         return False
 
     # 3. Verify features ajoutees
-    print("\n[3/4] Verify features ajoutees (76 attendues)...")
-    expected_min = 76  # 33 LOT1 + 10 LOT2 + 5 LOT3 + 8 LOT4 + 10 LOT5 + 6 LOT6 = 72 min, 76 max
-    if n_new < 60:
-        print(f"  [FAIL] features ajoutees insuffisantes : {n_new} < 60")
+    print("\n[3/4] Verify features ajoutees (Pass 1 + Pass 2 = 82+ attendues)...")
+    # Pass 1 : 33 LOT1 + 10 LOT2 + 5 LOT3 + 8 LOT4 + 10 LOT5 + 6 LOT6 = 72 min, 76 max
+    # Pass 2 ES : + 10 intermarket = 82 min, 86 max
+    if n_new < 70:
+        print(f"  [FAIL] features ajoutees insuffisantes : {n_new} < 70")
         return False
-    print(f"  [OK] {n_new} features ajoutees (>= 60 minimum)")
+    print(f"  [OK] {n_new} features ajoutees (>= 70 minimum)")
 
     # Sample : verifier presence features critiques
     critical_keys = [
@@ -217,6 +247,9 @@ def main():
         "bn_absorb_ask_raw", "near_resistance_level", # LOT 4
         "bn_trapped_buyers_raw",                       # LOT 5
         "n_delta_div_buy_zones_active",                # LOT 6
+        "im_cross_delta_agreement_5",                  # Pass 2 intermarket
+        "im_rolling_correlation_10",                   # Pass 2 intermarket
+        "im_open_type_agreement",                      # Pass 2 intermarket
     ]
     missing = [k for k in critical_keys if k not in payload_enriched]
     if missing:

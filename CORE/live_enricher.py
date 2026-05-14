@@ -311,8 +311,8 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         payload["trades_window_sec"] = 60
 
         # ──────────────────────────────────────────────────────────────────────
-        # Phase 3c semaine 4 : engines streaming phase_b_plus_plus (76 features)
-        # Ordre dependance critique :
+        # Phase 3c semaine 4 : engines streaming (76 + 4 MGC + 10 ES/NQ = 90 max)
+        # Ordre dependance critique (Pass 1 phase_b_plus_plus) :
         #   footprint_cells (helper pur)
         #   -> LOT 1 trades aggregates (produit delta_div_buy/sell, delta_bar)
         #   -> LOT 2 big_v2 (10 features VAP scan)
@@ -320,6 +320,10 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         #   -> LOT 4 absorb (produit near_resistance/support_level)
         #   -> LOT 5 trapped (consomme near_*, fail-loud anti Pattern 11)
         #   -> LOT 6 delta_div_ext (consomme delta_div_buy/sell de LOT 1)
+        #
+        # Pass 2 (cross-asset / cross-symbol) :
+        #   -> gold_phase_d (MGC only, 4 features 6E/ZN/ZB) - hors lock target
+        #   -> intermarket (ES/NQ partner, 10 features) - lit _states[partner]
         # ──────────────────────────────────────────────────────────────────────
         # FIX P0 code-reviewer post-fix #2 : checkpoint payload avant chain
         # pour eviter JSONL heterogene si crash mid-execution (LOT 1+2 ajoutees
@@ -430,6 +434,81 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     factory=make_delta_div_ext_state,
                 )
                 payload = add_delta_div_ext_streaming(payload, s_delta_div)
+
+            # ──────────────────────────────────────────────────────────────────
+            # Pass 2 Phase 3c semaine 4 : gold_phase_d (MGC) + intermarket (ES/NQ)
+            # Hors lock state principal pour eviter deadlock cross-symbol (gold
+            # ne touche pas state target, intermarket lit _states[partner] sous
+            # son propre lock).
+            # ──────────────────────────────────────────────────────────────────
+
+            # Gold Phase D : MGC-specific (4 features cross-asset 6E/ZN/ZB)
+            # Pour autres symbols : skip (gold est MGC-only).
+            # NOTE dette : closes 6E/ZN/ZB pas trackes dans SYMBOLS Live Enricher
+            # actuel -> None passe -> features = NaN. Backfill V4 fournira via
+            # parquets Databento. Cf IDEAS_BACKLOG entry "cross-asset MGC live".
+            if symbol_pure == "MGC":
+                from gold_phase_d_streaming import (
+                    add_gold_phase_d_streaming,
+                    GoldPhaseDState,
+                )
+                with state.lock:
+                    s_gold = state.get_engine_state(
+                        "gold_phase_d",
+                        factory=GoldPhaseDState,
+                    )
+                    payload = add_gold_phase_d_streaming(
+                        payload, s_gold,
+                        close_6e=None, close_zn=None, close_zb=None,
+                    )
+
+            # Intermarket : ES <-> NQ cross-symbol (10 features)
+            # Lire derniere bar partner depuis _states[partner]. NaN si absent.
+            if symbol_pure in ("ES", "NQ"):
+                from intermarket_streaming import (
+                    add_intermarket_streaming,
+                    IntermarketState,
+                )
+
+                partner_symbol = "NQ.c.0" if symbol_pure == "ES" else "ES.c.0"
+                partner_bar = None
+                with _states_lock:
+                    partner_state = _states.get(partner_symbol)
+                if partner_state is not None:
+                    with partner_state.lock:
+                        partner_bar = partner_state.last_bar()
+
+                # Build other_inputs dict pour intermarket streaming (None si
+                # partner absent ou non-traite encore ce cycle -> features NaN).
+                other_inputs = None
+                if partner_bar is not None:
+                    other_inputs = {
+                        "price": partner_bar.get("close"),
+                        "delta_bar": partner_bar.get("delta_bar"),
+                        "total_vol": partner_bar.get("volume"),
+                        "delta_day": partner_bar.get("delta_day"),
+                        "dist_sess_high": partner_bar.get("dist_sess_high"),
+                        "dist_sess_low": partner_bar.get("dist_sess_low"),
+                        "large_trader_ratio": partner_bar.get("large_trader_ratio"),
+                        "open_bias_conf": partner_bar.get("open_bias_conf"),
+                        "open_direction": partner_bar.get("open_direction"),
+                        "open_type": partner_bar.get("open_type"),
+                    }
+
+                # Target row necessite aussi 'price' alias 'close' pour
+                # intermarket_streaming convention. Aliaser sans muter le
+                # payload origine downstream consumers.
+                if "price" not in payload and "close" in payload:
+                    payload["price"] = payload["close"]
+
+                with state.lock:
+                    s_intermarket = state.get_engine_state(
+                        "intermarket",
+                        factory=IntermarketState,
+                    )
+                    payload = add_intermarket_streaming(
+                        payload, s_intermarket, other_inputs=other_inputs,
+                    )
         except (ValueError, KeyError, TypeError, AttributeError, ImportError) as e:
             # Fail-soft restreint (code-reviewer P1) : whitelist exceptions
             # attendues (contract violation, dep manquante, type mismatch). Tout
@@ -450,6 +529,8 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             tb = traceback.format_exc()
             failed_lot = "unknown"
             for marker, lot_name in (
+                ("intermarket_streaming", "intermarket"),
+                ("gold_phase_d_streaming", "gold_phase_d"),
                 ("phase_b_plus_plus_delta_div_ext_streaming", "LOT_6_delta_div_ext"),
                 ("phase_b_plus_plus_trapped_streaming", "LOT_5_trapped"),
                 ("phase_b_plus_plus_absorb_streaming", "LOT_4_absorb"),

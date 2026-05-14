@@ -135,6 +135,20 @@ class LiveEnricherState:
         self._bars_deque.append(bar_row)
         self.n_bars_processed += 1
 
+    def last_bar(self) -> Optional[dict]:
+        """Retourne la derniere bar enrichie ou None si buffer vide.
+
+        Cost O(1) (deque[-1]). Utilise pour cross-symbol access dans
+        engines intermarket (ES <-> NQ partner bar) sans materialiser
+        bars_df full (qui serait O(N) sur 60j buffer).
+
+        Caller doit acquerir `state.lock` AVANT pour eviter race avec
+        snapshot_loop / main loop concurrent mutation.
+        """
+        if not self._bars_deque:
+            return None
+        return self._bars_deque[-1]
+
     def append_trades(self, trades_df: pd.DataFrame) -> None:
         """Ajoute trades au deque, truncate > TRADES_RETENTION_DAYS via ts cutoff.
 
