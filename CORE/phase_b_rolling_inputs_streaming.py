@@ -340,22 +340,18 @@ def add_cvd_momentum_streaming(row: dict, state: CVDMomentumState) -> dict:
     if np.isnan(delta_bar):
         delta_bar = 0.0  # batch fillna(0)
 
-    # Fast path : alias cvd_session si deja produit par session_confluence (Pass 3b)
-    cvd_session = out.get("cvd_session")
-    if cvd_session is not None:
-        try:
-            out["cvd_day"] = float(cvd_session)
-        except (TypeError, ValueError):
-            out["cvd_day"] = 0.0
-    else:
-        # Cumsum running par session_date_trading
-        sess_d = out.get("session_date_trading")
-        if sess_d != state.current_session_date_trading:
-            # Nouvelle session -> reset cumsum
-            state.current_session_date_trading = sess_d
-            state.cvd_day_running = 0.0
-        state.cvd_day_running += delta_bar
-        out["cvd_day"] = state.cvd_day_running
+    # Fix code-reviewer Pass 4a R2 #3 : REMOVED code mort cvd_session fast path.
+    # Apres refactor ordre (Pass 4a AVANT Pass 3b), `cvd_session` produit par
+    # Pass 3b session_confluence n'est JAMAIS dispo a Pass 4a -> fast path
+    # ne s'activait jamais. Seul chemin reel : cumsum running par
+    # session_date_trading (produit par Pass 4c-prereq AVANT Pass 4a).
+    sess_d = out.get("session_date_trading")
+    if sess_d != state.current_session_date_trading:
+        # Nouvelle session -> reset cumsum
+        state.current_session_date_trading = sess_d
+        state.cvd_day_running = 0.0
+    state.cvd_day_running += delta_bar
+    out["cvd_day"] = state.cvd_day_running
 
     # delta_day_dir = sign(cvd_day)
     cvd = out["cvd_day"]

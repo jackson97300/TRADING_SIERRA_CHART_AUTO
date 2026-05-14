@@ -605,14 +605,34 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             # Inputs : total_vol, delta_bar (depuis LOT 1) + OHLC.
             # Audit feature-engineer 14/05 : GREEN (rvol_extreme rho=+0.059 ES).
             # ──────────────────────────────────────────────────────────────────
+            # Fix code-reviewer Pass 4a R2 #4 : consolider imports phase_b_helpers
+            # (Pass 3c rvol_inputs + Pass 4c-prereq helpers + Pass 4a) en 1 bloc.
             from phase_b_helpers import (
-                add_rvol_inputs_streaming,
-                RvolInputsState,
+                add_rvol_inputs_streaming, RvolInputsState,
+                add_session_metadata_streaming, SessionMetadataState,
+                add_ib_features_streaming, IBState,
+                add_session_high_low_streaming, SessionHighLowState,
+                add_volume_profile_features_streaming, VolumeProfileState,
             )
             from rvol_streaming import (
                 add_rvol_engine_streaming,
                 RvolEngineState,
             )
+            from phase_b_plus_streaming import (
+                add_phase_b_plus_streaming, PhaseBPlusState, make_phase_b_plus_state,
+            )
+            from phase_b_rolling_inputs_streaming import (
+                make_phase_b_rolling_inputs_state,
+                apply_rolling_inputs_streaming,
+            )
+            try:
+                from CORE.constants import get_session_boundaries as _get_bounds
+            except ImportError:
+                from constants import get_session_boundaries as _get_bounds
+            sym_bounds = _get_bounds(symbol_pure)
+            trades_for_vp = []
+            if not trades_df.empty and {"price", "size"}.issubset(trades_df.columns):
+                trades_for_vp = trades_df[["price", "size"]].to_dict(orient="records")
 
             with state.lock:
                 # 1. rvol_inputs : range_size, finish_strength, delta_pct (stateless)
@@ -642,25 +662,8 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             #   3. add_session_high_low_streaming  -> sess_high/low, cash_high/low
             #   4. add_volume_profile_features_streaming -> cur_vpoc/vah/val
             #   5. add_phase_b_plus_streaming      -> 74 features VWAP + OVN
+            # Imports consolides plus haut (fix code-reviewer Pass 4a R2 #4).
             # ──────────────────────────────────────────────────────────────────
-            from phase_b_helpers import (
-                add_session_metadata_streaming, SessionMetadataState,
-                add_ib_features_streaming, IBState,
-                add_session_high_low_streaming, SessionHighLowState,
-                add_volume_profile_features_streaming, VolumeProfileState,
-            )
-            from phase_b_plus_streaming import (
-                add_phase_b_plus_streaming, PhaseBPlusState, make_phase_b_plus_state,
-            )
-            try:
-                from CORE.constants import get_session_boundaries as _get_bounds
-            except ImportError:
-                from constants import get_session_boundaries as _get_bounds
-            sym_bounds = _get_bounds(symbol_pure)
-            trades_for_vp = []
-            if not trades_df.empty and {"price", "size"}.issubset(trades_df.columns):
-                trades_for_vp = trades_df[["price", "size"]].to_dict(orient="records")
-
             with state.lock:
                 s_meta = state.get_engine_state("session_metadata", factory=SessionMetadataState)
                 payload = add_session_metadata_streaming(payload, s_meta, bounds=sym_bounds)
@@ -679,11 +682,8 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             # Pass 4a Phase 3c semaine 4 : phase_b_rolling_inputs_streaming
             # FIX code-reviewer Pass 4a R1 #1 : DEPLACE AVANT Pass 3b rolling.
             # 24 features derivees (resout dette B5). Mirror batch.
+            # Imports consolides plus haut.
             # ──────────────────────────────────────────────────────────────────
-            from phase_b_rolling_inputs_streaming import (
-                make_phase_b_rolling_inputs_state,
-                apply_rolling_inputs_streaming,
-            )
             with state.lock:
                 s_rolling_inputs = state.get_engine_state(
                     "phase_b_rolling_inputs",

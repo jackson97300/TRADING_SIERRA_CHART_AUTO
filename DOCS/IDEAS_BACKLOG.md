@@ -7,6 +7,12 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-15]** **Test cross-session reset + quantification ctx_* alive count** | 1-2h | LOW | PROPOSED (Pass 4a R2 reserves)
+  - **Source** : Code-reviewer Pass 4a R2 (commit bc5f8b3) - 2 tests empiriques manquants.
+  - **Test 1 cross-session** : sample 30 bars Asia -> London (ou US cash -> AH) verifier que `ctx_cvd_session` reset bien au changement de `session` value. Code par lecture correct (rolling_features_streaming.py:1171-1175) mais pas valide empiriquement.
+  - **Test 2 quantification** : assertion `ctx_alive_count >= N` ou N basé sur audit pre-refactor. Le test actuel "+349 features" cache le detail.
+  - **Fix** : etendre `TOOLS/test_live_enricher_integration.py` avec test 8 + 9.
+
 - **[DETTE 2026-05-15]** **DROP definitif features DMP-C++ non-reproductibles batch + V4 schema** | 2-3h | MEDIUM | PROPOSED (drop streaming fait, reste batch)
   - **Source** : Code-reviewer Pass 4c-prereq audit + Jackson confirme drop 2 mortes (15/05).
   - **Status streaming** : DONE - `ctx_diag_imbalance_mean_5` + `ctx_large_trader_slope_5` ne sont plus produits par `rolling_features_streaming.py` (lignes 444-451 + 681-686 commentees, state.diag_imb_mid / large_trader_mid conserves au cas ou).
