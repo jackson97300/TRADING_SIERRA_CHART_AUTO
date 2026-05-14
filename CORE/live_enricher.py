@@ -295,6 +295,11 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         #   -> LOT 5 trapped (consomme near_*, fail-loud anti Pattern 11)
         #   -> LOT 6 delta_div_ext (consomme delta_div_buy/sell de LOT 1)
         # ──────────────────────────────────────────────────────────────────────
+        # FIX P0 code-reviewer post-fix #2 : checkpoint payload avant chain
+        # pour eviter JSONL heterogene si crash mid-execution (LOT 1+2 ajoutees
+        # avant fail LOT 3 -> payload partiel ecrit downstream).
+        # Revert payload pre-chain en cas d'exception fail-soft.
+        payload_pre_chain = dict(payload)
         try:
             from footprint_builder_streaming import build_footprint_cells_streaming
             from phase_b_plus_plus_trades_streaming import (
@@ -405,17 +410,26 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             # autre Exception (RuntimeError, MemoryError, etc.) remontera pour
             # crash + nssm restart -- evite masquage bugs critiques.
             #
+            # FIX P0 code-reviewer post-fix #2 : revert payload pre-chain pour
+            # eviter JSONL heterogene (bars partielles si crash mid-execution).
+            payload = payload_pre_chain
+            payload["phase_b_plus_plus_partial"] = True  # marker downstream filter
+            #
             # Parse traceback pour identifier le LOT defaillant (LOT 1-6).
+            # FIX P2 code-reviewer post-fix #2 : ordre INVERSE (LOT 6 -> LOT 1)
+            # pour eviter mis-classification cascade. Un fail LOT 6 qui pass
+            # par LOT 1 (rare mais possible) etait classifie LOT 1. L'ordre
+            # inverse priorise le module le plus profond dans la chain.
             import traceback
             tb = traceback.format_exc()
             failed_lot = "unknown"
             for marker, lot_name in (
-                ("phase_b_plus_plus_trades_streaming", "LOT_1_trades"),
-                ("phase_b_plus_plus_big_v2_streaming", "LOT_2_big_v2"),
-                ("phase_b_plus_plus_cluster_v2_streaming", "LOT_3_cluster_v2"),
-                ("phase_b_plus_plus_absorb_streaming", "LOT_4_absorb"),
-                ("phase_b_plus_plus_trapped_streaming", "LOT_5_trapped"),
                 ("phase_b_plus_plus_delta_div_ext_streaming", "LOT_6_delta_div_ext"),
+                ("phase_b_plus_plus_trapped_streaming", "LOT_5_trapped"),
+                ("phase_b_plus_plus_absorb_streaming", "LOT_4_absorb"),
+                ("phase_b_plus_plus_cluster_v2_streaming", "LOT_3_cluster_v2"),
+                ("phase_b_plus_plus_big_v2_streaming", "LOT_2_big_v2"),
+                ("phase_b_plus_plus_trades_streaming", "LOT_1_trades"),
                 ("footprint_builder_streaming", "footprint_cells"),
             ):
                 if marker in tb:
@@ -423,7 +437,7 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     break
             logger.warning(
                 f"phase_b_plus_plus chain fail {symbol} at {failed_lot}: "
-                f"{type(e).__name__}: {e}"
+                f"{type(e).__name__}: {e} -- payload reverted to pre-chain"
             )
             _emit_log(
                 "ENRICHER_ENGINE_FAIL", sym=symbol,
