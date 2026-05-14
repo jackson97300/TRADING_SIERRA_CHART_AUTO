@@ -701,6 +701,82 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 produced_keys = set(enriched_rolling) - set(row_for_rolling)
                 for k in produced_keys:
                     payload[k] = enriched_rolling[k]
+
+            # ──────────────────────────────────────────────────────────────────
+            # Pass 4c-prereq Phase 3c semaine 4 : prerequisites pour Pass 4a
+            # rolling_inputs_streaming (a venir). Integre 5 helpers streaming :
+            #   1. add_session_metadata_streaming  -> date_et, mins_et,
+            #      session_date_trading, is_cash_session, is_ib_window
+            #   2. add_ib_features_streaming       -> ib_high/low/range, ib_complete,
+            #      ib_position_pct, ib_extension_ratio
+            #   3. add_session_high_low_streaming  -> sess_high/low, cash_high/low,
+            #      dist_sess_*_pct, is_new_sess_*
+            #   4. add_volume_profile_features_streaming -> cur_vpoc/vah/val,
+            #      prev_*, pdh/pdl, inside_value_area, dist_*_pct
+            #   5. add_phase_b_plus_streaming      -> 74 features VWAP D/W/M + SD
+            #      + OVN + cross_up/dn + sd1/2_above/below
+            # Ordre dependancy : 1 -> 2 -> 3 -> 4 -> 5 (session metadata premier).
+            # Audit feature-engineer 15/05 : couvre 60% inputs B5 Pass 4a.
+            # ──────────────────────────────────────────────────────────────────
+            from phase_b_helpers import (
+                add_session_metadata_streaming,
+                SessionMetadataState,
+                add_ib_features_streaming,
+                IBState,
+                add_session_high_low_streaming,
+                SessionHighLowState,
+                add_volume_profile_features_streaming,
+                VolumeProfileState,
+            )
+            from phase_b_plus_streaming import (
+                add_phase_b_plus_streaming,
+                PhaseBPlusState,
+            )
+
+            # Pour add_session_metadata bounds : utiliser bounds per-symbol deja
+            # importe via get_session_boundaries. Pass via dict pour _resolve_bounds.
+            try:
+                from CORE.constants import get_session_boundaries as _get_bounds
+            except ImportError:
+                from constants import get_session_boundaries as _get_bounds
+            sym_bounds = _get_bounds(symbol_pure)
+
+            # Build trades list for volume_profile (mirror Pass 1 LOT 1 format)
+            trades_for_vp = []
+            if not trades_df.empty and {"price", "size"}.issubset(trades_df.columns):
+                trades_for_vp = trades_df[["price", "size"]].to_dict(orient="records")
+
+            with state.lock:
+                # 1. Session metadata (date_et, mins_et, session_date_trading)
+                s_meta = state.get_engine_state(
+                    "session_metadata",
+                    factory=SessionMetadataState,
+                )
+                payload = add_session_metadata_streaming(payload, s_meta, bounds=sym_bounds)
+
+                # 2. IB features (ib_high/low, ib_position_pct, ib_extension_ratio)
+                s_ib = state.get_engine_state("ib_features", factory=IBState)
+                payload = add_ib_features_streaming(payload, s_ib, tick=tick, bounds=sym_bounds)
+
+                # 3. Session high/low (sess_high/low, cash_high/low, dist_sess_*_pct)
+                s_sess_hl = state.get_engine_state(
+                    "session_high_low",
+                    factory=SessionHighLowState,
+                )
+                payload = add_session_high_low_streaming(payload, s_sess_hl, tick=tick)
+
+                # 4. Volume profile (cur_vpoc/vah/val, prev_*, inside_value_area)
+                s_vp = state.get_engine_state(
+                    "volume_profile",
+                    factory=VolumeProfileState,
+                )
+                payload = add_volume_profile_features_streaming(
+                    payload, s_vp, trades_in_window=trades_for_vp, tick=tick,
+                )
+
+                # 5. Phase B+ (74 features VWAP D/W/M + SD bands + OVN)
+                s_bp = state.get_engine_state("phase_b_plus", factory=PhaseBPlusState)
+                payload = add_phase_b_plus_streaming(payload, s_bp, tick=tick)
         except (ValueError, KeyError, TypeError, AttributeError, ImportError) as e:
             # Fail-soft restreint (code-reviewer P1) : whitelist exceptions
             # attendues (contract violation, dep manquante, type mismatch). Tout
@@ -721,6 +797,7 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             tb = traceback.format_exc()
             failed_lot = "unknown"
             for marker, lot_name in (
+                ("phase_b_plus_streaming", "phase_b_plus"),
                 ("rolling_features_streaming", "rolling_features"),
                 ("rvol_streaming", "rvol_engine"),
                 ("sessions_swings_lag_streaming", "sessions_lag"),
@@ -752,6 +829,8 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 engine_name = "rvol_chain"
             elif failed_lot == "rolling_features":
                 engine_name = "rolling_features_chain"
+            elif failed_lot == "phase_b_plus":
+                engine_name = "phase_b_plus_chain"
             else:
                 engine_name = "cross_asset_chain"
             logger.warning(

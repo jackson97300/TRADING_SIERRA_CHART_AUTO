@@ -200,6 +200,34 @@ def run_integration_chain(payload: dict, trades_df: pd.DataFrame, state, symbol:
         s_rvol = state.get_engine_state("rvol_engine", factory=RvolEngineState)
         payload = add_rvol_engine_streaming(payload, s_rvol)
 
+    # Pass 4c-prereq : add_session_metadata + ib + session_high_low + volume_profile + phase_b_plus
+    from phase_b_helpers import (
+        add_session_metadata_streaming, SessionMetadataState,
+        add_ib_features_streaming, IBState,
+        add_session_high_low_streaming, SessionHighLowState,
+        add_volume_profile_features_streaming, VolumeProfileState,
+    )
+    from phase_b_plus_streaming import add_phase_b_plus_streaming, PhaseBPlusState
+    try:
+        from CORE.constants import get_session_boundaries as _gb
+    except ImportError:
+        from constants import get_session_boundaries as _gb
+    _sym_bounds = _gb(symbol_pure)
+    _trades_vp = []
+    if not trades_df.empty and {"price", "size"}.issubset(trades_df.columns):
+        _trades_vp = trades_df[["price", "size"]].to_dict(orient="records")
+    with state.lock:
+        s_meta = state.get_engine_state("session_metadata", factory=SessionMetadataState)
+        payload = add_session_metadata_streaming(payload, s_meta, bounds=_sym_bounds)
+        s_ib = state.get_engine_state("ib_features", factory=IBState)
+        payload = add_ib_features_streaming(payload, s_ib, tick=tick, bounds=_sym_bounds)
+        s_sess_hl = state.get_engine_state("session_high_low", factory=SessionHighLowState)
+        payload = add_session_high_low_streaming(payload, s_sess_hl, tick=tick)
+        s_vp = state.get_engine_state("volume_profile", factory=VolumeProfileState)
+        payload = add_volume_profile_features_streaming(payload, s_vp, trades_in_window=_trades_vp, tick=tick)
+        s_bp = state.get_engine_state("phase_b_plus", factory=PhaseBPlusState)
+        payload = add_phase_b_plus_streaming(payload, s_bp, tick=tick)
+
     # Pass 3b : rolling_features (5 sous-fonctions chain meme state)
     # Fix code-reviewer Pass 3b : isoler aliases + injecter ts ms epoch
     from rolling_features_streaming import (
@@ -337,6 +365,9 @@ def main():
         "asia_high", "ny_open", "pct_in_range",        # Pass 3a simple
         "premium_zone", "discount_zone",               # Pass 3a simple
         "swing_high_active_lag10", "liquidity_sweep_high_lag5",  # Pass 3a lag
+        "vwap_d", "dist_vwap_d_pct",                   # Pass 4c-prereq phase_b_plus
+        "ib_position_pct", "sess_high",                # Pass 4c-prereq ib + session_hl
+        "cur_vpoc", "inside_value_area",               # Pass 4c-prereq volume_profile
     ]
     missing = [k for k in critical_keys if k not in payload_enriched]
     if missing:
