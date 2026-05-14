@@ -3496,6 +3496,92 @@ def _test_phase_b_plus_plus_big_v2():
     return {"all_pass": all_pass}
 
 
+def _test_phase_b_plus_plus_cluster_v2():
+    """Test sub-engine LOT 3 cluster_volume_v2 (5 features)."""
+    from phase_b_plus_plus_cluster_v2_streaming import (
+        add_cluster_v2_streaming, make_cluster_v2_state,
+    )
+    from phase_b_plus_plus_engine import add_cluster_volume_features
+    from footprint_builder import build_footprint_per_bar
+    from footprint_builder_streaming import build_footprint_cells_streaming
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(157)
+    n_bars = 200
+    n_trades = 12000
+    start = pd.Timestamp("2026-05-12 13:00:00", tz="UTC")
+    bar_starts = pd.Series([start + pd.Timedelta(minutes=i) for i in range(n_bars)])
+
+    # Trades : concentrer sur peu de prix pour générer clusters volume
+    trades = []
+    for _ in range(n_trades):
+        offset_min = np.random.uniform(0, n_bars - 0.001)
+        ts = start + pd.Timedelta(minutes=offset_min)
+        # Concentrer sur 8 niveaux de prix (favorise cluster volume threshold 250)
+        price = 5800 + (np.random.randint(0, 8) * 0.25 - 1.0)
+        size = int(np.random.exponential(50)) + 1
+        side = np.random.choice(["A", "B"], p=[0.5, 0.5])
+        trades.append({"ts_event": ts, "price": price, "size": size, "side": side})
+    trades_df = pd.DataFrame(trades).sort_values("ts_event").reset_index(drop=True)
+
+    # bars df with high/low (necessaire pour cluster_at_high/low)
+    df = pd.DataFrame({"ts_event": bar_starts})
+    df["high"] = 5800.50  # constante pour simplicite
+    df["low"] = 5799.50
+
+    # BATCH
+    batch_footprint = build_footprint_per_bar(trades_df, bar_starts, tick=0.25)
+    batch_df = add_cluster_volume_features(df.copy(), batch_footprint, symbol="ES", tick=0.25)
+
+    # STREAM
+    state = make_cluster_v2_state("ES")
+    stream_rows = []
+    for i in range(n_bars):
+        bar_start_ts = bar_starts.iloc[i]
+        bar_end_ts = bar_starts.iloc[i + 1] if i + 1 < n_bars else bar_start_ts + pd.Timedelta(minutes=1)
+        mask = (trades_df["ts_event"] >= bar_start_ts) & (trades_df["ts_event"] < bar_end_ts)
+        trades_in_bar = trades_df[mask][["price", "size", "side"]].to_dict("records")
+        cells = build_footprint_cells_streaming(trades_in_bar, tick=0.25)
+        row_in = {"ts_event": bar_starts.iloc[i], "high": 5800.50, "low": 5799.50}
+        out = add_cluster_v2_streaming(row_in, state, cells)
+        stream_rows.append(out)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest phase_b_plus_plus_cluster_v2 parite sur {n_bars} bars + {n_trades} trades...")
+
+    cols_check = [
+        "n_cluster_groups", "max_cluster_size", "max_cluster_volume_v2",
+        "cluster_at_high", "cluster_at_low",
+    ]
+    print(f"\n--- NIVEAU 1 : parite (5 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:32s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        max_diff = float(np.nanmax(np.abs(b - s)))
+        n_fires_b = int((b != 0).sum())
+        n_fires_s = int((s != 0).sum())
+        status = "PASS" if max_diff < 1e-6 else "FAIL"
+        print(f"  {col:32s} {status} max_diff={max_diff:.4e} "
+              f"non-zero batch/stream={n_fires_b}/{n_fires_s}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where(np.abs(b - s) > 1e-6)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL phase_b_plus_plus_cluster_v2 : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -3797,6 +3883,7 @@ def main():
                                  "footprint_builder",
                                  "phase_b_plus_plus_trades",
                                  "phase_b_plus_plus_big_v2",
+                                 "phase_b_plus_plus_cluster_v2",
                                  "all"])
     args = parser.parse_args()
 
@@ -3932,6 +4019,11 @@ def main():
 
     if args.engine in ("phase_b_plus_plus_big_v2", "all"):
         report = _test_phase_b_plus_plus_big_v2()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("phase_b_plus_plus_cluster_v2", "all"):
+        report = _test_phase_b_plus_plus_cluster_v2()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
