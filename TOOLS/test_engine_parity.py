@@ -3314,6 +3314,109 @@ def _test_footprint_builder():
     return {"all_pass": all_pass}
 
 
+def _test_phase_b_plus_plus_trades():
+    """Test sub-engine LOT 1 phase_b_plus_plus trades aggregates (~34 features)."""
+    from phase_b_plus_plus_trades_streaming import (
+        add_phase_b_plus_plus_trades_streaming,
+        make_phase_b_plus_plus_trades_state,
+    )
+    from phase_b_plus_plus_engine import apply_phase_b_plus_plus
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(149)
+    n_bars = 200
+    n_trades = 8000
+
+    start = pd.Timestamp("2026-05-12 13:00:00", tz="UTC")
+    bar_starts = pd.Series([start + pd.Timedelta(minutes=i) for i in range(n_bars)])
+
+    # Bars OHLC + delta_bar
+    df = pd.DataFrame({"ts_event": bar_starts})
+    base = 5800 + np.cumsum(np.random.randn(n_bars) * 0.3)
+    df["close"] = base
+    df["open"] = base + np.random.randn(n_bars) * 0.2
+    df["high"] = np.maximum(df["open"], df["close"]) + np.random.uniform(0.5, 3.0, n_bars)
+    df["low"] = np.minimum(df["open"], df["close"]) - np.random.uniform(0.5, 3.0, n_bars)
+    df["delta_bar"] = np.random.randint(-100, 100, n_bars).astype(float)
+    df["volume"] = np.random.randint(500, 2000, n_bars)
+
+    # Trades synth distribués sur bars
+    trades = []
+    for _ in range(n_trades):
+        offset_min = np.random.uniform(0, n_bars - 0.001)
+        ts = start + pd.Timedelta(minutes=offset_min)
+        price = round(5800 + np.random.uniform(-15, 15), 2)
+        size = int(np.random.exponential(30)) + 1
+        side = np.random.choice(["A", "B", "N"], p=[0.47, 0.47, 0.06])
+        trades.append({"ts_event": ts, "price": price, "size": size, "side": side})
+    trades_df = pd.DataFrame(trades).sort_values("ts_event").reset_index(drop=True)
+
+    # BATCH
+    batch_df = apply_phase_b_plus_plus(df.copy(), trades_df, symbol="ES", tick=0.25)
+
+    # STREAM : pour chaque bar, on extrait trades_in_window + appelle stream
+    state = make_phase_b_plus_plus_trades_state("ES")
+    stream_rows = []
+    for i, (_, row) in enumerate(df.iterrows()):
+        bar_start_ts = bar_starts.iloc[i]
+        bar_end_ts = bar_starts.iloc[i + 1] if i + 1 < n_bars else bar_start_ts + pd.Timedelta(minutes=1)
+        mask = (trades_df["ts_event"] >= bar_start_ts) & (trades_df["ts_event"] < bar_end_ts)
+        trades_in_bar = trades_df[mask][["price", "size", "side"]].to_dict("records")
+        out = add_phase_b_plus_plus_trades_streaming(row.to_dict(), state, trades_in_bar)
+        stream_rows.append(out)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest phase_b_plus_plus_trades parite sur {n_bars} bars + {n_trades} trades synth...")
+
+    cols_check = [
+        # Big orders multi-tier (12)
+        "n_big_t1", "n_big_t2", "n_big_t3", "n_big_t4",
+        "n_big_buy_t1", "n_big_buy_t2", "n_big_buy_t3", "n_big_buy_t4",
+        "n_big_sell_t1", "n_big_sell_t2", "n_big_sell_t3", "n_big_sell_t4",
+        # Trade size stats (3)
+        "max_size_buy", "max_size_sell", "p99_trade_size",
+        # Aggressor + clusters (3)
+        "aggressor_imbalance", "n_clusters", "max_cluster_volume",
+        # FPBS intra-bar (4)
+        "max_delta_bar", "min_delta_bar", "delta_change", "n_ticks_bar",
+        # Distances nearest (4)
+        "dist_big_ask_nearest_pct", "dist_big_bid_nearest_pct",
+        "dist_cluster_nearest_up_pct", "dist_cluster_nearest_dn_pct",
+        # Derivees (5)
+        "big_buy_dominance", "big_sell_dominance",
+        "finish_pct_up", "finish_strong_up", "finish_strong_dn",
+        # Delta divergence daily (2)
+        "delta_div_buy", "delta_div_sell",
+    ]
+
+    print(f"\n--- NIVEAU 1 : parite ({len(cols_check)} features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:32s} MANQUANT batch={col in batch_df.columns} stream={col in stream_df.columns}")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mismatch = int(nan_diff.sum())
+        atol = 1e-3 if "pct" in col or col in ("p99_trade_size", "finish_pct_up") else 1e-6
+        status = "PASS" if max_diff < atol and nan_mismatch < 5 else "FAIL"
+        print(f"  {col:32s} {status} max_diff={max_diff:.4e} nan_mm={nan_mismatch}")
+        if status == "FAIL":
+            all_pass = False
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL phase_b_plus_plus_trades : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -3613,6 +3716,7 @@ def main():
                                  "sessions_swings_lag",
                                  "vwap_diff",
                                  "footprint_builder",
+                                 "phase_b_plus_plus_trades",
                                  "all"])
     args = parser.parse_args()
 
@@ -3738,6 +3842,11 @@ def main():
 
     if args.engine in ("footprint_builder", "all"):
         report = _test_footprint_builder()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("phase_b_plus_plus_trades", "all"):
+        report = _test_phase_b_plus_plus_trades()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
