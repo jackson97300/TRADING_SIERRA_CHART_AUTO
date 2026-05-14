@@ -3582,6 +3582,103 @@ def _test_phase_b_plus_plus_cluster_v2():
     return {"all_pass": all_pass}
 
 
+def _test_phase_b_plus_plus_absorb():
+    """Test sub-engine LOT 4 stack + absorption (8 features)."""
+    from phase_b_plus_plus_absorb_streaming import (
+        add_stack_absorb_streaming, make_stack_absorb_state,
+    )
+    from phase_b_plus_plus_engine import add_stack_features, add_absorption_features
+    from footprint_builder import build_footprint_per_bar
+    from footprint_builder_streaming import build_footprint_cells_streaming
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(163)
+    n_bars = 200
+    n_trades = 12000
+    start = pd.Timestamp("2026-05-12 13:00:00", tz="UTC")
+    bar_starts = pd.Series([start + pd.Timedelta(minutes=i) for i in range(n_bars)])
+
+    # OHLC + trades synth (forces absorption + stack patterns)
+    df = pd.DataFrame({"ts_event": bar_starts})
+    base = 5800 + np.cumsum(np.random.randn(n_bars) * 0.5)
+    df["close"] = base
+    df["open"] = base + np.random.randn(n_bars) * 0.3
+    df["high"] = np.maximum(df["open"], df["close"]) + np.random.uniform(0.5, 2.5, n_bars)
+    df["low"] = np.minimum(df["open"], df["close"]) - np.random.uniform(0.5, 2.5, n_bars)
+    # Niveaux key absolus pour near_resistance/support
+    df["sess_high"] = df["high"].cummax()
+    df["sess_low"] = df["low"].cummin()
+    df["ib_high"] = 5810.0
+    df["ib_low"] = 5790.0
+    df["pdh"] = 5820.0
+    df["pdl"] = 5780.0
+    df["prev_vah"] = 5815.0
+    df["prev_val"] = 5785.0
+
+    # Trades synth distribues sur bars
+    trades = []
+    for _ in range(n_trades):
+        offset_min = np.random.uniform(0, n_bars - 0.001)
+        ts = start + pd.Timedelta(minutes=offset_min)
+        price = round(5800 + np.random.uniform(-15, 15), 2)
+        size = int(np.random.exponential(30)) + 1
+        side = np.random.choice(["A", "B"], p=[0.5, 0.5])
+        trades.append({"ts_event": ts, "price": price, "size": size, "side": side})
+    trades_df = pd.DataFrame(trades).sort_values("ts_event").reset_index(drop=True)
+
+    # BATCH
+    batch_footprint = build_footprint_per_bar(trades_df, bar_starts, tick=0.25)
+    batch_df = add_stack_features(df.copy(), batch_footprint, symbol="ES", tick=0.25)
+    batch_df = add_absorption_features(batch_df, batch_footprint, symbol="ES", tick=0.25)
+
+    # STREAM
+    state = make_stack_absorb_state("ES")
+    stream_rows = []
+    for i in range(n_bars):
+        bar_start_ts = bar_starts.iloc[i]
+        bar_end_ts = bar_starts.iloc[i + 1] if i + 1 < n_bars else bar_start_ts + pd.Timedelta(minutes=1)
+        mask = (trades_df["ts_event"] >= bar_start_ts) & (trades_df["ts_event"] < bar_end_ts)
+        trades_in_bar = trades_df[mask][["price", "size", "side"]].to_dict("records")
+        cells = build_footprint_cells_streaming(trades_in_bar, tick=0.25)
+        row_in = df.iloc[i].to_dict()
+        out = add_stack_absorb_streaming(row_in, state, cells)
+        stream_rows.append(out)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest phase_b_plus_plus_absorb parite sur {n_bars} bars + {n_trades} trades...")
+
+    cols_check = [
+        "bn_stack_ask", "bn_stack_bid",
+        "bn_absorb_ask_raw", "bn_absorb_bid_raw",
+        "near_resistance_level", "near_support_level",
+        "bn_absorb_ask_at_level", "bn_absorb_bid_at_level",
+    ]
+    print(f"\n--- NIVEAU 1 : parite (8 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:32s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        max_diff = float(np.nanmax(np.abs(b - s)))
+        n_fires_b = int((b != 0).sum())
+        n_fires_s = int((s != 0).sum())
+        status = "PASS" if max_diff < 1e-6 else "FAIL"
+        print(f"  {col:32s} {status} max_diff={max_diff:.4e} "
+              f"non-zero batch/stream={n_fires_b}/{n_fires_s}")
+        if status == "FAIL":
+            all_pass = False
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL phase_b_plus_plus_absorb : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -3884,6 +3981,7 @@ def main():
                                  "phase_b_plus_plus_trades",
                                  "phase_b_plus_plus_big_v2",
                                  "phase_b_plus_plus_cluster_v2",
+                                 "phase_b_plus_plus_absorb",
                                  "all"])
     args = parser.parse_args()
 
@@ -4024,6 +4122,11 @@ def main():
 
     if args.engine in ("phase_b_plus_plus_cluster_v2", "all"):
         report = _test_phase_b_plus_plus_cluster_v2()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("phase_b_plus_plus_absorb", "all"):
+        report = _test_phase_b_plus_plus_absorb()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
