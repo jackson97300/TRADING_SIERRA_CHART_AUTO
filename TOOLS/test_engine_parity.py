@@ -3417,6 +3417,85 @@ def _test_phase_b_plus_plus_trades():
     return {"all_pass": all_pass}
 
 
+def _test_phase_b_plus_plus_big_v2():
+    """Test sub-engine LOT 2 phase_b_plus_plus big_v2 (10 features scan VAP cells)."""
+    from phase_b_plus_plus_big_v2_streaming import (
+        add_big_orders_v2_streaming, make_big_orders_v2_state,
+    )
+    from phase_b_plus_plus_engine import add_big_orders_features_v2
+    from footprint_builder import build_footprint_per_bar
+    from footprint_builder_streaming import build_footprint_cells_streaming
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(151)
+    n_bars = 200
+    n_trades = 10000
+    start = pd.Timestamp("2026-05-12 13:00:00", tz="UTC")
+    bar_starts = pd.Series([start + pd.Timedelta(minutes=i) for i in range(n_bars)])
+    df = pd.DataFrame({"ts_event": bar_starts})
+
+    # Trades avec sizes biaises pour declencher t1=100, t2=150
+    trades = []
+    for _ in range(n_trades):
+        offset_min = np.random.uniform(0, n_bars - 0.001)
+        ts = start + pd.Timedelta(minutes=offset_min)
+        price = round(5800 + np.random.uniform(-15, 15), 2)
+        # Distribution biased pour generer cellules >= 100 et >= 150
+        size = int(np.random.exponential(40)) + 5
+        side = np.random.choice(["A", "B"], p=[0.5, 0.5])
+        trades.append({"ts_event": ts, "price": price, "size": size, "side": side})
+    trades_df = pd.DataFrame(trades).sort_values("ts_event").reset_index(drop=True)
+
+    # BATCH
+    batch_footprint = build_footprint_per_bar(trades_df, bar_starts, tick=0.25)
+    batch_df = add_big_orders_features_v2(df.copy(), batch_footprint, symbol="ES", tick=0.25)
+
+    # STREAM : pour chaque bar, build cells streaming + call big_v2
+    state = make_big_orders_v2_state("ES")
+    stream_rows = []
+    for i in range(n_bars):
+        bar_start_ts = bar_starts.iloc[i]
+        bar_end_ts = bar_starts.iloc[i + 1] if i + 1 < n_bars else bar_start_ts + pd.Timedelta(minutes=1)
+        mask = (trades_df["ts_event"] >= bar_start_ts) & (trades_df["ts_event"] < bar_end_ts)
+        trades_in_bar = trades_df[mask][["price", "size", "side"]].to_dict("records")
+        cells = build_footprint_cells_streaming(trades_in_bar, tick=0.25)
+        out = add_big_orders_v2_streaming({"ts_event": bar_starts.iloc[i]}, state, cells)
+        stream_rows.append(out)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest phase_b_plus_plus_big_v2 parite sur {n_bars} bars + {n_trades} trades...")
+
+    cols_check = [
+        "n_big_ask_v2_t1", "n_big_ask_v2_t2", "n_big_ask_v2_t3", "n_big_ask_v2_t4",
+        "n_big_bid_v2_t1", "n_big_bid_v2_t2", "n_big_bid_v2_t3", "n_big_bid_v2_t4",
+        "max_big_ask_vol_in_bar", "max_big_bid_vol_in_bar",
+    ]
+    print(f"\n--- NIVEAU 1 : parite (10 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:32s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        max_diff = float(np.nanmax(np.abs(b - s)))
+        status = "PASS" if max_diff < 1e-6 else "FAIL"
+        n_fires_b = int((b != 0).sum())
+        n_fires_s = int((s != 0).sum())
+        print(f"  {col:32s} {status} max_diff={max_diff:.4e} "
+              f"non-zero batch/stream={n_fires_b}/{n_fires_s}")
+        if status == "FAIL":
+            all_pass = False
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL phase_b_plus_plus_big_v2 : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -3717,6 +3796,7 @@ def main():
                                  "vwap_diff",
                                  "footprint_builder",
                                  "phase_b_plus_plus_trades",
+                                 "phase_b_plus_plus_big_v2",
                                  "all"])
     args = parser.parse_args()
 
@@ -3847,6 +3927,11 @@ def main():
 
     if args.engine in ("phase_b_plus_plus_trades", "all"):
         report = _test_phase_b_plus_plus_trades()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("phase_b_plus_plus_big_v2", "all"):
+        report = _test_phase_b_plus_plus_big_v2()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
