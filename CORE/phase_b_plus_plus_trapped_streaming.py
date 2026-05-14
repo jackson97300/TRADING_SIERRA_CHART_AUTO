@@ -140,7 +140,11 @@ def add_trapped_traders_streaming(
     trap_sell = 0
     if footprint_cells and not (np.isnan(h) or np.isnan(l) or np.isnan(op) or np.isnan(c)):
         bar_range = h - l
-        finish_pct = (c - l) / bar_range * 100 if bar_range > 0 else 50.0
+        # finish_pct calcule en float64 par defaut Python. Le batch utilise float32
+        # (memoire). Cast explicite pour aligner precision et eviter divergence
+        # numerique tres faible (1e-7) qui pourrait flipper les comparaisons aux
+        # seuils TRAPPED_FINISH_PCT_BUYERS=30 / TRAPPED_FINISH_PCT_SELLERS=70.
+        finish_pct = float((c - l) / bar_range * 100) if bar_range > 0 else 50.0
 
         # Trapped buyers : AskVol(top zone) seuil + finish<=30 + delta>0 + close<open
         ask_h = 0.0

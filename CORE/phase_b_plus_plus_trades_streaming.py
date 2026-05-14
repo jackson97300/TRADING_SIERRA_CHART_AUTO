@@ -124,10 +124,35 @@ def add_phase_b_plus_plus_trades_streaming(
                             ({price, size, side='A'|'B'|'N'}).
                             None ou [] = toutes features = 0/NaN.
 
+    Contract:
+      - trades_in_window doit etre tri par ts_event ASC (oldest -> newest).
+      - Chaque trade : dict avec keys 'price', 'size', 'side'
+        ('A'=BUY aggressor, 'B'=SELL aggressor, 'N'=ignore) et optionnellement
+        'ts_event' (pour sanity check debug).
+      - Le caller (Live Enricher) est responsable du tri. Le streaming ne re-trie
+        pas pour des raisons de performance (eviter O(n log n) par bar).
+      - L'ordre est critique pour le calcul cumdelta (max_delta_bar / min_delta_bar) :
+        un tri incorrect produit des valeurs differentes du batch.
+
     Returns:
         dict row + 34 features phase_b_plus_plus trades aggregates.
     """
     out = dict(row)
+
+    # Sanity check debug-only : verifier tri ts_event ASC (caller contract).
+    # Skip en non-debug (-O / python -OO) pour zero overhead production.
+    if __debug__ and trades_in_window and len(trades_in_window) >= 2:
+        first_ts = trades_in_window[0].get("ts_event")
+        last_ts = trades_in_window[-1].get("ts_event")
+        if first_ts is not None and last_ts is not None and first_ts > last_ts:
+            import warnings
+            warnings.warn(
+                f"trades_in_window not sorted ts_event ASC : "
+                f"first={first_ts} > last={last_ts}. "
+                f"Caller must sort. Skipping assertion in non-debug mode.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     # ─── Inputs OHLC ───────────────────────────────────────────────────────
     try:

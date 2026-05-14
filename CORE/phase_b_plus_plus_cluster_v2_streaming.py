@@ -67,6 +67,22 @@ def add_cluster_v2_streaming(
 
     Returns:
         dict row + 5 features.
+
+    Algorithme runs detection (mirror batch add_cluster_volume_features) :
+      1. Trier les prix VAP cells par ordre croissant.
+      2. Iterer : si total_vol(cell) >= threshold (ES=250, NQ=70, MGC=50),
+         marquer 'hot', sinon 'cold'.
+      3. Detecter runs consecutifs de 'hot' cells separes par <= 1 tick
+         (adjacence : abs(price[i] - price[i-1] - tick) < 1e-6).
+      4. Run = cluster si len(run) >= min_group (ES=2, NQ=2, MGC=2).
+      5. Pour chaque cluster : compter size (nb cellules), sommer volume,
+         noter prix min/max (start/end de la run).
+      6. Features sortie :
+         - n_cluster_groups       : nb total clusters
+         - max_cluster_size       : taille du plus gros cluster (nb cellules)
+         - max_cluster_volume_v2  : volume cumule du plus gros cluster
+         - cluster_at_high        : 1 si cluster touche bar.high (tolerance tick/2)
+         - cluster_at_low         : 1 si cluster touche bar.low (tolerance tick/2)
     """
     out = dict(row)
 

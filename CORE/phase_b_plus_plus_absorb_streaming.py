@@ -212,6 +212,13 @@ def add_stack_absorb_streaming(
             break
 
     # MenthorQ via dist_pct (proximity en %)
+    # NOTE : mq_hvl (et mq_hvl_z) sont verifies a la fois dans MQ_NEUTRAL_DIST_COLS
+    # cote resistance ET cote support (mirror batch phase_b_plus_plus_engine.py
+    # lignes 1010-1016 et 1023-1028). Justification : HVL = High Volume Level,
+    # peut etre au-dessus (resistance approchee par-dessous) OU en-dessous (support
+    # approche par-dessus) du close courant selon le contexte de la bar.
+    # Pas de duplication accidentelle - c'est intentionnel cote batch et le
+    # streaming reproduit exactement la meme logique (parite bit-for-bit).
     proximity_pct_bar = (proximity / c) * 100 if c > 0 else 0.0
     if near_res == 0:
         for col in MQ_RESISTANCE_DIST_COLS:

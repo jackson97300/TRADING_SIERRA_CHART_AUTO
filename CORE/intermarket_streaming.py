@@ -259,6 +259,11 @@ def add_intermarket_streaming(
         out["im_cross_open_signal"] = dir_t * conf_t
 
     # ─── 9. Open type agreement ─────────────────────────────────────────────
+    # NOTE : dir_t/dir_o sont des _safe_float retournant float (NaN-safe).
+    # Comparaison `!= 0` est safe car np.nan != 0 evaluerait True, MAIS on a deja
+    # force dir_t = 0.0 / dir_o = 0.0 si NaN au-dessus (lignes 137-139 et 152-153).
+    # Donc comparaison directe sur float OK ici, pas besoin de cast int().
+    # Mirror batch : batch utilise aussi float -> float comparison (parite preservee).
     if dir_t != 0 and dir_o != 0:
         out["im_open_type_agreement"] = 1.0 if dir_t == dir_o else -1.0
     else:
