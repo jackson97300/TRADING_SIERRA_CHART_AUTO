@@ -599,6 +599,7 @@ LOG_CODES = {
     "ENRICHER_INPUTS_INCOMPLETE":  (LogLevel.ALERTE,  "events", "Enricher inputs incomplete : {sym} missing={missing} (stream alive={alive})"),
     "ENRICHER_WRITE_FAIL":         (LogLevel.MAJEUR,  "events", "Enricher write FAIL : {sym} path={path} err={err}"),
     "ENRICHER_ENGINE_FAIL":        (LogLevel.MAJEUR,  "events", "Enricher engine chain fail : {sym} engine={engine} failed_lot={failed_lot} err_type={err_type} err={err}"),
+    "ENRICHER_PARTNER_STALE":      (LogLevel.ALERTE,  "events", "Enricher partner bar stale/future : {sym} partner={partner} reason={reason} delta_ns={delta_ns} (intermarket features=NaN)"),
 }
 
 

@@ -345,12 +345,65 @@ def main():
         # Restore original LOT 3 function
         _lot3_module.add_cluster_v2_streaming = original_add_cluster
 
+    # 6. Test cross-symbol intermarket avec mock partner (fix P2 #6 code-reviewer)
+    print("\n[6/6] Test cross-symbol intermarket (mock NQ partner bar) ...")
+    from intermarket_streaming import add_intermarket_streaming, IntermarketState
+
+    # Build mock NQ partner bar (synchro ES bar 14:00)
+    mock_nq_bar = {
+        "close": 24500.0, "high": 24510.0, "low": 24490.0, "volume": 8000.0,
+        "delta_bar": 250.0, "delta_day": 5000.0,
+        "dist_sess_high": 30.0, "dist_sess_low": 100.0,
+        "large_trader_ratio": 0.6, "open_bias_conf": 0.7,
+        "open_direction": 1.0, "open_type": 2,
+        "ts_event_ns": int(bar_target_ts.value),
+    }
+
+    s_im = IntermarketState()
+    row_target = dict(payload_baseline)
+    row_target["price"] = row_target["close"]
+    row_target["delta_bar"] = 100.0
+    row_target["total_vol"] = 4000.0
+    row_target["delta_day"] = 2000.0
+    row_target["dist_sess_high"] = 5.0
+    row_target["dist_sess_low"] = 30.0
+    row_target["large_trader_ratio"] = 0.5
+    row_target["open_bias_conf"] = 0.6
+    row_target["open_direction"] = 1.0
+    row_target["open_type"] = 3
+
+    other_inputs = {
+        "price": mock_nq_bar["close"], "delta_bar": mock_nq_bar["delta_bar"],
+        "total_vol": mock_nq_bar["volume"], "delta_day": mock_nq_bar["delta_day"],
+        "dist_sess_high": mock_nq_bar["dist_sess_high"],
+        "dist_sess_low": mock_nq_bar["dist_sess_low"],
+        "large_trader_ratio": mock_nq_bar["large_trader_ratio"],
+        "open_bias_conf": mock_nq_bar["open_bias_conf"],
+        "open_direction": mock_nq_bar["open_direction"],
+        "open_type": mock_nq_bar["open_type"],
+    }
+
+    enriched_im = add_intermarket_streaming(row_target, s_im, other_inputs=other_inputs)
+    # Verify intermarket features non-NaN apres au moins 1 bar
+    im_features = {k: v for k, v in enriched_im.items() if k.startswith("im_")}
+    non_nan_count = sum(1 for v in im_features.values() if not (isinstance(v, float) and np.isnan(v)))
+    print(f"  features im_* dispo : {len(im_features)}")
+    print(f"  features im_* non-NaN : {non_nan_count}")
+    # Apres 1 bar : agreement/weighted/delta_day_divergence/open_signal/open_type peuvent etre non-NaN
+    if non_nan_count < 4:
+        print(f"  [FAIL] expected >= 4 features non-NaN apres 1 bar mock partner")
+        return False
+    print(f"  [OK] intermarket calcule {non_nan_count} features non-NaN avec partner mock")
+    print(f"  [OK] im_open_type_agreement = {enriched_im.get('im_open_type_agreement')}")
+    print(f"  [OK] im_delta_day_divergence = {enriched_im.get('im_delta_day_divergence')}")
+
     print("\n" + "=" * 70)
     print("VERIFICATION EMPIRIQUE : PASS")
     print(f"  payload enrichi : {n_baseline} -> {n_enriched} clefs (+{n_new})")
     print(f"  6 sub-engines chainees, 0 KeyError silently swallowed")
     print(f"  fail-loud LOT 5 dep check validee")
     print(f"  fail-soft revert + failed_lot detection validee")
+    print(f"  cross-symbol intermarket avec mock partner OK")
     print("=" * 70)
     return True
 

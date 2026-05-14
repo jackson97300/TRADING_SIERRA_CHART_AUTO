@@ -7,6 +7,13 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-14]** **Cross-asset MGC live : tracker 6E/ZN/ZB dans SYMBOLS Live Enricher** | 3-4h | MEDIUM | PROPOSED (gold_phase_d features = NaN sans cross-asset live)
+  - **Source** : Live Enricher Pass 2 commit d964762 - `gold_phase_d_streaming` necessite close 6E/ZN/ZB pour `im_dxy_corr_60d` et `im_real_yields_proxy`. Actuellement passe None -> features NaN en live MGC.
+  - **Impact** : 2 features Gold (sur 4) = NaN systematique en LIVE pour MGC. Backfill V4 ok (parquets Databento dispo). Mais ML training avec NaN systematique = info perdue pour le modele.
+  - **Fix** : ajouter "6E.c.0", "ZN.c.0", "ZB.c.0" a `SYMBOLS` (CORE/live_enricher.py:66) + lecture cache live (databento_live_stream.py supporte ces symbols). Cycle MGC : `cross_asset_closes = {"6E": _states["6E.c.0"].last_bar()["close"], ...}` + pass to add_gold_phase_d_streaming.
+  - **Cost** : 3 streams Databento supplementaires (deja inclus subscription Databento).
+  - **Deadline** : AVANT training reel MGC mid-juin 2026.
+
 - **[DETTE 2026-05-14]** **Consumer downstream pour marker `phase_b_plus_plus_partial`** | 1-2h | MEDIUM | PROPOSED (bloquant Pass 2 Live Enricher integration)
   - **Source** : code-reviewer round 3 Live Enricher (commit af17446) - marker `phase_b_plus_plus_partial = True` ajoute au payload en cas de crash mid-chain LOT 1-6, mais **aucun consommateur downstream ne le filtre**.
   - **Impact** : bars partielles passent au dataset V4 comme bars completes (features phase_b_plus_plus = defaults/NaN). NaN handling LightGBM gere mais biais si frequence elevee.

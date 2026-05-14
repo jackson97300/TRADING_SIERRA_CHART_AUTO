@@ -478,8 +478,36 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     with partner_state.lock:
                         partner_bar = partner_state.last_bar()
 
+                # Fix code-reviewer P1 #1+#2 : staleness check + no-future guard.
+                # - Staleness : reject si partner bar > 120s old (Databento glitch)
+                # - No-future : reject si partner_ts_ns > target_ts_ns (NQ deja
+                #   process le cycle suivant) -> evite asymetrie temporelle
+                #   lookahead artificielle.
+                # En cas de reject : other_inputs=None -> features NaN + emit log.
+                STALE_NS = 120 * 1_000_000_000  # 120s en ns
+                if partner_bar is not None:
+                    partner_ts_ns = partner_bar.get("ts_event_ns", 0)
+                    if partner_ts_ns > ts_event_ns:
+                        # Partner cycle plus recent que target -> reject (no future)
+                        _emit_log(
+                            "ENRICHER_PARTNER_STALE", sym=symbol,
+                            partner=partner_symbol,
+                            reason="future",
+                            delta_ns=int(partner_ts_ns - ts_event_ns),
+                        )
+                        partner_bar = None
+                    elif (ts_event_ns - partner_ts_ns) > STALE_NS:
+                        # Partner trop ancien (> 2 min) -> reject (stale stream)
+                        _emit_log(
+                            "ENRICHER_PARTNER_STALE", sym=symbol,
+                            partner=partner_symbol,
+                            reason="stale",
+                            delta_ns=int(ts_event_ns - partner_ts_ns),
+                        )
+                        partner_bar = None
+
                 # Build other_inputs dict pour intermarket streaming (None si
-                # partner absent ou non-traite encore ce cycle -> features NaN).
+                # partner absent / stale / future -> features NaN).
                 other_inputs = None
                 if partner_bar is not None:
                     other_inputs = {
@@ -495,20 +523,27 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                         "open_type": partner_bar.get("open_type"),
                     }
 
-                # Target row necessite aussi 'price' alias 'close' pour
-                # intermarket_streaming convention. Aliaser sans muter le
-                # payload origine downstream consumers.
-                if "price" not in payload and "close" in payload:
-                    payload["price"] = payload["close"]
+                # Fix code-reviewer P2 #5 : isoler price alias localement.
+                # Le streaming intermarket attend `price` mais le payload final
+                # ne doit pas avoir cette colonne dupliquee (bloat JSONL).
+                # Build row_for_im local sans muter payload, puis merge uniquement
+                # les features im_* dans payload final.
+                row_for_im = dict(payload)
+                if "price" not in row_for_im and "close" in row_for_im:
+                    row_for_im["price"] = row_for_im["close"]
 
                 with state.lock:
                     s_intermarket = state.get_engine_state(
                         "intermarket",
                         factory=IntermarketState,
                     )
-                    payload = add_intermarket_streaming(
-                        payload, s_intermarket, other_inputs=other_inputs,
+                    enriched_im = add_intermarket_streaming(
+                        row_for_im, s_intermarket, other_inputs=other_inputs,
                     )
+                # Merger uniquement features im_* dans payload final (pas price)
+                for k, v in enriched_im.items():
+                    if k.startswith("im_"):
+                        payload[k] = v
         except (ValueError, KeyError, TypeError, AttributeError, ImportError) as e:
             # Fail-soft restreint (code-reviewer P1) : whitelist exceptions
             # attendues (contract violation, dep manquante, type mismatch). Tout
@@ -542,13 +577,21 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 if marker in tb:
                     failed_lot = lot_name
                     break
+            # Fix code-reviewer Pass 2 P1 #3 : engine name dynamique pour J+1 grep.
+            # Phase 3c contient 2 chaines : phase_b_plus_plus_chain (LOT 1-6)
+            # et cross_asset_chain (gold + intermarket). Differencier dans le
+            # log pour audit.
+            if failed_lot.startswith("LOT_") or failed_lot in ("footprint_cells", "unknown"):
+                engine_name = "phase_b_plus_plus_chain"
+            else:
+                engine_name = "cross_asset_chain"
             logger.warning(
-                f"phase_b_plus_plus chain fail {symbol} at {failed_lot}: "
+                f"{engine_name} fail {symbol} at {failed_lot}: "
                 f"{type(e).__name__}: {e} -- payload reverted to pre-chain"
             )
             _emit_log(
                 "ENRICHER_ENGINE_FAIL", sym=symbol,
-                engine="phase_b_plus_plus_chain",
+                engine=engine_name,
                 failed_lot=failed_lot,
                 err_type=type(e).__name__,
                 err=str(e)[:200],
