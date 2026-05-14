@@ -3984,6 +3984,96 @@ def _test_gold_phase_d():
     return {"all_pass": all_pass}
 
 
+def _test_intermarket():
+    """Test sub-engine intermarket (10 features cross-sym ES/NQ)."""
+    from intermarket_streaming import add_intermarket_streaming, IntermarketState
+    from intermarket_features import IntermarketFeatures
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(199)
+    n = 200
+    ts_seq = np.arange(n) * 60 * 1000
+
+    # Target = NQ (avec open_type pour eviter batch NaN fallback)
+    df_t = pd.DataFrame({
+        "ts": ts_seq,
+        "price": 5800 + np.cumsum(np.random.randn(n) * 0.5),
+        "delta_bar": np.random.randint(-100, 100, n).astype(float),
+        "total_vol": np.random.randint(500, 2000, n).astype(float),
+        "delta_day": np.cumsum(np.random.randint(-50, 50, n)).astype(float),
+        "dist_sess_high": np.random.uniform(-20, 0, n),
+        "dist_sess_low": np.random.uniform(0, 20, n),
+        "large_trader_ratio": np.random.uniform(0, 1, n),
+        "open_direction": np.random.choice([-1, 0, 1], n).astype(float),
+        "open_bias_conf": np.random.uniform(0, 1, n),
+        "open_type": np.random.randint(0, 12, n).astype(float),  # required par batch REQUIRED_OTHER
+    })
+    # Other = ES
+    df_o = pd.DataFrame({
+        "ts": ts_seq,
+        "price": 5800 + np.cumsum(np.random.randn(n) * 0.4),
+        "delta_bar": np.random.randint(-100, 100, n).astype(float),
+        "total_vol": np.random.randint(500, 2000, n).astype(float),
+        "delta_day": np.cumsum(np.random.randint(-50, 50, n)).astype(float),
+        "dist_sess_high": np.random.uniform(-20, 0, n),
+        "dist_sess_low": np.random.uniform(0, 20, n),
+        "large_trader_ratio": np.random.uniform(0, 1, n),
+        "open_direction": np.random.choice([-1, 0, 1], n).astype(float),
+        "open_bias_conf": np.random.uniform(0, 1, n),
+        "open_type": np.random.randint(0, 12, n).astype(float),
+    })
+
+    # BATCH
+    im = IntermarketFeatures(short=3, mid=5, long=10)
+    batch_df = im.compute(df_t.copy(), df_o, target="NQ")
+
+    # STREAM
+    state = IntermarketState(short=3, mid=5, long=10)
+    stream_rows = []
+    for i in range(n):
+        row_t = df_t.iloc[i].to_dict()
+        row_o = df_o.iloc[i].to_dict()
+        out = add_intermarket_streaming(row_t, state, other_inputs=row_o)
+        stream_rows.append(out)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest intermarket parite sur {n} rows synth (NQ vs ES)...")
+
+    cols_check = [
+        "im_cross_delta_agreement_5", "im_cross_delta_weighted_5",
+        "im_smt_divergence", "im_delta_day_divergence",
+        "im_price_ratio_slope_10", "im_volume_lead",
+        "im_rolling_correlation_10", "im_ltr_slope_diff",
+        "im_cross_open_signal", "im_open_type_agreement",
+    ]
+    print(f"\n--- NIVEAU 1 : parite (10 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:40s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mm = int(nan_diff.sum())
+        atol = 1e-3
+        status = "PASS" if max_diff < atol and nan_mm < 5 else "FAIL"
+        print(f"  {col:40s} {status} max_diff={max_diff:.4e} nan_mm={nan_mm}")
+        if status == "FAIL":
+            all_pass = False
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL intermarket : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -4290,6 +4380,7 @@ def main():
                                  "phase_b_plus_plus_trapped",
                                  "phase_b_plus_plus_delta_div_ext",
                                  "gold_phase_d",
+                                 "intermarket",
                                  "all"])
     args = parser.parse_args()
 
@@ -4450,6 +4541,11 @@ def main():
 
     if args.engine in ("gold_phase_d", "all"):
         report = _test_gold_phase_d()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("intermarket", "all"):
+        report = _test_intermarket()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
