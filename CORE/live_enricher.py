@@ -284,6 +284,155 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         payload["trades_window_n"] = len(trades_df)
         payload["trades_window_sec"] = 60
 
+        # ──────────────────────────────────────────────────────────────────────
+        # Phase 3c semaine 4 : engines streaming phase_b_plus_plus (76 features)
+        # Ordre dependance critique :
+        #   footprint_cells (helper pur)
+        #   -> LOT 1 trades aggregates (produit delta_div_buy/sell, delta_bar)
+        #   -> LOT 2 big_v2 (10 features VAP scan)
+        #   -> LOT 3 cluster_v2 (5 features runs detection)
+        #   -> LOT 4 absorb (produit near_resistance/support_level)
+        #   -> LOT 5 trapped (consomme near_*, fail-loud anti Pattern 11)
+        #   -> LOT 6 delta_div_ext (consomme delta_div_buy/sell de LOT 1)
+        # ──────────────────────────────────────────────────────────────────────
+        try:
+            from footprint_builder_streaming import build_footprint_cells_streaming
+            from phase_b_plus_plus_trades_streaming import (
+                add_phase_b_plus_plus_trades_streaming,
+                make_phase_b_plus_plus_trades_state,
+            )
+            from phase_b_plus_plus_big_v2_streaming import (
+                add_big_orders_v2_streaming,
+                make_big_orders_v2_state,
+            )
+            from phase_b_plus_plus_cluster_v2_streaming import (
+                add_cluster_v2_streaming,
+                make_cluster_v2_state,
+            )
+            from phase_b_plus_plus_absorb_streaming import (
+                add_stack_absorb_streaming,
+                make_stack_absorb_state,
+            )
+            from phase_b_plus_plus_trapped_streaming import (
+                add_trapped_traders_streaming,
+                make_trapped_traders_state,
+            )
+            from phase_b_plus_plus_delta_div_ext_streaming import (
+                add_delta_div_ext_streaming,
+                make_delta_div_ext_state,
+            )
+            try:
+                from CORE.constants import get_tick_size as _get_tick_size
+            except ImportError:
+                from constants import get_tick_size as _get_tick_size
+
+            # symbol_pure : "ES.c.0" -> "ES", "MGC.v.0" -> "MGC"
+            symbol_pure = symbol.split(".")[0]
+            tick = _get_tick_size(symbol_pure)
+
+            # 1. Build footprint cells (helper pur, sans state)
+            #    Convert trades_df -> list[dict] (streaming attend list of dicts).
+            #    Colonnes attendues : price, size, side ('A'/'B'/'N'), ts_event optionnel.
+            #    Guard fix code-reviewer P0 : ts_event_ns OBLIGATOIRE pour assertion debug
+            #    (sanity check tri ASC dans phase_b_plus_plus_trades_streaming). Sans
+            #    ts_event_ns -> KeyError silently swallowed par try/except global.
+            required_cols = {"price", "size", "side", "ts_event_ns"}
+            if not trades_df.empty and required_cols.issubset(trades_df.columns):
+                trades_records = trades_df[["price", "size", "side", "ts_event_ns"]].rename(
+                    columns={"ts_event_ns": "ts_event"}
+                ).to_dict(orient="records")
+            else:
+                if not trades_df.empty:
+                    missing = required_cols - set(trades_df.columns)
+                    logger.warning(
+                        f"trades_df {symbol} missing cols {missing} -> skip footprint engines"
+                    )
+                trades_records = []
+
+            cells = build_footprint_cells_streaming(trades_records, tick=tick)
+
+            # 2-7. Run engines streaming chain (state per engine via factory)
+            #      Sous lock state (anti corruption deque concurrent mutation).
+            with state.lock:
+                # LOT 1 : trades aggregates (foundation, produit delta_div_buy/sell)
+                s_trades = state.get_engine_state(
+                    "phase_b_plus_plus_trades",
+                    factory=lambda: make_phase_b_plus_plus_trades_state(symbol=symbol_pure),
+                )
+                payload = add_phase_b_plus_plus_trades_streaming(
+                    payload, s_trades, trades_in_window=trades_records,
+                )
+
+                # LOT 2 : big orders V2 (10 features VAP scan)
+                s_big_v2 = state.get_engine_state(
+                    "phase_b_plus_plus_big_v2",
+                    factory=lambda: make_big_orders_v2_state(symbol=symbol_pure),
+                )
+                payload = add_big_orders_v2_streaming(payload, s_big_v2, footprint_cells=cells)
+
+                # LOT 3 : cluster V2 (5 features runs detection)
+                s_cluster_v2 = state.get_engine_state(
+                    "phase_b_plus_plus_cluster_v2",
+                    factory=lambda: make_cluster_v2_state(symbol=symbol_pure),
+                )
+                payload = add_cluster_v2_streaming(payload, s_cluster_v2, footprint_cells=cells)
+
+                # LOT 4 : stack + absorption (produit near_resistance/support_level)
+                s_absorb = state.get_engine_state(
+                    "phase_b_plus_plus_absorb",
+                    factory=lambda: make_stack_absorb_state(symbol=symbol_pure),
+                )
+                payload = add_stack_absorb_streaming(payload, s_absorb, footprint_cells=cells)
+
+                # LOT 5 : trapped traders (consomme near_* de LOT 4, fail-loud check)
+                s_trapped = state.get_engine_state(
+                    "phase_b_plus_plus_trapped",
+                    factory=lambda: make_trapped_traders_state(symbol=symbol_pure),
+                )
+                payload = add_trapped_traders_streaming(
+                    payload, s_trapped, footprint_cells=cells,
+                )
+
+                # LOT 6 : delta_div extension lines (consomme delta_div_buy/sell de LOT 1)
+                s_delta_div = state.get_engine_state(
+                    "phase_b_plus_plus_delta_div_ext",
+                    factory=make_delta_div_ext_state,
+                )
+                payload = add_delta_div_ext_streaming(payload, s_delta_div)
+        except (ValueError, KeyError, TypeError, AttributeError, ImportError) as e:
+            # Fail-soft restreint (code-reviewer P1) : whitelist exceptions
+            # attendues (contract violation, dep manquante, type mismatch). Tout
+            # autre Exception (RuntimeError, MemoryError, etc.) remontera pour
+            # crash + nssm restart -- evite masquage bugs critiques.
+            #
+            # Parse traceback pour identifier le LOT defaillant (LOT 1-6).
+            import traceback
+            tb = traceback.format_exc()
+            failed_lot = "unknown"
+            for marker, lot_name in (
+                ("phase_b_plus_plus_trades_streaming", "LOT_1_trades"),
+                ("phase_b_plus_plus_big_v2_streaming", "LOT_2_big_v2"),
+                ("phase_b_plus_plus_cluster_v2_streaming", "LOT_3_cluster_v2"),
+                ("phase_b_plus_plus_absorb_streaming", "LOT_4_absorb"),
+                ("phase_b_plus_plus_trapped_streaming", "LOT_5_trapped"),
+                ("phase_b_plus_plus_delta_div_ext_streaming", "LOT_6_delta_div_ext"),
+                ("footprint_builder_streaming", "footprint_cells"),
+            ):
+                if marker in tb:
+                    failed_lot = lot_name
+                    break
+            logger.warning(
+                f"phase_b_plus_plus chain fail {symbol} at {failed_lot}: "
+                f"{type(e).__name__}: {e}"
+            )
+            _emit_log(
+                "ENRICHER_ENGINE_FAIL", sym=symbol,
+                engine="phase_b_plus_plus_chain",
+                failed_lot=failed_lot,
+                err_type=type(e).__name__,
+                err=str(e)[:200],
+            )
+
         # 5. Append bar to state buffer (rolling 60j) - FIX P0-2 sous lock
         with state.lock:
             state.append_bar(payload)
