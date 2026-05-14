@@ -39,8 +39,30 @@ class MockState:
         return self.engine_states[name]
 
 
+def _compute_delta_bar_from_trades(trades_df: pd.DataFrame) -> float:
+    """Calcule delta_bar = sum signed_size (A=+ B=- N=0) - mirror live_enricher fix B2.
+
+    Fix B8 code-reviewer Round 3 : pd.notna() detecte NaN pandas.
+    """
+    if trades_df.empty or not {"size", "side"}.issubset(trades_df.columns):
+        return 0.0
+    total = 0.0
+    for t in trades_df[["size", "side"]].itertuples(index=False):
+        s = float(t.size) if t.size is not None and pd.notna(t.size) else 0.0
+        if t.side == "A":
+            total += s
+        elif t.side == "B":
+            total -= s
+    return total
+
+
 def run_integration_chain(payload: dict, trades_df: pd.DataFrame, state, symbol: str) -> dict:
     """Reproduit le bloc d'integration de _process_bar_cycle ligne 282-440."""
+    # Fix B3 + B2 (code-reviewer Pass 3b R2) : inject ts_event + delta_bar
+    if "ts_event" not in payload and "ts_event_ns" in payload:
+        payload["ts_event"] = pd.Timestamp(payload["ts_event_ns"], unit="ns", tz="UTC")
+    if "delta_bar" not in payload:
+        payload["delta_bar"] = _compute_delta_bar_from_trades(trades_df)
     from footprint_builder_streaming import build_footprint_cells_streaming
     from phase_b_plus_plus_trades_streaming import (
         add_phase_b_plus_plus_trades_streaming,
@@ -148,6 +170,67 @@ def run_integration_chain(payload: dict, trades_df: pd.DataFrame, state, symbol:
                 payload, s_gold, close_6e=None, close_zn=None, close_zb=None,
             )
 
+    # Pass 3a : sessions_swings (simple + lag)
+    from sessions_swings_simple_streaming import (
+        add_sessions_swings_simple_streaming,
+        make_sessions_swings_simple_state,
+    )
+    from sessions_swings_lag_streaming import (
+        add_sessions_swings_lag_streaming,
+        make_sessions_swings_lag_state,
+    )
+    with state.lock:
+        s_sess_simple = state.get_engine_state(
+            "sessions_swings_simple",
+            factory=lambda: make_sessions_swings_simple_state(symbol=symbol_pure),
+        )
+        payload = add_sessions_swings_simple_streaming(payload, s_sess_simple)
+        s_sess_lag = state.get_engine_state(
+            "sessions_swings_lag",
+            factory=lambda: make_sessions_swings_lag_state(symbol=symbol_pure),
+        )
+        payload = add_sessions_swings_lag_streaming(payload, s_sess_lag)
+
+    # Pass 3c : rvol (inputs + engine)
+    from phase_b_helpers import add_rvol_inputs_streaming, RvolInputsState
+    from rvol_streaming import add_rvol_engine_streaming, RvolEngineState
+    with state.lock:
+        s_rvol_inputs = state.get_engine_state("rvol_inputs", factory=RvolInputsState)
+        payload = add_rvol_inputs_streaming(payload, s_rvol_inputs, tick=tick)
+        s_rvol = state.get_engine_state("rvol_engine", factory=RvolEngineState)
+        payload = add_rvol_engine_streaming(payload, s_rvol)
+
+    # Pass 3b : rolling_features (5 sous-fonctions chain meme state)
+    # Fix code-reviewer Pass 3b : isoler aliases + injecter ts ms epoch
+    from rolling_features_streaming import (
+        add_rolling_features_basic_streaming,
+        add_rolling_features_medium_streaming,
+        add_rolling_features_advanced_streaming,
+        add_rolling_features_delta_div_streaming,
+        add_rolling_features_session_confluence_streaming,
+        RollingFeaturesState,
+    )
+    with state.lock:
+        s_rolling = state.get_engine_state("rolling_features", factory=RollingFeaturesState)
+        ts_event_ns_local = payload.get("ts_event_ns", 0)
+        row_for_rolling = dict(payload)
+        if "price" not in row_for_rolling and "close" in row_for_rolling:
+            row_for_rolling["price"] = row_for_rolling["close"]
+        row_for_rolling["ts"] = ts_event_ns_local / 1_000_000
+        if "bar_high" not in row_for_rolling and "high" in row_for_rolling:
+            row_for_rolling["bar_high"] = row_for_rolling["high"]
+        if "bar_low" not in row_for_rolling and "low" in row_for_rolling:
+            row_for_rolling["bar_low"] = row_for_rolling["low"]
+        enriched_rolling = add_rolling_features_basic_streaming(row_for_rolling, s_rolling)
+        enriched_rolling = add_rolling_features_medium_streaming(enriched_rolling, s_rolling)
+        enriched_rolling = add_rolling_features_advanced_streaming(enriched_rolling, s_rolling)
+        enriched_rolling = add_rolling_features_delta_div_streaming(enriched_rolling, s_rolling)
+        enriched_rolling = add_rolling_features_session_confluence_streaming(enriched_rolling, s_rolling)
+        # Fix B1 : diff merge au lieu de filter selectif
+        produced_keys = set(enriched_rolling) - set(row_for_rolling)
+        for k in produced_keys:
+            payload[k] = enriched_rolling[k]
+
     return payload
 
 
@@ -250,6 +333,10 @@ def main():
         "im_cross_delta_agreement_5",                  # Pass 2 intermarket
         "im_rolling_correlation_10",                   # Pass 2 intermarket
         "im_open_type_agreement",                      # Pass 2 intermarket
+        "session_id", "is_in_us_cash",                 # Pass 3a simple
+        "asia_high", "ny_open", "pct_in_range",        # Pass 3a simple
+        "premium_zone", "discount_zone",               # Pass 3a simple
+        "swing_high_active_lag10", "liquidity_sweep_high_lag5",  # Pass 3a lag
     ]
     missing = [k for k in critical_keys if k not in payload_enriched]
     if missing:
@@ -397,6 +484,102 @@ def main():
     print(f"  [OK] im_open_type_agreement = {enriched_im.get('im_open_type_agreement')}")
     print(f"  [OK] im_delta_day_divergence = {enriched_im.get('im_delta_day_divergence')}")
 
+    # 7. Test critique Pass 3b : delta_div features non-constantes 0 sur 30 bars
+    print("\n[7/7] Test delta_div features fonctionnelles (concern 11 code-reviewer) ...")
+    state_30bars = MockState()
+    delta_div_strength_values = []
+    delta_div_clean_buy_values = []
+    delta_divergence_clean_values = []
+    bars_30 = bars[bars["ts_event"] >= pd.Timestamp("2026-04-09 14:00:00", tz="UTC")].head(30)
+    for _, b in bars_30.iterrows():
+        bar_ts = b.ts_event
+        bar_end = bar_ts + pd.Timedelta(minutes=1)
+        trades_w = trades[(trades["ts_event"] >= bar_ts) & (trades["ts_event"] < bar_end)]
+        row_b = {
+            "symbol": "ES.c.0",
+            "ts_event_ns": int(bar_ts.value),
+            "open": float(b.open), "high": float(b.high), "low": float(b.low),
+            "close": float(b.close), "volume": float(b.volume),
+            "mq_call_resistance": 5950.0, "mq_put_support": 5800.0, "mq_hvl": 5870.0,
+            "mq_call_resistance_0dte": np.nan, "mq_put_support_0dte": np.nan, "mq_hvl_0dte": np.nan,
+            "mq_dist_call_resistance": np.nan, "mq_dist_put_support": np.nan, "mq_dist_hvl": np.nan,
+            "mq_dist_call_resistance_0dte": np.nan, "mq_dist_put_support_0dte": np.nan, "mq_dist_hvl_0dte": np.nan,
+            "mq_dist_gamma_wall_0dte": np.nan, "mq_dist_gex_call_strike": np.nan, "mq_dist_gex_put_strike": np.nan,
+            "mq_dist_blue_line": np.nan, "mq_dist_orange_line": np.nan, "mq_dist_yellow_line": np.nan,
+            "trades_window_n": len(trades_w), "trades_window_sec": 60,
+        }
+        payload_b = run_integration_chain(row_b, trades_w, state_30bars, "ES.c.0")
+        delta_div_strength_values.append(payload_b.get("delta_div_strength", 0))
+        delta_div_clean_buy_values.append(payload_b.get("delta_div_buy_clean", 0))
+        delta_divergence_clean_values.append(payload_b.get("delta_divergence_clean", 0))
+
+    n_non_zero_strength = sum(1 for v in delta_div_strength_values if v != 0 and not (isinstance(v, float) and np.isnan(v)))
+    n_non_zero_buy = sum(1 for v in delta_div_clean_buy_values if v != 0)
+    n_non_zero_div = sum(1 for v in delta_divergence_clean_values if v != 0)
+    print(f"  Sur 30 bars consecutives :")
+    print(f"  delta_div_strength non-zero    : {n_non_zero_strength}/30 (max={max(delta_div_strength_values):.4f})")
+    print(f"  delta_div_buy_clean non-zero   : {n_non_zero_buy}/30")
+    print(f"  delta_divergence_clean non-zero: {n_non_zero_div}/30")
+    if n_non_zero_strength + n_non_zero_buy + n_non_zero_div == 0:
+        print(f"  [FAIL] delta_div features TOUTES constantes 0 - bug concern 11 NON resolu")
+        return False
+    print(f"  [OK] delta_div features fonctionnelles apres fix `ts` ms injection")
+
+    # 8. Test critique Pass 3b R2 fixes B2+B3 : delta_bar produit + ts_event injecte
+    # Verifie que 13+ features ML qui dependaient de delta_bar ne sont plus mortes
+    print("\n[8/8] Test fixes B2 (delta_bar) + B3 (ts_event) sur 30 bars consecutives ...")
+    state_b2b3 = MockState()
+    delta_bar_values = []
+    ctx_delta_sum_3_values = []
+    ctx_absorption_score_5_values = []
+    session_id_values = []
+    rvol_values = []
+    div_confluence_dmp_values = []  # fix B1 (merge selectif)
+    for _, b in bars_30.iterrows():
+        bar_ts = b.ts_event
+        bar_end = bar_ts + pd.Timedelta(minutes=1)
+        trades_w = trades[(trades["ts_event"] >= bar_ts) & (trades["ts_event"] < bar_end)]
+        row_b = {
+            "symbol": "ES.c.0",
+            "ts_event_ns": int(bar_ts.value),
+            "open": float(b.open), "high": float(b.high), "low": float(b.low),
+            "close": float(b.close), "volume": float(b.volume),
+            "mq_call_resistance": 5950.0, "mq_put_support": 5800.0, "mq_hvl": 5870.0,
+            "mq_call_resistance_0dte": np.nan, "mq_put_support_0dte": np.nan, "mq_hvl_0dte": np.nan,
+            "mq_dist_call_resistance": np.nan, "mq_dist_put_support": np.nan, "mq_dist_hvl": np.nan,
+            "mq_dist_call_resistance_0dte": np.nan, "mq_dist_put_support_0dte": np.nan, "mq_dist_hvl_0dte": np.nan,
+            "mq_dist_gamma_wall_0dte": np.nan, "mq_dist_gex_call_strike": np.nan, "mq_dist_gex_put_strike": np.nan,
+            "mq_dist_blue_line": np.nan, "mq_dist_orange_line": np.nan, "mq_dist_yellow_line": np.nan,
+            "trades_window_n": len(trades_w), "trades_window_sec": 60,
+        }
+        p = run_integration_chain(row_b, trades_w, state_b2b3, "ES.c.0")
+        delta_bar_values.append(p.get("delta_bar", 0))
+        ctx_delta_sum_3_values.append(p.get("ctx_delta_sum_3", np.nan))
+        ctx_absorption_score_5_values.append(p.get("ctx_absorption_score_5", np.nan))
+        session_id_values.append(p.get("session_id", -99))
+        rvol_values.append(p.get("rvol", np.nan))
+        div_confluence_dmp_values.append(p.get("div_confluence_dmp", np.nan))
+
+    n_db_nonzero = sum(1 for v in delta_bar_values if v != 0)
+    n_session_valid = sum(1 for v in session_id_values if v not in (-1, -99))
+    n_rvol_valid = sum(1 for v in rvol_values if v != 1.0 and not (isinstance(v, float) and np.isnan(v)))
+    has_div_conf = "div_confluence_dmp" in p  # last payload
+    print(f"  delta_bar non-zero (B2)        : {n_db_nonzero}/30 (max={max(abs(v) for v in delta_bar_values):.0f})")
+    print(f"  session_id valid (B3)          : {n_session_valid}/30")
+    print(f"  rvol non-default (B2 cascade)  : {n_rvol_valid}/30")
+    print(f"  div_confluence_dmp present (B1): {has_div_conf}")
+
+    if n_db_nonzero < 10:
+        print(f"  [FAIL] delta_bar still mostly 0 - B2 fix incomplete")
+        return False
+    if n_session_valid < 20:
+        print(f"  [FAIL] session_id mostly invalid (-1) - B3 fix incomplete")
+        return False
+    if not has_div_conf:
+        print(f"  [FAIL] div_confluence_dmp missing - B1 merge selectif fix incomplete")
+        return False
+    print(f"  [OK] B1+B2+B3 fixes valides empiriquement")
+
     print("\n" + "=" * 70)
     print("VERIFICATION EMPIRIQUE : PASS")
     print(f"  payload enrichi : {n_baseline} -> {n_enriched} clefs (+{n_new})")
@@ -404,6 +587,7 @@ def main():
     print(f"  fail-loud LOT 5 dep check validee")
     print(f"  fail-soft revert + failed_lot detection validee")
     print(f"  cross-symbol intermarket avec mock partner OK")
+    print(f"  Pass 3b delta_div features validees (concern 11 fix)")
     print("=" * 70)
     return True
 

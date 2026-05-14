@@ -260,12 +260,26 @@ def apply_game_changers(df: pd.DataFrame, symbol: str = "ES") -> pd.DataFrame:
     out_open_direction = []
     out_open_bias_conf = []
 
-    # Group par date (1 classification par jour, broadcast sur barres)
-    for date, grp in df.groupby("date_et", sort=False):
-        # FIX 10/05 : prendre row POST-IB (ib_high/low valides)
-        # Avant : first = grp.iloc[0] = 18:00 ET J-1 = ib_high/low NaN
-        # Apres : 1ere row apres ib_close_min (09:30 MGC, 10:30 ES/NQ)
-        post_ib = grp[grp["mins_et"] >= ib_close_min]
+    # Group par session CME (CME 18:00 ET cutoff = trading session boundary).
+    # FIX 14/05/2026 v2 (audit code-reviewer NOGO sur v1) :
+    # v1 utilisait groupby("session_date_trading") + filter mins_et >= 630, mais
+    # le filter capturait en PREMIER la bar Asia 18:00 ET (mins_et=1080) qui
+    # passe le filtre. Cette bar a date_et = jour PRECEDENT -> helpers
+    # open_cash/ib_high/price_1030 mergees par date_et viennent de la veille.
+    # Resultat : open_type calcule sur les MAUVAISES donnees (shift J-1 silent).
+    # Anti-pattern 11 V1 detecte (fix-bug-introduce-another, plus dangereux).
+    # v2 : filter 3 conditions cumulees :
+    #   1. mins_et >= ib_close_min  (post IB window)
+    #   2. mins_et < bounds["asia_start"] (avant next Asia open)
+    #   3. date_et == session_date_trading (bar du JOUR CASH, pas Asia veille)
+    asia_start = bounds["asia_start"]
+    for date, grp in df.groupby("session_date_trading", sort=False):
+        # FIX 10/05 + 14/05 v2 : prendre row POST-IB du JOUR CASH (pas Asia veille)
+        post_ib = grp[
+            (grp["mins_et"] >= ib_close_min)
+            & (grp["mins_et"] < asia_start)
+            & (grp["date_et"] == date)
+        ]
         if post_ib.empty:
             # Pas de bar post-IB ce jour (weekend, holiday, partial) - fallback UNKNOWN
             n_bars = len(grp)
@@ -507,7 +521,15 @@ def apply_all_engines(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def process_partition(symbol: str, year: int, month: int, write: bool = True) -> dict:
-    """Pipeline complet sur 1 (symbol, year, month)."""
+    """Pipeline complet sur 1 (symbol, year, month).
+
+    FIX 14/05/2026 (audit profond bug open_type=0/day_type=2) :
+    Charge aussi le mois M-1 comme seed pour les features cross-month
+    (prev_vah/val/vpoc, ib_atr) qui exigent l'historique de la session
+    precedente. Sans seed, les premiers jours du mois ont prev_*=NaN
+    -> classify_open_type retourne UNKNOWN (0) systematique.
+    Apres apply_all_engines, on filtre pour ne write QUE le mois courant.
+    """
     t0 = time.time()
     print(f"\n[{symbol} {year}-{month:02d}] Start")
 
@@ -522,9 +544,44 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     original_cols = set(df_orig.columns) - PHASE_B_GENERATED - {c for c in df_orig.columns if c.startswith(INTERMARKET_PREFIX)}
     print(f"  Loaded {n_bars} bars x {n_cols_orig} cols ({len(original_cols)} non-PhaseB)")
 
-    # Trades pour Volume Profile
+    # FIX #3 architectural : charger seed M-1 pour cross-month features
+    prev_month = month - 1 if month > 1 else 12
+    prev_year = year if month > 1 else year - 1
+    df_seed = load_v4_partition(symbol, prev_year, prev_month)
+    if not df_seed.empty:
+        # Garder uniquement les 20 derniers jours pour limiter cout RAM (ib_atr lookback=14)
+        df_seed["ts_event"] = pd.to_datetime(df_seed["ts_event"], utc=True)
+        cutoff = df_seed["ts_event"].max() - pd.Timedelta(days=20)
+        df_seed = df_seed[df_seed["ts_event"] >= cutoff].copy()
+        # Drop les cols PhaseB already-generated (sinon re-run sur seed sera incorrect)
+        seed_drop = [c for c in PHASE_B_GENERATED if c in df_seed.columns]
+        if seed_drop:
+            df_seed = df_seed.drop(columns=seed_drop)
+        print(f"  Seed M-1 : {len(df_seed)} bars (20 derniers jours {prev_year}-{prev_month:02d})")
+        # Concat seed + current (seed FIRST pour conserver ordre chronologique)
+        df_orig["ts_event"] = pd.to_datetime(df_orig["ts_event"], utc=True)
+        df_combined = pd.concat([df_seed, df_orig], ignore_index=True)
+        # Sort + drop_duplicates (au cas ou)
+        df_combined = df_combined.sort_values("ts_event").reset_index(drop=True)
+    else:
+        print(f"  Seed M-1 : empty (premier mois du dataset OU manquant)")
+        df_combined = df_orig.copy()
+
+    # Trades pour Volume Profile (charger aussi M-1 pour seed VPOC)
     trades_df = load_trades_for_month(symbol, year, month)
-    print(f"  Loaded {len(trades_df):,} trades")
+    trades_seed = load_trades_for_month(symbol, prev_year, prev_month)
+    # Convertir ts_event UTC sur les deux pour eviter object dtype apres concat
+    if not trades_df.empty:
+        trades_df["ts_event"] = pd.to_datetime(trades_df["ts_event"], utc=True)
+    if not trades_seed.empty and not df_seed.empty:
+        # Filter trades_seed sur la fenetre 20 jours seed
+        trades_seed["ts_event"] = pd.to_datetime(trades_seed["ts_event"], utc=True)
+        trades_seed = trades_seed[trades_seed["ts_event"] >= cutoff].copy()
+        trades_combined = pd.concat([trades_seed, trades_df], ignore_index=True)
+        print(f"  Loaded {len(trades_df):,} trades + {len(trades_seed):,} seed (total {len(trades_combined):,})")
+    else:
+        trades_combined = trades_df
+        print(f"  Loaded {len(trades_df):,} trades (no seed)")
 
     # Pipeline (10/05/2026 : tick + bounds per-symbole — supporte MGC=0.10 + 08:30 RTH)
     tick = get_tick_size(symbol)
@@ -537,7 +594,15 @@ def process_partition(symbol: str, year: int, month: int, write: bool = True) ->
     # 13/05 Phase 1b refacto : sequence d'engines extraite dans apply_all_engines.
     # process_partition reste l'orchestrateur full mode (load + engines + write).
     # process_partition_incremental utilise aussi apply_all_engines sur window seul.
-    df = apply_all_engines(df_orig, trades_df, symbol, tick, bounds)
+    df = apply_all_engines(df_combined, trades_combined, symbol, tick, bounds)
+
+    # FIX #3 architectural : filter pour ne garder QUE le mois courant avant write
+    # (le seed M-1 etait juste pour bootstrap les rolling features cross-month)
+    month_start = pd.Timestamp(year=year, month=month, day=1, tz="UTC")
+    month_end = (month_start + pd.offsets.MonthBegin(1)).tz_convert("UTC")
+    df["ts_event"] = pd.to_datetime(df["ts_event"], utc=True)
+    df = df[(df["ts_event"] >= month_start) & (df["ts_event"] < month_end)].reset_index(drop=True)
+    print(f"  Filtered to {year}-{month:02d} : {len(df)} bars (post-seed)")
 
     # Sanity stats
     if "open_type" in df.columns:

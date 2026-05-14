@@ -7,6 +7,35 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-14]** **Test empirique cross-session boundary CME 22:00 UTC (Pass 3b)** | 1-2h | LOW | PROPOSED (couverture test incomplete)
+  - **Source** : Code-reviewer Pass 3b R2 B4 - test actuel `test_live_enricher_integration.py` valide 30 bars d'1 plage horaire continue. Manque la validation du reset `trading_date` + `daily_high_running` au cross-CME boundary (18:00 ET = 22:00 UTC).
+  - **Impact** : si bug `same_session` (ligne 1010 `rolling_features_streaming.py`), divergences delta_div seraient calculees a tort cross-day. Non detecte par test actuel.
+  - **Fix** : ajouter test 2 jours consecutifs avec bar 21:59 UTC + 22:00 UTC. Verifier `trading_date` change + reset state.
+
+- **[DETTE 2026-05-14]** **Audit complet inputs payload vs attentes engines streaming** | 3-4h | HIGH | PROPOSED (Pattern 11 V1 prevent)
+  - **Source** : Code-reviewer Pass 3b R2 B5 - revele 20+ inputs amont manquants pour rolling_features (vwap_slope_10, cvd_day, va_position_pct, ib_position_pct, dist_vwap_d, atr, vwap_d_side, vix_regime, bn_absorb_*, retest_*, dist_swing_*, dist_blind_*, dist_cur_va*, dist_ib_*, large_trader_ratio, dist_mq_*, next_wall_dist_ticks).
+  - **Impact** : nombreuses features ML potentiellement biaisees/mortes silencieusement. Pattern V1 26 jours features mortes.
+  - **Fix** : audit systematique de chaque engine streaming dans `live_enricher.py` :
+    - Pour chaque sub-engine, lister inputs attendus (grep `out.get`)
+    - Verifier presence dans payload AVANT appel
+    - Si absent : injecter (Databento source) OU documenter (phase_b_plus non integre) OU fail-loud (anti silent fallback)
+  - **Engines a integrer en amont** : `phase_b_plus_streaming` (74 VWAP) + `phase_b_helpers.add_session_high_low_streaming` + `add_volume_profile_features_streaming`. Sans, ~30% des ctx_* features = NaN/biais.
+  - **Deadline** : AVANT training reel mid-juin 2026.
+
+- **[DETTE 2026-05-14]** **Bug data quality : trades Databento manquants 04-27 + 04-30 ES** | INVESTIGATE | MEDIUM | PROPOSED (impact 2/23 sessions ES April UNKNOWN)
+  - **Source** : Audit V4 Round 2 code-reviewer (commit Fix v2 game_changers) - revele apres Fix v2 propage proprement les defauts data.
+  - **Impact** : 2 sessions ES April 2026 (04-27 lundi, 04-30 jeudi) ont `prev_vah/val/vpoc = NaN` car `daily_profiles` ne contient pas ces dates -> trades manquants dans le buffer Databento.
+  - **Verification** : `ls DATA/DATABENTO/GLBX.MDP3/trades/symbol=ES.c.0/year=2026/month=4/day=27/` + idem day=30. Si absent -> retelecharger Databento.
+  - **Note** : 04-03 (Good Friday NYSE ferme) + 05-01 (cross-month partial) sont UNKNOWN LEGITIMES. Total UNKNOWN April ES = 4/23 (17%), dont 2 legitimes + 2 data quality.
+  - **Deadline** : AVANT training reel mid-juin 2026 (15-17% UNKNOWN biaiserait le modele).
+
+- **[DETTE 2026-05-14]** **Root fix `add_open_cash_price1030` merge par session_date_trading** | 1-2h | LOW | PROPOSED (Fix v2 contourne en aval)
+  - **Source** : Audit V4 Round 2 - Fix #1 v2 corrige le bug J-1 shift au point de CONSOMMATION (filter `date_et == session_date_trading`), MAIS la SOURCE du bug (`phase_b_helpers.py:761`) merge toujours `open_cash` / `price_1030` par `date_et`.
+  - **Impact** : si un autre consommateur downstream (dashboard, autre engine) lit `open_cash` directement, il aura encore le shift J-1.
+  - **Verification** : `grep -rn "open_cash\|price_1030" CORE/ DASHBOARD/` pour identifier consommateurs.
+  - **Fix** : refactor `add_open_cash_price1030` pour merger par `session_date_trading` au lieu de `date_et`. Tester non-regression toutes consumers.
+  - **Mitigation actuelle** : test regression `TOOLS/test_phase_b_open_type_no_j1_shift.py` detecte la reintroduction du bug.
+
 - **[DETTE 2026-05-14]** **Cross-asset MGC live : tracker 6E/ZN/ZB dans SYMBOLS Live Enricher** | 3-4h | MEDIUM | PROPOSED (gold_phase_d features = NaN sans cross-asset live)
   - **Source** : Live Enricher Pass 2 commit d964762 - `gold_phase_d_streaming` necessite close 6E/ZN/ZB pour `im_dxy_corr_60d` et `im_real_yields_proxy`. Actuellement passe None -> features NaN en live MGC.
   - **Impact** : 2 features Gold (sur 4) = NaN systematique en LIVE pour MGC. Backfill V4 ok (parquets Databento dispo). Mais ML training avec NaN systematique = info perdue pour le modele.

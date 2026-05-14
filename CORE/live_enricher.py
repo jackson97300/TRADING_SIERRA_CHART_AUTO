@@ -310,6 +310,29 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         payload["trades_window_n"] = len(trades_df)
         payload["trades_window_sec"] = 60
 
+        # ─── Fix code-reviewer Pass 3b R2 BLOQUANTS ───────────────────────────
+        # B3 : inject `ts_event` (pd.Timestamp) - sessions_swings/rvol_inputs
+        #      attend cette cle, cache OHLCV livre uniquement ts_event_iso/ns.
+        # B2 : produire `delta_bar` depuis trades Databento (= sum signed_size).
+        #      LOT 1 et 13+ rolling features ML lisent cette cle, le DMP C++
+        #      la produisait. Aucun upstream Live Enricher ne la produit.
+        #      Sans ce calcul : pattern V1 26 jours features mortes reproduit.
+        import pandas as _pd  # local import (heavy module deja loaded)
+        payload["ts_event"] = _pd.Timestamp(ts_event_ns, unit="ns", tz="UTC")
+        # delta_bar = sum signed_size (A=BUY +size / B=SELL -size / N=ignore)
+        # Fix B8 code-reviewer Round 3 : pd.notna() detecte NaN pandas
+        # (not None ne suffit pas - NaN passe None check et propage en
+        # float(NaN) = NaN -> cascade silent feature mortes).
+        delta_bar_total = 0.0
+        if not trades_df.empty and {"size", "side"}.issubset(trades_df.columns):
+            for _trade in trades_df[["size", "side"]].itertuples(index=False):
+                s = float(_trade.size) if _trade.size is not None and _pd.notna(_trade.size) else 0.0
+                if _trade.side == "A":
+                    delta_bar_total += s
+                elif _trade.side == "B":
+                    delta_bar_total -= s
+        payload["delta_bar"] = delta_bar_total
+
         # ──────────────────────────────────────────────────────────────────────
         # Phase 3c semaine 4 : engines streaming (76 + 4 MGC + 10 ES/NQ = 90 max)
         # Ordre dependance critique (Pass 1 phase_b_plus_plus) :
@@ -544,6 +567,140 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 for k, v in enriched_im.items():
                     if k.startswith("im_"):
                         payload[k] = v
+
+            # ──────────────────────────────────────────────────────────────────
+            # Pass 3a Phase 3c semaine 4 : sessions_swings (55 features)
+            # SIMPLE (38 features) puis LAG (17 features) - chain dependency :
+            # LAG consomme session_id produit par SIMPLE.
+            # Audit feature-engineer 14/05 : GREEN Prio 1 (trend_day_probability
+            # et open_bias_conf famille = top SHAP).
+            # ──────────────────────────────────────────────────────────────────
+            from sessions_swings_simple_streaming import (
+                add_sessions_swings_simple_streaming,
+                make_sessions_swings_simple_state,
+            )
+            from sessions_swings_lag_streaming import (
+                add_sessions_swings_lag_streaming,
+                make_sessions_swings_lag_state,
+            )
+
+            with state.lock:
+                # SIMPLE : produit session_id, is_in_*, opens, premium/discount, mins_et
+                s_sess_simple = state.get_engine_state(
+                    "sessions_swings_simple",
+                    factory=lambda: make_sessions_swings_simple_state(symbol=symbol_pure),
+                )
+                payload = add_sessions_swings_simple_streaming(payload, s_sess_simple)
+
+                # LAG : consomme session_id (produit par SIMPLE) -> swings + sweep
+                s_sess_lag = state.get_engine_state(
+                    "sessions_swings_lag",
+                    factory=lambda: make_sessions_swings_lag_state(symbol=symbol_pure),
+                )
+                payload = add_sessions_swings_lag_streaming(payload, s_sess_lag)
+
+            # ──────────────────────────────────────────────────────────────────
+            # Pass 3c Phase 3c semaine 4 : rvol streaming (10 features)
+            # Chain : rvol_inputs (helper stateless) -> rvol_engine (rolling 20).
+            # Inputs : total_vol, delta_bar (depuis LOT 1) + OHLC.
+            # Audit feature-engineer 14/05 : GREEN (rvol_extreme rho=+0.059 ES).
+            # ──────────────────────────────────────────────────────────────────
+            from phase_b_helpers import (
+                add_rvol_inputs_streaming,
+                RvolInputsState,
+            )
+            from rvol_streaming import (
+                add_rvol_engine_streaming,
+                RvolEngineState,
+            )
+
+            with state.lock:
+                # 1. rvol_inputs : range_size, finish_strength, delta_pct (stateless)
+                s_rvol_inputs = state.get_engine_state(
+                    "rvol_inputs",
+                    factory=RvolInputsState,
+                )
+                payload = add_rvol_inputs_streaming(payload, s_rvol_inputs, tick=tick)
+
+                # 2. rvol_engine : 10 features rvol_* (rolling 20 vol)
+                s_rvol = state.get_engine_state(
+                    "rvol_engine",
+                    factory=RvolEngineState,
+                )
+                payload = add_rvol_engine_streaming(payload, s_rvol)
+
+            # ──────────────────────────────────────────────────────────────────
+            # Pass 3b Phase 3c semaine 4 : rolling_features (45+ ctx_* features)
+            # 5 sous-fonctions :
+            #   - basic (13 features tier 1)
+            #   - medium (tier 2)
+            #   - advanced (tier 3)
+            #   - delta_div (rolling div)
+            #   - session_confluence
+            # Inputs : price, delta_bar, total_vol (LOT 1) + vwap_slope_10/cvd_day
+            # /va_position_pct (phase_b_plus, pas encore integre - features NaN
+            # pour celles-la, par design tolerant batch ligne 88-92).
+            # Audit feature-engineer 14/05 : GREEN Prio 1 (ib_extension_ratio,
+            # poc_migration_10, va_developing_10 references SHAP historique).
+            # ──────────────────────────────────────────────────────────────────
+            from rolling_features_streaming import (
+                add_rolling_features_basic_streaming,
+                add_rolling_features_medium_streaming,
+                add_rolling_features_advanced_streaming,
+                add_rolling_features_delta_div_streaming,
+                add_rolling_features_session_confluence_streaming,
+                RollingFeaturesState,
+            )
+
+            with state.lock:
+                s_rolling = state.get_engine_state(
+                    "rolling_features",
+                    factory=RollingFeaturesState,
+                )
+                # Fix code-reviewer Pass 3b P2 #2 : isoler aliases localement
+                # pour eviter pollution payload final ('price' bloat).
+                # Fix code-reviewer Pass 3b CRITIQUE #11 : injecter `ts` ms epoch
+                # (rolling_features_streaming.add_rolling_features_delta_div_streaming
+                # attend `ts` en MILLISECONDES, le payload a `ts_event_ns` en
+                # NANOSECONDES). Sans cette conversion : delta_div_*_clean=0
+                # constant + cascade biaisee (ctx_div_density_20, bars_since_div,
+                # div_at_swing). Reference incident similaire 07/04/2026
+                # delta_divergence toujours 0 (lessons.md).
+                row_for_rolling = dict(payload)
+                if "price" not in row_for_rolling and "close" in row_for_rolling:
+                    row_for_rolling["price"] = row_for_rolling["close"]
+                # Fix code-reviewer Pass 3b concern 11 (3 alias):
+                # - ts ms epoch (ns -> ms) pour _ts_to_trading_date_cme
+                # - bar_high alias high (delta_div module attend bar_high)
+                # - bar_low alias low
+                row_for_rolling["ts"] = ts_event_ns / 1_000_000
+                if "bar_high" not in row_for_rolling and "high" in row_for_rolling:
+                    row_for_rolling["bar_high"] = row_for_rolling["high"]
+                if "bar_low" not in row_for_rolling and "low" in row_for_rolling:
+                    row_for_rolling["bar_low"] = row_for_rolling["low"]
+                # Chain 5 sous-fonctions partageant le meme state rolling.
+                # Warmup periods (concern P1 #4 code-reviewer Pass 3b) :
+                #   - basic : ctx_vol_z_5/delta_sum_3 = 5/3 bars warmup
+                #   - medium : ctx_va_developing_10 = 10 bars
+                #   - advanced : ctx_excess_high_bars_60 = 60 bars (1h)
+                #   - delta_div : ctx_div_density_20 = 20 bars
+                #   - session_confluence : depend warmup downstream (60 max)
+                # Premier ~60 bars du service : features rolling partiellement NaN.
+                enriched_rolling = add_rolling_features_basic_streaming(row_for_rolling, s_rolling)
+                enriched_rolling = add_rolling_features_medium_streaming(enriched_rolling, s_rolling)
+                enriched_rolling = add_rolling_features_advanced_streaming(enriched_rolling, s_rolling)
+                enriched_rolling = add_rolling_features_delta_div_streaming(enriched_rolling, s_rolling)
+                enriched_rolling = add_rolling_features_session_confluence_streaming(enriched_rolling, s_rolling)
+                # Fix code-reviewer Pass 3b R2 B1 : merge par DIFF de cles
+                # au lieu de filter whitelist. Capture TOUTES les features
+                # produites par les sub-engines rolling sans risquer de perdre
+                # les nouvelles (e.g. div_at_key_level_ticks, div_confluence_*
+                # qui ne matchent pas startswith("ctx_") ni "delta_div_").
+                # Convention : tout ce qui est dans enriched_rolling et pas dans
+                # row_for_rolling est une feature produite -> merge dans payload.
+                produced_keys = set(enriched_rolling) - set(row_for_rolling)
+                for k in produced_keys:
+                    payload[k] = enriched_rolling[k]
         except (ValueError, KeyError, TypeError, AttributeError, ImportError) as e:
             # Fail-soft restreint (code-reviewer P1) : whitelist exceptions
             # attendues (contract violation, dep manquante, type mismatch). Tout
@@ -564,6 +721,10 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             tb = traceback.format_exc()
             failed_lot = "unknown"
             for marker, lot_name in (
+                ("rolling_features_streaming", "rolling_features"),
+                ("rvol_streaming", "rvol_engine"),
+                ("sessions_swings_lag_streaming", "sessions_lag"),
+                ("sessions_swings_simple_streaming", "sessions_simple"),
                 ("intermarket_streaming", "intermarket"),
                 ("gold_phase_d_streaming", "gold_phase_d"),
                 ("phase_b_plus_plus_delta_div_ext_streaming", "LOT_6_delta_div_ext"),
@@ -578,11 +739,19 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     failed_lot = lot_name
                     break
             # Fix code-reviewer Pass 2 P1 #3 : engine name dynamique pour J+1 grep.
-            # Phase 3c contient 2 chaines : phase_b_plus_plus_chain (LOT 1-6)
-            # et cross_asset_chain (gold + intermarket). Differencier dans le
-            # log pour audit.
+            # Phase 3c contient 3 chaines :
+            #   - phase_b_plus_plus_chain (LOT 1-6 + footprint)
+            #   - cross_asset_chain (gold + intermarket)
+            #   - sessions_swings_chain (Pass 3a sessions simple + lag)
+            # Differencier dans le log pour audit.
             if failed_lot.startswith("LOT_") or failed_lot in ("footprint_cells", "unknown"):
                 engine_name = "phase_b_plus_plus_chain"
+            elif failed_lot.startswith("sessions_"):
+                engine_name = "sessions_swings_chain"
+            elif failed_lot.startswith("rvol_"):
+                engine_name = "rvol_chain"
+            elif failed_lot == "rolling_features":
+                engine_name = "rolling_features_chain"
             else:
                 engine_name = "cross_asset_chain"
             logger.warning(

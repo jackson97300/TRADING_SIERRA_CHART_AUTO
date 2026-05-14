@@ -1389,15 +1389,21 @@ def add_ib_atr(df: pd.DataFrame, lookback_days: int = 14) -> pd.DataFrame:
     """
     ib_atr = moyenne(ib_range) sur lookback_days jours precedents.
     Utilise par classify_day_type pour normaliser ib_range.
+
+    FIX 14/05/2026 (audit profond bug day_type=2 constants) :
+    groupby("date_et") cascade le bug session fragmentation. Switch a
+    groupby("session_date_trading") pour aligner sur les vraies sessions
+    CME (18:00 ET cutoff). Sinon ib_atr peut etre NaN si mois single-day.
     """
     df = df.copy()
     if "ib_range" not in df.columns:
         raise ValueError("add_ib_features() doit etre appele avant add_ib_atr()")
 
-    # Une valeur ib_range par jour (constante a l'interieur d'un jour)
-    daily_ib = df.groupby("date_et")["ib_range"].first().sort_index()
+    # Une valeur ib_range par session CME (constante intraday)
+    group_key = "session_date_trading" if "session_date_trading" in df.columns else "date_et"
+    daily_ib = df.groupby(group_key)["ib_range"].first().sort_index()
     ib_atr_series = daily_ib.shift(1).rolling(lookback_days, min_periods=3).mean()
-    df["ib_atr"] = df["date_et"].map(ib_atr_series)
+    df["ib_atr"] = df[group_key].map(ib_atr_series)
     return df
 
 
