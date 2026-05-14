@@ -731,6 +731,7 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             from phase_b_plus_streaming import (
                 add_phase_b_plus_streaming,
                 PhaseBPlusState,
+                make_phase_b_plus_state,
             )
 
             # Pour add_session_metadata bounds : utiliser bounds per-symbol deja
@@ -775,7 +776,13 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 )
 
                 # 5. Phase B+ (74 features VWAP D/W/M + SD bands + OVN)
-                s_bp = state.get_engine_state("phase_b_plus", factory=PhaseBPlusState)
+                # Fix code-reviewer Pass 4c-prereq #12 (Pattern 11) : factory
+                # PER-SYMBOL pour threshold_vol correct. Sans symbol : ES default
+                # 1200 utilise pour NQ (real 400) -> vol_spike_up/dn morte NQ.
+                s_bp = state.get_engine_state(
+                    "phase_b_plus",
+                    factory=lambda: make_phase_b_plus_state(symbol=symbol_pure),
+                )
                 payload = add_phase_b_plus_streaming(payload, s_bp, tick=tick)
         except (ValueError, KeyError, TypeError, AttributeError, ImportError) as e:
             # Fail-soft restreint (code-reviewer P1) : whitelist exceptions
@@ -797,7 +804,12 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             tb = traceback.format_exc()
             failed_lot = "unknown"
             for marker, lot_name in (
+                # Pass 4c-prereq markers (deepest first)
                 ("phase_b_plus_streaming", "phase_b_plus"),
+                # Fix code-reviewer Pass 4c-prereq #9 : marker phase_b_helpers
+                # pour J+1 grep correct si crash session_metadata/ib_features/
+                # session_high_low/volume_profile (tous dans phase_b_helpers.py).
+                ("phase_b_helpers", "phase_b_helpers"),
                 ("rolling_features_streaming", "rolling_features"),
                 ("rvol_streaming", "rvol_engine"),
                 ("sessions_swings_lag_streaming", "sessions_lag"),
@@ -831,6 +843,8 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 engine_name = "rolling_features_chain"
             elif failed_lot == "phase_b_plus":
                 engine_name = "phase_b_plus_chain"
+            elif failed_lot == "phase_b_helpers":
+                engine_name = "phase_b_helpers_chain"
             else:
                 engine_name = "cross_asset_chain"
             logger.warning(

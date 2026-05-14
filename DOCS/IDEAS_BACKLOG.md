@@ -7,6 +7,17 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-15]** **Hardcode OVN/Opens 18:00/09:30 ET dans `phase_b_plus_streaming.py` casse MGC** | 1h | LOW | PROPOSED (MGC pas Bot 2/3 actuel)
+  - **Source** : Code-reviewer Pass 4c-prereq audit (commit c1475b0) ligne 343-352, 346 - hardcode `mins_et >= 1080 OR < 570` correct ES/NQ mais FAUX MGC (devrait `>= 1140 OR < 510` per `SESSION_BOUNDARIES_BY_SYMBOL["MGC"]`).
+  - **Impact** : features `ovn_high/low MGC` polluees si on integre MGC live.
+  - **Fix** : utiliser `bounds["asia_start"]` per-symbole comme dans `add_session_metadata_streaming`. Refactor session boundaries au lieu de hardcode.
+  - **Deadline** : AVANT Bot 3 MGC live (cf `project_bot1_bot2_mgc_plan_blockers`).
+
+- **[DETTE 2026-05-15]** **Redondance schema payload Pass 3a + Pass 4c-prereq (3 paires duplicate)** | 0.5h | LOW | PROPOSED (bloat sans bug)
+  - **Source** : Code-reviewer Pass 4c-prereq concern #2 - paires duplicate dans payload : `mins_et` (Pass 3a + Pass 4c), `session_date` vs `session_date_trading`, `is_in_us_cash` vs `is_cash_session`.
+  - **Impact** : bloat schema ~3 cles + risque drift si convention diverge future.
+  - **Fix** : soit (a) consolider Pass 4c-prereq pour ne PAS produire les cles deja produites par Pass 3a, soit (b) renommer Pass 4c outputs avec prefix unique. Documenter convention.
+
 - **[DETTE 2026-05-14]** **Test empirique cross-session boundary CME 22:00 UTC (Pass 3b)** | 1-2h | LOW | PROPOSED (couverture test incomplete)
   - **Source** : Code-reviewer Pass 3b R2 B4 - test actuel `test_live_enricher_integration.py` valide 30 bars d'1 plage horaire continue. Manque la validation du reset `trading_date` + `daily_high_running` au cross-CME boundary (18:00 ET = 22:00 UTC).
   - **Impact** : si bug `same_session` (ligne 1010 `rolling_features_streaming.py`), divergences delta_div seraient calculees a tort cross-day. Non detecte par test actuel.
