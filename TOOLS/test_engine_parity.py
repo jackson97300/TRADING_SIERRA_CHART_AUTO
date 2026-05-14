@@ -3890,6 +3890,100 @@ def _test_phase_b_plus_plus_delta_div_ext():
     return {"all_pass": all_pass}
 
 
+def _test_gold_phase_d():
+    """Test sub-engine gold_phase_d (4 features intermarket MGC).
+
+    Test parite batch apply_gold_phase_d() vs stream avec inputs cross-sym.
+    """
+    from gold_phase_d_streaming import (
+        add_gold_phase_d_streaming, GoldPhaseDState,
+    )
+    from gold_phase_d_features import apply_gold_phase_d
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(191)
+    # 200 bars MGC + 6E + ZN + ZB synchros 1-min sur 13:30-16:50 UTC
+    # (couvre overlap 12:30-16:00 UTC + post-open 13:30-14:00 ET = 17:30-18:00 UTC en DST)
+    n_bars = 200
+    start = pd.Timestamp("2026-05-12 12:00:00", tz="UTC")
+    ts_seq = pd.Series([start + pd.Timedelta(minutes=i) for i in range(n_bars)])
+
+    df_mgc = pd.DataFrame({"ts_event": ts_seq})
+    base_mgc = 2400 + np.cumsum(np.random.randn(n_bars) * 0.5)
+    df_mgc["close"] = base_mgc
+    df_mgc["high"] = base_mgc + np.random.uniform(0.5, 2, n_bars)
+    df_mgc["low"] = base_mgc - np.random.uniform(0.5, 2, n_bars)
+    df_mgc["volume"] = np.random.randint(50, 500, n_bars)
+
+    df_6e = pd.DataFrame({"ts_event": ts_seq})
+    df_6e["close"] = 1.08 + np.cumsum(np.random.randn(n_bars) * 0.0005)
+
+    df_zn = pd.DataFrame({"ts_event": ts_seq})
+    df_zn["close"] = 110.0 + np.cumsum(np.random.randn(n_bars) * 0.02)
+
+    df_zb = pd.DataFrame({"ts_event": ts_seq})
+    df_zb["close"] = 130.0 + np.cumsum(np.random.randn(n_bars) * 0.03)
+
+    # BATCH
+    batch_df = apply_gold_phase_d(df_mgc.copy(), df_6e, df_zn, df_zb)
+
+    # STREAM
+    state = GoldPhaseDState()
+    stream_rows = []
+    for i in range(n_bars):
+        row_in = df_mgc.iloc[i].to_dict()
+        out = add_gold_phase_d_streaming(
+            row_in, state,
+            close_6e=df_6e["close"].iloc[i],
+            close_zn=df_zn["close"].iloc[i],
+            close_zb=df_zb["close"].iloc[i],
+        )
+        stream_rows.append(out)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest gold_phase_d parite sur {n_bars} bars synth (MGC + 6E + ZN + ZB)...")
+
+    cols_check = [
+        "im_dxy_corr_60d",
+        "im_real_yields_proxy",
+        "mgc_asia_london_overlap_vol",
+        "mgc_session_break_acceleration",
+    ]
+    print(f"\n--- NIVEAU 1 : parite (4 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:40s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mm = int(nan_diff.sum())
+        # Tolerance large car pct_change cumulatif peut introduire noise
+        atol = 1e-3
+        status = "PASS" if max_diff < atol and nan_mm < 5 else "FAIL"
+        n_active_b = int((~np.isnan(b) & (b != 0)).sum())
+        n_active_s = int((~np.isnan(s) & (s != 0)).sum())
+        print(f"  {col:40s} {status} max_diff={max_diff:.4e} nan_mm={nan_mm} "
+              f"non-zero batch/stream={n_active_b}/{n_active_s}")
+        if status == "FAIL":
+            all_pass = False
+            idx_diff = np.where((np.abs(diff) > atol) & ~nan_both)[0][:3]
+            for idx in idx_diff:
+                print(f"    idx={idx} batch={b[idx]} stream={s[idx]}")
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL gold_phase_d : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -4195,6 +4289,7 @@ def main():
                                  "phase_b_plus_plus_absorb",
                                  "phase_b_plus_plus_trapped",
                                  "phase_b_plus_plus_delta_div_ext",
+                                 "gold_phase_d",
                                  "all"])
     args = parser.parse_args()
 
@@ -4350,6 +4445,11 @@ def main():
 
     if args.engine in ("phase_b_plus_plus_delta_div_ext", "all"):
         report = _test_phase_b_plus_plus_delta_div_ext()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("gold_phase_d", "all"):
+        report = _test_gold_phase_d()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
