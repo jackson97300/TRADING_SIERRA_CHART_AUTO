@@ -19,8 +19,15 @@ Ordre dependancy obligatoire (caller doit avoir applique AVANT) :
                                        OU session_date_trading (Pass 4c-prereq)
   - add_vpoc_derivees_streaming     <- cur_vpoc/vah/val/inside_value_area (Pass 4c-prereq)
 
-Convention : tout fonction retourne `dict row + features ajoutees`. Si input
-critique manquant, fail-loud KeyError (anti silent fallback Pattern 11).
+Convention : streaming TOLERE NaN sur inputs critiques (vs batch qui raise
+KeyError). Justification : raise dans live = interruption cycle entier =
+trades manques. Tolerance NaN propagee proprement vs silent fallback :
+les NaN sont VISIBLES dans le payload (pas reset a 0), downstream filtre
+peut detecter via `pd.isna()`. Cf code-reviewer Pass 4a R1 concern #3.
+
+NB : si input manquant systematiquement (ex: vwap_d toujours NaN), c'est un
+bug de pipeline upstream (Pass 4c-prereq) - signaler via emit log au lieu
+de raise. La fail-loud production = nssm restart vide qui ne resout rien.
 
 Auteur : MIA Trading System V2
   v1.0 (2026-05-15) : Pass 4a Phase 3c semaine 4 - resolution dette B5

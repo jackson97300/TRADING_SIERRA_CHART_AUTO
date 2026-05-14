@@ -630,6 +630,68 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 payload = add_rvol_engine_streaming(payload, s_rvol)
 
             # ──────────────────────────────────────────────────────────────────
+            # Pass 4c-prereq Phase 3c semaine 4 : prerequisites pour Pass 4a + 3b
+            # FIX code-reviewer Pass 4a R1 #1 : DEPLACE AVANT Pass 3b rolling
+            # car Pass 3b session_confluence LIT `session` produit par Pass 4a.
+            # Ordre : Pass 4c-prereq -> Pass 4a -> Pass 3b rolling.
+            # Integre 5 helpers streaming :
+            #   1. add_session_metadata_streaming  -> date_et, mins_et,
+            #      session_date_trading, is_cash_session, is_ib_window
+            #   2. add_ib_features_streaming       -> ib_high/low/range, ib_complete,
+            #      ib_position_pct, ib_extension_ratio
+            #   3. add_session_high_low_streaming  -> sess_high/low, cash_high/low
+            #   4. add_volume_profile_features_streaming -> cur_vpoc/vah/val
+            #   5. add_phase_b_plus_streaming      -> 74 features VWAP + OVN
+            # ──────────────────────────────────────────────────────────────────
+            from phase_b_helpers import (
+                add_session_metadata_streaming, SessionMetadataState,
+                add_ib_features_streaming, IBState,
+                add_session_high_low_streaming, SessionHighLowState,
+                add_volume_profile_features_streaming, VolumeProfileState,
+            )
+            from phase_b_plus_streaming import (
+                add_phase_b_plus_streaming, PhaseBPlusState, make_phase_b_plus_state,
+            )
+            try:
+                from CORE.constants import get_session_boundaries as _get_bounds
+            except ImportError:
+                from constants import get_session_boundaries as _get_bounds
+            sym_bounds = _get_bounds(symbol_pure)
+            trades_for_vp = []
+            if not trades_df.empty and {"price", "size"}.issubset(trades_df.columns):
+                trades_for_vp = trades_df[["price", "size"]].to_dict(orient="records")
+
+            with state.lock:
+                s_meta = state.get_engine_state("session_metadata", factory=SessionMetadataState)
+                payload = add_session_metadata_streaming(payload, s_meta, bounds=sym_bounds)
+                s_ib = state.get_engine_state("ib_features", factory=IBState)
+                payload = add_ib_features_streaming(payload, s_ib, tick=tick, bounds=sym_bounds)
+                s_sess_hl = state.get_engine_state("session_high_low", factory=SessionHighLowState)
+                payload = add_session_high_low_streaming(payload, s_sess_hl, tick=tick)
+                s_vp = state.get_engine_state("volume_profile", factory=VolumeProfileState)
+                payload = add_volume_profile_features_streaming(payload, s_vp, trades_in_window=trades_for_vp, tick=tick)
+                s_bp = state.get_engine_state(
+                    "phase_b_plus", factory=lambda: make_phase_b_plus_state(symbol=symbol_pure),
+                )
+                payload = add_phase_b_plus_streaming(payload, s_bp, tick=tick)
+
+            # ──────────────────────────────────────────────────────────────────
+            # Pass 4a Phase 3c semaine 4 : phase_b_rolling_inputs_streaming
+            # FIX code-reviewer Pass 4a R1 #1 : DEPLACE AVANT Pass 3b rolling.
+            # 24 features derivees (resout dette B5). Mirror batch.
+            # ──────────────────────────────────────────────────────────────────
+            from phase_b_rolling_inputs_streaming import (
+                make_phase_b_rolling_inputs_state,
+                apply_rolling_inputs_streaming,
+            )
+            with state.lock:
+                s_rolling_inputs = state.get_engine_state(
+                    "phase_b_rolling_inputs",
+                    factory=lambda: make_phase_b_rolling_inputs_state(symbol=symbol_pure),
+                )
+                payload = apply_rolling_inputs_streaming(payload, s_rolling_inputs)
+
+            # ──────────────────────────────────────────────────────────────────
             # Pass 3b Phase 3c semaine 4 : rolling_features (45+ ctx_* features)
             # 5 sous-fonctions :
             #   - basic (13 features tier 1)
@@ -701,113 +763,6 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 produced_keys = set(enriched_rolling) - set(row_for_rolling)
                 for k in produced_keys:
                     payload[k] = enriched_rolling[k]
-
-            # ──────────────────────────────────────────────────────────────────
-            # Pass 4c-prereq Phase 3c semaine 4 : prerequisites pour Pass 4a
-            # rolling_inputs_streaming (a venir). Integre 5 helpers streaming :
-            #   1. add_session_metadata_streaming  -> date_et, mins_et,
-            #      session_date_trading, is_cash_session, is_ib_window
-            #   2. add_ib_features_streaming       -> ib_high/low/range, ib_complete,
-            #      ib_position_pct, ib_extension_ratio
-            #   3. add_session_high_low_streaming  -> sess_high/low, cash_high/low,
-            #      dist_sess_*_pct, is_new_sess_*
-            #   4. add_volume_profile_features_streaming -> cur_vpoc/vah/val,
-            #      prev_*, pdh/pdl, inside_value_area, dist_*_pct
-            #   5. add_phase_b_plus_streaming      -> 74 features VWAP D/W/M + SD
-            #      + OVN + cross_up/dn + sd1/2_above/below
-            # Ordre dependancy : 1 -> 2 -> 3 -> 4 -> 5 (session metadata premier).
-            # Audit feature-engineer 15/05 : couvre 60% inputs B5 Pass 4a.
-            # ──────────────────────────────────────────────────────────────────
-            from phase_b_helpers import (
-                add_session_metadata_streaming,
-                SessionMetadataState,
-                add_ib_features_streaming,
-                IBState,
-                add_session_high_low_streaming,
-                SessionHighLowState,
-                add_volume_profile_features_streaming,
-                VolumeProfileState,
-            )
-            from phase_b_plus_streaming import (
-                add_phase_b_plus_streaming,
-                PhaseBPlusState,
-                make_phase_b_plus_state,
-            )
-
-            # Pour add_session_metadata bounds : utiliser bounds per-symbol deja
-            # importe via get_session_boundaries. Pass via dict pour _resolve_bounds.
-            try:
-                from CORE.constants import get_session_boundaries as _get_bounds
-            except ImportError:
-                from constants import get_session_boundaries as _get_bounds
-            sym_bounds = _get_bounds(symbol_pure)
-
-            # Build trades list for volume_profile (mirror Pass 1 LOT 1 format)
-            trades_for_vp = []
-            if not trades_df.empty and {"price", "size"}.issubset(trades_df.columns):
-                trades_for_vp = trades_df[["price", "size"]].to_dict(orient="records")
-
-            with state.lock:
-                # 1. Session metadata (date_et, mins_et, session_date_trading)
-                s_meta = state.get_engine_state(
-                    "session_metadata",
-                    factory=SessionMetadataState,
-                )
-                payload = add_session_metadata_streaming(payload, s_meta, bounds=sym_bounds)
-
-                # 2. IB features (ib_high/low, ib_position_pct, ib_extension_ratio)
-                s_ib = state.get_engine_state("ib_features", factory=IBState)
-                payload = add_ib_features_streaming(payload, s_ib, tick=tick, bounds=sym_bounds)
-
-                # 3. Session high/low (sess_high/low, cash_high/low, dist_sess_*_pct)
-                s_sess_hl = state.get_engine_state(
-                    "session_high_low",
-                    factory=SessionHighLowState,
-                )
-                payload = add_session_high_low_streaming(payload, s_sess_hl, tick=tick)
-
-                # 4. Volume profile (cur_vpoc/vah/val, prev_*, inside_value_area)
-                s_vp = state.get_engine_state(
-                    "volume_profile",
-                    factory=VolumeProfileState,
-                )
-                payload = add_volume_profile_features_streaming(
-                    payload, s_vp, trades_in_window=trades_for_vp, tick=tick,
-                )
-
-                # 5. Phase B+ (74 features VWAP D/W/M + SD bands + OVN)
-                # Fix code-reviewer Pass 4c-prereq #12 (Pattern 11) : factory
-                # PER-SYMBOL pour threshold_vol correct. Sans symbol : ES default
-                # 1200 utilise pour NQ (real 400) -> vol_spike_up/dn morte NQ.
-                s_bp = state.get_engine_state(
-                    "phase_b_plus",
-                    factory=lambda: make_phase_b_plus_state(symbol=symbol_pure),
-                )
-                payload = add_phase_b_plus_streaming(payload, s_bp, tick=tick)
-
-            # ──────────────────────────────────────────────────────────────────
-            # Pass 4a Phase 3c semaine 4 : phase_b_rolling_inputs_streaming
-            # 24 features derivees (resout dette B5 - 18 inputs amont manquants
-            # pour rolling_features). Mirror batch phase_b_rolling_inputs.py.
-            # Dependances chain (toutes resolues par Pass 1+2+3+4c-prereq) :
-            #   ATR <- high/low/close (LOT 1)
-            #   VWAP derivees <- vwap_d (phase_b_plus 4c-prereq), atr (Pass 4a)
-            #   IB derivees <- ib_high/low/range_ticks (4c-prereq), atr (4a)
-            #   Session derivees <- sess_high/low (4c-prereq), is_in_* (Pass 3a)
-            #   CVD Momentum <- delta_bar (Fix B2), session_date_trading (4c-prereq)
-            #   VPOC derivees <- cur_vpoc/vah/val/inside_value_area (4c-prereq)
-            # ──────────────────────────────────────────────────────────────────
-            from phase_b_rolling_inputs_streaming import (
-                make_phase_b_rolling_inputs_state,
-                apply_rolling_inputs_streaming,
-            )
-
-            with state.lock:
-                s_rolling_inputs = state.get_engine_state(
-                    "phase_b_rolling_inputs",
-                    factory=lambda: make_phase_b_rolling_inputs_state(symbol=symbol_pure),
-                )
-                payload = apply_rolling_inputs_streaming(payload, s_rolling_inputs)
         except (ValueError, KeyError, TypeError, AttributeError, ImportError) as e:
             # Fail-soft restreint (code-reviewer P1) : whitelist exceptions
             # attendues (contract violation, dep manquante, type mismatch). Tout
