@@ -7,6 +7,13 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-14]** **Consumer downstream pour marker `phase_b_plus_plus_partial`** | 1-2h | MEDIUM | PROPOSED (bloquant Pass 2 Live Enricher integration)
+  - **Source** : code-reviewer round 3 Live Enricher (commit af17446) - marker `phase_b_plus_plus_partial = True` ajoute au payload en cas de crash mid-chain LOT 1-6, mais **aucun consommateur downstream ne le filtre**.
+  - **Impact** : bars partielles passent au dataset V4 comme bars completes (features phase_b_plus_plus = defaults/NaN). NaN handling LightGBM gere mais biais si frequence elevee.
+  - **Fix** : ajouter filtre dans `build_dataset_v4_phase_b.py` (ou equivalent) : `df = df[df.get("phase_b_plus_plus_partial", False) != True]`. Logger count filtre pour monitoring.
+  - **Alternative** : ne PAS supprimer mais flag dans col booleene pour LightGBM (sample_weight = 0.5 si partial).
+  - **Deadline** : AVANT training reel mid-juin 2026.
+
 - **[PRIORITE 2 — Jackson 2026-05-13]** **Feature `bn_state` machine d'etat (Battle Navale haussiere/baissiere/neutre)** | 4-6h dev + agent review | HIGH | PROPOSED (concept valide Jackson "OK")
   - **Concept** : detection automatique etat BN base sur theorie Dow + paliers franchis. Reference screenshot ancien Jackson 10 niveaux escalier ascendant.
   - **6 etats** : `BN_HAUSSIER_ACTIF` / `BN_HAUSSIER_PAUSE` / `BN_BAISSIER_ACTIF` / `BN_BAISSIER_PAUSE` / `NEUTRE` / `BN_INVALIDATION`

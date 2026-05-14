@@ -598,6 +598,7 @@ LOG_CODES = {
     "ENRICHER_CYCLE_SLOW":         (LogLevel.ALERTE,  "events", "Enricher cycle SLOW : {sym} dt={dt}ms > {limit}ms (engines a optimiser)"),
     "ENRICHER_INPUTS_INCOMPLETE":  (LogLevel.ALERTE,  "events", "Enricher inputs incomplete : {sym} missing={missing} (stream alive={alive})"),
     "ENRICHER_WRITE_FAIL":         (LogLevel.MAJEUR,  "events", "Enricher write FAIL : {sym} path={path} err={err}"),
+    "ENRICHER_ENGINE_FAIL":        (LogLevel.MAJEUR,  "events", "Enricher engine chain fail : {sym} engine={engine} failed_lot={failed_lot} err_type={err_type} err={err}"),
 }
 
 

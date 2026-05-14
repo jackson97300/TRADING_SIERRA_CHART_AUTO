@@ -212,9 +212,19 @@ def _emergency_exit(code: int = 3) -> None:
 def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
     """Process une bar : read inputs -> compose enriched -> write JSONL.
 
-    Phase 3a Jour 4 = SKELETON SANS ENGINES. Le payload contient OHLCV + MQ +
-    VIX (passthrough). Les engines (phase_b_*, edge_zones, regime_engine_v6,
-    etc.) seront ajoutes Phase 3b-d.
+    Phase 3c semaine 4 : integration phase_b_plus_plus chain (76 features).
+
+    SEMANTIQUE FAIL-SOFT engines chain :
+      - Si crash mid-chain (ValueError/KeyError/TypeError/AttributeError/ImportError) :
+        * payload est revert vers `payload_pre_chain` (checkpoint pre-try)
+        * marker `phase_b_plus_plus_partial = True` ajoute pour filtrage downstream
+        * NOTE IMPORTANTE : l'ETAT INTERNE des engines (state.engine_states[X])
+          peut avoir mute partiellement avant le crash (LOT 1 a deja increment
+          bar_idx, buffers updated). Le revert N'EST PAS transactional sur les
+          states - uniquement le payload. Au prochain bar, l'etat des engines
+          est consistent avec la SEQUENCE de bars vues (pas avec ce qui a ete
+          ECRIT en JSONL). Comportement intentionnel : les engines sont stateful
+          continu, le bar "saute" la sortie mais l'etat interne reste correct.
 
     Returns True si bar processed OK, False si fail / skip.
     """
