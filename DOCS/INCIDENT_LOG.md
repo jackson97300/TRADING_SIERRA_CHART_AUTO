@@ -46,6 +46,24 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-05-14 01:30 — [VALIDATION_MISS] — Distribution shift delta_div_buy streaming LOT 1 fire 60% vs batch < 15%
+
+**Contexte** : Smoke test phase_b_plus_plus_trades_streaming sur vraies donnees ES 09/04/2026 (1380 bars, 482K trades). 0 crash mais delta_div_buy fire rate = 59.71% (824/1380). delta_div_sell = 25.00% (345/1380).
+**Ce qui a mal tourne** : Stream LOT 1 detecte une "divergence delta" beaucoup trop souvent (60% des bars). En batch les divergences sont typiquement < 15% (rare event). Le pattern fired n'est pas exploitable comme signal binaire ML en l'etat.
+**Cause racine** : Convention streaming LOT 1 calcule delta_div sur cumdelta intra-bar (oscillations frequentes avec ~350 trades/bar), batch utilise un contexte cross-bar plus stable. Divergence semantique INHERENTE, pas un bug.
+**Lecon** : Tout sub-engine streaming avec features cross-state (delta_div, color, long_updown, sweep) doit etre flagge `distribution_shift` + ml-trainer review OBLIGATOIRE avant deploy live. PSR/DSR re-calcul sur features stream est non-optionnel.
+**Trigger prevention** : Avant trade live, run train_lightgbm sur dataset streaming-built + check feature_importance pour `delta_div_*` features. Si SHAP rank diverge > 5 places vs batch, alarme + investiguer.
+**Reviewed** : self + code-reviewer (verdict 9 sub-engines GO/GO-AVEC-RESERVES 14/05 00:30)
+
+### 2026-05-14 01:00 — [PATTERN_11] — LOT 5 trapped_traders silent dependency on LOT 4 absorb (fixed)
+
+**Contexte** : Code-reviewer audit Phase 3c semaine 4 sur 8 commits (LOT 1-6 phase_b_plus_plus + gold_phase_d + intermarket). P0 bloquant detecte sur LOT 5.
+**Ce qui a mal tourne** : Si caller appelle `add_trapped_traders_streaming` SANS avoir appele `add_stack_absorb_streaming` avant, `near_resistance_level`/`near_support_level` absents du row -> silent fallback 0 -> `at_resistance`/`at_support` toujours 0 (Pattern 11 V1 silent silent fail).
+**Cause racine** : Convention dict-passing entre sub-engines sans schema/contract explicite. Le code originel utilisait `out.get("near_resistance_level", 0)` sans verifier presence.
+**Lecon** : Tout sub-engine streaming consommant la sortie d'un autre DOIT raise ValueError fail-loud au debut si dependance absente. Le silent fallback Pattern 11 = bug differe garanti en prod.
+**Trigger prevention** : Tout nouveau sub-engine cross-state ajoute apres LOT 4 doit avoir `if "<key>" not in row: raise ValueError` au debut. Lint check possible.
+**Reviewed** : code-reviewer (P0 #7) + fix self 14/05 01:00 + retest data reelle PASS
+
 ### 2026-05-14 23:00 — [SCOPE_CREEP] — Sessions_swings_lag liquidity_sweep divergence batch (lookahead swing_h) vs stream (lag-10 swing_h)
 
 **Contexte** : Chantier 3 Phase 3b semaine 3, commit sessions_swings_lag_streaming.py (ebea05b). Code-reviewer audit identifie P0 sur convention sweep timing.

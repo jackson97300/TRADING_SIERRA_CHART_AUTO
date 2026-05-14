@@ -114,7 +114,15 @@ def add_trapped_traders_streaming(
     if np.isnan(delta):
         delta = 0.0
 
-    # Inputs niveaux (depuis LOT 4)
+    # Inputs niveaux (depuis LOT 4 absorb) - dependency check anti Pattern 11
+    # LOT 4 add_stack_absorb_streaming DOIT etre appele AVANT LOT 5 dans le pipeline.
+    # Sans LOT 4, near_*=0 silently -> at_resistance/at_support toujours 0 (silent fallback).
+    if "near_resistance_level" not in row or "near_support_level" not in row:
+        raise ValueError(
+            "LOT 5 trapped_traders requires LOT 4 absorb to run first. "
+            "Missing 'near_resistance_level' or 'near_support_level' in row. "
+            "Chain order : LOT 1 (trades) -> LOT 4 (absorb) -> LOT 5 (trapped)."
+        )
     near_res = int(out.get("near_resistance_level", 0)) if out.get("near_resistance_level") is not None else 0
     near_sup = int(out.get("near_support_level", 0)) if out.get("near_support_level") is not None else 0
 

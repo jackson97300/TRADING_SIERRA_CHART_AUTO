@@ -203,8 +203,9 @@ def add_intermarket_streaming(
             else:
                 out["im_smt_divergence"] = 0.0
     else:
-        # Mirror batch comportement bar < short : NaN propagation
-        out["im_smt_divergence"] = 0.0 if not (np.isnan(dist_high_t)) else np.nan
+        # Warmup (bar < 4) : batch retourne NaN car shift(3) -> NaN sur 3 premieres bars
+        # Stream doit aussi retourner NaN pendant warmup (P1 #9 align batch)
+        out["im_smt_divergence"] = np.nan
 
     # ─── 3. Delta day divergence ───────────────────────────────────────────
     if not np.isnan(delta_day_t) and not np.isnan(delta_day_o):
