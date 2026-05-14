@@ -125,10 +125,26 @@ _boot_ts = time.time()
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _emit_log(code: str, **kwargs) -> None:
-    """Emit via log_catalog (fail-loud, regle souveraine logs 01/05)."""
+    """Emit via log_catalog avec fallback degrade pour code inconnu.
+
+    Convention : tout code DOIT etre enregistre dans `CORE/log_catalog.py`
+    (regle souveraine logs 01/05). Si un code n'existe pas dans LOG_CODES,
+    on emit un WARNING explicite avec le code+kwargs pour eviter qu'un
+    bug d'instrumentation passe silencieusement (anti-pattern interdit
+    section .claude/rules/critical-tasks-review.md A.D).
+
+    Note : ce fallback degrade n'est PAS un fail-loud strict (pas de raise),
+    car pendant le runtime production, raise interromprait le cycle. Le
+    warning suffit pour declencher l'investigation (grep logs J+1).
+    """
     try:
         from log_catalog import LOG_CODES, LogLevel
         if code not in LOG_CODES:
+            # Fallback degrade : warning au lieu de silent no-op
+            logger.warning(
+                f"[UNREGISTERED_LOG_CODE] code={code!r} kwargs={kwargs} -- "
+                f"ajouter a CORE/log_catalog.py (regle souveraine 01/05)"
+            )
             return
         level, _cat, template = LOG_CODES[code]
         try:
