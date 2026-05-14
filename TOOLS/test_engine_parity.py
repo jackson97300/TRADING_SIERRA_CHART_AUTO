@@ -3789,6 +3789,107 @@ def _test_phase_b_plus_plus_trapped():
     return {"all_pass": all_pass}
 
 
+def _test_phase_b_plus_plus_delta_div_ext():
+    """Test sub-engine LOT 6 Delta Div Extension Lines (6 features)."""
+    from phase_b_plus_plus_delta_div_ext_streaming import (
+        add_delta_div_ext_streaming, make_delta_div_ext_state,
+    )
+    from phase_b_plus_plus_trades_streaming import (
+        add_phase_b_plus_plus_trades_streaming, make_phase_b_plus_plus_trades_state,
+    )
+    from phase_b_plus_plus_engine import (
+        apply_phase_b_plus_plus, add_delta_div_extension_lines,
+    )
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(179)
+    n_bars = 600  # 10 jours = 600 bars 1-min sur RTH (6h30/jour) approx
+    n_trades = 20000
+
+    # Generate 3 jours pour forcer delta_div daily reset
+    start = pd.Timestamp("2026-05-12 13:30:00", tz="UTC")
+    bar_starts = []
+    for d in range(3):
+        day_start = start + pd.Timedelta(days=d)
+        for i in range(200):
+            bar_starts.append(day_start + pd.Timedelta(minutes=i))
+    bar_starts = pd.Series(bar_starts[:n_bars])
+
+    df = pd.DataFrame({"ts_event": bar_starts})
+    # Prix avec swings forts pour generer delta_div daily fires
+    base = 5800 + np.cumsum(np.random.randn(n_bars) * 1.0)
+    df["close"] = base
+    df["open"] = base + np.random.randn(n_bars) * 0.3
+    df["high"] = np.maximum(df["open"], df["close"]) + np.random.uniform(1, 4, n_bars)
+    df["low"] = np.minimum(df["open"], df["close"]) - np.random.uniform(1, 4, n_bars)
+    df["delta_bar"] = np.random.randint(-100, 100, n_bars).astype(float)
+    df["volume"] = np.random.randint(500, 2000, n_bars)
+
+    trades = []
+    for _ in range(n_trades):
+        offset_bars = np.random.uniform(0, n_bars - 0.001)
+        ts = bar_starts.iloc[int(offset_bars)] + pd.Timedelta(seconds=np.random.uniform(0, 60))
+        price = round(5800 + np.random.uniform(-30, 30), 2)
+        size = int(np.random.exponential(30)) + 1
+        side = np.random.choice(["A", "B"], p=[0.5, 0.5])
+        trades.append({"ts_event": ts, "price": price, "size": size, "side": side})
+    trades_df = pd.DataFrame(trades).sort_values("ts_event").reset_index(drop=True)
+
+    # BATCH (apply_phase_b_plus_plus chain : trades aggregates -> delta_div_buy/sell -> ext_lines)
+    batch_df = apply_phase_b_plus_plus(df.copy(), trades_df, symbol="ES", tick=0.25)
+
+    # STREAM (chain LOT 1 trades + LOT 6 ext_lines)
+    state_trades = make_phase_b_plus_plus_trades_state("ES")
+    state_ext = make_delta_div_ext_state()
+    stream_rows = []
+    for i in range(n_bars):
+        bar_start_ts = bar_starts.iloc[i]
+        bar_end_ts = bar_starts.iloc[i + 1] if i + 1 < n_bars else bar_start_ts + pd.Timedelta(minutes=1)
+        mask = (trades_df["ts_event"] >= bar_start_ts) & (trades_df["ts_event"] < bar_end_ts)
+        trades_in_bar = trades_df[mask][["price", "size", "side"]].to_dict("records")
+        row_in = df.iloc[i].to_dict()
+        r1 = add_phase_b_plus_plus_trades_streaming(row_in, state_trades, trades_in_bar)
+        r2 = add_delta_div_ext_streaming(r1, state_ext)
+        stream_rows.append(r2)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest phase_b_plus_plus_delta_div_ext parite sur {n_bars} bars (3 jours) + {n_trades} trades...")
+
+    cols_check = [
+        "n_delta_div_buy_zones_active", "n_delta_div_sell_zones_active",
+        "dist_delta_div_buy_nearest_pct", "dist_delta_div_sell_nearest_pct",
+        "n_delta_div_buy_cluster_within_0_2pct", "n_delta_div_sell_cluster_within_0_2pct",
+    ]
+    print(f"\n--- NIVEAU 1 : parite (6 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:45s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mm = int(nan_diff.sum())
+        n_fires_b = int((b != 0).sum())
+        n_fires_s = int((s != 0).sum())
+        status = "PASS" if max_diff < 1e-6 and nan_mm == 0 else "FAIL"
+        print(f"  {col:45s} {status} max_diff={max_diff:.4e} "
+              f"non-zero batch/stream={n_fires_b}/{n_fires_s}")
+        if status == "FAIL":
+            all_pass = False
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL phase_b_plus_plus_delta_div_ext : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -4093,6 +4194,7 @@ def main():
                                  "phase_b_plus_plus_cluster_v2",
                                  "phase_b_plus_plus_absorb",
                                  "phase_b_plus_plus_trapped",
+                                 "phase_b_plus_plus_delta_div_ext",
                                  "all"])
     args = parser.parse_args()
 
@@ -4243,6 +4345,11 @@ def main():
 
     if args.engine in ("phase_b_plus_plus_trapped", "all"):
         report = _test_phase_b_plus_plus_trapped()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("phase_b_plus_plus_delta_div_ext", "all"):
+        report = _test_phase_b_plus_plus_delta_div_ext()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
