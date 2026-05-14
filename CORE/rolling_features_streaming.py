@@ -442,11 +442,13 @@ def add_rolling_features_basic_streaming(
         out["ctx_vol_z_5"] = np.nan
 
     # ─── 10. ctx_diag_imbalance_mean_5 ─────────────────────────────────────
-    diag_vals = [d for d in state.diag_imb_mid if d is not None]
-    if diag_vals:
-        out["ctx_diag_imbalance_mean_5"] = sum(diag_vals) / len(diag_vals)
-    else:
-        out["ctx_diag_imbalance_mean_5"] = np.nan
+    # DROP 2026-05-15 (code-reviewer Pass 4c-prereq audit + Jackson confirme) :
+    # `diag_imbalance` (DMP_Transform.h:1051 diagonal footprint pattern) n'est
+    # PAS reproductible depuis trades Databento (necessite sc.VolumeAtPrice
+    # cell-level access Sierra Chart). Feature etait NaN constant en live ->
+    # pollution ML training. Drop output cote streaming.
+    # IDEAS_BACKLOG : drop definitif batch + stream + v4 schema cleanup.
+    # state.diag_imb_mid conserve (re-introductible si DMP redeploye live).
 
     # ─── 11. ctx_finish_strength_mean_5 ────────────────────────────────────
     finish_vals = [f for f in state.finish_str_mid if f is not None]
@@ -677,7 +679,12 @@ def add_rolling_features_medium_streaming(
         out["ctx_delta_exhaustion"] = np.nan
 
     # ─── 23. ctx_large_trader_slope_5 ──────────────────────────────────────
-    out["ctx_large_trader_slope_5"] = _linreg_slope(list(state.large_trader_mid))
+    # DROP 2026-05-15 (code-reviewer Pass 4c-prereq audit + Jackson confirme) :
+    # `large_trader_ratio` (DMP_Transform.h:981 avg_ask/bid_size VAP) n'est PAS
+    # reproductible depuis trades Databento (necessite cell-level VAP Sierra).
+    # Feature etait NaN constant en live -> pollution ML training. Drop output.
+    # IDEAS_BACKLOG : drop definitif batch + stream + v4 schema cleanup.
+    # state.large_trader_mid conserve (re-introductible si DMP redeploye live).
 
     # ─── 24. ctx_trend_day_score (composite 5 criteres) ────────────────────
     # Mirror batch : score additif clip(0.0, 1.0)

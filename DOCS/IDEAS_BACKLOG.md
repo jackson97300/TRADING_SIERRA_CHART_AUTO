@@ -7,6 +7,16 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-15]** **DROP definitif features DMP-C++ non-reproductibles batch + V4 schema** | 2-3h | MEDIUM | PROPOSED (drop streaming fait, reste batch)
+  - **Source** : Code-reviewer Pass 4c-prereq audit + Jackson confirme drop 2 mortes (15/05).
+  - **Status streaming** : DONE - `ctx_diag_imbalance_mean_5` + `ctx_large_trader_slope_5` ne sont plus produits par `rolling_features_streaming.py` (lignes 444-451 + 681-686 commentees, state.diag_imb_mid / large_trader_mid conserves au cas ou).
+  - **Reste a faire** :
+    1. Drop dans batch `rolling_features.py` (lignes 156-158, 265-269) pour parite.
+    2. Schema V4 cleanup : retraitement V4 historiques pour retirer ces 2 colonnes (sinon parquet h?terogene).
+    3. SHAP rapport refresh : valider que ces 2 features n'?taient pas top SHAP (auquel cas perte d'edge documentee).
+  - **Features biaisees gardees** (NON drop) : `div_confluence_dmp` + `div_confluence_with_regime` (sous-eval -1 pt sur 4 car bn_absorb_* compose null en live, mais 3/4 composants OK).
+  - **Deadline** : AVANT training reel mid-juin 2026 (clean schema obligatoire).
+
 - **[DETTE 2026-05-15]** **Hardcode OVN/Opens 18:00/09:30 ET dans `phase_b_plus_streaming.py` casse MGC** | 1h | LOW | PROPOSED (MGC pas Bot 2/3 actuel)
   - **Source** : Code-reviewer Pass 4c-prereq audit (commit c1475b0) ligne 343-352, 346 - hardcode `mins_et >= 1080 OR < 570` correct ES/NQ mais FAUX MGC (devrait `>= 1140 OR < 510` per `SESSION_BOUNDARIES_BY_SYMBOL["MGC"]`).
   - **Impact** : features `ovn_high/low MGC` polluees si on integre MGC live.
