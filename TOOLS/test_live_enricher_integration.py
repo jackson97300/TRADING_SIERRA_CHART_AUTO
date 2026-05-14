@@ -266,6 +266,18 @@ def run_integration_chain(payload: dict, trades_df: pd.DataFrame, state, symbol:
         )
         payload = add_phase_b_plus_streaming(payload, s_bp, tick=tick)
 
+    # Pass 4a : phase_b_rolling_inputs_streaming (6 sous-fonctions, 24 features)
+    from phase_b_rolling_inputs_streaming import (
+        make_phase_b_rolling_inputs_state,
+        apply_rolling_inputs_streaming,
+    )
+    with state.lock:
+        s_ri = state.get_engine_state(
+            "phase_b_rolling_inputs",
+            factory=lambda: make_phase_b_rolling_inputs_state(symbol=symbol_pure),
+        )
+        payload = apply_rolling_inputs_streaming(payload, s_ri)
+
     return payload
 
 
@@ -375,6 +387,9 @@ def main():
         "vwap_d", "dist_vwap_d_pct",                   # Pass 4c-prereq phase_b_plus
         "ib_position_pct", "sess_high",                # Pass 4c-prereq ib + session_hl
         "cur_vpoc", "inside_value_area",               # Pass 4c-prereq volume_profile
+        "atr", "vwap_slope_10", "dist_vwap_d",         # Pass 4a rolling_inputs
+        "dist_ib_high", "session", "cvd_day",          # Pass 4a rolling_inputs
+        "momentum_5b", "poc_position", "va_position_pct",  # Pass 4a rolling_inputs
     ]
     missing = [k for k in critical_keys if k not in payload_enriched]
     if missing:

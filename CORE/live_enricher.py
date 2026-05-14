@@ -784,6 +784,30 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     factory=lambda: make_phase_b_plus_state(symbol=symbol_pure),
                 )
                 payload = add_phase_b_plus_streaming(payload, s_bp, tick=tick)
+
+            # ──────────────────────────────────────────────────────────────────
+            # Pass 4a Phase 3c semaine 4 : phase_b_rolling_inputs_streaming
+            # 24 features derivees (resout dette B5 - 18 inputs amont manquants
+            # pour rolling_features). Mirror batch phase_b_rolling_inputs.py.
+            # Dependances chain (toutes resolues par Pass 1+2+3+4c-prereq) :
+            #   ATR <- high/low/close (LOT 1)
+            #   VWAP derivees <- vwap_d (phase_b_plus 4c-prereq), atr (Pass 4a)
+            #   IB derivees <- ib_high/low/range_ticks (4c-prereq), atr (4a)
+            #   Session derivees <- sess_high/low (4c-prereq), is_in_* (Pass 3a)
+            #   CVD Momentum <- delta_bar (Fix B2), session_date_trading (4c-prereq)
+            #   VPOC derivees <- cur_vpoc/vah/val/inside_value_area (4c-prereq)
+            # ──────────────────────────────────────────────────────────────────
+            from phase_b_rolling_inputs_streaming import (
+                make_phase_b_rolling_inputs_state,
+                apply_rolling_inputs_streaming,
+            )
+
+            with state.lock:
+                s_rolling_inputs = state.get_engine_state(
+                    "phase_b_rolling_inputs",
+                    factory=lambda: make_phase_b_rolling_inputs_state(symbol=symbol_pure),
+                )
+                payload = apply_rolling_inputs_streaming(payload, s_rolling_inputs)
         except (ValueError, KeyError, TypeError, AttributeError, ImportError) as e:
             # Fail-soft restreint (code-reviewer P1) : whitelist exceptions
             # attendues (contract violation, dep manquante, type mismatch). Tout
@@ -804,7 +828,9 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             tb = traceback.format_exc()
             failed_lot = "unknown"
             for marker, lot_name in (
-                # Pass 4c-prereq markers (deepest first)
+                # Pass 4a marker (deepest first - le plus profond)
+                ("phase_b_rolling_inputs_streaming", "phase_b_rolling_inputs"),
+                # Pass 4c-prereq markers
                 ("phase_b_plus_streaming", "phase_b_plus"),
                 # Fix code-reviewer Pass 4c-prereq #9 : marker phase_b_helpers
                 # pour J+1 grep correct si crash session_metadata/ib_features/
@@ -845,6 +871,8 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 engine_name = "phase_b_plus_chain"
             elif failed_lot == "phase_b_helpers":
                 engine_name = "phase_b_helpers_chain"
+            elif failed_lot == "phase_b_rolling_inputs":
+                engine_name = "phase_b_rolling_inputs_chain"
             else:
                 engine_name = "cross_asset_chain"
             logger.warning(
