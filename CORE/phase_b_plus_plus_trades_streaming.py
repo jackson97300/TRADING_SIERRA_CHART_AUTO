@@ -149,7 +149,8 @@ def add_phase_b_plus_plus_trades_streaming(
             warnings.warn(
                 f"trades_in_window not sorted ts_event ASC : "
                 f"first={first_ts} > last={last_ts}. "
-                f"Caller must sort. Skipping assertion in non-debug mode.",
+                f"Caller must sort trades_in_window. "
+                f"This check is skipped in -O / -OO mode (no overhead).",
                 RuntimeWarning,
                 stacklevel=2,
             )

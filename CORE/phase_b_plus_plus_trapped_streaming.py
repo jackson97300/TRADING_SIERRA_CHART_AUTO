@@ -140,10 +140,15 @@ def add_trapped_traders_streaming(
     trap_sell = 0
     if footprint_cells and not (np.isnan(h) or np.isnan(l) or np.isnan(op) or np.isnan(c)):
         bar_range = h - l
-        # finish_pct calcule en float64 par defaut Python. Le batch utilise float32
-        # (memoire). Cast explicite pour aligner precision et eviter divergence
-        # numerique tres faible (1e-7) qui pourrait flipper les comparaisons aux
-        # seuils TRAPPED_FINISH_PCT_BUYERS=30 / TRAPPED_FINISH_PCT_SELLERS=70.
+        # Cast explicite vers Python float (float64) :
+        # - c, l, bar_range proviennent de _safe_float et sont deja float Python.
+        # - Le cast `float()` defend contre une eventuelle entree numpy.float32
+        #   en upstream (qui propagerait float32 -> ambiguite comparaison aux
+        #   seuils 30/70 si troncature differente du batch).
+        # - Note : le batch arr-pipeline produit `finish_pct_up` stockee en float32
+        #   (engine.py:1137), mais la valeur intermediaire utilisee pour les
+        #   comparaisons trapped (engine.py:704) est en float natif de l'array.
+        #   Avec inputs Python natifs ici, divergence numerique <= 1e-7 attendue.
         finish_pct = float((c - l) / bar_range * 100) if bar_range > 0 else 50.0
 
         # Trapped buyers : AskVol(top zone) seuil + finish<=30 + delta>0 + close<open
