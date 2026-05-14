@@ -3679,6 +3679,116 @@ def _test_phase_b_plus_plus_absorb():
     return {"all_pass": all_pass}
 
 
+def _test_phase_b_plus_plus_trapped():
+    """Test sub-engine LOT 5 trapped traders (10 features)."""
+    from phase_b_plus_plus_trapped_streaming import (
+        add_trapped_traders_streaming, make_trapped_traders_state,
+    )
+    from phase_b_plus_plus_engine import (
+        add_trapped_traders_features, add_absorption_features,
+    )
+    from footprint_builder import build_footprint_per_bar
+    from footprint_builder_streaming import build_footprint_cells_streaming
+    import numpy as np
+    import pandas as pd
+
+    np.random.seed(173)
+    n_bars = 200
+    n_trades = 12000
+    start = pd.Timestamp("2026-05-12 13:00:00", tz="UTC")
+    bar_starts = pd.Series([start + pd.Timedelta(minutes=i) for i in range(n_bars)])
+
+    df = pd.DataFrame({"ts_event": bar_starts})
+    base = 5800 + np.cumsum(np.random.randn(n_bars) * 0.5)
+    df["close"] = base
+    df["open"] = base + np.random.randn(n_bars) * 0.3
+    df["high"] = np.maximum(df["open"], df["close"]) + np.random.uniform(0.5, 2.5, n_bars)
+    df["low"] = np.minimum(df["open"], df["close"]) - np.random.uniform(0.5, 2.5, n_bars)
+    df["delta_bar"] = np.random.randint(-100, 100, n_bars).astype(float)
+    # Niveaux key absolus pour near_resistance/support (LOT 4 absorb pre-requis)
+    df["sess_high"] = df["high"].cummax()
+    df["sess_low"] = df["low"].cummin()
+    df["ib_high"] = 5810.0
+    df["ib_low"] = 5790.0
+    df["pdh"] = 5820.0
+    df["pdl"] = 5780.0
+    df["prev_vah"] = 5815.0
+    df["prev_val"] = 5785.0
+
+    trades = []
+    for _ in range(n_trades):
+        offset_min = np.random.uniform(0, n_bars - 0.001)
+        ts = start + pd.Timedelta(minutes=offset_min)
+        price = round(5800 + np.random.uniform(-15, 15), 2)
+        size = int(np.random.exponential(30)) + 1
+        side = np.random.choice(["A", "B"], p=[0.5, 0.5])
+        trades.append({"ts_event": ts, "price": price, "size": size, "side": side})
+    trades_df = pd.DataFrame(trades).sort_values("ts_event").reset_index(drop=True)
+
+    # BATCH (chain : absorption pour near_res/sup -> trapped)
+    batch_footprint = build_footprint_per_bar(trades_df, bar_starts, tick=0.25)
+    batch_df = add_absorption_features(df.copy(), batch_footprint, symbol="ES", tick=0.25)
+    batch_df = add_trapped_traders_features(batch_df, batch_footprint, symbol="ES", tick=0.25)
+
+    # STREAM (chain : LOT 4 absorb pour near -> LOT 5 trapped)
+    from phase_b_plus_plus_absorb_streaming import (
+        add_stack_absorb_streaming, make_stack_absorb_state,
+    )
+    state_absorb = make_stack_absorb_state("ES")
+    state_trapped = make_trapped_traders_state("ES")
+    stream_rows = []
+    for i in range(n_bars):
+        bar_start_ts = bar_starts.iloc[i]
+        bar_end_ts = bar_starts.iloc[i + 1] if i + 1 < n_bars else bar_start_ts + pd.Timedelta(minutes=1)
+        mask = (trades_df["ts_event"] >= bar_start_ts) & (trades_df["ts_event"] < bar_end_ts)
+        trades_in_bar = trades_df[mask][["price", "size", "side"]].to_dict("records")
+        cells = build_footprint_cells_streaming(trades_in_bar, tick=0.25)
+        row_in = df.iloc[i].to_dict()
+        # LOT 4 first (set near_res/sup)
+        r1 = add_stack_absorb_streaming(row_in, state_absorb, cells)
+        # LOT 5 (consomme near_res/sup)
+        r2 = add_trapped_traders_streaming(r1, state_trapped, cells)
+        stream_rows.append(r2)
+    stream_df = pd.DataFrame(stream_rows)
+
+    print(f"\nTest phase_b_plus_plus_trapped parite sur {n_bars} bars + {n_trades} trades...")
+
+    cols_check = [
+        "bn_trapped_buyers_raw", "bn_trapped_sellers_raw",
+        "bn_trapped_buyers_at_resistance", "bn_trapped_sellers_at_support",
+        "n_trapped_buyers_zones_active", "n_trapped_sellers_zones_active",
+        "dist_trapped_buyers_nearest_pct", "dist_trapped_sellers_nearest_pct",
+        "n_trapped_buyers_cluster_within_0_2pct", "n_trapped_sellers_cluster_within_0_2pct",
+    ]
+    print(f"\n--- NIVEAU 1 : parite (10 features) ---")
+    all_pass = True
+    for col in cols_check:
+        if col not in batch_df.columns or col not in stream_df.columns:
+            print(f"  {col:48s} MANQUANT")
+            all_pass = False
+            continue
+        b = batch_df[col].astype("float64").values
+        s = stream_df[col].astype("float64").values
+        nan_both = np.isnan(b) & np.isnan(s)
+        nan_diff = np.isnan(b) ^ np.isnan(s)
+        diff = np.where(nan_both, 0.0, np.where(nan_diff, 1e9, b - s))
+        max_diff = float(np.nanmax(np.abs(diff)))
+        nan_mm = int(nan_diff.sum())
+        n_fires_b = int((b != 0).sum())
+        n_fires_s = int((s != 0).sum())
+        status = "PASS" if max_diff < 1e-6 and nan_mm == 0 else "FAIL"
+        print(f"  {col:48s} {status} max_diff={max_diff:.4e} "
+              f"non-zero batch/stream={n_fires_b}/{n_fires_s}")
+        if status == "FAIL":
+            all_pass = False
+
+    print(f"\n  Niveau 1 status : {'PASS' if all_pass else 'FAIL'}")
+    print(f"\n{'=' * 70}")
+    print(f"GLOBAL phase_b_plus_plus_trapped : {'PASS' if all_pass else 'FAIL'}")
+    print("=" * 70)
+    return {"all_pass": all_pass}
+
+
 def _test_rvol_inputs():
     """Test sub-engine #5a add_rvol_inputs (STATELESS).
 
@@ -3982,6 +4092,7 @@ def main():
                                  "phase_b_plus_plus_big_v2",
                                  "phase_b_plus_plus_cluster_v2",
                                  "phase_b_plus_plus_absorb",
+                                 "phase_b_plus_plus_trapped",
                                  "all"])
     args = parser.parse_args()
 
@@ -4127,6 +4238,11 @@ def main():
 
     if args.engine in ("phase_b_plus_plus_absorb", "all"):
         report = _test_phase_b_plus_plus_absorb()
+        if report and not report.get("all_pass"):
+            sys.exit(1)
+
+    if args.engine in ("phase_b_plus_plus_trapped", "all"):
+        report = _test_phase_b_plus_plus_trapped()
         if report and not report.get("all_pass"):
             sys.exit(1)
 
