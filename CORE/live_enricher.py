@@ -1275,6 +1275,9 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         #   bit 5 (32) : session_open_approximate (live restart mid-session,
         #                capture fallback sid au lieu de mins_et exact).
         #                Tracking pour parite batch/stream (cf bug #4).
+        #   bit 6 (64) : ib_data_missing (ib_complete=1 mais ib_high=NaN).
+        #                Live etait down pendant 09:30-10:30 ET ET seed V4
+        #                a echoue. Bug #2 fix : seed V4 a chaque boot.
         flag = 0
         if n_bars_sym < WARMUP_BARS_THRESHOLD:
             flag |= 1
@@ -1309,6 +1312,18 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             for p in ("asia", "london", "ny", "after")
         ):
             flag |= 32
+        # bit 6 (64) : ib_data_missing. ib_complete=1 mais ib_high=NaN
+        # (live down pendant fenetre IB 09:30-10:30 ET, seed V4 echec car
+        # V4 batch Phase B incomplete jour J). FIX BUG #2 15/05 : seed IB
+        # depuis V4 reduit ce flag. Si flag persiste -> V4 batch Phase B
+        # retard ou bug pipeline upstream a investiguer.
+        _ib_complete = payload.get("ib_complete")
+        _ib_high = payload.get("ib_high")
+        _ib_high_missing = (_ib_high is None) or (
+            isinstance(_ib_high, float) and _math_flag.isnan(_ib_high)
+        )
+        if _ib_complete == 1 and _ib_high_missing:
+            flag |= 64
         payload["data_quality_flag"] = flag
         # Log souverain (regle critical-tasks-review 01/05) : tout flag != 0
         # doit etre tracable J+1 pour audit ETL/ML drop bars suspectes.

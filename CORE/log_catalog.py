@@ -615,8 +615,10 @@ LOG_CODES = {
     "ENRICHER_SEED_SWINGS_LAG_FAIL": (LogLevel.ALERTE, "events", "Enricher seed SessionsSwingsLag FAIL : {sym} reason={reason} (P1.2 - dist_swing_* sera null pendant 10-21 min jusqu'a detection live)"),
     "ENRICHER_SEED_VP_FROM_V4": (LogLevel.INFO, "events", "Enricher seed VolumeProfile (prev_*/pdh/pdl) depuis V4 : {sym} n_values={n_values} keys={keys} (P2.1 fix prev_* null cold start)"),
     "ENRICHER_SEED_VP_FAIL": (LogLevel.ALERTE, "events", "Enricher seed VolumeProfile FAIL : {sym} reason={reason} (P2.1 - prev_*/pdh/pdl restera null jusqu'a session change)"),
-    "ENRICHER_DATA_QUALITY_FLAG_SET": (LogLevel.ALERTE, "decisions", "Enricher data_quality_flag SET : {sym} flag={flag} n_bars={n_bars} sid={sid} (bit0=warmup bit1=sentinel999 bit2=sd_collapse bit3=swing_reset bit4=session_corrupt bit5=open_approximate - ETL/ML drop si bit relevant)"),
+    "ENRICHER_DATA_QUALITY_FLAG_SET": (LogLevel.ALERTE, "decisions", "Enricher data_quality_flag SET : {sym} flag={flag} n_bars={n_bars} sid={sid} (bit0=warmup bit1=sentinel999 bit2=sd_collapse bit3=swing_reset bit4=session_corrupt bit5=open_approximate bit6=ib_missing - ETL/ML drop si bit relevant)"),
     "ENRICHER_SESSIONS_OPEN_APPROXIMATE": (LogLevel.ALERTE, "decisions", "Enricher session open APPROXIMATE : {sym} session={session} mins_et={mins_et} start_exact={start_exact} (live boot mid-session, parite batch cassee, V4 batch ne refletera pas cet open)"),
+    "ENRICHER_SEED_IB_FROM_V4": (LogLevel.INFO, "events", "Enricher seed IB (ib_high/ib_low) depuis V4 : {sym} sdt={sdt} ib_high={ib_high} ib_low={ib_low} (BUG #2 fix - cold/HOT restart > 10:30 ET)"),
+    "ENRICHER_SEED_IB_FAIL": (LogLevel.ALERTE, "events", "Enricher seed IB FAIL : {sym} reason={reason} (BUG #2 - ib_high/ib_low restera NaN si live down 09:30-10:30 ET aujourd'hui)"),
 }
 
 

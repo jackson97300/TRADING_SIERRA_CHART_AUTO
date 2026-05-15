@@ -62,6 +62,88 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-15 19:00 — FIX BUG #2 IB seed depuis V4 batch (cold/HOT restart > 10:30 ET)
+
+**Categorie** : FIX
+**Impact prod** : OFFLINE (Live-Enricher collecte, aucun consumer)
+**Fichier(s)** : `CORE/live_enricher_state.py:663-738` (nouvelle fn `_seed_ib_from_warmup`), `CORE/live_enricher_state.py:721-724` (appel boot), `CORE/live_enricher.py:1305-1315` (bit 6), `CORE/log_catalog.py:620-621` (2 codes)
+**Reviewer(s) agent** : pattern strictement analogue aux 5 seeds existants (_seed_open_cash, _seed_sessions, _seed_swings_lag, _seed_vp, +nouveau _seed_ib) — pas re-review
+
+### Quoi
+Fix bug `ib_complete=1` mais `ib_high=null` observe post-HOT-restart 18:13 UTC.
+
+Cause racine identifie via `phase_b_helpers.py:374-381` :
+```python
+ib_complete = 1 if (mins_et >= ib_close) else 0  # base sur time only
+if ib_complete == 1 and state.ib_high is not None:  # MAIS state vide si live down
+    ib_high_out = state.ib_high
+else:
+    ib_high_out = np.nan  # → ib_high=NaN dans output
+```
+
+Si live etait DOWN pendant fenetre IB 09:30-10:30 ET ET HOT restart apres
+10:30 ET → state.ib_high jamais accumule → ib_complete=1 (time pass) MAIS
+ib_high=NaN (state vide).
+
+**Solution** :
+1. `_seed_ib_from_warmup` lit V4 batch derniere bar `ib_high` non-NaN du
+   session_date_trading courant et instantie `IBState` pre-rempli :
+   ```python
+   IBState(current_date_et=today_sdt, ib_high=v4_ib_high, ib_low=v4_ib_low,
+           n_ib_bars_seen=60)
+   ```
+2. Appele dans `initialize_state` apres les 4 autres seeds existants.
+3. Bit 6 (64) `ib_data_missing` dans data_quality_flag = signal residuel si
+   seed V4 echec (V4 batch Phase B incomplete jour J).
+4. 2 codes log : `ENRICHER_SEED_IB_FROM_V4` (INFO/events succes) et
+   `ENRICHER_SEED_IB_FAIL` (ALERTE/events).
+
+### Pourquoi
+**Code seed strictement analogue aux 4 seeds existants** (sessions_swings,
+swings_lag, vp, open_cash) qui suivent meme pattern lecture V4 batch derniere
+bar valide -> instantiation state pickle-friendly. Pas un nouveau pattern.
+
+**Bit 6 distinct du bit 4** : bit 4 = ny_open None (session corruption),
+bit 6 = ib_high None (IB window data manquante). Domaines independants.
+
+**Cas observe (recap)** : ES.c.0 V4 batch IB complete (Phase B done sur
+09:30-10:30 ET) → seed succes. NQ.c.0/MGC.v.0 V4 batch IB partial selon
+quand live_pipeline rebuild. Seed succes ou echec selon timing.
+
+### Impact attendu
+- Post seed succes : ib_complete=1 + ib_high reel (bit 6 = 0)
+- Post seed echec (V4 Phase B retard) : ib_complete=1 + ib_high=NaN + bit 6 actif
+- Pas de regression cas nominal (live continu pendant 09:30-10:30 ET) : state
+  accumule normalement, V4 seed redondant mais idempotent.
+
+### Validation pre-deploy
+- [x] Test empirique 3 symboles ES/NQ/MGC : 3/3 PASS seed V4 actuel
+  - ES : ib_high=7467.75, ib_low=7420.25
+  - NQ : ib_high=29684.75, ib_low=29458.5
+  - MGC : ib_high=4716.9, ib_low=4694.0
+- [x] Test bit 6 logic 6/6 PASS (None/NaN/valid/sentinel)
+- [x] Syntax validate 3 fichiers modifies
+- [ ] Test post-deploy : grep `ENRICHER_SEED_IB_FROM_V4` boot logs
+
+### Revert plan
+```bash
+git revert <commit_fix_bug2>
+scp CORE/live_enricher_state.py CORE/live_enricher.py CORE/log_catalog.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 "nssm stop MIA-Live-Enricher; Start-Sleep -Seconds 5; nssm start MIA-Live-Enricher"
+```
+
+### Suivi post-deploy
+- J+1 : grep `ENRICHER_SEED_IB_FROM_V4` LOGS/events. Si > 0 emit = OK.
+  Si bit 6 actif chronique = V4 batch Phase B pipeline a investiguer (chantier
+  refacto pipeline incremental cf project_pipeline_incremental_backlog.md).
+
+### Liens
+- Bug racine : `CORE/phase_b_helpers.py:374-381` (sentinel ib_high=NaN si state vide)
+- Pattern : analogue aux 4 seeds existants (DRY refacto backlog)
+- BUG #4 connexe (capture mid-session) deja fixe commit 3a3e5e6
+
+---
+
 ## 2026-05-15 18:45 — FIX BUG #4 session opens capture mid-session restart (parite batch + bit 5 observabilite)
 
 **Categorie** : FIX

@@ -660,6 +660,78 @@ def _seed_volume_profile_from_warmup(
     )
 
 
+def _seed_ib_from_warmup(
+    state: LiveEnricherState, symbol: str, df: Optional[pd.DataFrame] = None,
+) -> None:
+    """FIX BUG #2 15/05/2026 : seed IBState ib_high/ib_low depuis V4 batch.
+
+    Sans seed, cold/HOT restart apres 10:30 ET (us_start+60) =
+    state.ib_high/ib_low jamais accumules (live etait DOWN pendant 09:30-10:30
+    fenetre IB) -> ib_complete=1 mais ib_high=NaN dans output (cf
+    phase_b_helpers.py:374-381).
+
+    V4 batch contient ib_high/ib_low broadcasted sur toutes les bars post-IB
+    close (cf phase_b_helpers add_ib_features). On lit la derniere bar V4
+    AVEC ib_high non-NaN du session_date_trading courant.
+
+    Note : si V4 batch Phase B incomplete jour J (cas observe NQ/MGC 15/05),
+    seed echec mais le live continuera a tracker IB depuis les bars suivantes
+    (mais retroactivement impossible sans backfill 09:30-10:30 bars).
+    """
+    if df is None:
+        df = state.bars_df
+    if df.empty:
+        _emit_log("ENRICHER_SEED_IB_FAIL", sym=symbol, reason="bars_df empty")
+        return
+    cols_needed = ["ib_high", "ib_low", "session_date_trading"]
+    if not all(c in df.columns for c in cols_needed):
+        missing = [c for c in cols_needed if c not in df.columns]
+        _emit_log("ENRICHER_SEED_IB_FAIL", sym=symbol,
+                  reason=f"cols missing: {missing}")
+        return
+    df_sdt = df[df["session_date_trading"].notna()]
+    if df_sdt.empty:
+        _emit_log("ENRICHER_SEED_IB_FAIL", sym=symbol,
+                  reason="no V4 bar with sdt non-null")
+        return
+    today_sdt = df_sdt["session_date_trading"].iloc[-1]
+    df_today = df_sdt[df_sdt["session_date_trading"] == today_sdt]
+    df_ib = df_today[df_today["ib_high"].notna()]
+    if df_ib.empty:
+        _emit_log("ENRICHER_SEED_IB_FAIL", sym=symbol,
+                  reason=f"no V4 bar with ib_high non-null on sdt={today_sdt}")
+        return
+    last_row = df_ib.iloc[-1]
+    ib_high_v4 = float(last_row["ib_high"])
+    ib_low_v4 = float(last_row["ib_low"])
+
+    try:
+        from CORE.phase_b_helpers import IBState
+    except ImportError:
+        try:
+            from phase_b_helpers import IBState
+        except ImportError:
+            _emit_log("ENRICHER_SEED_IMPORT_FAIL", sym=symbol)
+            return
+
+    # Resolve date_et de today_sdt pour aligner current_date_et state IB
+    # (utilise par engine streaming pour detecter session change).
+    # IBState reset si date_et != state.current_date_et au prochain call.
+    # On set current_date_et = today_sdt pour eviter reset au 1er bar.
+    seeded = IBState(
+        current_date_et=today_sdt,
+        ib_high=ib_high_v4,
+        ib_low=ib_low_v4,
+        n_ib_bars_seen=60,  # IB window full = 60 bars (09:30-10:30)
+    )
+    state.engine_states["ib_features"] = seeded
+    _emit_log(
+        "ENRICHER_SEED_IB_FROM_V4",
+        sym=symbol, sdt=str(today_sdt),
+        ib_high=ib_high_v4, ib_low=ib_low_v4,
+    )
+
+
 def initialize_state(
     symbol: str,
     warmup_from_v4: bool = False,
@@ -715,6 +787,10 @@ def initialize_state(
             # depuis V4 derniere bar valide. Sans seed, prev_vpoc/vah/val +
             # pdh/pdl null pendant 1 jour entier post-cold-start.
             _seed_volume_profile_from_warmup(state, symbol, df=df)
+            # BUG #2 fix Jackson 15/05 : seed IBState ib_high/ib_low depuis V4.
+            # Sans seed, cold/HOT restart > 10:30 ET = ib_complete=1 mais
+            # ib_high=NaN (state jamais accumule 09:30-10:30 quand live down).
+            _seed_ib_from_warmup(state, symbol, df=df)
         except Exception as e:
             # Non-silent : emit + log (anti-Pattern V1 reglesouveraine logs 01/05)
             _emit_log("ENRICHER_WARMUP_FAIL", sym=symbol, err=str(e)[:200])
