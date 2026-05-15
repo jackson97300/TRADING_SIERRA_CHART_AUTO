@@ -67,6 +67,31 @@ ssh Administrator@212.28.179.199 "type C:\TRADING_SIERRA_CHART_AUTO\LOGS\live_en
 ssh Administrator@212.28.179.199 "type C:\TRADING_SIERRA_CHART_AUTO\LOGS\events\events_$(date +%Y%m%d).jsonl" | grep -i ENRICHER
 ```
 
+## Force cold start (declenche seed depuis V4 batch parquet)
+
+**Cas d'usage** : apres modif code seed sessions / open_cash dans
+live_enricher_state.py, le restart classique nssm garde le pickle state
+existant (`state_loaded=True` dans logs ENRICHER_BOOT) -> SKIP du seed.
+
+Pour FORCER cold start :
+
+```bash
+# 1. Stop service
+ssh Administrator@212.28.179.199 "nssm stop MIA-Live-Enricher"
+
+# 2. Delete pickle states (force cold start sur prochain boot)
+ssh Administrator@212.28.179.199 "powershell -Command Remove-Item C:/TRADING_SIERRA_CHART_AUTO/DATA/LIVE_CACHE/enricher_state/*.pickle -Force"
+
+# 3. Start
+ssh Administrator@212.28.179.199 "nssm start MIA-Live-Enricher"
+
+# 4. Verifier logs ENRICHER_SEED_OPEN_CASH_FROM_V4 + ENRICHER_SEED_SESSIONS_FROM_V4
+ssh Administrator@212.28.179.199 "powershell -Command \"Select-String -Path C:/TRADING_SIERRA_CHART_AUTO/LOGS/live_enricher_stdout.log -Pattern 'ENRICHER_SEED' | Select-Object -Last 5\""
+```
+
+**Risque** : perte de l'historique state pickle (rolling buffer 60j bars + engine_states).
+Le warmup_from_v4=True doit RE-CHARGER bars depuis V4 parquet → ~30s boot time.
+
 ## Pipeline d'inspection (apres 1-2h prod)
 
 ```bash
@@ -80,6 +105,11 @@ python tools/snapshot_inspector.py --all --verbose
 
 # Comparer vs V4 batch (drift detection)
 python tools/snapshot_inspector.py --symbol ES.c.0 --compare-v4
+
+# Validator PRO (a la dmp_validator.py) — 8 checks DMP-style
+python tools/live_enricher_validator.py --date YYYYMMDD
+python tools/live_enricher_validator.py --symbol NQ.c.0 --strict
+# Verdict GREEN / YELLOW / RED + actions concretes
 
 # Comparer apres 1 mois complet (V4 oracle test extension)
 python tests/test_live_enricher_parity_v4.py

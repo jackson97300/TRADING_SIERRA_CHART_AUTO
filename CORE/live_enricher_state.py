@@ -379,6 +379,81 @@ def _seed_open_cash_price1030_from_warmup(
     )
 
 
+def _seed_sessions_swings_from_warmup(
+    state: LiveEnricherState, symbol: str, df: Optional[pd.DataFrame] = None,
+) -> None:
+    """Audit Pass 4 multi-bars (15/05/2026) : seed SessionsSwingsSimpleState depuis V4.
+
+    Sans seed, cold start mid-London (boot 06:30 ET) =
+    asia_high/low/open + london_open + ny_open vides puisque sessions Asia
+    deja passees. Le streaming reset state sur session_date_trading change
+    et n'a aucun mecanisme de catch-up sessions historiques.
+
+    V4 batch a 1109/1109 asia_*/asia_open via add_session_high_low + capture
+    1ere bar. On lit la derniere bar V4 du session_date_trading courant qui
+    contient les running highs/lows broadcast.
+    """
+    if df is None:
+        df = state.bars_df
+    if df.empty:
+        return
+    # Today's session_date_trading = derniere valeur (V4 trie par ts)
+    if "session_date_trading" not in df.columns:
+        return
+    try:
+        today_sdt = df["session_date_trading"].iloc[-1]
+    except (IndexError, KeyError):
+        return
+    df_today = df[df["session_date_trading"] == today_sdt]
+    if df_today.empty:
+        return
+
+    # Last row contient les running highs/lows et opens broadcast post-capture
+    last_row = df_today.iloc[-1].to_dict()
+    sessions_cols = [
+        "asia_high", "asia_low", "london_high", "london_low",
+        "us_high", "us_low", "after_high", "after_low",
+        "asia_open", "london_open", "ny_open", "after_open",
+    ]
+    seed_values = {}
+    for c in sessions_cols:
+        v = last_row.get(c)
+        if v is not None and not (isinstance(v, float) and v != v):
+            seed_values[c] = float(v)
+    if not seed_values:
+        return  # rien a seeder
+
+    try:
+        from CORE.sessions_swings_simple_streaming import (
+            make_sessions_swings_simple_state,
+        )
+    except ImportError:
+        try:
+            from sessions_swings_simple_streaming import (
+                make_sessions_swings_simple_state,
+            )
+        except ImportError:
+            _emit_log("ENRICHER_SEED_IMPORT_FAIL", sym=symbol)
+            return
+
+    # Factory cree state per-symbole avec bounds
+    sym_pure = symbol.split(".")[0]  # ES.c.0 -> ES, MGC.v.0 -> MGC
+    seeded = make_sessions_swings_simple_state(symbol=sym_pure)
+    seeded.current_session_date = today_sdt
+    for c, v in seed_values.items():
+        if hasattr(seeded, c):
+            setattr(seeded, c, v)
+
+    state.engine_states["sessions_swings_simple"] = seeded
+    _emit_log(
+        "ENRICHER_SEED_SESSIONS_FROM_V4",
+        sym=symbol,
+        sdt=str(today_sdt),
+        n_values=len(seed_values),
+        keys=",".join(sorted(seed_values.keys()))[:200],
+    )
+
+
 def initialize_state(
     symbol: str,
     warmup_from_v4: bool = False,
@@ -423,6 +498,9 @@ def initialize_state(
             # R2 seed: pre-fill OpenCashPrice1030State depuis derniere bar today.
             # On passe df directement (eviter double-materialization via property).
             _seed_open_cash_price1030_from_warmup(state, symbol, df=df)
+            # Audit Pass 4 (15/05) : seed SessionsSwingsSimpleState asia_*/opens
+            # depuis V4. Sans ce seed, boot mid-London = asia jamais traque.
+            _seed_sessions_swings_from_warmup(state, symbol, df=df)
         except Exception as e:
             # Non-silent : emit + log (anti-Pattern V1 reglesouveraine logs 01/05)
             _emit_log("ENRICHER_WARMUP_FAIL", sym=symbol, err=str(e)[:200])
