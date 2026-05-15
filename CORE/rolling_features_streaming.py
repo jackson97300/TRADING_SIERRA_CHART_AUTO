@@ -544,8 +544,11 @@ def add_rolling_features_medium_streaming(
     ib_broken_dn = out.get("ib_broken_down", 0)
     vwap_d_side = _safe_float(out.get("vwap_d_side"))
     delta_day_dir = _safe_float(out.get("delta_day_dir"))
-    dist_mq_put = _safe_float(out.get("dist_mq_put"))
-    dist_mq_call = _safe_float(out.get("dist_mq_call"))
+    # P2.2 fix Jackson 15/05/2026 : utiliser dist_mq_*_pct (calcules par P1.4)
+    # au lieu de dist_mq_* (vides V4 batch 0/14418). Cf ligne 733 ratio calc.
+    # Fallback dist_mq_*_pct -> dist_mq_* (legacy) -> NaN.
+    dist_mq_put = _safe_float(out.get("dist_mq_put_pct") or out.get("dist_mq_put"))
+    dist_mq_call = _safe_float(out.get("dist_mq_call_pct") or out.get("dist_mq_call"))
 
     # Outputs GROUPE A si disponibles (mirror batch df.get fallback Series 0)
     ctx_vol_z_5 = _safe_float(out.get("ctx_vol_z_5"))

@@ -858,6 +858,45 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     _sess_final = 3
                 payload["session"] = _sess_final
 
+                # P3 Phase 3 (15/05/2026) - 3 features simples DMP-cibles
+                # Cible : combler lacunes audit feature-engineer (LIVE vs DMP)
+                # P3.2 range_pos : position close dans bar range [0=low, 1=high]
+                _h_p3 = payload.get("high")
+                _l_p3 = payload.get("low")
+                _c_p3 = payload.get("close")
+                if _h_p3 is not None and _l_p3 is not None and _c_p3 is not None:
+                    try:
+                        h_f = float(_h_p3); l_f = float(_l_p3); c_f = float(_c_p3)
+                        rng = h_f - l_f
+                        payload["range_pos"] = (c_f - l_f) / rng if rng > 0 else 0.5
+                    except (TypeError, ValueError):
+                        pass
+
+                # P3.1 atr_14m : multi-TF ATR. Notre `atr` deja sur 14 bars 1m
+                # = 14 min ATR. Alias direct (DMP utilise convention identique).
+                _atr_p3 = payload.get("atr")
+                if _atr_p3 is not None:
+                    payload["atr_14m"] = _atr_p3
+
+                # P3.4 dist_vwap_w/m_atr : normaliser /atr pour parite DMP
+                # convention (`dist_*_atr` regle souveraine data-quality.md).
+                if _atr_p3 is not None:
+                    try:
+                        atr_f = float(_atr_p3)
+                        if atr_f > 0:
+                            for src, dst in (
+                                ("dist_vwap_w", "dist_vwap_w_atr"),
+                                ("dist_vwap_m", "dist_vwap_m_atr"),
+                            ):
+                                v = payload.get(src)
+                                if v is not None:
+                                    try:
+                                        payload[dst] = float(v) / atr_f
+                                    except (TypeError, ValueError):
+                                        pass
+                    except (TypeError, ValueError):
+                        pass
+
                 # LAG : consomme session_id (produit par SIMPLE) -> swings + sweep
                 s_sess_lag = state.get_engine_state(
                     "sessions_swings_lag",
