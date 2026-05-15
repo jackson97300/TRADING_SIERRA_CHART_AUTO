@@ -250,12 +250,26 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
 
     try:
         # 1. Read all inputs
-        inputs = read_all_inputs(symbol, trades_window_sec=60, ohlcv_max_age_sec=90)
-        ohlcv = inputs["ohlcv"]
+        # Premier passe : lit OHLCV pour determiner ts_event_ns (bar start).
+        # FIX BUG #3 15/05/2026 : la fenetre trades doit etre alignee sur la
+        # bar OHLCV [bar_start, bar_start+60s], PAS une fenetre rolling
+        # [now-60s, now] qui chevauche 2 bars (avant fix : trades_window_n
+        # > volume cause cycle process lag 5s+).
+        # On lit d'abord OHLCV seul, puis trades_window aligne via
+        # read_trades_window apres avoir l'anchor ts_event_ns.
+        from live_enricher_io import (
+            read_latest_ohlcv as _read_ohlcv_only,
+            read_trades_window as _read_trades_aligned,
+            read_mq_latest as _read_mq,
+            read_vix_latest as _read_vix,
+            is_stream_alive as _is_alive,
+        )
+        ohlcv = _read_ohlcv_only(symbol, max_age_sec=90)
         if ohlcv is None:
+            stream_alive, _ = _is_alive()
             _emit_log(
                 "ENRICHER_INPUTS_INCOMPLETE", sym=symbol,
-                missing="ohlcv", alive=inputs["stream_alive"]
+                missing="ohlcv", alive=stream_alive,
             )
             return False
 
@@ -263,6 +277,24 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         ts_event_ns = ohlcv.get("ts_event_ns", 0)
         if ts_event_ns <= _last_processed_ts_ns.get(symbol, 0):
             return False  # bar deja vue, skip silencieux
+
+        # 1bis. Lecture trades + MQ + VIX maintenant qu'on a ts_event_ns.
+        # trades_window aligne sur bar OHLCV : [bar_start, bar_start+60s].
+        # Convention Databento : ts_event = START de la bar 1m.
+        _bar_start_ns = ts_event_ns
+        _bar_end_ns = _bar_start_ns + 60_000_000_000  # +60s
+        trades_df = _read_trades_aligned(symbol, _bar_start_ns, _bar_end_ns)
+        mq_levels = _read_mq(symbol)
+        vix_levels = _read_vix()
+        stream_alive, _ = _is_alive()
+        inputs = {
+            "ohlcv": ohlcv,
+            "trades_df": trades_df,
+            "mq_levels": mq_levels,
+            "vix": vix_levels,
+            "stream_alive": stream_alive,
+            "ts_read_ns": int(time.time() * 1e9),
+        }
 
         # 3. Update state (in-memory rolling buffer)
         # FIX P0-2 review : lock state pour mutex main loop vs snapshot_loop
@@ -431,9 +463,16 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                         payload[k] = v
 
         # Inject trades stats minimales (Phase 3a passthrough)
+        # FIX BUG #3 15/05/2026 : trades_df vient de read_trades_window aligne
+        # sur la bar OHLCV [ts_event_ns, ts_event_ns+60s], pas une fenetre
+        # rolling [now-60s, now]. Maintenant trades_window_n <= volume (parite
+        # car volume bar = sum trades meme fenetre temporelle).
+        # trades_window_aligned=1 pour audit : si jamais on revient a rolling
+        # window, on peut le tracer.
         trades_df = inputs["trades_df"]
         payload["trades_window_n"] = len(trades_df)
         payload["trades_window_sec"] = 60
+        payload["trades_window_aligned"] = 1  # aligne sur bar OHLCV start
 
         # ─── Fix code-reviewer Pass 3b R2 BLOQUANTS ───────────────────────────
         # B3 : inject `ts_event` (pd.Timestamp) - sessions_swings/rvol_inputs

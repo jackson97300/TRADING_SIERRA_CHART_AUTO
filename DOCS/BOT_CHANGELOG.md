@@ -62,6 +62,54 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-15 19:30 — FIX BUG #3 trades_window aligne sur bar OHLCV (precedemment rolling now-60s)
+
+**Categorie** : FIX
+**Impact prod** : OFFLINE (Live-Enricher collecte, aucun consumer)
+**Fichier(s)** : `CORE/live_enricher.py:250-297` (read inputs decompose), `CORE/live_enricher.py:455-465` (trades_window_aligned)
+
+### Quoi
+Fix race subtile cause de `trades_window_n > volume` dans certaines bars :
+
+**Avant** : `read_all_inputs(trades_window_sec=60)` lit `[now-60s, now]` UTC
+= fenetre rolling. Cycle process bar avec lag (ex: 30s pipeline) → fenetre
+chevauche 30s de la bar precedente + 30s bar courante. trades_window_n est
+sum partiel 2 bars → peut depasser volume bar courante.
+
+**Apres** : decomposition lecture inputs en 2 etapes :
+1. `read_latest_ohlcv` seul → recupere `ts_event_ns` (bar start)
+2. `read_trades_window(sym, bar_start_ns, bar_start_ns+60s)` aligne EXACT
+3. `read_mq_latest` + `read_vix_latest` + `is_stream_alive` standalone
+4. Compose `inputs` dict identique signature precedente (no API change)
+
+Flag `trades_window_aligned=1` ajoute au payload pour audit (si revient
+a rolling = aligned=0 visible).
+
+### Pourquoi
+**Cause racine** : convention Databento `OHLCVMsg.ts_event` = START de la bar
+1m. Fenetre trades_df doit etre `[bar_start, bar_start+60s]` pour matcher
+volume sum exact, pas `[now-60s, now]` rolling decoupling de la bar.
+
+**Impact ML** : trades_window_n et volume sont supposes etre dans le meme
+referentiel. Avant fix, certaines features derivees (eg avg_trade_size =
+volume / trades_window_n) peuvent etre faussees par la decoupling.
+
+### Validation pre-deploy
+- [x] Test logique alignement : window post fix = bar exact
+- [x] Test empirique 30 bars 3 symboles post-deploy : 0 violation trades_n > vol
+- [x] Syntax check OK
+- [x] Logs ENRICHER_BAR_PROCESSED normaux apres restart
+
+### Suivi post-deploy
+- J+1 : verifier sanity_calc_check + audit J+1 16/05 RTH (trades_n <= volume)
+- J+7 : grep flag aligned=0 dans bars (devrait etre 0% post-deploy)
+
+### Liens
+- Audit externe Jackson 15/05 mentionnait "trades_window_n > volume bucketing race"
+- Fix complementaire BUG #2 IB seed + BUG #4 ny_open capture mid-session
+
+---
+
 ## 2026-05-15 19:15 — FIX BUG #2 IB seed + GAP RECOVERY pour HOT restart (state stale pickle)
 
 **Categorie** : FIX (extension fix 19:00 + gap recovery)
