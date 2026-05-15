@@ -1169,13 +1169,41 @@ def main():
         signal.signal(signal.SIGBREAK, _signal_handler)
 
     # 2. Initialize states (cold or warm depuis snapshot)
+    # R2 fix Pass 4 (15/05/2026) : warmup_from_v4=True active sur cold start
+    # SI snapshot disque absent. Seed OpenCashPrice1030State.cached_*
+    # depuis V4 J-1/J0 derniere bar (cf live_enricher_state._seed_*).
+    # Sans seed : classify_open_type=UNKNOWN jusqu'a 10:30 ET prochain cycle
+    # complet (cold start scenario c agent R2 verdict).
+    #
+    # Fix R1 code-reviewer (15/05 verdict GO-AVEC-RESERVES) : compute today_et
+    # via ZoneInfo America/New_York pour partition lookup. Boot 01/05 00:30 UTC
+    # = 30/04 20:30 ET -> today_et=30/04 -> month=04 partition (contient open_cash
+    # 30/04 14:30 UTC captured). Sans ce fix, today_utc=01/05 -> month=05 vide
+    # = seed FAIL silent et UNKNOWN J0.
+    try:
+        from zoneinfo import ZoneInfo
+        _ET = ZoneInfo("America/New_York")
+        today_et = datetime.now(timezone.utc).astimezone(_ET).date()
+    except Exception:
+        today_et = datetime.now(timezone.utc).date()  # fallback safe
     for sym in SYMBOLS:
-        state = initialize_state(sym, warmup_from_v4=False)
+        v4_path = (
+            ROOT / "DATA" / "datasets" / "v4_enriched" /
+            f"symbol={sym}" /
+            f"year={today_et.year}" /
+            f"month={today_et.month:02d}" /
+            "data.parquet"
+        )
+        state = initialize_state(
+            sym,
+            warmup_from_v4=True,
+            v4_parquet_path=v4_path,
+        )
         with _states_lock:
             _states[sym] = state
         _emit_log(
             "ENRICHER_BOOT", sym=sym,
-            warmup=False, loaded=state.n_bars_processed > 0,
+            warmup=True, loaded=state.n_bars_processed > 0,
         )
 
     # 3. Start daemon threads

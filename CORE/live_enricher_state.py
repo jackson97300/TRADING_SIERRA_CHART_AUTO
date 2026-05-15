@@ -300,6 +300,85 @@ def load_state(symbol: str) -> Optional[LiveEnricherState]:
         return None
 
 
+def _seed_open_cash_price1030_from_warmup(
+    state: LiveEnricherState, symbol: str, df: Optional[pd.DataFrame] = None,
+) -> None:
+    """R2 fix Pass 4 (15/05/2026) : seed OpenCashPrice1030State depuis bars_df warmup.
+
+    Sans seed, cold start cycle (c) du R2 (boot apres 10:30 ET) =
+    `cached_open_cash`/`cached_price_1030` vides -> classify_open_type UNKNOWN
+    jusqu'a J+1 09:30. Reproduit Pattern V1 (silent feature dead).
+
+    Strategie : lit derniere valeur non-nulle de `open_cash` + `price_1030`
+    pour le `date_et` le plus recent dans bars_df, instancie
+    OpenCashPrice1030State pre-rempli pour ce date_et.
+
+    Args:
+        state : LiveEnricherState a seeder.
+        symbol : pour log emit.
+        df : DataFrame deja en memoire (R2 fix code-reviewer : evite double
+             materialization O(N) via state.bars_df property). Si None, fallback
+             materialise depuis le deque (rare path test seul).
+
+    Limite scenario edge : si cold start entre 09:30 et 10:30 ET et batch V4
+    n'a pas encore capture J0 (delay Databento 15 min), seed = None et
+    streaming captures normalement sur la prochaine bar reelle.
+    """
+    if df is None:
+        df = state.bars_df
+    if df.empty or "date_et" not in df.columns:
+        return
+    # R4 fix code-reviewer : iloc[-1] O(1) au lieu de max() O(N).
+    # V4 batch garantit le tri par ts_event (cf build_dataset_v4_dmp_databento sort).
+    try:
+        today_et = df["date_et"].iloc[-1]
+    except (IndexError, KeyError):
+        return
+    df_today = df[df["date_et"] == today_et]
+    if df_today.empty:
+        return
+
+    cached_oc = None
+    cached_p1030 = None
+    if "open_cash" in df_today.columns:
+        valid = df_today["open_cash"].dropna()
+        if len(valid):
+            cached_oc = float(valid.iloc[-1])
+    if "price_1030" in df_today.columns:
+        valid = df_today["price_1030"].dropna()
+        if len(valid):
+            cached_p1030 = float(valid.iloc[-1])
+
+    if cached_oc is None and cached_p1030 is None:
+        return  # rien a seeder (J0 cold start pre-09:30 ou V4 obsolete)
+
+    # Dual import path (fix R3 code-reviewer 15/05) : nssm service peut tourner
+    # avec AppDirectory=ROOT (CORE/. dans sys.path) OU AppDirectory=CORE
+    # (ROOT/. dans sys.path). Pattern aligne mia_paper_trader.py:33-36.
+    try:
+        from CORE.phase_b_helpers import OpenCashPrice1030State
+    except ImportError:
+        try:
+            from phase_b_helpers import OpenCashPrice1030State
+        except ImportError:
+            _emit_log("ENRICHER_SEED_IMPORT_FAIL", sym=symbol)
+            return
+
+    seeded = OpenCashPrice1030State(
+        current_date_et=today_et,
+        cached_open_cash=cached_oc,
+        cached_price_1030=cached_p1030,
+    )
+    state.engine_states["open_cash_price1030"] = seeded
+    _emit_log(
+        "ENRICHER_SEED_OPEN_CASH_FROM_V4",
+        sym=symbol,
+        date=str(today_et),
+        open_cash=cached_oc,
+        price_1030=cached_p1030,
+    )
+
+
 def initialize_state(
     symbol: str,
     warmup_from_v4: bool = False,
@@ -330,10 +409,23 @@ def initialize_state(
             max_bars = BARS_RETENTION_DAYS * 1440
             if len(df) > max_bars:
                 df = df.iloc[-max_bars:].reset_index(drop=True)
-            state.bars_df = df
+            # FIX R2 Pass 4 (15/05/2026) : bars_df est @property read-only depuis
+            # FIX P0-2 (deque). L'ancien `state.bars_df = df` levait AttributeError
+            # silencieusement avale par except: pass = warmup completement mort.
+            # Pattern V1 cousin (silent fallback). On append au deque via API.
+            for row in df.to_dict(orient="records"):
+                state._bars_deque.append(row)
             state.n_bars_processed = len(df)
-        except Exception:
-            pass  # silent fallback empty state
+            _emit_log(
+                "ENRICHER_WARMUP_OK",
+                sym=symbol, n_bars=len(df), path=str(v4_parquet_path),
+            )
+            # R2 seed: pre-fill OpenCashPrice1030State depuis derniere bar today.
+            # On passe df directement (eviter double-materialization via property).
+            _seed_open_cash_price1030_from_warmup(state, symbol, df=df)
+        except Exception as e:
+            # Non-silent : emit + log (anti-Pattern V1 reglesouveraine logs 01/05)
+            _emit_log("ENRICHER_WARMUP_FAIL", sym=symbol, err=str(e)[:200])
 
     return state
 

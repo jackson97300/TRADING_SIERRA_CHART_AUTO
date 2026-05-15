@@ -601,6 +601,14 @@ LOG_CODES = {
     "ENRICHER_ENGINE_FAIL":        (LogLevel.MAJEUR,  "events", "Enricher engine chain fail : {sym} engine={engine} failed_lot={failed_lot} err_type={err_type} err={err}"),
     "ENRICHER_PARTNER_STALE":      (LogLevel.ALERTE,  "events", "Enricher partner bar stale/future : {sym} partner={partner} reason={reason} delta_ns={delta_ns} (intermarket features=NaN)"),
     "GAME_CHANGERS_OPEN_TYPE_UNKNOWN": (LogLevel.MAJEUR, "events", "Game changers OPEN_TYPE=UNKNOWN : {sym} date_et={date_et} mins_et={mins_et} missing_inputs={missing_inputs} (warmup cold start OU bug pipeline upstream - frequence elevee = bug)"),
+
+    # ============================================================
+    # R2 Fix Pass 4 (15/05/2026) — seed warmup J-1 cold start
+    # ============================================================
+    "ENRICHER_WARMUP_OK":          (LogLevel.INFO,    "events", "Enricher warmup V4 OK : {sym} n_bars={n_bars} path={path}"),
+    "ENRICHER_WARMUP_FAIL":        (LogLevel.MAJEUR,  "events", "Enricher warmup V4 FAIL : {sym} err={err} -> cold start vide (anti-pattern V1 silent log emitted)"),
+    "ENRICHER_SEED_OPEN_CASH_FROM_V4": (LogLevel.INFO, "events", "Enricher seed OpenCashPrice1030 depuis V4 : {sym} date={date} open_cash={open_cash} price_1030={price_1030}"),
+    "ENRICHER_SEED_IMPORT_FAIL":   (LogLevel.MAJEUR,  "events", "Enricher seed phase_b_helpers import FAIL : {sym} (warmup partiel, classify_open_type peut UNKNOWN J0)"),
 }
 
 
