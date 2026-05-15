@@ -159,8 +159,29 @@ def add_game_changers_streaming(
             state.cached_open_zone = int(oz)
             state.cached_open_direction = int(gc.direction(ot))
             state.cached_open_bias_conf = float(gc.confidence(ot))
-        # else : inputs manquants (warmup cold start OU bug pipeline) -> garder
-        # cached UNKNOWN. Caller doit detecter via grep log si frequent en prod.
+        else:
+            # Inputs manquants -> garder cached UNKNOWN.
+            # Fix code-reviewer Pass 4 Review #3 R3 (15/05) : emit log MAJEUR
+            # pour audit J+1 (regle souveraine logs 01/05). Distinguer warmup
+            # cold start (acceptable) de bug pipeline (silent fallback Pattern V1).
+            # Caller doit grep `GAME_CHANGERS_OPEN_TYPE_UNKNOWN` en errors_*.jsonl
+            # pour identifier frequence (rare = warmup OK, frequent = bug).
+            try:
+                import logging
+                _gc_logger = logging.getLogger("game_changers_streaming")
+                missing_inputs = [
+                    n for n, v in zip(
+                        ("open_cash", "prev_vah", "prev_val", "ib_high", "ib_low", "price_1030"),
+                        (open_cash, prev_vah, prev_val, ib_high, ib_low, price_1030),
+                    ) if v is None or (isinstance(v, float) and v != v)
+                ]
+                _gc_logger.warning(
+                    f"[GAME_CHANGERS_OPEN_TYPE_UNKNOWN] symbol={symbol} "
+                    f"date_et={date_et} mins_et={mins_et} missing_inputs={missing_inputs} "
+                    "-> classify=UNKNOWN cached (warmup cold start OU bug pipeline upstream)"
+                )
+            except Exception:
+                pass
         # FIX P1.1 : classified_today=True inconditionnel (mirror batch fige sur post_ib.iloc[0])
         state.classified_today = True
 

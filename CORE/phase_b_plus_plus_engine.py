@@ -39,11 +39,15 @@ TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — caller passe tick=get_tick_size(
 BIG_ORDER_TIERS = {
     "ES":  [100, 150, 400, 1000],
     "NQ":  [10, 30, 100, 300],
-    # MGC distribution mesuree empirique (mars 2026, 30k bars) :
-    # max_trade_size p50=6, p95=16, p99=31, max=621
-    # Recalibre : t1=10 (22% fire = signal), t2=30 (1.2% rare),
-    # t3/t4 None (events trop rares pour ML).
-    "MGC": [10, 30, 100, None],
+    # 11/05 J3 Phase B recalibration MGC (mesure avril 2026, 22k bars) :
+    # max_trade_size p50=6, p95=16, p99=30, max=246
+    # Audit precedent t3=100 / t4=None / t2=30 -> features t3 mortes (0% fire).
+    # Recalibre Phase A.3 mesures empirique :
+    #   t1=10 (~22% fire = signal frequent OK ML)
+    #   t2=20 (~5-10% fire = entre p95=16 et p99=30, vs 30 trop rare 1.2%)
+    #   t3=30 (~1-3% fire = p99, evenement rare ML actionnable)
+    #   t4=None (events au-dessus p99 trop rares Gold, drop par design)
+    "MGC": [10, 20, 30, None],
 }
 CLUSTER_THRESHOLDS = {
     "ES":  250,
@@ -232,9 +236,12 @@ BIG_ORDERS_TIERS_NEW = {
     # DROP tier 3 cote ES + NQ. Garder t1/t2 avec NQ recalibre.
     "ES":  [100, 150, None, None],
     "NQ":  [40, 80, None, None],
-    # MGC distribution empirique : max_trade_size p95=16, p99=31.
-    # t1=10 (22% fire), t2=30 (1.2% rare-mais-signal).
-    "MGC": [10, 30, None, None],
+    # 11/05 J3 Phase B R1 (code-reviewer) : aligner BIG_ORDERS_TIERS_NEW
+    # avec BIG_ORDER_TIERS["MGC"]=[10,20,30,None] pour eviter divergence
+    # 2 dicts/2 engines (pattern 11 V1 TICK_SIZE 5x reproduction).
+    # MGC distribution empirique : max_trade_size p95=16, p99=30.
+    # t1=10 (22% fire), t2=20 (cible 5-10%), t3=30 (cible 1-3%).
+    "MGC": [10, 20, 30, None],
 }
 
 # BN #9 CLUSTER VOLUME (Volume At Price Threshold Alert V2 - Total Volume)
@@ -1026,6 +1033,12 @@ def add_absorption_features(df, footprint, symbol="ES", tick=TICK_SIZE):
     df["near_support_level"] = near_sup
     df["bn_absorb_ask_at_level"] = (abs_ask_raw & near_res).astype(np.int8)
     df["bn_absorb_bid_at_level"] = (abs_bid_raw & near_sup).astype(np.int8)
+    # Fix code-reviewer Pass 4 Review #3 P5 (15/05) : parite batch/stream
+    # rolling_features div_confluence_dmp absorb_score (l. 1276-1278) consomme
+    # `bn_absorb_ask/bid` (sans suffix). Stream expose alias = _raw, ajout
+    # batch ici pour parite ML.
+    df["bn_absorb_ask"] = df["bn_absorb_ask_raw"]
+    df["bn_absorb_bid"] = df["bn_absorb_bid_raw"]
     return df
 
 

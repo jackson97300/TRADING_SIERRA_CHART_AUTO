@@ -7,6 +7,12 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-15]** **`next_wall_dist_ticks` batch V4 creation pour parite ML** | 1-2h | LOW | PROPOSED (Review #3 P3)
+  - **Source** : Code-reviewer Review #3 P3 - feature creee stream (live_enricher.py:331-360) mais ABSENTE batch V4 (build_dataset_v4_phase_b.py, build_dataset_v4_dmp_databento.py). Utilisee par entry_quality_gate.py decision LIVE seulement, pas dans ML training V4 actuel.
+  - **Impact** : asymetrie OK si V4 ML training ne consomme pas cette feature. Mais si on l'ajoute aux features ML futures, divergence batch/stream.
+  - **Fix** : ajouter calcul `next_wall_dist_ticks = min(abs(level - close) / tick for level in mq_walls)` dans batch (probable phase_b_helpers ou builder V4) AVANT ML feature selection.
+  - **Note** : feature nouvelle (pas dette pre-existante), formule simple stateless.
+
 - **[DETTE 2026-05-15]** **Tests cross-day game_changers + reset cache (P1 R2 reserves R2+R4)** | 1-2h | LOW | PROPOSED (couverture test incomplete)
   - **R2** : test 9 valide `open_cash` produit mais ne prouve PAS variance `open_type` post-warmup. Ajouter test J+1 simule (seed `prev_vah/val/vpoc/pdh/pdl` artificiel via `state.volume_profile.prev_vah = X`) pour valider classify sort de UNKNOWN.
   - **R4** : aucun test cross-day reset cache OpenCashPrice1030State. Test J + J+1 dans meme run pour verifier `if date_et != current_date_et` declenche correctement.

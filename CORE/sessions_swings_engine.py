@@ -366,6 +366,12 @@ def add_swing_features_v2(df: pd.DataFrame, n_bars: int = SWING_LOOKBACK,
     df["swing_low_active_lag10"] = swing_l
     df["dist_last_swing_high_pct"] = ((close - last_h_price) / close * 100).astype("float32")
     df["dist_last_swing_low_pct"] = ((close - last_l_price) / close * 100).astype("float32")
+    # Fix code-reviewer Pass 4 Review #3 P4 (15/05) : parite batch/stream
+    # rolling_features ctx_div_at_swing + div_at_key_level_ticks consomme
+    # POINTS bruts (pas _pct). Stream expose dist_swing_high/low POINTS,
+    # ajout batch ici pour parite ML.
+    df["dist_swing_high"] = (close - last_h_price).astype("float32")
+    df["dist_swing_low"] = (close - last_l_price).astype("float32")
     df["bars_since_last_swing_high"] = bars_since_h
     df["bars_since_last_swing_low"] = bars_since_l
     df["last_swing_high_session"] = last_h_session

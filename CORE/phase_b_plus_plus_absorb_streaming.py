@@ -111,6 +111,11 @@ def add_stack_absorb_streaming(
     out["near_support_level"] = 0
     out["bn_absorb_ask_at_level"] = 0
     out["bn_absorb_bid_at_level"] = 0
+    # Fix Pass 4 Review #3 P5 (15/05) : alias bn_absorb_ask/bid DANS init defaults
+    # pour garantir presence dans payload meme en early return (1ere bar prev_close None
+    # OU OHLC NaN). Sinon test critical_keys FAIL + downstream KeyError.
+    out["bn_absorb_ask"] = 0
+    out["bn_absorb_bid"] = 0
 
     # Inputs OHLC
     o = _safe_float(out.get("open"))

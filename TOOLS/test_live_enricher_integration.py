@@ -63,6 +63,31 @@ def run_integration_chain(payload: dict, trades_df: pd.DataFrame, state, symbol:
         payload["ts_event"] = pd.Timestamp(payload["ts_event_ns"], unit="ns", tz="UTC")
     if "delta_bar" not in payload:
         payload["delta_bar"] = _compute_delta_bar_from_trades(trades_df)
+
+    # Fix Pass 4b P3 (Review #3) : inject next_wall_dist_ticks (reproduit live_enricher:331-360)
+    try:
+        from CORE.constants import get_tick_size as _gts_test
+    except ImportError:
+        from constants import get_tick_size as _gts_test
+    _close_t = float(payload.get("close")) if payload.get("close") is not None else None
+    _tick_t = _gts_test(symbol.split(".")[0])
+    if _close_t is not None and _close_t > 0 and _tick_t > 0:
+        _mq_walls = []
+        for _mq in ("mq_call_resistance", "mq_call_resistance_0dte",
+                    "mq_put_support", "mq_put_support_0dte",
+                    "mq_hvl", "mq_hvl_0dte"):
+            v = payload.get(_mq)
+            if v is not None:
+                try:
+                    vf = float(v)
+                    if not (vf != vf):
+                        _mq_walls.append(vf)
+                except (TypeError, ValueError):
+                    pass
+        if _mq_walls:
+            payload["next_wall_dist_ticks"] = float(min(abs(w - _close_t) / _tick_t for w in _mq_walls))
+        else:
+            payload["next_wall_dist_ticks"] = float("nan")
     from footprint_builder_streaming import build_footprint_cells_streaming
     from phase_b_plus_plus_trades_streaming import (
         add_phase_b_plus_plus_trades_streaming,
@@ -398,6 +423,9 @@ def main():
         "momentum_5b", "poc_position", "va_position_pct",  # Pass 4a rolling_inputs
         "open_type", "day_type", "open_direction",     # P1 game_changers
         "open_bias_conf",                               # P1 game_changers
+        "next_wall_dist_ticks",                         # P3 Pass 4b
+        "dist_swing_high", "dist_swing_low",            # P4 alias
+        "bn_absorb_ask", "bn_absorb_bid",               # P5 alias
     ]
     missing = [k for k in critical_keys if k not in payload_enriched]
     if missing:
