@@ -904,41 +904,101 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                         except (TypeError, ValueError):
                             pass
 
-                # P3.4 dist_vwap_w/m + dist_vwap_w/m_atr :
-                # Bug separe detecte : streaming engine ne calcule pas
-                # dist_vwap_w/m (seulement vwap_w/m raw). Calcul ici =
-                # vwap_w/m - close (convention batch).
-                # Puis normaliser /atr pour parite DMP convention.
+                # P3.5 REVERT 15/05/2026 (code-reviewer NOGO) : profile_shape/skew
+                # approximations basees VPOC J-1 non-conformes standard DMP C++
+                # (profile_shape=3 = B_DOUBLE PAS trend, seuils 0.70/0.30 pas
+                # 0.66/0.33, manque skewness/volume_imbalance/bimodal VAP intra-day).
+                # Risque : corruption RegimeGate Bot 1 (winner edge profile_shape=3).
+                # Chantier separe necessite VAP intra-day stream + game_changers.classify_profile_shape().
+                # Cf errata_audit_market_profile.md:86 (audit precedent rejet).
+
+                # P3.4 V3 dist_vwap_w/m en TICKS (R3 fix code-reviewer 15/05) :
+                # V1 emit POINTS (vwap_w - close), C++ DMP emit TICKS. Asymetrie
+                # batch/stream. Fix V3 : (vwap - close) / tick_size = TICKS.
                 if _c_p3 is not None:
                     try:
                         c_v = float(_c_p3)
-                        for vw_key, dist_key in (
-                            ("vwap_w", "dist_vwap_w"),
-                            ("vwap_m", "dist_vwap_m"),
-                        ):
-                            vw_val = payload.get(vw_key)
-                            if vw_val is not None:
-                                try:
-                                    payload[dist_key] = float(vw_val) - c_v
-                                except (TypeError, ValueError):
-                                    pass
+                        try:
+                            from CORE.constants import get_tick_size as _gts_vw
+                        except ImportError:
+                            from constants import get_tick_size as _gts_vw
+                        _tick_vw = _gts_vw(symbol_pure)
+                        if _tick_vw > 0:
+                            for vw_key, dist_key in (
+                                ("vwap_w", "dist_vwap_w"),
+                                ("vwap_m", "dist_vwap_m"),
+                            ):
+                                vw_val = payload.get(vw_key)
+                                if vw_val is not None:
+                                    try:
+                                        payload[dist_key] = (float(vw_val) - c_v) / _tick_vw
+                                    except (TypeError, ValueError):
+                                        pass
                     except (TypeError, ValueError):
                         pass
 
-                if _atr_p3 is not None:
+                # P4 V3 REFACTOR 15/05/2026 (code-reviewer GO-AVEC-RESERVES V2) :
+                # Convention DMP officielle = (level - close) / tick_size / atr_ticks
+                # clampe ±5. Cf DMP_Transform.h:501-520 + migrate_atr_x4.py:65-99.
+                # V1 bug : oubli /tick (magnitude 4x off NQ) + signe inverse 9/13.
+                # V2 bug : NaN filter manquant (np.nan is not None == True) ->
+                #   float(nan)/n = nan -> min(5, nan) = 5 -> faux signal extreme.
+                # V3 fix : math.isfinite() check + filtre NaN/Inf explicitement.
+                # NOTE R4 : `atr` LIVE = 14-min ATR en TICKS (cf
+                # phase_b_rolling_inputs_streaming.py:153 atr_points/tick).
+                # Distinct DMP C++ daily-ATR. Convention `_atr` = dist_ticks /
+                # atr_14m_ticks. Documente dans data-quality.md / IDEAS_BACKLOG.
+                import math as _math_p4
+                if _atr_p3 is not None and _c_p3 is not None:
                     try:
                         atr_f = float(_atr_p3)
-                        if atr_f > 0:
-                            for src, dst in (
-                                ("dist_vwap_w", "dist_vwap_w_atr"),
-                                ("dist_vwap_m", "dist_vwap_m_atr"),
+                        c_atr = float(_c_p3)
+                        # Get tick size local (deja import _gts dans bloc P6c)
+                        try:
+                            from CORE.constants import get_tick_size as _gts_p4
+                        except ImportError:
+                            from constants import get_tick_size as _gts_p4
+                        _tick_p4 = _gts_p4(symbol_pure)
+                        # V3 fix R1 : check atr/close finite (anti NaN clamp 5.0)
+                        if (atr_f > 0 and _tick_p4 > 0
+                                and _math_p4.isfinite(atr_f)
+                                and _math_p4.isfinite(c_atr)):
+                            ATR_CLIP = 5.0
+                            for lvl_key, dst in (
+                                ("vwap_w", "dist_vwap_w_atr"),
+                                ("vwap_m", "dist_vwap_m_atr"),
+                                ("ib_high", "dist_ib_high_atr"),
+                                ("ib_low", "dist_ib_low_atr"),
+                                ("sess_high", "dist_sess_high_atr"),
+                                ("sess_low", "dist_sess_low_atr"),
+                                ("cur_vpoc", "dist_cur_vpoc_atr"),
+                                ("cur_vah", "dist_cur_vah_atr"),
+                                ("cur_val", "dist_cur_val_atr"),
+                                ("prev_vpoc", "dist_prev_vpoc_atr"),
+                                ("prev_vah", "dist_prev_vah_atr"),
+                                ("prev_val", "dist_prev_val_atr"),
+                                ("pdh", "dist_pdh_atr"),
+                                ("pdl", "dist_pdl_atr"),
+                                ("mq_call", "dist_mq_call_atr"),
+                                ("mq_put", "dist_mq_put_atr"),
+                                ("mq_hvl", "dist_mq_hvl_atr"),
                             ):
-                                v = payload.get(src)
-                                if v is not None:
-                                    try:
-                                        payload[dst] = float(v) / atr_f
-                                    except (TypeError, ValueError):
-                                        pass
+                                lvl = payload.get(lvl_key)
+                                if lvl is None:
+                                    continue
+                                try:
+                                    lvl_f = float(lvl)
+                                except (TypeError, ValueError):
+                                    continue
+                                # V3 R1 fix : filtre NaN/Inf explicitement
+                                # (np.nan is not None = True passe le check None
+                                # mais float(nan) propage via division -> faux 5.0)
+                                if not _math_p4.isfinite(lvl_f):
+                                    continue
+                                val = (lvl_f - c_atr) / _tick_p4 / atr_f
+                                # Clamp ±5 (DMP_ATR_CLIP)
+                                val = max(-ATR_CLIP, min(ATR_CLIP, val))
+                                payload[dst] = val
                     except (TypeError, ValueError):
                         pass
 
