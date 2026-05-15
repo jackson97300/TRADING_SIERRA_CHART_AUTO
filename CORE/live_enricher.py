@@ -860,15 +860,33 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
 
                 # P3 Phase 3 (15/05/2026) - 3 features simples DMP-cibles
                 # Cible : combler lacunes audit feature-engineer (LIVE vs DMP)
-                # P3.2 range_pos : position close dans bar range [0=low, 1=high]
+                # P3.2 range_pos + P3.9 bar_body + avg_price (couverture C++)
                 _h_p3 = payload.get("high")
                 _l_p3 = payload.get("low")
                 _c_p3 = payload.get("close")
+                _o_p3 = payload.get("open")
                 if _h_p3 is not None and _l_p3 is not None and _c_p3 is not None:
                     try:
                         h_f = float(_h_p3); l_f = float(_l_p3); c_f = float(_c_p3)
                         rng = h_f - l_f
                         payload["range_pos"] = (c_f - l_f) / rng if rng > 0 else 0.5
+                        # avg_price (mean OHLC) - couverture C++ DMP
+                        if _o_p3 is not None:
+                            try:
+                                o_f = float(_o_p3)
+                                payload["avg_price"] = (o_f + h_f + l_f + c_f) / 4
+                                # bar_body : (close - open) en points + ticks
+                                body = c_f - o_f
+                                payload["bar_body_pct"] = (body / rng * 100) if rng > 0 else 0.0
+                                try:
+                                    from CORE.constants import get_tick_size as _gts2
+                                except ImportError:
+                                    from constants import get_tick_size as _gts2
+                                _tick = _gts2(symbol_pure)
+                                if _tick > 0:
+                                    payload["bar_body_ticks"] = body / _tick
+                            except (TypeError, ValueError):
+                                pass
                     except (TypeError, ValueError):
                         pass
 
@@ -877,9 +895,36 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 _atr_p3 = payload.get("atr")
                 if _atr_p3 is not None:
                     payload["atr_14m"] = _atr_p3
+                    # P3.9 atr_14m_pct : ATR normalise % close (couverture C++)
+                    if _c_p3 is not None:
+                        try:
+                            atr_f = float(_atr_p3); c_f2 = float(_c_p3)
+                            if c_f2 > 0:
+                                payload["atr_14m_pct"] = atr_f / c_f2 * 100
+                        except (TypeError, ValueError):
+                            pass
 
-                # P3.4 dist_vwap_w/m_atr : normaliser /atr pour parite DMP
-                # convention (`dist_*_atr` regle souveraine data-quality.md).
+                # P3.4 dist_vwap_w/m + dist_vwap_w/m_atr :
+                # Bug separe detecte : streaming engine ne calcule pas
+                # dist_vwap_w/m (seulement vwap_w/m raw). Calcul ici =
+                # vwap_w/m - close (convention batch).
+                # Puis normaliser /atr pour parite DMP convention.
+                if _c_p3 is not None:
+                    try:
+                        c_v = float(_c_p3)
+                        for vw_key, dist_key in (
+                            ("vwap_w", "dist_vwap_w"),
+                            ("vwap_m", "dist_vwap_m"),
+                        ):
+                            vw_val = payload.get(vw_key)
+                            if vw_val is not None:
+                                try:
+                                    payload[dist_key] = float(vw_val) - c_v
+                                except (TypeError, ValueError):
+                                    pass
+                    except (TypeError, ValueError):
+                        pass
+
                 if _atr_p3 is not None:
                     try:
                         atr_f = float(_atr_p3)
@@ -1285,9 +1330,16 @@ def main():
     except Exception:
         today_et = datetime.now(timezone.utc).date()  # fallback safe
     for sym in SYMBOLS:
+        # Fix Jackson 15/05/2026 : V4 batch utilise MGC.c.0 (canonical Databento
+        # continuous month-based) tandis que live stream utilise MGC.v.0 (volume-
+        # based pour Gold futures monthly rollover). Cf lessons.md mapping.
+        # Mapping live_sym -> V4_sym pour seed warmup.
+        sym_v4 = sym
+        if sym == "MGC.v.0":
+            sym_v4 = "MGC.c.0"
         v4_path = (
             ROOT / "DATA" / "datasets" / "v4_enriched" /
-            f"symbol={sym}" /
+            f"symbol={sym_v4}" /
             f"year={today_et.year}" /
             f"month={today_et.month:02d}" /
             "data.parquet"

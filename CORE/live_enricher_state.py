@@ -576,6 +576,76 @@ def _seed_swings_lag_from_warmup(
     )
 
 
+def _seed_volume_profile_from_warmup(
+    state: LiveEnricherState, symbol: str, df: Optional[pd.DataFrame] = None,
+) -> None:
+    """P2.1 fix Jackson 15/05/2026 : seed VolumeProfileState prev_*/pdh/pdl
+    depuis V4 batch derniere bar valide.
+
+    V4 batch VPS contient prev_vpoc/vah/val + pdh/pdl 91% non-null
+    (13247/14507 mai 2026). Sans seed, LIVE engine state vide post-cold-
+    start -> prev_* = null pendant 1 jour entier (until session_date change).
+
+    Strategy : lit derniere bar V4 valide avec prev_vpoc non-NaN, instancie
+    VolumeProfileState avec prev_vpoc/vah/val/pdh/pdl pre-rempli.
+    """
+    if df is None:
+        df = state.bars_df
+    if df.empty:
+        _emit_log("ENRICHER_SEED_VP_FAIL", sym=symbol, reason="bars_df empty")
+        return
+    cols_needed = ["prev_vpoc", "prev_vah", "prev_val", "pdh", "pdl",
+                   "session_date_trading"]
+    if not all(c in df.columns for c in cols_needed):
+        missing = [c for c in cols_needed if c not in df.columns]
+        _emit_log("ENRICHER_SEED_VP_FAIL", sym=symbol,
+                  reason=f"cols missing: {missing}")
+        return
+    # Derniere bar avec prev_vpoc non-NaN (= post jour 1 V4)
+    df_valid = df[df["prev_vpoc"].notna()]
+    if df_valid.empty:
+        _emit_log("ENRICHER_SEED_VP_FAIL", sym=symbol,
+                  reason="no V4 bar with prev_vpoc non-null")
+        return
+    last_row = df_valid.iloc[-1]
+    seed_values = {}
+    for col in ["prev_vpoc", "prev_vah", "prev_val", "pdh", "pdl"]:
+        v = last_row.get(col)
+        if v is not None and pd.notna(v):
+            seed_values[col] = float(v)
+    if not seed_values:
+        return
+
+    try:
+        from CORE.phase_b_helpers import VolumeProfileState
+    except ImportError:
+        try:
+            from phase_b_helpers import VolumeProfileState
+        except ImportError:
+            _emit_log("ENRICHER_SEED_IMPORT_FAIL", sym=symbol)
+            return
+
+    seeded = VolumeProfileState()
+    # Map cols V4 -> attrs state
+    seeded.prev_vpoc = seed_values.get("prev_vpoc")
+    seeded.prev_vah = seed_values.get("prev_vah")
+    seeded.prev_val = seed_values.get("prev_val")
+    seeded.prev_pdh = seed_values.get("pdh")  # batch col `pdh` = state.prev_pdh
+    seeded.prev_pdl = seed_values.get("pdl")
+    # Set current_session_date_trading depuis last_row pour eviter reset
+    # immediate sur 1er bar live (qui aurait meme sdt).
+    sdt = last_row.get("session_date_trading")
+    if sdt is not None and pd.notna(sdt):
+        seeded.current_session_date_trading = sdt
+
+    state.engine_states["volume_profile"] = seeded
+    _emit_log(
+        "ENRICHER_SEED_VP_FROM_V4",
+        sym=symbol, n_values=len(seed_values),
+        keys=",".join(sorted(seed_values.keys())),
+    )
+
+
 def initialize_state(
     symbol: str,
     warmup_from_v4: bool = False,
@@ -627,6 +697,10 @@ def initialize_state(
             # deques (21 dernieres bars valides). Sans seed, dist_swing_*=null
             # pendant 21 min apres cold start (BUG audit feature-engineer #7).
             _seed_swings_lag_from_warmup(state, symbol, df=df)
+            # P2.1 fix Jackson 15/05 : seed VolumeProfileState prev_*/pdh/pdl
+            # depuis V4 derniere bar valide. Sans seed, prev_vpoc/vah/val +
+            # pdh/pdl null pendant 1 jour entier post-cold-start.
+            _seed_volume_profile_from_warmup(state, symbol, df=df)
         except Exception as e:
             # Non-silent : emit + log (anti-Pattern V1 reglesouveraine logs 01/05)
             _emit_log("ENRICHER_WARMUP_FAIL", sym=symbol, err=str(e)[:200])

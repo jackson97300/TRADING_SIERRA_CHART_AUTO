@@ -613,6 +613,8 @@ LOG_CODES = {
     "ENRICHER_WRITE_DEDUP_SKIP":   (LogLevel.ALERTE,  "events", "Enricher write SKIP doublon ts_event_ns : {sym} path={path} ts_ns={ts_ns} (race restart-service ou Databento re-emit)"),
     "ENRICHER_SEED_SWINGS_LAG_FROM_V4": (LogLevel.INFO, "events", "Enricher seed SessionsSwingsLag depuis V4 : {sym} n_bars={n_bars} n_pivots={n_pivots} (P1.2 fix init swing tracker cold start)"),
     "ENRICHER_SEED_SWINGS_LAG_FAIL": (LogLevel.ALERTE, "events", "Enricher seed SessionsSwingsLag FAIL : {sym} reason={reason} (P1.2 - dist_swing_* sera null pendant 10-21 min jusqu'a detection live)"),
+    "ENRICHER_SEED_VP_FROM_V4": (LogLevel.INFO, "events", "Enricher seed VolumeProfile (prev_*/pdh/pdl) depuis V4 : {sym} n_values={n_values} keys={keys} (P2.1 fix prev_* null cold start)"),
+    "ENRICHER_SEED_VP_FAIL": (LogLevel.ALERTE, "events", "Enricher seed VolumeProfile FAIL : {sym} reason={reason} (P2.1 - prev_*/pdh/pdl restera null jusqu'a session change)"),
 }
 
 
