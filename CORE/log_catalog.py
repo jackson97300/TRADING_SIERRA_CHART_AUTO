@@ -615,6 +615,7 @@ LOG_CODES = {
     "ENRICHER_SEED_SWINGS_LAG_FAIL": (LogLevel.ALERTE, "events", "Enricher seed SessionsSwingsLag FAIL : {sym} reason={reason} (P1.2 - dist_swing_* sera null pendant 10-21 min jusqu'a detection live)"),
     "ENRICHER_SEED_VP_FROM_V4": (LogLevel.INFO, "events", "Enricher seed VolumeProfile (prev_*/pdh/pdl) depuis V4 : {sym} n_values={n_values} keys={keys} (P2.1 fix prev_* null cold start)"),
     "ENRICHER_SEED_VP_FAIL": (LogLevel.ALERTE, "events", "Enricher seed VolumeProfile FAIL : {sym} reason={reason} (P2.1 - prev_*/pdh/pdl restera null jusqu'a session change)"),
+    "ENRICHER_DATA_QUALITY_FLAG_SET": (LogLevel.ALERTE, "decisions", "Enricher data_quality_flag SET : {sym} flag={flag} n_bars={n_bars} sid={sid} (bit0=warmup bit1=sentinel999 bit2=sd_collapse bit3=swing_reset bit4=session_corrupt - ETL/ML drop si bit relevant)"),
 }
 
 

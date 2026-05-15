@@ -1242,24 +1242,36 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
 
         # Audit externe 15/05/2026 recommandation : data_quality_flag pour
         # ETL/ML drop bars warmup_phase post-cold-restart.
-        # bars_since_boot < WARMUP_THRESHOLD = rolling buffers pas pleins
-        # (vwap_d cumsum from scratch, rvol init = 1.0, im_* null, swings
-        # state perdu jusqu'a 21 bars, etc.). Recommandation drop ETL.
+        # FIX code-reviewer 15/05 (3 bugs critiques) :
+        #   - bars_since_boot : utiliser state.n_bars_processed (pickle persiste)
+        #     au lieu de _n_bars_processed dict module reset au boot process.
+        #     Anti-faux-positifs HOT restart (state buffers pleins mais module reset).
+        #   - bit 3 : sentinel swing_state vide = -1 (cf sessions_swings_lag_streaming
+        #     L246/L259), pas 0 (= Asia legitime). Ancien check `== 0` =
+        #     faux positifs systematiques bars Asia.
+        #   - bit 4 : ny_open absent serialise en np.nan (cf sessions_swings_simple
+        #     L262), converti None par writer APRES bitmask. `_ny is None`
+        #     ne match jamais. math.isnan() ou pd.isna() requis.
+        import math as _math_flag
         WARMUP_BARS_THRESHOLD = 30  # ~30 min apres cold start = state stable
-        n_bars_sym = _n_bars_processed.get(symbol, 0) + 1  # +1 car increment apres
+        # state.n_bars_processed deja incremente par append_bar() ligne 1241.
+        # Pickle-persiste donc HOT restart conserve la valeur reelle (buffers
+        # pleins). _n_bars_processed dict reste pour tracking module mais
+        # ne sert plus au bitmask.
+        n_bars_sym = state.n_bars_processed
         payload["bars_since_boot"] = n_bars_sym
         # data_quality_flag bitmask (audit externe 15/05 + recommandations) :
         #   bit 0 (1)  : warmup_phase (n_bars_sym < threshold)
         #   bit 1 (2)  : sentinel detected (bars_since_retest == 999)
         #   bit 2 (4)  : sd_collapse (sd1u == sd1d)
-        #   bit 3 (8)  : swing_state_reset (last_swing_high_session == 0
-        #                AND n_bars_sym > 21)
+        #   bit 3 (8)  : swing_state_reset (last_swing_high_session == -1
+        #                = sentinel "swing state empty", AND n_bars_sym > 21).
+        #                NB : session_id 0 = Asia legitime, pas un sentinel.
         #   bit 4 (16) : session_ctx_corrupted (apres reset US session,
         #                london_*/ny_open/asia_low perdus jusqu'au prochain
-        #                rollover session). Audit externe Jackson : "vendredi
-        #                post-reset = tout session ctx US corrompu jusqu'a
-        #                lundi prochaine session". Detection : si en US (sid=2)
-        #                ET ny_open is null = corruption.
+        #                rollover session). Detection : si en US (sid=2)
+        #                ET ny_open NaN/None = corruption. NB : np.nan is not
+        #                None == True, donc isnan() check obligatoire.
         flag = 0
         if n_bars_sym < WARMUP_BARS_THRESHOLD:
             flag |= 1
@@ -1272,14 +1284,27 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         if _sd1u is not None and _sd1d is not None and _sd1u == _sd1d:
             flag |= 4
         _lshs = payload.get("last_swing_high_session")
-        if _lshs == 0 and n_bars_sym > 21:
+        if _lshs == -1 and n_bars_sym > 21:
             flag |= 8
-        # bit 4 : session_ctx_corrupted (US RTH actif mais ny_open null)
+        # bit 4 : session_ctx_corrupted (US RTH actif mais ny_open NaN/None).
         _sid = payload.get("session_id")
         _ny = payload.get("ny_open")
-        if _sid == 2 and _ny is None:
+        _ny_missing = (_ny is None) or (
+            isinstance(_ny, float) and _math_flag.isnan(_ny)
+        )
+        if _sid == 2 and _ny_missing:
             flag |= 16
         payload["data_quality_flag"] = flag
+        # Log souverain (regle critical-tasks-review 01/05) : tout flag != 0
+        # doit etre tracable J+1 pour audit ETL/ML drop bars suspectes.
+        if flag != 0:
+            _emit_log(
+                "ENRICHER_DATA_QUALITY_FLAG_SET",
+                sym=symbol,
+                flag=flag,
+                n_bars=n_bars_sym,
+                sid=_sid,
+            )
 
         # 6. Write JSONL atomic
         ok = write_enriched_bar(symbol, payload)

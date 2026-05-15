@@ -62,6 +62,63 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-15 18:30 — FIX data_quality_flag bitmask 3 bugs critiques (code-reviewer GO-AVEC-RESERVES)
+
+**Categorie** : FIX
+**Impact prod** : OFFLINE (Live-Enricher collecte, aucun consumer)
+**Fichier(s)** : `CORE/live_enricher.py:1243-1300`, `CORE/log_catalog.py:618`
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES verdict 15/05 18:00)
+
+### Quoi
+Fix 3 bugs critiques bitmask `data_quality_flag` (commits 8c08c7e + d559af2 + 525485b)
+detectes par code-reviewer apres deploy initial Phase 1 :
+1. **bit 4 (session_ctx_corrupted)** ne se declenchait JAMAIS. Cause : `sessions_swings_simple_streaming.py:262` ecrit `out["ny_open"] = np.nan` (pas None). `np.nan is not None == True`. Le writer convertit NaN→None APRES bitmask. Fix : check `math.isnan(_ny)` AVANT le branch None.
+2. **bit 3 (swing_state_reset)** = faux positifs systematiques sur bars Asia. Cause : `session_id=0` est legitimement Asia (0=Asia / 1=London / 2=US cash / 3=US AH), pas un sentinel. Le vrai sentinel "swing state empty" est `-1` (cf `sessions_swings_lag_streaming.py:246, 259`). Fix : `_lshs == -1` au lieu de `== 0`.
+3. **bars_since_boot ignorait HOT restart**. Cause : `_n_bars_processed` dict module-level reset au boot process. HOT restart (nssm stop/start) reload pickle avec `state.n_bars_processed=10000+` mais module reset a 0 → 30 premieres bars post-HOT-restart taggees warmup_phase a tort. Fix : utiliser `state.n_bars_processed` (pickle-persiste).
+4. Ajout code log `ENRICHER_DATA_QUALITY_FLAG_SET` (regle souveraine logs critical-tasks-review 01/05) - tout flag != 0 emit ALERTE/decisions pour audit J+1.
+
+### Pourquoi
+Sans ces fixes :
+- bit 4 = METRIQUE MORTE (jamais audit possible sur corruption ny_open post-reset)
+- bit 3 = bruit massif (toutes les bars Asia 22:00-08:00 UTC taggees a tort `swing_reset` apres bar #21 → ETL drop 33% du temps)
+- HOT restart penalise = doc anti-cold-restart inutile car HOT restart se comporte comme cold restart pour les 30 premieres bars
+
+### Impact attendu
+- bit 4 : declenchements 0% → declenchements reels sur bars US sans ny_open
+- bit 3 : faux positifs Asia ~33% → ~0% (sentinel `-1` exclusivement)
+- HOT restart : warmup tag 0 bars (state pickle continue)
+- Log `ENRICHER_DATA_QUALITY_FLAG_SET` emit a chaque flag != 0 (tracking J+1)
+
+### Validation pre-deploy
+- [x] Code edit applique
+- [x] Code log declare `CORE/log_catalog.py:618`
+- [ ] Test empirique 10 bars post HOT restart (a faire apres scp)
+- [x] Review agent : GO-AVEC-RESERVES → 3 bugs adresses
+
+### Revert plan
+```bash
+git revert <commit_fix_3bugs>
+ssh Administrator@212.28.179.199 "nssm stop MIA-Live-Enricher"
+scp CORE/live_enricher.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+scp CORE/log_catalog.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 "nssm start MIA-Live-Enricher"
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+(en attente confirmation Jackson pour scp VPS)
+
+### Suivi post-deploy
+- J+1 : grep `ENRICHER_DATA_QUALITY_FLAG_SET` LOGS/decisions/ -> verifier bit 4 declenche sur bars US AH si ny_open absent, bit 3 nul sur bars Asia normales
+- J+7 : audit bars warmup_phase post HOT-restart = 0
+- J+30 : tendance flag globale, ratio bars ETL-droppees
+
+### Liens
+- Commits couverts : 8c08c7e (data_quality_flag init), d559af2 (HOT restart doc), 525485b (seed P1.2 session_id pivot V2)
+- Review : code-reviewer GO-AVEC-RESERVES 15/05 18:00 (3 critiques + 1 important)
+- Regle logs : `.claude/rules/critical-tasks-review.md` (logs souverains 01/05)
+
+---
+
 ## 2026-05-15 12:36 — DEPLOY MIA-Live-Enricher service VPS (Phase 1 collecte pure)
 
 **Categorie** : DEPLOY
