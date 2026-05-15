@@ -328,13 +328,17 @@ def _seed_open_cash_price1030_from_warmup(
         df = state.bars_df
     if df.empty or "date_et" not in df.columns:
         return
-    # R4 fix code-reviewer : iloc[-1] O(1) au lieu de max() O(N).
-    # V4 batch garantit le tri par ts_event (cf build_dataset_v4_dmp_databento sort).
+    # Fix Jackson 15/05/2026 cold start : V4 batch peut avoir derniere bars
+    # avec Phase B PAS ENCORE RUN (intra-day buffer). Ces bars ont date_et=None.
+    # On prend la derniere bar AVEC date_et non-NaN (= Phase B done).
+    df_valid = df[df["date_et"].notna()]
+    if df_valid.empty:
+        return
     try:
-        today_et = df["date_et"].iloc[-1]
+        today_et = df_valid["date_et"].iloc[-1]
     except (IndexError, KeyError):
         return
-    df_today = df[df["date_et"] == today_et]
+    df_today = df_valid[df_valid["date_et"] == today_et]
     if df_today.empty:
         return
 
@@ -397,19 +401,33 @@ def _seed_sessions_swings_from_warmup(
         df = state.bars_df
     if df.empty:
         return
-    # Today's session_date_trading = derniere valeur (V4 trie par ts)
+    # Today's session_date_trading = derniere valeur AVEC session_date_trading
+    # non-None (V4 batch peut avoir bars Phase B PAS ENCORE RUN ou la valeur
+    # est None — cas observe 15/05 cold start).
     if "session_date_trading" not in df.columns:
         return
+    df_sdt_valid = df[df["session_date_trading"].notna()]
+    if df_sdt_valid.empty:
+        return
     try:
-        today_sdt = df["session_date_trading"].iloc[-1]
+        today_sdt = df_sdt_valid["session_date_trading"].iloc[-1]
     except (IndexError, KeyError):
         return
-    df_today = df[df["session_date_trading"] == today_sdt]
+    df_today = df_sdt_valid[df_sdt_valid["session_date_trading"] == today_sdt]
     if df_today.empty:
         return
 
-    # Last row contient les running highs/lows et opens broadcast post-capture
-    last_row = df_today.iloc[-1].to_dict()
+    # Fix Jackson 15/05/2026 cold start : V4 batch peut avoir derniere bars
+    # avec Phase B PAS ENCORE RUN (intra-day buffer, live_pipeline 5 min cron).
+    # Ces bars ont asia_high=NaN, session_date_trading=None.
+    # On prend la DERNIERE bar AVEC asia_high non-NaN (= bar Phase B done).
+    if "asia_high" in df_today.columns:
+        df_valid = df_today[df_today["asia_high"].notna()]
+        if df_valid.empty:
+            return  # aucune bar Phase B valide today (rebuild pipeline needed)
+        last_row = df_valid.iloc[-1].to_dict()
+    else:
+        last_row = df_today.iloc[-1].to_dict()
     sessions_cols = [
         "asia_high", "asia_low", "london_high", "london_low",
         "us_high", "us_low", "after_high", "after_low",

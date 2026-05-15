@@ -49,6 +49,11 @@ def _json_default(obj):
 
     Pattern : convertir explicitement les types courants. Si autre type
     non-serializable, raise TypeError (echec explicite vs silent corrupt).
+
+    Fix Jackson 15/05/2026 : ROUND a 6 decimales pour eviter IEEE754 noise
+    (5.809999999999999 -> 5.81) et reduire taille JSONL ~3x. 6 decimales
+    suffit pour : prix tick 0.10/0.25, ratios pct, distances. Aligne avec
+    convention C++ DMP (round 2-4 decimales selon type).
     """
     # numpy scalars (np.float64, np.int64, np.bool_, etc.)
     try:
@@ -58,7 +63,7 @@ def _json_default(obj):
             # NaN / Inf -> None (JSON strict ne supporte pas NaN par defaut)
             if v != v or v == float("inf") or v == float("-inf"):
                 return None
-            return v
+            return round(v, 6)  # 6 decimales suffit pour tous use cases
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.bool_):
@@ -94,6 +99,27 @@ def _json_default(obj):
         f"Object of type {type(obj).__name__} not JSON serializable "
         f"(_json_default fallback)"
     )
+
+
+def _round_floats_recursive(obj, ndigits: int = 6):
+    """Round recursivement tous les floats Python natifs dans dict/list.
+
+    Necessaire car json.dumps emet 17 digits sur float64 Python natifs
+    (IEEE 754 noise). `_json_default` ne capture QUE numpy types, pas
+    Python float. Fix Jackson 15/05/2026 "trop de chiffres".
+
+    Skip : int, bool, str, None, numpy types (gerees par _json_default).
+    """
+    if isinstance(obj, dict):
+        return {k: _round_floats_recursive(v, ndigits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats_recursive(v, ndigits) for v in obj]
+    if isinstance(obj, float):
+        # NaN / Inf -> None (JSON strict)
+        if obj != obj or obj == float("inf") or obj == float("-inf"):
+            return None
+        return round(obj, ndigits)
+    return obj
 
 
 def _emit_log(code: str, **kwargs) -> None:
@@ -193,6 +219,12 @@ def write_enriched_bar(
     payload = dict(enriched_bar)
     if add_schema_version and "schema_version" not in payload:
         payload["schema_version"] = SCHEMA_VERSION
+
+    # Fix Jackson 15/05/2026 : ROUND floats Python natifs avant serialize.
+    # Sans ce pass, json.dumps emet 17 digits (IEEE 754 noise) sur les
+    # float64 Python natifs. _json_default ne capture QUE numpy types,
+    # pas Python float. Resultat : 5.81 -> 5.809999999999999.
+    payload = _round_floats_recursive(payload, ndigits=6)
 
     fpath = _build_output_path(symbol, ts_ns)
 
