@@ -162,6 +162,76 @@ CONST_SNAPSHOTS_LEGIT = {
     # Schema fields
     "schema_version", "mq_schema_version", "instrument_id", "symbol",
     "mq_sym", "mq_trigger", "mq_snapshot_ts",
+    # Bool/int events RARES legit constants si 0 sur fenetre courte/Asia/London
+    # MGC overnight = peu d'activite (no big orders, no IB breakouts, no
+    # divergences). Asia London ES/NQ = idem. Flag uniquement si >= 200 bars
+    # ET symbol = US RTH actif (cf logic CHECK3 ci-dessous).
+    # tier counts trades big orders
+    "n_big_t1", "n_big_t2", "n_big_t3", "n_big_t4",
+    "n_big_buy_t1", "n_big_buy_t2", "n_big_buy_t3", "n_big_buy_t4",
+    "n_big_sell_t1", "n_big_sell_t2", "n_big_sell_t3", "n_big_sell_t4",
+    "n_big_ask_v2_t1", "n_big_ask_v2_t2", "n_big_ask_v2_t3", "n_big_ask_v2_t4",
+    "n_big_bid_v2_t1", "n_big_bid_v2_t2", "n_big_bid_v2_t3", "n_big_bid_v2_t4",
+    # Cluster counts (rare events overnight)
+    "n_clusters", "n_cluster_groups",
+    "cluster_at_high", "cluster_at_low",
+    "max_cluster_size", "max_cluster_volume_v2",
+    # Bool flags pre-RTH (jamais set Asia/London)
+    "ib_broken_up", "ib_broken_dn", "ib_broken_down",
+    "ovn_broken_up", "ovn_broken_dn",
+    "vwap_d_cross_up", "vwap_d_cross_dn",
+    "is_new_cash_high", "is_new_cash_low",
+    "rotation_up", "rotation_dn",
+    "vol_spike_up", "vol_spike_dn",
+    # News flags (calendrier, jamais set hors news window)
+    "is_news_715", "is_news_730", "is_news_830",
+    "is_news_845", "is_news_900", "is_news_930",
+    "within_news_715_5m", "within_news_730_5m", "within_news_830_5m",
+    "within_news_845_5m", "within_news_900_5m", "within_news_930_5m",
+    # Battle Navale (events rares stack/absorb/trapped)
+    "bn_stack_ask", "bn_stack_bid",
+    "bn_absorb_ask", "bn_absorb_bid",
+    "bn_absorb_ask_raw", "bn_absorb_bid_raw",
+    "bn_absorb_ask_at_level", "bn_absorb_bid_at_level",
+    "bn_trapped_buyers_raw", "bn_trapped_sellers_raw",
+    "bn_trapped_buyers_at_resistance", "bn_trapped_sellers_at_support",
+    # Delta divergence + clean
+    "delta_div_buy", "delta_div_sell",
+    "delta_div_buy_clean", "delta_div_sell_clean",
+    # Zones tracker (count events)
+    "n_trapped_buyers_zones_active", "n_trapped_sellers_zones_active",
+    "n_delta_div_buy_zones_active", "n_delta_div_sell_zones_active",
+    "n_trapped_buyers_cluster_within_0_2pct",
+    "n_trapped_sellers_cluster_within_0_2pct",
+    "n_delta_div_buy_cluster_within_0_2pct",
+    "n_delta_div_sell_cluster_within_0_2pct",
+    # Swing + sweep events rares
+    "swing_high_active_lag10", "swing_low_active_lag10",
+    "equal_highs_detected", "equal_lows_detected",
+    "liquidity_sweep_high_lag5", "liquidity_sweep_low_lag5",
+    "spike_detected_lag3",
+    "retest_high_delta_div", "retest_low_delta_div",
+    # Finish strength
+    "finish_strong_up", "finish_strong_dn",
+    # Open type events (pre-IB-close = constant 0/UNKNOWN)
+    "open_type", "open_zone", "open_direction", "open_bias_conf",
+    "day_type", "profile_shape",
+    "im_cross_open_signal", "im_open_type_agreement",
+    # Premium/discount + intraday VA flags
+    "inside_value_area", "premium_zone", "discount_zone",
+    "vwap_d_sd1_above", "vwap_d_sd1_below",
+    "vwap_d_sd2_above", "vwap_d_sd2_below",
+    "vix_above_hvl", "vix_above_hvl_0dte",
+    "above_asia_open", "above_london_open", "above_ny_open",
+    "above_after_open", "above_open_830", "above_open_930",
+    "is_in_asia", "is_in_london", "is_in_us_cash", "is_in_us_after",
+    "is_cash_session", "is_ib_window", "is_new_sess_high", "is_new_sess_low",
+    "ib_complete", "bool_above_mq_call", "bool_above_mq_hvl",
+    "bool_gex_flip_zone",
+    "poc_position", "poc_migration_dir",
+    # ctx_* day_type intensity (early session = 0)
+    "ctx_day_type_intensity", "ctx_session_phase",
+    "ctx_failed_auction",
 }
 
 # Outlier explosion threshold (cf DMP_validator.py:65)
@@ -337,7 +407,9 @@ def check_drift_vs_v4(df: pd.DataFrame, sym: str, report: ValidationReport):
     today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     year = int(today_str[:4])
     month = int(today_str[4:6])
-    v4_path = V4_DIR / f"symbol={sym}" / f"year={year}" / f"month={month:02d}" / "data.parquet"
+    # Mapping MGC.v.0 -> MGC.c.0 (V4 batch utilise canonical Databento)
+    sym_v4 = "MGC.c.0" if sym == "MGC.v.0" else sym
+    v4_path = V4_DIR / f"symbol={sym_v4}" / f"year={year}" / f"month={month:02d}" / "data.parquet"
     if not v4_path.exists():
         report.add_info(f"V4 batch absent {v4_path.name} (drift check skip)")
         return
@@ -393,7 +465,9 @@ def check_schema_completeness(df: pd.DataFrame, sym: str, report: ValidationRepo
     today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     year = int(today_str[:4])
     month = int(today_str[4:6])
-    v4_path = V4_DIR / f"symbol={sym}" / f"year={year}" / f"month={month:02d}" / "data.parquet"
+    # Mapping MGC.v.0 -> MGC.c.0 (V4 batch utilise canonical Databento)
+    sym_v4 = "MGC.c.0" if sym == "MGC.v.0" else sym
+    v4_path = V4_DIR / f"symbol={sym_v4}" / f"year={year}" / f"month={month:02d}" / "data.parquet"
     if not v4_path.exists():
         return
     df_v4 = pd.read_parquet(v4_path)
