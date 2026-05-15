@@ -442,15 +442,13 @@ def add_rolling_features_basic_streaming(
         out["ctx_vol_z_5"] = np.nan
 
     # ─── 10. ctx_diag_imbalance_mean_5 ─────────────────────────────────────
-    # RE-ENABLE 2026-05-15 P6c : avec proxy OFI streaming (live_enricher.py
-    # injecte `diag_imbalance = delta_bar / total_vol` apres LOT 1 trades).
-    # Proxy != DMP-C++ exact mais capture concept asymetrie order flow.
-    # Anti perte ML training (cf Jackson "zero perte" 15/05).
-    diag_vals = [d for d in state.diag_imb_mid if d is not None]
-    if diag_vals:
-        out["ctx_diag_imbalance_mean_5"] = sum(diag_vals) / len(diag_vals)
-    else:
-        out["ctx_diag_imbalance_mean_5"] = np.nan
+    # REVERT RE-ENABLE 2026-05-15 Review #4 NOGO : asymetrie semantique
+    # batch/stream PIRE que la perte. Batch consume DMP-C++ exact `diag_imbalance`
+    # (footprint VAP cellule), stream produirait proxy OFI (delta_bar/total_vol).
+    # Meme NOM avec definition DIFFERENTE -> drift ML train/inference garanti.
+    # Stream produit `diag_imbalance_ofi_proxy` (rename) accessible pour gates
+    # mais PAS pour ML training. ctx_diag_imbalance_mean_5 reste droppe.
+    # IDEAS_BACKLOG : retraitement V4 batch avec OFI proxy si parite ML requise.
 
     # ─── 11. ctx_finish_strength_mean_5 ────────────────────────────────────
     finish_vals = [f for f in state.finish_str_mid if f is not None]
@@ -681,12 +679,11 @@ def add_rolling_features_medium_streaming(
         out["ctx_delta_exhaustion"] = np.nan
 
     # ─── 23. ctx_large_trader_slope_5 ──────────────────────────────────────
-    # RE-ENABLE 2026-05-15 P6d : avec proxy streaming (live_enricher.py
-    # injecte `large_trader_ratio = max_size_buy / max(max_size_sell, 1)` apres
-    # LOT 1 trades). Proxy != DMP-C++ exact (avg_ask/bid_size VAP cellule)
-    # mais capture concept concentration big traders B vs S.
-    # Anti perte ML training (cf Jackson "zero perte" 15/05).
-    out["ctx_large_trader_slope_5"] = _linreg_slope(list(state.large_trader_mid))
+    # REVERT RE-ENABLE 2026-05-15 Review #4 NOGO : asymetrie semantique
+    # batch/stream. Batch consume DMP-C++ `large_trader_ratio` (avg_ask/bid_size
+    # VAP cellule), stream produirait proxy max_size B/S. MEME NOM definition
+    # DIFFERENTE -> drift ML. ctx_large_trader_slope_5 reste droppe.
+    # Stream produit `large_trader_max_size_proxy` (rename) pour gates uniquement.
 
     # ─── 24. ctx_trend_day_score (composite 5 criteres) ────────────────────
     # Mirror batch : score additif clip(0.0, 1.0)

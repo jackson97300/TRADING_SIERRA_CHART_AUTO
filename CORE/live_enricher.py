@@ -542,25 +542,23 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
 
                 # ──────────────────────────────────────────────────────────
                 # P6c + P6d : proxies streaming pour features DMP-C++ NON-
-                # reproductibles (Diagonal Imbalance + Large Trader Ratio).
-                # Audit feature-engineer 15/05 dette #6 - reconstructions.
-                # P6c diag_imbalance : OFI normalise [-1, +1]
-                #   = (buy_vol - sell_vol) / (buy_vol + sell_vol)
-                #   = delta_bar / total_vol (proxy ratio asymetrie order flow)
-                # P6d large_trader_ratio : ratio biggest buy/sell single trade
-                #   = max_size_buy / max(max_size_sell, 1)
-                # NB : proxies != DMP-C++ exact (footprint VAP cellule),
-                # mais capturent meme concept asymetrie/concentration big traders.
-                # IDEAS_BACKLOG : retraitement V4 historique pour parite si requis.
+                # reproductibles. Fix Review #4 NOGO : RENAME avec suffix
+                # `_*_proxy` pour eviter collision semantique batch/stream
+                # (batch consume DMP-C++ exact via V4 historique, stream produit
+                # proxies differents -> drift ML drift garanti si meme nom).
+                # Disponibles pour gates/rules engine uniquement, PAS dans
+                # critical_keys ML training (cf IDEAS_BACKLOG dette HIGH).
+                # P6c : OFI [-1, +1] = delta_bar / total_vol
+                # P6d : ratio max single trade buy/sell
                 _delta_bar = payload.get("delta_bar", 0.0) or 0.0
                 _total_vol = payload.get("total_vol", 0.0) or 0.0
                 if _total_vol > 0:
-                    payload["diag_imbalance"] = float(_delta_bar) / float(_total_vol)
+                    payload["diag_imbalance_ofi_proxy"] = float(_delta_bar) / float(_total_vol)
                 else:
-                    payload["diag_imbalance"] = 0.0
+                    payload["diag_imbalance_ofi_proxy"] = 0.0
                 _max_buy = payload.get("max_size_buy", 0) or 0
                 _max_sell = payload.get("max_size_sell", 0) or 0
-                payload["large_trader_ratio"] = float(_max_buy) / max(float(_max_sell), 1.0)
+                payload["large_trader_max_size_proxy"] = float(_max_buy) / max(float(_max_sell), 1.0)
 
                 # ──────────────────────────────────────────────────────────
                 # P0 REORDER (audit feature-engineer 15/05 dette #6) :
@@ -811,9 +809,11 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 # P6a : retest_* streaming minimal (inline state via engine_states).
                 # Audit feature-engineer 15/05 dette #6 - reconstruction DMP-C++.
                 # Logique : retest_high quand high revient toucher last_swing_high
-                # (tolerance 5 ticks). retest_high_delta_div = retest + delta_div_sell
-                # (exhaustion bull). Symmetric pour retest_low.
+                # (tolerance 0.05% prix - symbole-aware). retest_high_delta_div =
+                # retest + delta_div_sell (exhaustion bull). Symmetric pour retest_low.
                 # Consume par rolling_features ctx_double_top_trap (line 1146-1157).
+                # Fix Review #4 P6a R2 : warmup bar_idx >= 5 + tolerance pct (vs
+                # 5 ticks fixe non-symbole-aware ES vs MGC).
                 _retest_state = state.get_engine_state(
                     "retest_tracker",
                     factory=lambda: {
@@ -829,13 +829,17 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 _last_l = s_sess_lag.last_swing_low.price if s_sess_lag.last_swing_low else None
                 _high_bar = payload.get("high")
                 _low_bar = payload.get("low")
-                _tick_p6a = tick
-                _tol = 5 * _tick_p6a  # 5 ticks tolerance
+                _close_retest = payload.get("close")
+                # Tolerance % prix (0.05% = 5 bps) - symbole-aware vs ticks fixes
+                _tol_pct = 0.0005
+                _tol_pts = (_close_retest * _tol_pct) if _close_retest else 0.0
+                # Warmup minimum 5 bars (anti faux-positif cold start)
+                _warmup_ok = _bar_idx >= 5
                 # Detect retest high : high actuel >= last_swing_high - tolerance
-                if _last_h is not None and _high_bar is not None and _high_bar >= _last_h - _tol:
+                if _warmup_ok and _last_h is not None and _high_bar is not None and _high_bar >= _last_h - _tol_pts:
                     _retest_state["last_retest_high_bar_idx"] = _bar_idx
                 # Detect retest low : low actuel <= last_swing_low + tolerance
-                if _last_l is not None and _low_bar is not None and _low_bar <= _last_l + _tol:
+                if _warmup_ok and _last_l is not None and _low_bar is not None and _low_bar <= _last_l + _tol_pts:
                     _retest_state["last_retest_low_bar_idx"] = _bar_idx
                 # bars_since_retest
                 if _retest_state["last_retest_high_bar_idx"] is not None:

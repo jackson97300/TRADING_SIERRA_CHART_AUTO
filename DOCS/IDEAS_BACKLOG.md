@@ -7,6 +7,17 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE BLOCKER 2026-05-15]** **Retraitement V4 batch avec proxies streaming `diag_imbalance` + `large_trader_ratio` OU drop definitif** | 4-6h | **HIGH BLOCKER** | PROPOSED (AVANT training mid-juin)
+  - **Source** : Code-reviewer Review #4 Pass 4 NOGO - asymetrie semantique batch/stream pour `diag_imbalance` et `large_trader_ratio`. Batch DMP-C++ exact (footprint VAP cellule) vs stream proxy (OFI / max_size). Meme nom, definition opposee → ML drift train/inference garanti.
+  - **Fix R2 partiel** : streaming proxies renames `diag_imbalance_ofi_proxy` + `large_trader_max_size_proxy` (eviter collision). RE-ENABLE ctx_* REVERTED (re-dropped).
+  - **Dette restante** : decider definitivement :
+    1. SOIT rebuild V4 batch historique avec memes proxies (parite stricte streaming)
+    2. SOIT drop definitif `diag_imbalance` + `large_trader_ratio` partout (batch + stream + V4 schema)
+    3. SOIT confirmer empiriquement que V4 ML training ne consomme PAS ces features (via grep dataset_builder + ML_EXCLUDE) → garder asymetrie acceptable car features stream uniquement pour gates/rules engine
+  - **Action obligatoire** : agent ml-trainer review avant tout training V4 utilisant `ctx_diag_imbalance_mean_5` ou `ctx_large_trader_slope_5`.
+  - **Deadline** : AVANT training reel mid-juin 2026 (sinon modele aveugle distribution shift).
+
+
 - **[DETTE 2026-05-15]** **Lint guard `check_feature_added_consistency.py` (anti Pattern V1 cousin recurrent)** | 2h | MEDIUM | PROPOSED (Review #3 R3 recommandation)
   - **Source** : Review #3 R3 GO NET apres 3 iterations sur meme pattern (P3+P4+P5 stream/batch + GENERATED sets + path no-trades + log_catalog + emit pattern). Signal culture documentation manquante.
   - **Fix** : creer `tools/check_feature_added_consistency.py` qui verifie qu'une feature ajoutee dans un engine est presente dans :

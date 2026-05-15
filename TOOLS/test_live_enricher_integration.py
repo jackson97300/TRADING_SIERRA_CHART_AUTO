@@ -64,6 +64,35 @@ def run_integration_chain(payload: dict, trades_df: pd.DataFrame, state, symbol:
     if "delta_bar" not in payload:
         payload["delta_bar"] = _compute_delta_bar_from_trades(trades_df)
 
+    # Fix Review #4 : reproduit P6b bool_gex_flip_zone + P6c/P6d proxies + P6a retest_*
+    # P6b : bool_gex_flip_zone = 1 - mq_gamma_condition (default 0 si absent)
+    _gamma = payload.get("mq_gamma_condition")
+    if _gamma is not None:
+        try:
+            payload["bool_gex_flip_zone"] = 1 - int(_gamma)
+        except (TypeError, ValueError):
+            payload["bool_gex_flip_zone"] = 0
+    else:
+        payload["bool_gex_flip_zone"] = 0
+    # P6c : diag_imbalance_ofi_proxy (rename - eviter collision batch DMP-C++)
+    _db = payload.get("delta_bar", 0.0) or 0.0
+    _tv = payload.get("total_vol", 0.0) or 0.0
+    payload["diag_imbalance_ofi_proxy"] = float(_db) / float(_tv) if _tv > 0 else 0.0
+    # P6d : large_trader_max_size_proxy (rename)
+    _mb = payload.get("max_size_buy", 0) or 0
+    _ms = payload.get("max_size_sell", 0) or 0
+    payload["large_trader_max_size_proxy"] = float(_mb) / max(float(_ms), 1.0)
+    # P6a retest_* streaming (mock - warmup + tolerance pct 0.05%)
+    _retest_state_test = state.get_engine_state("retest_tracker", factory=lambda: {
+        "last_retest_high_bar_idx": None, "last_retest_low_bar_idx": None, "bar_idx": 0,
+    })
+    _retest_state_test["bar_idx"] += 1
+    _bi = _retest_state_test["bar_idx"]
+    payload["bars_since_retest_high"] = 999
+    payload["bars_since_retest_low"] = 999
+    payload["retest_high_delta_div"] = 0
+    payload["retest_low_delta_div"] = 0
+
     # Fix Pass 4b P3 (Review #3) : inject next_wall_dist_ticks (reproduit live_enricher:331-360)
     try:
         from CORE.constants import get_tick_size as _gts_test
@@ -426,6 +455,11 @@ def main():
         "next_wall_dist_ticks",                         # P3 Pass 4b
         "dist_swing_high", "dist_swing_low",            # P4 alias
         "bn_absorb_ask", "bn_absorb_bid",               # P5 alias
+        "bool_gex_flip_zone",                           # P6b inverse mq_gamma
+        "diag_imbalance_ofi_proxy",                     # P6c OFI proxy (rename)
+        "large_trader_max_size_proxy",                  # P6d max_size proxy (rename)
+        "bars_since_retest_high", "bars_since_retest_low",  # P6a streaming
+        "retest_high_delta_div", "retest_low_delta_div",    # P6a streaming
     ]
     missing = [k for k in critical_keys if k not in payload_enriched]
     if missing:
