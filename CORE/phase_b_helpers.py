@@ -767,6 +767,79 @@ def add_open_cash_price1030(df: pd.DataFrame, bounds: dict | None = None) -> pd.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# add_open_cash_price1030 STREAMING (Pass P1 fix B1 - 15/05/2026)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Code-reviewer P1 NOGO : `add_open_cash_price1030` batch-only n'etait jamais
+# appele dans `_process_bar_cycle` -> open_cash/price_1030 = None -> game_changers
+# retournait UNKNOWN constant (Pattern V1 reproduit).
+# Cette version streaming capture close a us_start ET us_start+60, puis broadcast
+# sur les bars suivantes du meme date_et (per-symbole bounds).
+
+@dataclass
+class OpenCashPrice1030State:
+    """State streaming add_open_cash_price1030 - capture+broadcast per date_et.
+
+    Pickle-safe : primitifs + Optional[Any] (date).
+    """
+    current_date_et: Optional[Any] = None
+    cached_open_cash: Optional[float] = None
+    cached_price_1030: Optional[float] = None
+
+
+def add_open_cash_price1030_streaming(
+    row: dict,
+    state: OpenCashPrice1030State,
+    bounds: dict | None = None,
+) -> dict:
+    """Sub-engine streaming open_cash + price_1030.
+
+    Reproduit batch add_open_cash_price1030 :
+      - open_cash = close de la bar mins_et == us_start (1ere bar cash)
+      - price_1030 = close de la bar mins_et == us_start + 60 (1ere post-IB)
+      - Broadcast cached values sur toutes bars du meme date_et
+
+    Args:
+        row : dict avec date_et + mins_et (Pass 4c-prereq session_metadata) + close.
+        state : OpenCashPrice1030State mutable.
+        bounds : per-symbole us_start (ES/NQ=570, MGC=510).
+
+    Returns:
+        dict row + {open_cash, price_1030}.
+    """
+    out = dict(row)
+    b = _resolve_bounds(bounds)
+    us_start = b["us_start"]
+    ib_close = us_start + 60
+
+    date_et = out.get("date_et")
+    mins_et = out.get("mins_et")
+    close = out.get("close")
+
+    # Reset cache si nouveau jour
+    if date_et != state.current_date_et:
+        state.current_date_et = date_et
+        state.cached_open_cash = None
+        state.cached_price_1030 = None
+
+    # Capture close si on est SUR la bar us_start ou us_start+60
+    if mins_et is not None and close is not None:
+        try:
+            mins_int = int(mins_et)
+            close_f = float(close)
+            if mins_int == us_start and state.cached_open_cash is None:
+                state.cached_open_cash = close_f
+            elif mins_int == ib_close and state.cached_price_1030 is None:
+                state.cached_price_1030 = close_f
+        except (TypeError, ValueError):
+            pass
+
+    # Broadcast valeurs cached (None si pas encore capture)
+    out["open_cash"] = state.cached_open_cash if state.cached_open_cash is not None else np.nan
+    out["price_1030"] = state.cached_price_1030 if state.cached_price_1030 is not None else np.nan
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # API STREAMING sub-engine #4 (Chantier 3 Phase 3b Mardi soir)
 # ═══════════════════════════════════════════════════════════════════════════════
 # add_volume_profile_features STATEFUL : 16 features VPOC/VAH/VAL/PDH/PDL

@@ -461,6 +461,7 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 add_ib_features_streaming, IBState,
                 add_session_high_low_streaming, SessionHighLowState,
                 add_volume_profile_features_streaming, VolumeProfileState,
+                add_open_cash_price1030_streaming, OpenCashPrice1030State,
             )
             from rvol_streaming import add_rvol_engine_streaming, RvolEngineState
             from phase_b_plus_streaming import (
@@ -514,6 +515,16 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 s_vp = state.get_engine_state("volume_profile", factory=VolumeProfileState)
                 payload = add_volume_profile_features_streaming(
                     payload, s_vp, trades_in_window=_trades_for_vp_p0, tick=tick,
+                )
+                # P1 FIX B1 (code-reviewer P1 NOGO Pattern V1 reproduit) :
+                # add_open_cash_price1030 streaming AVANT game_changers.
+                # Sans cette injection : open_cash/price_1030 = None -> classify
+                # retourne UNKNOWN (0) constant -> 4/5 features mortes + cascade.
+                s_open_cash = state.get_engine_state(
+                    "open_cash_price1030", factory=OpenCashPrice1030State,
+                )
+                payload = add_open_cash_price1030_streaming(
+                    payload, s_open_cash, bounds=_sym_bounds_p0,
                 )
                 s_bp = state.get_engine_state(
                     "phase_b_plus", factory=lambda: make_phase_b_plus_state(symbol=symbol_pure),

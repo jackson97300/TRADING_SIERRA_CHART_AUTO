@@ -7,6 +7,12 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-15]** **Warmup volume_profile 1 jour cold start Live Enricher** | DOCUMENT | LOW | PROPOSED (P1 R1 NOGO fix B1)
+  - **Source** : Code-reviewer P1 R1 NOGO fix B1 + test variance B3 - sur cold start (J0), `prev_vah/val/vpoc/pdh/pdl` = NaN car pas de session J-1. Resultat : `classify_open_type` retourne UNKNOWN (0) systematique tant que session J-1 absente.
+  - **Impact** : ~1 jour de warmup en LIVE Enricher avant que `open_type/direction/bias_conf` deviennent fonctionnels. J+1 onwards : OK (volume_profile state populated).
+  - **Mitigation** : load snapshot V4 enriched J-1 au boot du service Live Enricher pour seed volume_profile state. Si snapshot absent : warmup naturel acceptable.
+  - **Fix optionnel** : ajouter check explicit warmup dans game_changers + emit log `GAME_CHANGERS_WARMUP` premier jour cold start.
+
 - **[DETTE 2026-05-15]** **Clip physique `dist_mq_*_pct` streaming (parite batch full)** | 30min | LOW | PROPOSED (P0+P2 R2 reserve)
   - **Source** : Code-reviewer P0+P2 R2 - batch fait clip physique `dist_mq_put_pct <= 0` + `dist_mq_call_pct >= 0` (build_dataset_v4_dmp_databento.py:904-910). Streaming n'a pas ce clip → si MQ live emet anomalie `put_support > close` (theorie impossible mais data quality possible), streaming garde la valeur positive vs batch clip a 0.
   - **Impact** : divergence batch/stream sur anomalies MQ data. Rare en pratique.
