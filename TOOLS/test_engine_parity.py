@@ -1226,13 +1226,18 @@ def _test_rolling_features_basic():
 
     print(f"\nTest rolling_features_basic parite sur {n} rows synth...")
 
-    # NIVEAU 1 : parite sur les 13 features
+    # NIVEAU 1 : parite sur les features streaming actives
+    # R1 Pass 4 (commit a46eb0e du 15/05/2026) : ctx_diag_imbalance_mean_5 et
+    # ctx_large_trader_slope_5 explicitement DROP du streaming pour eviter le
+    # drift batch/stream sur features DMP-C++ non-reproductibles Databento.
+    # Cf rolling_features_streaming.py:444-451 + ML_EXCLUDE_FEATURES.
     cols_check = [
         "ctx_price_delta_div_3", "ctx_absorption_score_5",
         "ctx_vol_sell_buy_ratio_5", "ctx_vwap_slope_accel",
         "ctx_cvd_recovery_rate", "ctx_price_slope_5",
         "ctx_delta_slope_5", "ctx_delta_sum_3", "ctx_vol_z_5",
-        "ctx_diag_imbalance_mean_5", "ctx_finish_strength_mean_5",
+        # "ctx_diag_imbalance_mean_5",  # DROP R1 Pass 4 (non-reproductible Databento)
+        "ctx_finish_strength_mean_5",
         "ctx_va_position_velocity", "ctx_side_flip_count_10",
     ]
     print("\n--- NIVEAU 1 : parite batch vs streaming (13 features) ---")
@@ -1428,15 +1433,16 @@ def _test_rolling_features_medium():
         "ctx_range_vs_atr_10", "ctx_ib_position_velocity",
         # AUDIT (3)
         "ctx_instant_absorption", "ctx_absorption_streak_5", "ctx_climax_signal",
-        # TIER1 (3)
-        "ctx_vol_slope_5", "ctx_delta_exhaustion", "ctx_large_trader_slope_5",
+        # TIER1 (2 — ctx_large_trader_slope_5 DROP R1 Pass 4 a46eb0e)
+        "ctx_vol_slope_5", "ctx_delta_exhaustion",
+        # "ctx_large_trader_slope_5",  # DROP R1 (non-reproductible Databento)
         # DYNAMIC (2)
         "ctx_trend_day_score", "ctx_day_type_intensity",
         # MQ (1)
         "ctx_mq_put_call_ratio",
     ]
 
-    print("\n--- NIVEAU 1 : parite batch vs streaming (13 GROUPE B features) ---")
+    print("\n--- NIVEAU 1 : parite batch vs streaming (12 GROUPE B features) ---")
     all_pass = True
     for col in cols_check:
         if col not in batch_df.columns or col not in stream_df.columns:

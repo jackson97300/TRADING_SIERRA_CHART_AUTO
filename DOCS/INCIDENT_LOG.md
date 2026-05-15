@@ -46,6 +46,34 @@
 
 ## Incidents (anti-chronologique)
 
+### 2026-05-15 11:50 — [PATTERN_11] — game_changers streaming reset date_et vs batch groupby session_date_trading
+
+**Contexte** : R3 Pass 4 test parite V4 oracle ES avril 2026. Premiere comparaison streaming vs V4 sur donnees reelles (vs synthetic tests TOOLS/test_engine_parity).
+
+**Ce qui a mal tourne** : 43.8% drift open_type / 39.2% open_zone / 33.9% open_direction sur bars Asia evening (date_et=J-1, session_date_trading=J). Test synthetique passait 4/4, masquait le drift.
+
+**Cause racine** : apply_game_changers (build_dataset_v4_phase_b.py:276) groupby session_date_trading + broadcast cash classification a TOUS bars de la session. add_game_changers_streaming (game_changers_streaming.py:105) reset state sur date_et change. Pattern V1 cousin V2 = batch utilise scope SESSION, stream utilise scope DATE_ET.
+
+**Lecon** : tests parite synthetiques peuvent passer alors que V4 oracle detecte du drift. Tout sub-engine streaming dont la version batch utilise `groupby("session_date_trading")` DOIT aussi reset sur changement session_date_trading, pas date_et.
+
+**Trigger prevention** : grep `groupby.*session_date_trading` batch_fn -> verifier que streaming reset cle correspond. Test V4 oracle obligatoire avant deploy LIVE reel (tests/test_live_enricher_parity_v4.py).
+
+**Reviewed** : self + agent feature-engineer R3 verdict initial. Fix streaming = scope session dediee (IDEAS_BACKLOG section streaming-batch-alignment).
+
+### 2026-05-15 11:30 — [PATTERN_11] — initialize_state warmup_from_v4 silent fallback (AttributeError @property)
+
+**Contexte** : R2 Pass 4 fix seed warmup. Suite a FIX P0-2 (bars_df = @property read-only depuis deque), l'ancien code `state.bars_df = df` levait AttributeError silencieusement avale par `except: pass`.
+
+**Ce qui a mal tourne** : branche warmup_from_v4=True morte depuis FIX P0-2 (13/05). Aucun warmup ne s'executait. Cold start scenario c (boot apres 10:30 ET) -> open_cash/price_1030 vides = UNKNOWN constant jusqu'a J+1 09:30.
+
+**Cause racine** : refactor deque (FIX P0-2) a casse l'API setter de bars_df sans casser de test (tests existants utilisent append_bar, pas l'assignment direct). Pattern V1 silent cousin.
+
+**Lecon** : tout refactor d'une API mutation doit etre accompagne d'un test couvrant le path qui dependait de l'ancienne API. Pas de `except: pass` sans `_emit_log`.
+
+**Trigger prevention** : grep `except Exception:\s*pass$` partout (initialize/boot/warmup). Tout silent fallback doit avoir un log emit.
+
+**Reviewed** : code-reviewer GO NET apres correction Pass 4 commit b79d138 + 6 tests TOOLS/test_r2_seed_warmup.py
+
 ### 2026-05-14 01:30 — [VALIDATION_MISS] — Distribution shift delta_div_buy streaming LOT 1 fire 60% vs batch < 15%
 
 **Contexte** : Smoke test phase_b_plus_plus_trades_streaming sur vraies donnees ES 09/04/2026 (1380 bars, 482K trades). 0 crash mais delta_div_buy fire rate = 59.71% (824/1380). delta_div_sell = 25.00% (345/1380).
