@@ -548,12 +548,20 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 # proxies differents -> drift ML drift garanti si meme nom).
                 # Disponibles pour gates/rules engine uniquement, PAS dans
                 # critical_keys ML training (cf IDEAS_BACKLOG dette HIGH).
-                # P6c : OFI [-1, +1] = delta_bar / total_vol
+                # P6c : OFI [-1, +1] = delta_bar / volume
                 # P6d : ratio max single trade buy/sell
+                #
+                # Fix Jackson 15/05/2026 audit : avant fix, on lisait `total_vol`
+                # qui est injecte par rvol_inputs PLUS TARD dans la chain ->
+                # `total_vol`=0 -> diag_imbalance_ofi_proxy=0 CONSTANT (165
+                # bars MGC = 0.0 detecte par validator CHECK3).
+                # Fix : utiliser `volume` (ohlcv direct, deja dans payload
+                # depuis init). volume == total_vol empiriquement (sum trades
+                # = OHLCV volume sur memes bar).
                 _delta_bar = payload.get("delta_bar", 0.0) or 0.0
-                _total_vol = payload.get("total_vol", 0.0) or 0.0
-                if _total_vol > 0:
-                    payload["diag_imbalance_ofi_proxy"] = float(_delta_bar) / float(_total_vol)
+                _volume = payload.get("volume", 0.0) or 0.0
+                if _volume > 0:
+                    payload["diag_imbalance_ofi_proxy"] = float(_delta_bar) / float(_volume)
                 else:
                     payload["diag_imbalance_ofi_proxy"] = 0.0
                 _max_buy = payload.get("max_size_buy", 0) or 0

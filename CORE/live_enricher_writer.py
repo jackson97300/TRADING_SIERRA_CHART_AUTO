@@ -38,6 +38,47 @@ sys.path.insert(0, str(ROOT / "CORE"))
 OUTPUT_BASE = ROOT / "DATA" / "live_enriched"
 SCHEMA_VERSION = "live_enriched_1.0"
 
+# Priorite C fix Jackson 15/05/2026 : dedup last-write-wins au niveau writer.
+# Cause root : restart service -> _last_processed_ts_ns reset -> re-process
+# bars du buffer Databento OHLCV -> doublons.
+# Solution : maintenir set in-memory ts_event_ns par path JSONL daily.
+# Au 1er write d'un path, lire le fichier existant pour reload le set.
+_WRITTEN_TS_PER_PATH: dict[str, set] = {}
+_WRITTEN_TS_LOCK_INITIALIZED: set = set()
+
+
+def _load_existing_ts(fpath: Path) -> set:
+    """Reload set ts_event_ns deja ecrits dans le JSONL existant.
+
+    Au 1er write apres boot, lire le fichier (si existant) et extraire
+    tous les ts_event_ns pour dedup futur.
+    """
+    ts_set = set()
+    if not fpath.exists():
+        return ts_set
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                # Parse minimal pour extraire ts_event_ns (parse JSON complet evite)
+                # Pattern : `"ts_event_ns":1234567890`
+                idx = line.find('"ts_event_ns":')
+                if idx == -1:
+                    continue
+                start = idx + len('"ts_event_ns":')
+                end = start
+                while end < len(line) and (line[end].isdigit() or (end == start and line[end] == '-')):
+                    end += 1
+                try:
+                    ts_set.add(int(line[start:end]))
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    return ts_set
+
 
 def _json_default(obj):
     """JSON encoder default pour convertir numpy/pandas types -> Python natif.
@@ -248,6 +289,24 @@ def write_enriched_bar(
     payload = _round_floats_recursive(payload, ndigits=6)
 
     fpath = _build_output_path(symbol, ts_ns)
+
+    # Priorite C fix Jackson 15/05 : dedup last-write-wins par ts_event_ns.
+    # Reload set au 1er write d'un path (anti race restart-service).
+    path_key = str(fpath)
+    if path_key not in _WRITTEN_TS_LOCK_INITIALIZED:
+        _WRITTEN_TS_PER_PATH[path_key] = _load_existing_ts(fpath)
+        _WRITTEN_TS_LOCK_INITIALIZED.add(path_key)
+    written_set = _WRITTEN_TS_PER_PATH[path_key]
+    if ts_ns in written_set:
+        # ts deja ecrit -> SKIP (last-write-wins via NOOP : la 1ere ecriture gagne).
+        # Pour overwrite reel, il faudrait re-ecrire le fichier complet (couteux).
+        # Choix : 1ere ecriture preserved + emit log MAJEUR pour audit J+1.
+        _emit_log(
+            "ENRICHER_WRITE_DEDUP_SKIP",
+            sym=symbol, path=str(fpath.name), ts_ns=ts_ns,
+        )
+        return True  # skip "succes" (idempotent), pas fail
+    written_set.add(ts_ns)
 
     # Serialize JSON line (compact, pas pretty-print)
     try:

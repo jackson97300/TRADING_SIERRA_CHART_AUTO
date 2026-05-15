@@ -610,6 +610,7 @@ LOG_CODES = {
     "ENRICHER_SEED_OPEN_CASH_FROM_V4": (LogLevel.INFO, "events", "Enricher seed OpenCashPrice1030 depuis V4 : {sym} date={date} open_cash={open_cash} price_1030={price_1030}"),
     "ENRICHER_SEED_IMPORT_FAIL":   (LogLevel.MAJEUR,  "events", "Enricher seed phase_b_helpers import FAIL : {sym} (warmup partiel, classify_open_type peut UNKNOWN J0)"),
     "ENRICHER_SEED_SESSIONS_FROM_V4": (LogLevel.INFO, "events", "Enricher seed SessionsSwingsSimple depuis V4 : {sym} sdt={sdt} n_values={n_values} keys={keys}"),
+    "ENRICHER_WRITE_DEDUP_SKIP":   (LogLevel.ALERTE,  "events", "Enricher write SKIP doublon ts_event_ns : {sym} path={path} ts_ns={ts_ns} (race restart-service ou Databento re-emit)"),
 }
 
 
