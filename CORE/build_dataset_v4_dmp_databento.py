@@ -114,6 +114,13 @@ ML_EXCLUDE_FEATURES = {
     "range_size",  # points bruts
     # Bool features avec biais regime instrument-specifique
     "bool_above_mq_call", "bool_gex_flip_zone",
+    # === Features DMP-C++ non-reproductibles Databento (15/05/2026) ===
+    # Audit feature-engineer Review #4 : drift batch/stream si reactivees.
+    # Stream produit proxies renames (diag_imbalance_ofi_proxy,
+    # large_trader_max_size_proxy) disponibles gates uniquement.
+    # ML_EXCLUDE explicite anti reintroduction accidentelle.
+    "diag_imbalance", "large_trader_ratio",
+    "ctx_diag_imbalance_mean_5", "ctx_large_trader_slope_5",
     # RVOL binaires mortes (>97% top_value_freq sur Databento, seuils SC mal calibres)
     # Rester : rvol, rvol_zscore, rvol_regime (vivants)
     "rvol_buy", "rvol_sell", "rvol_buy_strong", "rvol_sell_strong",
