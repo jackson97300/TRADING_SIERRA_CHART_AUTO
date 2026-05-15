@@ -1240,6 +1240,36 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         with state.lock:
             state.append_bar(payload)
 
+        # Audit externe 15/05/2026 recommandation : data_quality_flag pour
+        # ETL/ML drop bars warmup_phase post-cold-restart.
+        # bars_since_boot < WARMUP_THRESHOLD = rolling buffers pas pleins
+        # (vwap_d cumsum from scratch, rvol init = 1.0, im_* null, swings
+        # state perdu jusqu'a 21 bars, etc.). Recommandation drop ETL.
+        WARMUP_BARS_THRESHOLD = 30  # ~30 min apres cold start = state stable
+        n_bars_sym = _n_bars_processed.get(symbol, 0) + 1  # +1 car increment apres
+        payload["bars_since_boot"] = n_bars_sym
+        # data_quality_flag bitmask :
+        #   bit 0 (1) : warmup_phase (n_bars_sym < threshold)
+        #   bit 1 (2) : sentinel detected (bars_since_retest == 999)
+        #   bit 2 (4) : sd_collapse (sd1u == sd1d)
+        #   bit 3 (8) : swing_state_reset (last_swing_high_session == 0
+        #               AND n_bars_sym > 21)
+        flag = 0
+        if n_bars_sym < WARMUP_BARS_THRESHOLD:
+            flag |= 1
+        _bsrh = payload.get("bars_since_retest_high")
+        _bsrl = payload.get("bars_since_retest_low")
+        if (_bsrh == 999 or _bsrl == 999) and n_bars_sym > 5:
+            flag |= 2
+        _sd1u = payload.get("vwap_d_sd1u")
+        _sd1d = payload.get("vwap_d_sd1d")
+        if _sd1u is not None and _sd1d is not None and _sd1u == _sd1d:
+            flag |= 4
+        _lshs = payload.get("last_swing_high_session")
+        if _lshs == 0 and n_bars_sym > 21:
+            flag |= 8
+        payload["data_quality_flag"] = flag
+
         # 6. Write JSONL atomic
         ok = write_enriched_bar(symbol, payload)
         if not ok:
