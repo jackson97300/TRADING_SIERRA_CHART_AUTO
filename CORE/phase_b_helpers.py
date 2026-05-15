@@ -755,7 +755,10 @@ def add_open_cash_price1030(df: pd.DataFrame, bounds: dict | None = None) -> pd.
     df = df.copy()
     if "date_et" not in df.columns:
         df = add_session_metadata(df, bounds=bounds)
-    us_start = (bounds or {"us_start": 570})["us_start"]
+    # Fix code-reviewer P1 R2 R1 : harmoniser avec streaming via _resolve_bounds
+    # (raise KeyError explicite vs silent fallback `(bounds or {...})` Pattern 11).
+    b = _resolve_bounds(bounds)
+    us_start = b["us_start"]
     ib_close = us_start + 60  # fin IB = 1h apres us_start
     # Open cash = close de la barre us_start
     open_cash = df[df["mins_et"] == us_start].groupby("date_et")["close"].first().rename("open_cash")

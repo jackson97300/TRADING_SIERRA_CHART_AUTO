@@ -229,14 +229,19 @@ def add_sessions_swings_lag_streaming(
     out["swing_low_active_lag10"] = swing_l_active
 
     # ─── 2. DIST/BARS_SINCE/SESSION du dernier swing confirme ──────────────
+    # Fix code-reviewer Pass 4a R2 P4 (15/05) : expose aussi dist_swing_high/low
+    # POINTS (raw) en plus du _pct, pour rolling_features ctx_div_at_swing /
+    # div_at_key_level_ticks qui consomment POINTS. Sans : 2 ctx_* mortes.
     if state.last_swing_high is not None and not np.isnan(c) and c > 0:
         out["dist_last_swing_high_pct"] = (
             (c - state.last_swing_high.price) / c * 100
         )
+        out["dist_swing_high"] = c - state.last_swing_high.price  # POINTS raw
         out["bars_since_last_swing_high"] = bar_idx - state.last_swing_high.bar_idx
         out["last_swing_high_session"] = state.last_swing_high.session_id
     else:
         out["dist_last_swing_high_pct"] = np.nan
+        out["dist_swing_high"] = np.nan
         out["bars_since_last_swing_high"] = -1
         out["last_swing_high_session"] = -1
 
@@ -244,10 +249,12 @@ def add_sessions_swings_lag_streaming(
         out["dist_last_swing_low_pct"] = (
             (c - state.last_swing_low.price) / c * 100
         )
+        out["dist_swing_low"] = c - state.last_swing_low.price  # POINTS raw
         out["bars_since_last_swing_low"] = bar_idx - state.last_swing_low.bar_idx
         out["last_swing_low_session"] = state.last_swing_low.session_id
     else:
         out["dist_last_swing_low_pct"] = np.nan
+        out["dist_swing_low"] = np.nan
         out["bars_since_last_swing_low"] = -1
         out["last_swing_low_session"] = -1
 

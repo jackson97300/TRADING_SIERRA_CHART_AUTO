@@ -7,6 +7,11 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-15]** **Tests cross-day game_changers + reset cache (P1 R2 reserves R2+R4)** | 1-2h | LOW | PROPOSED (couverture test incomplete)
+  - **R2** : test 9 valide `open_cash` produit mais ne prouve PAS variance `open_type` post-warmup. Ajouter test J+1 simule (seed `prev_vah/val/vpoc/pdh/pdl` artificiel via `state.volume_profile.prev_vah = X`) pour valider classify sort de UNKNOWN.
+  - **R4** : aucun test cross-day reset cache OpenCashPrice1030State. Test J + J+1 dans meme run pour verifier `if date_et != current_date_et` declenche correctement.
+  - **Fix** : etendre `TOOLS/test_live_enricher_integration.py` test 10 + 11.
+
 - **[DETTE 2026-05-15]** **Warmup volume_profile 1 jour cold start Live Enricher** | DOCUMENT | LOW | PROPOSED (P1 R1 NOGO fix B1)
   - **Source** : Code-reviewer P1 R1 NOGO fix B1 + test variance B3 - sur cold start (J0), `prev_vah/val/vpoc/pdh/pdl` = NaN car pas de session J-1. Resultat : `classify_open_type` retourne UNKNOWN (0) systematique tant que session J-1 absente.
   - **Impact** : ~1 jour de warmup en LIVE Enricher avant que `open_type/direction/bias_conf` deviennent fonctionnels. J+1 onwards : OK (volume_profile state populated).

@@ -329,6 +329,38 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     except (TypeError, ValueError):
                         pass
 
+            # Pass 4b : next_wall_dist_ticks (P3 audit dette #6, 15/05)
+            # Distance en TICKS vers le nearest wall MQ depuis close.
+            # Inputs : 6 niveaux MQ (call/put/hvl regular + 0dte) + close + tick.
+            # Consume par rolling_features div_at_key_level_ticks proxy.
+            # STATELESS - calcul O(1) par bar.
+            try:
+                from CORE.constants import get_tick_size as _gts
+            except ImportError:
+                from constants import get_tick_size as _gts
+            symbol_pure_p3 = symbol.split(".")[0]
+            tick_p3 = _gts(symbol_pure_p3)
+            mq_walls = []
+            for mq_key in (
+                "mq_call_resistance", "mq_call_resistance_0dte",
+                "mq_put_support", "mq_put_support_0dte",
+                "mq_hvl", "mq_hvl_0dte",
+            ):
+                lvl = payload.get(mq_key)
+                if lvl is not None:
+                    try:
+                        lvl_f = float(lvl)
+                        if not (lvl_f != lvl_f):  # not NaN
+                            mq_walls.append(lvl_f)
+                    except (TypeError, ValueError):
+                        pass
+            if mq_walls and tick_p3 > 0:
+                # min distance en ticks vers nearest wall
+                min_dist_ticks = min(abs(w - _close) / tick_p3 for w in mq_walls)
+                payload["next_wall_dist_ticks"] = float(min_dist_ticks)
+            else:
+                payload["next_wall_dist_ticks"] = float("nan")
+
         # Inject VIX snapshot (passthrough Phase 3a) + appel engine streaming Jour 5
         # Plug factory pattern : state.get_engine_state("vix_lite", VixLiteState)
         # Validation convention API streaming (Plan agent reframe Jour 5).

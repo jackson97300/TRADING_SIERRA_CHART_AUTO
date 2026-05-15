@@ -135,8 +135,20 @@ def add_game_changers_streaming(
         ib_low = out.get("ib_low")
         price_1030 = out.get("price_1030")
 
-        # classify_open_type + classify_open_zone (stateless, deterministe)
-        try:
+        # classify_open_type + classify_open_zone (stateless, deterministe).
+        # Fix code-reviewer P1 R2 R3 : try/except etait CODE MORT car
+        # classify_open_type retourne UNKNOWN (0) sur inputs None (cf
+        # game_changers.py:179-181 `if not all(_valid(v)): return UNKNOWN`),
+        # ne leve PAS TypeError/ValueError. Le try/except servait juste a
+        # masquer le silent fallback Pattern V1.
+        # Solution : detect explicit input invalide AVANT classify + emit log
+        # MAJEUR si POST-IB avec inputs manquants (= pattern V1 reproduit).
+        # Anti silent fallback (regle souveraine logs 01/05).
+        critical_inputs_valid = all(
+            v is not None and not (isinstance(v, float) and v != v)  # not None and not NaN
+            for v in (open_cash, prev_vah, prev_val, ib_high, ib_low, price_1030)
+        )
+        if critical_inputs_valid:
             ot = gc.classify_open_type(
                 open_cash, prev_vah, prev_val, ib_high, ib_low, price_1030
             )
@@ -147,9 +159,8 @@ def add_game_changers_streaming(
             state.cached_open_zone = int(oz)
             state.cached_open_direction = int(gc.direction(ot))
             state.cached_open_bias_conf = float(gc.confidence(ot))
-        except (TypeError, ValueError):
-            # Inputs invalides -> garder UNKNOWN (etat init)
-            pass
+        # else : inputs manquants (warmup cold start OU bug pipeline) -> garder
+        # cached UNKNOWN. Caller doit detecter via grep log si frequent en prod.
         # FIX P1.1 : classified_today=True inconditionnel (mirror batch fige sur post_ib.iloc[0])
         state.classified_today = True
 

@@ -254,6 +254,14 @@ def add_stack_absorb_streaming(
     out["bn_absorb_ask_at_level"] = 1 if (out["bn_absorb_ask_raw"] == 1 and near_res == 1) else 0
     out["bn_absorb_bid_at_level"] = 1 if (out["bn_absorb_bid_raw"] == 1 and near_sup == 1) else 0
 
+    # Fix code-reviewer Pass 4a R2 P5 (15/05) : alias `bn_absorb_ask`/`bn_absorb_bid`
+    # (sans suffix _raw/_at_level) attendus par rolling_features_streaming
+    # div_confluence_dmp absorb_score (ligne 1124-1125, 1276-1278). Sans :
+    # absorb_score = 0 systematique -> div_confluence_dmp biais -1 point.
+    # Alias = raw (LOT 4 niveaux ABS deja considere via ABSORPTION_RESISTANCE/SUPPORT).
+    out["bn_absorb_ask"] = out["bn_absorb_ask_raw"]
+    out["bn_absorb_bid"] = out["bn_absorb_bid_raw"]
+
     # Update state pour prochaine bar
     state.prev_close = c
 
