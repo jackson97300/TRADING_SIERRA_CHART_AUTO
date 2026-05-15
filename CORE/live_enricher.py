@@ -1248,12 +1248,18 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         WARMUP_BARS_THRESHOLD = 30  # ~30 min apres cold start = state stable
         n_bars_sym = _n_bars_processed.get(symbol, 0) + 1  # +1 car increment apres
         payload["bars_since_boot"] = n_bars_sym
-        # data_quality_flag bitmask :
-        #   bit 0 (1) : warmup_phase (n_bars_sym < threshold)
-        #   bit 1 (2) : sentinel detected (bars_since_retest == 999)
-        #   bit 2 (4) : sd_collapse (sd1u == sd1d)
-        #   bit 3 (8) : swing_state_reset (last_swing_high_session == 0
-        #               AND n_bars_sym > 21)
+        # data_quality_flag bitmask (audit externe 15/05 + recommandations) :
+        #   bit 0 (1)  : warmup_phase (n_bars_sym < threshold)
+        #   bit 1 (2)  : sentinel detected (bars_since_retest == 999)
+        #   bit 2 (4)  : sd_collapse (sd1u == sd1d)
+        #   bit 3 (8)  : swing_state_reset (last_swing_high_session == 0
+        #                AND n_bars_sym > 21)
+        #   bit 4 (16) : session_ctx_corrupted (apres reset US session,
+        #                london_*/ny_open/asia_low perdus jusqu'au prochain
+        #                rollover session). Audit externe Jackson : "vendredi
+        #                post-reset = tout session ctx US corrompu jusqu'a
+        #                lundi prochaine session". Detection : si en US (sid=2)
+        #                ET ny_open is null = corruption.
         flag = 0
         if n_bars_sym < WARMUP_BARS_THRESHOLD:
             flag |= 1
@@ -1268,6 +1274,11 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         _lshs = payload.get("last_swing_high_session")
         if _lshs == 0 and n_bars_sym > 21:
             flag |= 8
+        # bit 4 : session_ctx_corrupted (US RTH actif mais ny_open null)
+        _sid = payload.get("session_id")
+        _ny = payload.get("ny_open")
+        if _sid == 2 and _ny is None:
+            flag |= 16
         payload["data_quality_flag"] = flag
 
         # 6. Write JSONL atomic
