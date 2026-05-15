@@ -546,24 +546,38 @@ def _seed_swings_lag_from_warmup(
     last_row = df_valid.iloc[-1]
     last_sh = last_row.get("_last_swing_high_price")
     last_sl = last_row.get("_last_swing_low_price")
-    try:
-        last_sid = int(last_row.get("session_id", -1)) if pd.notna(last_row.get("session_id")) else -1
-    except (TypeError, ValueError):
-        last_sid = -1
+    # Fix bug audit externe Jackson 15/05 P2 : utiliser last_swing_*_session
+    # de V4 batch (= session_id du PIVOT reel) au lieu de session_id de la
+    # bar V4 actuelle (qui peut etre Asia/London alors que le pivot a ete
+    # detecte dans une session anterieure).
+    # V1 bug : seed avec session_id de la derniere bar V4 valide -> session_id
+    # incoherent vs reality (audit detecte last_swing_high_session=0 persistant).
+    last_sh_sid = last_row.get("last_swing_high_session")
+    last_sl_sid = last_row.get("last_swing_low_session")
+
+    def _safe_int_sid(v, fallback=-1):
+        try:
+            if v is None or not pd.notna(v):
+                return fallback
+            return int(v)
+        except (TypeError, ValueError):
+            return fallback
 
     n_pivots_seeded = 0
     if last_sh is not None and pd.notna(last_sh):
         try:
+            sid_h = _safe_int_sid(last_sh_sid)
             seeded.last_swing_high = SwingPivot(
-                bar_idx=-1, price=float(last_sh), session_id=last_sid,
+                bar_idx=-1, price=float(last_sh), session_id=sid_h,
             )
             n_pivots_seeded += 1
         except (TypeError, ValueError):
             pass
     if last_sl is not None and pd.notna(last_sl):
         try:
+            sid_l = _safe_int_sid(last_sl_sid)
             seeded.last_swing_low = SwingPivot(
-                bar_idx=-1, price=float(last_sl), session_id=last_sid,
+                bar_idx=-1, price=float(last_sl), session_id=sid_l,
             )
             n_pivots_seeded += 1
         except (TypeError, ValueError):

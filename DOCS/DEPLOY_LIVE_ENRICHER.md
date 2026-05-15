@@ -67,6 +67,28 @@ ssh Administrator@212.28.179.199 "type C:\TRADING_SIERRA_CHART_AUTO\LOGS\live_en
 ssh Administrator@212.28.179.199 "type C:\TRADING_SIERRA_CHART_AUTO\LOGS\events\events_$(date +%Y%m%d).jsonl" | grep -i ENRICHER
 ```
 
+## ⚠️ ATTENTION : delete pickle = ~20 bars sales post-restart
+
+Audit externe Jackson 15/05/2026 a detecte : cold restart force avec delete
+pickle = rolling buffers vides post-restart :
+- vwap_d saut +27.5 pts (recalcul from scratch)
+- rvol=1.0, rvol_zscore=0.0 (init)
+- bars_since_retest=999, last_swing_high_session=0 (state perdu)
+- london_high/low, ny_open null DEFINITIVEMENT jusqu'au rollover suivant
+- asia_low/high overwrite avec V4 batch INCOMPLET (V4 lag 30 min)
+
+**Recommandation deploy** : utiliser **HOT restart** par defaut
+(`nssm stop + start` SANS delete pickle). Le pickle existe + reload =
+state continue, pas de bars sales.
+
+**Force cold start uniquement** si :
+- Schema STATE_SCHEMA_VERSION change (pickle invalide)
+- Bug state persistant impossible a regenerer autrement
+
+Si force cold start necessaire, marquer les bars suivantes via
+`data_quality_flag` bit 0 (warmup_phase) qui se desactive apres 30 bars,
+puis bit 4 (session_ctx_corrupted) qui se desactive au prochain rollover.
+
 ## Force cold start (declenche seed depuis V4 batch parquet)
 
 **Cas d'usage** : apres modif code seed sessions / open_cash dans
