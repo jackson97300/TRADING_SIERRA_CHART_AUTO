@@ -229,7 +229,7 @@ def _build_output_path(symbol: str, ts_event_ns: int) -> Path:
     sym_fs = _safe_sym_dir(symbol)
     sym_dir = OUTPUT_BASE / sym_fs
     sym_dir.mkdir(parents=True, exist_ok=True)
-    return sym_dir / f"{day_str}.jsonl"
+    return sym_dir / f"{day_str}_{sym_fs}.jsonl"
 
 
 def write_enriched_bar(
@@ -373,7 +373,7 @@ def write_enriched_bars_batch(
     n_ok = 0
     n_fail = 0
     for day_str, bars in by_day.items():
-        fpath = sym_dir / f"{day_str}.jsonl"
+        fpath = sym_dir / f"{day_str}_{safe}.jsonl"
         try:
             with open(fpath, "a", encoding="utf-8") as f:
                 for bar in bars:

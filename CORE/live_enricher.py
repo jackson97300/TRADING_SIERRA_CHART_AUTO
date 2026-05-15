@@ -340,10 +340,18 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 from constants import get_tick_size as _gts
             symbol_pure_p3 = symbol.split(".")[0]
             tick_p3 = _gts(symbol_pure_p3)
+            # Fix Jackson 15/05/2026 audit feature-engineer BUG #1 CRITIQUE :
+            # Avant fix, le code cherchait keys `mq_call_resistance/put_support`
+            # qui n'existent PAS dans le payload MQ_Lite (qui contient
+            # `mq_call/mq_put/mq_hvl` + arrays `mq_gex[10]` + `mq_blind[10]`).
+            # Resultat : seuls hvl + hvl_0dte trouves -> next_wall_dist_ticks
+            # SUR-ESTIMEE ~7x sur 100% des bars. Bot 3 decisions sur cette
+            # feature = data sale (lessons C++ DMP delta_div 0 26j).
             mq_walls = []
+            # Scalaires : mq_call/put/hvl + 0DTE variants
             for mq_key in (
-                "mq_call_resistance", "mq_call_resistance_0dte",
-                "mq_put_support", "mq_put_support_0dte",
+                "mq_call", "mq_call_0dte",
+                "mq_put", "mq_put_0dte",
                 "mq_hvl", "mq_hvl_0dte",
             ):
                 lvl = payload.get(mq_key)
@@ -354,6 +362,18 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                             mq_walls.append(lvl_f)
                     except (TypeError, ValueError):
                         pass
+            # Arrays : mq_gex[10] (gamma strikes) + mq_blind[10] (break levels)
+            for mq_array_key in ("mq_gex", "mq_blind"):
+                arr = payload.get(mq_array_key)
+                if isinstance(arr, list):
+                    for lvl in arr:
+                        if lvl is not None:
+                            try:
+                                lvl_f = float(lvl)
+                                if not (lvl_f != lvl_f):
+                                    mq_walls.append(lvl_f)
+                            except (TypeError, ValueError):
+                                pass
             if mq_walls and tick_p3 > 0:
                 # min distance en ticks vers nearest wall
                 min_dist_ticks = min(abs(w - _close) / tick_p3 for w in mq_walls)
@@ -806,6 +826,26 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     factory=lambda: make_sessions_swings_simple_state(symbol=symbol_pure),
                 )
                 payload = add_sessions_swings_simple_streaming(payload, s_sess_simple)
+
+                # Fix Jackson 15/05/2026 audit BUG #5 : recalcul `session` enum
+                # APRES sessions_swings_simple qui set is_in_asia/london/us_cash/us_after.
+                # Avant fix : rolling_inputs (ligne 637) calculait session AVANT que
+                # is_in_us_cash soit set -> session=-1 sur 100% bars us_cash, alors
+                # que session_id=2 OK. Pattern V1 cousin (ordre execution silent).
+                _is_asia = int(payload.get("is_in_asia", 0) or 0)
+                _is_london = int(payload.get("is_in_london", 0) or 0)
+                _is_us_cash = int(payload.get("is_in_us_cash", 0) or 0)
+                _is_us_after = int(payload.get("is_in_us_after", 0) or 0)
+                _sess_final = -1
+                if _is_asia == 1:
+                    _sess_final = 0
+                if _is_london == 1:
+                    _sess_final = 1
+                if _is_us_cash == 1:
+                    _sess_final = 2
+                if _is_us_after == 1:
+                    _sess_final = 3
+                payload["session"] = _sess_final
 
                 # LAG : consomme session_id (produit par SIMPLE) -> swings + sweep
                 s_sess_lag = state.get_engine_state(
