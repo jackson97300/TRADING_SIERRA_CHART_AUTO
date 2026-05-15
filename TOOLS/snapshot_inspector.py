@@ -62,16 +62,24 @@ ML_CRITICAL_FEATURES = [
 
 
 def _safe_sym_dir(symbol: str) -> str:
-    """ES.c.0 -> ES_c_0."""
-    return symbol.replace("/", "_").replace(".", "_")
+    """Pattern DMP C++ : ES.c.0 -> ES, MGC.v.0 -> GC (filesystem alias).
+
+    Jackson 15/05/2026 : naming aligne DMP (DATA/NQ/20260507_NQ.jsonl).
+    """
+    pure = symbol.split(".")[0]
+    return "GC" if pure == "MGC" else pure
 
 
 def list_snapshot_files(symbol: str) -> list[Path]:
-    """Liste fichiers JSONL du symbol, tries chronologiquement."""
-    sym_dir = LIVE_ENRICHED_DIR / _safe_sym_dir(symbol)
+    """Liste fichiers JSONL du symbol, tries chronologiquement.
+
+    Pattern : DATA/live_enriched/{SYM}/{YYYYMMDD}_{SYM}.jsonl
+    """
+    sym_fs = _safe_sym_dir(symbol)
+    sym_dir = LIVE_ENRICHED_DIR / sym_fs
     if not sym_dir.exists():
         return []
-    return sorted(sym_dir.glob("*.jsonl"))
+    return sorted(sym_dir.glob(f"*_{sym_fs}.jsonl"))
 
 
 def load_jsonl(path: Path) -> pd.DataFrame:

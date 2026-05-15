@@ -96,8 +96,9 @@ Le warmup_from_v4=True doit RE-CHARGER bars depuis V4 parquet → ~30s boot time
 
 ```bash
 # Sync JSONL VPS -> PC
-scp -r Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DATA/live_enriched/ES_c_0/*.jsonl" DATA/live_enriched/ES_c_0/
-scp -r Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DATA/live_enriched/NQ_c_0/*.jsonl" DATA/live_enriched/NQ_c_0/
+scp Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DATA/live_enriched/ES/20260515_ES.jsonl" DATA/live_enriched/ES/
+scp Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DATA/live_enriched/NQ/20260515_NQ.jsonl" DATA/live_enriched/NQ/
+scp Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DATA/live_enriched/GC/20260515_GC.jsonl" DATA/live_enriched/GC/
 scp Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DATA/LIVE_CACHE/enricher_state/heartbeat.json" DATA/LIVE_CACHE/enricher_state/
 
 # Inspecter contenu local

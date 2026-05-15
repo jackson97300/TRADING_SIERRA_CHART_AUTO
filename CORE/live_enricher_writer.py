@@ -152,20 +152,41 @@ def _emit_log(code: str, **kwargs) -> None:
 
 
 def _safe_sym_dir(symbol: str) -> str:
-    """ES.c.0 -> ES_c_0. Aligne sur live_enricher_io._safe_sym_dir."""
-    return symbol.replace("/", "_").replace(".", "_")
+    """Convertit symbole Live -> dossier filesystem aligne pattern DMP C++.
+
+    Jackson 15/05/2026 : "LES NOMS DES FICHIERS DEVRAIS REFLETER ES OU NQ
+    OU GC". Aligne sur DMP C++ qui ecrit DATA/NQ/20260507_NQ.jsonl.
+
+    Mapping :
+      ES.c.0  -> 'ES'
+      NQ.c.0  -> 'NQ'
+      MGC.v.0 -> 'GC' (Micro Gold Sierra Chart dump scsf_MIA_MQ_Lite_GC,
+                        cf lessons.md MGC->GC filesystem mapping 10/05)
+    """
+    # Split sur le 1er point: ES.c.0 -> ES
+    pure = symbol.split(".")[0]
+    # MGC -> GC filesystem alignement DMP (cf CORE/constants.py SYMBOL_TO_FS_DIR)
+    if pure == "MGC":
+        return "GC"
+    return pure
 
 
 def _build_output_path(symbol: str, ts_event_ns: int) -> Path:
-    """Construit le path output JSONL du jour UTC.
+    """Construit le path output JSONL aligne pattern DMP C++ :
+    DATA/live_enriched/{SYM}/{YYYYMMDD}_{SYM}.jsonl
+
+    Exemples :
+      ES.c.0  + 2026-05-15 -> DATA/live_enriched/ES/20260515_ES.jsonl
+      NQ.c.0  + 2026-05-15 -> DATA/live_enriched/NQ/20260515_NQ.jsonl
+      MGC.v.0 + 2026-05-15 -> DATA/live_enriched/GC/20260515_GC.jsonl
 
     Cross-day automatic : bars de 23:59:59 UTC va dans YYYYMMDD courant,
     bars de 00:00:00 UTC va dans YYYYMMDD suivant.
     """
     dt = datetime.fromtimestamp(ts_event_ns / 1e9, tz=timezone.utc)
     day_str = dt.strftime("%Y%m%d")
-    safe = _safe_sym_dir(symbol)
-    sym_dir = OUTPUT_BASE / safe
+    sym_fs = _safe_sym_dir(symbol)
+    sym_dir = OUTPUT_BASE / sym_fs
     sym_dir.mkdir(parents=True, exist_ok=True)
     return sym_dir / f"{day_str}.jsonl"
 

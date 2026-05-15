@@ -496,10 +496,13 @@ def main():
     total_errors = 0
     total_warnings = 0
     for sym in symbols:
-        sym_fs = sym.replace(".", "_")
-        path = LIVE_DIR / sym_fs / f"{date_str}.jsonl"
+        # Pattern DMP C++ : DATA/live_enriched/{SYM}/{YYYYMMDD}_{SYM}.jsonl
+        # MGC -> GC filesystem (cf lessons.md mapping)
+        sym_pure = sym.split(".")[0]
+        sym_fs = "GC" if sym_pure == "MGC" else sym_pure
+        path = LIVE_DIR / sym_fs / f"{date_str}_{sym_fs}.jsonl"
         if not path.exists():
-            print(f"\n  [SKIP] {sym} : {path.name} absent")
+            print(f"\n  [SKIP] {sym} : {path} absent")
             continue
         rep = validate_file(path, sym)
         print_report(sym, rep)
