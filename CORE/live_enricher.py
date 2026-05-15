@@ -930,18 +930,31 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                         pass
 
                 # P3.1 atr_14m : multi-TF ATR. Notre `atr` deja sur 14 bars 1m
-                # = 14 min ATR. Alias direct (DMP utilise convention identique).
+                # = 14 min ATR.
+                # FIX BUG E units 15/05/2026 (audit externe + agent confirmation) :
+                # `atr` payload (= phase_b_rolling_inputs_streaming.py:153) est
+                # en TICKS (atr_points / tick). Mais batch v4
+                # (build_dataset_v4_dmp_databento.py:791) calcule atr_14m en
+                # POINTS directement (rolling TR sans /tick). Alias TICKS→POINTS
+                # cassait la parite : live atr_14m_pct ~0.22% NQ vs batch ~0.04%
+                # (skew 4x). Fix : multiplier par tick_size pour aligner POINTS.
                 _atr_p3 = payload.get("atr")
                 if _atr_p3 is not None:
-                    payload["atr_14m"] = _atr_p3
-                    # P3.9 atr_14m_pct : ATR normalise % close (couverture C++)
-                    if _c_p3 is not None:
-                        try:
-                            atr_f = float(_atr_p3); c_f2 = float(_c_p3)
+                    try:
+                        from CORE.constants import get_tick_size as _gts_atr
+                    except ImportError:
+                        from constants import get_tick_size as _gts_atr
+                    _tick_atr = _gts_atr(symbol_pure)
+                    try:
+                        atr_ticks = float(_atr_p3)
+                        atr_points = atr_ticks * _tick_atr
+                        payload["atr_14m"] = atr_points  # POINTS (= batch)
+                        if _c_p3 is not None:
+                            c_f2 = float(_c_p3)
                             if c_f2 > 0:
-                                payload["atr_14m_pct"] = atr_f / c_f2 * 100
-                        except (TypeError, ValueError):
-                            pass
+                                payload["atr_14m_pct"] = atr_points / c_f2 * 100
+                    except (TypeError, ValueError):
+                        pass
 
                 # P3.5 REVERT 15/05/2026 (code-reviewer NOGO) : profile_shape/skew
                 # approximations basees VPOC J-1 non-conformes standard DMP C++
@@ -976,33 +989,29 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     except (TypeError, ValueError):
                         pass
 
-                # P4 V3 REFACTOR 15/05/2026 (code-reviewer GO-AVEC-RESERVES V2) :
-                # Convention DMP officielle = (level - close) / tick_size / atr_ticks
-                # clampe ±5. Cf DMP_Transform.h:501-520 + migrate_atr_x4.py:65-99.
-                # V1 bug : oubli /tick (magnitude 4x off NQ) + signe inverse 9/13.
-                # V2 bug : NaN filter manquant (np.nan is not None == True) ->
-                #   float(nan)/n = nan -> min(5, nan) = 5 -> faux signal extreme.
-                # V3 fix : math.isfinite() check + filtre NaN/Inf explicitement.
-                # NOTE R4 : `atr` LIVE = 14-min ATR en TICKS (cf
-                # phase_b_rolling_inputs_streaming.py:153 atr_points/tick).
-                # Distinct DMP C++ daily-ATR. Convention `_atr` = dist_ticks /
-                # atr_14m_ticks. Documente dans data-quality.md / IDEAS_BACKLOG.
+                # P4 V4 REFACTOR 15/05/2026 (audit externe + market-analyst) :
+                # Convention BATCH v4 (phase_b_rolling_inputs.py:114) =
+                #   (level - close) / tick_size / atr_ticks  SANS CLAMP
+                # Verification empirique batch NQ avril 2026 dist_vwap_d_atr :
+                #   mean=8.4, max=222 → batch NE CLAMPE PAS.
+                # Versions precedentes V1/V2/V3 clampaient ±5 → train-serve skew
+                # massif (70% des bars saturees, 12/17 features mortes).
+                # V4 fix : retirer clamp pour parite batch bit-for-bit.
+                # `atr_f` reste en TICKS (cohrent batch `atr` col, pas atr_14m).
+                # NaN filter math.isfinite() preserve (V3 fix anti-faux-clamp).
                 import math as _math_p4
                 if _atr_p3 is not None and _c_p3 is not None:
                     try:
                         atr_f = float(_atr_p3)
                         c_atr = float(_c_p3)
-                        # Get tick size local (deja import _gts dans bloc P6c)
                         try:
                             from CORE.constants import get_tick_size as _gts_p4
                         except ImportError:
                             from constants import get_tick_size as _gts_p4
                         _tick_p4 = _gts_p4(symbol_pure)
-                        # V3 fix R1 : check atr/close finite (anti NaN clamp 5.0)
                         if (atr_f > 0 and _tick_p4 > 0
                                 and _math_p4.isfinite(atr_f)
                                 and _math_p4.isfinite(c_atr)):
-                            ATR_CLIP = 5.0
                             for lvl_key, dst in (
                                 ("vwap_w", "dist_vwap_w_atr"),
                                 ("vwap_m", "dist_vwap_m_atr"),
@@ -1029,15 +1038,10 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                                     lvl_f = float(lvl)
                                 except (TypeError, ValueError):
                                     continue
-                                # V3 R1 fix : filtre NaN/Inf explicitement
-                                # (np.nan is not None = True passe le check None
-                                # mais float(nan) propage via division -> faux 5.0)
                                 if not _math_p4.isfinite(lvl_f):
                                     continue
-                                val = (lvl_f - c_atr) / _tick_p4 / atr_f
-                                # Clamp ±5 (DMP_ATR_CLIP)
-                                val = max(-ATR_CLIP, min(ATR_CLIP, val))
-                                payload[dst] = val
+                                # V4 : SANS clamp (parite batch v4)
+                                payload[dst] = (lvl_f - c_atr) / _tick_p4 / atr_f
                     except (TypeError, ValueError):
                         pass
 

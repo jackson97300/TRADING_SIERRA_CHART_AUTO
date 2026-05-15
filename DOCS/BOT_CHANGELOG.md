@@ -62,6 +62,75 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-15 20:00 — FIX BUGS E + atr_14m units : parite batch v4 (4x skew + clamp removed)
+
+**Categorie** : FIX (critique ML pipeline)
+**Impact prod** : OFFLINE Phase 1 collecte uniquement. **Bot 3 / Bot 2 V2 NE TRADENT PAS aujourd'hui** donc impact trading = ZERO.
+**Fichier(s)** : `CORE/live_enricher.py:932-958` (atr_14m units), `CORE/live_enricher.py:1006-1043` (dist_*_atr clamp removed)
+**Reviewer(s) agent** : code-reviewer GO-AVEC-RESERVES (2 reserves Bot 3 + Bot 2 V2 calibration), market-analyst confirme via audit batch v4
+
+### Quoi
+2 fixes coordonnes pour aligner LIVE sur BATCH v4 (parite bit-for-bit) :
+
+**Fix 1 : atr_14m units POINTS au lieu TICKS**
+- AVANT : `atr_14m = atr` (alias direct atr_ticks de phase_b_rolling_inputs_streaming) → en TICKS (64 NQ)
+- APRES : `atr_14m = atr_ticks * tick_size` → en POINTS (16 NQ)
+- `atr_14m_pct = atr_points / close * 100` → ratio cohrent batch
+- Validation empirique : avant 0.22% NQ vs batch 0.04% NQ (4x skew confirme)
+
+**Fix 2 : Supprimer clamp ±5 sur 17 features dist_*_atr**
+- AVANT : `val = (lvl - close) / tick / atr_ticks; val = clamp(±5)` → 70% bars saturees
+- APRES : `val = (lvl - close) / tick / atr_ticks` SANS clamp
+- Validation batch v4 NQ avril : dist_vwap_d_atr mean=8.4 max=222 (sans clamp confirme)
+
+### Pourquoi
+Audit externe Jackson + 2 agents (code-reviewer + market-analyst) ont identifie :
+
+1. **`atr_14m_pct` payload faux** : ligne 942 calcule `atr_ticks / close * 100` au lieu de `atr_points / close * 100`. Resultat : skew 4x = 1/tick_size.
+
+2. **Clamp ±5 `dist_*_atr` n'existe pas dans batch v4** : `phase_b_rolling_inputs.py:114` (batch) ne clampe pas. Audit empirique batch parquet v4 NQ : dist_vwap_d_atr.max = 222.
+
+3. **Train-serve skew massif sur atr_14m_pct** : models ML v4 entraines sur 0.04% NQ, live serve 0.22%. Tout consumer downstream qui lit atr_14m_pct est affecte.
+
+4. **70% des 17 features dist_*_atr mortes** (100% saturees ib_*, prev_*, pdh, mq_call/hvl) sur 72 bars audit 3 symboles.
+
+### Validation pre-deploy
+- [x] Calcul empirique : avant fix dist_pdl_atr=7.13 → clamp 5.0 (saturated), apres fix=7.13 (preserved)
+- [x] atr_14m_pct avant=0.22% → apres=0.055% (aligne batch 0.04%)
+- [x] Syntax check OK
+- [x] Review code-reviewer GO-AVEC-RESERVES (2 reserves notees ci-dessous)
+- [ ] Test post-deploy 5-10 bars HOT restart
+
+### RESERVES BLOQUANTES code-reviewer pour ACTIVATION future Bot 3/Bot 2 V2
+
+**Bot 3 SL adaptatif** : `CORE/bot3_config.py:244` `ATR_BASELINE = {"NQ": 0.033, "ES": 0.027, "MGC": 0.035}` calibres sur LIVE BUGUÉ (atr_14m_pct ~0.22% NQ). Post-fix atr_14m_pct = 0.055% NQ. Ratio change.
+- **Action AVANT activation Bot 3** : recalibrer `ATR_BASELINE` sur batch v4 reel (NQ ~0.04%, ES ~0.027%).
+
+**Bot 2 V2 VETO** : `CORE/setup_engine.py:112` `VETO_ATR_14M_PCT_MAX = 0.10` (10%) obsolete post-fix.
+- **Action** : revaloir le seuil sur batch v4 reel (max NQ ~0.5%). Veto plus jamais declenche maintenant.
+
+**Bot 2 V2 stats comment** : `setup_engine.py:104-110` mentionne "ES p50=1.4% NQ p50=2.1%" - stats ancienne basees sur live bugue. A reviser.
+
+### Revert plan
+```bash
+git revert <commit_fix_bug_e>
+scp CORE/live_enricher.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 "nssm stop MIA-Live-Enricher; Start-Sleep -Seconds 5; nssm start MIA-Live-Enricher"
+```
+
+### Suivi post-deploy
+- **J+1** : grep `atr_14m_pct` dans LOGS bars 16/05 + verif distribution dist_*_atr (target : 0% clamp, mean 1-10, max 50-200)
+- **J+7** : verif aucun consumer `atr_14m_pct` n'a casse silencieusement
+- **J+30** : si activation Bot 3 envisagee, recalibration ATR_BASELINE prerequis
+
+### Liens
+- Audit externe Jackson identifie facteur 4x sur dist_*_atr
+- Code-reviewer GO-AVEC-RESERVES 20:00 (2 reserves listees)
+- Market-analyst confirme batch v4 ne clampe pas (mean 8.4 max 222 dist_vwap_d_atr)
+- Bug D (signes incoherents dist_X raw/pct/atr) : separe, traitement Phase 2 (30+ call sites)
+
+---
+
 ## 2026-05-15 19:30 — FIX BUG #3 trades_window aligne sur bar OHLCV (precedemment rolling now-60s)
 
 **Categorie** : FIX
