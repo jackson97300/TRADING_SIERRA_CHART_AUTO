@@ -638,6 +638,9 @@ SESSIONS_SWINGS_GENERATED = {
     # Swings significatifs
     "swing_high_active_lag10", "swing_low_active_lag10",
     "dist_last_swing_high_pct", "dist_last_swing_low_pct",
+    # Fix code-reviewer Review #3 R2 BLOCKER 3 (15/05) : POINTS bruts ajoutes
+    # pour parite stream/batch (rolling_features ctx_div_at_swing).
+    "dist_swing_high", "dist_swing_low",
     "bars_since_last_swing_high", "bars_since_last_swing_low",
     "last_swing_high_session", "last_swing_low_session",
     "_last_swing_high_price", "_last_swing_low_price",  # internes

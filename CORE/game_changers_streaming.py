@@ -161,27 +161,37 @@ def add_game_changers_streaming(
             state.cached_open_bias_conf = float(gc.confidence(ot))
         else:
             # Inputs manquants -> garder cached UNKNOWN.
-            # Fix code-reviewer Pass 4 Review #3 R3 (15/05) : emit log MAJEUR
-            # pour audit J+1 (regle souveraine logs 01/05). Distinguer warmup
-            # cold start (acceptable) de bug pipeline (silent fallback Pattern V1).
-            # Caller doit grep `GAME_CHANGERS_OPEN_TYPE_UNKNOWN` en errors_*.jsonl
-            # pour identifier frequence (rare = warmup OK, frequent = bug).
+            # Fix code-reviewer Review #3 R2 BLOCKER 4 (15/05) : emit via
+            # `logging_v2.emit()` pattern projet (MAJEUR -> errors_*.jsonl
+            # pour audit J+1, regle souveraine logs 01/05).
+            # Code `GAME_CHANGERS_OPEN_TYPE_UNKNOWN` enregistre log_catalog.py.
             try:
-                import logging
-                _gc_logger = logging.getLogger("game_changers_streaming")
+                from logging_v2 import get_logger
+                _v2log = get_logger("game_changers", process="enricher")
                 missing_inputs = [
                     n for n, v in zip(
                         ("open_cash", "prev_vah", "prev_val", "ib_high", "ib_low", "price_1030"),
                         (open_cash, prev_vah, prev_val, ib_high, ib_low, price_1030),
                     ) if v is None or (isinstance(v, float) and v != v)
                 ]
-                _gc_logger.warning(
-                    f"[GAME_CHANGERS_OPEN_TYPE_UNKNOWN] symbol={symbol} "
-                    f"date_et={date_et} mins_et={mins_et} missing_inputs={missing_inputs} "
-                    "-> classify=UNKNOWN cached (warmup cold start OU bug pipeline upstream)"
+                _v2log.emit(
+                    "GAME_CHANGERS_OPEN_TYPE_UNKNOWN",
+                    sym=symbol,
+                    date_et=str(date_et),
+                    mins_et=mins_et,
+                    missing_inputs=",".join(missing_inputs),
                 )
             except Exception:
-                pass
+                # Fallback : logging Python standard si logging_v2 indispo
+                # (ex: tests unitaires hors infra Live Enricher).
+                try:
+                    import logging
+                    logging.getLogger("game_changers_streaming").warning(
+                        f"[GAME_CHANGERS_OPEN_TYPE_UNKNOWN] symbol={symbol} "
+                        f"date_et={date_et} -> classify=UNKNOWN (warmup ou bug)"
+                    )
+                except Exception:
+                    pass
         # FIX P1.1 : classified_today=True inconditionnel (mirror batch fige sur post_ib.iloc[0])
         state.classified_today = True
 

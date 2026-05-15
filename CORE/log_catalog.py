@@ -600,6 +600,7 @@ LOG_CODES = {
     "ENRICHER_WRITE_FAIL":         (LogLevel.MAJEUR,  "events", "Enricher write FAIL : {sym} path={path} err={err}"),
     "ENRICHER_ENGINE_FAIL":        (LogLevel.MAJEUR,  "events", "Enricher engine chain fail : {sym} engine={engine} failed_lot={failed_lot} err_type={err_type} err={err}"),
     "ENRICHER_PARTNER_STALE":      (LogLevel.ALERTE,  "events", "Enricher partner bar stale/future : {sym} partner={partner} reason={reason} delta_ns={delta_ns} (intermarket features=NaN)"),
+    "GAME_CHANGERS_OPEN_TYPE_UNKNOWN": (LogLevel.MAJEUR, "events", "Game changers OPEN_TYPE=UNKNOWN : {sym} date_et={date_et} mins_et={mins_et} missing_inputs={missing_inputs} (warmup cold start OU bug pipeline upstream - frequence elevee = bug)"),
 }
 
 

@@ -1061,6 +1061,10 @@ PHASE_B_PLUS_PLUS_GENERATED = {
     "bn_absorb_ask_raw", "bn_absorb_bid_raw",
     "near_resistance_level", "near_support_level",
     "bn_absorb_ask_at_level", "bn_absorb_bid_at_level",
+    # Fix code-reviewer Review #3 R2 BLOCKER 1 (15/05) : aliases alimentent
+    # rolling_features div_confluence_dmp absorb_score - DOIT etre dans
+    # GENERATED set pour drop_existing anti-pollution re-run.
+    "bn_absorb_ask", "bn_absorb_bid",
     # BN #7 Double ES (2 cellules) / Triple NQ (3 cellules) : stack PUR ASK/BID
     "bn_stack_ask", "bn_stack_bid",
     # BN #8 Big Orders multi-tier v2 (formule SC officielle scan cellules VAP, pas trade aggregat)
@@ -1199,7 +1203,12 @@ def apply_phase_b_plus_plus(df: pd.DataFrame, trades_df: Optional[pd.DataFrame],
         # BN bonus Trapped Traders (apres absorption pour reuse near_resistance/support)
         df = add_trapped_traders_features(df, footprint, symbol=symbol, tick=tick)
     else:
+        # Fix code-reviewer Review #3 R2 BLOCKER 2 (15/05) : aliases bn_absorb_ask/bid
+        # AJOUTES dans path footprint absent pour parite stream/batch sur jours
+        # sans trades (Pattern V1 cousin sinon - rolling_features absorb_score
+        # batch=0 vs stream=non-init = KeyError).
         for col in ["bn_absorb_ask_raw", "bn_absorb_bid_raw",
+                     "bn_absorb_ask", "bn_absorb_bid",
                      "near_resistance_level", "near_support_level",
                      "bn_absorb_ask_at_level", "bn_absorb_bid_at_level",
                      "bn_stack_ask", "bn_stack_bid",
