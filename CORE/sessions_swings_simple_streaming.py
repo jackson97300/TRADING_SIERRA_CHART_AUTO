@@ -70,6 +70,15 @@ class SessionsSwingsSimpleState:
     ny_open: Optional[float] = None
     after_open: Optional[float] = None
 
+    # Flags "approximate" : True si l'open a ete capture en fallback (sid match
+    # mais pas mins_et == start exact). Cas typique : restart mid-session.
+    # Permet observabilite downstream (cf bit 5 data_quality_flag) + ML peut
+    # apprendre a traiter ce cas. Reset au session_date change.
+    asia_open_approximate: bool = False
+    london_open_approximate: bool = False
+    ny_open_approximate: bool = False
+    after_open_approximate: bool = False
+
 
 def make_sessions_swings_simple_state(symbol: str = "ES") -> "SessionsSwingsSimpleState":
     """Factory per-symbole avec bounds session corrects."""
@@ -195,6 +204,11 @@ def add_sessions_swings_simple_streaming(
         state.london_open = None
         state.ny_open = None
         state.after_open = None
+        # FIX BUG #4 15/05/2026 : reset flags approximate aussi
+        state.asia_open_approximate = False
+        state.london_open_approximate = False
+        state.ny_open_approximate = False
+        state.after_open_approximate = False
 
     # ─── 3. UPDATE running highs/lows pour la session courante ─────────────
     if not (np.isnan(h) or np.isnan(l)):
@@ -219,15 +233,49 @@ def add_sessions_swings_simple_streaming(
             if state.after_low is None or l < state.after_low:
                 state.after_low = l
 
-    # ─── 4. CAPTURE session opens au 1er bar de chaque session ─────────────
-    if mins_et == state.asia_start and state.asia_open is None and not np.isnan(o):
-        state.asia_open = o
-    if mins_et == state.london_start and state.london_open is None and not np.isnan(o):
-        state.london_open = o
-    if mins_et == state.us_start and state.ny_open is None and not np.isnan(o):
-        state.ny_open = o
-    if mins_et == state.us_after_start and state.after_open is None and not np.isnan(o):
-        state.after_open = o
+    # ─── 4. CAPTURE session opens (PRIORITE 1 : exact, FALLBACK : sid match) ──
+    # FIX BUG #4 15/05/2026 (code-reviewer GO-AVEC-RESERVES) :
+    # Strategy 2 niveaux pour preserver parite batch (qui utilise m == target
+    # exact, cf sessions_swings_engine.py:263) ET handle restart mid-session :
+    #
+    #   1. Capture EXACT a mins_et == start (= identique batch). Pas approximate.
+    #   2. Si on rate ce match (ex: live restart 18:13 UTC > us_start 13:30 UTC),
+    #      fallback capture au 1er bar avec sid correspondant. Set flag
+    #      *_open_approximate = True pour observabilite downstream.
+    #
+    # Le flag approximate est expose dans out[] pour ML feature + ETL drop
+    # selectif. Le bit 5 data_quality_flag (cf live_enricher.py) emit ALERTE
+    # log quand l'un des flags est True (preserve signal "boot mid-session").
+    #
+    # Note batch divergence : batch produit NaN dans ce cas. Live produit proxy
+    # tagged. Dette tech : aligner batch sur meme regle (backlog refacto seed).
+    if not np.isnan(o):
+        # Capture EXACT (priorite) - parite batch garantie
+        if mins_et == state.asia_start and state.asia_open is None:
+            state.asia_open = o
+            state.asia_open_approximate = False
+        elif mins_et == state.london_start and state.london_open is None:
+            state.london_open = o
+            state.london_open_approximate = False
+        elif mins_et == state.us_start and state.ny_open is None:
+            state.ny_open = o
+            state.ny_open_approximate = False
+        elif mins_et == state.us_after_start and state.after_open is None:
+            state.after_open = o
+            state.after_open_approximate = False
+        # FALLBACK approximate (1er bar avec sid match, mins_et != start exact)
+        elif sid == 0 and state.asia_open is None:
+            state.asia_open = o
+            state.asia_open_approximate = True
+        elif sid == 1 and state.london_open is None:
+            state.london_open = o
+            state.london_open_approximate = True
+        elif sid == 2 and state.ny_open is None:
+            state.ny_open = o
+            state.ny_open_approximate = True
+        elif sid == 3 and state.after_open is None:
+            state.after_open = o
+            state.after_open_approximate = True
 
     # ─── 5. OUTPUT highs/lows + distances ──────────────────────────────────
     for prefix, attr_h, attr_l in [
@@ -251,15 +299,19 @@ def add_sessions_swings_simple_streaming(
             out[f"dist_{prefix}_high_pct"] = np.nan
             out[f"dist_{prefix}_low_pct"] = np.nan
 
-    # ─── 6. OUTPUT session opens + distances + above ───────────────────────
-    for prefix, attr in [
-        ("asia", "asia_open"),
-        ("london", "london_open"),
-        ("ny", "ny_open"),
-        ("after", "after_open"),
+    # ─── 6. OUTPUT session opens + distances + above + approximate flags ──────
+    # FIX BUG #4 15/05/2026 : ajout flags *_open_approximate dans out[] pour
+    # observabilite downstream (ML/ETL/audit J+1). Tracking si l'open a ete
+    # capture en fallback sid (live restart mid-session) vs exact mins_et.
+    for prefix, attr, approx_attr in [
+        ("asia", "asia_open", "asia_open_approximate"),
+        ("london", "london_open", "london_open_approximate"),
+        ("ny", "ny_open", "ny_open_approximate"),
+        ("after", "after_open", "after_open_approximate"),
     ]:
         o_val = getattr(state, attr)
         out[f"{prefix}_open"] = o_val if o_val is not None else np.nan
+        out[f"{prefix}_open_approximate"] = 1 if getattr(state, approx_attr) else 0
         if not np.isnan(c) and c > 0 and o_val is not None:
             out[f"dist_{prefix}_open_pct"] = (c - o_val) / c * 100
             out[f"above_{prefix}_open"] = 1 if c > o_val else 0

@@ -62,6 +62,77 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-15 18:45 — FIX BUG #4 session opens capture mid-session restart (parite batch + bit 5 observabilite)
+
+**Categorie** : FIX
+**Impact prod** : OFFLINE (Live-Enricher collecte, aucun consumer)
+**Fichier(s)** : `CORE/sessions_swings_simple_streaming.py:67-78,184-205,222-280,302-320`, `CORE/live_enricher.py:1290-1314`, `CORE/log_catalog.py:618-620`
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES 18:35 - 2 critiques adressees)
+
+### Quoi
+Fix bug detecte empiriquement post-HOT-restart 18:13 UTC : `ny_open=None` persistant
+sur NQ/MGC (bit 4 actif systematique) car :
+- Live enricher down 12:11-18:13 UTC = 6h gap couvrant 13:30 UTC (US RTH open 09:30 ET)
+- Code streaming SET `ny_open` uniquement quand `mins_et == us_start` exact
+- Si live boot mi-session, cette condition ne se redeclenche jamais cette session
+- Seed V4 fallback fonctionne pour ES (V4 batch ES Phase B complet n=9) mais
+  echec NQ/MGC (V4 batch Phase B incomplet jour J, seed n=3 asia only)
+
+Solution **2 niveaux** (preserve parite batch + add observabilite) :
+1. **Capture EXACT prioritaire** (`mins_et == X_start`) - identique batch
+2. **Capture FALLBACK** (`sid == X and open is None`) - mid-session boot
+3. **Flag `*_open_approximate`** dans state + out[] (4 sessions)
+4. **Bit 5 (32) data_quality_flag** = at least 1 open approximate
+5. **Code log ENRICHER_SESSIONS_OPEN_APPROXIMATE** (ALERTE/decisions) defini
+6. Reset `*_open_approximate` au session_date change (idempotent)
+
+### Pourquoi
+**RESERVE 1 code-reviewer (parite batch)** : Le batch (`sessions_swings_engine.py:263`)
+utilise `m == target` strict. En cas restart-mid-session, batch=NaN, ancien stream=None.
+Ce fix prend un proxy en stream qui est tagged `approximate=1`. ML peut filtrer
+ou apprendre a gerer ce cas. Dette tech : aligner batch sur meme regle (backlog).
+
+**RESERVE 2 code-reviewer (silent fallback)** : Bit 4 etait justement le signal
+"ny_open=None apres us_start". Capture fallback masquerait cette corruption.
+Bit 5 distinct preserve l'observabilite : bit 4 = open MISSING (vraie corruption),
+bit 5 = open APPROXIMATE (proxy acceptable mais tagged).
+
+**Q5 (Pattern 11 V1)** : 4eme correctif consecutif bitmask. Surveillance, pas
+blocker. Refacto `_seed_sessions_swings_from_warmup` robuste idempotent en backlog.
+
+### Impact attendu
+- Bit 4 NQ/MGC : actif → 0 (capture proxy au 1er bar US cash post-boot)
+- Bit 5 : 0 (nominal) → 1 (mid-session restart)
+- Flags `*_open_approximate` : nouvelles colonnes JSONL (4 par bar)
+- Parite batch : preservee si live continu, divergence taggee si restart
+
+### Validation pre-deploy
+- [x] Tests empiriques 3/3 PASS (capture exact / fallback / reset)
+- [x] Code log declare `ENRICHER_SESSIONS_OPEN_APPROXIMATE`
+- [x] Review code-reviewer 2 reserves adressees
+- [ ] Test post-deploy : bit 4 disparait NQ/MGC, bit 5 actif (jusqu'a session change)
+- [ ] J+1 16/05 : nouvelle session 18:00 ET → bit 5 reset si live continu
+
+### Revert plan
+```bash
+git revert <commit_fix_bug4>
+ssh Administrator@212.28.179.199 "nssm stop MIA-Live-Enricher"
+scp CORE/sessions_swings_simple_streaming.py CORE/live_enricher.py CORE/log_catalog.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 "nssm start MIA-Live-Enricher"
+```
+
+### Suivi post-deploy
+- J+1 : grep bits 4 et 5 dans LOGS/decisions. Bit 4 doit etre 0 sur NQ/MGC,
+  bit 5 doit etre actif jusqu'a 18:00 ET (Asia next session reset)
+- J+7 : verifier 0 bit 4 anormal, bit 5 active uniquement post-restart legitime
+
+### Liens
+- Review : code-reviewer GO-AVEC-RESERVES 18:35
+- Backlog : refacto seed V4 idempotent + alignement batch sur regle "1er bar vu"
+- Bug racine : V4 batch NQ/MGC Phase B incomplet jour J (live_pipeline lag 5min)
+
+---
+
 ## 2026-05-15 18:30 — FIX data_quality_flag bitmask 3 bugs critiques (code-reviewer GO-AVEC-RESERVES)
 
 **Categorie** : FIX

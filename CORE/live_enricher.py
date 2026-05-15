@@ -1272,6 +1272,9 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         #                rollover session). Detection : si en US (sid=2)
         #                ET ny_open NaN/None = corruption. NB : np.nan is not
         #                None == True, donc isnan() check obligatoire.
+        #   bit 5 (32) : session_open_approximate (live restart mid-session,
+        #                capture fallback sid au lieu de mins_et exact).
+        #                Tracking pour parite batch/stream (cf bug #4).
         flag = 0
         if n_bars_sym < WARMUP_BARS_THRESHOLD:
             flag |= 1
@@ -1294,6 +1297,18 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         )
         if _sid == 2 and _ny_missing:
             flag |= 16
+        # bit 5 (32) : session_open_approximate. Au moins 1 des opens
+        # (asia/london/ny/after) a ete capture en fallback mid-session
+        # (live restart > start_exact). Trace explicite pour ETL/ML drop
+        # selectif. Si tous les *_open_approximate = 0 -> bit 5 = 0.
+        # FIX BUG #4 15/05/2026 (code-reviewer GO-AVEC-RESERVES) :
+        # preservation signal "boot mid-session" (precedemment bit 4 silent
+        # masque par sid-fallback capture).
+        if any(
+            payload.get(f"{p}_open_approximate") == 1
+            for p in ("asia", "london", "ny", "after")
+        ):
+            flag |= 32
         payload["data_quality_flag"] = flag
         # Log souverain (regle critical-tasks-review 01/05) : tout flag != 0
         # doit etre tracable J+1 pour audit ETL/ML drop bars suspectes.
