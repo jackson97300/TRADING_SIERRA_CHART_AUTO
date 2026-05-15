@@ -232,6 +232,17 @@ CONST_SNAPSHOTS_LEGIT = {
     # ctx_* day_type intensity (early session = 0)
     "ctx_day_type_intensity", "ctx_session_phase",
     "ctx_failed_auction",
+    # Session-fixed levels (seeded au cold start, change 1x/jour session change)
+    "prev_vpoc", "prev_vah", "prev_val", "pdh", "pdl",
+    "asia_high", "asia_low", "asia_open",
+    "ctx_bars_since_div",  # counter
+    "im_smt_divergence",   # event rare cross-symbol
+    # MQ snapshot daily fixe (broadcast 1x/jour matin)
+    "mq_call", "mq_put", "mq_hvl",
+    "mq_call_0dte", "mq_put_0dte", "mq_hvl_0dte",
+    "mq_1d_min", "mq_1d_max",
+    "next_wall_is_call",
+    "cur_pdh", "cur_pdl",  # idem session-fixed
 }
 
 # Outlier explosion threshold (cf DMP_validator.py:65)
