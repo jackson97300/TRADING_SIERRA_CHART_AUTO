@@ -62,6 +62,45 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-16 04:00 — FIX MenthorQ coverage builder + PROHIBITED_BUGD quality_validator
+
+**Categorie** : FIX (ML Pipeline + Data Quality)
+**Impact prod** : OFFLINE (dataset rebuild, ML training samedi)
+**Fichier(s)** : `CORE/build_dataset_v4_dmp_databento.py` (snapshot/restore dist_mq_* + fallback _pct), `CORE/quality_validator.py` (+PROHIBITED_FEATURES_BUGD 10 features)
+
+### Quoi
+Suite audit cross-check session 15/05 + investigations Jackson :
+
+**Fix 1 builder MenthorQ fallback v3** (3 patches itératifs) :
+- v1 : ajout bloc `[4bis-fallback]` calcul `dist_mq_*_pct` depuis `dist_mq_*_ticks` DMP
+- v2 : retiré drop dist_mq_* DMP (preserve TICKS pour fallback)
+- v3 : snapshot dist_mq_* DMP AVANT attach_mq_distances + restore APRES (attach_mq_distances pre-allocate NaN ecrasait DMP)
+
+**Resultats coverage MQ** :
+- ES total : 22.9% → **47.0%** (Mars 0→61.6%, Avr 77→90.7%)
+- NQ total : 9.1% → **39.8%** (Mars 0→55.9%, Avr 10.8→65.7%)
+- MGC : 82.2% (inchangé, fallback déjà actif)
+
+**Fix 2 quality_validator** : ajout PROHIBITED_FEATURES_BUGD (10 features RED post-audit) :
+- `avg_price` (prix absolu)
+- `dist_blind_nearest_dn_pct` (outlier 5824x, bug calcul find_nearest_below)
+- `dist_gex_nearest_dn_pct` (outlier 400x)
+- `position_in_range` (100% nulls Dec-Mar, 23-89% avril selon symbole)
+- `bool_above_mq_call`, `gex_cluster_count_z`, `is_roll_day` (quasi-constants 94-100%)
+- 4 MGC : regime_confidence/trend_votes/range_votes/actionable (std=0)
+
+### Validation
+- Test 18/03 ES (jour pre-MQ_Lite) : 0% → 62.9% MQ avec fallback
+- Test rebuild 5 mois : ES 47%, NQ 40%, MGC 82% (vs 23/9/82 avant)
+- Mars-Mai ES/NQ : 55-99% coverage (assez pour ML training 3 mois)
+
+### Reserves restantes
+- Dec/Jan DMP local incomplet (démarre 19/12, gaps Jan) → coverage <15%
+- regime_engine SKIP pour MGC (manque features DMP day_type/profile_shape)
+- Pour 100% Dec/Jan, syncer DMP JSONL VPS supplementaires ou injecter MenthorQ JSON direct
+
+---
+
 ## 2026-05-15 22:30 — FIX BUG D convention dist_X unifiee (level - close) compliant DMP C++
 
 **Categorie** : FIX (ML Pipeline + Trading) — Solution long-terme sans dette

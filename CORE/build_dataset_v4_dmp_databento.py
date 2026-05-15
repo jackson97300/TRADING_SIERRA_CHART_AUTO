@@ -958,22 +958,26 @@ def build_for_symbol(symbol: str, start: date, end: date,
         # FIX 12/05 : charge aussi DMP JSONL pour les 28 features Sierra-only
         # (regime/profile/CVD/VWAP/momentum/IB). Drop les cols MQ qui sont
         # remises ensuite via attach_mq_distances (4bis) pour eviter doublon.
+        #
+        # FIX MENTHORQ COVERAGE 16/05/2026 : conditionner le drop dist_mq_*.
+        #   Si MQ_Lite Hive VIDE pour la periode (mois pre-28/04/2026 deploy),
+        #   on GARDE dist_mq_*_ticks du DMP pour fallback (calcul _pct = ticks*tick/close*100
+        #   dans bloc 4bis-fallback). Sans ce fix, coverage MQ = 0% sur Dec-Mar.
         print("  [3bis/6] Load DMP JSONL pour features Sierra non-MQ...")
         dmp_full = load_dmp_jsonl(symbol, start, end)
         if not dmp_full.empty:
-            # Cols MQ-related a EXCLURE (recalculees par attach_mq_distances)
-            MQ_COLS_TO_DROP = [
-                "dist_mq_call", "dist_mq_put", "dist_mq_hvl",
-                "dist_mq_call_0dte", "dist_mq_put_0dte", "dist_mq_hvl_0dte",
-                "dist_1d_min_ticks", "dist_1d_max_ticks",
-                "dist_gex_nearest_up", "dist_gex_nearest_dn",
-                "dist_blind_nearest_up", "dist_blind_nearest_dn",
-                "gex_cluster_count",
-                "bool_above_mq_call", "bool_above_mq_hvl", "bool_gex_flip_zone",
-                "dist_vix_gex_nearest_up", "dist_vix_gex_nearest_dn",
-            ]
-            dmp = dmp_full.drop(columns=[c for c in MQ_COLS_TO_DROP if c in dmp_full.columns])
-            print(f"        {len(dmp)} bars DMP (Sierra-only: {len(dmp.columns)-1} cols)")
+            # FIX MENTHORQ COVERAGE 16/05/2026 v2 : NE JAMAIS dropper dist_mq_*
+            # du DMP. On les garde TOUJOURS comme TICKS source pour fallback _pct.
+            # MQ_Lite asof merge ecrit `dist_mq_*_pct` en colonnes separees (PCT)
+            # quand disponible → pas de conflit nom. Le fallback (4bis-fallback)
+            # calcule `_pct` = ticks*tick/close*100 pour les bars NaN apres MQ_Lite.
+            #
+            # Resultat attendu :
+            #   - Mois pre-MQ_Lite (Dec-Mar) : `_pct` calcule via fallback DMP (~100%)
+            #   - Mois post-deploy (Avr-Mai) : `_pct` via MQ_Lite asof (autoritaire)
+            #                                  + fallback DMP comble les trous
+            dmp = dmp_full  # plus de drop, tout est preserve
+            print(f"        {len(dmp)} bars DMP ({len(dmp.columns)-1} cols, incl. dist_mq_* TICKS pour fallback)")
         else:
             dmp = pd.DataFrame()
             print(f"        [WARN] DMP JSONL vide (Sierra inactif?) → 28 features regime/profile manquantes")
@@ -998,11 +1002,77 @@ def build_for_symbol(symbol: str, start: date, end: date,
     df = ohlcv.merge(trades, on="ts_event", how="left") if not trades.empty else ohlcv
     df = df.merge(dmp, on="ts_event", how="left") if not dmp.empty else df
 
+    # 4bis-pre. Snapshot dist_mq_*_ticks du DMP AVANT attach_mq_distances
+    # (qui pre-allocate NaN et ecrase les valeurs DMP). On restore via fillna apres.
+    # FIX MENTHORQ COVERAGE 16/05/2026 v3.
+    _dmp_mq_snapshot = {}
+    _snapshot_cols = ["dist_mq_call", "dist_mq_put", "dist_mq_hvl",
+                       "dist_mq_call_0dte", "dist_mq_put_0dte", "dist_mq_hvl_0dte"]
+    for col in _snapshot_cols:
+        if col in df.columns and df[col].notna().any():
+            _dmp_mq_snapshot[col] = df[col].copy()
+
     # 4bis. Si MQ_Lite mode : asof merge + calcul distances (close depuis OHLCV)
     if use_mq_lite and not mq_levels.empty:
         from load_mq_levels import attach_mq_distances
         print("  [4bis/6] Asof merge MQ_Lite levels + compute distances...")
         df = attach_mq_distances(df, mq_levels, tick_size=get_tick_size(symbol))
+
+    # 4bis-restore. Restore DMP dist_mq_*_ticks pour les bars NaN apres MQ_Lite.
+    # MQ_Lite valeurs (bars matched asof) sont AUTORITAIRES, fallback DMP comble trous.
+    if _dmp_mq_snapshot:
+        n_restored = 0
+        for col, dmp_vals in _dmp_mq_snapshot.items():
+            if col in df.columns:
+                mask_nan = df[col].isna() & dmp_vals.notna()
+                if mask_nan.any():
+                    df.loc[mask_nan, col] = dmp_vals[mask_nan]
+                    n_restored += int(mask_nan.sum())
+            else:
+                df[col] = dmp_vals
+                n_restored += int(dmp_vals.notna().sum())
+        if n_restored > 0:
+            print(f"  [4bis-restore] DMP dist_mq_*_ticks restaures (post-attach NaN) : {n_restored} valeurs")
+
+    # 4bis-fallback. FIX BUG MenthorQ COVERAGE 16/05/2026 :
+    # Pour les mois pre-MQ_Lite deploy (28/04/2026), MQ_Lite Hive est vide
+    # mais le DMP JSONL contient `dist_mq_*` en TICKS (post menthorq_backfill_injector).
+    # On calcule `dist_mq_*_pct` en fallback = dist_mq_*_ticks * tick / close * 100.
+    # Convention NEW (level - close) preservee : signe DMP C++ deja NEW.
+    # Resultat attendu : coverage MQ Dec-Mar passe de 0% a ~95% sur ES/NQ.
+    _tick = get_tick_size(symbol)
+    _fallback_mq_map = [
+        ("dist_mq_call", "dist_mq_call_pct"),
+        ("dist_mq_put", "dist_mq_put_pct"),
+        ("dist_mq_hvl", "dist_mq_hvl_pct"),
+        ("dist_mq_call_0dte", "dist_mq_call_0dte_pct"),
+        ("dist_mq_put_0dte", "dist_mq_put_0dte_pct"),
+        ("dist_mq_hvl_0dte", "dist_mq_hvl_0dte_pct"),
+    ]
+    n_filled_fallback = 0
+    for ticks_col, pct_col in _fallback_mq_map:
+        if ticks_col in df.columns:
+            # Mask : pct vide (NaN) ET ticks dispo ET close valide
+            need_fill = (
+                (pct_col not in df.columns or df[pct_col].isna())
+                & df[ticks_col].notna()
+                & df["close"].notna()
+                & (df["close"] != 0)
+            )
+            if need_fill.any():
+                # dist_pct = (level - close) / close * 100
+                #         = (dist_ticks * tick) / close * 100  [convention DMP NEW]
+                pct_values = (df.loc[need_fill, ticks_col] * _tick / df.loc[need_fill, "close"]) * 100
+                if pct_col not in df.columns:
+                    df[pct_col] = pd.NA
+                df.loc[need_fill, pct_col] = pct_values
+                n_filled_fallback += int(need_fill.sum())
+    if n_filled_fallback > 0:
+        # Marquer is_mq_filled=1 pour ces bars (fallback considere MQ valide)
+        if "is_mq_filled" in df.columns:
+            mask_filled = df["dist_mq_call_pct"].notna() | df["dist_mq_put_pct"].notna()
+            df.loc[mask_filled & df["is_mq_filled"].isna(), "is_mq_filled"] = 1
+        print(f"  [4bis-fallback] DMP dist_mq_*_ticks -> _pct : {n_filled_fallback} valeurs remplies")
 
     # 4ter. VIX_Lite (Phase 2a — decouplage progressif des vix_* du DMP full).
     # But strategique 13/05/2026 : Bot 2 V6 full Databento. VIX_Lite est une etude

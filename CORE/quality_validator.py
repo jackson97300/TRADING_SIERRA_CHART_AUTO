@@ -207,6 +207,38 @@ NATURALLY_DIFFERENT = [
     "n_big_sell_t1",
 ]
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# FEATURES PROHIBITED Bug D (16/05/2026 — quality-auditor + market-analyst)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Identifiees apres rebuild 5 mois post Bug D + Bug E :
+#   - 7 RED flags : critere fuite, outlier, prix absolu, quasi-constante
+#   - DROP avant tout retrain LightGBM. Action systematique dans dataset_builder.
+PROHIBITED_FEATURES_BUGD = [
+    # CRITERE 3 : prix absolu (fuite instrument + non-stationnaire)
+    "avg_price",
+    # CRITERE 4 : outlier explosion (max/p99 = 1881-5824x sur 22K bars)
+    #   Cause : bug calcul find_nearest_below() quand pas de blind level proche.
+    #   Distribution bimodale (-28% ou ~0) = bruit non exploitable ML.
+    "dist_blind_nearest_dn_pct",
+    # CRITERE 4 : outlier 400x ES, 229x NQ (winsorisation envisagee Plan B)
+    #   Plan A : DROP. Plan B : clip(p1, p99) si signal residuel justifie.
+    "dist_gex_nearest_dn_pct",
+    # CRITERE 1 + 4 : fuite instrument ratio=1.31 + 77-91% nulls 4 mois
+    #   Cause : feature MQ-derived absente Dec-Mar 2026 (100% nulls),
+    #   apparait avril partiellement. Non exploitable training cross-period.
+    "position_in_range",
+    # CRITERE 5 : quasi-constantes (top_value_freq > 94%)
+    "bool_above_mq_call",        # 98.5% constant (rally avril-mai under call)
+    "gex_cluster_count_z",       # 94-98.9% top value
+    "is_roll_day",               # 99.9-100% constant (rarissime event 4x/an)
+    # CRITERE 5 MGC : constants strictes (std=0) post MGC regime skip
+    #   regime_engine skipped pour MGC (manque day_type/profile_shape DMP).
+    "regime_confidence",         # MGC only : nunique=1 std=0
+    "regime_trend_votes",        # MGC only : nunique=1 std=0
+    "regime_range_votes",        # MGC only : nunique=1 std=0
+    "regime_actionable",         # MGC only : nunique=1 std=0
+]
+
 # Meta columns a ignorer dans l'audit (pas des features)
 # Phase 1 (13/04/2026) : ajout is_nq, partial_session, atr qui sont construits
 # par dataset_builder mais excluses des features ML dans train_lightgbm.get_features.
