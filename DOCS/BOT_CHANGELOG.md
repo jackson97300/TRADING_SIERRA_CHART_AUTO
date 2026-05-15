@@ -62,6 +62,83 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-15 22:30 — FIX BUG D convention dist_X unifiee (level - close) compliant DMP C++
+
+**Categorie** : FIX (ML Pipeline + Trading) — Solution long-terme sans dette
+**Impact prod** : OFFLINE Phase 1 collecte. **Bot 2 V6 paper trade impact = features changent de signe sur dist_X raw/_pct, mais consommateurs alignes simultanement**.
+**Fichier(s)** : 14 fichiers patches (16 patches + 5 NO-OP confirmes par audit cross-check)
+**Reviewer(s) agent** : code-reviewer 3 rounds (NOGO → GO-AVEC-RESERVES → GO-final), quality-auditor independant, audit externe Jackson
+
+### Quoi
+Audit externe Jackson + 3 agents internes ont identifie convention signe `dist_X` divergente entre 30+ fichiers (raw `dist_X`, pct `dist_X_pct`, atr `dist_X_atr`) avec 3 sous-conventions melangees. ML LightGBM voit signes contradictoires pour memes niveaux = bruit pur.
+
+**Convention canonique adoptee** : `dist_X = (level - close)` partout. Positif = niveau au-dessus du prix. Compliant DMP C++ `CalcDistTicks(level, price) = (level - price) / tick`.
+
+**Fichiers patches** :
+
+### Producers (5 fichiers, 28+ lignes)
+1. `CORE/phase_b_helpers.py` : 10 lignes _pct inversees (ib_low, sess_low, cash_low, cur_*, prev_*, pdh, pdl batch + streaming)
+2. `CORE/phase_b_rolling_inputs.py` : 8 lignes batch (dist_ib_high/low, dist_sess_high/low, dist_cur_vpoc/vah/val, dist_vwap_d + vwap_d_side preserve `sign(close-vwap)` explicite)
+3. `CORE/phase_b_rolling_inputs_streaming.py` : 8 lignes live identiques
+4. `CORE/phase_b_plus_streaming.py` : 15 lignes dist_vwap_d/w/m_pct + sd_bands inversees (vwap_d L242-246, vwap_w L297-301, vwap_m L331-335)
+5. `CORE/databento_paper_trader.py` : 3 _pct recalc + 2 conditions L291,294 inversees
+
+### Consommateurs (4 fichiers)
+6. `CORE/rule_engine.py` : 14 inversions R1-R9 + R15-R16 + commentaires top NEW
+7. `CORE/mia_rule_backtest.py` : 10 inversions + docstring NEW
+8. `CORE/bot3_decision_engine.py:141-148` : 2 inversions LONG/SHORT
+9. `CORE/rules_discovery.py:309-310` : swap high_mask/low_mask
+
+### Primary models (2 fichiers)
+10. `CORE/primary_models/bataille_navale.py:284` : commentaire ajoute (var locale OLD intentionnelle, pas feature externe)
+11. `CORE/primary_models/va_failure_fade.py` : commentaires top + docstring inverses
+
+### Tests (2 fichiers)
+12. `CORE/tests/test_value_area_running.py:224-235` : assertion sign inversee
+13. `tools/test_dist_sign_convention.py` : 18 tests parite (3 niveaux × 4 features + 6 VWAP) - **18/18 PASS**
+
+### NO-OP confirmes (5 fichiers via audit cross-check 2 agents)
+- `bias_calculator_v6.py:325-336` : DEJA NEW conv, mon fix repare bug pre-existant (consommait OLD avec semantique NEW)
+- `rolling_features_streaming.py:842` : vpoc_side cross-count neutre au signe
+- `mia_sltp.py:867-906` : DEJA NEW conv
+- `primary_models/vwap_reversion.py` : DEJA NEW
+- `primary_models/expected_move_reversion.py` : DEJA NEW
+- `CPP+DATA/mia_data_validator.py` : NEW-compliant verifie
+
+### Pourquoi
+**Empirique** : audit 72 bars 3 symboles - 100% divergence signes raw/pct/atr sur 7 niveaux. LightGBM voit signes opposes pour meme signal = perte d'efficience.
+
+**Train-serve skew** : aucun (batch + live patches simultanes pour memes producers).
+
+### Validation pre-deploy
+- [x] Tests parite 18/18 PASS (`tools/test_dist_sign_convention.py`)
+- [x] Audit 3 agents (code-reviewer NOGO->GO + quality-auditor + audit externe Jackson)
+- [x] Cross-check audits convergent sur 6 fichiers, divergent sur 4 NO-OP confirmes
+- [x] Syntax check 14 fichiers OK
+- [ ] Backtest preservation Bot 2 V6 (preservation wins/losses labels, pas valeurs - cf CLAUDE.md ligne 86)
+
+### Revert plan
+```bash
+git revert <commits Bug D>
+ssh Administrator@212.28.179.199 "nssm stop MIA-Live-Enricher"
+scp CORE/*.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 "nssm start MIA-Live-Enricher"
+```
+
+### Suivi post-deploy
+- J+1 : grep logs - aucun cassage primary_models / bot3 / paper_trader
+- J+7 : audit JSONL live - dist_X raw + pct + atr meme signe sur 100% bars 3 symboles
+- J+30 : si retrain ML envisage, rebuild parquet V4 avec NEW conv obligatoire
+
+### Liens
+- Code-reviewer rounds 1-3 : NOGO 30+ fichiers → GO-AVEC-RESERVES 12 → GO-final apres 6 audits
+- Quality-auditor : confirme scope + recommande Option A (rejete par Jackson Option B "PAS DE DETTE")
+- Audit externe Jackson : plan 6 phases avec garde-fous fatigue
+- Sous-bug dist_vwap_d (OLD) vs dist_vwap_w/m (NEW) : decouvert audit externe, fixe ce soir
+- Bug E (clamp dist_*_atr) + atr_14m units POINTS deployes 13:28 UTC stables
+
+---
+
 ## 2026-05-15 20:00 — FIX BUGS E + atr_14m units : parite batch v4 (4x skew + clamp removed)
 
 **Categorie** : FIX (critique ML pipeline)

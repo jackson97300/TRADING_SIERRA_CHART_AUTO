@@ -28,9 +28,12 @@ NON-REPRODUCTIBLE en V4 (drop documente) :
 Ces inputs sont des HELPERS internes (drop ML_EXCLUDE_FEATURES). Seules les
 features ctx_* derivees arrivent au modele.
 
-Convention :
-  - distances POINTS = close - level (signe : close > level -> positif)
-  - distances pct = (close - level) / close * 100 (deja calculees en Phase B helpers)
+Convention (FIX BUG D 15/05/2026 - compliant DMP C++ CalcDistTicks) :
+  - distances POINTS = level - close (signe : level > close -> positif = niveau au-dessus)
+  - distances pct = (level - close) / close * 100
+  - distances atr = (level - close) / tick / atr_ticks
+  Tous les 3 ont meme signe pour le meme niveau. Audit empirique 16 lignes
+  inversees 2026-05-15. Test parite tools/test_dist_sign_convention.py.
 
 Auteur : Phase 1 V4 (2026-04-27)
 """
@@ -103,11 +106,15 @@ def add_vwap_derivees(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame
     # Slope 10 bars : (vwap_d - vwap_d.shift(10)) / 10 (en POINTS / bar - helper raw)
     df["vwap_slope_10"] = ((df["vwap_d"] - df["vwap_d"].shift(10)) / 10).astype("float32")
 
-    # Distance close - vwap_d (POINTS, signe conserve - helper raw)
-    df["dist_vwap_d"] = (df["close"] - df["vwap_d"]).astype("float32")
+    # FIX BUG D sub-bug VWAP 15/05/2026 : convention (level - close) compliant DMP C++
+    # CalcDistTicks(level, price) = (level - price) / tick, positif = niveau au-dessus.
+    df["dist_vwap_d"] = (df["vwap_d"] - df["close"]).astype("float32")
 
-    # Side : -1, 0, +1 selon close vs vwap_d (ML feature)
-    df["vwap_d_side"] = np.sign(df["dist_vwap_d"]).fillna(0).astype("int8")
+    # Side : -1, 0, +1 = preserve C++ semantics Sign(close - vwap) :
+    # +1 = price above VWAP (BULL), -1 = price below (BEAR), 0 = equal.
+    # NB : explicitement sign(close - vwap) au lieu de sign(dist_vwap_d) naif
+    # car convention NEW inverse le signe du raw dist.
+    df["vwap_d_side"] = np.sign(df["close"] - df["vwap_d"]).fillna(0).astype("int8")
 
     # Versions ATR-normalisees (ML features)
     atr_safe = df["atr"].replace(0, np.nan)
@@ -132,8 +139,10 @@ def add_ib_derivees(df: pd.DataFrame, tick: float = TICK_SIZE) -> pd.DataFrame:
 
     atr_safe = df["atr"].replace(0, np.nan)
     df["ib_range_atr"] = (df["ib_range_ticks"] / atr_safe).astype("float32")
-    df["dist_ib_high"] = (df["close"] - df["ib_high"]).astype("float32")
-    df["dist_ib_low"] = (df["close"] - df["ib_low"]).astype("float32")
+    # FIX BUG D 15/05/2026 : convention unique (level - close) compliant DMP C++
+    # CalcDistTicks(level, price) = (level - price) / tick, positif = niveau au-dessus
+    df["dist_ib_high"] = (df["ib_high"] - df["close"]).astype("float32")
+    df["dist_ib_low"] = (df["ib_low"] - df["close"]).astype("float32")
 
     # Alias V1 (ib_broken_down) -> V4 (ib_broken_dn)
     if "ib_broken_dn" in df.columns:
@@ -153,8 +162,9 @@ def add_session_derivees(df: pd.DataFrame) -> pd.DataFrame:
     if "sess_high" not in df.columns or "sess_low" not in df.columns:
         raise KeyError("[Phase 1] sess_high/low manquant.")
 
-    df["dist_sess_high"] = (df["close"] - df["sess_high"]).astype("float32")
-    df["dist_sess_low"] = (df["close"] - df["sess_low"]).astype("float32")
+    # FIX BUG D 15/05/2026 : convention unique (level - close)
+    df["dist_sess_high"] = (df["sess_high"] - df["close"]).astype("float32")
+    df["dist_sess_low"] = (df["sess_low"] - df["close"]).astype("float32")
 
     # Session entier : 0=Asia, 1=London, 2=US cash, 3=US after-hours
     # Si is_in_us_cash=1 -> 2 ; is_in_london=1 -> 1 ; is_in_asia=1 -> 0 ; is_in_us_after=1 -> 3
@@ -240,10 +250,11 @@ def add_vpoc_derivees(df: pd.DataFrame) -> pd.DataFrame:
     # inside_cur_va : alias V1 de inside_value_area
     df["inside_cur_va"] = df["inside_value_area"].astype("int8")
 
-    # Distances POINTS (close - level), signe conserve
-    df["dist_cur_vpoc"] = (df["close"] - df["cur_vpoc"]).astype("float32")
-    df["dist_cur_vah"] = (df["close"] - df["cur_vah"]).astype("float32")
-    df["dist_cur_val"] = (df["close"] - df["cur_val"]).astype("float32")
+    # Distances POINTS (level - close) compliant DMP C++
+    # FIX BUG D 15/05/2026 : convention unique (level - close), positif = level above
+    df["dist_cur_vpoc"] = (df["cur_vpoc"] - df["close"]).astype("float32")
+    df["dist_cur_vah"] = (df["cur_vah"] - df["close"]).astype("float32")
+    df["dist_cur_val"] = (df["cur_val"] - df["close"]).astype("float32")
     return df
 
 

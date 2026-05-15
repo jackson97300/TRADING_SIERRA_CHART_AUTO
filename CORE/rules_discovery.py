@@ -304,10 +304,12 @@ def analyze_clusters(df, base):
         if cluster_mask.sum() < 10:
             continue
 
-        # Determiner si cluster en zone haute ou basse
+        # FIX BUG D 15/05/2026 : convention NEW (level - close) compliant DMP C++
+        # dist_vwap_d > 0 = VWAP au-dessus du prix = prix EN-DESSOUS VWAP (zone basse)
+        # dist_vwap_d < 0 = VWAP sous le prix = prix AU-DESSUS VWAP (zone haute)
         if "dist_vwap_d" in df.columns:
-            high_mask = cluster_mask & (df["dist_vwap_d"] > 0)
-            low_mask = cluster_mask & (df["dist_vwap_d"] < 0)
+            high_mask = cluster_mask & (df["dist_vwap_d"] < 0)  # price above vwap
+            low_mask = cluster_mask & (df["dist_vwap_d"] > 0)   # price below vwap
         else:
             high_mask = cluster_mask
             low_mask = cluster_mask

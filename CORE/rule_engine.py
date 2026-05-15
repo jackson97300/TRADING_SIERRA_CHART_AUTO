@@ -59,6 +59,25 @@ def _get(row, col, default=0.0):
         return default
 
 
+def _get_nullable(row, col):
+    """Recupere une valeur numerique ou None (pour features avec sentinel null).
+
+    Contrairement a _get(), ne retourne PAS 0.0 par defaut. Retourne None si
+    la valeur est None, NaN, ou absente. A utiliser pour les features ou 0 serait
+    ambigu avec 'hors range' (ex: va_position_pct, ib_position_pct post fix
+    DMP_Transform.h 2026-04-16 qui ecrit null au lieu du sentinel -1).
+    """
+    try:
+        v = row.get(col, None) if isinstance(row, dict) else row.get(col, None)
+        if v is None:
+            return None
+        if isinstance(v, float) and v != v:  # NaN
+            return None
+        return float(v)
+    except Exception:
+        return None
+
+
 class RuleEngine:
     """Moteur de regles base sur les niveaux previous, options et order flow."""
 
@@ -108,8 +127,10 @@ class RuleEngine:
         # ═══════════════════════════════════════════════════════
         # TIER 1 — Previous Levels (DIRECTIONNEL)
         # Le prix arrive SUR un niveau → on trade le REBOND
-        # dist > 0 = prix AU-DESSUS du niveau → descend vers → BUY (rebond up)
-        # dist < 0 = prix EN-DESSOUS du niveau → monte vers → SELL (rejet down)
+        # FIX BUG D 15/05/2026 : convention DMP unique (level - close) compliant
+        # CalcDistTicks(level, price) = (level - price) / tick.
+        # dist > 0 = niveau AU-DESSUS du prix → prix sous le niveau → monte vers → SELL (rejet)
+        # dist < 0 = niveau EN-DESSOUS du prix → prix au-dessus → descend vers → BUY (rebond)
         # ═══════════════════════════════════════════════════════
 
         # R1: prev_VPOC — aimant, rebond dans la direction d'approche
@@ -117,10 +138,10 @@ class RuleEngine:
         dist_abs = abs(dist_raw)
         if 0 < dist_abs < 12:
             weight = 0.25 if dist_abs < 5 else 0.15
-            if dist_raw > 0:  # Prix au-dessus, descend vers VPOC → BUY
+            if dist_raw < 0:  # VPOC sous le prix = prix au-dessus, descend vers → BUY
                 buy_score += weight
                 signal.rules_fired.append(f"prev_VPOC({dist_raw:+.0f}t)→BUY_rebond")
-            else:  # Prix en-dessous, monte vers VPOC → SELL
+            else:  # VPOC au-dessus du prix = prix en-dessous, monte vers → SELL
                 sell_score += weight
                 signal.rules_fired.append(f"prev_VPOC({dist_raw:+.0f}t)→SELL_rejet")
 
@@ -129,7 +150,7 @@ class RuleEngine:
         dist_abs = abs(dist_raw)
         if 0 < dist_abs < 12:
             weight = 0.25 if dist_abs < 5 else 0.15
-            if dist_raw > 0:
+            if dist_raw < 0:  # VWAP sous le prix → BUY rebond
                 buy_score += weight
                 signal.rules_fired.append(f"prev_VWAP({dist_raw:+.0f}t)→BUY_rebond")
             else:
@@ -137,19 +158,19 @@ class RuleEngine:
                 signal.rules_fired.append(f"prev_VWAP({dist_raw:+.0f}t)→SELL_rejet")
 
         # R3: prev_VWAP_SD1d — bande BASSE = mean reversion BUY
-        # dist < 0 = prix EN-DESSOUS du SD1d = survendu = BUY mean reversion
-        # dist > 0 = prix au-dessus = zone normale, pas de signal
+        # dist > 0 = SD1d AU-DESSUS du prix = prix EN-DESSOUS du SD1d = survendu = BUY
+        # dist < 0 = SD1d en-dessous = zone normale, pas de signal
         dist_raw = _get(row, "dist_prev_vwap_sd1d")
-        if dist_raw < 0 and abs(dist_raw) < 12:
+        if dist_raw > 0 and abs(dist_raw) < 12:
             weight = 0.25 if abs(dist_raw) < 5 else 0.15
             buy_score += weight
             signal.rules_fired.append(f"prev_SD1d({dist_raw:+.0f}t)→BUY_survendu")
 
         # R4: prev_VWAP_SD1u — bande HAUTE = mean reversion SELL
-        # dist > 0 = prix AU-DESSUS du SD1u = surachete = SELL mean reversion
-        # dist < 0 = prix en-dessous = zone normale, pas de signal
+        # dist < 0 = SD1u SOUS le prix = prix AU-DESSUS du SD1u = surachete = SELL
+        # dist > 0 = SD1u au-dessus = zone normale, pas de signal
         dist_raw = _get(row, "dist_prev_vwap_sd1u")
-        if dist_raw > 0 and abs(dist_raw) < 12:
+        if dist_raw < 0 and abs(dist_raw) < 12:
             weight = 0.20 if abs(dist_raw) < 5 else 0.12
             sell_score += weight
             signal.rules_fired.append(f"prev_SD1u({dist_raw:+.0f}t)→SELL_surachete")
@@ -158,10 +179,10 @@ class RuleEngine:
         dist_raw = _get(row, "dist_prev_val")
         dist_abs = abs(dist_raw)
         if 0 < dist_abs < 12:
-            if dist_raw > 0:  # Au-dessus du VAL, descend vers → BUY rebond
+            if dist_raw < 0:  # VAL sous le prix = prix au-dessus, descend vers → BUY rebond
                 buy_score += 0.12
                 signal.rules_fired.append(f"prev_VAL({dist_raw:+.0f}t)→BUY_support")
-            else:  # En-dessous → SELL breakdown
+            else:  # VAL au-dessus = prix en-dessous → SELL breakdown
                 sell_score += 0.08
                 signal.rules_fired.append(f"prev_VAL({dist_raw:+.0f}t)→SELL_break")
 
@@ -169,10 +190,10 @@ class RuleEngine:
         dist_raw = _get(row, "dist_prev_vah")
         dist_abs = abs(dist_raw)
         if 0 < dist_abs < 12:
-            if dist_raw < 0:  # En-dessous du VAH, monte vers → SELL rejet
+            if dist_raw > 0:  # VAH au-dessus du prix = prix en-dessous, monte vers → SELL rejet
                 sell_score += 0.12
                 signal.rules_fired.append(f"prev_VAH({dist_raw:+.0f}t)→SELL_resist")
-            else:  # Au-dessus → BUY breakout
+            else:  # VAH sous le prix = prix au-dessus → BUY breakout
                 buy_score += 0.08
                 signal.rules_fired.append(f"prev_VAH({dist_raw:+.0f}t)→BUY_break")
 
@@ -185,10 +206,10 @@ class RuleEngine:
         dist_abs = abs(dist_raw)
         if 0 < dist_abs < 15:
             weight = 0.20 if dist_abs < 8 else 0.12
-            if dist_raw < 0:  # Prix en-dessous du call, monte vers → SELL
+            if dist_raw > 0:  # Call au-dessus du prix = prix en-dessous, monte vers → SELL
                 sell_score += weight
                 signal.rules_fired.append(f"Call_0DTE({dist_raw:+.0f}t)→SELL_resist")
-            else:  # Au-dessus du call → breakout rare
+            else:  # Call sous le prix = prix au-dessus → breakout rare
                 buy_score += weight * 0.3
                 signal.rules_fired.append(f"Call_0DTE({dist_raw:+.0f}t)→BUY_break")
 
@@ -197,10 +218,10 @@ class RuleEngine:
         dist_abs = abs(dist_raw)
         if 0 < dist_abs < 20:
             weight = 0.20 if dist_abs < 10 else 0.12
-            if dist_raw > 0:  # Prix au-dessus du put, descend vers → BUY
+            if dist_raw < 0:  # Put sous le prix = prix au-dessus, descend vers → BUY
                 buy_score += weight
                 signal.rules_fired.append(f"Put_0DTE({dist_raw:+.0f}t)→BUY_support")
-            else:  # En-dessous du put → SELL breakdown
+            else:  # Put au-dessus = prix en-dessous → SELL breakdown
                 sell_score += weight * 0.5
                 signal.rules_fired.append(f"Put_0DTE({dist_raw:+.0f}t)→SELL_break")
 
@@ -209,10 +230,10 @@ class RuleEngine:
         dist_abs = abs(dist_raw)
         if 0 < dist_abs < 20:
             weight = 0.12
-            if dist_raw > 0:  # Au-dessus, descend vers → attraction
+            if dist_raw < 0:  # HVL sous le prix = prix au-dessus, descend vers → attraction
                 buy_score += weight * 0.5
                 signal.rules_fired.append(f"MQ_HVL({dist_raw:+.0f}t)→aimant")
-            else:  # En-dessous, monte vers → SELL resistance
+            else:  # HVL au-dessus = prix en-dessous, monte vers → SELL resistance
                 sell_score += weight
                 signal.rules_fired.append(f"MQ_HVL({dist_raw:+.0f}t)→SELL_resist")
 
@@ -221,10 +242,10 @@ class RuleEngine:
             dist_raw = _get(row, col)
             dist_abs = abs(dist_raw)
             if 0 < dist_abs < 15:
-                if dist_raw > 0:  # Au-dessus → BUY rebond
+                if dist_raw < 0:  # comp_vpoc sous le prix → BUY rebond
                     buy_score += 0.10
                     signal.rules_fired.append(f"{col}({dist_raw:+.0f}t)→BUY")
-                else:  # En-dessous → SELL rejet
+                else:  # comp_vpoc au-dessus → SELL rejet
                     sell_score += 0.10
                     signal.rules_fired.append(f"{col}({dist_raw:+.0f}t)→SELL")
                 break
@@ -244,21 +265,24 @@ class RuleEngine:
             signal.rules_fired.append("div_VWAP_slope-_prix+→SELL")
 
         # R11: VA position extreme — SEULEMENT si le trend confirme
-        va_pos = _get(row, "va_position_pct")
+        # FIX 2026-04-16 : va_position_pct est null hors VA (pas -1 comme avant).
+        # On utilise _get_nullable pour ne PAS fallback a 0.0 qui ferait fire faux BUY
+        # sur toute barre hors VA. Ancienne logique va_pos < 0 devient va_pos is None.
+        va_pos = _get_nullable(row, "va_position_pct")
         vwap_sl_r11 = _get(row, "vwap_slope_10")
-        if va_pos > 0.80:
+        if va_pos is None:
+            # Hors VA -> pas de signal R11
+            pass
+        elif va_pos > 0.80:
             sell_score += 0.10
             signal.rules_fired.append(f"VA_haute({va_pos:.0%})→SELL")
-        elif va_pos < 0.20 and va_pos >= 0:
+        elif va_pos < 0.20:
             # VA basse = BUY seulement si le VWAP ne descend pas (sinon breakdown)
             if vwap_sl_r11 >= -0.1:
                 buy_score += 0.08
                 signal.rules_fired.append(f"VA_basse({va_pos:.0%})→BUY")
             else:
                 signal.rules_fired.append(f"VA_basse_SKIP(slope={vwap_sl_r11:.1f})")
-        elif va_pos < 0:
-            # va_position = -1 → hors VA completement, pas de signal
-            pass
 
         # R12: new_swing_high → BUY (NQ 64% WR, p=0.036)
         if _get(row, "new_swing_high") == 1:
@@ -276,14 +300,17 @@ class RuleEngine:
             signal.rules_fired.append("double_bottom+delta_div→BUY")
 
         # R15: VIX Call 0DTE au-dessus → BUY (ES 66% WR, n=547, p=0.000)
+        # FIX BUG D 15/05/2026 : convention NEW (level - close). Call AU-DESSUS
+        # du VIX prix = dist_vix_call > 0 (anciennement dist < 0 sous OLD conv).
         dist_vix_call = _get(row, "dist_vix_call_0dte")
-        if -20 < dist_vix_call < -3:
+        if 3 < dist_vix_call < 20:
             buy_score += 0.08
             signal.rules_fired.append("VIX_Call_0DTE_above→BUY")
 
         # R16: VIX Put 0DTE en-dessous → SELL (ES 65% WR, n=162, p=0.000)
+        # FIX BUG D 15/05/2026 : Put EN-DESSOUS du VIX prix = dist_vix_put < 0.
         dist_vix_put = _get(row, "dist_vix_put_0dte")
-        if 3 < dist_vix_put < 20:
+        if -20 < dist_vix_put < -3:
             sell_score += 0.10
             signal.rules_fired.append("VIX_Put_0DTE_below→SELL")
 

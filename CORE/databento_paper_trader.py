@@ -285,15 +285,18 @@ def score_consensus(bar: pd.Series, cfg: BotConfig) -> ScoreResult:
 
     # 3. Position range — dist_pdh_pct / dist_pdl_pct
     # Fallback : position_in_range (0=bottom, 1=top) si pdh/pdl absents
+    # FIX BUG D 15/05/2026 : convention NEW (level - close). dist_pdh < 0 = pdh sous
+    # le close = price AU-DESSUS du PDH (zone reversal court). Inversion de la
+    # condition vs ancienne convention OLD (close - level).
     dist_pdh = _safe_get(bar, "dist_pdh_pct")
     dist_pdl = _safe_get(bar, "dist_pdl_pct")
     pos_in_range = _safe_get(bar, "position_in_range", default=-1.0)
-    if dist_pdh > 0:  # au-dessus du PDH
+    if dist_pdh < 0:  # pdh sous le close = price above PDH (NEW conv)
         bear_pts += 1   # zone de reversal court
-        checks.append(f"above PDH (+{dist_pdh:.2f}%)")
-    elif dist_pdl < 0:  # sous PDL
+        checks.append(f"above PDH (dist={dist_pdh:.2f}%)")
+    elif dist_pdl > 0:  # pdl au-dessus du close = price below PDL (NEW conv)
         bull_pts += 1
-        checks.append(f"below PDL ({dist_pdl:.2f}%)")
+        checks.append(f"below PDL (dist={dist_pdl:.2f}%)")
     elif pos_in_range >= 0:  # fallback range_pos
         if pos_in_range <= 0.20:
             bull_pts += 1
@@ -1750,23 +1753,26 @@ class DatabentoPaperTrader:
         new_bar["volume"] = float(live["volume"])
 
         # Recalculer dist_mq_*_pct avec close LIVE (mq_* levels broadcast daily, restent valides)
+        # FIX BUG D 15/05/2026 : convention unique (level - close) compliant DMP C++
+        # Aligne sur phase_b_helpers.py dist_*_pct (positif = niveau au-dessus du close).
         for level_key in ("mq_call", "mq_put", "mq_hvl"):
             level = bar.get(level_key)
             if level is not None and pd.notna(level):
                 level_f = float(level)
                 if level_f > 0:
                     dist_key = f"dist_{level_key}_pct"
-                    new_bar[dist_key] = (live_close - level_f) / live_close * 100
+                    new_bar[dist_key] = (level_f - live_close) / live_close * 100
                     bool_key = f"bool_above_{level_key}"
                     new_bar[bool_key] = 1 if live_close > level_f else 0
 
         # Recalculer dist_pdh/pdl_pct avec close LIVE
+        # FIX BUG D 15/05/2026 : convention unique (level - close)
         for level_key, dist_key in [("pdh", "dist_pdh_pct"), ("pdl", "dist_pdl_pct")]:
             level = bar.get(level_key)
             if level is not None and pd.notna(level):
                 level_f = float(level)
                 if level_f > 0:
-                    new_bar[dist_key] = (live_close - level_f) / live_close * 100
+                    new_bar[dist_key] = (level_f - live_close) / live_close * 100
 
         # NOTE (FIX C v2 01/05) : recalcul dist_* aux walls T1+T2 deplace dans
         # `_inject_dist_ticks_from_pct` (apres reconstruction depuis _pct).

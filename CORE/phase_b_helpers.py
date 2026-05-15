@@ -260,9 +260,13 @@ def add_ib_features(df: pd.DataFrame, tick: float = TICK_SIZE,
     df["ib_range"] = df["ib_high"] - df["ib_low"]
     df["ib_broken_up"] = ((df["ib_complete"] == 1) & (df["high"] > df["ib_high"])).astype("int8")
     df["ib_broken_dn"] = ((df["ib_complete"] == 1) & (df["low"] < df["ib_low"])).astype("int8")
-    # Distances IB en pct (NOUVEAU - normalised, ML-usable). NaN avant 10:30 ET (anti-leak).
+    # Distances IB en pct (normalised, ML-usable). NaN avant 10:30 ET (anti-leak).
+    # FIX BUG D 15/05/2026 : convention unique (level - close) partout (compliant
+    # DMP C++ CalcDistTicks). dist_ib_low_pct inverse de (close-ib_low) -> (ib_low-close)
+    # pour cohrence signes avec dist_ib_high_pct et dist_X_atr (toutes positives
+    # si level > close).
     df["dist_ib_high_pct"] = ((df["ib_high"] - df["close"]) / df["close"] * 100).astype("float64")
-    df["dist_ib_low_pct"] = ((df["close"] - df["ib_low"]) / df["close"] * 100).astype("float64")
+    df["dist_ib_low_pct"] = ((df["ib_low"] - df["close"]) / df["close"] * 100).astype("float64")
 
     # ib_position_pct (uniquement si ib_complete)
     ib_rng = df["ib_range"].replace(0, np.nan)
@@ -407,6 +411,7 @@ def add_ib_features_streaming(
         out["ib_broken_dn"] = 0
 
     # 7. dist_ib_high_pct, dist_ib_low_pct (suivent mask, NaN si pre-IB)
+    # FIX BUG D 15/05/2026 : convention unique (level - close)
     close = out.get("close")
     if close is not None and not pd.isna(close) and float(close) != 0.0:
         cf = float(close)
@@ -415,7 +420,7 @@ def add_ib_features_streaming(
         else:
             out["dist_ib_high_pct"] = np.nan
         if not pd.isna(ib_low_out):
-            out["dist_ib_low_pct"] = (cf - ib_low_out) / cf * 100
+            out["dist_ib_low_pct"] = (ib_low_out - cf) / cf * 100
         else:
             out["dist_ib_low_pct"] = np.nan
     else:
@@ -568,13 +573,14 @@ def add_session_high_low_streaming(
     out["sess_low"] = sess_low_out
 
     # dist_sess_*_pct
+    # FIX BUG D 15/05/2026 : convention unique (level - close)
     if close is not None and not pd.isna(close) and float(close) != 0.0:
         cf = float(close)
         out["dist_sess_high_pct"] = (
             (sess_high_out - cf) / cf * 100 if not pd.isna(sess_high_out) else np.nan
         )
         out["dist_sess_low_pct"] = (
-            (cf - sess_low_out) / cf * 100 if not pd.isna(sess_low_out) else np.nan
+            (sess_low_out - cf) / cf * 100 if not pd.isna(sess_low_out) else np.nan
         )
     else:
         out["dist_sess_high_pct"] = np.nan
@@ -640,13 +646,14 @@ def add_session_high_low_streaming(
     out["cash_low"] = cash_low_out
 
     # dist_cash_*_pct
+    # FIX BUG D 15/05/2026 : convention unique (level - close)
     if close is not None and not pd.isna(close) and float(close) != 0.0:
         cf = float(close)
         out["dist_cash_high_pct"] = (
             (cash_high_out - cf) / cf * 100 if not pd.isna(cash_high_out) else np.nan
         )
         out["dist_cash_low_pct"] = (
-            (cf - cash_low_out) / cf * 100 if not pd.isna(cash_low_out) else np.nan
+            (cash_low_out - cf) / cf * 100 if not pd.isna(cash_low_out) else np.nan
         )
     else:
         out["dist_cash_high_pct"] = np.nan
@@ -715,8 +722,9 @@ def add_session_high_low(df: pd.DataFrame, tick: float = TICK_SIZE,
     # Full trading session HH/LL
     df["sess_high"] = df.groupby("session_date_trading")["high"].cummax()
     df["sess_low"] = df.groupby("session_date_trading")["low"].cummin()
+    # FIX BUG D 15/05/2026 : convention unique (level - close)
     df["dist_sess_high_pct"] = ((df["sess_high"] - df["close"]) / df["close"] * 100).astype("float64")
-    df["dist_sess_low_pct"] = ((df["close"] - df["sess_low"]) / df["close"] * 100).astype("float64")
+    df["dist_sess_low_pct"] = ((df["sess_low"] - df["close"]) / df["close"] * 100).astype("float64")
     # is_new event : high de cette barre > sess_high de la barre precedente
     prev_sess_high = df.groupby("session_date_trading")["sess_high"].shift(1)
     prev_sess_low = df.groupby("session_date_trading")["sess_low"].shift(1)
@@ -730,8 +738,9 @@ def add_session_high_low(df: pd.DataFrame, tick: float = TICK_SIZE,
     cash_mask = df["is_cash_session"] == 1
     df["cash_high"] = df.where(cash_mask).groupby("date_et")["high"].cummax()
     df["cash_low"] = df.where(cash_mask).groupby("date_et")["low"].cummin()
+    # FIX BUG D 15/05/2026 : convention unique (level - close)
     df["dist_cash_high_pct"] = ((df["cash_high"] - df["close"]) / df["close"] * 100).astype("float64")
-    df["dist_cash_low_pct"] = ((df["close"] - df["cash_low"]) / df["close"] * 100).astype("float64")
+    df["dist_cash_low_pct"] = ((df["cash_low"] - df["close"]) / df["close"] * 100).astype("float64")
     prev_cash_high = df.groupby("date_et")["cash_high"].shift(1)
     prev_cash_low = df.groupby("date_et")["cash_low"].shift(1)
     df["is_new_cash_high"] = ((df["high"] > prev_cash_high.fillna(-np.inf)) & cash_mask).astype("int8")
@@ -1040,13 +1049,14 @@ def add_volume_profile_features_streaming(
     else:
         out["poc_migration_dir"] = 0
 
-    # Distances pct (8 features) : (close - level) / close * 100
+    # Distances pct (8 features) : (level - close) / close * 100
+    # FIX BUG D 15/05/2026 : convention unique (level - close) compliant DMP C++
     if close is not None and not pd.isna(close):
         try:
             cf = float(close)
             if cf != 0.0:
                 def _dist(level):
-                    return (cf - level) / cf * 100 if not pd.isna(level) else np.nan
+                    return (level - cf) / cf * 100 if not pd.isna(level) else np.nan
                 out["dist_cur_vpoc_pct"] = _dist(cur_vpoc)
                 out["dist_cur_vah_pct"] = _dist(cur_vah)
                 out["dist_cur_val_pct"] = _dist(cur_val)
@@ -1191,14 +1201,15 @@ def add_volume_profile_features(
     # poc_migration_dir : signe(cur_vpoc - prev_vpoc) -> +1 vpoc up, -1 vpoc down, 0 unchanged
     df["poc_migration_dir"] = np.sign(df["cur_vpoc"] - df["prev_vpoc"]).fillna(0).astype("int8")
     # Distances en pct (ML-usable)
-    df["dist_cur_vpoc_pct"] = ((df["close"] - df["cur_vpoc"]) / df["close"] * 100).astype("float32")
-    df["dist_cur_vah_pct"] = ((df["close"] - df["cur_vah"]) / df["close"] * 100).astype("float32")
-    df["dist_cur_val_pct"] = ((df["close"] - df["cur_val"]) / df["close"] * 100).astype("float32")
-    df["dist_prev_vpoc_pct"] = ((df["close"] - df["prev_vpoc"]) / df["close"] * 100).astype("float32")
-    df["dist_prev_vah_pct"] = ((df["close"] - df["prev_vah"]) / df["close"] * 100).astype("float32")
-    df["dist_prev_val_pct"] = ((df["close"] - df["prev_val"]) / df["close"] * 100).astype("float32")
-    df["dist_pdh_pct"] = ((df["close"] - df["pdh"]) / df["close"] * 100).astype("float32")
-    df["dist_pdl_pct"] = ((df["close"] - df["pdl"]) / df["close"] * 100).astype("float32")
+    # FIX BUG D 15/05/2026 : convention unique (level - close) compliant DMP C++
+    df["dist_cur_vpoc_pct"] = ((df["cur_vpoc"] - df["close"]) / df["close"] * 100).astype("float32")
+    df["dist_cur_vah_pct"] = ((df["cur_vah"] - df["close"]) / df["close"] * 100).astype("float32")
+    df["dist_cur_val_pct"] = ((df["cur_val"] - df["close"]) / df["close"] * 100).astype("float32")
+    df["dist_prev_vpoc_pct"] = ((df["prev_vpoc"] - df["close"]) / df["close"] * 100).astype("float32")
+    df["dist_prev_vah_pct"] = ((df["prev_vah"] - df["close"]) / df["close"] * 100).astype("float32")
+    df["dist_prev_val_pct"] = ((df["prev_val"] - df["close"]) / df["close"] * 100).astype("float32")
+    df["dist_pdh_pct"] = ((df["pdh"] - df["close"]) / df["close"] * 100).astype("float32")
+    df["dist_pdl_pct"] = ((df["pdl"] - df["close"]) / df["close"] * 100).astype("float32")
     return df
 
 

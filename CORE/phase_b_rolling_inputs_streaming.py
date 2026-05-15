@@ -203,13 +203,17 @@ def add_vwap_derivees_streaming(
         if not np.isnan(vwap_d_prev):
             out["vwap_slope_10"] = (vwap_d - vwap_d_prev) / lookback
 
-    # Distance close - vwap_d (POINTS)
+    # FIX BUG D sub-bug VWAP 15/05/2026 : convention (level - close) compliant DMP C++
+    # Aligne sur phase_b_rolling_inputs.py:110 (batch). Positif = niveau au-dessus.
     if not np.isnan(c):
-        out["dist_vwap_d"] = c - vwap_d
-        # Side : signe(dist)
-        if out["dist_vwap_d"] > 0:
+        out["dist_vwap_d"] = vwap_d - c
+        # Side : preserve C++ semantics Sign(close - vwap) :
+        # +1 = price above VWAP (BULL), -1 = price below (BEAR), 0 = equal.
+        # Explicite sign(close - vwap), pas sign(dist_vwap_d) (qui flip post-NEW conv).
+        delta_cv = c - vwap_d
+        if delta_cv > 0:
             out["vwap_d_side"] = 1
-        elif out["dist_vwap_d"] < 0:
+        elif delta_cv < 0:
             out["vwap_d_side"] = -1
         else:
             out["vwap_d_side"] = 0
@@ -247,12 +251,13 @@ def add_ib_derivees_streaming(row: dict, tick: float = TICK_SIZE) -> dict:
         out["ib_range_atr"] = np.nan
 
     # Distances POINTS
+    # FIX BUG D 15/05/2026 : convention unique (level - close) compliant DMP C++
     if not np.isnan(c) and not np.isnan(ib_high):
-        out["dist_ib_high"] = c - ib_high
+        out["dist_ib_high"] = ib_high - c
     else:
         out["dist_ib_high"] = np.nan
     if not np.isnan(c) and not np.isnan(ib_low):
-        out["dist_ib_low"] = c - ib_low
+        out["dist_ib_low"] = ib_low - c
     else:
         out["dist_ib_low"] = np.nan
 
@@ -286,12 +291,13 @@ def add_session_derivees_streaming(row: dict) -> dict:
     l = _safe_float(out.get("low"))
 
     # Distances POINTS
+    # FIX BUG D 15/05/2026 : convention unique (level - close)
     if not np.isnan(c) and not np.isnan(sess_high):
-        out["dist_sess_high"] = c - sess_high
+        out["dist_sess_high"] = sess_high - c
     else:
         out["dist_sess_high"] = np.nan
     if not np.isnan(c) and not np.isnan(sess_low):
-        out["dist_sess_low"] = c - sess_low
+        out["dist_sess_low"] = sess_low - c
     else:
         out["dist_sess_low"] = np.nan
 
@@ -417,11 +423,12 @@ def add_vpoc_derivees_streaming(row: dict) -> dict:
     else:
         out["inside_cur_va"] = 0
 
-    # Distances POINTS (close - level, signe conserve)
+    # Distances POINTS (level - close) compliant DMP C++
+    # FIX BUG D 15/05/2026 : convention unique (level - close), positif = level above
     if not np.isnan(c):
-        out["dist_cur_vpoc"] = c - cur_vpoc if not np.isnan(cur_vpoc) else np.nan
-        out["dist_cur_vah"] = c - cur_vah if not np.isnan(cur_vah) else np.nan
-        out["dist_cur_val"] = c - cur_val if not np.isnan(cur_val) else np.nan
+        out["dist_cur_vpoc"] = cur_vpoc - c if not np.isnan(cur_vpoc) else np.nan
+        out["dist_cur_vah"] = cur_vah - c if not np.isnan(cur_vah) else np.nan
+        out["dist_cur_val"] = cur_val - c if not np.isnan(cur_val) else np.nan
     else:
         out["dist_cur_vpoc"] = np.nan
         out["dist_cur_vah"] = np.nan

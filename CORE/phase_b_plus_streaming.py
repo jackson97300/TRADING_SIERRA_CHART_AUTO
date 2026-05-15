@@ -237,12 +237,13 @@ def add_phase_b_plus_streaming(
         out[f"vwap_d_sd{n}d"] = vwap_d - n * sd if not np.isnan(vwap_d) else np.nan
 
     # dist_vwap_d_pct, sd1u/d, sd2u/d
+    # FIX BUG D 15/05/2026 : convention unique (level - close) compliant DMP C++
     if not np.isnan(c) and c > 0 and not np.isnan(vwap_d):
-        out["dist_vwap_d_pct"] = (c - vwap_d) / c * 100
-        out["dist_vwap_d_sd1u_pct"] = (c - out["vwap_d_sd1u"]) / c * 100
-        out["dist_vwap_d_sd1d_pct"] = (c - out["vwap_d_sd1d"]) / c * 100
-        out["dist_vwap_d_sd2u_pct"] = (c - out["vwap_d_sd2u"]) / c * 100
-        out["dist_vwap_d_sd2d_pct"] = (c - out["vwap_d_sd2d"]) / c * 100
+        out["dist_vwap_d_pct"] = (vwap_d - c) / c * 100
+        out["dist_vwap_d_sd1u_pct"] = (out["vwap_d_sd1u"] - c) / c * 100
+        out["dist_vwap_d_sd1d_pct"] = (out["vwap_d_sd1d"] - c) / c * 100
+        out["dist_vwap_d_sd2u_pct"] = (out["vwap_d_sd2u"] - c) / c * 100
+        out["dist_vwap_d_sd2d_pct"] = (out["vwap_d_sd2d"] - c) / c * 100
     else:
         for k in ("dist_vwap_d_pct", "dist_vwap_d_sd1u_pct", "dist_vwap_d_sd1d_pct",
                   "dist_vwap_d_sd2u_pct", "dist_vwap_d_sd2d_pct"):
@@ -292,12 +293,13 @@ def add_phase_b_plus_streaming(
     for n in (1, 2, 3):
         out[f"vwap_w_sd{n}u"] = vwap_w + n * sd_w if not np.isnan(vwap_w) else np.nan
         out[f"vwap_w_sd{n}d"] = vwap_w - n * sd_w if not np.isnan(vwap_w) else np.nan
+    # FIX BUG D 15/05/2026 : convention unique (level - close) compliant DMP C++
     if not np.isnan(c) and c > 0 and not np.isnan(vwap_w):
-        out["dist_vwap_w_pct"] = (c - vwap_w) / c * 100
-        out["dist_vwap_w_sd1u_pct"] = (c - out["vwap_w_sd1u"]) / c * 100
-        out["dist_vwap_w_sd1d_pct"] = (c - out["vwap_w_sd1d"]) / c * 100
-        out["dist_vwap_w_sd2u_pct"] = (c - out["vwap_w_sd2u"]) / c * 100
-        out["dist_vwap_w_sd2d_pct"] = (c - out["vwap_w_sd2d"]) / c * 100
+        out["dist_vwap_w_pct"] = (vwap_w - c) / c * 100
+        out["dist_vwap_w_sd1u_pct"] = (out["vwap_w_sd1u"] - c) / c * 100
+        out["dist_vwap_w_sd1d_pct"] = (out["vwap_w_sd1d"] - c) / c * 100
+        out["dist_vwap_w_sd2u_pct"] = (out["vwap_w_sd2u"] - c) / c * 100
+        out["dist_vwap_w_sd2d_pct"] = (out["vwap_w_sd2d"] - c) / c * 100
     else:
         for k in ("dist_vwap_w_pct", "dist_vwap_w_sd1u_pct", "dist_vwap_w_sd1d_pct",
                   "dist_vwap_w_sd2u_pct", "dist_vwap_w_sd2d_pct"):
@@ -326,12 +328,13 @@ def add_phase_b_plus_streaming(
     for n in (1, 2, 3):
         out[f"vwap_m_sd{n}u"] = vwap_m + n * sd_m if not np.isnan(vwap_m) else np.nan
         out[f"vwap_m_sd{n}d"] = vwap_m - n * sd_m if not np.isnan(vwap_m) else np.nan
+    # FIX BUG D 15/05/2026 : convention unique (level - close) compliant DMP C++
     if not np.isnan(c) and c > 0 and not np.isnan(vwap_m):
-        out["dist_vwap_m_pct"] = (c - vwap_m) / c * 100
-        out["dist_vwap_m_sd1u_pct"] = (c - out["vwap_m_sd1u"]) / c * 100
-        out["dist_vwap_m_sd1d_pct"] = (c - out["vwap_m_sd1d"]) / c * 100
-        out["dist_vwap_m_sd2u_pct"] = (c - out["vwap_m_sd2u"]) / c * 100
-        out["dist_vwap_m_sd2d_pct"] = (c - out["vwap_m_sd2d"]) / c * 100
+        out["dist_vwap_m_pct"] = (vwap_m - c) / c * 100
+        out["dist_vwap_m_sd1u_pct"] = (out["vwap_m_sd1u"] - c) / c * 100
+        out["dist_vwap_m_sd1d_pct"] = (out["vwap_m_sd1d"] - c) / c * 100
+        out["dist_vwap_m_sd2u_pct"] = (out["vwap_m_sd2u"] - c) / c * 100
+        out["dist_vwap_m_sd2d_pct"] = (out["vwap_m_sd2d"] - c) / c * 100
     else:
         for k in ("dist_vwap_m_pct", "dist_vwap_m_sd1u_pct", "dist_vwap_m_sd1d_pct",
                   "dist_vwap_m_sd2u_pct", "dist_vwap_m_sd2d_pct"):
