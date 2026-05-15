@@ -310,12 +310,23 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
         # IDEAS_BACKLOG : implementer z-score streaming pour parite complete.
         _close = float(ohlcv.get("close")) if ohlcv.get("close") is not None else None
         if _close is not None and _close > 0:
+            # P1.4 fix Jackson 15/05/2026 : alignment keys payload MQ_Lite.
+            # AVANT fix : code cherchait mq_call_resistance/put_support qui
+            # n'existent PAS dans le payload. Donc dist_mq_call/put_pct
+            # JAMAIS calcules. Meme pattern que BUG #1 next_wall_dist_ticks.
+            # Audit feature-engineer 15/05 : BUG silent dist_mq_call_pct.
+            #
+            # Decision code-reviewer 15/05 : PAS de fallback HVL silent.
+            # LightGBM gere les NaN naturellement (missing handling).
+            # Si mq_call_0dte null pendant US RTH = MenthorQ pas update -> laisser
+            # NaN honnete plutot que fallback HVL inverse signal.
             for mq_key, dist_key in (
-                ("mq_call_resistance", "dist_mq_call_pct"),
-                ("mq_call_resistance_0dte", "dist_mq_call_0dte_pct"),
-                ("mq_put_support", "dist_mq_put_pct"),
-                ("mq_put_support_0dte", "dist_mq_put_0dte_pct"),
+                ("mq_call", "dist_mq_call_pct"),
+                ("mq_call_0dte", "dist_mq_call_0dte_pct"),
+                ("mq_put", "dist_mq_put_pct"),
+                ("mq_put_0dte", "dist_mq_put_0dte_pct"),
                 ("mq_hvl", "dist_mq_hvl_pct"),
+                ("mq_hvl_0dte", "dist_mq_hvl_0dte_pct"),
                 # NOTE : dist_mq_hvl_pct_z REMOVED (BUG #1 fix) - z-score rolling
                 # non-trivial, IDEAS_BACKLOG. LOT 4 tolera l'absence.
             ):

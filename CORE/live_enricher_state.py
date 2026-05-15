@@ -472,6 +472,110 @@ def _seed_sessions_swings_from_warmup(
     )
 
 
+def _seed_swings_lag_from_warmup(
+    state: LiveEnricherState, symbol: str, df: Optional[pd.DataFrame] = None,
+) -> None:
+    """P1.2 fix Jackson 15/05/2026 : seed SessionsSwingsLagState complet.
+
+    Code-reviewer NOGO V1 : filler 21 bars deques NE SUFFIT PAS car tracker
+    re-detecte pivot au middle (idx=10) avec probabilite < 100%. Bug reduit
+    a 10-20 min vs 21 min initial = encore present.
+
+    Solution V2 : lire `_last_swing_high_price` + `_last_swing_low_price`
+    de V4 batch (100% non-null cf sessions_swings_engine.py:381-406) +
+    instancier `SwingPivot` directement -> dist_swing_*_pct populated
+    IMMEDIATEMENT post-seed.
+
+    Filler deques 21 bars conserve pour detection PROCHAIN pivot (continuite
+    tracker live).
+    """
+    if df is None:
+        df = state.bars_df
+    if df.empty:
+        _emit_log("ENRICHER_SEED_SWINGS_LAG_FAIL",
+                  sym=symbol, reason="bars_df empty")
+        return
+    # Filter rows avec high/low/close + session_id non-NaN (R1 code-reviewer)
+    cols_needed = ["high", "low", "close", "session_id"]
+    if not all(c in df.columns for c in cols_needed):
+        _emit_log("ENRICHER_SEED_SWINGS_LAG_FAIL",
+                  sym=symbol,
+                  reason=f"cols missing: {[c for c in cols_needed if c not in df.columns]}")
+        return
+    df_valid = df.dropna(subset=cols_needed)
+    if len(df_valid) < 21:
+        _emit_log("ENRICHER_SEED_SWINGS_LAG_FAIL",
+                  sym=symbol, reason=f"only {len(df_valid)} valid bars < 21")
+        return
+
+    # Prendre les 21 dernieres bars valides pour swing_window
+    df_seed = df_valid.iloc[-21:]
+
+    try:
+        from CORE.sessions_swings_lag_streaming import (
+            make_sessions_swings_lag_state, SwingPivot,
+        )
+    except ImportError:
+        try:
+            from sessions_swings_lag_streaming import (
+                make_sessions_swings_lag_state, SwingPivot,
+            )
+        except ImportError:
+            _emit_log("ENRICHER_SEED_IMPORT_FAIL", sym=symbol)
+            return
+
+    sym_pure = symbol.split(".")[0]
+    seeded = make_sessions_swings_lag_state(symbol=sym_pure)
+
+    # 1. Filler 5 deques (maxlen=21) pour continuite detection prochain pivot
+    for idx, (_, row) in enumerate(df_seed.iterrows()):
+        seeded.swing_window_high.append(float(row["high"]))
+        seeded.swing_window_low.append(float(row["low"]))
+        seeded.swing_window_close.append(float(row["close"]))
+        sid_val = row.get("session_id", -1)
+        try:
+            seeded.swing_window_sid.append(int(sid_val) if sid_val is not None else -1)
+        except (TypeError, ValueError):
+            seeded.swing_window_sid.append(-1)
+        seeded.swing_window_bar_idx.append(idx)
+    seeded.bar_idx = 21
+
+    # 2. CRITIQUE : lire _last_swing_high_price + _last_swing_low_price V4
+    # pour instancier SwingPivot direct -> dist_swing_* populated immediat.
+    # Sans ca, dist_swing_*_pct = null pendant 10-20 min (code-reviewer NOGO V1).
+    last_row = df_valid.iloc[-1]
+    last_sh = last_row.get("_last_swing_high_price")
+    last_sl = last_row.get("_last_swing_low_price")
+    try:
+        last_sid = int(last_row.get("session_id", -1)) if pd.notna(last_row.get("session_id")) else -1
+    except (TypeError, ValueError):
+        last_sid = -1
+
+    n_pivots_seeded = 0
+    if last_sh is not None and pd.notna(last_sh):
+        try:
+            seeded.last_swing_high = SwingPivot(
+                bar_idx=-1, price=float(last_sh), session_id=last_sid,
+            )
+            n_pivots_seeded += 1
+        except (TypeError, ValueError):
+            pass
+    if last_sl is not None and pd.notna(last_sl):
+        try:
+            seeded.last_swing_low = SwingPivot(
+                bar_idx=-1, price=float(last_sl), session_id=last_sid,
+            )
+            n_pivots_seeded += 1
+        except (TypeError, ValueError):
+            pass
+
+    state.engine_states["sessions_swings_lag"] = seeded
+    _emit_log(
+        "ENRICHER_SEED_SWINGS_LAG_FROM_V4",
+        sym=symbol, n_bars=21, n_pivots=n_pivots_seeded,
+    )
+
+
 def initialize_state(
     symbol: str,
     warmup_from_v4: bool = False,
@@ -519,6 +623,10 @@ def initialize_state(
             # Audit Pass 4 (15/05) : seed SessionsSwingsSimpleState asia_*/opens
             # depuis V4. Sans ce seed, boot mid-London = asia jamais traque.
             _seed_sessions_swings_from_warmup(state, symbol, df=df)
+            # P1.2 fix Jackson 15/05 : seed SessionsSwingsLagState swing_window
+            # deques (21 dernieres bars valides). Sans seed, dist_swing_*=null
+            # pendant 21 min apres cold start (BUG audit feature-engineer #7).
+            _seed_swings_lag_from_warmup(state, symbol, df=df)
         except Exception as e:
             # Non-silent : emit + log (anti-Pattern V1 reglesouveraine logs 01/05)
             _emit_log("ENRICHER_WARMUP_FAIL", sym=symbol, err=str(e)[:200])
