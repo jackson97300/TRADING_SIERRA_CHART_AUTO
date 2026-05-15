@@ -361,6 +361,24 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             else:
                 payload["next_wall_dist_ticks"] = float("nan")
 
+            # Pass 4 P6b : bool_gex_flip_zone = 1 - mq_gamma_condition
+            # Audit feature-engineer 15/05 dette #6 - reconstruction DMP-C++.
+            # mq_gamma_condition (menthorq_backfill_injector.py:148) :
+            #   = 1 si net_gex > 0 (dealer long gamma = stabilisant)
+            #   = 0 si net_gex <= 0 (dealer short gamma = volatile = flip zone)
+            # bool_gex_flip_zone (rolling_features div_regime_proxy_ok consumer)
+            # = inverse logique : 1 si flip (volatile), 0 si stable.
+            # Resout `div_regime_proxy_ok` qui etait constante 0/1.
+            gamma_cond = payload.get("mq_gamma_condition")
+            if gamma_cond is not None:
+                try:
+                    gc_int = int(gamma_cond)
+                    payload["bool_gex_flip_zone"] = 1 - gc_int
+                except (TypeError, ValueError):
+                    payload["bool_gex_flip_zone"] = 0  # default stable
+            else:
+                payload["bool_gex_flip_zone"] = 0  # default stable si MQ absent
+
         # Inject VIX snapshot (passthrough Phase 3a) + appel engine streaming Jour 5
         # Plug factory pattern : state.get_engine_state("vix_lite", VixLiteState)
         # Validation convention API streaming (Plan agent reframe Jour 5).
@@ -521,6 +539,28 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 payload = add_phase_b_plus_plus_trades_streaming(
                     payload, s_trades, trades_in_window=trades_records,
                 )
+
+                # ──────────────────────────────────────────────────────────
+                # P6c + P6d : proxies streaming pour features DMP-C++ NON-
+                # reproductibles (Diagonal Imbalance + Large Trader Ratio).
+                # Audit feature-engineer 15/05 dette #6 - reconstructions.
+                # P6c diag_imbalance : OFI normalise [-1, +1]
+                #   = (buy_vol - sell_vol) / (buy_vol + sell_vol)
+                #   = delta_bar / total_vol (proxy ratio asymetrie order flow)
+                # P6d large_trader_ratio : ratio biggest buy/sell single trade
+                #   = max_size_buy / max(max_size_sell, 1)
+                # NB : proxies != DMP-C++ exact (footprint VAP cellule),
+                # mais capturent meme concept asymetrie/concentration big traders.
+                # IDEAS_BACKLOG : retraitement V4 historique pour parite si requis.
+                _delta_bar = payload.get("delta_bar", 0.0) or 0.0
+                _total_vol = payload.get("total_vol", 0.0) or 0.0
+                if _total_vol > 0:
+                    payload["diag_imbalance"] = float(_delta_bar) / float(_total_vol)
+                else:
+                    payload["diag_imbalance"] = 0.0
+                _max_buy = payload.get("max_size_buy", 0) or 0
+                _max_sell = payload.get("max_size_sell", 0) or 0
+                payload["large_trader_ratio"] = float(_max_buy) / max(float(_max_sell), 1.0)
 
                 # ──────────────────────────────────────────────────────────
                 # P0 REORDER (audit feature-engineer 15/05 dette #6) :
@@ -767,6 +807,50 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     factory=lambda: make_sessions_swings_lag_state(symbol=symbol_pure),
                 )
                 payload = add_sessions_swings_lag_streaming(payload, s_sess_lag)
+
+                # P6a : retest_* streaming minimal (inline state via engine_states).
+                # Audit feature-engineer 15/05 dette #6 - reconstruction DMP-C++.
+                # Logique : retest_high quand high revient toucher last_swing_high
+                # (tolerance 5 ticks). retest_high_delta_div = retest + delta_div_sell
+                # (exhaustion bull). Symmetric pour retest_low.
+                # Consume par rolling_features ctx_double_top_trap (line 1146-1157).
+                _retest_state = state.get_engine_state(
+                    "retest_tracker",
+                    factory=lambda: {
+                        "last_retest_high_bar_idx": None,
+                        "last_retest_low_bar_idx": None,
+                        "bar_idx": 0,
+                    },
+                )
+                _retest_state["bar_idx"] += 1
+                _bar_idx = _retest_state["bar_idx"]
+                # Recuperer last_swing_*.price via state sessions_swings_lag
+                _last_h = s_sess_lag.last_swing_high.price if s_sess_lag.last_swing_high else None
+                _last_l = s_sess_lag.last_swing_low.price if s_sess_lag.last_swing_low else None
+                _high_bar = payload.get("high")
+                _low_bar = payload.get("low")
+                _tick_p6a = tick
+                _tol = 5 * _tick_p6a  # 5 ticks tolerance
+                # Detect retest high : high actuel >= last_swing_high - tolerance
+                if _last_h is not None and _high_bar is not None and _high_bar >= _last_h - _tol:
+                    _retest_state["last_retest_high_bar_idx"] = _bar_idx
+                # Detect retest low : low actuel <= last_swing_low + tolerance
+                if _last_l is not None and _low_bar is not None and _low_bar <= _last_l + _tol:
+                    _retest_state["last_retest_low_bar_idx"] = _bar_idx
+                # bars_since_retest
+                if _retest_state["last_retest_high_bar_idx"] is not None:
+                    payload["bars_since_retest_high"] = _bar_idx - _retest_state["last_retest_high_bar_idx"]
+                else:
+                    payload["bars_since_retest_high"] = 999  # never retested
+                if _retest_state["last_retest_low_bar_idx"] is not None:
+                    payload["bars_since_retest_low"] = _bar_idx - _retest_state["last_retest_low_bar_idx"]
+                else:
+                    payload["bars_since_retest_low"] = 999
+                # retest_*_delta_div : retest detected this bar AND delta_div correspondant
+                is_retest_h = payload["bars_since_retest_high"] == 0
+                is_retest_l = payload["bars_since_retest_low"] == 0
+                payload["retest_high_delta_div"] = 1 if (is_retest_h and payload.get("delta_div_sell", 0) == 1) else 0
+                payload["retest_low_delta_div"] = 1 if (is_retest_l and payload.get("delta_div_buy", 0) == 1) else 0
 
             # ──────────────────────────────────────────────────────────────────
             # Pass 3c Phase 3c semaine 4 : rvol streaming (10 features)

@@ -7,6 +7,17 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-15]** **Lint guard `check_feature_added_consistency.py` (anti Pattern V1 cousin recurrent)** | 2h | MEDIUM | PROPOSED (Review #3 R3 recommandation)
+  - **Source** : Review #3 R3 GO NET apres 3 iterations sur meme pattern (P3+P4+P5 stream/batch + GENERATED sets + path no-trades + log_catalog + emit pattern). Signal culture documentation manquante.
+  - **Fix** : creer `tools/check_feature_added_consistency.py` qui verifie qu'une feature ajoutee dans un engine est presente dans :
+    1. SET `*_GENERATED` du module
+    2. Path no-trades / footprint-absent (init defaults)
+    3. Miroir batch+stream
+    4. `log_catalog.py` (si emit log nouveau)
+    5. Test critical_keys (si feature ML-critical)
+  - **Trigger** : pre-commit hook ou CI script. Fail si feature dans `out["X"] =` mais absente du set.
+  - **Benefice** : evite Pattern V1 cousin recurrent (3 reviews iteratives en 1 session).
+
 - **[DETTE 2026-05-15]** **`next_wall_dist_ticks` batch V4 creation pour parite ML** | 1-2h | LOW | PROPOSED (Review #3 P3)
   - **Source** : Code-reviewer Review #3 P3 - feature creee stream (live_enricher.py:331-360) mais ABSENTE batch V4 (build_dataset_v4_phase_b.py, build_dataset_v4_dmp_databento.py). Utilisee par entry_quality_gate.py decision LIVE seulement, pas dans ML training V4 actuel.
   - **Impact** : asymetrie OK si V4 ML training ne consomme pas cette feature. Mais si on l'ajoute aux features ML futures, divergence batch/stream.
