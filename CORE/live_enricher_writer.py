@@ -76,6 +76,19 @@ def _json_default(obj):
             return obj.isoformat()
     except (ImportError, TypeError, ValueError):
         pass
+    # Standard library datetime.date / datetime.datetime
+    # Fix 15/05/2026 deploy : phase_b_helpers.add_session_metadata produit
+    # `date_et = ts_et.dt.date` (objet datetime.date), pas pd.Timestamp.
+    # json.dumps natif ne sait pas serializer date -> TypeError silent
+    # avant fix = 100% bars echec write JSONL (cf logs 06:33 ENRICHER_WRITE_FAIL).
+    try:
+        from datetime import date, datetime
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()  # YYYY-MM-DD
+    except ImportError:
+        pass
     # Fallback explicite : raise TypeError (vs silent)
     raise TypeError(
         f"Object of type {type(obj).__name__} not JSON serializable "

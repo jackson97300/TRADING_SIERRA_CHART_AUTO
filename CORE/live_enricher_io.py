@@ -161,11 +161,14 @@ def read_trades_last_n_seconds(symbol: str, n_seconds: int = 60) -> pd.DataFrame
 # MQ_Lite levels (wrap load_mq_levels.py)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Mapping symbol Live (Databento style) → symbol MQ_Lite (Sierra style)
+# Mapping symbol Live (Databento style) → symbol Python pour load_mq_levels
+# Fix 15/05/2026 deploy : load_mq_levels valide `symbol in SYMBOL_TO_FS_DIR.keys()`
+# (MGC, ES, NQ) puis convertit fs_symbol="GC" en interne via get_fs_dir(symbol).
+# Avant fix : on passait directement "GC" -> ValueError "symbol must be in [ES, NQ, MGC]".
 SYMBOL_TO_MQ_SYM = {
     "ES.c.0": "ES",
     "NQ.c.0": "NQ",
-    "MGC.v.0": "GC",  # MGC -> GC dossier filesystem (cf lessons.md mapping)
+    "MGC.v.0": "MGC",  # symbol Python (load_mq_levels handle fs dir mapping)
 }
 
 

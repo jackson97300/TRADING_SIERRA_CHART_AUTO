@@ -37,7 +37,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 LIVE_ENRICHED_DIR = ROOT / "DATA" / "live_enriched"
-HEARTBEAT_FILE = ROOT / "DATA" / "LIVE_CACHE" / "enricher_state" / "heartbeat.json"
+HEARTBEAT_FILE = ROOT / "DATA" / "LIVE_CACHE" / "_enricher_heartbeat.json"
 V4_BASE = ROOT / "DATA" / "datasets" / "v4_enriched"
 
 

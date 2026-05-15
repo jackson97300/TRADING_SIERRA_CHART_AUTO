@@ -62,6 +62,106 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-15 12:36 — DEPLOY MIA-Live-Enricher service VPS (Phase 1 collecte pure)
+
+**Categorie** : DEPLOY
+**Impact prod** : OFFLINE (collecte JSONL pure, AUCUN consumer bot/dashboard)
+**Fichier(s)** : `CORE/live_enricher*.py`, `CORE/log_catalog.py`, +20 fichiers streaming
+**Reviewer(s) agent** : code-reviewer (R2 commit b79d138 + R3 commit e2bc44f)
+
+### Quoi
+Premier demarrage MIA-Live-Enricher en production VPS comme service nssm.
+Demarre la collecte H24 des snapshots enrichis (~431 cols/bar) pour ES/NQ/MGC
+dans `DATA/live_enriched/{sym}/{YYYYMMDD}.jsonl`. Aucun consumer branche
+(decision Jackson Phase 1 = "pas encore brancher bot ou dashboard").
+
+### Pourquoi
+- Suite audit Pass 4 R1-R5 (5 risques closed) : R2 seed warmup commit b79d138
+  + R3 V4 oracle test commit e2bc44f
+- Jackson : "on peux commencer a recevoir des snapshots dans des dossiers
+  bien organises EN LIVE avant de brancher sur un bot"
+- Infrastructure code-ready depuis 13/05 mais jamais demarre (DATA/live_enriched
+  vide). Etape critique pour valider streaming end-to-end avant LIVE reel.
+
+### Impact attendu
+- Snapshots JSONL H24 disponibles pour inspection vs V4 batch oracle
+- Detection drift batch/stream en LIVE (vs V4 oracle test offline 8190 bars)
+- ~431 cols/bar, ~1 ligne/min/symbol = 1440 lignes/jour/symbol
+- Conso disque ~50 MB/jour total (3 symbols)
+
+### Bugs detectes + fixes deploy
+
+1. **AppDirectory chain** : nssm set avec `;` separator a stocke toute la chaine
+   PowerShell dans la valeur AppDirectory -> service start fail "Nom repertoire
+   invalide". Fix : separer chaque nssm set en commande SSH dediee.
+
+2. **SYMBOL_TO_MQ_SYM mapping MGC** : `live_enricher_io.py:165-169` mappait
+   `MGC.v.0 -> "GC"` (filesystem dir). Mais `load_mq_levels` valide
+   `symbol in SYMBOL_TO_FS_DIR.keys()` (= ES/NQ/MGC), pas GC. Fix :
+   `MGC.v.0 -> "MGC"` (symbol Python, load_mq_levels handle fs dir conversion).
+   Cf lessons.md "MGC -> GC mapping filesystem".
+
+3. **`datetime.date` not JSON serializable** : `phase_b_helpers.add_session_metadata`
+   produit `date_et = ts_et.dt.date` (objet datetime.date). `_json_default`
+   du writer gerait pd.Timestamp et np.* mais PAS la stdlib date. Fix :
+   ajout handling `isinstance(obj, (datetime, date))` -> `.isoformat()`.
+   Avant fix : 100% bars ENRICHER_WRITE_FAIL.
+
+4. **Sub-engines streaming pas tous deployes** : initial scp = 5 fichiers
+   live_enricher* + log_catalog. Manquait 20+ fichiers *_streaming.py +
+   helpers (footprint_builder_streaming, vix_lite_reader, etc.) -> Pattern V1
+   safe fallback "payload reverted to pre-chain" emit ENRICHER_ENGINE_FAIL.
+   Fix : scp batch complet (25 fichiers).
+
+### Validation pre-deploy
+- [x] Sanity test : `python -m CORE.live_enricher --test` 5/5 PASS local + VPS
+- [x] R2 seed warmup commit b79d138 (6 tests PASS, code-reviewer GO NET)
+- [x] R3 V4 parity test commit e2bc44f (3 pytest PASS)
+- [x] R5 lint guard commit 0743efe (37 modules baseline 0 violation)
+- [x] V4 parquet ES + NQ mai 2026 present (warmup seed source)
+
+### Validation post-deploy
+
+```
+Heartbeat ALIVE (age 20.8s, uptime 136s)
+ES.c.0 : 7 rows / 431 cols / schema live_enriched_1.0
+NQ.c.0 : 7 rows / 431 cols
+MGC.v.0 : 5 rows / 425 cols
+ML-critical features : 13/22 present (Phase 2 enquete 9 manquantes)
+0 bars failed
+```
+
+### Plan suivi
+
+- J+1 : sync JSONL VPS->PC + snapshot_inspector --compare-v4
+  - Cherche : open_cash captured a 09:30 ET (= 13:30 UTC) sur bar 14:30 UTC
+  - Verifie : ENRICHER_SEED_OPEN_CASH_FROM_V4 emit > 0 dans events log
+- J+7 : extension V4 oracle test aux 7+ sub-engines `groupby session_date_trading`
+  (sess_high/low, phase_d_dalton 4x, phase_b_v6, value_area_running)
+- Phase 2 (post-J+7) : Pattern V1 fix game_changers stream session_date_trading
+  OU mode RTH-only confirme
+
+### Revert plan
+
+```bash
+# Stop service (preserve data + state pickle)
+ssh Administrator@212.28.179.199 "nssm stop MIA-Live-Enricher"
+
+# Desinstaller (si bug bloquant)
+ssh Administrator@212.28.179.199 "nssm remove MIA-Live-Enricher confirm"
+```
+
+### Deployed at 2026-05-15 12:35 (Paris) / 06:35 ET / 10:35 UTC
+
+Service status confirme : Running Automatic.
+
+### Suivi post-deploy
+
+- Memory : `feedback_live_enricher_first_deploy_*` (a creer si pattern detecte)
+- Review agent : code-reviewer (R2+R3+R5 prior reviews valides)
+
+---
+
 ## 2026-05-13 15:00 — FEATURE Chantier 3 Phase 3b — sub-engine #4 volume_profile streaming (RUNNING VPOC intraday)
 
 **Categorie** : FEATURE

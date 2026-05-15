@@ -1,0 +1,1 @@
+{"service": "MIA-Live-Enricher", "status": "alive", "boot_ts": 1778841301.1390584, "uptime_sec": 135.84976768493652, "last_heartbeat_iso": "2026-05-15T10:37:16.988826+00:00", "n_bars_processed": {"ES.c.0": 3, "NQ.c.0": 3, "MGC.v.0": 3}, "n_bars_failed": {"ES.c.0": 0, "NQ.c.0": 0, "MGC.v.0": 0}, "symbols": ["ES.c.0", "NQ.c.0", "MGC.v.0"]}
