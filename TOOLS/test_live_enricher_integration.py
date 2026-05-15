@@ -236,12 +236,18 @@ def run_integration_chain(payload: dict, trades_df: pd.DataFrame, state, symbol:
     from phase_b_rolling_inputs_streaming import (
         make_phase_b_rolling_inputs_state, apply_rolling_inputs_streaming,
     )
+    from game_changers_streaming import (
+        add_game_changers_streaming, GameChangersState,
+    )
     with state.lock:
         s_ri = state.get_engine_state(
             "phase_b_rolling_inputs",
             factory=lambda: make_phase_b_rolling_inputs_state(symbol=symbol_pure),
         )
         payload = apply_rolling_inputs_streaming(payload, s_ri)
+        # P1 : game_changers (5 features Market Profile)
+        s_gc = state.get_engine_state("game_changers", factory=GameChangersState)
+        payload = add_game_changers_streaming(payload, s_gc, symbol=symbol_pure)
 
     # Pass 3b : rolling_features (5 sous-fonctions chain meme state)
     # Fix code-reviewer Pass 3b : isoler aliases + injecter ts ms epoch
@@ -386,6 +392,8 @@ def main():
         "atr", "vwap_slope_10", "dist_vwap_d",         # Pass 4a rolling_inputs
         "dist_ib_high", "session", "cvd_day",          # Pass 4a rolling_inputs
         "momentum_5b", "poc_position", "va_position_pct",  # Pass 4a rolling_inputs
+        "open_type", "day_type", "open_direction",     # P1 game_changers
+        "open_bias_conf",                               # P1 game_changers
     ]
     missing = [k for k in critical_keys if k not in payload_enriched]
     if missing:

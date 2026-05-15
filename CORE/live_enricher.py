@@ -469,6 +469,9 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             from phase_b_rolling_inputs_streaming import (
                 make_phase_b_rolling_inputs_state, apply_rolling_inputs_streaming,
             )
+            from game_changers_streaming import (
+                add_game_changers_streaming, GameChangersState,
+            )
             try:
                 from CORE.constants import get_session_boundaries as _get_bounds
             except ImportError:
@@ -523,6 +526,26 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                     factory=lambda: make_phase_b_rolling_inputs_state(symbol=symbol_pure),
                 )
                 payload = apply_rolling_inputs_streaming(payload, s_rolling_inputs_p0)
+
+                # P1 : game_changers_streaming (5 features Market Profile)
+                # Audit feature-engineer 15/05 dette #6 BUG #2 :
+                # add_game_changers_streaming existe (CORE/) mais PAS integre live.
+                # Produit : open_type, open_zone, day_type, open_direction,
+                # open_bias_conf - dont open_direction/open_bias_conf consommes
+                # par intermarket_streaming (im_cross_open_signal,
+                # im_open_type_agreement) -> 5-7 features im_* mortes auparavant.
+                # Top SHAP : open_type rank #2 (0.4334), day_type rank #4 (0.1109).
+                # Inputs : open_cash, price_1030 (Pass 4c-prereq) + ib_high/low/atr
+                # (Pass 4c-prereq + Pass 4a) + sess_high/low + prev_vah/val/vpoc +
+                # pdh/pdl (Pass 4c-prereq vp) + date_et + mins_et (Pass 4c-prereq
+                # sess_metadata) -- TOUS deja produits dans ordre P0 reorder.
+                s_game_changers = state.get_engine_state(
+                    "game_changers",
+                    factory=GameChangersState,
+                )
+                payload = add_game_changers_streaming(
+                    payload, s_game_changers, symbol=symbol_pure,
+                )
 
                 # LOT 2 : big orders V2 (10 features VAP scan)
                 s_big_v2 = state.get_engine_state(
@@ -816,6 +839,8 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
             tb = traceback.format_exc()
             failed_lot = "unknown"
             for marker, lot_name in (
+                # P1 marker
+                ("game_changers_streaming", "game_changers"),
                 # Pass 4a marker (deepest first - le plus profond)
                 ("phase_b_rolling_inputs_streaming", "phase_b_rolling_inputs"),
                 # Pass 4c-prereq markers
@@ -861,6 +886,8 @@ def _process_bar_cycle(symbol: str, state: LiveEnricherState) -> bool:
                 engine_name = "phase_b_helpers_chain"
             elif failed_lot == "phase_b_rolling_inputs":
                 engine_name = "phase_b_rolling_inputs_chain"
+            elif failed_lot == "game_changers":
+                engine_name = "game_changers_chain"
             else:
                 engine_name = "cross_asset_chain"
             logger.warning(

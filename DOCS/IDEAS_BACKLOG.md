@@ -7,6 +7,14 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE 2026-05-15]** **Clip physique `dist_mq_*_pct` streaming (parite batch full)** | 30min | LOW | PROPOSED (P0+P2 R2 reserve)
+  - **Source** : Code-reviewer P0+P2 R2 - batch fait clip physique `dist_mq_put_pct <= 0` + `dist_mq_call_pct >= 0` (build_dataset_v4_dmp_databento.py:904-910). Streaming n'a pas ce clip → si MQ live emet anomalie `put_support > close` (theorie impossible mais data quality possible), streaming garde la valeur positive vs batch clip a 0.
+  - **Impact** : divergence batch/stream sur anomalies MQ data. Rare en pratique.
+  - **Fix** : ajouter `payload["dist_mq_put_pct"] = min(0, payload["dist_mq_put_pct"])` + idem call. 4 lignes.
+
+- **[DETTE 2026-05-15]** **Test empirique P2 dispatch MQ snapshot** | 1h | LOW | PROPOSED (P0+P2 R2 reserve)
+  - Test actuel mock injecte payload directement, ne passe pas par `inputs["mq_levels"]` dispatch. Ajouter test 8 dans `test_live_enricher_integration.py` qui simule dispatch + verifie signe.
+
 - **[DETTE 2026-05-15]** **`dist_mq_hvl_pct_z` z-score streaming pour parite batch** | 2-3h | MEDIUM | PROPOSED (P2 R1 BUG #1)
   - **Source** : Code-reviewer P0+P2 R1 (commit 6b28f22) BUG #1 - `dist_mq_hvl_pct_z` n'est PAS un alias `mq_hvl_0dte`, c'est un z-score rolling normalise par symbole calcule batch (build_dataset_v4_dmp_databento.py:837).
   - **Impact** : LOT 4 absorb tolera l'absence (skip ligne 230) → 1 input MQ_NEUTRAL manquant. Pas bloquant LOT 4 (autre niveau HVL `dist_mq_hvl_pct` deja calcule). Mais dette ML : si feature `dist_mq_hvl_pct_z` est consommee ailleurs en aval (ML training), parite cassee.
