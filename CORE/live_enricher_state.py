@@ -732,6 +732,57 @@ def _seed_ib_from_warmup(
     )
 
 
+def _apply_gap_recovery_seeds(
+    state: LiveEnricherState, symbol: str, v4_parquet_path: Optional[Path],
+) -> None:
+    """FIX BUG #2 15/05/2026 : gap recovery seeds en HOT restart.
+
+    Pickle figé pendant 6h+ downtime → engine states stale. Si state engine
+    sous-optimal (= field critique None alors qu'evenement deja passé selon
+    bars du buffer), re-seed depuis V4 batch a jour.
+
+    Idempotent : ne touche un engine state que si CHAMP CRITIQUE EST None.
+    Si pas de gap (live continu), ces seeds ne font rien.
+
+    Critere "sous-optimal" par engine :
+    - IBState : ib_high is None ET buffer contient bar post-IB close
+    - SessionsSwingsSimpleState : ny_open is None ET buffer post-us_start
+    - VolumeProfileState : prev_vpoc is None ET buffer >= 1 jour
+    - OpenCashPrice1030State : price_1030 is None ET buffer post-10:30 ET
+
+    NB : N'ecrit JAMAIS sur engine state non-vide (preserve continuite live
+    nominal). Audit J+1 via codes log ENRICHER_SEED_*_FROM_V4.
+    """
+    if not v4_parquet_path or not v4_parquet_path.exists():
+        return
+    try:
+        df_v4 = pd.read_parquet(v4_parquet_path)
+    except Exception as e:
+        _emit_log("ENRICHER_WARMUP_FAIL", sym=symbol,
+                  err=f"gap_recovery_v4_read: {str(e)[:200]}")
+        return
+
+    # Test IB sous-optimal
+    ib_state = state.engine_states.get("ib_features")
+    if ib_state is None or getattr(ib_state, "ib_high", None) is None:
+        _seed_ib_from_warmup(state, symbol, df=df_v4)
+
+    # Test sessions sous-optimal : ny_open None
+    ss_state = state.engine_states.get("sessions_swings_simple")
+    if ss_state is None or getattr(ss_state, "ny_open", None) is None:
+        _seed_sessions_swings_from_warmup(state, symbol, df=df_v4)
+
+    # Test VP sous-optimal : prev_vpoc None
+    vp_state = state.engine_states.get("volume_profile")
+    if vp_state is None or getattr(vp_state, "prev_vpoc", None) is None:
+        _seed_volume_profile_from_warmup(state, symbol, df=df_v4)
+
+    # Test OpenCashPrice1030 sous-optimal : price_1030 None
+    oc_state = state.engine_states.get("open_cash_price_1030")
+    if oc_state is None or getattr(oc_state, "price_1030", None) is None:
+        _seed_open_cash_price1030_from_warmup(state, symbol, df=df_v4)
+
+
 def initialize_state(
     symbol: str,
     warmup_from_v4: bool = False,
@@ -749,7 +800,13 @@ def initialize_state(
     """
     state = load_state(symbol)
     if state is not None:
-        # Snapshot trouve, on continue
+        # Snapshot trouve - HOT restart. Mais le pickle peut etre stale (live
+        # down pendant 6h+ : sessions/IB engine states figes au timestamp pickle).
+        # FIX BUG #2 15/05/2026 : gap recovery seed pour HOT restart aussi.
+        # On re-applique les seeds ssi engine state sous-optimal (= signal vide
+        # alors qu'on est apres event critique : IB close, NY open, etc.).
+        # Idempotent : seeds overwrite uniquement si engine state nul.
+        _apply_gap_recovery_seeds(state, symbol, v4_parquet_path)
         return state
 
     # Cold start : creer state vide

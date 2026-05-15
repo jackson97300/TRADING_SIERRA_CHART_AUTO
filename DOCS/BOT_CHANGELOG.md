@@ -62,6 +62,61 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-15 19:15 — FIX BUG #2 IB seed + GAP RECOVERY pour HOT restart (state stale pickle)
+
+**Categorie** : FIX (extension fix 19:00 + gap recovery)
+**Impact prod** : OFFLINE (Live-Enricher collecte, aucun consumer)
+**Fichier(s)** : `CORE/live_enricher_state.py:740-805` (nouvelle fn `_apply_gap_recovery_seeds`), `CORE/live_enricher_state.py:817-822` (appel HOT restart path)
+
+### Quoi
+**Bug residuel apres 1er fix BUG #2 (19:00)** : seed IB n'etait appele que en
+cold start (pas de pickle). HOT restart avec pickle pre-existant pre-IB
+(snapshot pickle 12:11 UTC = pre-09:30 ET us_start) → seed jamais applique →
+ib_high reste None → bit 6 reste actif.
+
+Empirique post-19:00 HOT restart : flag=64 (ES bit 6) + flag=98 (NQ/MGC bit 6+5+1).
+
+**Fix gap recovery** : appel `_apply_gap_recovery_seeds` apres `load_state`
+si pickle existe. Idempotent : applique seed UNIQUEMENT si engine state
+sous-optimal (champ critique None alors que evenement passe).
+
+Criteres "sous-optimal" :
+- IBState : `ib_high is None` → seed depuis V4 batch
+- SessionsSwingsSimpleState : `ny_open is None` → seed
+- VolumeProfileState : `prev_vpoc is None` → seed
+- OpenCashPrice1030State : `price_1030 is None` → seed
+
+**Resultats post-deploy 19:15 UTC** :
+- 3 symboles ENRICHER_SEED_IB_FROM_V4 emit au boot ✅
+- NQ.c.0/MGC.v.0 flag 98 → 34 (bit 6 disparu) ✅
+- ES.c.0 flag 64 → 0 (bit 6 disparu, propre) ✅
+
+### Pourquoi
+Pickle figé pendant 6h+ downtime = state engine pre-evenements critiques de
+la journee. Le live va calculer 1ere bar post-boot SANS connaitre IB high/low
+de la session = data corruption persistante jusqu'au prochain rollover.
+
+Gap recovery permet de re-seeder ces engine states "morts" depuis V4 batch
+(qui a continue a etre rebuild par live_pipeline meme pendant downtime).
+
+### Validation pre-deploy
+- [x] Syntax check OK
+- [x] Test empirique 3/3 PASS post HOT restart 12:43 UTC
+- [x] Logs ENRICHER_SEED_IB_FROM_V4 emis pour 3 symboles
+- [x] Bit 6 disparu sur ES/NQ/MGC
+
+### Suivi post-deploy
+- J+1 : grep `ENRICHER_SEED_*_FROM_V4` boot logs. Tous emis ssi pickle stale.
+- Surveiller : gap recovery ne doit jamais overwrite live nominal (engine
+  state non-vide preserve par check None idempotent).
+
+### Liens
+- Bug observe : commit 296714b (seed IB) deploye mais ineffectif en HOT restart
+- Pattern future : refacto unifier 5 seeds en `seed_*_if_stale(state, key, ...)`
+  helper DRY (backlog).
+
+---
+
 ## 2026-05-15 19:00 — FIX BUG #2 IB seed depuis V4 batch (cold/HOT restart > 10:30 ET)
 
 **Categorie** : FIX
