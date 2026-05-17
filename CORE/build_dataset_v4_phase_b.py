@@ -206,12 +206,24 @@ def write_v4_atomic(df: pd.DataFrame, symbol: str, year: int, month: int, origin
             if not o.equals(n):
                 raise RuntimeError(f"Original datetime column {col!r} modified in Phase B output")
             continue
-        # Numeric cols
+        # Numeric cols : tolerance adaptive par dtype (FIX 17/05 Jackson)
+        # Avant : atol=1e-12 trop strict pour float32 (precision native ~1e-7).
+        # Recompute Phase A produit artefacts float32 > 1e-12 -> check fail
+        # systematique sur cvd_5d_rolling_ffd (cast .astype("float32") ligne 705
+        # build_dataset_v4_dmp_databento.py). Bloquait le pipeline V4 entierement.
+        # Maintenant : float32 -> atol=1e-5, float64 -> atol=1e-12 (strict).
         if pd.api.types.is_numeric_dtype(s_orig):
+            if s_orig.dtype == np.float32 or s_new.dtype == np.float32:
+                atol_use, rtol_use = 1e-5, 1e-5
+            else:
+                atol_use, rtol_use = 1e-12, 1e-9
             if not np.allclose(s_orig.fillna(-9e18).values,
                                s_new.fillna(-9e18).values,
-                               equal_nan=True, rtol=1e-9, atol=1e-12):
-                raise RuntimeError(f"Original numeric column {col!r} modified in Phase B output")
+                               equal_nan=True, rtol=rtol_use, atol=atol_use):
+                raise RuntimeError(
+                    f"Original numeric column {col!r} modified in Phase B output "
+                    f"(dtype={s_orig.dtype}, tolerance atol={atol_use})"
+                )
             continue
         # Object/string/bool : equals strict
         if not s_orig.equals(s_new):

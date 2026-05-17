@@ -2230,10 +2230,14 @@ class PaperTrader:
             if hasattr(ts_ev, "isoformat"):
                 bar["ts_event_iso"] = ts_ev.isoformat()
 
-            # FIX R2 code-reviewer : staleness check (pipeline V4 cycle 5 min)
-            # Si bar V4 > 600s = pipeline V4 down ou retard -> emit STALE et
-            # retourne None pour forcer fallback DMP (3 gates basent dessus).
-            STALE_THRESHOLD_SEC = 600
+            # FIX 17/05 (Jackson "brancher Bot 2 V6 comme Bot 3") : threshold
+            # aligne Bot 3 (databento_paper_trader_v2.py:187 DATA_CRIT_THR_SEC=2700).
+            # Avant : 600s -> fallback DMP 100% du temps (12692 emits V6_V4_BAR_STALE
+            # le 15/05 = pipeline V4 stale 1266s = 21min, jamais < 600s en pratique).
+            # Apres : 2700s (45 min) = Bot 2 V6 utilise V4 enriched comme Bot 3 le fait.
+            # Le fallback DMP reste safety net mais devient rare (pipeline normalement
+            # < 30 min stale, > 45 min = bug pipeline a investiguer via watchdog).
+            STALE_THRESHOLD_SEC = 2700
             try:
                 if hasattr(ts_ev, "timestamp"):
                     bar_age_sec = (datetime.now(timezone.utc) - ts_ev.to_pydatetime()).total_seconds()
