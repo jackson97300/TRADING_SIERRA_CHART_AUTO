@@ -173,6 +173,11 @@ class Bot3Signal:
     bar_at_touch: dict       # bar entiere pour snapshot ulterieur
     # 🆕 09/05 (Bot 3 v2) : tag bucket pour routage SLTPEngine + bypass filter
     bucket: str = "HERITAGE"  # "HERITAGE" / "SIDAK" / "COMBO_BOOSTED"
+    # 17/05 P3 audit dashboard : propager params decision (boost_applied,
+    # swing_color_boost_applied, swing_color_consensus, atr_current) pour
+    # afficher SETUP COMPLET dans onglet "Trade en cours" (Jackson Q3 17/05).
+    # Cohesion avec Bot3DecisionLog.params (deja existant GAP 1).
+    params: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -528,6 +533,14 @@ class Bot3Engine:
             dist_pct_at_touch=retest_signal.retest_dist_signed,
             ctx=ctx,
             bar_at_touch=bar_at_touch,
+            # 17/05 P3 audit dashboard : signal automatique retest n'a pas de
+            # boost/swing_color (issu state machine, pas decision_engine).
+            # Dict minimal pour cohesion API : bucket SIDAK si applicable.
+            params={
+                "action": "BREAKOUT_RETEST",
+                "confidence": confidence,
+                "atr_multiplier": round(atr_multiplier, 3),
+            },
         )
 
     def _build_signal(
@@ -577,6 +590,9 @@ class Bot3Engine:
             ctx=ctx,
             bar_at_touch=bar_at_touch,
             bucket=bucket,
+            # 17/05 P3 audit dashboard : propager params (boost_applied, swing_color_*).
+            # Cle pour onglet "Trade en cours" SETUP COMPLET.
+            params=params,
         )
 
     def _scan_combos_boosted(

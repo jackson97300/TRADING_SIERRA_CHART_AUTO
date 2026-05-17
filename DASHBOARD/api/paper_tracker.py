@@ -37,6 +37,15 @@ except ImportError:
     from CORE.constants import get_cme_trading_day, CME_TZ, CME_DAY_ROLLOVER_HOUR_ET
     from CORE.eco_calendar import is_blocked_combined as _eco_is_blocked_combined
 
+# 17/05 R1 Q3 review code-reviewer : hoist import + singleton logger pour eviter
+# re-import dans except `_safe_read_state` (corrupt state -> 100 imports/min).
+# Singleton module-level + fallback stderr robuste si get_logger echoue au boot.
+try:
+    from CORE.logging_v2 import get_logger as _get_v2_logger
+    _PAPER_TRACKER_LOG = _get_v2_logger("dashboard_paper_tracker", process="dashboard")
+except Exception:
+    _PAPER_TRACKER_LOG = None
+
 
 def _cme_trading_day_start_utc(now_utc: Optional[datetime] = None) -> datetime:
     """Retourne le debut UTC du CME trading day courant.
@@ -94,13 +103,34 @@ def get_eco_status_payload() -> dict:
 
 
 def _safe_read_state(state_file: Path = STATE_FILE) -> dict:
-    """Lit state.json (atomic read, fallback dict vide si absent)."""
+    """Lit state.json (atomic read, fallback dict vide si absent).
+
+    B4 audit 17/05 : fail-loud sur JSON corrompu via emit BOT3_STATE_CORRUPT
+    (avant : except Exception: pass silencieux -> dashboard affiche
+    "OBSERVE_ONLY" 0 positions sans signal).
+    """
     if not state_file.exists():
         return _empty_state()
     try:
         with state_file.open("r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        # B4 17/05 : fail-loud sur JSON corrompu/permissions/IO error.
+        # Sans cet emit, on perdait toute trace d'un state corrompu.
+        # R1 Q3 17/05 : logger singleton module-level (vs re-import dans except).
+        if _PAPER_TRACKER_LOG is not None:
+            try:
+                _PAPER_TRACKER_LOG.emit("BOT3_STATE_CORRUPT",
+                                         state_file=str(state_file),
+                                         err_type=type(e).__name__,
+                                         err_msg=str(e)[:200])
+            except Exception:
+                # Logger casse aussi -> fallback stderr.
+                print(f"[BOT3_STATE_CORRUPT] {state_file} err={type(e).__name__}: {e}",
+                      file=sys.stderr, flush=True)
+        else:
+            print(f"[BOT3_STATE_CORRUPT] {state_file} err={type(e).__name__}: {e}",
+                  file=sys.stderr, flush=True)
         return _empty_state()
 
 
@@ -122,21 +152,30 @@ def _empty_state() -> dict:
 def _iter_trades_from_files(since_utc: datetime, pattern: str = "*_trades.jsonl"):
     """Yields trades from *_trades.jsonl files since a datetime.
 
-    pattern : '*_trades.jsonl' (BOT 1 DMP) ou '*_databento_trades.jsonl' (BOT 2 DB)
+    pattern accepted :
+      - '*_trades.jsonl'          → BOT 1 DMP (mia_paper_trader.py Sim3)
+      - '*_v6_trades.jsonl'       → BOT 2 V6 (mia2_brain_v6_databento.py Sim2)
+      - '*_databento_trades.jsonl' → BOT 2 V1 ARCHIVE (databento_paper_trader.py — deprecated 11/05)
+      - '*_databento_v3_trades.jsonl' → BOT 3 MP (databento_paper_trader_v2.py Sim1)
 
     FIX 29/04 soir (verdict code-reviewer NOGO) : le glob '*_trades.jsonl'
     matche AUSSI '*_databento_trades.jsonl' → Bot 1 stats incluaient les
     trades Bot 2 = double-comptage dashboard. Exclusion explicite des fichiers
     contenant 'databento' quand le pattern est Bot 1.
+
+    FIX 11/05/2026 (audit Bot 2 V6 stats fausses -$2783 vs reel +$868) :
+    le glob '*_trades.jsonl' matche AUSSI '*_v6_trades.jsonl' → Bot 1 stats
+    polluees par trades Bot 2 V6. Exclusion explicite 'v6' du pattern Bot 1.
+    Idem '*_databento_v3_trades.jsonl' Bot 3 (deja exclu par 'databento' match).
     """
     if not PAPER_DIR.exists():
         return
-    is_bot1_pattern = "databento" not in pattern
+    is_bot1_pattern = "databento" not in pattern and "v6" not in pattern
     for path in sorted(glob(str(PAPER_DIR / pattern))):
         # Filter by filename date
         fname = os.path.basename(path)
-        # FIX 29/04 soir : exclure les fichiers Bot 2 du glob Bot 1
-        if is_bot1_pattern and "databento" in fname:
+        # FIX 29/04 + FIX 11/05 : exclure Bot 2 V1 + Bot 2 V6 + Bot 3 du glob Bot 1
+        if is_bot1_pattern and ("databento" in fname or "v6" in fname):
             continue
         try:
             date_str = fname.split("_")[0]
@@ -175,10 +214,25 @@ def _iter_trades_from_files(since_utc: datetime, pattern: str = "*_trades.jsonl"
 def compute_stats_period(days: int, pattern: str = "*_trades.jsonl") -> dict:
     """Calcule stats sur N jours passes (WR, PF, PnL total, count par symbol).
 
-    pattern : '*_trades.jsonl' (BOT 1 DMP) ou '*_databento_trades.jsonl' (BOT 2 DB)
+    pattern :
+      - '*_trades.jsonl'              (BOT 1 DMP, Sim3)
+      - '*_databento_trades.jsonl'    (BOT 2 V1 ARCHIVE — deprecated 11/05)
+      - '*_v6_trades.jsonl'           (BOT 2 V6 Sim2)
+      - '*_databento_v3_trades.jsonl' (BOT 3 MP, Sim1)
     """
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    trades = list(_iter_trades_from_files(since, pattern))
+    trades_raw = list(_iter_trades_from_files(since, pattern))
+    # 13/05 FIX (Jackson "ON VOIS TOUJOURS PAS DONNER DES TRADE") : Bot 3 v3
+    # logge des entries RECOVERED_TIMEOUT (anti-zombie 2-stage boot) avec
+    # pnl_ticks=None + pnl_usd=None → TypeError dans `t.get("pnl_ticks", 0) > 0`
+    # car .get retourne None (cle existe mais valeur null), pas le default 0.
+    # Bot 1/Bot 2 jamais affectes (jamais de pnl_ticks=None). Aligne sur la
+    # protection _is_numeric_pnl de `_compute_stats_today_from_trades` (L267).
+    trades = [
+        t for t in trades_raw
+        if isinstance(t.get("pnl_ticks"), (int, float))
+        and t.get("pnl_ticks") == t.get("pnl_ticks")  # exclut NaN (NaN != NaN)
+    ]
     if not trades:
         return {"trades": 0, "wr": 0, "pf": None, "pnl_usd": 0, "pnl_ticks": 0, "by_symbol": {}}
 
@@ -461,7 +515,9 @@ def get_dual_bots_payload() -> dict:
     # vers V2 qui est le bot reellement actif depuis 02/05/2026.
     payload = {
         "bot1_dmp": _build_bot_payload(STATE_FILE, "*_trades.jsonl", "dmp"),
-        "bot2_db":  _build_bot_payload(STATE_FILE_DB_V2, "*_databento_trades.jsonl", "db"),
+        # FIX 11/05 (audit bug attribution) : pattern *_databento_trades.jsonl = Bot 2 V1 ARCHIVE
+        # (deprecated 11/05). Bot 2 V6 utilise state_v6.json + *_v6_trades.jsonl.
+        "bot2_db":  _build_bot_payload(STATE_FILE_DB_V2, "*_v6_trades.jsonl", "db"),
         "eco_status": get_eco_status_payload(),
     }
     return _clean_nan_inf(payload)
@@ -533,8 +589,23 @@ def get_bot3_payload() -> dict:
             "state_file": "databento_paper_v3_state.json",
             "state": None,
             "available": False,
+            "state_age_sec": None,
+            "paper_trader_alive": False,
             "msg": "Bot 3 MP non actif ou state.json non disponible",
         }
+
+    # P1 audit 17/05 (Jackson Q1) : aligner staleness backend Bot 3 avec Bot 1/2
+    # `_build_bot_payload` (lignes 402-414). Avant : frontend calculait age cote
+    # JS mais ne signalait JAMAIS staleness (paper_trader_alive=d.available
+    # statique). Sans cet ajout, freeze 6h Bot 3 invisible sur dashboard.
+    age_sec = None
+    ts_iso = state.get("ts_utc") or state.get("updated_iso") or state.get("ts")
+    if ts_iso:
+        try:
+            db_ts = datetime.fromisoformat(str(ts_iso).replace("Z", "+00:00"))
+            age_sec = max(0, (datetime.now(timezone.utc) - db_ts).total_seconds())
+        except (ValueError, AttributeError):
+            pass
 
     # SOLUTION DURABLE 06/05 (Plan agent GO) : closed_today + stats_today lus
     # depuis le journal append-only `*_databento_v3_trades.jsonl` ecrit par
@@ -547,6 +618,13 @@ def get_bot3_payload() -> dict:
     # Cap display 50 derniers trades (volume potentiel Bot 3 = 13 niveaux × 2 sym)
     closed_full = bot3_stats.get("closed_today", [])
     closed_display = closed_full[-50:] if len(closed_full) > 50 else closed_full
+
+    # 13/05 FIX section "7/30 derniers jours" vide pour Bot 3 (Jackson) :
+    # get_bot3_payload n'exposait que stats_today, contrairement a _build_bot_payload
+    # (Bot 1/Bot 2) qui calcule stats_7d/30d. Frontend (_renderPaperStatsPeriod) lit
+    # paperData.stats_7d/30d -> undefined -> "Pas de donnees historiques".
+    stats_7d = compute_stats_period(7, "*_databento_v3_trades.jsonl")
+    stats_30d = compute_stats_period(30, "*_databento_v3_trades.jsonl")
 
     return _clean_nan_inf({
         "state_file": "databento_paper_v3_state.json",
@@ -563,6 +641,8 @@ def get_bot3_payload() -> dict:
         "trade_count_today": bot3_stats.get("trade_count_today", 0),
         "stats_today": bot3_stats.get("stats_today", {}),
         "stats_by_symbol": bot3_stats.get("stats_by_symbol", {}),
+        "stats_7d": stats_7d,
+        "stats_30d": stats_30d,
         "phase": state.get("phase", "OBSERVE_ONLY"),
         "trade_rejections": state.get("trade_rejections", True),
         "trade_breakouts": state.get("trade_breakouts", True),
@@ -573,4 +653,7 @@ def get_bot3_payload() -> dict:
         "mode": state.get("mode", "OBSERVE_ONLY"),
         "available": True,
         "ts_utc": state.get("ts_utc"),
+        # P1 audit 17/05 : surveillance staleness backend (aligne Bot 1/2).
+        "state_age_sec": age_sec,
+        "paper_trader_alive": age_sec is not None and age_sec < 120,
     })

@@ -62,6 +62,97 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-17 16:00 — FEATURE Dashboard Bot 3 audit Jackson : SETUP COMPLET + staleness + MGC + race fix
+
+**Categorie** : FEATURE + REFACTO (critere 1 Trading + 6 Cross-module 6 fichiers ~250 LOC)
+**Impact prod** : DASHBOARD + PAPER (paper_trader_v2 dict enrichi)
+**Fichier(s)** :
+- `CORE/bot3_mp_engine.py` : Bot3Signal +1 champ `params: dict`, propagation `_build_signal` + retest minimal
+- `CORE/databento_paper_trader_v2.py` : 3 sites enrichissement `_bot3_positions[sym]` sous lock (DRY_RUN + prod + persist_state snapshot atomique)
+- `CORE/log_catalog.py` : +2 codes `BOT3_DASHBOARD_STATE_STALE` (MAJEUR), `BOT3_STATE_CORRUPT` (CRITIQUE)
+- `DASHBOARD/api/paper_tracker.py` : `get_bot3_payload` aligne Bot 1/2 (state_age_sec + paper_trader_alive), `_safe_read_state` fail-loud emit, singleton logger module-level
+- `DASHBOARD/static/js/dashboard.js` : refonte `_renderPositionV3` 2 panneaux SIGNAL + EXECUTION, boucle MGC, banner staleness 60s/300s, branche RECOVERED, atr_current visible
+- `DASHBOARD/static/css/dashboard.css` : +40 LOC classes (v3-pos-panel-*, v3-bucket-*, v3-regime-*, v3-confluence-*, v3-boost-applied, v3-banner-stale/frozen, v3-pos-recovered, grid dynamique 1/2/3)
+- `DASHBOARD/static/index.html` : bump css?v=81 js?v=131
+
+**Reviewer(s) agent** :
+- code-reviewer R0 (audit page Bot 3) : GO-AVEC-RESERVES + plan P1-P8 prioritise
+- code-reviewer R1 (cross-check implementation P1-P5) : 5 actions pre-deploy (Q1 race, B5 double atrMult, Q3 import paresseux, Q4 RECOVERED, B3 atr_current dead)
+- code-reviewer R2 (post-fix) : GO sans reserves bloquantes
+- market-analyst (UX trading SETUP) : en cours background
+
+### Quoi
+
+Jackson 17/05 demande explicite : "QUAND IL YA UN TRADE ENCORE IL SERAIS BIEN DE VOIR QUELLE NIVEAU ET SETUP EST EN COUR DAN LONGLET TRADE EN COURE" + "ON AVAIS EN PLACE DES SYSTEM DE SURVEILLANR RUN POUR VOIR S I IL YA DES PROBLEME DE LATENCE DE LECTURE DE FICHIER PERIMER" + "VERIFFIE TOUT SUR LA PAGE BOT 3 PEUX ON L AMELIORER".
+
+**Refonte page Bot 3 dashboard** :
+- Trade en cours en 2 panneaux : SIGNAL (decision au moment entry : niveau, confidence, regime favor, swing×color consensus, boosts session/swing, baseline PF level, VIX) + EXECUTION (entry/SL/TP, ATR entry, MFE/MAE, countdown timeout)
+- Surveillance staleness state.json : banner orange si age > 60s, banner rouge pulsant si > 300s
+- MGC desormais affiche (etait invisible depuis 12/05 Bot3GoldEngine ajoute)
+- Branche dediee positions RECUPEREES apres restart Bot 3 (signal info perdu, affiche entry/SL/TP basiques avec note)
+- Counters NQ+ES+MGC via reduce (avant : somme manuelle hardcodee)
+- Singleton logger paper_tracker (B4 fail-loud sur state.json corrompu)
+
+### Bug critique evite (race condition)
+
+Code-reviewer R1 a flagge race condition : `_bot3_positions[sym] = {...}` ecrit dans 2 sites SANS `_bot3_pos_lock`, alors que `_handle_dtc_fill` (thread daemon DTCConnector) le lit. Fix : 3 nouveaux sites sous lock (incluant snapshot atomique dans `_bot3_persist_state`).
+
+### Pourquoi
+
+Jackson Q3 "voir quel niveau ET SETUP en cours" : avant ce patch, `_bot3_positions[sym]` ne stockait QUE signal_id, level, side, action, n_contracts, entry/SL/TP, mfe/mae. Lignes mortes JS (`pos.confidence`, `pos.session_label_entry`, `pos.atr_multiplier`, `pos.trailing_*`) tombaient sur "—". Phase 1.7b/d (boost_applied + swing_color_consensus) ajoutes 17/05 matin = invisibles cote dashboard.
+
+Audit code-reviewer confirme H1-H5 (staleness backend absent, MGC invisible, position dict pauvre, paper_trader_alive frontend statique, recent_decisions schema minimal) + 4 bugs additionnels.
+
+### Impact attendu
+
+- Jackson voit en 3 sec POURQUOI un trade est en cours (regime, confluence, boost, baseline level)
+- Detection visuelle freeze paper_trader (banner > 60s/300s)
+- MGC trades visibles (sortie de l'angle mort dashboard)
+- Race condition `_handle_dtc_fill` vs `_bot3_persist_state` eliminee (state.json coherence)
+- Singleton logger : cost negligeable vs re-import par appel (5s)
+
+### Validation pre-deploy
+
+- [x] Tests unitaires : 39/39 PASS (Phase 1.7b 16 + Phase 1.7d 19 + anti-VALIDATION_MISS 4)
+- [x] AST parse `databento_paper_trader_v2.py` OK + Node JS syntax `dashboard.js` OK
+- [x] Import isole : `get_bot3_payload()` retourne state_age_sec + paper_trader_alive + positions multi-sym
+- [x] Singleton logger verifie : `<CORE.logging_v2.Logger object>` instance creee 1 fois module load
+- [x] Review code-reviewer R1 : 5 actions appliquees
+- [x] Review code-reviewer R2 : GO sans reserves bloquantes
+- [ ] Review market-analyst UX trading : en cours (non-bloquant pour deploy)
+
+### Revert plan
+
+```bash
+git revert <commit_sha>
+ssh VPS 'nssm restart MIA-DataBento-Paper-V2'
+ssh VPS 'Get-CimInstance Win32_Process -Filter "Name like ''python%''" | Stop-Process'  # restart uvicorn
+```
+
+Risque rollback faible : enrichissement dict + affichage additif + lock defensif. Pas de modif decision engine logic.
+
+### Suivi post-deploy J+1 (lundi 18/05)
+
+```bash
+ssh VPS 'findstr "BOT3_STATE_CORRUPT" C:/TRADING_SIERRA_CHART_AUTO/LOGS/errors/errors_20260518_*.jsonl | find /c /v ""'
+ssh VPS 'findstr "PY_EXCEPTION_HOT_PATH.*_bot3_persist_state" C:/TRADING_SIERRA_CHART_AUTO/LOGS/errors/errors_20260518_*.jsonl'
+# Verifier state.json contient setup complet
+ssh VPS 'type C:/TRADING_SIERRA_CHART_AUTO/DATA/PAPER_TRADES/databento_paper_v3_state.json'
+# Dashboard visuel : positions affichent regime/confluence/boost/baseline_pf
+```
+
+Si `BOT3_STATE_CORRUPT > 0` → state.json devient corrompu (investigation IO).
+Si `PY_EXCEPTION_HOT_PATH _bot3_persist_state > 0` → snapshot lock fail (debug ASAP).
+
+### Liens
+- INCIDENT_LOG : (rien aujourd'hui)
+- Audit R0 : code-reviewer page Bot 3 (H1-H5 + B1-B4)
+- Audit R1 : code-reviewer cross-check P1-P5 (5 actions)
+- Audit R2 : code-reviewer GO post-fix
+- Memory : `feedback_validation_miss_patterns.md` (P1 P5 confirme avec backend + emit)
+
+---
+
 ## 2026-05-17 13:30 — REFACTO Bot 3 log tracabilite : audit 6 GAPS + fixes
 
 **Categorie** : REFACTO (logs decisions + critere 1+2 critical-tasks-review : Trading + ML pipeline)

@@ -2599,15 +2599,43 @@ class DatabentoPaperTraderV2:
                   side=signal.side, action=signal.action,
                   qty=signal.n_contracts, price=signal.price_entry_ref,
                   sl=signal.sl_ticks, conf=signal.confidence)
-            self._bot3_positions[sym] = {
-                "signal_id": signal.signal_id,
-                "level": signal.level_name,
-                "side": signal.side,
-                "entry_price": signal.price_entry_ref,
-                "sl_price": sl_price,
-                "tp_cap_price": tp_cap_price,
-                "ts_open": signal.ts_event,
-            }
+            # 17/05 P3 audit dashboard : enrichir aussi le branche DRY_RUN
+            # pour coherence avec branche prod (ligne 2665+). Setup visible
+            # en mode test (Sim1 dry_run).
+            # 17/05 R1 review code-reviewer Q1 : LOCK pour eviter race avec
+            # `_handle_dtc_fill` thread daemon DTCConnector qui peut lire
+            # `_bot3_positions[sym]` en parallele.
+            _sig_ctx_dry = signal.ctx or {}
+            _sig_params_dry = signal.params or {}
+            try:
+                _session_entry_dry = compute_session_label(signal.ts_event)
+            except Exception:
+                _session_entry_dry = None
+            with self._bot3_pos_lock:
+                self._bot3_positions[sym] = {
+                    "signal_id": signal.signal_id,
+                    "level": signal.level_name,
+                    "level_tier": signal.level_tier,
+                    "side": signal.side,
+                    "action": signal.action,
+                    "n_contracts": signal.n_contracts,
+                    "confidence": signal.confidence,
+                    "bucket": signal.bucket,
+                    "atr_multiplier": signal.atr_multiplier,
+                    "entry_price": signal.price_entry_ref,
+                    "sl_price": sl_price,
+                    "tp_cap_price": tp_cap_price,
+                    "ts_open": signal.ts_event,
+                    "session_label_entry": _session_entry_dry,
+                    "mfe_ticks": 0.0, "mae_ticks": 0.0,
+                    "regime_mode": _sig_ctx_dry.get("regime_mode"),
+                    "regime_favor": _sig_ctx_dry.get("regime_favor"),
+                    "vix_level": _sig_ctx_dry.get("vix_level"),
+                    "swing_color_consensus": _sig_params_dry.get("swing_color_consensus"),
+                    "boost_applied": _sig_params_dry.get("boost_applied"),
+                    "swing_color_boost_applied": _sig_params_dry.get("swing_color_boost_applied"),
+                    "dry_run": True,
+                }
             return True
 
         if not self._ensure_dtc_connected():
@@ -2662,21 +2690,52 @@ class DatabentoPaperTraderV2:
                   drift_ticks=entry_drift_ticks,
                   bot="bot3_mp")
 
-        self._bot3_positions[sym] = {
-            "signal_id": signal.signal_id,
-            "level": signal.level_name,
-            "side": signal.side,
-            "action": signal.action,
-            "n_contracts": signal.n_contracts,
-            "entry_price": entry_price_effective,  # 12/05 FIX : fill_price reel
-            "signal_price": signal.price_entry_ref,  # 12/05 FIX : tracking signal separe
-            "entry_drift_ticks": entry_drift_ticks,  # 12/05 FIX : audit drift
-            "sl_price": sl_price,
-            "tp_cap_price": tp_cap_price,
-            "parent_id": parent_id, "tp_cid": tp_cid, "sl_cid": sl_cid,
-            "ts_open": signal.ts_event,
-            "mfe_ticks": 0.0, "mae_ticks": 0.0,
-        }
+        # 17/05 P3 audit dashboard : enrichissement SETUP COMPLET pour onglet
+        # "Trade en cours" (Jackson Q3 17/05). Lignes JS mortes
+        # `pos.confidence`/`pos.atr_multiplier`/`pos.session_label_entry` deviennent
+        # actives. Source : Bot3Signal (params Phase 1.7b/d propage depuis 17/05).
+        # 17/05 R1 review code-reviewer Q1 : LOCK pour eviter race avec
+        # `_handle_dtc_fill` thread daemon DTCConnector + `_bot3_persist_state`
+        # qui lit `_bot3_positions` pour serialiser state.json dashboard.
+        _sig_ctx = signal.ctx or {}
+        _sig_params = signal.params or {}
+        try:
+            _session_entry = compute_session_label(signal.ts_event)
+        except Exception:
+            _session_entry = None
+        with self._bot3_pos_lock:
+            self._bot3_positions[sym] = {
+                "signal_id": signal.signal_id,
+                "level": signal.level_name,
+                "level_tier": signal.level_tier,                     # P3 SETUP
+                "level_baseline_pf": signal.level_baseline_pf,       # P3 SETUP
+                "level_baseline_rej": signal.level_baseline_rej,     # P3 SETUP
+                "side": signal.side,
+                "action": signal.action,
+                "n_contracts": signal.n_contracts,
+                "confidence": signal.confidence,                     # P3 SETUP (Q3 Jackson)
+                "bucket": signal.bucket,                             # P3 SETUP (HERITAGE/SIDAK)
+                "atr_multiplier": signal.atr_multiplier,             # P3 SETUP
+                "entry_price": entry_price_effective,  # 12/05 FIX : fill_price reel
+                "signal_price": signal.price_entry_ref,  # 12/05 FIX : tracking signal separe
+                "entry_drift_ticks": entry_drift_ticks,  # 12/05 FIX : audit drift
+                "sl_price": sl_price,
+                "tp_cap_price": tp_cap_price,
+                "parent_id": parent_id, "tp_cid": tp_cid, "sl_cid": sl_cid,
+                "ts_open": signal.ts_event,
+                "session_label_entry": _session_entry,               # P3 SETUP (deja affiche frontend)
+                "mfe_ticks": 0.0, "mae_ticks": 0.0,
+                # P3 SETUP : context regime (Plan B regime_engine 03/05) au moment entry
+                "regime_mode": _sig_ctx.get("regime_mode"),
+                "regime_favor": _sig_ctx.get("regime_favor"),
+                "vix_level": _sig_ctx.get("vix_level"),
+                "dist_pct_at_touch": signal.dist_pct_at_touch,
+                # P3 SETUP : metadata Phase 1.7b/d (BOOST + swing_color confluence)
+                "swing_color_consensus": _sig_params.get("swing_color_consensus"),
+                "boost_applied": _sig_params.get("boost_applied"),
+                "swing_color_boost_applied": _sig_params.get("swing_color_boost_applied"),
+                "atr_current": _sig_params.get("atr_current"),
+            }
         # FIX #1 : tracker CIDs pour routing fills Bot 3
         self._bot3_cid_index[parent_id] = {"sym": sym, "type": "parent",
                                             "signal_id": signal.signal_id}
@@ -2917,6 +2976,23 @@ class DatabentoPaperTraderV2:
             phase = "OBSERVE_ONLY" if BOT3_OBSERVE_ONLY else (
                 "PAPER_FULL" if (BOT3_ENABLE_TIER2 or BOT3_ENABLE_TIER3) else "PAPER_TIER1"
             )
+
+            # 17/05 R1 Q1 review code-reviewer : snapshot atomique sous lock pour
+            # eviter race condition avec `_bot3_execute_trade` (poll) et
+            # `_handle_dtc_fill` (thread daemon DTCConnector) qui modifient
+            # `_bot3_positions[sym]`. Sans lock, state.json peut serialiser
+            # mid-update (champ entry_price ancien + sl_price nouveau).
+            with self._bot3_pos_lock:
+                positions_snapshot = {
+                    sym: (
+                        None if self._bot3_positions.get(sym) is None
+                        else dict(self._bot3_positions.get(sym))   # copy defensive
+                        if isinstance(self._bot3_positions.get(sym), dict)
+                        else dict(getattr(self._bot3_positions.get(sym), "__dict__", {}) or {})
+                    )
+                    for sym in SYMBOLS_BOT3
+                }
+
             state = {
                 "ts_utc": datetime.now(timezone.utc).isoformat(),
                 "trading_day": str(get_cme_trading_day()),
@@ -2933,15 +3009,9 @@ class DatabentoPaperTraderV2:
                 # 05/05 SOIR FIX : `_bot3_positions[sym]` peut etre dict OU objet.
                 # `.__dict__` crash sur dict (PY_EXCEPTION_HOT_PATH boucle 30s).
                 # Helper inline supporte les 2 types pour serialisation JSON robuste.
-                "positions": {
-                    sym: (
-                        None if self._bot3_positions.get(sym) is None
-                        else self._bot3_positions.get(sym)
-                        if isinstance(self._bot3_positions.get(sym), dict)
-                        else getattr(self._bot3_positions.get(sym), "__dict__", None)
-                    )
-                    for sym in SYMBOLS_BOT3   # 12/05 fix : MGC inclus snapshot Bot 3
-                },
+                # 17/05 R1 Q1 : snapshot atomique sous lock (cf supra) pour eviter
+                # race avec `_bot3_execute_trade`/`_handle_dtc_fill`.
+                "positions": positions_snapshot,
                 "level_stats": self.bot3_level_stats,
                 "recent_decisions": self.bot3_recent_decisions[-20:],
                 "n_contacts_today": self.bot3_counters_today["n_contacts"],

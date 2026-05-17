@@ -598,6 +598,11 @@ LOG_CODES = {
     "BOT3_BAR_OK":               (LogLevel.INFO,    "events",    "Bot3 BAR OK : {sym} bar_ts={bar_ts} age_sec={age_sec}"),
     # GAP 6 : SWING_COLOR distribution tracking (NEUTRE inclus) pour calibration
     "BOT3_SWING_COLOR_TRACKING": (LogLevel.INFO,    "decisions", "Bot3 SWING_COLOR distrib : {sym} level={level} bucket={bucket} side={side}"),
+    # Audit dashboard 17/05 (Jackson Q1+Q2) — surveillance staleness + corrupt state
+    # P5 : staleness state.json (emit lazy depuis dashboard backend si age > seuil)
+    "BOT3_DASHBOARD_STATE_STALE": (LogLevel.MAJEUR, "events", "Bot3 state.json STALE : age={age_sec}s threshold={threshold}s (pipeline lag ou paper_trader freeze)"),
+    # B4 : JSON state corrompu (fail-loud anti silent empty fallback)
+    "BOT3_STATE_CORRUPT":        (LogLevel.CRITIQUE,"errors",   "Bot3 state.json CORRUPT : {state_file} err={err_type} msg={err_msg} (dashboard fallback empty)"),
 
     # ============================================================
     # V6 brain Sim2 (05/05) — Bot V6 enrichi Databento V4

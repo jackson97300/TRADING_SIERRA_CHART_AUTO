@@ -4771,8 +4771,13 @@
                     // 13/05 FIX section "7/30 derniers jours" vide Bot 3 (Jackson)
                     stats_7d: d.stats_7d,
                     stats_30d: d.stats_30d,
-                    paper_trader_alive: d.available || false,
-                    state_age_sec: stateAge,
+                    // H4 audit 17/05 : utiliser le calcul backend (P1 paper_tracker.py)
+                    // au lieu de `d.available` statique (vrai des que state.json existe).
+                    // Fallback sur stateAge calcule JS si backend n'a pas remonte alive.
+                    paper_trader_alive: (typeof d.paper_trader_alive === "boolean")
+                        ? d.paper_trader_alive
+                        : (stateAge != null && stateAge < 120),
+                    state_age_sec: (typeof d.state_age_sec === "number") ? d.state_age_sec : stateAge,
                 };
                 if (typeof window.paperDataAll === "undefined") {
                     window.paperDataAll = { bot1_dmp: null, bot2_db: null, bot3_mp: null };
@@ -4795,39 +4800,166 @@
         if (!pos) return '<div class="v3-pos v3-pos-empty"><strong>' + sym + '</strong> : aucun contact actif</div>';
         // FIX 06/05 : state.json Bot 3 stocke `pos.level` (pas `level_name`)
         var levelLabel = pos.level || pos.level_name || "?";
+        // Q4 R1 review 17/05 : branche dediee pour positions RECOVERED au boot
+        // (re-attachees depuis broker apres restart). Setup info absente par
+        // definition (signal d'entry perdu). Affiche bloc explicite "RECUPEREE".
+        if (levelLabel === "_RECOVERED_BOOT_") {
+            var entryPriceR = pos.entry_price != null ? pos.entry_price : "?";
+            var slPriceR = pos.sl_price != null ? pos.sl_price : "—";
+            var tpPriceR = pos.tp_cap_price != null ? pos.tp_cap_price : (pos.tp_price != null ? pos.tp_price : "—");
+            var nContractsR = pos.n_contracts != null ? pos.n_contracts : "?";
+            var countdownR = _formatCountdown(pos.seconds_until_timeout);
+            return (
+                '<div class="v3-pos v3-pos-active v3-pos-recovered" data-sym="' + sym + '" data-timeout-sec="' + (pos.seconds_until_timeout || 0) + '">' +
+                '<div class="v3-pos-header"><strong>' + sym + ' ' + (pos.side || "?") + '</strong>' +
+                '<span class="v3-action-badge v3-action-recovered">RECUPEREE</span></div>' +
+                '<div class="v3-pos-row"><span>Info SIGNAL :</span><strong class="v3-recovered-note">absente (signal perdu apres restart)</strong></div>' +
+                '<div class="v3-pos-row"><span>Entry broker:</span><strong>' + entryPriceR + ' (' + nContractsR + ' contrats)</strong></div>' +
+                '<div class="v3-pos-row"><span>SL:</span><strong>' + slPriceR + '</strong></div>' +
+                '<div class="v3-pos-row"><span>TP:</span><strong>' + tpPriceR + '</strong></div>' +
+                '<div class="v3-pos-row v3-countdown-row"><span>⏱ Timeout dans:</span>' +
+                '<strong class="v3-countdown" id="v3-countdown-' + sym + '">' + countdownR + '</strong></div>' +
+                '</div>'
+            );
+        }
         var tier = pos.level_tier || pos.tier || "?";
         var side = pos.side || "?";
-        var action = pos.action || "?";   // REJECTION / BREAKOUT
+        var action = pos.action || "?";   // REJECTION / BREAKOUT / BREAKOUT_RETEST
         var conf = pos.confidence != null ? pos.confidence : "—";
         // FIX 06/05 : afficher SL/TP price absolus (state.json a sl_price + tp_cap_price)
         var slPrice = pos.sl_price != null ? pos.sl_price : null;
         var tpPrice = pos.tp_cap_price != null ? pos.tp_cap_price : (pos.tp_price != null ? pos.tp_price : null);
         var slTicks = pos.sl_ticks != null ? pos.sl_ticks + "t" : "—";
         var atrMult = pos.atr_multiplier != null ? "x" + pos.atr_multiplier : "";
-        var trailStatus = pos.trailing_activated ? "✓ ACTIF @ " + (pos.trailing_stop_price || "?") : "—";
         var countdown = _formatCountdown(pos.seconds_until_timeout);
         var sessionLabel = pos.session_label_entry || "—";
-        var actionBadge = action === "BREAKOUT"
-            ? '<span class="v3-action-badge v3-action-breakout">BREAK</span>'
+        var actionBadge = action === "BREAKOUT" || action === "BREAKOUT_RETEST"
+            ? '<span class="v3-action-badge v3-action-breakout">' + (action === "BREAKOUT_RETEST" ? "RETEST" : "BREAK") + '</span>'
             : '<span class="v3-action-badge v3-action-rejection">REJECT</span>';
+        // B5 R1 review 17/05 : si slPrice != null, NE PAS suffixer atrMult deux fois
+        // (eviter "29304 (5t) x1.5 x1.5"). atrMult deja affiche dans slLine.
         var slLine = slPrice != null
             ? slPrice + " (" + slTicks + ")"
-            : (slTicks + " " + atrMult);
+            : (slTicks + (atrMult ? " " + atrMult : ""));
         var tpLine = tpPrice != null ? tpPrice : "—";
+
+        // P4 audit 17/05 (Jackson Q3) : 2 panneaux SIGNAL + EXECUTION.
+        // SIGNAL = decision au moment entry (regime, boost, swing_color, baseline).
+        // EXECUTION = position en cours (prix, MFE/MAE, countdown).
+        // Source backend P3 : `_bot3_positions[sym]` enrichi avec params Phase 1.7b/d.
+        // UX R2 market-analyst 17/05 : 3 ameliorations critiques (Q1-Q3 audit visuel 3s)
+        var bucket = pos.bucket || "HERITAGE";
+        var bucketBadge = bucket !== "HERITAGE"
+            ? '<span class="v3-bucket-badge v3-bucket-' + bucket.toLowerCase() + '">' + bucket + '</span>'
+            : '';
+        var regimeMode = pos.regime_mode || "?";
+        var regimeFavor = pos.regime_favor || "NEUTRE";
+        var regimeFavorClass = regimeFavor === "LONG" ? "v3-regime-long"
+            : (regimeFavor === "SHORT" ? "v3-regime-short" : "v3-regime-neutre");
+        // UX R2 Q3 : drapeau COUNTER-TREND rouge gras (signal contre regime favor non NEUTRE)
+        var isCounterTrend = (regimeFavor === "LONG" && side === "SHORT")
+            || (regimeFavor === "SHORT" && side === "LONG");
+        var counterTrendBadge = isCounterTrend
+            ? '<span class="v3-counter-trend-badge">⚠ COUNTER-TREND</span>'
+            : '';
+        var swcBucket = pos.swing_color_consensus || "NEUTRE";
+        var swcClass = swcBucket.indexOf("CONFLUENCE_STRONG") >= 0 ? "v3-confluence-strong"
+            : (swcBucket.indexOf("CONFLUENCE_OK") >= 0 ? "v3-confluence-ok"
+            : (swcBucket === "DIVERGENCE" ? "v3-confluence-divergence" : "v3-confluence-neutre"));
+        // UX R2 Q4 : auto-hide swing_color row si NEUTRE (60% des cas)
+        var showSwc = (swcBucket && swcBucket !== "NEUTRE");
+        // Boost session × level (Phase 1.7b) + boost swing_color (1.7d).
+        var boostLines = "";
+        if (pos.boost_applied) {
+            boostLines += '<div class="v3-pos-row"><span>Boost session:</span><strong class="v3-boost-applied">+'
+                + pos.boost_applied.boost + ' (' + pos.boost_applied.session
+                + ' × ' + pos.boost_applied.level + ', PF=' + pos.boost_applied.pf_observed + ')</strong></div>';
+        }
+        if (pos.swing_color_boost_applied) {
+            boostLines += '<div class="v3-pos-row"><span>Boost swing_color:</span><strong class="v3-boost-applied">+'
+                + pos.swing_color_boost_applied.boost + ' (' + pos.swing_color_boost_applied.bucket + ')</strong></div>';
+        }
+        // UX R2 Q5 : pastille edge baseline_pf (PF>=2.0 fort, 1.3-2.0 moyen, <1.3 faible)
+        var baselinePf = pos.level_baseline_pf != null ? pos.level_baseline_pf : "?";
+        var baselineRej = pos.level_baseline_rej != null ? (Math.round(pos.level_baseline_rej * 100) + "%") : "?";
+        var edgePastille = "";
+        if (pos.level_baseline_pf != null) {
+            var pf = pos.level_baseline_pf;
+            if (pf >= 2.0) edgePastille = ' <span class="v3-edge-pastille v3-edge-strong">FORT</span>';
+            else if (pf >= 1.3) edgePastille = ' <span class="v3-edge-pastille v3-edge-medium">MOYEN</span>';
+            else edgePastille = ' <span class="v3-edge-pastille v3-edge-weak">FAIBLE</span>';
+        }
+        var vixLine = pos.vix_level != null ? pos.vix_level.toFixed(1) : "—";
+
+        // Drift signal -> fill (cf 12/05 entry_drift_ticks).
+        // UX R2 Q6 : auto-hide drift si <1.5t (bruit micro). Rouge si >3t (slippage anormal).
+        var driftLabel = "";
+        if (pos.entry_drift_ticks != null && pos.signal_price != null) {
+            var absDrift = Math.abs(pos.entry_drift_ticks);
+            if (absDrift >= 1.5) {
+                var driftSign = pos.entry_drift_ticks > 0 ? "+" : "";
+                var driftCls = absDrift > 3 ? "v3-drift v3-drift-high" : "v3-drift";
+                driftLabel = ' <span class="' + driftCls + '">(signal ' + pos.signal_price
+                    + ', drift ' + driftSign + pos.entry_drift_ticks + 't)</span>';
+            }
+        }
+        // UX R2 Q7 : ratio SL/ATR pastille (serre/normal/large)
+        var slAtrPastille = "";
+        if (pos.atr_current != null && pos.sl_ticks != null && pos.atr_current > 0) {
+            var ratio = pos.sl_ticks / pos.atr_current;
+            var ratioStr = ratio.toFixed(2);
+            if (ratio < 0.8) slAtrPastille = ' <span class="v3-slatr-pastille v3-slatr-tight">SERRE ' + ratioStr + '</span>';
+            else if (ratio > 1.5) slAtrPastille = ' <span class="v3-slatr-pastille v3-slatr-large">LARGE ' + ratioStr + '</span>';
+            else slAtrPastille = ' <span class="v3-slatr-pastille v3-slatr-normal">' + ratioStr + '</span>';
+        }
+
+        // UX R2 market-analyst 17/05 : hierarchie "WHY -> WHAT -> CONVICTION -> BOOSTS -> CONTEXTE"
+        // Header gros : side du trade + COUNTER-TREND si signal contre regime favor.
+        var sideClass = side === "LONG" ? "v3-side-long" : (side === "SHORT" ? "v3-side-short" : "");
         return (
-            '<div class="v3-pos v3-pos-active" data-sym="' + sym + '" data-timeout-sec="' + (pos.seconds_until_timeout || 0) + '">' +
-            '<div class="v3-pos-header"><strong>' + sym + ' ' + side + '</strong> ' + actionBadge +
+            '<div class="v3-pos v3-pos-active' + (isCounterTrend ? ' v3-pos-counter-trend' : '') +
+            '" data-sym="' + sym + '" data-timeout-sec="' + (pos.seconds_until_timeout || 0) + '">' +
+            '<div class="v3-pos-header"><strong class="' + sideClass + '">' + sym + ' ' + side + '</strong> ' + actionBadge +
             '<span class="v3-tier-badge v3-tier-' + tier + '">T' + tier + '</span>' +
+            bucketBadge +
+            counterTrendBadge +
             '<span class="v3-session-badge">' + sessionLabel + '</span></div>' +
+
+            // PANNEAU SIGNAL — hierarchie WHY > WHAT > CONVICTION > BOOSTS > CONTEXTE
+            '<div class="v3-pos-panel v3-pos-panel-signal">' +
+            '<div class="v3-pos-panel-title">▣ SIGNAL <span class="v3-panel-sub">(au moment entry)</span></div>' +
+            // WHY (regime + favor)
+            '<div class="v3-pos-row"><span>Regime:</span><strong class="' + regimeFavorClass + '">' + regimeMode + ' / favor=' + regimeFavor + '</strong></div>' +
+            // WHAT (niveau + swing_color confluence si non-NEUTRE)
             '<div class="v3-pos-row"><span>Niveau:</span><strong>' + levelLabel + '</strong></div>' +
+            (showSwc
+                ? '<div class="v3-pos-row"><span>Swing×Color:</span><strong class="' + swcClass + '">' + swcBucket + '</strong></div>'
+                : '') +
+            // CONVICTION (confidence + baseline + edge pastille)
             '<div class="v3-pos-row"><span>Confidence:</span><strong>' + conf + '/100</strong></div>' +
-            '<div class="v3-pos-row"><span>Entry:</span><strong>' + (pos.entry_price || "?") + '</strong></div>' +
-            '<div class="v3-pos-row"><span>SL:</span><strong>' + slLine + '</strong></div>' +
+            '<div class="v3-pos-row"><span>Baseline level:</span><strong>PF=' + baselinePf + edgePastille + ' · rej=' + baselineRej + '</strong></div>' +
+            // BOOSTS
+            boostLines +
+            // CONTEXTE
+            '<div class="v3-pos-row"><span>VIX:</span><strong>' + vixLine + '</strong></div>' +
+            '</div>' +
+
+            // PANNEAU EXECUTION (en cours — bouge au fil du temps)
+            // B3 R1 review 17/05 : ajout pos.atr_current (etait dead code dans
+            // _bot3_positions, jamais lu cote JS). atr_current = ATR au moment
+            // de l'entry en ticks (ref pour calibration SL adaptatif).
+            '<div class="v3-pos-panel v3-pos-panel-execution">' +
+            '<div class="v3-pos-panel-title">▣ EXECUTION <span class="v3-panel-sub">(en cours)</span></div>' +
+            '<div class="v3-pos-row"><span>Entry:</span><strong>' + (pos.entry_price || "?") + driftLabel + '</strong></div>' +
+            '<div class="v3-pos-row"><span>SL:</span><strong>' + slLine + slAtrPastille + '</strong></div>' +
             '<div class="v3-pos-row"><span>TP:</span><strong>' + tpLine + '</strong></div>' +
-            '<div class="v3-pos-row"><span>Trailing:</span><strong>' + trailStatus + '</strong></div>' +
+            '<div class="v3-pos-row"><span>ATR entry:</span><strong>' +
+                (pos.atr_current != null ? Number(pos.atr_current).toFixed(2) + 't' : '—') +
+                '</strong></div>' +
             '<div class="v3-pos-row"><span>MFE / MAE:</span><strong>' + (pos.mfe_ticks || 0) + 't / ' + (pos.mae_ticks || 0) + 't</strong></div>' +
             '<div class="v3-pos-row v3-countdown-row"><span>⏱ Timeout dans:</span>' +
             '<strong class="v3-countdown" id="v3-countdown-' + sym + '">' + countdown + '</strong></div>' +
+            '</div>' +
             '</div>'
         );
     }
@@ -4931,11 +5063,46 @@
             ? '<span class="v3-info v3-flags">' + modeFlags.join(" + ") + '</span>'
             : '';
 
-        // Counters today
-        var contactsTotal = (d.n_contacts_today && (d.n_contacts_today.NQ || 0) + (d.n_contacts_today.ES || 0)) || 0;
-        var goTotal = (d.n_go_today && (d.n_go_today.NQ || 0) + (d.n_go_today.ES || 0)) || 0;
-        var skipTotal = (d.n_skip_today && (d.n_skip_today.NQ || 0) + (d.n_skip_today.ES || 0)) || 0;
-        var vetoTotal = (d.n_veto_today && (d.n_veto_today.NQ || 0) + (d.n_veto_today.ES || 0)) || 0;
+        // P5 audit 17/05 (Jackson Q1) : banner staleness state.json. Backend
+        // calcule state_age_sec + paper_trader_alive (P1 paper_tracker.py).
+        // Seuil 60s : pipeline lag. 300s : freeze paper_trader suspect.
+        var staleBanner = "";
+        var ageSec = d.state_age_sec;
+        if (ageSec != null) {
+            if (ageSec > 300) {
+                staleBanner = '<div class="v3-banner v3-banner-frozen">⚠ STATE FROZEN — age='
+                    + Math.round(ageSec) + 's (paper_trader freeze suspect, ouvrir LOGS/events/)</div>';
+            } else if (ageSec > 60) {
+                staleBanner = '<div class="v3-banner v3-banner-stale">⚠ State age '
+                    + Math.round(ageSec) + 's > 60s (pipeline lag, surveillez)</div>';
+            }
+        } else if (d.paper_trader_alive === false) {
+            staleBanner = '<div class="v3-banner v3-banner-frozen">⚠ STATE FROZEN — paper_trader_alive=false (ts_utc manquant ou state corrompu)</div>';
+        }
+
+        // P2 audit 17/05 (Jackson Q2) + B2 : boucler dynamiquement sur les symboles
+        // (avant : NQ+ES hardcode -> MGC INVISIBLE depuis 12/05 Bot3GoldEngine).
+        // SYMBOLS_BOT3 = ES+NQ+MGC (cf CORE/databento_paper_trader_v2.py SYMBOLS_BOT3).
+        // Fallback ["NQ","ES","MGC"] si state.json vide (cas demarrage Bot 3).
+        var symList = Object.keys(positions);
+        if (symList.length === 0) {
+            symList = ["NQ", "ES", "MGC"];
+        } else {
+            // Ordre stable : NQ, ES, MGC (consistance UX vs ordre Object.keys aleatoire)
+            var preferOrder = ["NQ", "ES", "MGC"];
+            symList = preferOrder.filter(function (s) { return symList.indexOf(s) >= 0; })
+                .concat(symList.filter(function (s) { return preferOrder.indexOf(s) < 0; }));
+        }
+
+        // B2 : counters reduce au lieu de somme manuelle NQ+ES (MGC inclus).
+        function _sumCountersDict(dict) {
+            if (!dict) return 0;
+            return Object.values(dict).reduce(function (a, b) { return a + (Number(b) || 0); }, 0);
+        }
+        var contactsTotal = _sumCountersDict(d.n_contacts_today);
+        var goTotal = _sumCountersDict(d.n_go_today);
+        var skipTotal = _sumCountersDict(d.n_skip_today);
+        var vetoTotal = _sumCountersDict(d.n_veto_today);
         var counters = (
             '<div class="v3-counters">' +
             '<span class="v3-counter v3-counter-contacts">Contacts: <strong>' + contactsTotal + '</strong></span>' +
@@ -4949,19 +5116,30 @@
         var closedToday = d.closed_today || [];
         var tradeCountToday = d.trade_count_today || 0;
 
+        // P2 : rendu positions dynamique (MGC inclus si present)
+        var positionsHtml = symList.map(function (s) {
+            return _renderPositionV3(s, positions[s]);
+        }).join('');
+
+        // P5 : badge age en clair dans header pour debug rapide visuel
+        var ageBadge = (ageSec != null && ageSec <= 60)
+            ? '<span class="v3-info v3-age-ok">state age: ' + Math.round(ageSec) + 's</span>'
+            : '';
+
         container.innerHTML = (
+            staleBanner +
             '<div class="v3-header">' +
-            '<h3>📐 Bot 3 MP — Market Profile (13 niveaux)</h3>' +
+            '<h3>📐 Bot 3 MP — Market Profile (14 niveaux)</h3>' +
             phaseBadge +
             flagsBadge +
             '<span class="v3-info">Trading window: ' + (d.trading_window_utc || "—") + ' UTC</span>' +
             '<span class="v3-info">Compte: ' + (d.trade_account || "Sim1") + '</span>' +
             '<span class="v3-info">Trades cloturés aujourd\'hui: <strong>' + tradeCountToday + '</strong></span>' +
+            ageBadge +
             '</div>' +
             counters +
-            '<div class="v3-positions-grid">' +
-            _renderPositionV3("NQ", positions.NQ) +
-            _renderPositionV3("ES", positions.ES) +
+            '<div class="v3-positions-grid v3-positions-grid-' + symList.length + '">' +
+            positionsHtml +
             '</div>' +
             '<h4>Trades cloturés aujourd\'hui (' + closedToday.length + ', cap 50)</h4>' +
             _renderClosedTradesV3(closedToday) +
@@ -6582,6 +6760,32 @@
             title: "Naked POC (POC orphelin)",
             body: "Un <strong>Naked POC</strong> = POC d'une session passee qui n'a JAMAIS ete retouche depuis. Le marche a tendance a y revenir (effet aimant magnetique documente). <strong>MAGNET++</strong> = naked POC &lt;0.2% ET age &gt;5 jours = aimant tres puissant. <strong>MAGNET</strong> = &lt;0.5%. <strong>PRESENT</strong> = naked POC actif mais loin. Le widget affiche distance + age max — la direction (haut/bas) n'est PAS exposee, repere-la sur le chart.",
             action: "<strong>MAGNET++ proche</strong> = forte probabilite de retracement vers le POC dans la session. Identifie sa direction sur le chart (au-dessus/au-dessous) et trade dans le sens du retracement. Plus l'age est eleve plus la magnetic action est puissante (5j+ = quasi-certain qu'on va y revenir). <strong>OFF</strong> = pas de naked POC notable, ignore.",
+        },
+        // ─── Phase 2 enrichissement OFA (13/05/2026) ───
+        "mi-setup-tip": {
+            title: "Setup actif (synthese composite)",
+            body: "Synthese des <strong>setups composites haut conviction</strong> detectes par market-analyst V4. 4 setups suivis : <strong>SHORT haut conviction</strong> (trapped buyers + POC dn + div SELL + VWAP dn), <strong>LONG breakout</strong> (IB broken up + RVOL eleve + VWAP triple align UP), <strong>MEAN REVERSION</strong> (range day + VA extreme + div active), <strong>NO-TRADE</strong> (RVOL low + VIX low + profile mixte + bars_in_va high). Le badge affiche le setup actif + nombre de raisons convergentes.",
+            action: "<strong>Setup affiche</strong> = composite haute conviction validé empiriquement (audit 04/05). <strong>4+ raisons</strong> = conviction maximale, R:R favorable. <strong>2-3 raisons</strong> = setup probable mais attends confirmation. <strong>AUCUN</strong> = pas de convergence, trade rule-based individuel uniquement. Ces setups sont enrichis dans `active_setups` (banner alerts) et integrent automatiquement les CALL signals Bot 2 V6.",
+        },
+        "ofa-cluster-strength-tip": {
+            title: "Force cluster (concentration volume)",
+            body: "Mesure la <strong>concentration de clusters volumiques</strong> a proximite d'un niveau structurel (HVL, POC, VWAP, BL). <strong>HEAVY</strong> = 2+ clusters detectes ET niveau touche = setup tres fort. <strong>MEDIUM</strong> = 1 cluster + niveau = setup probable. <strong>LIGHT</strong> = 1 cluster sans niveau = signal isole. <strong>OFF</strong> = aucun cluster. Indicateur n=N affiche le nombre de clusters detectes + @RES/@SUP si proximite niveau.",
+            action: "<strong>HEAVY @ RES</strong> = setup SHORT haut conviction (resistance verrouillee par institutionnels). <strong>HEAVY @ SUP</strong> = setup LONG haut conviction (support defendu). <strong>MEDIUM</strong> = surveiller, combiner avec divergence delta. <strong>LIGHT</strong> = trop faible seul, integrer dans la stack confirmation. Pattern Bookmap + AMT.",
+        },
+        "ofa-imbalance-tip": {
+            title: "Imbalance bar (delta/volume normalise)",
+            body: "Mesure l'<strong>imbalance acheteurs/vendeurs sur la barre courante</strong> via <code>delta_bar / volume</code> clamp [-1,+1]. Plus stable que delta_bar absolu (independent du volume). <strong>BUY+++</strong> = imbalance &gt;+0.4 = acheteurs dominent fortement. <strong>BUY</strong> = &gt;+0.2. <strong>SELL+++</strong> = &lt;-0.4. <strong>SELL</strong> = &lt;-0.2. <strong>BAL</strong> = +/-0.2. Le pourcentage affiche est l'imbalance normalisee en %.",
+            action: "<strong>BUY+++ @ support / VWAP / pullback</strong> = entry LONG haut conviction (acheteurs prennent le controle). <strong>SELL+++ @ resistance</strong> = entry SHORT idem. <strong>BAL</strong> = pas d'edge directionnel, attends rotation. <strong>Combine avec RVOL eleve</strong> pour confirmation institutionnelle (gros volume + imbalance fort = main forte). Indicateur le plus reactif du dashboard, 1-min latence.",
+        },
+        "ofa-velocity-tip": {
+            title: "Absorb velocity (taux absorption)",
+            body: "Mesure la <strong>velocite d'absorption d'ordres au niveau</strong>. Combine evenements d'absorption (BID/ASK defended at level) + streak rolling 5 bars. <strong>EXTREME</strong> = absorption tres intense (&gt;2) = main forte verrouille le niveau. <strong>HIGH</strong> = &gt;1.5. <strong>MOD</strong> = absorption presente. <strong>LIGHT</strong> = streak seul (absorption recente). <strong>OFF</strong> = pas d'absorption. Le side (BID/ASK) indique de quel cote l'absorption a lieu.",
+            action: "<strong>EXTREME BID</strong> @ support = LONG haut conviction (institutional buying defended). <strong>EXTREME ASK</strong> @ resistance = SHORT haut conviction. <strong>HIGH</strong> = setup probable mais combiner avec Trapped/Divergence pour confirmation. Pattern absorption + niveau = setup signature Bookmap/Wyckoff. Streak persistant = main institutionnelle, pas algo flippy.",
+        },
+        "ofa-momentum-tip": {
+            title: "Big momentum (gros ordres sliding 5 bars)",
+            body: "Mesure le <strong>momentum directionnel des gros ordres</strong> (T1+T2+T3 buy vs sell) sur la barre. Ratio = (buy-sell)/(buy+sell) avec total n. <strong>BUY RUSH</strong> = n&gt;=3 ET ratio &gt;+0.6 = afflux institutionnel acheteur. <strong>SELL RUSH</strong> = symetrique. <strong>BUY LEAN/SELL LEAN</strong> = direction sans rush. <strong>ACTIVE</strong> = activite moderee. <strong>QUIET</strong> = pas de gros ordres. n=N r=+/-X.XX affichage exact.",
+            action: "<strong>BUY RUSH</strong> = momentum institutionnel acheteur, trade LONG dans le sens. <strong>SELL RUSH</strong> idem SHORT. <strong>LEAN</strong> = direction probable mais conviction moyenne, combine avec niveau structurel. <strong>QUIET</strong> = pas d'activite institutionnelle, no-trade pour scalpers, attends qu'un cote prenne la main. Indicateur en avance de phase sur les moves directionnels significatifs.",
         },
     };
 
