@@ -11,7 +11,7 @@ Usage:
 
 Emplacement: D:\\TRADING_SIERRA_CHART_AUTO\\CORE\\dmp_validator.py
 Date: 2026-03-10
-Schema: 3.7.x — 258/260/262/266 colonnes (3.7.0/3.7.1/3.7.2/3.7.3)
+Schema: 3.7.x — 258/260/262/266/267 colonnes (3.7.0/3.7.1/3.7.2/3.7.3/3.7.9)
 """
 
 import json, sys, os
@@ -149,11 +149,14 @@ V2_RULES = [
 # CONFIGURATION — Schema 3.7.0
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SCHEMA_VERSION = "3.7.x"          # accepte 3.7.0 / 3.7.1 / 3.7.2 / 3.7.3
+SCHEMA_VERSION = "3.7.x"          # accepte 3.7.0 / 3.7.1 / 3.7.2 / 3.7.3 / 3.7.9
 EXPECTED_COLS_370 = 258           # schema historique
 EXPECTED_COLS_371 = 260           # +bar_high, +bar_low
 EXPECTED_COLS_372 = 262           # +dist_vwap_d_sd3u, +dist_vwap_d_sd3d
 EXPECTED_COLS_373 = 266           # +dist_cluster_nearest_up/dn, +n_clusters_20t/50t
+EXPECTED_COLS_379 = 267           # +dist_mq_hvl_0dte (24/04/2026 cas niveaux distincts)
+EXPECTED_COLS_3714 = 268          # +atr_14m (24/04/2026 soir - ATR intraday fix VolatilitySpikeGate)
+EXPECTED_COLS_3715 = 271          # +mq_gamma_condition/iv_30d/pc_gex/pc_dex (17/05/2026 update MenthorQ)
 EXPECTED_COLS = EXPECTED_COLS_370 # rétrocompatibilité (remplacé dynamiquement)
 
 # ─── NETTOYAGE 2026-04-12 ────────────────────────────────────────────────
@@ -298,7 +301,15 @@ def validate(path):
     has_bar_hl  = ("bar_high" in lines[0]) and ("bar_low" in lines[0])
     has_vwap_sd3 = ("dist_vwap_d_sd3u" in lines[0]) and ("dist_vwap_d_sd3d" in lines[0])
     has_cluster_vol = ("dist_cluster_nearest_up" in lines[0]) and ("n_clusters_20t" in lines[0])
-    if ncols == EXPECTED_COLS_373 and has_bar_hl and has_vwap_sd3 and has_cluster_vol:
+    has_hvl_0dte = "dist_mq_hvl_0dte" in lines[0]  # 3.7.9 (24/04)
+    has_atr_14m = "atr_14m" in lines[0]            # 3.7.14 (24/04 soir)
+    if ncols == EXPECTED_COLS_3714 and has_bar_hl and has_vwap_sd3 and has_cluster_vol and has_hvl_0dte and has_atr_14m:
+        detected_schema = "3.7.14"
+        expected = EXPECTED_COLS_3714
+    elif ncols == EXPECTED_COLS_379 and has_bar_hl and has_vwap_sd3 and has_cluster_vol and has_hvl_0dte:
+        detected_schema = "3.7.9"
+        expected = EXPECTED_COLS_379
+    elif ncols == EXPECTED_COLS_373 and has_bar_hl and has_vwap_sd3 and has_cluster_vol:
         detected_schema = "3.7.3"
         expected = EXPECTED_COLS_373
     elif ncols == EXPECTED_COLS_372 and has_bar_hl and has_vwap_sd3:
@@ -314,8 +325,10 @@ def validate(path):
         detected_schema = "INCONNU"
         expected = ncols  # éviter faux positif, on signale quand même
 
-    if ncols not in (EXPECTED_COLS_370, EXPECTED_COLS_371, EXPECTED_COLS_372, EXPECTED_COLS_373):
-        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260, 262 ou 266)")
+    if ncols not in (EXPECTED_COLS_370, EXPECTED_COLS_371, EXPECTED_COLS_372,
+                     EXPECTED_COLS_373, EXPECTED_COLS_379, EXPECTED_COLS_3714,
+                     EXPECTED_COLS_3715):
+        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260, 262, 266, 267, 268 ou 271)")
     else:
         ok += 1
     print(f"  Schema detecte : {detected_schema}  ({ncols} colonnes)")

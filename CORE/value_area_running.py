@@ -234,9 +234,15 @@ def apply_value_area_running(
     ).astype("int8")
 
     close_safe = df["close"].replace(0, np.nan)
-    df["dist_cur_vpoc_pct"] = ((df["close"] - df["cur_vpoc"]) / close_safe * 100).astype("float32")
-    df["dist_cur_vah_pct"] = ((df["close"] - df["cur_vah"]) / close_safe * 100).astype("float32")
-    df["dist_cur_val_pct"] = ((df["close"] - df["cur_val"]) / close_safe * 100).astype("float32")
+    # 17/05 FIX REGRESSION BUG D (commit 78f40cb 15/05) : convention unifiee
+    # `(level - close) / close * 100` compliant DMP C++ (positif = niveau
+    # AU-DESSUS du close). Avant : `(close - level)` = convention inverse,
+    # non-aligne avec phase_b_helpers.py:1205-1207 + audit_tpsl_walls +
+    # bot3_*_level_definitions qui utilisent tous (level - close).
+    # Module value_area_running.py etait seul out-of-sync = regression silente.
+    df["dist_cur_vpoc_pct"] = ((df["cur_vpoc"] - df["close"]) / close_safe * 100).astype("float32")
+    df["dist_cur_vah_pct"]  = ((df["cur_vah"] - df["close"]) / close_safe * 100).astype("float32")
+    df["dist_cur_val_pct"]  = ((df["cur_val"] - df["close"]) / close_safe * 100).astype("float32")
 
     return df
 

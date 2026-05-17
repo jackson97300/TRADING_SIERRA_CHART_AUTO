@@ -145,8 +145,10 @@ def evaluate_decision(
         level_def : dict du niveau (TIER1/2/3)
         ctx : dict des 12 dimensions de contexte
         symbol : "NQ" ou "ES"
-        dist_signed : dist_pct (signe inclus). Negatif = prix au-dessus,
-                      positif = prix en-dessous.
+        dist_signed : dist_pct (signe inclus). Convention BUG D 15/05/2026
+                      (`level - close`) compliant DMP C++ :
+                      * dist_signed > 0 = level AU-DESSUS du prix -> resistance -> rejection SHORT
+                      * dist_signed < 0 = level EN-DESSOUS du prix -> support -> rejection LONG
 
     Returns:
         (trade : bool, reason : str, params : dict)
