@@ -124,11 +124,19 @@ def evaluate_entry_quality_gate(
     res.direction_sign = sign
 
     # Lecture features
+    # 17/05 FIX GHOST NAME (audit code-reviewer Etape 3 Bot 2 V7) :
+    # AVANT : `cvd_bar_delta` n'existe PAS dans v4 enriched -> _safe_float
+    #         retourne None -> contra_cvd jamais True -> gate degrade
+    #         (momentum_5b SEUL en pratique, cvd contra ignore depuis creation).
+    # APRES : `delta_bar` (vraie cle v4 enriched, 0% NaN, 98.99% non-zero,
+    #         1369 valeurs uniques = delta volume du bar = order flow direct).
+    # Backtest historique "104 trades 32.7% bloques PnL eviter -1803$" = artefact
+    # momentum_5b seul. Vrai impact gate complet a re-mesurer post-fix.
     momentum = _safe_float(bar, "momentum_5b")
-    cvd = _safe_float(bar, "cvd_bar_delta")
+    cvd = _safe_float(bar, "delta_bar")
     wall_dist = _safe_float(bar, "next_wall_dist_ticks")
     res.momentum_5b = momentum
-    res.cvd_bar_delta = cvd
+    res.cvd_bar_delta = cvd  # nom de champ conserve pour log compat
     res.next_wall_dist_ticks = wall_dist
 
     # Conditions

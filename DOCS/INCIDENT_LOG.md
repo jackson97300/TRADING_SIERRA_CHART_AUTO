@@ -31,6 +31,36 @@
 
 ---
 
+### 2026-05-17 19:00 - [VALIDATION_MISS] Ghost feature names brain_v6 + entry_quality_gate (2 gates morts depuis creation)
+
+**Contexte** : Audit Etape 3 Bot 2 V7 (mapping rules -> features V4 enriched). Cross-check empirique parquet mai 2026 + grep code brain_v6/entry_quality_gate.
+
+**Ce qui a mal tourne** : Bot 2 V6 lit dans son code des features sous des noms qui **N'EXISTENT PAS** dans le parquet V4 enriched depuis sa creation :
+1. `mia2_brain_v6_databento.py:1582-1583` lit `dist_big_ask_nearest_up` / `dist_big_bid_nearest_dn` → vraies cles V4 = `dist_big_ask_nearest_pct` / `dist_big_bid_nearest_pct` (sans suffix `_up/_dn`)
+2. `entry_quality_gate.py:128` lit `cvd_bar_delta` → vraie cle V4 = `delta_bar`
+
+**Effet** : Gate BIG_ORDER_OPPOSITE 100% MORT (jamais tire, .get() retourne None systematiquement). Gate ENTRY_QUALITY degrade (momentum_5b seul, cvd contra ignore).
+
+**Preuves empiriques** :
+- Funnel V6 EOD 5 jours (11-15/05) : 0 emit `v6_big_ask_at_price` / `v6_big_bid_at_price` (gate jamais bloque un trade)
+- Backtest historique "+$155 / +0.078 PF" annonce CHANGELOG 05/05 = artefact d'autres filtres coincidents
+- Backtest "104 trades 32.7% bloques PnL -1803$" entry_quality = artefact momentum_5b seul
+
+**Cause racine** : noms inventes au code time sans cross-verification du schema parquet V4. Pas d'AssertionError car `.get()` silent fallback None. **Pattern COMMENT_FALSE** : commentaire ligne 1578 dit "Source : bar_row_dict.dist_big_ask_nearest_up" → mensonge operationnel depuis ~10 jours.
+
+**Lecon** : `.get("ghost_name")` retourne None silencieusement. Pour features critiques, utiliser pattern `bar[key]` (KeyError loud) ou assertion debug-mode au boot.
+
+**Trigger prevention** :
+1. **Fix applique** : 2 LOC change (commit + SCP + restart MIA-Brain-V6 done 17/05 19:00)
+2. **Pattern detection** : grep `\.get\(.dist_big_|cvd_bar_delta` dans tout CORE/ pour confirmer plus de ghost
+3. **Tool** : `tools/audit_feature_names_in_code.py` (BACKLOG) qui scanne tous les `.get("string")` et verifie presence dans schema v4 enriched
+4. **Tests** : ajouter test boot brain_v6 qui charge 1 bar v4 + verifie que toutes les features lues par les 3 gates V6 sont presentes (assertion non-None)
+5. **Regle CLAUDE.md** : a chaque ajout gate utilisant feature V4, CONFIRMER nom via grep parquet schema AVANT commit (pas seulement copy/paste depuis spec C++)
+
+**Cross-reference** : `feedback_validation_miss_patterns.md` (4+ occurrences, escalation memoire dediee), `feedback_ia_traps_detection.md` (pattern 11 cousin = "feature qui semble exister mais morte").
+
+---
+
 ### 2026-05-17 09:30 - [DEPLOY_UNSAFE] sys.path BOT/ shadow CORE/ : ImportError BLOCKED_COMBOS_BOT3
 
 **Contexte** : deploy VPS Phase 1.7b + 1.7d Bot 3 v2. SCP 6 fichiers CORE/ + nssm restart MIA-DataBento-Paper-V2. Service en SERVICE_PAUSED apres restart (crash loop).

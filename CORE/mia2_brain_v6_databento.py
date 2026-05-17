@@ -1571,16 +1571,25 @@ class PaperTrader:
 
         # 🆕 V6 GATE BIG ORDER OPPOSITE AT PRICE (05/05 backtest +$155 / +0.078 PF)
         # Decouverte 05/05 : Trade #2 Bot 1 -$87 entry @ 27931 avec
-        # `dist_big_ask_nearest_up = 0` = vendeur institutionnel PILE au prix.
-        # Backtest 111 trades historiques : reject si big_*_nearest <= 0t (TOL=0 strict)
+        # gros vendeur institutionnel PILE au prix.
+        # Backtest 111 trades historiques : reject si big_*_nearest <= 0 (TOL=0 strict)
         # Cumule avec V6 bias gate : PnL +193 -> +605 ($, +213%), PF 1.05 -> 1.24, WR 40.5% -> 44.3%.
         # TOL=0 strict : a TOL>=1, on tue trop de wins (le big order proche est utile comme S/R).
-        # Source : bar_row_dict.dist_big_ask_nearest_up / dist_big_bid_nearest_dn
-        # MAIS le bar est lu plus bas (ligne 1349). Pour ce gate, utiliser _v6_bar_v4
-        # capture en debut check_entry (override block).
+        # 17/05 FIX GHOST NAMES (audit code-reviewer Etape 3 Bot 2 V7) :
+        # AVANT : lecture `dist_big_ask_nearest_up` / `dist_big_bid_nearest_dn`
+        #         -> ces cles n'existent PAS dans parquet v4 enriched ->
+        #         .get() retourne None -> gate condition jamais evaluee ->
+        #         GATE 100% MORT depuis sa creation (cf funnel V6 5j = 0 emit).
+        # APRES : lecture `dist_big_ask_nearest_pct` / `dist_big_bid_nearest_pct`
+        #         (vraies cles v4 enriched, 98% NaN par design rare event mais
+        #         85.8% non-zero quand fire = gros ordre present au/pres prix).
+        # Backtest +$155 historique = ARTEFACT (gate jamais tire) -> a re-mesurer
+        # apres fix avec 4 semaines collecte V4 enriched fresh.
+        # NOTE unite : `_pct` est un pourcentage signe (vs `_up/_dn` ticks legacy).
+        # TOL=0 strict reste valide (0 == prix exact, 0% distance = pile au prix).
         TOL_BIG_AT_PRICE = 0
-        big_dist_ask_up = (_v6_bar_v4 or {}).get("dist_big_ask_nearest_up")
-        big_dist_bid_dn = (_v6_bar_v4 or {}).get("dist_big_bid_nearest_dn")
+        big_dist_ask_up = (_v6_bar_v4 or {}).get("dist_big_ask_nearest_pct")
+        big_dist_bid_dn = (_v6_bar_v4 or {}).get("dist_big_bid_nearest_pct")
         if direction == "LONG" and big_dist_ask_up is not None:
             try:
                 d = float(big_dist_ask_up)
