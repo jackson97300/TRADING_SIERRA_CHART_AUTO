@@ -14,7 +14,7 @@ un cooldown N bars entre 2 contacts du meme niveau (anti tape-touch repete).
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -166,7 +166,15 @@ class Bot3Signal:
 
 @dataclass
 class Bot3DecisionLog:
-    """Log d'une decision (GO ou SKIP) pour audit Phase 1 observe-only."""
+    """Log d'une decision (GO ou SKIP) pour audit Phase 1 observe-only.
+
+    FIX GAP 1 (audit log tracabilite 17/05) : ajout champ `params` pour
+    transporter les metadata d'audit jusqu'au paper_trader (boost_applied,
+    swing_color_boost_applied, BLOCK_COMBO metadata, funnel NEUTRAL).
+    Sans ce champ, paper_trader.py:2746,2779 leveraient AttributeError au
+    1er BOOST ou BLOCK_COMBO en production -> service crash + Phase 1.7b/d
+    morte des activation.
+    """
     signal_id: str
     symbol: str
     ts_event: str
@@ -176,6 +184,7 @@ class Bot3DecisionLog:
     decision: str            # "GO", "SKIP_*", "VETO_*"
     reason: str              # detail
     ctx: dict
+    params: dict = field(default_factory=dict)  # boost_applied, funnel, etc.
 
 
 class Bot3Engine:
@@ -409,6 +418,7 @@ class Bot3Engine:
                 decision="GO" if trade else reason,
                 reason=reason,
                 ctx=ctx,
+                params=params,   # FIX GAP 1 17/05 : transporter boost_applied / BLOCK / funnel
             ))
 
             if trade and signal is None:

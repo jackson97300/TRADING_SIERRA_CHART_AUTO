@@ -31,6 +31,31 @@
 
 ---
 
+### 2026-05-17 09:30 - [DEPLOY_UNSAFE] sys.path BOT/ shadow CORE/ : ImportError BLOCKED_COMBOS_BOT3
+
+**Contexte** : deploy VPS Phase 1.7b + 1.7d Bot 3 v2. SCP 6 fichiers CORE/ + nssm restart MIA-DataBento-Paper-V2. Service en SERVICE_PAUSED apres restart (crash loop).
+
+**Ce qui a mal tourne** : `databento_paper_trader_v2.py:50-51` :
+```python
+sys.path.insert(0, str(ROOT / "CORE"))   # CORE inserted en 0...
+sys.path.insert(0, str(ROOT / "BOT"))    # ...puis BOT inserted en 0 = BOT prioritaire !
+```
+Python charge `BOT/bot3_config.py` (12/05 vieux, sans BLOCKED_COMBOS_BOT3) au lieu de `CORE/bot3_config.py` (17/05 a jour). ImportError → service crash + nssm restart loop. 1h debug avant detection via log stderr.
+
+**Cause racine** : doublon code source non documente. `BOT/bot3_config.py` + `BOT/log_catalog.py` existent depuis ancien deploy (avant refactor `CORE/`). Tant que les 2 versions etaient identiques, le bug etait LATENT. Premier ajout `BLOCKED_COMBOS_BOT3` dans CORE/ uniquement → drift → import echoue.
+
+**Lecon** : `sys.path.insert(0, ...)` x2 = la derniere insertion devient priorite. Pour multi-dirs source, utiliser `insert(0)` UNE seule fois (priorite) + `append` pour fallbacks. Et JAMAIS de doublons code source sans process de sync.
+
+**Trigger prevention** :
+1. **Fix permanent applique** : `databento_paper_trader_v2.py:50-51` -> CORE `insert(0)` + BOT `append` (fallback dtc_connector legitime).
+2. **Linter** `tools/check_duplicate_modules.py` : detecte tout .py duplique CORE/ vs BOT/ avec comparaison hash. Run en CI/CD.
+3. **Regle CLAUDE.md** : Bot 3 modules = CORE/ source unique. BOT/ deprecated pour Bot 3 (reste pour dtc_connector + autres bots).
+4. **Process deploy** : verifier `dir CORE/X.py BOT/X.py` (alignement timestamps) avant restart service.
+
+**Reviewed** : code-reviewer (audit avant + apres fix), Jackson directive "Option A + audit complet".
+
+---
+
 ### 2026-05-17 06:30 - [VALIDATION_MISS] Phase 1.7d boost JAMAIS declenche en prod malgre tests 17/17 PASS
 
 **Contexte** : implementation Phase 1.7d Bot 3 v2 (SWING_COLOR_BOOSTED, 11 combos confluence COLOR validees DSR Lopez 1.0). Code ecrit, 17 tests unitaires PASS + commit 1.7b deja fait (f7caf40).

@@ -47,8 +47,14 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "CORE"))
-sys.path.insert(0, str(ROOT / "BOT"))
+# FIX 17/05/2026 (incident DEPLOY_UNSAFE) : CORE/ doit etre PRIORITAIRE sur BOT/
+# pour eviter le shadowing accidentel de modules dupliques (cas bot3_config.py,
+# log_catalog.py qui existaient en 2 versions). Avant : 2x insert(0) -> BOT en
+# tete -> Python charge BOT/bot3_config.py (vieux) au lieu de CORE/ (a jour) ->
+# ImportError BLOCKED_COMBOS_BOT3 absent. Apres : CORE prioritaire, BOT fallback.
+# BOT/ reste necessaire pour dtc_connector.py (DTC commun a tous les bots).
+sys.path.insert(0, str(ROOT / "CORE"))   # priorite max (Bot 3 v2 modules)
+sys.path.append(str(ROOT / "BOT"))       # fallback (dtc_connector + legacy)
 
 from setup_engine import (
     SetupEngine,
