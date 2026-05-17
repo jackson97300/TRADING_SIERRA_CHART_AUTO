@@ -108,12 +108,38 @@ def _safe_read_state(state_file: Path = STATE_FILE) -> dict:
     B4 audit 17/05 : fail-loud sur JSON corrompu via emit BOT3_STATE_CORRUPT
     (avant : except Exception: pass silencieux -> dashboard affiche
     "OBSERVE_ONLY" 0 positions sans signal).
+
+    R3 review 17/05 (code-reviewer voyant flux) : retry 50ms sur JSONDecodeError
+    + FileNotFoundError transitoires. Cause : _write_state ecrit tmp + os.replace
+    atomique, mais cote lecture si dashboard tape pendant les ~5ms de rename ->
+    JSONDecodeError ou FileNotFoundError transitoire -> bar_source manquant ->
+    voyant tombe INIT alors que reellement V4. Retry simple eviter false negatif.
     """
     if not state_file.exists():
         return _empty_state()
     try:
         with state_file.open("r", encoding="utf-8") as f:
             return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        # R3 17/05 : 1 retry 50ms pour absorber race rename atomique
+        import time as _time
+        _time.sleep(0.05)
+        try:
+            with state_file.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+        # Si encore fail apres retry, fall through fail-loud handler ci-dessous
+        e = Exception("retry_failed_post_50ms")
+        if _PAPER_TRACKER_LOG is not None:
+            try:
+                _PAPER_TRACKER_LOG.emit("BOT3_STATE_CORRUPT",
+                                         state_file=str(state_file),
+                                         err_type="RaceRetryFail",
+                                         err_msg="JSONDecodeError + retry 50ms fail")
+            except Exception:
+                pass
+        return _empty_state()
     except Exception as e:
         # B4 17/05 : fail-loud sur JSON corrompu/permissions/IO error.
         # Sans cet emit, on perdait toute trace d'un state corrompu.

@@ -4482,23 +4482,38 @@
         var barSrc = bot.bar_source || {};
         var globalSrc = barSrc.global || "INIT";
         var perSym = barSrc.per_symbol || {};
+        var tsPerSym = barSrc.ts_per_symbol || {};
         var es = perSym.ES || globalSrc;
         var nq = perSym.NQ || globalSrc;
 
         el.style.display = "inline-flex";
+        // R4 review 17/05 : title tooltip pour mobile (text-overflow ellipsis CSS)
+        var subText = "ES=" + es + " NQ=" + nq;
+        el.title = "Source data Bot 2 V6 - " + subText;
         if (es === "V4" && nq === "V4") {
             el.classList.add("ds-voyant-v4");
             lbl.textContent = "V4 ENRICHED";
-            sub.textContent = "ES=V4 NQ=V4 (Databento target)";
+            sub.textContent = subText + " (Databento target)";
         } else if (es === "INIT" || nq === "INIT") {
             el.classList.add("ds-voyant-init");
             lbl.textContent = "INIT";
-            sub.textContent = "ES=" + es + " NQ=" + nq + " (en attente cycle)";
+            sub.textContent = subText + " (en attente cycle)";
         } else {
             // Au moins un des 2 en fallback DMP
             el.classList.add("ds-voyant-dmp");
             lbl.textContent = "DMP FALLBACK";
-            sub.textContent = "ES=" + es + " NQ=" + nq + " (V4 stale)";
+            sub.textContent = subText + " (V4 stale)";
+            // R6 review 17/05 : desactiver animation pulse apres 1h continu DMP
+            // (alert fatigue Nielsen heuristic #1). Lit ts_per_symbol pour
+            // calculer duree depuis derniere maj. Si > 1h, ajoute classe
+            // .ds-voyant-no-animation qui override @keyframes pulse.
+            var nowSec = Date.now() / 1000;
+            var oldestTs = Math.min(tsPerSym.ES || nowSec, tsPerSym.NQ || nowSec);
+            var ageMin = (nowSec - oldestTs) / 60;
+            if (ageMin > 60) {
+                el.classList.add("ds-voyant-no-animation");
+                el.title += " - DMP stable depuis " + Math.round(ageMin) + "min (animation off)";
+            }
         }
     }
 

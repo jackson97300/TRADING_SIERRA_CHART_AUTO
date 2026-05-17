@@ -1392,6 +1392,20 @@ body.edu-active .edu-icon { display: inline-flex; }
     font-weight: 400;
     font-size: 0.72rem;
     margin-left: 4px;
+    /* R4 review 17/05 : ellipsis sur mobile pour eviter debordement.
+       Tooltip natif (title=) affichera le sub complet au hover. */
+    max-width: 230px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+@media (max-width: 768px) {
+    .bot-data-source-voyant .ds-voyant-sub { max-width: 150px; }
+}
+/* R6 review 17/05 : override pulse apres 1h continu en DMP_FALLBACK.
+   Evite alert fatigue Nielsen heuristic #1 (animation perpetuelle devient bruit ignore). */
+.bot-data-source-voyant.ds-voyant-no-animation {
+    animation: none !important;
 }
 /* V4 ENRICHED (target) - vert */
 .bot-data-source-voyant.ds-voyant-v4 {
