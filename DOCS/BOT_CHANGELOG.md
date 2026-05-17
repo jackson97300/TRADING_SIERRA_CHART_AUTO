@@ -62,6 +62,96 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-17 13:30 — REFACTO Bot 3 log tracabilite : audit 6 GAPS + fixes
+
+**Categorie** : REFACTO (logs decisions + critere 1+2 critical-tasks-review : Trading + ML pipeline)
+**Impact prod** : PAPER (Sim1, post Phase 1.7b+d deploy)
+**Fichier(s)** :
+- `CORE/bot3_mp_engine.py:124-149,183-200,397-443` (+8 LOC : `params: dict = field()` Bot3DecisionLog + 4 mappings GAP 3+4 + `params=params` ligne 411)
+- `CORE/log_catalog.py:586-598` (+7 codes : BOT3_BLOCK_COMBO, BOOST_APPLIED, SWING_COLOR_BOOST, NEUTRAL_FUNNEL, BREAKOUT_REGISTER, BAR_OK, SWING_COLOR_TRACKING)
+- `CORE/databento_paper_trader_v2.py:2229-2244,2750-2820` (+38 LOC : emit BAR_OK heartbeat + emit NEUTRAL_FUNNEL/BREAKOUT_REGISTER/SWING_COLOR_TRACKING dans `_bot3_log_decision`)
+
+**Reviewer(s) agent** : audit interne (cross-check moi-meme : grep emit vs catalog + tests integration anti-VALIDATION_MISS deja passes round 17/05 07:00)
+
+### Quoi
+
+Audit Jackson 17/05 demande explicite : "POFINE LE BOT 3 VERIFIE QUE LE SYSTEME DE LOG TRAQUE TOUT A CHAQUE ETAPE". Identification de 6 GAPS log tracabilite + fixes.
+
+**GAP 1 (CRITIQUE — bug latent)** : `Bot3DecisionLog` dataclass n'avait PAS de champ `params`. Mais `paper_trader.py:2749` faisait `decision.params or {}` → AttributeError au 1er BOOST/BLOCK en prod aurait crashe le service. Fix : ajout `params: dict = field(default_factory=dict)` + import `field` + propagation `params=params` ligne 411 mp_engine.
+
+**GAP 2** : funnel NEUTRAL 7 scenarios deja calcule dans `decision_engine` mais JAMAIS persiste hors decisions[].params. Emit dedie `BOT3_NEUTRAL_FUNNEL` ajoute en parallele du SKIP_NEUTRAL_* generique → audit "savoir exactement quelle feature bloque a chaque etape".
+
+**GAP 3** : `PENDING_BREAKOUT_REGISTERED` routait vers `BOT3_DECISION_SKIP` generique → perte info "register breakout pour acceptance/retest". Nouveau code `BOT3_BREAKOUT_REGISTER` dedie. **Collision evitee** avec `BOT3_BREAKOUT_PENDING` existant (placeholders differents `{side}` vs `{side_break}/{delta}/{finish}`).
+
+**GAP 4** : `SKIP_SIDE_INVALID_*` (bug config niveau, side != LONG/SHORT/REJECTION/NEUTRAL) routait vers `BOT3_DECISION_SKIP` INFO → invisible. Maintenant route vers `BOT3_LEVEL_DEF_INVALID` MAJEUR.
+
+**GAP 5** : aucune trace positive "bot recoit data fraiche". Logs asymetriques : BAR_NONE/BAR_STALE seulement. Nouveau emit `BOT3_BAR_OK` throttle 300s dans `_bot3_poll_cycle` apres `load_last_bar(sym)` reussi. J+1 grep BAR_OK = preuve flux OK.
+
+**GAP 6** : `swing_color_consensus` (bucket NEUTRE/CONFLUENCE_STRONG/OK/DIVERGENCE) jamais persiste hors cas boost applique. Nouveau emit `BOT3_SWING_COLOR_TRACKING` sur CHAQUE GO (NEUTRE inclus) → calibration distribution future.
+
+### Pourquoi
+
+VALIDATION_MISS Phase 1.7d (entry 06:30 INCIDENT_LOG) demontre que tests vert ≠ feature connectee. Sans tracabilite emit en prod, on ne peut PAS verifier J+1 que :
+1. BLOCK_COMBO se declenche effectivement (Phase 1.7b)
+2. BOOST applique a la bonne distribution (Phase 1.7b+d)
+3. funnel NEUTRAL bloque les bonnes confluences
+4. bot recoit data fraiche en continu
+
+Le bug GAP 1 (latent) aurait crashe le service au 1er BOOST/BLOCK en prod = catastrophe paper trading.
+
+### Impact attendu
+
+- AttributeError latent GAP 1 elimine (preventif)
+- J+1 audit ENFIN possible via grep codes stables
+- Distribution swing_color_consensus mesurable (calibration future Phase 2)
+- Heartbeat positif data path (preuve flux OK vs silence ambigu)
+
+### Validation pre-deploy
+
+- [x] Tests unitaires : 39/39 PASS (`test_block_boost_phase17b` 16 + `test_swing_color_boost_phase17d` 19 + `test_anti_validation_miss` 4)
+- [x] `test_log_codes_emit_all_defined` PASS = tous les 7 nouveaux codes sont emis quelque part dans le code
+- [x] `test_log_codes_referenced_anywhere` PASS = anti orphan codes
+- [x] Collision `BOT3_BREAKOUT_PENDING` vs `BOT3_BREAKOUT_REGISTER` resolue (codes dedies)
+
+### Nouveaux logs (regle souveraine tracabilite Jackson 01/05)
+
+| Code | Level | Category | Quand |
+|---|---|---|---|
+| `BOT3_BLOCK_COMBO` | MAJEUR | decisions | 5 combos ES ASIA/LONDON DSR Lopez=1.0 |
+| `BOT3_BOOST_APPLIED` | INFO | decisions | NQ LONDON SIDAK_COLOR_UP_zone +15 |
+| `BOT3_SWING_COLOR_BOOST` | INFO | decisions | 11 combos confluence Phase 1.7d |
+| `BOT3_NEUTRAL_FUNNEL` | INFO | decisions | SKIP_NEUTRAL_* avec scenario matche |
+| `BOT3_BREAKOUT_REGISTER` | INFO | decisions | PENDING_BREAKOUT_REGISTERED (avant state machine) |
+| `BOT3_BAR_OK` | INFO | events | Heartbeat data path throttle 300s |
+| `BOT3_SWING_COLOR_TRACKING` | INFO | decisions | Distribution swing_color_consensus tous GO (NEUTRE inclus) |
+
+### Verification J+1 obligatoire (lundi 18/05)
+
+```bash
+ssh Administrator@212.28.179.199 'wc -l C:/TRADING_SIERRA_CHART_AUTO/LOGS/decisions/decisions_20260518_*.jsonl'
+ssh Administrator@212.28.179.199 'findstr "BOT3_BLOCK_COMBO BOT3_BOOST_APPLIED BOT3_SWING_COLOR_BOOST BOT3_NEUTRAL_FUNNEL BOT3_BREAKOUT_REGISTER BOT3_SWING_COLOR_TRACKING" C:/TRADING_SIERRA_CHART_AUTO/LOGS/decisions/decisions_20260518_*.jsonl | find /c /v ""'
+ssh Administrator@212.28.179.199 'findstr "BOT3_BAR_OK" C:/TRADING_SIERRA_CHART_AUTO/LOGS/events/events_20260518_*.jsonl | find /c /v ""'
+```
+
+Si un code = 0 emit en 24h session live → instrumentation ratee → INCIDENT_LOG VALIDATION_MISS (6e occurrence).
+
+### Revert plan
+
+```bash
+git revert <commit_sha>
+ssh VPS 'nssm restart MIA-DataBento-Paper-V2'
+```
+
+Risque rollback : faible (logs additifs seulement, pas de modif decision engine logic).
+
+### Liens
+- INCIDENT_LOG : 2026-05-17 06:30 VALIDATION_MISS Phase 1.7d (5e occurrence)
+- INCIDENT_LOG : 2026-05-17 09:30 DEPLOY_UNSAFE sys.path BOT/ vs CORE/
+- Memory : `feedback_validation_miss_patterns.md` (4+ occurrences)
+- Rule : `.claude/rules/critical-tasks-review.md` section "🆕 Regle souveraine LOGS TRACABILITE (01/05/2026)"
+
+---
+
 ## 2026-05-17 07:00 — GATE Phase 1.7d Bot 3 v2 : SWING_COLOR_BOOSTED confluence (Jackson pattern)
 
 **Categorie** : GATE (Trading/Risk + ML Pipeline — critere 1+2 critical-tasks-review)

@@ -131,6 +131,17 @@ def reason_to_log_code(reason: str) -> str:
     if reason.startswith("BLOCK_COMBO_"):
         # Phase 1.7b (17/05) : BLOCK combos session × level (DSR Lopez audit)
         return "BOT3_BLOCK_COMBO"
+    # GAP 3 audit log tracabilite 17/05 : route PENDING_BREAKOUT_REGISTERED
+    # vers code dedie BOT3_BREAKOUT_REGISTER (PAS BOT3_BREAKOUT_PENDING qui est
+    # deja utilise par _bot3_emit_breakout_events avec placeholders differents).
+    # Sinon collision template {side} vs {side_break}/{delta}/{finish} -> KeyError.
+    if reason == "PENDING_BREAKOUT_REGISTERED":
+        return "BOT3_BREAKOUT_REGISTER"
+    # GAP 4 audit log tracabilite 17/05 : SKIP_SIDE_INVALID_* = bug config
+    # niveau (level["side"] non in LONG/SHORT/REJECTION/NEUTRAL). Route vers
+    # code MAJEUR dedie au lieu de BOT3_DECISION_SKIP generique INFO.
+    if reason.startswith("SKIP_SIDE_INVALID_"):
+        return "BOT3_LEVEL_DEF_INVALID"
     if reason.startswith("SKIP_"):
         return "BOT3_DECISION_SKIP"
     if reason.startswith("VETO_"):

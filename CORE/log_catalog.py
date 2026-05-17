@@ -587,6 +587,17 @@ LOG_CODES = {
     "BOT3_BOOST_APPLIED":        (LogLevel.INFO,    "decisions", "Bot3 BOOST applique : {sym} session={session} level={level} boost=+{boost} pf={pf} n={n}"),
     # Phase 1.7d (17/05) — Swing × Color confluence boost
     "BOT3_SWING_COLOR_BOOST":    (LogLevel.INFO,    "decisions", "Bot3 SWING_COLOR boost : {sym} level={level} bucket={bucket} boost=+{boost}"),
+    # Audit log tracabilite Jackson 17/05 — 5 GAPS detectes + fixes
+    # GAP 2 : funnel NEUTRAL 7 scenarios persiste pour audit "quelle feature bloque"
+    "BOT3_NEUTRAL_FUNNEL":       (LogLevel.INFO,    "decisions", "Bot3 NEUTRAL funnel : {sym} level={level} reason={reason} matched={matched}"),
+    # GAP 3 : PENDING_BREAKOUT register depuis bot3_mp_engine (avant acceptance state machine).
+    # Code DEDIE (pas BOT3_BREAKOUT_PENDING qui est emis par _bot3_emit_breakout_events ligne 568).
+    # Evite collision placeholders {side} vs {side_break}/{delta}/{finish}.
+    "BOT3_BREAKOUT_REGISTER":    (LogLevel.INFO,    "decisions", "Bot3 BREAKOUT register : {sym} level={level} side_break={side_break} delta={delta} finish={finish}"),
+    # GAP 5 : BAR OK heartbeat data path throttle 5min (tracking pipeline fraiche)
+    "BOT3_BAR_OK":               (LogLevel.INFO,    "events",    "Bot3 BAR OK : {sym} bar_ts={bar_ts} age_sec={age_sec}"),
+    # GAP 6 : SWING_COLOR distribution tracking (NEUTRE inclus) pour calibration
+    "BOT3_SWING_COLOR_TRACKING": (LogLevel.INFO,    "decisions", "Bot3 SWING_COLOR distrib : {sym} level={level} bucket={bucket} side={side}"),
 
     # ============================================================
     # V6 brain Sim2 (05/05) — Bot V6 enrichi Databento V4

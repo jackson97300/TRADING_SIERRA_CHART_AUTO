@@ -2232,6 +2232,14 @@ class DatabentoPaperTraderV2:
                     self._bot3_emit_throttled("BOT3_BAR_NONE", sym=sym)
                     continue
                 age = bar_age_seconds(bar)
+                # GAP 5 audit 17/05 : trace positive heartbeat data path (throttle 300s).
+                # Asymetrie pre-existante : on logge BAR_NONE/BAR_STALE mais aucune
+                # trace "bot recoit data fraiche". J+1 grep BOT3_BAR_OK = preuve flux OK.
+                self._bot3_emit_throttled("BOT3_BAR_OK",
+                                            throttle_sec=300.0,
+                                            sym=sym,
+                                            bar_ts=str(bar.get("ts_event", "?")),
+                                            age_sec=round(age, 1))
                 if age > DATA_CRIT_THR_SEC:
                     # 11/05 Jackson : tracer blocage bar stale (throttle 300s ALERTE)
                     # review code-reviewer : MAJEUR + 60s = spam Discord, donc ALERTE + 300s
@@ -2738,12 +2746,12 @@ class DatabentoPaperTraderV2:
         # rvol=0.0 limit=0.3 mins_since=0 hardcodes -> valeurs reelles jamais loggees).
         log_code = reason_to_log_code(decision.reason)
         ctx_d = decision.ctx or {}
+        params_d = decision.params or {}
         if decision.decision == "GO":
             _emit("BOT3_LEVEL_CONTACT",
                   sym=sym, level=ln,
                   dist=0.0, tier=decision.level_tier)
             # Phase 1.7b (17/05) : emit BOOST applique pour tracer N boosts/jour
-            params_d = decision.params or {}
             boost_info = params_d.get("boost_applied")
             if boost_info:
                 _emit("BOT3_BOOST_APPLIED",
@@ -2759,6 +2767,21 @@ class DatabentoPaperTraderV2:
                       sym=sym, level=sw_color_info["level"],
                       bucket=sw_color_info["bucket"],
                       boost=sw_color_info["boost"])
+            # GAP 6 audit 17/05 : tracking distribution swing_color_consensus
+            # (incluant NEUTRE) pour calibration future. Emit silent INFO.
+            swc_bucket = params_d.get("swing_color_consensus")
+            if swc_bucket:
+                _emit("BOT3_SWING_COLOR_TRACKING",
+                      sym=sym, level=ln, bucket=swc_bucket,
+                      side=params_d.get("side", "?"))
+        elif log_code == "BOT3_BREAKOUT_REGISTER":
+            # GAP 3 audit 17/05 : PENDING_BREAKOUT_REGISTERED route vers code dedie
+            # BOT3_BREAKOUT_REGISTER (collision evitee avec BOT3_BREAKOUT_PENDING
+            # de _bot3_emit_breakout_events). Trace le moment exact du register.
+            _emit(log_code, sym=sym, level=ln,
+                  side_break=params_d.get("side_break", "?"),
+                  delta=round(params_d.get("delta", 0.0), 2),
+                  finish=round(params_d.get("finish", 0.0), 2))
         elif log_code == "BOT3_VETO_VOL_DEAD":
             _emit(log_code, sym=sym,
                   rvol=ctx_d.get("rvol", 0.0), limit=0.3)
@@ -2776,7 +2799,6 @@ class DatabentoPaperTraderV2:
         elif log_code == "BOT3_BLOCK_COMBO":
             # Phase 1.7b (17/05) : BLOCK combo Session × Level
             # Emit MAJEUR + contexte complet pour audit J+30 tracabilite
-            params_d = decision.params or {}
             _emit(log_code, sym=sym,
                   session=params_d.get("session", "?"),
                   level=ln,
@@ -2785,6 +2807,18 @@ class DatabentoPaperTraderV2:
         else:
             # SKIP generique
             _emit(log_code, sym=sym, level=ln, reason=decision.reason)
+
+            # GAP 2 audit 17/05 : funnel NEUTRAL 7 scenarios persiste pour
+            # audit "savoir exactement quelle feature bloque a chaque etape"
+            # (Jackson 03/05). Le funnel dict est dans params (28+ booleens
+            # par scenario). Emit INFO en parallele du SKIP generique.
+            if decision.reason.startswith("SKIP_NEUTRAL_"):
+                funnel = params_d.get("funnel")
+                if funnel:
+                    _emit("BOT3_NEUTRAL_FUNNEL",
+                          sym=sym, level=ln,
+                          reason=decision.reason,
+                          matched=funnel.get("matched_scenario", "none"))
 
     def _bot3_emit_breakout_events(self) -> None:
         """Emit codes log BOT3_BREAKOUT_* + persist JSONL ultra riche (Jackson 03/05).
