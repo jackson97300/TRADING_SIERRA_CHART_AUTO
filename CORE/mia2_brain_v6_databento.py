@@ -470,6 +470,12 @@ class PaperTrader:
         self._v4_bar_cache_ts: Dict[str, float] = {}  # sym -> last load epoch
         # Tracking source bar pour audit J+1 (R3 code-reviewer)
         self._latest_v6_bar_source: str = "INIT"
+        # 17/05 (Jackson "voyant flux source") : tracking PAR SYMBOLE pour
+        # voyant dashboard. Avant : variable globale ecrasee a chaque check_entry
+        # = on ne sait pas si NQ etait V4 ou DMP quand ES affiche autre source.
+        # bar_source_per_sym persiste dans state_v6.json (cf _write_state).
+        self._latest_v6_bar_source_per_sym: Dict[str, str] = {"ES": "INIT", "NQ": "INIT"}
+        self._latest_v6_bar_source_ts_per_sym: Dict[str, float] = {}  # epoch derniere maj par sym
 
         # 🆕 FIX 24/04 : kill-switch auto SELL (re-activation SELL ce soir).
         # 🆕 FIX 24/04 soir (audit market-analyst #4) : par SYMBOLE, seuil DD
@@ -1259,6 +1265,9 @@ class PaperTrader:
                             reason="V4_parquet_unavailable_or_stale")
         self._latest_v6_bias = None  # reset chaque check_entry
         self._latest_v6_bar_source = _v6_source  # tracking pour state.json + audit J+1
+        # 17/05 : tracking PAR SYMBOLE pour voyant dashboard (Jackson)
+        self._latest_v6_bar_source_per_sym[symbol] = _v6_source
+        self._latest_v6_bar_source_ts_per_sym[symbol] = time.time()
         if _v6_bar_v4:
             try:
                 from CORE.regime_engine_v6 import compute_regime as _compute_regime_v6
@@ -3609,6 +3618,19 @@ class PaperTrader:
             "v4_widgets_observed": {
                 "ES": dict(self._v4_obs_counts.get("ES", {})),
                 "NQ": dict(self._v4_obs_counts.get("NQ", {})),
+            },
+            # 17/05 (Jackson "voyant flux source") : VISIBILITE source data Bot 2 V6.
+            # bar_source possibles : "V4" (parquet enriched fresh), "DMP_BOT" (DMP via
+            # last_bars dashboard), "DMP_JSONL" (DMP via JSONL live fallback), "INIT"
+            # (jamais evalue). Avant ce voyant : on a perdu 5 jours sans le savoir
+            # (V4 stale -> fallback DMP 100% du temps depuis le 11/05).
+            # Le frontend affiche voyant vert (V4) / orange (DMP) / gris (INIT).
+            "bar_source": {
+                "global": self._latest_v6_bar_source,
+                "per_symbol": dict(self._latest_v6_bar_source_per_sym),
+                "ts_per_symbol": {
+                    sym: ts for sym, ts in self._latest_v6_bar_source_ts_per_sym.items()
+                },
             },
         }
 

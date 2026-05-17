@@ -1362,6 +1362,82 @@ body.edu-active .edu-icon { display: inline-flex; }
 /* P4 : drift signal -> fill (12/05 audit drift) */
 .v3-drift { color: var(--text-secondary); font-size: 0.72rem; font-style: italic; }
 
+/* 17/05 Jackson "voyant flux source data" : indique V4 enriched / DMP fallback / frozen */
+.bot-data-source-voyant {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    margin-left: 12px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+.bot-data-source-voyant .ds-voyant-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #888;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.2);
+}
+.bot-data-source-voyant .ds-voyant-label {
+    text-transform: uppercase;
+    font-weight: 700;
+}
+.bot-data-source-voyant .ds-voyant-sub {
+    color: var(--text-secondary);
+    font-weight: 400;
+    font-size: 0.72rem;
+    margin-left: 4px;
+}
+/* V4 ENRICHED (target) - vert */
+.bot-data-source-voyant.ds-voyant-v4 {
+    background: rgba(76, 175, 80, 0.12);
+    border-color: rgba(76, 175, 80, 0.4);
+}
+.bot-data-source-voyant.ds-voyant-v4 .ds-voyant-dot {
+    background: #4caf50;
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.7);
+}
+.bot-data-source-voyant.ds-voyant-v4 .ds-voyant-label {
+    color: #4caf50;
+}
+/* DMP FALLBACK (degraded) - orange clignotant */
+.bot-data-source-voyant.ds-voyant-dmp {
+    background: rgba(255, 152, 0, 0.12);
+    border-color: rgba(255, 152, 0, 0.5);
+    animation: pulse 2.5s infinite;
+}
+.bot-data-source-voyant.ds-voyant-dmp .ds-voyant-dot {
+    background: #ff9800;
+    box-shadow: 0 0 10px rgba(255, 152, 0, 0.8);
+}
+.bot-data-source-voyant.ds-voyant-dmp .ds-voyant-label {
+    color: #ff9800;
+}
+/* STATE FROZEN - rouge clignotant fort */
+.bot-data-source-voyant.ds-voyant-frozen {
+    background: rgba(244, 67, 54, 0.15);
+    border-color: rgba(244, 67, 54, 0.6);
+    animation: pulse 1.5s infinite;
+}
+.bot-data-source-voyant.ds-voyant-frozen .ds-voyant-dot {
+    background: #f44336;
+    box-shadow: 0 0 12px rgba(244, 67, 54, 0.9);
+}
+.bot-data-source-voyant.ds-voyant-frozen .ds-voyant-label {
+    color: #f44336;
+}
+/* INIT - gris (en attente premier cycle) */
+.bot-data-source-voyant.ds-voyant-init .ds-voyant-dot { background: #999; }
+.bot-data-source-voyant.ds-voyant-init .ds-voyant-label { color: #999; }
+/* NA (Bot 1 design DMP) - gris */
+.bot-data-source-voyant.ds-voyant-na .ds-voyant-dot { background: #607d8b; }
+.bot-data-source-voyant.ds-voyant-na .ds-voyant-label { color: #b0bec5; }
+
 /* Q4 R1 review 17/05 : positions RECUPEREES depuis broker apres restart */
 .v3-pos-recovered { border-left: 3px solid #ff9800 !important; }
 .v3-action-recovered { background: rgba(255,152,0,0.25); color: #ff9800; padding: 2px 6px; border-radius: 3px; font-size: 0.65rem; font-weight: 700; }

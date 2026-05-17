@@ -4413,8 +4413,94 @@
             if (label) label.textContent = "Bot 3 MP · 13 niveaux Tier 1/2/3 · Sim1 Phase PAPER_FULL";
             paperData = window.paperDataAll.bot3_mp || {};
         }
+        // 17/05 Jackson "voyant flux source" : mise a jour voyant selon bot actif
+        _updateDataSourceVoyant(which);
         if (currentPage === "paper") renderPaperPage();
     };
+
+    // 17/05 Jackson "voyant flux source data" : indique si le bot tourne sur le
+    // pipeline V4 enriched (Databento+DMP merge, target) OU sur fallback DMP
+    // (data Sierra Chart seule). Critique apres incident 11-15/05 : Bot 2 V6 a
+    // tourne 5 jours en fallback DMP silencieux (V4 pipeline cassé) -> Jackson
+    // n'avait AUCUN moyen de le voir. Voyant resout l'angle mort.
+    //
+    // Etats possibles :
+    //   - V4_ENRICHED (vert) : bar_source == "V4" + state fresh (alive)
+    //   - DMP_FALLBACK (orange) : bar_source in ("DMP_BOT", "DMP_JSONL")
+    //   - STALE_FROZEN (rouge clignotant) : paper_trader_alive == false
+    //   - INIT (gris) : bot pas encore evalue (boot ou idle weekend)
+    //   - NA (gris) : bot ne tracke pas bar_source (Bot 1 = toujours DMP par design)
+    function _updateDataSourceVoyant(which) {
+        var el = document.getElementById("paper-bot-data-source-voyant");
+        if (!el) return;
+        var dot = el.querySelector(".ds-voyant-dot");
+        var lbl = el.querySelector(".ds-voyant-label");
+        var sub = el.querySelector(".ds-voyant-sub");
+        if (!dot || !lbl || !sub) return;
+
+        // Reset classes voyant
+        el.classList.remove("ds-voyant-v4", "ds-voyant-dmp", "ds-voyant-frozen", "ds-voyant-init", "ds-voyant-na");
+
+        var data = window.paperDataAll || {};
+        var bot = which === "bot1" ? data.bot1_dmp : (which === "bot2" ? data.bot2_db : data.bot3_mp);
+        if (!bot) {
+            el.style.display = "none";
+            return;
+        }
+
+        // Bot 3 : pas de fallback DMP par design (skip cycle si stale). Affiche V4 ou FROZEN.
+        // Bot 2 V6 : peut faire fallback DMP -> on lit bot.bar_source.global + per_symbol
+        // Bot 1 : pas de pipeline V4 -> source = DMP_NATIVE (gris, design)
+        if (which === "bot1") {
+            el.style.display = "inline-flex";
+            el.classList.add("ds-voyant-na");
+            lbl.textContent = "DMP NATIVE";
+            sub.textContent = "Sierra Chart (design)";
+            return;
+        }
+
+        var alive = bot.paper_trader_alive;
+        if (alive === false) {
+            el.style.display = "inline-flex";
+            el.classList.add("ds-voyant-frozen");
+            lbl.textContent = "STATE FROZEN";
+            var ageMin = bot.state_age_sec != null ? Math.round(bot.state_age_sec / 60) : "?";
+            sub.textContent = "age=" + ageMin + "min (paper_trader freeze)";
+            return;
+        }
+
+        // Bot 3 : si alive, source = V4 (pas de fallback)
+        if (which === "bot3") {
+            el.style.display = "inline-flex";
+            el.classList.add("ds-voyant-v4");
+            lbl.textContent = "V4 ENRICHED";
+            sub.textContent = "Databento+DMP (parquet)";
+            return;
+        }
+
+        // Bot 2 V6 : lire bar_source du state
+        var barSrc = bot.bar_source || {};
+        var globalSrc = barSrc.global || "INIT";
+        var perSym = barSrc.per_symbol || {};
+        var es = perSym.ES || globalSrc;
+        var nq = perSym.NQ || globalSrc;
+
+        el.style.display = "inline-flex";
+        if (es === "V4" && nq === "V4") {
+            el.classList.add("ds-voyant-v4");
+            lbl.textContent = "V4 ENRICHED";
+            sub.textContent = "ES=V4 NQ=V4 (Databento target)";
+        } else if (es === "INIT" || nq === "INIT") {
+            el.classList.add("ds-voyant-init");
+            lbl.textContent = "INIT";
+            sub.textContent = "ES=" + es + " NQ=" + nq + " (en attente cycle)";
+        } else {
+            // Au moins un des 2 en fallback DMP
+            el.classList.add("ds-voyant-dmp");
+            lbl.textContent = "DMP FALLBACK";
+            sub.textContent = "ES=" + es + " NQ=" + nq + " (V4 stale)";
+        }
+    }
 
     // Helper : count open positions pour un bot (gere les 2 conventions
     // open_by_symbol pour Bot 1 DMP, active_positions pour Bot 2 DB)
@@ -4787,6 +4873,10 @@
                 if (window.currentPaperBot === "bot3") {
                     paperData = bot3Normalized;
                     if (currentPage === "paper") renderPaperPage();
+                }
+                // 17/05 Jackson voyant flux : update apres chaque fetch Bot 3
+                if (typeof _updateDataSourceVoyant === "function" && window.currentPaperBot === "bot3") {
+                    _updateDataSourceVoyant("bot3");
                 }
                 if (currentPage === "paper") renderPaperV3Section();
             })
@@ -5242,6 +5332,7 @@
                 if (window.currentPaperBot === "bot3") {
                     // Bot 3 gere par fetchPaperV3 cycle separe — skip update ici
                     _updateBotToggleBadges();
+                    _updateDataSourceVoyant(window.currentPaperBot);  // 17/05 voyant Jackson
                     return;
                 }
                 if (window.currentPaperBot === "bot1") {
@@ -5252,6 +5343,7 @@
                 _detectTradeEvents(paperData && paperData.state);
                 renderPaperBadge();
                 _updateBotToggleBadges();  // FIX 29/04 : badges OPEN sur toggle
+                _updateDataSourceVoyant(window.currentPaperBot);  // 17/05 voyant Jackson
                 if (currentPage === "paper") renderPaperPage();
             })
             .catch(function (err) {

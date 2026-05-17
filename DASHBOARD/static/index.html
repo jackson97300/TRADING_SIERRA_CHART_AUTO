@@ -16,7 +16,7 @@
     <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"></noscript>
-    <link rel="stylesheet" href="/static/css/dashboard.css?v=82">
+    <link rel="stylesheet" href="/static/css/dashboard.css?v=83">
     <!-- Driver.js — Onboarding tour -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.css">
     <script src="https://cdn.jsdelivr.net/npm/driver.js@1.3.1/dist/driver.js.iife.js" defer></script>
@@ -1225,6 +1225,12 @@
                             <span class="bot-info-dot"></span>
                             <span id="paper-bot-active-label">DMP JSONL Sierra Chart · 262 features</span>
                         </span>
+                        <!-- 17/05 Jackson voyant flux source data (V4 enriched / DMP fallback). Critique apres incident silencieux 5j fallback DMP. -->
+                        <span id="paper-bot-data-source-voyant" class="bot-data-source-voyant" style="display:none;">
+                            <span class="ds-voyant-dot"></span>
+                            <span class="ds-voyant-label">—</span>
+                            <span class="ds-voyant-sub">—</span>
+                        </span>
                     </div>
                 </div>
 
@@ -1304,6 +1310,6 @@
 
     <script defer src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script defer src="/static/js/ticker-widget.js?v=52"></script>
-    <script defer src="/static/js/dashboard.js?v=132"></script>
+    <script defer src="/static/js/dashboard.js?v=133"></script>
 </body>
 </html>

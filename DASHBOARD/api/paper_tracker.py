@@ -443,6 +443,13 @@ def _build_bot_payload(state_file: Path, trades_pattern: str, bot_label: str) ->
             except (ValueError, AttributeError):
                 pass
 
+    # 17/05 (Jackson "voyant flux source") : extraire bar_source state.json brain_v6
+    # pour exposer cote dashboard. Critique apres avoir perdu 5 jours de fallback DMP
+    # silencieux sur Bot 2 V6 (V4 stale -> fallback DMP 100%, invisible).
+    # bar_source format : {"global": str, "per_symbol": {sym: source}, "ts_per_symbol": {...}}
+    # sources possibles : "V4" / "DMP_BOT" / "DMP_JSONL" / "INIT"
+    bar_source = state.get("bar_source") or {}
+
     return {
         "bot": bot_label,
         "state": state,
@@ -451,6 +458,8 @@ def _build_bot_payload(state_file: Path, trades_pattern: str, bot_label: str) ->
         "has_paper_active": has_open or has_cooldown,
         "state_age_sec": age_sec,
         "paper_trader_alive": age_sec is not None and age_sec < 120,
+        # 17/05 Jackson : voyant flux source data Bot 2 V6 (V4 / DMP_BOT / DMP_JSONL)
+        "bar_source": bar_source,
     }
 
 
