@@ -62,6 +62,111 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-17 07:00 — GATE Phase 1.7d Bot 3 v2 : SWING_COLOR_BOOSTED confluence (Jackson pattern)
+
+**Categorie** : GATE (Trading/Risk + ML Pipeline — critere 1+2 critical-tasks-review)
+**Impact prod** : PAPER (Sim1, post Phase 1.7b deploy)
+**Fichier(s)** :
+- `CORE/bot3_config.py:418-466` (+49 LOC : SWING_COLOR_BOOSTED dict + SWING_COLOR_PROXIMITY_PCT)
+- `CORE/bot3_decision_engine.py:30-81,82-131,340-353,377-393` (+50 LOC : import + `_compute_swing_color_consensus` + boost + params)
+- `CORE/bot3_context_analyzer.py:277-289` (+12 LOC : DIM 14 populate features 1.7d) ← **FIX VALIDATION_MISS**
+- `CORE/log_catalog.py:588` (+1 LOC : BOT3_SWING_COLOR_BOOST)
+- `CORE/databento_paper_trader_v2.py:2754-2761` (+8 LOC : emit BOT3_SWING_COLOR_BOOST)
+- `CORE/tests/test_swing_color_boost_phase17d.py` (NEW +350 LOC : 17 unitaires + 2 integration)
+- `tools/audit_color_vs_longbar_comparison.py` (NEW +200 LOC : audit comparatif 3 approches)
+- `DOCS/BOT3_FONCTIONNEMENT_GENERAL.md` (NEW : revue complete Bot 3 post-1.7b+1.7d)
+- `DOCS/INCIDENT_LOG.md` : entry 2026-05-17 06:30 VALIDATION_MISS (5e occurrence)
+
+**Reviewer(s) agent** :
+- code-reviewer (1er round NOGO commit — bug VALIDATION_MISS detecte)
+- code-reviewer (2e round GO commit post-fix R1+R2)
+- Jackson directive : "verifie LONG UP/DN BAR + compare 2 approches" → audit comparatif COLOR vs LONG_BAR vs COMBINE
+
+### Quoi
+
+Pattern Jackson 17/05 : **"retour sur niveau defendu par color_up a beaucoup de chances de monter, RESPECTER LA TENDANCE pour qualite du rebond"**.
+
+Audit empirique tools/audit_color_vs_longbar_comparison.py sur 11356 trades directionnels 6m v4 enriched. Methodologie : DSR Lopez Bonferroni n_trials=96 (12 levels × 4 buckets × 2 sym), n>=50, PF>=1.3, DSR>=0.95.
+
+**Comparaison 3 approches** :
+- **COLOR seul** : 11 GOOD_EDGE, PnL/trade +12.9t, DIVERGENCE -15.7t ⭐ retenu
+- LONG_BAR seul : 7 GOOD_EDGE, PnL/trade +7.6t, DIVERGENCE +2.8t (anormal positif)
+- COMBINE (any-of) : 6 GOOD_EDGE, PnL/trade +9.2t (dilution)
+
+**SWING_COLOR_BOOSTED (11 combos GOOD_EDGE)** :
+- NQ SIDAK_COLOR_UP_zone CONFLUENCE_STRONG +15 (PF 1.93 n=1279 +25781t)
+- NQ SIDAK_COLOR_DN_zone CONFLUENCE_STRONG +15 (PF 1.87 n=865 +16498t)
+- NQ SIDAK_COLOR_UP_zone CONFLUENCE_OK +20 (PF 3.40 n=429 +13416t)
+- NQ SIDAK_COLOR_DN_zone CONFLUENCE_OK +20 (PF 3.48 n=272 +8754t)
+- NQ SIDAK_SWING_HIGH CONFLUENCE_STRONG +15 (PF 1.62 n=268 +3816t)
+- NQ SIDAK_SWING_LOW CONFLUENCE_STRONG +15 (PF 1.40 n=313 +3154t)
+- NQ MQ_PUT_0DTE CONFLUENCE_STRONG +15 (PF 1.64 n=149 +2508t) ← put_support Jackson
+- NQ MQ_PUT_0DTE CONFLUENCE_OK +10 (PF 1.45 n=96 +1226t)
+- NQ SIDAK_SWING_LOW CONFLUENCE_OK +10 (PF 1.42 n=87 +875t)
+- NQ SIDAK_SWING_HIGH CONFLUENCE_OK +10 (PF 1.44 n=69 +855t)
+- ES SIDAK_SWING_LOW CONFLUENCE_STRONG +10 (PF 1.55 n=77 +356t)
+
+### Bug critique decouvert + fixe (VALIDATION_MISS pattern recurrent)
+
+**1er code-reviewer NOGO** : Phase 1.7d ne se declenchait JAMAIS en prod malgre tests 17/17 PASS. Cause racine : `bot3_decision_engine._compute_swing_color_consensus(side, ctx)` lit `ctx["dist_color_up_nearest_pct"]`, `ctx["dist_color_dn_nearest_pct"]`, `ctx["aggressor_imbalance"]` MAIS `bot3_context_analyzer.analyze_context(bar)` ne populait AUCUNE de ces 3 cles → consensus toujours "NEUTRE" → 0 boost.
+
+**Verification empirique** : confidence avg NQ 1.7d_bug = 56.5 IDENTIQUE a 1.7b baseline 56.5 → preuve les boosts JAMAIS appliques.
+
+**Fix R1** : `bot3_context_analyzer.py:277-289` ajoute DIM 14 — populate les 3 features avec default `999.0` pour distances (anti faux positif CONFLUENCE qu'aurait cause default 0.0).
+
+**Fix R2** : 2 tests integration end-to-end ajoutes (`bar → analyze_context → evaluate_decision → verifier boost emis`). Anti VALIDATION_MISS futur.
+
+### Impact attendu (validation empirique post-fix)
+
+| Run | n | Conf avg | PF | PnL_sum |
+|---|---|---|---|---|
+| 1.7b baseline | 9785 | 56.5 | 1.262 | +72953t |
+| 1.7d bug (sans fix) | 9785 | **56.5** (boost JAMAIS applique) | 1.262 | +72953t |
+| **1.7d FIXED** | **9817** | **62.8** (+6.3) | **1.283** (+0.021) | **+78094t** (+5141t/6m) |
+
+Gain mesure : **+5141 ticks / 6m sur 9817 trades NQ** (~$2570 sur 3 micros NQ). PF +0.021. NQ SIDAK_COLOR_UP_zone : 1766 trades, min conf 65 (boost minimum applique), 702 trades conf>=80 (cumul session × confluence).
+
+### Validation pre-deploy
+
+- [x] Tests unitaires : 35/35 PASS (17 unitaires 1.7d + 16 regression 1.7b + 2 integration end-to-end)
+- [x] Audit empirique COLOR vs LONG_BAR vs COMBINE : COLOR seul superieur (11 GOOD_EDGE vs 7 vs 6)
+- [x] Backtest validation FIXED sur 6m v4 enriched : conf avg +6.3, PF +0.021, PnL +5141t
+- [x] Review code-reviewer 2 rounds : NOGO commit (round 1) → GO commit (round 2 post-fix)
+- [x] INCIDENT_LOG entry VALIDATION_MISS (5e occurrence) avec Trigger prevention
+
+### Nouveaux logs emit (regle souveraine tracability 01/05)
+
+- `BOT3_SWING_COLOR_BOOST` (INFO, decisions) : emit a chaque GO avec boost confluence applique
+- Tracability : `swing_color_consensus` (4 buckets) toujours dans params return (audit % par bucket prod)
+- 17/05 prod J+1 : `grep BOT3_SWING_COLOR_BOOST LOGS/decisions/*.jsonl` doit retourner > 0 (sinon VALIDATION_MISS bis)
+
+### Revert plan
+
+```bash
+# Rollback minimal : vider le dict (silent no-op, garde le code)
+sed -i 's/^SWING_COLOR_BOOSTED = {.*$/SWING_COLOR_BOOSTED = {/' CORE/bot3_config.py
+nssm restart MIA-DataBento-Paper-V2
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+(a remplir post-deploy VPS)
+
+### Suivi post-deploy
+
+- J+1 : grep `BOT3_SWING_COLOR_BOOST` > 0 lignes ; sinon investigation VALIDATION_MISS bis.
+- J+7 : mesurer n boosts emis vs predit (~6000/jour theoretical), pnl gain par bucket.
+- J+30 : audit re-run sur 8m enriched, verifier que 11 combos GOOD_EDGE tiennent. Si DIVERGENCE COLOR atteint n>=100 par combo + DSR>=0.95 → Phase 2 BLOCK divergence.
+
+### Cross-references
+
+- `DOCS/BOT3_FONCTIONNEMENT_GENERAL.md` (revue complete post-1.7b+1.7d)
+- `DOCS/INCIDENT_LOG.md` 2026-05-17 06:30 VALIDATION_MISS
+- `tools/audit_color_vs_longbar_comparison.py` (audit comparatif 3 approches)
+- `.claude/memory/feedback_lightgbm_no_composite_indicators.md` (anti Pattern 11)
+- `.claude/memory/feedback_validation_miss_patterns.md` (5e occurrence)
+
+---
+
 ## 2026-05-17 04:30 — GATE Phase 1.7b Bot 3 v2 : BLOCKED_COMBOS + SESSION_BOOST_CONFIDENCE
 
 **Categorie** : GATE (Trading/Risk + ML Pipeline — critere 1+2 critical-tasks-review)

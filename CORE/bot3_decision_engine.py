@@ -47,6 +47,8 @@ try:
         NEUTRAL_VA_EXPAND_THRESHOLD,
         NEUTRAL_VOL_ZSCORE_BREAKOUT_MIN,
         SESSION_BOOST_CONFIDENCE,
+        SWING_COLOR_BOOSTED,
+        SWING_COLOR_PROXIMITY_PCT,
         VETO_NEWS_AFTER_MIN,
         VETO_RVOL_MIN,
         VETO_ROLL_DAY,
@@ -74,10 +76,59 @@ except ImportError:
         NEUTRAL_VA_EXPAND_THRESHOLD,
         NEUTRAL_VOL_ZSCORE_BREAKOUT_MIN,
         SESSION_BOOST_CONFIDENCE,
+        SWING_COLOR_BOOSTED,
+        SWING_COLOR_PROXIMITY_PCT,
         VETO_NEWS_AFTER_MIN,
         VETO_RVOL_MIN,
         VETO_ROLL_DAY,
     )
+
+
+def _compute_swing_color_consensus(side: str, ctx: dict) -> str:
+    """Classifie le consensus COLOR-zone vs aggressor_imbalance pour ce side.
+
+    Pattern Jackson 17/05 : "retour sur niveau defendu par color_up a beaucoup
+    de chances de monter, RESPECTER LA TENDANCE pour qualite du rebond".
+
+    Empiriquement (DSR Lopez=1.0 sur 11 combos NQ+ES, 11356 trades 6m v4 enriched) :
+      - CONFLUENCE_STRONG : zone COLOR meme polarite proche + imbalance aligne
+      - CONFLUENCE_OK     : zone COLOR meme polarite proche seule
+      - DIVERGENCE        : zone COLOR polarite opposee proche + imbalance contraire
+      - NEUTRE            : aucune zone COLOR proche
+
+    Returns : "CONFLUENCE_STRONG" / "CONFLUENCE_OK" / "DIVERGENCE" / "NEUTRE".
+    """
+    dist_up = ctx.get("dist_color_up_nearest_pct")
+    dist_dn = ctx.get("dist_color_dn_nearest_pct")
+    imb = ctx.get("aggressor_imbalance", 0.0) or 0.0
+
+    def _close(d):
+        if d is None: return False
+        try:
+            return abs(float(d)) < SWING_COLOR_PROXIMITY_PCT
+        except (TypeError, ValueError):
+            return False
+
+    close_up = _close(dist_up)
+    close_dn = _close(dist_dn)
+
+    if side == "LONG":
+        if close_up and imb >= 0:
+            return "CONFLUENCE_STRONG"
+        if close_up:
+            return "CONFLUENCE_OK"
+        if close_dn and imb < 0:
+            return "DIVERGENCE"
+        return "NEUTRE"
+    elif side == "SHORT":
+        if close_dn and imb <= 0:
+            return "CONFLUENCE_STRONG"
+        if close_dn:
+            return "CONFLUENCE_OK"
+        if close_up and imb > 0:
+            return "DIVERGENCE"
+        return "NEUTRE"
+    return "NEUTRE"
 
 
 def evaluate_decision(
@@ -346,6 +397,19 @@ def evaluate_decision(
         boost_applied = SESSION_BOOST_CONFIDENCE[boost_key]
         confidence += boost_applied["boost"]
 
+    # === BOOST Swing × Color confluence (Phase 1.7d 17/05/2026) ===
+    # Pattern Jackson : "retour sur niveau defendu par color a beaucoup de
+    # chances de monter, respecter la tendance pour qualite du rebond".
+    # Audit empirique : 11 GOOD_EDGE combos COLOR seul (DSR Lopez 1.0,
+    # n>=50, PF>=1.3). Anti Pattern 11 : 1 feature derivee, 0 gate.
+    # Cf bot3_config.py:SWING_COLOR_BOOSTED + audit_color_vs_longbar_comparison.py
+    swing_color_bucket = _compute_swing_color_consensus(side, ctx)
+    swc_key = (symbol, level_name, swing_color_bucket)
+    swing_color_boost_applied: Optional[int] = None
+    if swc_key in SWING_COLOR_BOOSTED:
+        swing_color_boost_applied = SWING_COLOR_BOOSTED[swc_key]
+        confidence += swing_color_boost_applied
+
     # FIX M-1 (review code-reviewer 03/05) : clamp confidence 0-100
     # avant int() pour eviter score >100 (113 max sur test_confidence_full_stack)
     # qui casserait l'echelle d'un futur seuil decisionnel.
@@ -371,6 +435,8 @@ def evaluate_decision(
         "sl_ticks": adjusted_sl,
         "atr_multiplier": round(atr_multiplier, 3),
         "atr_current": round(atr_current, 5),
+        # Phase 1.7d : toujours expose le bucket pour tracking/audit
+        "swing_color_consensus": swing_color_bucket,
     }
     # Phase 1.7b : tracer BOOST applique pour emit log BOT3_BOOST_APPLIED
     if boost_applied is not None:
@@ -380,6 +446,13 @@ def evaluate_decision(
             "boost": boost_applied["boost"],
             "pf_observed": boost_applied["pf_observed"],
             "n_calibration": boost_applied["n"],
+        }
+    # Phase 1.7d : tracer BOOST swing_color applique
+    if swing_color_boost_applied is not None:
+        params["swing_color_boost_applied"] = {
+            "level": level_name,
+            "bucket": swing_color_bucket,
+            "boost": swing_color_boost_applied,
         }
     return True, "GO", params
 

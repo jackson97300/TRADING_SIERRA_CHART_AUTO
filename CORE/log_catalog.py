@@ -585,6 +585,8 @@ LOG_CODES = {
     # Reviews : ml-trainer GO + market-analyst GO + code-reviewer GO
     "BOT3_BLOCK_COMBO":          (LogLevel.MAJEUR,  "decisions", "Bot3 BLOCK combo : {sym} session={session} level={level} pf={pf} n={n}"),
     "BOT3_BOOST_APPLIED":        (LogLevel.INFO,    "decisions", "Bot3 BOOST applique : {sym} session={session} level={level} boost=+{boost} pf={pf} n={n}"),
+    # Phase 1.7d (17/05) — Swing × Color confluence boost
+    "BOT3_SWING_COLOR_BOOST":    (LogLevel.INFO,    "decisions", "Bot3 SWING_COLOR boost : {sym} level={level} bucket={bucket} boost=+{boost}"),
 
     # ============================================================
     # V6 brain Sim2 (05/05) — Bot V6 enrichi Databento V4

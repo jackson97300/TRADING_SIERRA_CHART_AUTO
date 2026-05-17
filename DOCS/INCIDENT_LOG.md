@@ -29,6 +29,45 @@
 4. **Escalation** : si une categorie atteint 3+ occurrences, promouvoir en memoire dediee auto-chargee
 5. **Cross-reference** avec `.claude/rules/lessons.md` + memoires `feedback_*`
 
+---
+
+### 2026-05-17 06:30 - [VALIDATION_MISS] Phase 1.7d boost JAMAIS declenche en prod malgre tests 17/17 PASS
+
+**Contexte** : implementation Phase 1.7d Bot 3 v2 (SWING_COLOR_BOOSTED, 11 combos confluence COLOR validees DSR Lopez 1.0). Code ecrit, 17 tests unitaires PASS + commit 1.7b deja fait (f7caf40).
+
+**Ce qui a mal tourne** : code-reviewer dispatch post-code a flag le bug avant commit. Empiriquement confirme par backtest : confidence avg NQ Phase 1.7d = **56.5 IDENTIQUE a Phase 1.7b 56.5** sur 9785 trades -> les boosts +10 a +20 ne se sont JAMAIS declenches sur ~6000 trades cibles cibles attendus.
+
+**Cause racine** : `bot3_decision_engine._compute_swing_color_consensus(side, ctx)` lit `ctx["dist_color_up_nearest_pct"]`, `ctx["dist_color_dn_nearest_pct"]`, `ctx["aggressor_imbalance"]`. MAIS `bot3_context_analyzer.analyze_context(bar)` ne populait AUCUNE de ces 3 features dans le `ctx`. En prod, `ctx.get(...)` retournait `None` -> classification toujours "NEUTRE" -> aucune cle dans `SWING_COLOR_BOOSTED` -> 0 boost emis. Pattern classique : tests unitaires injectent ctx synthetique avec features deja la, masquent la deconnexion bar->ctx.
+
+**Lecon** : pour chaque feature derivee dans `decision_engine`, AJOUTER UN TEST INTEGRATION END-TO-END qui passe par `bar -> analyze_context -> evaluate_decision` (pas ctx inject). Verifier empiriquement aussi via backtest que la statistique de sortie change (ex: confidence avg) — sinon = code mort.
+
+**Trigger prevention** :
+1. Apres tout ajout de feature dans `evaluate_decision` qui lit `ctx[...]`, **GREP `analyze_context` pour verifier que cette cle y est populated**.
+2. Apres backtest validation, comparer une metrique GLOBALE (confidence avg, n trades boost, etc.) entre baseline et nouveau code. Si identique -> investigation OBLIGATOIRE.
+3. Defaut `_safe_float(..., 999.0)` pour distances (pas 0.0) sinon |0| < 0.05 = faux positif CONFLUENCE.
+
+**Reviewed** : code-reviewer (dispatch post-code) + Jackson directive "missionne un agent pour review croise vos resultats".
+
+---
+
+### 2026-05-16 13:00 - [VALIDATION_MISS] Declaration success sur forme sans verifier fond
+
+**Contexte** : refactor Option B etape 7 `replay_enricher_batch.py`. Smoke test 1 jour ES a produit 117 bars × 438 cols. J'ai declare "Architecture validee empiriquement" en regardant uniquement le SHAPE (nb bars, nb cols).
+
+**Ce qui a mal tourne** : le code-reviewer a detecte un bug us/ns CRITIQUE : `df["ts_event"].astype("int64")` retournait des MICROSECONDES (dtype Databento `datetime64[us, UTC]`) traites comme nanosecondes -> trades window filtree sur 16h40 au lieu de 60s, VIX jamais joint (ts_event_ms = us//1M = epoch 1970), cascade pollution `delta_bar`, footprint, big_clusters, VIX features.
+
+**Cause racine** : j'ai verifie la FORME (nb cols, format JSONL OK) mais pas le FOND (delta_bar/volume coherent, vix non-NaN sur RTH, mq_gex shape correcte). Le bug etait INVISIBLE dans le shape.
+
+**Lecon** : "PASS sur shape != PASS sur fond". Pour tout module pipeline critique, valider EMPIRIQUEMENT le contenu via tests d'integrite (ratios cross-features, ranges plausibles, non-NaN sur features attendues).
+
+**Trigger prevention** :
+- Avant declarer "validation OK" sur tout output, **executer un script anti-triche** avec checks fail-loud
+- Pour pipeline ML : verifier minimum (a) features clees non-NaN sur fenetre attendue, (b) ratios cross-features (trades/volume), (c) timestamps monotones, (d) ranges plausibles
+- Voir `tools/verify_replay_batch_output.py` comme exemple template (10 checks fail-loud)
+- Cf directive Jackson 2026-05-16 13:30 : "TOUJOURS VERIFIER LE FOND, TESTE SUR DONNEES REELLES, ANTI TRICHE ET BUG"
+
+**Reviewed** : Jackson + code-reviewer (a flag NOGO + reco verif anti-triche)
+
 ## Format d'entree
 
 ```

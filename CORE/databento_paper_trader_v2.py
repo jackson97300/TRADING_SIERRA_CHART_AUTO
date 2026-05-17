@@ -2746,6 +2746,13 @@ class DatabentoPaperTraderV2:
                       boost=boost_info["boost"],
                       pf=boost_info["pf_observed"],
                       n=boost_info["n_calibration"])
+            # Phase 1.7d (17/05) : emit BOOST swing_color confluence
+            sw_color_info = params_d.get("swing_color_boost_applied")
+            if sw_color_info:
+                _emit("BOT3_SWING_COLOR_BOOST",
+                      sym=sym, level=sw_color_info["level"],
+                      bucket=sw_color_info["bucket"],
+                      boost=sw_color_info["boost"])
         elif log_code == "BOT3_VETO_VOL_DEAD":
             _emit(log_code, sym=sym,
                   rvol=ctx_d.get("rvol", 0.0), limit=0.3)

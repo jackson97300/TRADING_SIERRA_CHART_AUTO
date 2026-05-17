@@ -395,3 +395,54 @@ SESSION_BOOST_CONFIDENCE = {
         "folds_ge_1_3": 9, "pnl_gain_ticks": 8769.7,
     },
 }
+
+
+# ════════════════════════════════════════════════════════════════════════
+# SWING_COLOR_BOOSTED — Phase 1.7d Bot 3 v2 (17/05/2026)
+# ════════════════════════════════════════════════════════════════════════
+# Pattern Jackson 17/05 : "retour sur niveau defendu par color_up a beaucoup
+# de chances de monter, RESPECTER LA TENDANCE pour qualite du rebond".
+#
+# Audit empirique tools/audit_color_vs_longbar_comparison.py sur trades
+# phase17b_validation (11356 trades directionnels 6m v4 enriched).
+# Methodologie : DSR Lopez Bonferroni n_trials=96 (12 levels × 4 buckets × 2 sym),
+# n>=50 par (sym, level, bucket), PF>=1.3, DSR>=0.95.
+#
+# Comparaison empirique 3 approches :
+#   - COLOR seul         : 11 GOOD_EDGE, PnL/trade +12.9t, DIVERGENCE -15.7t
+#   - LONG_BAR seul      :  7 GOOD_EDGE, PnL/trade +7.6t, DIVERGENCE +2.8t (anormal)
+#   - COMBINE (any-of)   :  6 GOOD_EDGE, PnL/trade +9.2t (dilution)
+# -> COLOR seul retenu (signal net + DIVERGENCE asymetrique).
+#
+# Anti Pattern 11 V1 : 1 seule feature derivee `swing_color_consensus`
+# (4 buckets : CONFLUENCE_STRONG/OK/DIVERGENCE/NEUTRE) calculee dans
+# bot3_decision_engine apres resolution side. 0 gate, 0 penalite,
+# juste +X confidence si combo GOOD_EDGE valide DSR=1.0.
+#
+# Bucket classification (dans evaluate_decision) :
+#   side=LONG  + dist_color_up_nearest_pct proche (<0.05%) + imb >=0 -> CONFLUENCE_STRONG
+#   side=LONG  + dist_color_up_nearest_pct proche                   -> CONFLUENCE_OK
+#   side=LONG  + dist_color_dn_nearest_pct proche + imb < 0          -> DIVERGENCE (no boost)
+#   side=SHORT symetrique
+#
+# DIVERGENCE actuellement non-bloquante (447 trades sur 12 levels = ~37/level,
+# sous n>=100 requis pour DSR Lopez strict). Backlog Phase 2 audit J+30 8m.
+
+SWING_COLOR_BOOSTED = {
+    # (symbol, level_name, bucket) -> boost
+    # Tries par PnL_sum 6m decroissant (les plus rentables d'abord)
+    ("NQ", "SIDAK_COLOR_UP_zone", "CONFLUENCE_STRONG"): 15,   # PF 1.93 n=1279 +25781t
+    ("NQ", "SIDAK_COLOR_DN_zone", "CONFLUENCE_STRONG"): 15,   # PF 1.87 n=865  +16498t
+    ("NQ", "SIDAK_COLOR_UP_zone", "CONFLUENCE_OK"):     20,   # PF 3.40 n=429  +13416t
+    ("NQ", "SIDAK_COLOR_DN_zone", "CONFLUENCE_OK"):     20,   # PF 3.48 n=272  +8754t
+    ("NQ", "SIDAK_SWING_HIGH",    "CONFLUENCE_STRONG"): 15,   # PF 1.62 n=268  +3816t
+    ("NQ", "SIDAK_SWING_LOW",     "CONFLUENCE_STRONG"): 15,   # PF 1.40 n=313  +3154t
+    ("NQ", "MQ_PUT_0DTE",         "CONFLUENCE_STRONG"): 15,   # PF 1.64 n=149  +2508t (put_support)
+    ("NQ", "MQ_PUT_0DTE",         "CONFLUENCE_OK"):     10,   # PF 1.45 n=96   +1226t
+    ("NQ", "SIDAK_SWING_LOW",     "CONFLUENCE_OK"):     10,   # PF 1.42 n=87   +875t
+    ("NQ", "SIDAK_SWING_HIGH",    "CONFLUENCE_OK"):     10,   # PF 1.44 n=69   +855t
+    ("ES", "SIDAK_SWING_LOW",     "CONFLUENCE_STRONG"): 10,   # PF 1.55 n=77   +356t
+}
+
+# Seuil de proximite COLOR (en % du prix). 0.05% = ~12t NQ a 25k / ~3t ES a 6k.
+SWING_COLOR_PROXIMITY_PCT = 0.05
