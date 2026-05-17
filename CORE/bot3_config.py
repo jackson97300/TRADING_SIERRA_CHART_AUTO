@@ -157,6 +157,35 @@ GUARD_RAILS_BOT3: dict[str, dict] = {
             (80.0, 50.0),    # palier 3 : MFE +80t (=$300) → SL +50t (lock $187.50)
         ],
     },
+    # ────────────────────────────────────────────────────────────────────
+    # MGC (Micro Gold COMEX) — ajoute 12/05/2026 Bot 3 Gold integration
+    # ────────────────────────────────────────────────────────────────────
+    # Specs : tick=0.10, $1/tick × 3 micros = $3/tick total.
+    # ATR median 17 ticks/bar (~1.7 pts Gold). SL 200t = 20 pts = $600 (3 MGC).
+    # Source : DOCS/PROMPT_CLAUDE_CODE_BOT3_GOLD.md + bot3_gold_config.py.
+    # Phase 1 OBSERVE-ONLY → ces valeurs ne servent qu'a logger would_GO,
+    # pas d'execution DTC. Phase 2+ : recalibrer apres 20 trades empiriques.
+    "MGC": {
+        "n_contracts": 3,                       # 3 MGC = $3/tick
+        "sl_ticks_base": 200,                   # 20 pts Gold (= $600 risque 3 MGC)
+        "trailing_activation": 80,              # +8 pts pour armer trailing
+        "trailing_distance": 50,                # trail a 5 pts du best
+        "timeout_minutes": 60,                  # Gold = mouvements plus lents que ES/NQ
+        "tp_cap_ticks": 400,                    # cap 40 pts Gold (RR max 2)
+        "tp_rr_ratio": 2.0,                     # R:R 2.0 (recalibrer apres data)
+        "tick_value": 1.00,                     # $1/tick MGC
+        "tick_size": 0.10,                      # tick Gold
+        # Trailing + BE (alignes spec PROMPT Gold)
+        "trailing_be_trigger_ticks": 200,       # MFE >= 1R (200t) → BE
+        "trailing_active_trigger_ticks": 300,   # MFE >= 1.5R → trailing actif
+        "trailing_distance_ticks": 100,         # SL trailing = MFE_price - 100t (0.5R)
+        # Ladder profit-locking (calibre conservateur Phase 1, ajuster apres data)
+        "ladder_paliers": [
+            (250.0, 100.0),  # palier 1 : MFE +25 pts → lock +10 pts ($30)
+            (350.0, 200.0),  # palier 2 : MFE +35 pts → lock +20 pts ($60)
+            (450.0, 300.0),  # palier 3 : MFE +45 pts → lock +30 pts ($90)
+        ],
+    },
 }
 
 # ════════════════════════════════════════════════════════════════════════
@@ -185,6 +214,16 @@ RISK_BOT3: dict[str, dict] = {
         "kill_switch_daily_pnl": None,
         "position_size": 3,
     },
+    # MGC ajoute 12/05/2026 Bot 3 Gold integration.
+    # Phase 1 OBSERVE-ONLY : caps actifs (data quality), aligne sur Gold spec
+    # PROMPT (max 3 trades/jour, max 2 losses, kill switch -$600 = 2 × $300).
+    # Phase 2+ : aligner sur ES/NQ (PHASE_1_FREE_RUN=True = None) si paper GO.
+    "MGC": {
+        "max_trades_per_day": 3,            # cap data quality Phase 1
+        "max_losses_per_day": 2,            # circuit breaker
+        "kill_switch_daily_pnl": -600.0,    # 2 × $300 max loss/jour Gold
+        "position_size": 3,
+    },
 }
 
 # 07/05/2026 Jackson directive "ANALYSE LE COOLDOWN DES AUTRES BOT ET APLIQUE LE MEME"
@@ -202,7 +241,7 @@ PAUSE_AFTER_BREAKER_BOT3_MIN = 60       # pause 60 min apres breaker triggered
 # ════════════════════════════════════════════════════════════════════════
 # ATR baselines pour SL adaptatif
 # ════════════════════════════════════════════════════════════════════════
-ATR_BASELINE = {"NQ": 0.033, "ES": 0.027}      # atr_14m_pct mediane sur 318j V4
+ATR_BASELINE = {"NQ": 0.033, "ES": 0.027, "MGC": 0.035}  # atr_14m_pct mediane (MGC = spec Gold prompt)
 ATR_MULTIPLIER_CLAMP = (0.7, 1.5)              # clamp ratio atr_current / baseline
 
 # ════════════════════════════════════════════════════════════════════════
@@ -304,3 +343,55 @@ NEUTRAL_VA_BUCKETS_TREND = 690            # heuristic_calibrated_NQ p25 (profile
 NEUTRAL_DELTA_PEAK_RATIO_ABSORB = 2.0     # NON UTILISE actuellement
 # Spike confirmation BREAKOUT
 NEUTRAL_SPIKE_LAG_BLOCK = True             # spike_detected_lag3=1 → veto retest pollue
+
+
+# ════════════════════════════════════════════════════════════════════════
+# BLOCKED COMBOS + SESSION BOOSTS — Phase 1.7b Bot 3 v2 (17/05/2026)
+# ════════════════════════════════════════════════════════════════════════
+# Source : audit Phase 1.0 post-enrichissement v4 (454 cols).
+# Methodologie : DSR Lopez Bonferroni n_trials=1064 (28 sessions × 19 levels × 2 dirs),
+# walk-forward 12-fold (Pardo 1992), bootstrap CI 95% n_boot=1000, n>=100/combo.
+# Cf :
+#   - DATA/BACKTEST/BOT3/combos_session_level_post_fix_6m_v4_enriched.csv
+#   - DOCS/BOT3_V2_PHASE1_0_AUDIT_REPORT.md
+#   - DOCS/BOT3_V2_CHANGES.md (AXE 5 BLOCK + AXE 6 BOOST)
+# Reviews : ml-trainer GO + market-analyst GO + code-reviewer GO.
+
+# 5 combos avec DSR_block=1.0 (Bonferroni 1064 trials), walk-forward 8-10/12 folds
+# avec PF<0.7 stable. Edge negatif structurel ES marche bull persistant 2026.
+# Cle : (symbol, session, level_name). Session resolu par bot3_context_analyzer.
+BLOCKED_COMBOS_BOT3 = {
+    ("ES", "ASIA", "SIDAK_SWING_HIGH"): {
+        "pf_observed": 0.46, "n": 306, "dsr_block": 1.0,
+        "folds_lt_0_7": 10, "pnl_evite_ticks": -1577.0,
+    },
+    ("ES", "ASIA", "VWAP_W_SD1D"): {
+        "pf_observed": 0.52, "n": 128, "dsr_block": 1.0,
+        "folds_lt_0_7": 9, "pnl_evite_ticks": -681.5,
+    },
+    ("ES", "ASIA", "SIDAK_SWING_LOW"): {
+        "pf_observed": 0.53, "n": 230, "dsr_block": 1.0,
+        "folds_lt_0_7": 9, "pnl_evite_ticks": -1255.7,
+    },
+    ("ES", "LONDON", "CUR_VPOC"): {
+        "pf_observed": 0.45, "n": 236, "dsr_block": 1.0,
+        "folds_lt_0_7": 10, "pnl_evite_ticks": -1645.7,
+    },
+    ("ES", "LONDON", "SINGLE_PRINT"): {
+        "pf_observed": 0.66, "n": 127, "dsr_block": 1.0,
+        "folds_lt_0_7": 8, "pnl_evite_ticks": -467.4,
+    },
+}
+
+# 1 combo BOOST validee. Boost +15 sur confidence_raw (avant clamp 0-100).
+# NQ LONDON SIDAK_COLOR_UP_zone uniquement : PF 2.02 n=459 CI[1.59, 2.63] 9/12 folds.
+#
+# HOLD ES US_CASH SIDAK_COLOR_DN_zone (PF 1.78 n=189 CI[1.21, 2.71]) :
+# ml-trainer NOGO Phase 1.7b — CI plus large + concentration bull regime
+# possible. Re-evaluer J+30 sur audit 8m enriched complets (replay 657k bars).
+SESSION_BOOST_CONFIDENCE = {
+    ("NQ", "LONDON", "SIDAK_COLOR_UP_zone"): {
+        "boost": 15, "pf_observed": 2.02, "n": 459, "dsr_boost": 1.0,
+        "folds_ge_1_3": 9, "pnl_gain_ticks": 8769.7,
+    },
+}

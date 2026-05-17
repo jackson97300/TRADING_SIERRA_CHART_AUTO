@@ -62,6 +62,99 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-17 04:30 — GATE Phase 1.7b Bot 3 v2 : BLOCKED_COMBOS + SESSION_BOOST_CONFIDENCE
+
+**Categorie** : GATE (Trading/Risk + ML Pipeline — critere 1+2 critical-tasks-review)
+**Impact prod** : PAPER (Sim1 deploy apres tests + reviews)
+**Fichier(s)** :
+- `CORE/bot3_config.py:347-405` (+59 LOC : 2 dicts BLOCKED + BOOST)
+- `CORE/bot3_decision_engine.py:30-79,128-145,329-336,357-371` (+30 LOC : import + check BLOCK + check BOOST + boost_applied in params)
+- `CORE/bot3_mp_engine.py:131-133` (+3 LOC : handler BLOCK_COMBO_ reason -> BOT3_BLOCK_COMBO log code)
+- `CORE/log_catalog.py:578-585` (+8 LOC : codes BOT3_BLOCK_COMBO + BOT3_BOOST_APPLIED)
+- `CORE/databento_paper_trader_v2.py:2737-2754,2765-2770` (+18 LOC : emit BOOST_APPLIED apres GO + emit BLOCK_COMBO MAJEUR)
+- `CORE/tests/test_block_boost_phase17b.py` (NEW +280 LOC : 16 tests)
+
+**Reviewer(s) agent** :
+- ml-trainer : GO-AVEC-RESERVES (Deploy 5 BLOCK + 1 BOOST NQ LONDON, HOLD ES US_CASH BOOST, audit J+30)
+- market-analyst : COHERENT-AVEC-RESERVES (sequencing 1.7b SEUL d'abord, 1.7a bonus-only future)
+- code-reviewer : GO-AVEC-RESERVES (R1 log codes + R3 CHANGELOG -> appliques)
+
+### Quoi
+
+Bot 3 v2 Phase 1.7b. Audit Phase 1.0 post-enrichissement Phase B v4 (454 cols, 15553 trades) a revele 5 combos BLOCK + 1 BOOST valides Lopez :
+
+**BLOCKED_COMBOS_BOT3** (DSR_block=1.0 Bonferroni n_trials=1064, walk-forward 8-10/12 folds, n>=127) :
+1. (ES, ASIA, SIDAK_SWING_HIGH) PF 0.46 n=306 → -1577t evites
+2. (ES, ASIA, VWAP_W_SD1D) PF 0.52 n=128 → -682t
+3. (ES, ASIA, SIDAK_SWING_LOW) PF 0.53 n=230 → -1256t
+4. (ES, LONDON, CUR_VPOC) PF 0.45 n=236 → -1646t
+5. (ES, LONDON, SINGLE_PRINT) PF 0.66 n=127 → -467t
+
+Total : ~5625 ticks ES evites sur 6 mois (~$7k/an sur 1 micro ES).
+
+**SESSION_BOOST_CONFIDENCE** (DSR_boost=1.0, 9/12 folds >=1.3) :
+- (NQ, LONDON, SIDAK_COLOR_UP_zone) PF 2.02 n=459, +15 confidence, +8770t
+
+**HOLD** (ml-trainer NOGO Phase 1.7b) : (ES, US_CASH, SIDAK_COLOR_DN_zone) PF 1.78 n=189 — CI [1.21, 2.71] trop large + concentration bull regime. Re-eval J+30.
+
+### Pourquoi
+
+Bot 3 prenait des trades contre-tendance (Jackson 12/05) car bot3_decision_engine ne consulte ni `regime.favor` ni `bias.direction`. Phase 1.7b capture **empiriquement** les pires combinaisons Session × Level sans avoir besoin de variable regime/bias (anti Pattern 11 V1).
+
+Source : audit DSR Lopez `DATA/BACKTEST/BOT3/combos_session_level_post_fix_6m_v4_enriched.csv` + `DOCS/BOT3_V2_PHASE1_0_AUDIT_REPORT.md`. Methodologie : `tools/bot3_v2_phase1_0_audit.py` (DSR Bonferroni 1064 + walk-forward 12-fold + bootstrap CI 95%).
+
+### Impact attendu
+
+- ES : -5625t pertes evitees / 6 mois (~+$7k/an micro). PF 0.73 → ~0.80 estime.
+- NQ : +8770t gain sur 459 trades cibles LONDON COLOR_UP (~+$4.4k sur 6m micro). PF 1.26 stable.
+- Trade frequency : ES -127-306 trades/combo bloque, NQ +0 (boost = scoring only).
+
+### Validation pre-deploy
+
+- [x] Tests unitaires: 16/16 PASS (`pytest CORE/tests/test_block_boost_phase17b.py`)
+- [x] Audit Phase 1.0 sur vraies donnees 6m v4 enriched : 5 BLOCK + 1 BOOST DSR=1.0
+- [ ] Backtest preservation NQ : re-run avec Phase 1.7b en cours (background `bryemvwaj`) — verifier que les 9782 NQ trades baseline ne sont PAS impactes (BLOCK ES uniquement, BOOST = scoring)
+- [x] Review agents: 3/3 GO-AVEC-RESERVES (ml-trainer + market-analyst + code-reviewer)
+- [x] Test empirique : `python -X utf8 -m pytest CORE/tests/test_block_boost_phase17b.py -v` → 16 passed in 0.42s
+
+### Nouveaux logs emit (regle souveraine tracabilite 01/05)
+
+- `BOT3_BLOCK_COMBO` (decisions, LogLevel.MAJEUR) — emit a chaque touch d'un combo bloque + contexte pf/n/dsr pour audit J+30
+- `BOT3_BOOST_APPLIED` (decisions, LogLevel.INFO) — emit apres GO si le boost a ete applique + contexte session/level/pf/n
+- Mapping reason `BLOCK_COMBO_{symbol}_{session}_{level_name}` → code stable `BOT3_BLOCK_COMBO` via `bot3_mp_engine.reason_to_log_code` (anti KeyError silent en prod)
+
+### Revert plan
+
+```bash
+# Rollback minimal : reverter ces 6 commits dans ordre inverse de application
+# Alternative : vider les 2 dicts (silent no-op, garde le code mais desactive)
+sed -i 's/^BLOCKED_COMBOS_BOT3 = {.*$/BLOCKED_COMBOS_BOT3 = {/' CORE/bot3_config.py
+sed -i 's/^SESSION_BOOST_CONFIDENCE = {.*$/SESSION_BOOST_CONFIDENCE = {/' CORE/bot3_config.py
+# Restart service nssm MIA-DataBento-Paper-V2
+```
+
+Pas de schema bump (config-only changes).
+
+### Deployed at YYYY-MM-DD HH:MM
+(a remplir apres deploy VPS + restart service)
+
+### Suivi post-deploy
+
+- J+1 : grep `BOT3_BLOCK_COMBO` LOGS/decisions/*.jsonl. Si 0 emit -> instrumentation cassee (cf VALIDATION_MISS rule). Si > attendu -> investigation.
+- J+7 : compter BLOCK par combo, mesurer pnl_evite reel vs predit. Si regression > 10% predit -> rollback.
+- J+30 : re-run audit Phase 1.0 sur 8m enriched complets (`tools/bot3_v2_phase1_0_audit.py --run-id 8m_validation`). Si 1 BLOCK ou BOOST flip -> rollback immediat (DEPLOY_UNSAFE).
+
+### Cross-references
+
+- `DOCS/BOT3_V2_CHANGES.md` (AXE 5 BLOCK + AXE 6 BOOST documente)
+- `DOCS/BIAS_DIRECTION_DETECTION_CLARIFICATION.md` (Section C.5 strategie anti-contre-tendance)
+- `DATA/BACKTEST/BOT3/combos_session_level_post_fix_6m_v4_enriched.csv` (source data)
+- `.claude/memory/feedback_data_mining_trap.md` (5 controles Lopez)
+- `.claude/memory/feedback_cross_instrument_bonus_not_gate.md` (bonus only doctrine — applique Phase 1.7a future, PAS 1.7b qui est gate BLOCK + scoring BOOST)
+- `.claude/rules/orphan-prevention.md` (sequence anti-orphelin V2 obligatoire au deploy Sim1)
+
+---
+
 ## 2026-05-16 04:00 — FIX MenthorQ coverage builder + PROHIBITED_BUGD quality_validator
 
 **Categorie** : FIX (ML Pipeline + Data Quality)

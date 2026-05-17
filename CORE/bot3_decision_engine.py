@@ -28,6 +28,7 @@ try:
     from .bot3_config import (
         ATR_BASELINE,
         ATR_MULTIPLIER_CLAMP,
+        BLOCKED_COMBOS_BOT3,
         BOT3_TRADE_BREAKOUTS,
         BOT3_TRADE_REJECTIONS,
         GUARD_RAILS_BOT3,
@@ -45,6 +46,7 @@ try:
         NEUTRAL_VA_CONTRACT_THRESHOLD,
         NEUTRAL_VA_EXPAND_THRESHOLD,
         NEUTRAL_VOL_ZSCORE_BREAKOUT_MIN,
+        SESSION_BOOST_CONFIDENCE,
         VETO_NEWS_AFTER_MIN,
         VETO_RVOL_MIN,
         VETO_ROLL_DAY,
@@ -53,6 +55,7 @@ except ImportError:
     from bot3_config import (
         ATR_BASELINE,
         ATR_MULTIPLIER_CLAMP,
+        BLOCKED_COMBOS_BOT3,
         BOT3_TRADE_BREAKOUTS,
         BOT3_TRADE_REJECTIONS,
         GUARD_RAILS_BOT3,
@@ -70,6 +73,7 @@ except ImportError:
         NEUTRAL_VA_CONTRACT_THRESHOLD,
         NEUTRAL_VA_EXPAND_THRESHOLD,
         NEUTRAL_VOL_ZSCORE_BREAKOUT_MIN,
+        SESSION_BOOST_CONFIDENCE,
         VETO_NEWS_AFTER_MIN,
         VETO_RVOL_MIN,
         VETO_ROLL_DAY,
@@ -126,6 +130,23 @@ def evaluate_decision(
     # Anti trade sur niveaux perimes (MQ ingestion failed >12h).
     if ctx.get("mq_levels_stale", False) and level_name.startswith("MQ_"):
         return False, "VETO_MQ_STALE", {"level": level_name}
+
+    # ═══════════════════ BLOCK COMBO Session × Level (Phase 1.7b 17/05/2026) ═══════════════════
+    # Source : audit Phase 1.0 post-enrichissement v4 enriched (454 cols).
+    # 5 combos avec DSR_block=1.0 Bonferroni n_trials=1064, walk-forward 8-10/12
+    # folds PF<0.7 stable. Edge negatif structurel ES marche bull 2026.
+    # Cf bot3_config.py:BLOCKED_COMBOS_BOT3 + DOCS/BOT3_V2_PHASE1_0_AUDIT_REPORT.md
+    session = ctx.get("session", "OTHER")
+    combo_key = (symbol, session, level_name)
+    if combo_key in BLOCKED_COMBOS_BOT3:
+        block_info = BLOCKED_COMBOS_BOT3[combo_key]
+        return False, f"BLOCK_COMBO_{symbol}_{session}_{level_name}", {
+            "pf_observed": block_info["pf_observed"],
+            "n_calibration": block_info["n"],
+            "dsr_block": block_info["dsr_block"],
+            "session": session,
+            "level": level_name,
+        }
 
     # ═══════════════════ RESOLUTION SIDE + ACTION ═══════════════════
 
@@ -314,6 +335,17 @@ def evaluate_decision(
     if side == "SHORT" and ctx.get("n_trapped_buy_cluster", 0) > 0:
         confidence += 10  # trapped buyers near resistance = squeeze down
 
+    # === BOOST Session × Level (Phase 1.7b 17/05/2026) ===
+    # Source : audit Phase 1.0 post-enrichissement v4 enriched.
+    # NQ LONDON SIDAK_COLOR_UP_zone : PF 2.02 n=459, CI [1.59, 2.63], DSR_boost=1.0.
+    # ES US_CASH SIDAK_COLOR_DN_zone HOLD (CI plus large, n=189, re-eval J+30).
+    # Cf bot3_config.py:SESSION_BOOST_CONFIDENCE
+    boost_key = (symbol, session, level_name)
+    boost_applied: Optional[dict] = None
+    if boost_key in SESSION_BOOST_CONFIDENCE:
+        boost_applied = SESSION_BOOST_CONFIDENCE[boost_key]
+        confidence += boost_applied["boost"]
+
     # FIX M-1 (review code-reviewer 03/05) : clamp confidence 0-100
     # avant int() pour eviter score >100 (113 max sur test_confidence_full_stack)
     # qui casserait l'echelle d'un futur seuil decisionnel.
@@ -332,7 +364,7 @@ def evaluate_decision(
     base_sl = GUARD_RAILS_BOT3[symbol]["sl_ticks_base"]
     adjusted_sl = int(round(base_sl * atr_multiplier))
 
-    return True, "GO", {
+    params = {
         "side": side,
         "action": action,         # REJECTION ou BREAKOUT
         "confidence": int(confidence),
@@ -340,6 +372,16 @@ def evaluate_decision(
         "atr_multiplier": round(atr_multiplier, 3),
         "atr_current": round(atr_current, 5),
     }
+    # Phase 1.7b : tracer BOOST applique pour emit log BOT3_BOOST_APPLIED
+    if boost_applied is not None:
+        params["boost_applied"] = {
+            "session": session,
+            "level": level_name,
+            "boost": boost_applied["boost"],
+            "pf_observed": boost_applied["pf_observed"],
+            "n_calibration": boost_applied["n"],
+        }
+    return True, "GO", params
 
 
 def _resolve_neutral_side_with_funnel(ctx: dict) -> tuple:

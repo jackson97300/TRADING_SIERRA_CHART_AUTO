@@ -578,6 +578,15 @@ LOG_CODES = {
     "BOT3_CAP_LOSSES_REACHED":   (LogLevel.MAJEUR,  "decisions", "Bot3 cap losses atteint : {sym} n_losses={n_losses}/{max} (circuit breaker)"),
 
     # ============================================================
+    # Phase 1.7b Bot 3 v2 (17/05/2026) — BLOCK + BOOST combos Session × Level
+    # ============================================================
+    # Source : audit Phase 1.0 post-enrichissement v4 (454 cols)
+    # DSR Lopez Bonferroni n_trials=1064, walk-forward 12-fold, n>=100/combo
+    # Reviews : ml-trainer GO + market-analyst GO + code-reviewer GO
+    "BOT3_BLOCK_COMBO":          (LogLevel.MAJEUR,  "decisions", "Bot3 BLOCK combo : {sym} session={session} level={level} pf={pf} n={n}"),
+    "BOT3_BOOST_APPLIED":        (LogLevel.INFO,    "decisions", "Bot3 BOOST applique : {sym} session={session} level={level} boost=+{boost} pf={pf} n={n}"),
+
+    # ============================================================
     # V6 brain Sim2 (05/05) — Bot V6 enrichi Databento V4
     # ============================================================
     "BRAIN_V6_ACTIVE":           (LogLevel.INFO,    "events",    "Bot V6 brain actif : {sym} regime_mode={regime_mode} favor={regime_favor} bias_v6_score={bias_v6_score} dir={bias_v6_dir}"),

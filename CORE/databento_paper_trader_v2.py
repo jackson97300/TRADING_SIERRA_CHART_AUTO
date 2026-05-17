@@ -88,6 +88,24 @@ from bot3_level_definitions import (
     get_level_baseline_rej,
 )
 
+# ─── Bot 3 GOLD (MGC) — 12/05/2026 ─────────────────────────────────────
+# Import top-level + fail-loud (review code-reviewer R3) : eviter fallback
+# silencieux du pattern try/except ImportError qui peut masquer NameError
+# downstream si les 2 imports echouent (cf .claude/rules/lessons.md
+# "Gamma hardcode 0.0 silencieux"). Fail-loud BOOT en cas d'echec import.
+try:
+    from bot3_gold_config import BOT3G_OBSERVE_ONLY, BOT3G_ENABLE_HEDGE_CROSS_ASSET
+except ImportError as _e_gold_cfg:
+    try:
+        from CORE.bot3_gold_config import BOT3G_OBSERVE_ONLY, BOT3G_ENABLE_HEDGE_CROSS_ASSET
+    except ImportError as _e_gold_cfg2:
+        raise ImportError(
+            f"FAIL-LOUD : impossible d'importer bot3_gold_config "
+            f"(req: BOT3G_OBSERVE_ONLY, BOT3G_ENABLE_HEDGE_CROSS_ASSET). "
+            f"Tentatives : {_e_gold_cfg} | {_e_gold_cfg2}. "
+            f"PYTHONPATH ou structure CORE/ casse — refuser de booter Bot 3."
+        ) from _e_gold_cfg2
+
 
 def _bot3_count_active_levels() -> int:
     """Count moyen de niveaux actifs entre NQ et ES (filtres symbole appliques).
@@ -164,8 +182,15 @@ DATA_CRIT_THR_SEC = 2700
 
 TRADE_ACCOUNT = os.environ.get("MIA_TRADE_ACCOUNT", "Sim2")
 
-SYMBOLS = ["NQ", "ES"]
-SYMBOL_TO_CONTRACT = {"NQ": "NQM26-CME", "ES": "ESM26-CME"}
+# Bot 2 V2 (heberge dans cette class) trade UNIQUEMENT NQ + ES.
+# Bot 3 MP trade NQ + ES + MGC (MGC ajoute 12/05/2026 via dispatcher).
+# ATTENTION : SYMBOLS reste ["NQ", "ES"] pour eviter regression Bot 2 V2
+# (KeyError 'MGC' dans poll_cycle Bot 2 qui itere sur SYMBOLS et utilise
+# des dicts internes positions/sltp_engines/etc. NQ+ES uniquement).
+# Bot 3 utilise SYMBOLS_BOT3 dans _bot3_poll_cycle (variable separee).
+SYMBOLS = ["NQ", "ES"]                                # Bot 2 V2 (positions trading)
+SYMBOLS_BOT3 = ["NQ", "ES", "MGC"]                    # Bot 3 (MP ES/NQ + Gold MGC)
+SYMBOL_TO_CONTRACT = {"NQ": "NQM26-CME", "ES": "ESM26-CME", "MGC": "MGCM26-CMECOMEX"}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -176,21 +201,43 @@ def load_last_bar(symbol: str) -> Optional[pd.Series]:
     """Charge la derniere barre V4 enrichie pour le symbole.
 
     Cherche dans le mois courant, fallback mois precedent.
+
+    Fix 12/05/2026 (Bot 3 Gold integration) : utilise get_databento_ticker()
+    avec FALLBACK vers {symbol}.c.0 si ticker primary absent. Le pipeline
+    VPS produit `MGC.c.0` mais constants.py dit `MGC.v.0` (divergence
+    pipeline vs design — documente INCIDENT_LOG 12/05). En attendant
+    pipeline corrige, on essaye d'abord le ticker design (MGC.v.0) puis
+    fallback `.c.0` pour ne pas casser Phase 1 OBSERVE-ONLY.
+
+    Pour ES/NQ : ticker = "ES.c.0" / "NQ.c.0" = path original, IDENTIQUE.
     """
+    try:
+        from CORE.constants import get_databento_ticker
+    except ImportError:
+        from constants import get_databento_ticker
+    ticker_primary = get_databento_ticker(symbol)
+    # Fallback list : ticker design puis {symbol}.c.0 si primary absent
+    fallback_tickers = [ticker_primary]
+    if ticker_primary != f"{symbol}.c.0":
+        fallback_tickers.append(f"{symbol}.c.0")
+
     now_utc = datetime.now(timezone.utc)
     candidates = []
-    for offset in (0, -1):
-        m = now_utc.month + offset
-        y = now_utc.year
-        if m < 1:
-            m += 12
-            y -= 1
-        elif m > 12:
-            m -= 12
-            y += 1
-        fp = DATASET_ROOT / f"symbol={symbol}.c.0" / f"year={y}" / f"month={m:02d}" / "data.parquet"
-        if fp.exists():
-            candidates.append(fp)
+    for ticker in fallback_tickers:
+        for offset in (0, -1):
+            m = now_utc.month + offset
+            y = now_utc.year
+            if m < 1:
+                m += 12
+                y -= 1
+            elif m > 12:
+                m -= 12
+                y += 1
+            fp = DATASET_ROOT / f"symbol={ticker}" / f"year={y}" / f"month={m:02d}" / "data.parquet"
+            if fp.exists():
+                candidates.append(fp)
+        if candidates:
+            break    # ticker primary suffit, pas besoin fallback
     if not candidates:
         return None
     try:
@@ -243,8 +290,9 @@ class Bot3RiskManager:
         self.max_consec_sl = MAX_CONSECUTIVE_SL_BOT3
         self.pause_breaker_min = PAUSE_AFTER_BREAKER_BOT3_MIN
         self.last_close_time: dict[str, datetime] = {}
-        self.consecutive_sl: dict[str, int] = {"NQ": 0, "ES": 0}
-        self.breaker_until: dict[str, Optional[datetime]] = {"NQ": None, "ES": None}
+        # 12/05 fix : MGC ajoute (Bot 3 trade NQ+ES+MGC, Bot3RiskManager applique aux 3)
+        self.consecutive_sl: dict[str, int] = {"NQ": 0, "ES": 0, "MGC": 0}
+        self.breaker_until: dict[str, Optional[datetime]] = {"NQ": None, "ES": None, "MGC": None}
 
     def to_dict(self) -> dict:
         """11/05 J3 FIX BUG COOLDOWN : serialise state pour persistance JSON.
@@ -347,6 +395,7 @@ class DatabentoPaperTraderV2:
         # Tracker reussite par setup (Jackson 02/05) — cumul session
         self.setup_stats = SetupStatsTracker()
         # Position state par symbole : 1 max chacun
+        # (MGC tradde par Bot 3 uniquement, pas Bot 2 V2 → reste {"NQ", "ES"})
         self.positions: dict[str, Optional[Position]] = {"NQ": None, "ES": None}
         # DTC bracket IDs par symbole (pour cancel/replace)
         self.bracket_ids: dict[str, dict] = {"NQ": {}, "ES": {}}
@@ -356,18 +405,28 @@ class DatabentoPaperTraderV2:
         # actuellement — sera Sim1 quand Jackson confirmera le port DTC).
         # Phase 1 OBSERVE_ONLY : Bot 3 logge les contacts mais ne trade pas.
         self.bot3_engine = Bot3Engine()
+        # ─── Bot 3 GOLD (MGC) — 12/05/2026 ─────────────────────────────
+        # Engine separe pour MGC : 8 scenarios dynamiques (S1-S8) avec
+        # niveaux NEUTRAL. Phase 1 OBSERVE-ONLY (cf bot3_gold_config.py:16
+        # BOT3G_OBSERVE_ONLY=True). PAS d'execution DTC tant que Phase 1.
+        # Dispatcher dans _bot3_poll_cycle : if sym=="MGC" -> bot3_gold_engine.
+        try:
+            from CORE.bot3_gold_engine import Bot3GoldEngine
+        except ImportError:
+            from bot3_gold_engine import Bot3GoldEngine
+        self.bot3_gold_engine = Bot3GoldEngine()
         # Bot 3 stats : par niveau, isole de setup_stats
         self.bot3_level_stats: dict[str, dict] = {}    # {level_name: {n_contacts, n_go, n_skip, ...}}
         self.bot3_recent_decisions: list = []           # ring buffer 50 dernieres
         self.bot3_counters_today = {
-            "n_contacts": {"NQ": 0, "ES": 0},
-            "n_go": {"NQ": 0, "ES": 0},
-            "n_skip": {"NQ": 0, "ES": 0},
-            "n_veto": {"NQ": 0, "ES": 0},
+            "n_contacts": {"NQ": 0, "ES": 0, "MGC": 0},
+            "n_go": {"NQ": 0, "ES": 0, "MGC": 0},
+            "n_skip": {"NQ": 0, "ES": 0, "MGC": 0},
+            "n_veto": {"NQ": 0, "ES": 0, "MGC": 0},
         }
         self.bot3_trading_day: Optional[str] = None
         # Positions Bot 3 (isolees de self.positions Bot 2). 1 max par symbole.
-        self._bot3_positions: dict[str, Optional[dict]] = {"NQ": None, "ES": None}
+        self._bot3_positions: dict[str, Optional[dict]] = {"NQ": None, "ES": None, "MGC": None}
         # FIX R1 (Jackson 03/05 soir) : pattern Bot 1 — track CIDs Bot 3 pour routing fills.
         # cid → {"sym", "type" in {"parent","tp","sl"}, "signal_id"}
         self._bot3_cid_index: dict[str, dict] = {}
@@ -507,7 +566,7 @@ class DatabentoPaperTraderV2:
                     )
                     # Compteurs win/loss correction si pnl positif/negatif
                     if pnl_ticks < 0:
-                        self.bot3_counters_today.setdefault("n_losses", {"NQ": 0, "ES": 0})
+                        self.bot3_counters_today.setdefault("n_losses", {"NQ": 0, "ES": 0, "MGC": 0})
                         # Pas de increment ici — le n_losses a deja ete update au moment
                         # du timeout (avant fill) via reason=TIMEOUT. Eviter double-comptage.
                     self._bot3_cid_index.pop(cid, None)
@@ -548,8 +607,8 @@ class DatabentoPaperTraderV2:
                           pnl=pnl_ticks, mfe=pos.get("mfe_ticks", 0),
                           mae=pos.get("mae_ticks", 0), dur=int(duration_s))
                     # Update compteurs Bot 3 (FIX #3)
-                    self.bot3_counters_today.setdefault("n_trades", {"NQ": 0, "ES": 0})
-                    self.bot3_counters_today.setdefault("n_losses", {"NQ": 0, "ES": 0})
+                    self.bot3_counters_today.setdefault("n_trades", {"NQ": 0, "ES": 0, "MGC": 0})
+                    self.bot3_counters_today.setdefault("n_losses", {"NQ": 0, "ES": 0, "MGC": 0})
                     self.bot3_counters_today["n_trades"][sym] += 1
                     if pnl_ticks < 0:
                         self.bot3_counters_today["n_losses"][sym] += 1
@@ -608,7 +667,7 @@ class DatabentoPaperTraderV2:
             from CORE.bot3_config import GUARD_RAILS_BOT3 as GR, TRADE_ACCOUNT_BOT3
         now_utc = datetime.now(timezone.utc)
         with self._bot3_pos_lock:  # R5 : protection lock
-            for sym in SYMBOLS:
+            for sym in SYMBOLS_BOT3:   # 12/05 fix : MGC inclus pour Bot 3
                 pos = self._bot3_positions.get(sym)
                 if pos is None:
                     continue
@@ -970,7 +1029,7 @@ class DatabentoPaperTraderV2:
         except Exception as e:
             _emit("BOT3_RECOVER_OPEN_ORDERS_QUERY_FAIL", err=str(e)[:200])
 
-        for sym in SYMBOLS:
+        for sym in SYMBOLS_BOT3:   # 12/05 fix : MGC inclus pour Bot 3 recovery
             try:
                 contract = SYMBOL_TO_CONTRACT[sym]
                 # P2.1 (06/05) : utilise version qui retourne (qty, avg_price)
@@ -1126,7 +1185,7 @@ class DatabentoPaperTraderV2:
         # STEP 1 : update MFE/MAE inside lock (atomic), collect snapshot pour traitement hors lock
         positions_snapshot = []
         with self._bot3_pos_lock:
-            for sym in SYMBOLS:
+            for sym in SYMBOLS_BOT3:   # 12/05 fix : MGC inclus pour Bot 3
                 pos = self._bot3_positions.get(sym)
                 if pos is None:
                     continue
@@ -1962,17 +2021,25 @@ class DatabentoPaperTraderV2:
     # ═══════════════════════════════════════════════════════════════
 
     def _bot3_reset_today_if_rollover(self) -> None:
-        """Reset les compteurs Bot 3 au rollover trading day CME (18:00 ET)."""
+        """Reset les compteurs Bot 3 au rollover trading day CME (18:00 ET).
+
+        FIX 12/05 (incident KeyError 'MGC' post-deploy Bot 3 Gold) : MGC
+        ajoute aux 4 dicts compteurs. Avant ce fix, le reset rollover
+        ecrasait les compteurs sans MGC → KeyError au premier acces
+        cnt["n_trades"]["MGC"] dans _bot3_poll_cycle ligne 2167+.
+        """
         cur_day = str(get_cme_trading_day())
         if self.bot3_trading_day != cur_day:
             if self.bot3_trading_day is not None:
                 # Vrai rollover : reset compteurs (le journal JSONL utilise CME day
                 # dans son nom de fichier, donc rotation auto, pas de reset memoire)
                 self.bot3_counters_today = {
-                    "n_contacts": {"NQ": 0, "ES": 0},
-                    "n_go": {"NQ": 0, "ES": 0},
-                    "n_skip": {"NQ": 0, "ES": 0},
-                    "n_veto": {"NQ": 0, "ES": 0},
+                    "n_contacts": {"NQ": 0, "ES": 0, "MGC": 0},
+                    "n_go": {"NQ": 0, "ES": 0, "MGC": 0},
+                    "n_skip": {"NQ": 0, "ES": 0, "MGC": 0},
+                    "n_veto": {"NQ": 0, "ES": 0, "MGC": 0},
+                    "n_trades": {"NQ": 0, "ES": 0, "MGC": 0},
+                    "n_losses": {"NQ": 0, "ES": 0, "MGC": 0},
                 }
             self.bot3_trading_day = cur_day
 
@@ -2117,7 +2184,7 @@ class DatabentoPaperTraderV2:
             self._bot3_reset_today_if_rollover()
             # FIX #1 : check timeout positions actives (anti zombie)
             self._bot3_check_timeout()
-            for sym in SYMBOLS:
+            for sym in SYMBOLS_BOT3:   # 12/05 fix : MGC inclus pour Bot 3 poll cycle
                 # FIX #3 : cap data quality 20 trades/jour 10 losses/jour
                 cnt = self.bot3_counters_today
                 n_trades = cnt.get("n_trades", {}).get(sym, 0)
@@ -2193,22 +2260,51 @@ class DatabentoPaperTraderV2:
                     regime = None
                     REGIME_SKIP_ENABLED = False  # fail-safe si import echoue
 
-                signal, decisions = self.bot3_engine.evaluate(bar_dict, sym)
+                # ─── DISPATCHER Bot 3 (12/05/2026 — MGC integration) ──
+                # ES/NQ -> Bot3Engine (Market Profile, 8 niveaux Tier 1+2+3)
+                # MGC   -> Bot3GoldEngine (8 scenarios dynamiques NEUTRAL)
+                # Les 2 moteurs renvoient (Bot3Signal | None, list[Bot3DecisionLog])
+                # → API uniforme. Emit GO/SKIP MGC-specific tracking audit J+1.
+                if sym == "MGC":
+                    signal, decisions = self.bot3_gold_engine.evaluate(bar_dict, sym)
+                    if signal is not None:
+                        _emit("BOT3G_DECISION_GO",
+                              level=signal.level_name, side=signal.side,
+                              scenario=getattr(signal, "action", "?"),
+                              conf=signal.confidence, sl_ticks=signal.sl_ticks,
+                              macro=(signal.ctx.get("macro_bias") if signal.ctx else None))
+                    else:
+                        for d in decisions:
+                            if d.decision != "GO":
+                                _emit("BOT3G_DECISION_SKIP",
+                                      level=d.level_name, reason=d.reason,
+                                      macro=(d.ctx.get("macro_bias") if d.ctx else None))
+                else:
+                    signal, decisions = self.bot3_engine.evaluate(bar_dict, sym)
 
                 for d in decisions:
                     self._bot3_record_decision(d, sym)
 
                 self._bot3_emit_breakout_events()
 
+                # ─── OBSERVE-ONLY checkpoint UNIFIE (fix R1 review 12/05) ──
+                # Avant refactor : 2 checkpoints distincts (MGC dans dispatcher
+                # + ES/NQ ligne 2275) → divergence comportementale si flags
+                # croisees (BOT3G_OBSERVE_ONLY=False + BOT3_OBSERVE_ONLY=True
+                # = double-emit + risque execution non-bloque). Solution :
+                # un seul flag observe_only_sym par symbole, un seul emit.
+                observe_only_sym = (BOT3G_OBSERVE_ONLY if sym == "MGC"
+                                    else BOT3_OBSERVE_ONLY)
+
                 # Execution DTC si signal genere (PAPER actif)
-                if signal is not None and BOT3_OBSERVE_ONLY:
+                if signal is not None and observe_only_sym:
                     # 11/05 Jackson : tracer signal genere mais OBSERVE_ONLY actif
                     # (paper desactive = mode test/dev) — pas de throttle, 1 par signal
                     _emit("BOT3_OBSERVE_ONLY_SKIP",
                           sym=sym, side=signal.side,
                           level=signal.level_name,
                           signal_id=getattr(signal, "signal_id", None))
-                if signal is not None and not BOT3_OBSERVE_ONLY:
+                if signal is not None and not observe_only_sym:
                     # 🆕 09/05 (Bot 3 v2) : BYPASS filter regime si bucket SIDAK / COMBO_BOOSTED
                     # Sidak strict cross-régime validé → pas besoin de double protection.
                     # Combos boostés Bonferroni-validés → idem.
@@ -2247,9 +2343,13 @@ class DatabentoPaperTraderV2:
 
                     self._bot3_execute_trade(signal)
         except Exception as e:
+            # 12/05 fix : traceback pour debug rapide MGC integration KeyError
+            import traceback
+            _tb = traceback.format_exc()[:2000]
             _emit("PY_EXCEPTION_HOT_PATH",
                   sym="?", fn_name="_bot3_poll_cycle",
-                  exc_type=type(e).__name__, exc_msg=str(e))
+                  exc_type=type(e).__name__, exc_msg=str(e),
+                  exc_trace=_tb)
 
     def _compute_sltp_wall_aware(self, signal) -> dict:
         """🆕 09/05 (Bot 3 v2) — Calcule SL/TP via VRAI SLTPEngine pour bucket SIDAK/COMBO_BOOSTED.
@@ -2636,6 +2736,16 @@ class DatabentoPaperTraderV2:
             _emit("BOT3_LEVEL_CONTACT",
                   sym=sym, level=ln,
                   dist=0.0, tier=decision.level_tier)
+            # Phase 1.7b (17/05) : emit BOOST applique pour tracer N boosts/jour
+            params_d = decision.params or {}
+            boost_info = params_d.get("boost_applied")
+            if boost_info:
+                _emit("BOT3_BOOST_APPLIED",
+                      sym=sym, session=boost_info["session"],
+                      level=boost_info["level"],
+                      boost=boost_info["boost"],
+                      pf=boost_info["pf_observed"],
+                      n=boost_info["n_calibration"])
         elif log_code == "BOT3_VETO_VOL_DEAD":
             _emit(log_code, sym=sym,
                   rvol=ctx_d.get("rvol", 0.0), limit=0.3)
@@ -2650,6 +2760,15 @@ class DatabentoPaperTraderV2:
         elif log_code == "BOT3_LEVEL_DEF_INVALID":
             _emit(log_code, sym=sym, level=ln,
                   side_value=decision.reason)
+        elif log_code == "BOT3_BLOCK_COMBO":
+            # Phase 1.7b (17/05) : BLOCK combo Session × Level
+            # Emit MAJEUR + contexte complet pour audit J+30 tracabilite
+            params_d = decision.params or {}
+            _emit(log_code, sym=sym,
+                  session=params_d.get("session", "?"),
+                  level=ln,
+                  pf=params_d.get("pf_observed", 0.0),
+                  n=params_d.get("n_calibration", 0))
         else:
             # SKIP generique
             _emit(log_code, sym=sym, level=ln, reason=decision.reason)
@@ -2774,7 +2893,7 @@ class DatabentoPaperTraderV2:
                         if isinstance(self._bot3_positions.get(sym), dict)
                         else getattr(self._bot3_positions.get(sym), "__dict__", None)
                     )
-                    for sym in SYMBOLS
+                    for sym in SYMBOLS_BOT3   # 12/05 fix : MGC inclus snapshot Bot 3
                 },
                 "level_stats": self.bot3_level_stats,
                 "recent_decisions": self.bot3_recent_decisions[-20:],
@@ -2908,7 +3027,7 @@ class DatabentoPaperTraderV2:
                 from CORE.bot3_config import TRADE_ACCOUNT_BOT3
 
             with self._bot3_pos_lock:
-                for sym in SYMBOLS:
+                for sym in SYMBOLS_BOT3:   # 12/05 fix : MGC inclus EOD flush Bot 3
                     pos = self._bot3_positions.get(sym)
                     if pos is None:
                         continue
