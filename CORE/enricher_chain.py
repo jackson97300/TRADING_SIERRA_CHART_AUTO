@@ -1480,9 +1480,17 @@ def _apply_phase_3c_B(payload: dict, state: "LiveEnricherState",
     # FIX M1 review : utiliser make_edge_zones_state(sym) factory officielle
     # qui calcule threshold_pct depuis EDGE_THRESHOLD_PCT[sym] (au lieu default 600).
     try:
-        from CORE.edge_zones_streaming import (
-            add_edge_zones_streaming, make_edge_zones_state,
-        )
+        # FIX 18/05 post-deploy : VPS service tourne avec sys.path=CORE/, le
+        # prefix `CORE.` casse ModuleNotFoundError. Pattern try/except cf
+        # ligne 342-345 pour get_tick_size.
+        try:
+            from CORE.edge_zones_streaming import (
+                add_edge_zones_streaming, make_edge_zones_state,
+            )
+        except ImportError:
+            from edge_zones_streaming import (
+                add_edge_zones_streaming, make_edge_zones_state,
+            )
 
         def _edge_factory():
             return make_edge_zones_state(sym_base)
@@ -1513,9 +1521,15 @@ def _apply_phase_3c_B(payload: dict, state: "LiveEnricherState",
     # Les 8 autres features color (fwd1 LEAKY, long_*_pattern collision avec
     # phase_b_plus_long_streaming) NE SONT PAS propagees dans payload.
     try:
-        from CORE.phase_b_plus_color_streaming import (
-            add_phase_b_plus_color_streaming, make_color_bar_state,
-        )
+        # FIX 18/05 post-deploy : meme pattern que edge_zones (VPS sys.path)
+        try:
+            from CORE.phase_b_plus_color_streaming import (
+                add_phase_b_plus_color_streaming, make_color_bar_state,
+            )
+        except ImportError:
+            from phase_b_plus_color_streaming import (
+                add_phase_b_plus_color_streaming, make_color_bar_state,
+            )
 
         def _color_factory():
             return make_color_bar_state(sym_base)
