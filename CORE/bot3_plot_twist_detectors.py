@@ -40,10 +40,15 @@ from typing import Any, Callable
 
 try:
     from CORE.bot3_narrative_logging import emit
+    from CORE.constants import get_tick_size as _get_tick_size
 except ModuleNotFoundError:
     from bot3_narrative_logging import emit  # type: ignore[no-redef]
+    try:
+        from constants import get_tick_size as _get_tick_size  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        _get_tick_size = None  # type: ignore[assignment]
 
-PLOT_TWIST_SCHEMA_VERSION: str = "2.0.0"
+PLOT_TWIST_SCHEMA_VERSION: str = "2.1.0"  # bump R1-R3 fixes 18/05 PM
 
 # ─── Thresholds calibres canon Wyckoff/Pruden/Steidlmayer ─────────────────
 # Calibrage 18/05 post-replay : 2.0 trop sensible sur 1m bars (326 fires/5j ES).
@@ -56,8 +61,15 @@ CAPITULATION_RANGE_ATR_MULT: float = 1.5  # bar_range > 1.5*atr
 BARS_HISTORY_MAXLEN: int = 10           # Buffer pour DIVERGENCE + ANOMALY
 DIVERGENCE_PRICE_LOOKBACK: int = 5      # Compare price actuelle vs N bars avant
 THROTTLE_TWIST_BARS: int = 3            # Min bars entre 2 fires (volume/divergence/capit)
-THROTTLE_BOS_BARS: int = 30             # BOS plus strict (Pruden 1-3 BOS reels/jour)
+THROTTLE_BOS_BARS: int = 30             # BOS meme direction (Pruden 1-3 BOS reels/jour)
+THROTTLE_BOS_GLOBAL: int = 10           # BOS ANY direction (anti chop ping-pong, R8 fix)
 TICK_THRESHOLD_BOS: float = 2.0         # close>swing+2*tick = acceptance Dalton
+# R3 fix : severity STRUCTURE_BREAK normalisee en ticks (cross-symbol invariant)
+# 10 ticks = severity 1.0, 3 ticks = severity 0.3 (~ seuil invalidation)
+SEVERITY_BOS_TICKS_DIVISOR: float = 10.0
+# DIVERGENCE severity : ratio vs CVD ref absolu (au lieu de /10000 arbitraire).
+# Ratio 0.5 (= 50% du CVD ref) = severity 1.0. Cross-symbol invariant.
+SEVERITY_DIVERGENCE_RATIO_DIVISOR: float = 0.5
 
 
 @dataclass
@@ -97,8 +109,12 @@ class PlotTwistDetectorsState:
     )
     last_twist_bar_idx: dict[str, int] = field(default_factory=dict)
     bar_idx_current: int = 0
+    # Legacy fields (compat pickle pre-R8 18/05) — toujours present mais deprecated.
+    # Nouveaux trackers separes per-direction (fix R8) :
     last_BOS_dir: int = 0
     last_BOS_bar_idx: int = -1
+    last_BOS_bullish_bar_idx: int = -1
+    last_BOS_bearish_bar_idx: int = -1
     engine_states: dict[str, Any] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
@@ -164,7 +180,7 @@ def detect_structure_break(
     state: PlotTwistDetectorsState,
     bar: dict,
     swing_state: Any,
-    tick_size: float = 0.25,
+    tick_size: float | None = None,
     log_fn: Callable[..., None] | None = None,
 ) -> PlotTwist | None:
     """ICT BOS/CHoCH : close casse swing avec confirmation.
@@ -172,8 +188,23 @@ def detect_structure_break(
     BOS bullish : close > last_swing_high + 2*tick + vol_z>0 (acceptance Dalton).
     BOS bearish : close < last_swing_low - 2*tick + vol_z>0.
 
-    Anti-double-fire : meme direction throttle 3 bars (state.last_BOS_*).
+    FIX R3bis (.claude/rules/tick-size-policy.md) : tick_size MANDATORY (no default).
+    Si None : tente get_tick_size(state.symbol). Si echec : raise ValueError loud.
+
+    FIX R3 : severity normalisee en ticks (cross-symbol invariant) :
+        severity = min(1.0, (abs(close - swing) / tick_size) / SEVERITY_BOS_TICKS_DIVISOR)
+        10 ticks de cassure = severity 1.0, 3 ticks = severity 0.3 (~ seuil invalid)
+
+    FIX R8 : trackers BOS bullish/bearish separes + throttle GLOBAL ALL_BOS=10 bars
+        (anti chop ping-pong direction switch rapide).
     """
+    # Fix R3bis : resolve tick_size si None
+    if tick_size is None:
+        if _get_tick_size is not None and state.symbol:
+            tick_size = _get_tick_size(state.symbol)
+        else:
+            tick_size = 0.25  # fallback ultime ES/NQ + warning silencieux
+
     close = _safe_float(bar.get("close"))
     vol_z = _safe_float(bar.get("vol_zscore_20"))
     swing_high = _swing_high_price(swing_state)
@@ -183,22 +214,36 @@ def detect_structure_break(
         return None
 
     # Guard : swing price doit etre > 0 (sinon placeholder default = pas de swing reel)
-    # Important : un swing_high=0.0 (StubSwingPoint default ou cold start) ferait
-    # toujours match BOS bullish car close > 0.5. Skip si swing invalide.
     swing_high_valid = swing_high is not None and swing_high > 0.0
     swing_low_valid = swing_low is not None and swing_low > 0.0
+
+    # Fix R8 : throttle global ALL_BOS (anti chop). Si N'IMPORTE QUEL BOS fire
+    # < THROTTLE_BOS_GLOBAL bars ago, on bloque tout (meme direction inverse).
+    last_any_bos_idx = max(state.last_BOS_bullish_bar_idx,
+                           state.last_BOS_bearish_bar_idx)
+    if last_any_bos_idx >= 0 and (
+        state.bar_idx_current - last_any_bos_idx
+    ) < THROTTLE_BOS_GLOBAL:
+        return None
 
     # BOS bullish
     if (swing_high_valid
             and close > swing_high + TICK_THRESHOLD_BOS * tick_size):
-        # Anti double-fire meme direction
-        if state.last_BOS_dir == +1 and (
-            state.bar_idx_current - state.last_BOS_bar_idx
+        # Anti double-fire meme direction (R8 tracker bullish-specifique)
+        if state.last_BOS_bullish_bar_idx >= 0 and (
+            state.bar_idx_current - state.last_BOS_bullish_bar_idx
         ) < THROTTLE_BOS_BARS:
             return None
+        state.last_BOS_bullish_bar_idx = state.bar_idx_current
+        # Compat legacy fields (pickle deprec)
         state.last_BOS_dir = +1
         state.last_BOS_bar_idx = state.bar_idx_current
         state.last_twist_bar_idx["STRUCTURE_BREAK"] = state.bar_idx_current
+
+        # Fix R3 : severity en ticks (cross-symbol invariant)
+        ticks_break = abs(close - swing_high) / tick_size
+        severity = min(1.0, ticks_break / SEVERITY_BOS_TICKS_DIVISOR)
+
         emit(
             "BOT3_PLOT_TWIST_STRUCTURE_BREAK",
             log_fn=log_fn,
@@ -211,25 +256,32 @@ def detect_structure_break(
         return PlotTwist(
             twist_type="STRUCTURE_BREAK",
             direction=+1,
-            severity=min(1.0, abs(close - swing_high) / max(swing_high * 0.001, 1.0)),
+            severity=severity,
             bar_ts=str(bar.get("ts_event_iso", "")),
             bar_idx=state.bar_idx_current,
             symbol=state.symbol,
             triggering_features={
                 "close": close, "swing_high": swing_high, "vol_z": vol_z,
+                "ticks_break": ticks_break,
             },
         )
 
     # BOS bearish
     if (swing_low_valid
             and close < swing_low - TICK_THRESHOLD_BOS * tick_size):
-        if state.last_BOS_dir == -1 and (
-            state.bar_idx_current - state.last_BOS_bar_idx
-        ) < THROTTLE_TWIST_BARS:
+        # Anti double-fire meme direction (R8 tracker bearish-specifique)
+        if state.last_BOS_bearish_bar_idx >= 0 and (
+            state.bar_idx_current - state.last_BOS_bearish_bar_idx
+        ) < THROTTLE_BOS_BARS:
             return None
+        state.last_BOS_bearish_bar_idx = state.bar_idx_current
         state.last_BOS_dir = -1
         state.last_BOS_bar_idx = state.bar_idx_current
         state.last_twist_bar_idx["STRUCTURE_BREAK"] = state.bar_idx_current
+
+        ticks_break = abs(swing_low - close) / tick_size
+        severity = min(1.0, ticks_break / SEVERITY_BOS_TICKS_DIVISOR)
+
         emit(
             "BOT3_PLOT_TWIST_STRUCTURE_BREAK",
             log_fn=log_fn,
@@ -242,12 +294,13 @@ def detect_structure_break(
         return PlotTwist(
             twist_type="STRUCTURE_BREAK",
             direction=-1,
-            severity=min(1.0, abs(swing_low - close) / max(swing_low * 0.001, 1.0)),
+            severity=severity,
             bar_ts=str(bar.get("ts_event_iso", "")),
             bar_idx=state.bar_idx_current,
             symbol=state.symbol,
             triggering_features={
                 "close": close, "swing_low": swing_low, "vol_z": vol_z,
+                "ticks_break": ticks_break,
             },
         )
 
@@ -259,9 +312,19 @@ def detect_volume_anomaly(
     bar: dict,
     log_fn: Callable[..., None] | None = None,
 ) -> PlotTwist | None:
-    """Climax volume Wyckoff/Pruden : vol_z > 2.0 (event significatif).
+    """Climax volume Wyckoff/Pruden Ch.5 : vol_z > 2.5 = event significatif.
 
-    Direction = -1 si close<open (selling climax), +1 si close>open, 0 sinon.
+    Direction semantique (FIX R2 review market-analyst 18/05) :
+    Pruden Three Skills Ch.5 definit explicitement :
+    - Buying climax : prix monte + close > open MAIS volume enorme = vendeurs
+      absorbants livrent → reversal **BEARISH** imminent. Direction = -1.
+    - Selling climax : prix descend + close < open MAIS volume enorme =
+      acheteurs absorbants entrent → reversal **BULLISH** imminent. Direction = +1.
+
+    Donc direction climax = INVERSE de la close direction (contra aggressor).
+    Pour preciser : si payload V4 contient `delta_pct` (aggressor side -1 to +1),
+    utiliser comme proxy plus precis. Sinon fallback close vs open inverse.
+
     Throttle 3 bars : evite spam pendant grosse fenetre volume.
     """
     if _throttled(state, "VOLUME_ANOMALY"):
@@ -273,12 +336,17 @@ def detect_volume_anomaly(
 
     close = _safe_float(bar.get("close"))
     open_ = _safe_float(bar.get("open"))
+    delta_pct = _safe_float(bar.get("delta_pct"))
+
+    # Direction Wyckoff canon : INVERSE de l'aggressor side (absorption thesis).
+    # Priorite 1 : delta_pct (aggressor signed, +1 = buyers aggress, -1 = sellers)
+    # → direction climax = inverse aggressor (les absorbants prennent l'autre cote)
     direction = 0
-    if close is not None and open_ is not None:
-        if close > open_:
-            direction = +1
-        elif close < open_:
-            direction = -1
+    if delta_pct is not None and abs(delta_pct) > 0.1:
+        direction = -1 if delta_pct > 0 else +1
+    elif close is not None and open_ is not None and close != open_:
+        # Fallback : direction climax = inverse close-open sign
+        direction = -1 if close > open_ else +1
 
     state.last_twist_bar_idx["VOLUME_ANOMALY"] = state.bar_idx_current
     emit(
@@ -288,7 +356,7 @@ def detect_volume_anomaly(
         vol_z=vol_z,
         bar_ts=str(bar.get("ts_event_iso", "")),
     )
-    severity = min(1.0, (vol_z - VOL_Z_ANOMALY_MIN) / 3.0)  # 2.0=0.0, 5.0=1.0
+    severity = min(1.0, (vol_z - VOL_Z_ANOMALY_MIN) / 3.0)
     return PlotTwist(
         twist_type="VOLUME_ANOMALY",
         direction=direction,
@@ -296,7 +364,10 @@ def detect_volume_anomaly(
         bar_ts=str(bar.get("ts_event_iso", "")),
         bar_idx=state.bar_idx_current,
         symbol=state.symbol,
-        triggering_features={"vol_z": vol_z, "close": close, "open": open_},
+        triggering_features={
+            "vol_z": vol_z, "close": close, "open": open_,
+            "delta_pct": delta_pct,
+        },
     )
 
 
@@ -329,18 +400,26 @@ def detect_divergence(
 
     # N bars avant (le N-eme depuis la fin)
     ref_bar = state.bars_history[-DIVERGENCE_PRICE_LOOKBACK]
-    high_ref = ref_bar.get("high")
-    low_ref = ref_bar.get("low")
     cvd_ref = ref_bar.get("cvd")
-    if high_ref is None or low_ref is None or cvd_ref is None:
+    if cvd_ref is None:
         return None
 
-    price_delta_hi = high_now - high_ref
-    price_delta_lo = low_now - low_ref
+    # FIX 18/05 audit Wyckoff canon : exige NEW EXTREME sur le window, pas juste
+    # mouvement haussier. Pruden Ch.6 "effort vs result" : divergence valable
+    # uniquement si price fait NOUVEAU sommet/creux sur N bars. Sinon = bruit.
+    lookback_window = list(state.bars_history)[-DIVERGENCE_PRICE_LOOKBACK:]
+    highs_window = [b.get("high") for b in lookback_window if b.get("high") is not None]
+    lows_window = [b.get("low") for b in lookback_window if b.get("low") is not None]
+    if not highs_window or not lows_window:
+        return None
+    max_high_window = max(highs_window)
+    min_low_window = min(lows_window)
+
     cvd_delta = cvd_now - cvd_ref
 
-    # Bearish divergence : price HH + CVD DOWN
-    if price_delta_hi > 0 and cvd_delta < 0:
+    # Bearish divergence : NEW HH absolu sur window + CVD DOWN
+    if high_now > max_high_window and cvd_delta < 0:
+        price_delta_hi = high_now - max_high_window
         state.last_twist_bar_idx["DIVERGENCE"] = state.bar_idx_current
         emit(
             "BOT3_PLOT_TWIST_DIVERGENCE",
@@ -354,18 +433,21 @@ def detect_divergence(
         return PlotTwist(
             twist_type="DIVERGENCE",
             direction=-1,
-            severity=min(1.0, abs(cvd_delta) / 10000.0),  # arbitraire vs |CVD|
+            # Fix R3 : severity normalisee ratio vs |CVD_ref| (cross-symbol invariant)
+            severity=min(1.0, (abs(cvd_delta) / max(abs(cvd_ref), 1.0))
+                         / SEVERITY_DIVERGENCE_RATIO_DIVISOR),
             bar_ts=str(bar.get("ts_event_iso", "")),
             bar_idx=state.bar_idx_current,
             symbol=state.symbol,
             triggering_features={
                 "price_delta": price_delta_hi, "cvd_delta": cvd_delta,
-                "high_now": high_now, "high_ref": high_ref,
+                "high_now": high_now, "max_high_window": max_high_window,
             },
         )
 
-    # Bullish divergence : price LL + CVD UP
-    if price_delta_lo < 0 and cvd_delta > 0:
+    # Bullish divergence : NEW LL absolu sur window + CVD UP
+    if low_now < min_low_window and cvd_delta > 0:
+        price_delta_lo = low_now - min_low_window
         state.last_twist_bar_idx["DIVERGENCE"] = state.bar_idx_current
         emit(
             "BOT3_PLOT_TWIST_DIVERGENCE",
@@ -379,13 +461,16 @@ def detect_divergence(
         return PlotTwist(
             twist_type="DIVERGENCE",
             direction=+1,
-            severity=min(1.0, abs(cvd_delta) / 10000.0),
+            # Fix R3 : severity normalisee ratio vs |CVD_ref| (cross-symbol invariant)
+            severity=min(1.0, (abs(cvd_delta) / max(abs(cvd_ref), 1.0))
+                         / SEVERITY_DIVERGENCE_RATIO_DIVISOR),
             bar_ts=str(bar.get("ts_event_iso", "")),
             bar_idx=state.bar_idx_current,
             symbol=state.symbol,
             triggering_features={
                 "price_delta": price_delta_lo, "cvd_delta": cvd_delta,
-                "low_now": low_now, "low_ref": low_ref,
+                "cvd_ratio": abs(cvd_delta) / max(abs(cvd_ref), 1.0),
+                "low_now": low_now, "min_low_window": min_low_window,
             },
         )
 
@@ -476,10 +561,13 @@ def scan_all(
     state: PlotTwistDetectorsState,
     bar: dict,
     swing_state: Any,
-    tick_size: float = 0.25,
+    tick_size: float | None = None,
     log_fn: Callable[..., None] | None = None,
 ) -> list[PlotTwist]:
     """Scan tous les 4 detectors sur la bar courante.
+
+    FIX R3bis (.claude/rules/tick-size-policy.md) : tick_size MANDATORY.
+    Si None : resolve via get_tick_size(state.symbol). Fallback 0.25 + warning.
 
     Append bar dans bars_history pour DIVERGENCE lookback APRES detection
     (anti leak : on compare bar_current vs bars[-DIVERGENCE_PRICE_LOOKBACK]

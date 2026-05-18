@@ -7,6 +7,36 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[REFACTOR PARTAGE 2026-05-18]** **Bot 3 v2 Narrative Layer en service partage multi-bot** | 1-2 jours refactor | MEDIUM (post-paper GO Bot 3 v2) | PROPOSED
+  - **Source** : question Jackson 2026-05-18 PM "ces modules est-ce qu'on pourrait les utiliser pour les autres bots est-ce qu'ils pourront les appeler ?"
+  - **Architecture cible** : narrative layer = SERVICE PARTAGE consume par Bot 1 (DMP Sim3), Bot 2 (V6 Sim2), Bot 3 (MP Sim1), Bot 4 (BN V3), futur Bot MGC.
+  - **Pattern** : narrative layer tourne UNE FOIS dans `live_enricher.py` (pipeline central). Le snapshot NSM + plot twists + scenario validity est broadcast a tous les bots via colonnes V4 enrichies (`nsm_state`, `nsm_bias_dir`, `nsm_confidence`). Anti-duplication compute + state coherent cross-bot.
+  - **Tasks** :
+    1. Refactor namespace : `CORE/bot3_*.py` → `CORE/narrative/*.py` (5 fichiers)
+    2. Renommer codes log `BOT3_NSM_*` → `NARRATIVE_NSM_*` (etc.)
+    3. Integrer dans `live_enricher.py` comme producer unique
+    4. Bot 1/2/4 consomment via `bar["nsm_state"]` (zero dependance directe)
+    5. Tests pytest e2e cross-bot snapshot coherent
+  - **Trigger** : POST Phase 5 GO/NOGO Bot 3 v2 (cf master plan sect 287-299)
+  - **Bloqueurs prerequis** : 8 reserves Tier 1 Phase 3 (cf entry suivante) doivent etre fixees AVANT exposition cross-bot. Sinon Bot 1/2/4 consomment biaised narrative (VOLUME_ANOMALY direction inversee, severity ES-only).
+
+- **[DETTE TIER 1 2026-05-18]** **Bot 3 v2 Phase 2 - 8 reserves Tier 1 reviews ULTRATHINK bloquantes Phase 3** | 4-6h | **HIGH BLOCKER PHASE 3** | IN_PROGRESS (R1/R2/R3 critiques fix maintenant, R4-R8 J+1)
+  - **Source** : 2 agents ULTRATHINK 18/05 PM convergent verdict GO-AVEC-RESERVES Phase 2 TRACKING + NOGO PHASE 3 sans fixes R1-R3.
+  - **Reviews archives** :
+    - `LOGS/reviews/REVIEW_BOT3V2_phase2_market_analyst_20260518.json`
+    - `LOGS/reviews/REVIEW_BOT3V2_phase2_code_reviewer_20260518.json`
+  - **8 reserves** :
+    - **R1 CRITIQUE acceptance BOS multi-bar** (market-analyst) : fire INSTANT au lieu de 2-3 bars maintenus (Dalton MOM Ch.7). Vulnerable ICT liquidity sweep trap. Fix : state machine `bos_pending_dir` + confirm next bar.
+    - **R2 CRITIQUE VOLUME_ANOMALY direction INVERSEE Wyckoff** (convergent) : `close>open → direction=+1` mais Pruden Ch.5 buying climax = signal **BEARISH** (vendeurs absorbants). Fix : utiliser `delta_pct` (aggressor side) ou `bn_absorb_bid/ask`.
+    - **R3 CRITIQUE severity non normalisee cross-symbol** (code-reviewer empirique) : `/swing*0.001` + `/10000.0` + `/5.0` calibration ES-only. MGC sur-invalide (0.91 sur 2 ticks), NQ sous-invalide. Fix : `severity = min(1.0, (abs(close-swing)/tick_size)/10.0)`.
+    - **R3bis CRITIQUE tick_size=0.25 default viole `.claude/rules/tick-size-policy.md`** (code-reviewer) : silent fallback MGC. Fix : `tick_size: float | None = None` + `get_tick_size(state.symbol)` si None.
+    - **R4 IMPORTANTE seuil severity unique cross-types** (market-analyst Lopez) : 11j data N<<30. Fix : per-type tuning STRUCTURE_BREAK=0.5, VOL=0.4, DIVERGENCE=0.3, CAPITULATION=0.6 calibre walk-forward DSR 60+ jours.
+    - **R5 MOYENNE time decay 240 bars trop strict RTH long days** (Dalton) : Trend Day legitime 6h+ (390 bars). Fix : per-state time decay TREND_*=390, OPEN_DRIVE_*=240, EXHAUSTION_*=60.
+    - **R6 MOYENNE throttle BOS contradictoire CHoCH ICT** : pattern BOS→CHoCH 30 bars rate. Fix : check trend context story.hh_count_60.
+    - **R7 MINEURE CAPITULATION "3 bars strict" trop rigide Pruden** : "Three Pushes" canon permet retracements 1-5 bars. Fix : window-based 5 bars max.
+    - **R8 MINEURE last_BOS_dir partage bullish/bearish** (code-reviewer) : switch direction rapide en chop fire. Fix : trackers separes bullish/bearish + throttle global ALL_BOS=10 bars.
+  - **Action immediate** : fix R1+R2+R3+R3bis+R8 (5 critiques/importantes) MAINTENANT. R4-R7 dans Phase 3 J+1 par calibration walk-forward.
+
 - **[CHANTIER MAJEUR 2026-05-18]** **Bot 3 v2 Narrative Layer — refonte decision contextuelle bidirectionnelle** | 5 semaines / ~2600 LOC NEW + ~500 LOC refactor + ~1200 LOC tests | **CRITIQUE** (Bot 3 v1 WR 13% weekend 15-18/05) | IN_PROGRESS Phase 0 spec
   - **Source** : 3 agents converges (code-reviewer + market-analyst + Plan) Pattern 11 V1 inverse Bot 3 + diagnostic empirique 15-18/05 (108 ctx writes vs 4 reads, 14/15 LONG par construction, 91.7% trades fires avec `regime.is_actionable=0`)
   - **Vision** : Jackson souverain "bidirectionnel + contexte decide direction" + "le marche raconte une histoire continue, le job du trader = etre a l'ecoute"

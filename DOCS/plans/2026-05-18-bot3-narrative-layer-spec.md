@@ -313,6 +313,46 @@ Cf sanity check 18/05 : 3 features ABSENTES live, PRÉSENTES batch parquet. Audi
 - [ ] Monitoring J+1 / J+7 / J+30
 - [ ] Rollback plan documenté + flag `BOT3_USE_NARRATIVE_DIRECTION` kill switch testé
 
+### Phase 7.5 — Refactor narrative layer en service partagé multi-bot (POST paper GO)
+
+**Durée** : ~1-2 jours
+**Statut** : `[ ]` Pending - bloquée par Phase 5 GO + R1-R8 fixes Phase 2
+
+**Source** : question Jackson 2026-05-18 PM "ces modules pour les autres bots ?"
+
+**Vision** : narrative layer = SERVICE PARTAGÉ consommé par Bot 1 (DMP Sim3), Bot 2 (V6 Sim2), Bot 3 (MP Sim1), Bot 4 (BN V3), futur Bot MGC.
+
+**Pattern cible** : narrative layer tourne UNE FOIS dans `live_enricher.py` (déjà pipeline central qui voit chaque bar V4). Snapshot NSM + plot twists + scenario validity broadcast à tous les bots via colonnes V4 enrichies. Anti-duplication compute + state cohérent cross-bot.
+
+**Tasks** :
+- [ ] Refactor namespace `CORE/bot3_narrative_*.py` → `CORE/narrative/*.py` (6 fichiers : state_machine, story_trackers, plot_twist_detectors, scenario_validator, persistence, logging)
+- [ ] Renommer codes log `BOT3_NSM_*` → `NARRATIVE_NSM_*`, `BOT3_STORY_*` → `NARRATIVE_STORY_*`, `BOT3_PLOT_TWIST_*` → `NARRATIVE_PLOT_TWIST_*`, `BOT3_SCENARIO_*` → `NARRATIVE_SCENARIO_*`
+- [ ] Update `BOT3V2_NARRATIVE_CODES` whitelist → `NARRATIVE_LAYER_CODES`
+- [ ] Intégrer dans `live_enricher.py` comme producer unique :
+  ```python
+  nsm = NarrativeStateMachine()  # singleton process
+  def enrich_bar(bar, ctx):
+      snap = nsm.transition(symbol, bar, ctx, regime, story, swing)
+      bar["nsm_state"] = snap.state.value
+      bar["nsm_bias_dir"] = snap.bias_dir
+      bar["nsm_confidence"] = snap.confidence
+      twists = scan_all(twist_state, bar, swing, tick_size=get_tick_size(symbol))
+      bar["plot_twists"] = [t.twist_type for t in twists]
+      is_valid, reason = is_narrative_still_valid(snap, twists)
+      bar["narrative_valid"] = is_valid
+      return bar
+  ```
+- [ ] Bot 1/2/4 consomment via `bar["nsm_state"]` (zero dépendance directe au module)
+- [ ] Tests pytest e2e cross-bot consume snapshot cohérent
+- [ ] DOCS migration guide pour Bot 1/2/4 consumers
+
+**Bloqueurs prerequis** :
+1. Phase 5 GO/NOGO Bot 3 v2 (validation paper)
+2. 8 reserves Tier 1 Phase 2 (R1-R8 cf IDEAS_BACKLOG) doivent être fixées (sinon Bot 1/2/4 consomment narrative biaisée)
+3. Bot 3 v2 prouvé en paper (sinon partager une couche non-validée à 4 bots = risque systémique)
+
+**Critère GO Phase 7.5** : Bot 3 v2 paper validé Phase 5 GO + 8 reserves fixées + refactor namespace propre + 1 bot consumer test (Bot 1 ou Bot 2 lit `bar["nsm_state"]` sans dependance import directe).
+
 ## Logging total — 8 codes + 5 JSONL dédiés
 
 Codes log dans `CORE/log_catalog.py` (préfixe BOT3_) :

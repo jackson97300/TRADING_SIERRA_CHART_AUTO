@@ -31,6 +31,54 @@
 
 ---
 
+### 2026-05-18 PM (4) - [PATTERN_11] PlotTwistDetectors Phase 2 - 5 bugs critiques calibration symbol-blind
+
+**Contexte** : Phase 2 PlotTwistDetectors + ScenarioValidator livre verdict GO PHASE 2 sur 7/7 criteres replay (114/114 pytest PASS). Reviews ULTRATHINK Tier 1 dispatch (market-analyst + code-reviewer parallele).
+
+**Verdict convergent 2 agents** : GO-AVEC-RESERVES Phase 2 TRACKING + NOGO PHASE 3 sans fix R1-R3.
+
+**5 bugs detectes** :
+
+1. **R1 acceptance BOS instant** (market-analyst) : `detect_structure_break` fire sur close > swing + 2*tick SUR LA BARRE MEME. Dalton MOM Ch.7 exige 2-3 bars maintenus (acceptance TPOs Steidlmayer). ICT canonique require displacement candle + follow-through. Resultat : detecte sweep candidates = false BOS pile au sommet.
+
+2. **R2 VOLUME_ANOMALY direction INVERSEE Wyckoff** (market-analyst + code-reviewer convergent) : code `close > open → direction = +1`. Pruden Ch.5 "Three Skills" definit explicitement buying climax = `close > open` (close encore plus haut) MAIS signal = BEARISH (vendeurs absorbants livrent → reversal imminent). Mon detecteur inverse la semantique exact. Phase 3 DirectionResolver consume direction → decisions a l'envers garanties.
+
+3. **R3 severity non normalisee cross-symbol** (code-reviewer empirique avec script Python) : formules `/swing*0.001` + `/10000.0` + `/5.0` + `/3.0` toutes arbitraires et ES-only.
+   - STRUCTURE_BREAK : ES swing=5000 → 0.600, NQ swing=22000 → 0.364, MGC swing=2200 → 0.909 (meme magnitude relative en ticks). Asymetrie 2.5x.
+   - DIVERGENCE `/10000` : ES CVD 50-500K vs MGC 5-50K → severity MGC toujours <0.05 (jamais au seuil 0.3).
+   Resultat : MGC sur-invalide systematiquement, NQ sous-invalide.
+
+4. **R3bis tick_size=0.25 default viole `.claude/rules/tick-size-policy.md`** (code-reviewer) : `detect_structure_break(... tick_size: float = 0.25, ...)` + `scan_all(... tick_size: float = 0.25, ...)`. MGC tick=0.10 silent fallback. Acceptance 5x trop laxiste sur MGC.
+
+5. **R8 last_BOS_dir couplage bullish/bearish** (code-reviewer) : 1 variable partagee → switch direction rapide en chop fire en alternance (BOS+ idx=10 → BOS- idx=15 → BOS+ idx=20). NSM oscille INVALIDATED <-> TREND_UP. Replay pollue.
+
+**Cause racine commune Pattern 11 V1 inverse** :
+- Calibrages avec constantes arbitraires sans citation canon (`/10000`, `/5.0`)
+- Aucune normalisation par symbole (ticks, ATR, CVD baseline)
+- Silent fallback tick_size = MGC oublie
+- Tests passent car ils utilisent les memes valeurs hardcodees (pattern auto-referentiel deja documente PATTERN_11 NSM open_type 18/05 PM)
+
+**Lecons** :
+1. Severity formula doit etre cross-symbol invariante (ticks, ATR-mult, z-scores). JAMAIS de constante absolue arbitraire (`/10000`).
+2. `tick_size` JAMAIS hardcoded en default, TOUJOURS pris du caller via `get_tick_size(symbol)` (rule `.claude/rules/tick-size-policy.md`).
+3. Pour features cross-symbol critiques, tests pytest doivent inclure cas ES + NQ + MGC explicitement (pas tests unitaires ES-only).
+4. Reviews ULTRATHINK avec script Python empirique > review code-only (code-reviewer a calcule les severities asymetriques explicitement = bug visible).
+
+**Trigger prevention** :
+- Avant tout commit feature severity/threshold : verifier formula invariante par symbole (run mental ES + NQ + MGC)
+- Lint guard `tools/check_tick_hardcode.py` doit catch les defaults 0.25 hardcodes
+- Tests pytest doivent inclure regression cross-symbol (ES + NQ + MGC) pour features sensibles tick/CVD
+
+**Reviewed** : market-analyst (3.0 Dalton / 3.5 Wyckoff / 2.5 ICT / 2.0 Lopez) + code-reviewer (3 code / 3 threading / 4 state / 4 tests) verdict GO-AVEC-RESERVES Phase 2 TRACKING + NOGO PHASE 3 sans fix R1-R3 18/05 PM.
+
+**Cross-ref** :
+- `LOGS/reviews/REVIEW_BOT3V2_phase2_market_analyst_20260518.json`
+- `LOGS/reviews/REVIEW_BOT3V2_phase2_code_reviewer_20260518.json`
+- `DOCS/IDEAS_BACKLOG.md` (8 reserves trackees)
+- Memory feedback a creer post-fix : `.claude/memory/feedback_bot3v2_severity_normalization_cross_symbol.md`
+
+---
+
 ### 2026-05-18 PM (3) - [VALIDATION_MISS] NSM Bot 3 v2 trou couverture OAOR/ORR open_types non testes par replay
 
 **Contexte** : Replay tracking-only NSM ES 5 jours (11-15/05/2026) post-fix Tier 1 reviews. Verdict initial GO (56/56 pytest PASS + bench p99=28us). Replay donne 15 transitions reelles sur 6817 bars, dont 9 sur 11/05 et **ZERO sur 14-15/05**.

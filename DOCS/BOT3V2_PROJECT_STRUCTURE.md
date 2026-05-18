@@ -159,7 +159,7 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 
 | Fichier | Status | Date | Commit | Review | Notes |
 |---------|--------|------|--------|--------|-------|
-| CORE/bot3_plot_twist_detectors.py | 🟢 GO | 2026-05-18 | (next) | 17/17 pytest + 3 fixes Claude 4.7 (severity max BOS throttle 30 VOL_Z tighten 2.5/3.0) | 4 detectors STRUCTURE_BREAK/VOLUME_ANOMALY/DIVERGENCE/CAPITULATION + state ring buffer |
+| CORE/bot3_plot_twist_detectors.py | 🟢 GO | 2026-05-18 | (next) | 24/24 pytest + 5 fixes Tier 1 ULTRATHINK (R1+R2+R3+R3bis+R8) + 3 fixes Claude 4.7 (asymetrie/severity/throttle) + 4 detectors canon | schema 2.1.0 - VOLUME_ANOMALY direction Wyckoff INVERSE + severity tick-normalized cross-symbol + tick_size None + BOS trackers separes |
 | CORE/bot3_scenario_validator.py | 🟢 GO | 2026-05-18 | (next) | 14/14 pytest + 3 fixes Claude 4.7 externe (strongest signal + bars negatifs defensif + RANGE doc decision) | Time decay 240 bars + 10 etats whitelist invalidating twists |
 | CORE/log_catalog.py (extend) | 🟢 GO | 2026-05-18 | (next) | 17 codes load OK | +6 codes PLOT_TWIST_* + SCENARIO_* |
 | CORE/bot3_narrative_logging.py (extend) | 🟢 GO | 2026-05-18 | (next) | _verify_codes_registered PASS | BOT3V2_NARRATIVE_CODES +6 Phase 2 |

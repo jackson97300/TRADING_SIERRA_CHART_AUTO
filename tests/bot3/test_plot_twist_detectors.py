@@ -129,6 +129,86 @@ def test_structure_break_handles_missing_swing_state():
     assert twist is None
 
 
+def test_R3_severity_normalized_in_ticks_cross_symbol():
+    """FIX R3 review code-reviewer : severity STRUCTURE_BREAK en ticks (cross-symbol
+    invariant). Meme cassure en TICKS = meme severity peu importe le prix.
+
+    Avant fix : ES 5000+3pt → 0.6, MGC 2200+2pt → 0.9 (asymetrie 2.5x).
+    Apres fix : 10 ticks de cassure = severity 1.0, 3 ticks = severity 0.3.
+    """
+    # 10 ticks de cassure ES (tick=0.25 → 2.5pt) = severity 1.0
+    state_es = PlotTwistDetectorsState(symbol="ES")
+    state_es.bar_idx_current = 10
+    swing_es = StubSwingState(last_swing_high=StubSwingPoint(price=5000.0))
+    bar_es = _make_bar(close=5002.5, vol_z=1.0)  # 2.5pt = 10 ticks ES
+    twist_es = detect_structure_break(state_es, bar_es, swing_es, tick_size=0.25)
+    assert twist_es is not None
+
+    # 10 ticks de cassure MGC (tick=0.10 → 1.0pt) = MEME severity
+    state_mgc = PlotTwistDetectorsState(symbol="MGC")
+    state_mgc.bar_idx_current = 10
+    swing_mgc = StubSwingState(last_swing_high=StubSwingPoint(price=2200.0))
+    bar_mgc = _make_bar(close=2201.0, vol_z=1.0)  # 1pt = 10 ticks MGC
+    twist_mgc = detect_structure_break(state_mgc, bar_mgc, swing_mgc, tick_size=0.10)
+    assert twist_mgc is not None
+
+    # Severity DOIT etre identique (cross-symbol invariante)
+    assert twist_es.severity == pytest.approx(twist_mgc.severity, abs=0.05)
+
+
+def test_R8_BOS_throttle_global_blocks_direction_switch_in_chop():
+    """FIX R8 review code-reviewer : THROTTLE_BOS_GLOBAL=10 bars empeche
+    BOS+ → BOS- → BOS+ rapide en marche choppy.
+
+    Avant fix : BOS+ idx=10, BOS- idx=15, BOS+ idx=20 → 3 fires.
+    Apres fix : BOS+ idx=10, BOS- idx=15 BLOCKED (< 10 bars), BOS+ idx=21 OK.
+    """
+    state = PlotTwistDetectorsState(symbol="ES")
+    swing = StubSwingState(
+        last_swing_high=StubSwingPoint(price=100.0),
+        last_swing_low=StubSwingPoint(price=99.0),
+    )
+    # BOS bullish a idx=10
+    state.bar_idx_current = 10
+    bar_up = _make_bar(close=101.0, vol_z=1.0)
+    t1 = detect_structure_break(state, bar_up, swing, tick_size=0.25)
+    assert t1 is not None and t1.direction == +1
+
+    # BOS bearish tente a idx=15 (5 bars apres) - GLOBAL THROTTLE bloque (<10)
+    state.bar_idx_current = 15
+    bar_down = _make_bar(close=98.5, vol_z=1.0)
+    t2 = detect_structure_break(state, bar_down, swing, tick_size=0.25)
+    assert t2 is None  # Bloque par global throttle
+
+
+def test_R8_BOS_trackers_separes_bullish_bearish():
+    """FIX R8 : trackers separes last_BOS_bullish_bar_idx vs last_BOS_bearish_bar_idx.
+
+    Permet 1 BOS dans chaque direction sur fenetre 30 bars apres GLOBAL throttle 10.
+    """
+    state = PlotTwistDetectorsState(symbol="ES")
+    swing = StubSwingState(
+        last_swing_high=StubSwingPoint(price=100.0),
+        last_swing_low=StubSwingPoint(price=99.0),
+    )
+    # BOS bullish a idx=10
+    state.bar_idx_current = 10
+    t1 = detect_structure_break(state, _make_bar(close=101.0, vol_z=1.0),
+                                 swing, tick_size=0.25)
+    assert t1 is not None
+    assert state.last_BOS_bullish_bar_idx == 10
+    assert state.last_BOS_bearish_bar_idx == -1  # vierge
+
+    # BOS bearish a idx=25 (> 10 global throttle + > 0 bearish throttle)
+    state.bar_idx_current = 25
+    # close 98.0 < swing_low 99.0 - 2*0.25 = 98.5 (strict <)
+    t2 = detect_structure_break(state, _make_bar(close=98.0, vol_z=1.0),
+                                 swing, tick_size=0.25)
+    assert t2 is not None
+    assert state.last_BOS_bearish_bar_idx == 25
+    assert state.last_BOS_bullish_bar_idx == 10  # preserve
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # VOLUME_ANOMALY (Wyckoff climax)
 # ════════════════════════════════════════════════════════════════════════════
@@ -145,14 +225,44 @@ def test_volume_anomaly_fires_at_threshold():
     assert twist.severity > 0
 
 
-def test_volume_anomaly_direction_from_close_vs_open():
-    """close < open + vol_z>VOL_Z_ANOMALY_MIN = selling climax direction=-1."""
+def test_volume_anomaly_direction_wyckoff_canon_selling_climax():
+    """FIX R2 review market-analyst : Pruden Ch.5 selling climax = close<open +
+    vol_z extreme MAIS signal BULLISH (acheteurs absorbants entrent au plancher).
+    Direction = +1 (INVERSE de close-open sign).
+
+    Avant fix : direction = -1 (suit close-open) = INVERSE de Wyckoff = bug semantique.
+    """
     state = PlotTwistDetectorsState(symbol="ES")
     state.bar_idx_current = 5
+    # Selling climax : close < open + grosse vol
     bar = _make_bar(close=98.0, open_=102.0, vol_z=3.0)
     twist = detect_volume_anomaly(state, bar)
     assert twist is not None
-    assert twist.direction == -1
+    # Wyckoff canon : selling climax (panic sellers absorbed) = BULLISH signal
+    assert twist.direction == +1
+
+
+def test_volume_anomaly_direction_wyckoff_canon_buying_climax():
+    """FIX R2 : Pruden buying climax = close>open + vol extreme MAIS signal BEARISH
+    (vendeurs absorbants livrent au sommet). Direction = -1."""
+    state = PlotTwistDetectorsState(symbol="ES")
+    state.bar_idx_current = 5
+    bar = _make_bar(close=102.0, open_=98.0, vol_z=3.0)  # close>open
+    twist = detect_volume_anomaly(state, bar)
+    assert twist is not None
+    assert twist.direction == -1  # absorption thesis : opposed to bar direction
+
+
+def test_volume_anomaly_direction_delta_pct_priority():
+    """FIX R2 : si delta_pct present, prend priorite sur close-open.
+    delta_pct > 0 = buyers aggress = direction climax = -1 (absorbants vendent)."""
+    state = PlotTwistDetectorsState(symbol="ES")
+    state.bar_idx_current = 5
+    bar = _make_bar(close=102.0, open_=98.0, vol_z=3.0)
+    bar["delta_pct"] = 0.5  # buyers aggress fort
+    twist = detect_volume_anomaly(state, bar)
+    assert twist is not None
+    assert twist.direction == -1  # contra aggressor buyers
 
 
 def test_volume_anomaly_no_fire_below_threshold():
@@ -190,25 +300,28 @@ def test_divergence_requires_min_history():
     assert twist is None
 
 
-def test_divergence_bearish_price_HH_cvd_DOWN():
-    """high actuel > high(N) ET cvd actuel < cvd(N) → divergence -1."""
+def test_divergence_bearish_NEW_HH_extreme_cvd_DOWN():
+    """high_now > max(highs window) ET cvd_now < cvd_ref → divergence -1.
+
+    Fix 18/05 Wyckoff canon : exige NEW EXTREME absolu, pas juste mouvement up.
+    """
     state = PlotTwistDetectorsState(symbol="ES")
-    # Fill bars_history avec high decroissant + cvd croissant (reference de base)
+    # Fill bars_history avec high=105 max + cvd croissant
     for i in range(DIVERGENCE_PRICE_LOOKBACK + 1):
         state.bars_history.append({
             "high": 105.0, "low": 95.0, "close": 100.0, "open": 100.0,
             "vol_z": 0.0, "atr": 5.0, "cvd": 2000.0, "bar_idx": i,
         })
     state.bar_idx_current = 10
-    # bar actuelle : new HH mais CVD descend = bearish divergence
-    bar = _make_bar(close=110.0, high=110.5, cvd=1000.0)  # high>105, cvd<2000
+    # bar actuelle : NEW HH (110.5 > max(105) window) + CVD descend
+    bar = _make_bar(close=110.0, high=110.5, cvd=1000.0)
     twist = detect_divergence(state, bar)
     assert twist is not None
     assert twist.direction == -1
 
 
-def test_divergence_bullish_price_LL_cvd_UP():
-    """low actuel < low(N) ET cvd actuel > cvd(N) → divergence +1."""
+def test_divergence_bullish_NEW_LL_extreme_cvd_UP():
+    """low_now < min(lows window) ET cvd_now > cvd_ref → divergence +1."""
     state = PlotTwistDetectorsState(symbol="ES")
     for i in range(DIVERGENCE_PRICE_LOOKBACK + 1):
         state.bars_history.append({
@@ -216,14 +329,35 @@ def test_divergence_bullish_price_LL_cvd_UP():
             "vol_z": 0.0, "atr": 5.0, "cvd": -1000.0, "bar_idx": i,
         })
     state.bar_idx_current = 10
-    bar = _make_bar(close=90.0, low=89.5, cvd=500.0)  # low<95, cvd>-1000
+    # NEW LL : low_now 89.5 < min(95) window + cvd up
+    bar = _make_bar(close=90.0, low=89.5, cvd=500.0)
     twist = detect_divergence(state, bar)
     assert twist is not None
     assert twist.direction == +1
 
 
+def test_divergence_no_fire_without_new_extreme():
+    """Fix 18/05 : price moves UP mais PAS new HH absolu = pas de divergence.
+
+    Avant fix : ANY price up + CVD down = divergence (trop sensible).
+    Apres fix : exige high_now > max(window).
+    """
+    state = PlotTwistDetectorsState(symbol="ES")
+    for i in range(DIVERGENCE_PRICE_LOOKBACK + 1):
+        state.bars_history.append({
+            "high": 105.0, "low": 95.0, "close": 100.0, "open": 100.0,
+            "vol_z": 0.0, "atr": 5.0, "cvd": 2000.0, "bar_idx": i,
+        })
+    state.bar_idx_current = 10
+    # bar high=104 (PAS new HH, max window=105) + CVD descend
+    # Avant fix : firait sur high_now > high_ref simple. Apres fix : non.
+    bar = _make_bar(close=103.0, high=104.0, cvd=1000.0)
+    twist = detect_divergence(state, bar)
+    assert twist is None
+
+
 def test_divergence_no_fire_if_price_and_cvd_aligned():
-    """Price + CVD vont meme direction : pas de divergence."""
+    """Price NEW HH + CVD up = aligne = pas de divergence."""
     state = PlotTwistDetectorsState(symbol="ES")
     for i in range(DIVERGENCE_PRICE_LOOKBACK + 1):
         state.bars_history.append({
@@ -231,7 +365,7 @@ def test_divergence_no_fire_if_price_and_cvd_aligned():
             "vol_z": 0.0, "atr": 5.0, "cvd": 1000.0, "bar_idx": i,
         })
     state.bar_idx_current = 10
-    bar = _make_bar(close=110.0, high=110.5, cvd=3000.0)  # HH + CVD up = aligne
+    bar = _make_bar(close=110.0, high=110.5, cvd=3000.0)  # NEW HH + CVD up = aligne
     twist = detect_divergence(state, bar)
     assert twist is None
 
