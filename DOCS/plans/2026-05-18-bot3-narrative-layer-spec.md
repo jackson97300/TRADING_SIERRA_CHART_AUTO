@@ -196,17 +196,23 @@ Justification (cf agent ULTRATHINK + reco Jackson) :
 **Durée** : ~1 semaine
 **Statut** : 🟡 **EN COURS** (J+0 fin journée 18/05)
 
-#### Phase 1.5 — Mini-detour features live (J+1 AM, ~3h)
-Cf sanity check 18/05 : 3 features ABSENTES live, PRÉSENTES batch parquet :
-- `session_segment` (T1/T2/T3 transitions NSM session-aware)
-- `profile_shape` (T6/T7 OPEN_DRIVE detection Dalton)
-- `cvd_session` (Wyckoff VSA effort-result)
+#### Phase 1.5 — Mini-detour features live ✅ LIVRÉE 18/05 11:40 Paris
 
-- [ ] **J+1 AM** Port `session_segment` live (`enricher_chain.py` extend Phase B option_c_plus)
-- [ ] **J+1 AM** Port `profile_shape` live (`enricher_chain.py` extend game_changers)
-- [ ] **J+1 AM** Port `cvd_session` live (`enricher_chain.py` extend cvd_features)
-- [ ] **J+1 AM** Test 3 bars live + commit + deploy VPS si validé
-- [ ] **J+1 AM** Drop `bn_color_up_2`/`dn_2` du plan (absent batch ET live, jamais existé)
+Cf sanity check 18/05 : 3 features ABSENTES live, PRÉSENTES batch parquet. Audit code batch :
+- `session_segment` : formule pure mins_et (CORE/phase_b_option_c_plus.py:113)
+- `profile_shape` : **REVERTÉ 15/05** par code-reviewer (corruption RegimeGate Bot 1) → DROP Phase 1
+- `cvd_session` : déjà présent sous alias `ctx_cvd_session` (re-expose simple)
+
+- [x] **J+0 fin matin** Port `session_segment` live (`enricher_chain.py:1404` Phase 3c-A 10b)
+- [x] **J+0 fin matin** Re-expose `cvd_session` alias `ctx_cvd_session` (`enricher_chain.py:1428` Phase 3c-A 10c)
+- [x] **J+0 fin matin** DROP `profile_shape` du plan Phase 1 (chantier propre nécessite VAP intra-day stream)
+- [x] **J+0 fin matin** Test local + scp VPS + restart MIA-Live-Enricher
+- [x] **J+0 fin matin** Verif post-deploy bar 09:40 UTC : 467 cols (+2), `session_segment=0` + `cvd_session=-1408.0` ✓
+- [x] **J+0 fin matin** Drop `bn_color_up_2`/`dn_2` du plan (absent batch ET live)
+
+**Effort réel** : ~45 min (vs 3h estimé) car re-use alias existant + drop profile_shape éclairé.
+
+**Impact NSM** : transitions T1/T2/T3 (PRE_OPEN classifier) maintenant data-ready. Transitions T6/T7 (OPEN_DRIVE detection) utilisent `open_type` seul (profile_shape différé) — acceptable car `open_type` est le signal Dalton primaire.
 
 #### Phase 1 (J+1 PM → fin semaine)
 

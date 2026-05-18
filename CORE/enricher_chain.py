@@ -1401,6 +1401,43 @@ def _apply_phase_3c_A(payload: dict, symbol: str, log_fn: Callable) -> None:
     # Bot 2 V6 (bias_calculator_v6, regime_engine_v6) lit delta_day = alias cvd_day.
     payload["delta_day"] = payload.get("cvd_day")
 
+    # ──────────────────── 10b. session_segment (Phase 1.5 18/05) ──────────
+    # Port live equivalent CORE/phase_b_option_c_plus.py:113 add_session_segment.
+    # Categoriel 0/1/2/3 :
+    #   0 : pre-RTH (hors 09:30-16:00 ET)
+    #   1 : RTH early (09:30-11:00 ET, mins_et ∈ [570, 660))
+    #   2 : RTH mid (11:00-14:00 ET, mins_et ∈ [660, 840))
+    #   3 : RTH late (14:00-16:00 ET, mins_et ∈ [840, 960))
+    # Consume par NSM Phase 1 transitions session-aware + Bot 3 v2 context.
+    _mins_et = payload.get("mins_et")
+    if _mins_et is not None:
+        try:
+            _me = int(_mins_et)
+            if _me < 570 or _me >= 960:
+                payload["session_segment"] = 0
+            elif _me < 660:
+                payload["session_segment"] = 1
+            elif _me < 840:
+                payload["session_segment"] = 2
+            else:
+                payload["session_segment"] = 3
+        except (TypeError, ValueError):
+            payload["session_segment"] = 0
+    else:
+        payload["session_segment"] = 0
+
+    # ──────────────────── 10c. cvd_session (Phase 1.5 18/05) ──────────────
+    # Re-expose ctx_cvd_session (existant dans payload via ctx_*) sous le nom
+    # canonical `cvd_session` (consume par NSM + bot3_context_analyzer:95).
+    # En batch V4 : cvd_session = cumsum(delta_bar) per session_id chicago.
+    # En streaming : ctx_cvd_session deja calcule par ctx engines, juste alias.
+    _cvd_sess = payload.get("ctx_cvd_session")
+    if _cvd_sess is not None:
+        payload["cvd_session"] = _cvd_sess
+    else:
+        # Fallback : si ctx_cvd_session manque, utiliser cvd_day (proche, session_id != session_date_trading mais accept dégradation)
+        payload["cvd_session"] = payload.get("cvd_day")
+
     # ──────────────────── 11-17. regime_* (FIX M3 review 18/05 : 7 cles) ──
     # Batch produit 7 cles regime_* via compute_regime() (regime_engine.py).
     # Phase 3c-A doit livrer toutes les 7 pour respecter contract V4 :
