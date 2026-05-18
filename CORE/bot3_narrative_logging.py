@@ -45,9 +45,12 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger("bot3_v2.narrative")
 
-# Liste des 11 codes Bot 3 v2 - check au load module pour fail-fast si manquant
+# Liste des codes Bot 3 v2 - check au load module pour fail-fast si manquant
 # (anti-pattern V1 KeyError silencieux runtime cf INCIDENT_LOG 2026-05-18 12:30).
+# Phase 1 : 11 codes NSM + StoryTrackers
+# Phase 2 (18/05) : +6 codes PlotTwist (4) + ScenarioValidator (2)
 BOT3V2_NARRATIVE_CODES: frozenset[str] = frozenset({
+    # Phase 1 - NSM (8) + Story Trackers (3)
     "BOT3_NSM_STATE_TRANSITION",
     "BOT3_NSM_STATE_OBSERVE",
     "BOT3_NSM_INVALIDATED",
@@ -59,6 +62,13 @@ BOT3V2_NARRATIVE_CODES: frozenset[str] = frozenset({
     "BOT3_STORY_BOS_DETECTED",
     "BOT3_STORY_TREND_CONFIRMED",
     "BOT3_STORY_REVERSAL_CANDIDATE",
+    # Phase 2 - PlotTwistDetectors (4) + ScenarioValidator (2)
+    "BOT3_PLOT_TWIST_STRUCTURE_BREAK",
+    "BOT3_PLOT_TWIST_VOLUME_ANOMALY",
+    "BOT3_PLOT_TWIST_DIVERGENCE",
+    "BOT3_PLOT_TWIST_CAPITULATION",
+    "BOT3_SCENARIO_INVALIDATED",
+    "BOT3_SCENARIO_TIME_DECAY",
 })
 
 

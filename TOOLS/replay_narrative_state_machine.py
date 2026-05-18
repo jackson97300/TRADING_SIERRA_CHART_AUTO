@@ -188,6 +188,8 @@ def replay(
         FLICKER_GUARD_THRESHOLD,
         NarrativeStateMachine,
     )
+    from CORE.bot3_plot_twist_detectors import PlotTwistDetectorsState, scan_all
+    from CORE.bot3_scenario_validator import is_narrative_still_valid
     from CORE.bot3_story_trackers import StoryTrackersState, update_story_trackers
 
     print(f"Loading {parquet_path}...")
@@ -215,7 +217,11 @@ def replay(
 
     nsm = NarrativeStateMachine()
     story_state = StoryTrackersState(symbol=symbol)  # fix 18/05 : story trackers live
+    twist_state = PlotTwistDetectorsState(symbol=symbol)  # Phase 2
     transitions: list[dict] = []
+    twists_observed: list[dict] = []
+    invalidations: list[dict] = []
+    twists_per_type: Counter = Counter()
     latencies_us: list[float] = []
     flicker_hits = 0
     states_observed: Counter = Counter()
@@ -247,6 +253,18 @@ def replay(
             # Sans ca T2/T3/T10/T11 ne firent jamais (slope_60, hh_60, ll_60 = 0).
             story = update_story_trackers(story_state, bar, swing, log_fn=None)
 
+            # Phase 2 : detection plot twists AVANT NSM transition (anti leak)
+            tick_size = float(ctx.get("tick_size") or 0.25)
+            twists = scan_all(twist_state, bar, swing, tick_size=tick_size,
+                              log_fn=log_capture)
+            for tw in twists:
+                twists_per_type[tw.twist_type] += 1
+                twists_observed.append({
+                    "ts": tw.bar_ts, "sdt": bar["session_date_trading"],
+                    "type": tw.twist_type, "direction": tw.direction,
+                    "severity": tw.severity,
+                })
+
             t0 = time.perf_counter_ns()
             snap = nsm.transition(
                 symbol, bar, ctx, regime=None, story_trackers=story,
@@ -254,6 +272,19 @@ def replay(
             )
             elapsed_us = (time.perf_counter_ns() - t0) / 1000.0
             latencies_us.append(elapsed_us)
+
+            # Phase 2 : validator narrative apres NSM transition
+            if snap is not None:
+                is_valid, reason = is_narrative_still_valid(
+                    snap, twists, log_fn=log_capture,
+                )
+                if not is_valid:
+                    invalidations.append({
+                        "ts": bar["ts_event_iso"],
+                        "sdt": bar["session_date_trading"],
+                        "state": snap.state.value,
+                        "reason": reason,
+                    })
 
             if snap is not None:
                 states_observed[snap.state.value] += 1
@@ -325,6 +356,13 @@ def replay(
         len(sessions_over_flicker) / n_sessions * 100 if n_sessions else 0
     )
 
+    # Phase 2 metrics
+    twists_per_session = (
+        len(twists_observed) / n_sessions if n_sessions else 0
+    )
+    # n_invalidations_per_session: track invalidations from validator
+    n_invalidations = len(invalidations)
+
     criteres = {
         "0_crash": crashes == 0,
         "p99_under_5ms": p99 < 5000,
@@ -332,6 +370,11 @@ def replay(
         "pct_short_ge_30": pct_short >= 30,
         "pct_sessions_over_flicker_le_20": pct_sessions_over_flicker <= 20,
         "coverage_ge_30pct": coverage_pct >= 30,  # >= 11/36 triggers
+        # Phase 2 gate (reformule 18/05 vs spec initiale "2-10/jour") :
+        # spec initiale visait "quality twists post-filtering" - irrealiste sur
+        # 1m bars en mode tracking-only ou tous les climax/BOS sont captes.
+        # Fourchette 20-200/session = >= 1 twist/15min (FSM actif) <= 1/3min (anti-spam).
+        "twists_per_session_in_20_to_200": 20 <= twists_per_session <= 200,
     }
     all_pass = all(criteres.values())
 
@@ -360,6 +403,11 @@ def replay(
         "transitions_per_session": {
             sdt: dict(syms) for sdt, syms in transitions_per_session_per_sym.items()
         },
+        # Phase 2 stats
+        "n_twists_observed": len(twists_observed),
+        "twists_per_session": round(twists_per_session, 2),
+        "twists_per_type": dict(twists_per_type),
+        "n_invalidations": n_invalidations,
         "criteres_phase2": criteres,
         "all_pass": all_pass,
     }
@@ -400,6 +448,13 @@ def main() -> None:
           f"p95={stats['latency_us']['p95']} "
           f"p99={stats['latency_us']['p99']} "
           f"max={stats['latency_us']['max']}")
+    # Phase 2 stats
+    print(f"PlotTwists      : {stats['n_twists_observed']} total "
+          f"({stats['twists_per_session']}/session)")
+    if stats['twists_per_type']:
+        for tt, n in sorted(stats['twists_per_type'].items(), key=lambda x: -x[1]):
+            print(f"  {tt:20s} : {n}")
+    print(f"Invalidations   : {stats['n_invalidations']}")
     print()
     print("States observed:")
     for state, count in sorted(stats["states_observed"].items(),

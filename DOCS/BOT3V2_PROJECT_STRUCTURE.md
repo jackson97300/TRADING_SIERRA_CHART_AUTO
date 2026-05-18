@@ -155,15 +155,17 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 
 **Critère passage Phase 2** : 100% tests verts, replay 5 jours OK, latency <10ms/bar, diff `LOGS/decisions` pre/post = 0 (tracking-only).
 
-### Phase 2 — PlotTwist + ScenarioValidator ⬜ TODO
+### Phase 2 — PlotTwist + ScenarioValidator 🟢 EN COURS (J+1)
 
 | Fichier | Status | Date | Commit | Review | Notes |
 |---------|--------|------|--------|--------|-------|
-| CORE/bot3_plot_twist_detectors.py | ⬜ TODO | - | - | - | 4 twist types (BOS, vol_anomaly, divergence, capitulation) |
-| CORE/bot3_scenario_validator.py | ⬜ TODO | - | - | - | Invalidation triggers + time decay 4h |
-| CORE/bot3_narrative_state_machine.py (extend) | ⬜ TODO | - | - | - | Transition * → INVALIDATED |
-| tests/bot3/test_plot_twist_detectors.py | ⬜ TODO | - | - | - | 15+ tests |
-| tests/bot3/test_scenario_validator.py | ⬜ TODO | - | - | - | 12+ tests |
+| CORE/bot3_plot_twist_detectors.py | 🟢 GO | 2026-05-18 | (next) | 17/17 pytest + 3 fixes Claude 4.7 (severity max BOS throttle 30 VOL_Z tighten 2.5/3.0) | 4 detectors STRUCTURE_BREAK/VOLUME_ANOMALY/DIVERGENCE/CAPITULATION + state ring buffer |
+| CORE/bot3_scenario_validator.py | 🟢 GO | 2026-05-18 | (next) | 14/14 pytest + 3 fixes Claude 4.7 externe (strongest signal + bars negatifs defensif + RANGE doc decision) | Time decay 240 bars + 10 etats whitelist invalidating twists |
+| CORE/log_catalog.py (extend) | 🟢 GO | 2026-05-18 | (next) | 17 codes load OK | +6 codes PLOT_TWIST_* + SCENARIO_* |
+| CORE/bot3_narrative_logging.py (extend) | 🟢 GO | 2026-05-18 | (next) | _verify_codes_registered PASS | BOT3V2_NARRATIVE_CODES +6 Phase 2 |
+| tests/bot3/test_plot_twist_detectors.py | 🟢 GO | 2026-05-18 | (next) | 17/17 pytest PASS | BOS/VOL/DIV/CAPIT + scan_all + pickle + nan |
+| tests/bot3/test_scenario_validator.py | 🟢 GO | 2026-05-18 | (next) | 14/14 pytest PASS | time decay + invalidating twists + strongest + bars negative + 8 etats |
+| tools/replay_narrative_state_machine.py (extend) | 🟢 GO | 2026-05-18 | (next) | replay 5j ES VERDICT GO PHASE 2 (7/7 criteres) | +PlotTwistDetectorsState + scan_all + validator pipeline |
 
 ### Phase 3 — DirectionResolver + Shadow mode ⬜ TODO
 

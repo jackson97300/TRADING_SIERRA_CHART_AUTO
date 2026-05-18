@@ -685,6 +685,16 @@ LOG_CODES = {
     "BOT3_STORY_BOS_DETECTED":       (LogLevel.MAJEUR, "events",    "Bot3 STORY BOS detected : {sym} dir={bos_dir} price={bos_price} bar_idx={bar_idx} prev_close={prev_close} swing_ref={swing_ref}"),
     "BOT3_STORY_TREND_CONFIRMED":    (LogLevel.MAJEUR, "decisions", "Bot3 STORY trend confirmed : {sym} dir={trend_dir} hh={hh} ll={ll} slope60={slope60:.4f} bar_idx={bar_idx}"),
     "BOT3_STORY_REVERSAL_CANDIDATE": (LogLevel.ALERTE, "events",    "Bot3 STORY reversal candidate : {sym} slope60_prev={slope60_prev:.4f} slope60={slope60:.4f} hh5={hh5} ll5={ll5}"),
+
+    # PlotTwistDetectors Phase 2 - 4 codes
+    "BOT3_PLOT_TWIST_STRUCTURE_BREAK": (LogLevel.MAJEUR, "events",    "Bot3 PLOT TWIST structure break : {sym} dir={direction} close={close} swing_ref={swing_ref} bar_ts={bar_ts}"),
+    "BOT3_PLOT_TWIST_VOLUME_ANOMALY":  (LogLevel.MAJEUR, "events",    "Bot3 PLOT TWIST volume anomaly : {sym} vol_z={vol_z:.2f} bar_ts={bar_ts}"),
+    "BOT3_PLOT_TWIST_DIVERGENCE":      (LogLevel.MAJEUR, "events",    "Bot3 PLOT TWIST price/CVD divergence : {sym} dir={direction} price_delta={price_delta} cvd_delta={cvd_delta} bar_ts={bar_ts}"),
+    "BOT3_PLOT_TWIST_CAPITULATION":    (LogLevel.CRITIQUE,"events",   "Bot3 PLOT TWIST capitulation : {sym} dir={direction} n_climax_bars={n_climax} bar_ts={bar_ts}"),
+
+    # ScenarioValidator Phase 2 - 2 codes
+    "BOT3_SCENARIO_INVALIDATED":      (LogLevel.CRITIQUE,"events",   "Bot3 SCENARIO invalidated : {sym} state={state} reason={reason} bars_in_state={bars_in_state}"),
+    "BOT3_SCENARIO_TIME_DECAY":       (LogLevel.ALERTE,  "events",   "Bot3 SCENARIO time decay : {sym} state={state} bars_in_state={bars_in_state} threshold={threshold}"),
 }
 
 
