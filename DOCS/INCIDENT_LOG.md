@@ -31,6 +31,45 @@
 
 ---
 
+### 2026-05-18 PM - [PATTERN_11] NSM Bot 3 v2 open_type mapping hardcoded numerique vs IntEnum officielle
+
+**Contexte** : Phase 1 NSM Bot 3 v2 (`CORE/bot3_narrative_state_machine.py`) avait pour but EXPLICITE d'eliminer Pattern 11 V1 (composite hardcoded). Tag bot3v2-phase1-nsm-foundation-20260518, 26/26 pytest PASS, bench p50=13.4us, presente comme GO interne.
+
+**Ce qui a mal tourne** : Review market-analyst ULTRATHINK Tier 1 (verdict NOGO 3.25/5) a detecte que les transitions T6/T7 (OPEN_DRIVE_UP/DOWN), T8 (OTD), T9 (ROTATION) utilisent valeurs numerique hardcodees `open_type==0`, `==1`, `==3` alors que `CORE/game_changers.py:38-51` definit l'enum officielle `OpenType` :
+- UNKNOWN=0, OD_UP=1, OD_DOWN=2, OTD_UP=3, OTD_DOWN=4, OAIR=7 (ce que spec appelle "Open Rotation")
+- Code NSM matche les MAUVAISES valeurs. T6/T7 firent sur UNKNOWN, T8 sur OD_UP (inverse semantique), T9 sur OTD_UP (inverse).
+
+**Comment ca a echappe aux 26 tests pytest PASS** : les tests `_make_ctx(open_type=0)` reutilisaient les memes valeurs hardcodees fausses. Tests valident le code MAIS PAS le contrat avec game_changers.py source de verite. Pattern auto-referentiel = bug invisible jusqu'a integration mp_engine.
+
+**Cause racine** :
+- **Pattern 11 V1 INVERSE applique au NSM lui-meme** : feature definie ET utilisee, mais mapping numerique faux non grep'd source code
+- Test cree feature, code utilise feature, validation ne cross-check pas vs source officielle de la feature
+- Spec NSM section "open_type values" listait 0/1/2/3 sans citation `game_changers.py:38` ni import enum
+- Manuel de Jackson (MANUEL_EDGE_JACKSON.md) auto-load mais pas consulte avant ecriture transitions Dalton
+
+**Lecon** : Avant tout mapping numerique d'une feature → logique decision :
+1. Grep le code source de la feature (`grep -rn "OpenType\b" CORE/`)
+2. Si IntEnum/Enum existe → IMPORTER l'enum, JAMAIS hardcoder l'int
+3. Si pas d'enum → creer l'enum AVANT d'utiliser le numerique
+4. Test doit utiliser l'enum aussi (pas la valeur int hardcoded) sinon validation auto-referentielle
+
+**Trigger prevention** :
+- AVANT toute transition basee sur feature numerique : `grep -rn "<FeatureName>" CORE/` pour trouver source
+- Si feature numerique sans enum source → STOP, creer l'enum d'abord
+- Test pytest doit importer et utiliser l'enum, pas la valeur int directement
+
+**Reviewed** : market-analyst (NOGO 3.25/5) + Jackson directive 18/05 "PAS DE DETTE TOUJOUR CHOISIR LA SOLUTION LA LUS ROBUSTE ET STANDAR PRO"
+
+**Cross-ref** :
+- `LOGS/reviews/REVIEW_BOT3V2_narrative_state_machine_market_analyst_20260518.json`
+- `LOGS/reviews/REVIEW_BOT3V2_narrative_state_machine_code_reviewer_20260518.json`
+- `CORE/game_changers.py:38-51` (source de verite)
+- `CORE/bot3_narrative_state_machine.py:~458, 468, 478, 485` (bugs B1)
+- Memory `feedback_ia_traps_detection.md` (pattern 11 V1 origine)
+- Memory `feedback_pattern11_repetition_avoided.md`
+
+---
+
 ### 2026-05-18 12:30 - [VALIDATION_MISS] Hook V1 check_bot3v2_structure.py commit sans validation logique reelle
 
 **Contexte** : Phase 1.0 quality stack Bot 3 v2 a livre 2 custom hooks pre-commit (check_bot3v2_structure.py + check_bot3v2_headers.py). Commit (current session) sans test de la LOGIQUE reelle des hooks, juste self-test surface "EXIT 0 / EXIT 1".

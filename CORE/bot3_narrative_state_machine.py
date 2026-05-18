@@ -42,6 +42,26 @@ Auteur : Bot 3 v2 Narrative Layer Phase 1
 #                 + sdt change → PRE_OPEN_NEUTRAL) de detecter le change. Update
 #                 deplace apres evaluate. Detecte par pytest test_invalidated_state_
 #                 resets_on_sdt_change. 26/26 tests PASS apres fix.
+# 2026-05-18 PM : refonte post-review NOGO market-analyst + GO-RES code-reviewer.
+#                 Fixes critiques :
+#                 B1 (PATTERN_11_INVERSE) : import OpenType IntEnum officielle
+#                   (CORE/game_changers.py:38) au lieu de int hardcoded 0/1/3.
+#                   T6/T7 split par OD_UP/OD_DOWN, T8 OTD_UP/OTD_DOWN, T9 OAIR.
+#                 B2 : fusion BREAKOUT/BREAKDOWN_CONTINUATION dans TREND_UP/DOWN
+#                   (17 -> 15 etats). Distinction semantique recreable via bars_in_state.
+#                 B3 : inverser T30/T31. EXHAUSTION + follow-through (close<high-atr)
+#                   = thesis confirmee -> TREND_DOWN. EXHAUSTION + no follow-through
+#                   (close>=high) -> INVALIDATED (T30b/T31b).
+#                 F1 : _events_lock separe pour _pending_events (race condition
+#                   consume_events vs transition multi-symbol).
+#                 F6 : bar_idx_current += 1 APRES _evaluate_transitions (parallele
+#                   au fix T32 sdt sync).
+#                 F5 : magic numbers (vol_z thresholds, conf levels) extracted
+#                   en module-level constants.
+#                 M1 : guard whitelist Wyckoff Spring/Upthrust (etats Phase A+B prerequis).
+#                 M2 : conf Wyckoff Spring/Upthrust 0.85 -> 0.65 pre-SOS (Pruden Ch.7).
+#                 T1 ajout : * + sdt change + session=ASIA -> PRE_OPEN_NEUTRAL
+#                   (anti sticky cross-session, Mark Douglas every-moment-is-unique).
 # ──────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -53,17 +73,70 @@ from typing import Any, Callable
 
 try:
     from CORE.bot3_narrative_logging import emit
+    from CORE.game_changers import OpenType
 except ModuleNotFoundError:
     from bot3_narrative_logging import emit  # type: ignore[no-redef]
+    from game_changers import OpenType  # type: ignore[no-redef]
 
 NSM_SCHEMA_VERSION: str = "2.0.0"
 FLICKER_GUARD_THRESHOLD: int = 8  # >8 transitions/jour/sym = anti flicker block
 
+# ─── Magic numbers extraits (F5 fix) ──────────────────────────────────────
+# Volume z-score thresholds par regime
+VOL_Z_SPRING_MIN: float = 1.5       # T22/T23 Wyckoff Spring/Upthrust volume canon
+VOL_Z_EXHAUSTION_MIN: float = 2.5   # T28/T29 climax volume Pruden
+VOL_Z_OPEN_DRIVE_MIN: float = 1.0   # T6/T7 OPEN_DRIVE Dalton volume confirm
+VOL_Z_OTD_CONFIRM_MIN: float = 0.5  # T14/T15 OTD direction confirm
+VOL_Z_BOS_MIN: float = 0.0          # T20/T21 BOS volume confirm (faible exigence)
+VOL_Z_REVERT_MAX: float = -0.5      # T12/T13 OPEN_DRIVE revert vol exhaustion
+
+# ATR multiples
+ATR_MULT_OD: float = 1.0                  # T6/T7 close vs open_cash distance
+ATR_MULT_EXHAUSTION_RANGE: float = 2.0    # T28/T29 bar_range exhaustion
+ATR_MULT_WYCKOFF_RECOVERY: float = 1.0    # T24/T25 spring recovery confirm
+ATR_MULT_OTD_DIRECTION: float = 0.5       # T14/T15 OTD threshold close vs open
+
+# Slope thresholds (Pre-Open)
+SLOPE_PREOPEN_THRESHOLD: float = 0.2      # T2/T3 slope_60 directional
+SLOPE_NEUTRAL_BAND: float = 0.1           # T4/T5 rebalance neutral band
+
+# Confidence levels (calibre Dalton/Wyckoff doctrine)
+CONF_OPEN_DRIVE: float = 0.85             # T6/T7 OD = pattern Dalton conviction max
+CONF_WYCKOFF_PRE_SOS: float = 0.65        # T22/T23 Spring/Upthrust AVANT SOS (Pruden 50-65%)
+CONF_WYCKOFF_POST_SOS: float = 0.80       # T24/T25 Spring/Upthrust confirme SOS
+CONF_TREND_CONTINUATION: float = 0.80     # T10/T11 OD -> TREND
+CONF_BOS: float = 0.70                    # T20/T21 BOS structurel
+CONF_RANGE_BREAKOUT: float = 0.75         # T18/T19 range breakout VAH/VAL
+CONF_EXHAUSTION: float = 0.75             # T28/T29 EXHAUSTION_TOP/BOTTOM
+CONF_RANGE_RESPECTED: float = 0.70        # T17 OPEN_ROTATION -> RANGE
+CONF_PRE_OPEN_DIRECTIONAL: float = 0.6    # T2/T3 PRE_OPEN_BEARISH/BULLISH
+CONF_OTD_CONFIRM: float = 0.70            # T14/T15 OTD -> OD
+CONF_OTD_NEUTRAL: float = 0.5             # T8 OTD entry conf neutre
+CONF_OPEN_ROTATION: float = 0.6           # T9 OAIR conf
+CONF_ROTATION_TIMEOUT: float = 0.4        # T16 OTD timeout
+CONF_NEUTRAL: float = 0.5                 # T4/T5/T1 reset neutral
+CONF_INVALIDATED: float = 0.0             # INVALIDATED state
+
+# Other thresholds
+BARS_SINCE_BOS_MIN_WYCKOFF: int = 5       # T22/T23 anti immediate Spring post-BOS
+TICK_WYCKOFF_MULT: float = 2.0            # T22/T23 close > swing + 2*tick threshold
+IB_RANGE_ATR_MAX: float = 1.2             # T17 ib_range/atr < 1.2 = NON_TREND day
+BAR_IDX_OD_CONTINUATION_MIN: int = 30     # T10/T11 OD -> TREND validation bar threshold
+BAR_IDX_OTD_WINDOW_MIN: int = 5           # T14/T15 OTD confirm window start
+BAR_IDX_OTD_WINDOW_MAX: int = 15          # T14/T15 OTD confirm window end
+BAR_IDX_OTD_TIMEOUT: int = 15             # T16 OTD timeout (>15 -> rotation)
+TICK_SIZE_DEFAULT: float = 0.25           # ES/NQ default; MGC=0.10 via ctx
+
 
 class NarrativeState(Enum):
-    """17 etats narratifs du marche pour Bot 3 v2.
+    """15 etats narratifs du marche pour Bot 3 v2.
 
     Cf DOCS/specs/2026-05-18-bot3v2-phase1-nsm-spec.md section 2.1.
+
+    Note B2 fix : BREAKOUT/BREAKDOWN_CONTINUATION fusionnes avec TREND_UP/DOWN_
+    CONTINUATION. La distinction semantique "BOS recent" vs "trend etabli" est
+    recreable via bars_in_state (snapshot.bar_idx_current - state_entered_at_bar_idx).
+    17 -> 15 etats apres review market-analyst (absorbing states sans transition out).
     """
     # Pre-open (avant 09:30 ET)
     PRE_OPEN_BEARISH = "PRE_OPEN_BEARISH"
@@ -74,21 +147,33 @@ class NarrativeState(Enum):
     OPEN_DRIVE_DOWN = "OPEN_DRIVE_DOWN"
     OPEN_TEST_DRIVE = "OPEN_TEST_DRIVE"
     OPEN_ROTATION = "OPEN_ROTATION"
-    # Sessions etablies
+    # Sessions etablies (BOS et breakout VAH/VAL fusionnes ici via bars_in_state)
     TREND_UP_CONTINUATION = "TREND_UP_CONTINUATION"
     TREND_DOWN_CONTINUATION = "TREND_DOWN_CONTINUATION"
     RANGE_RESPECTED = "RANGE_RESPECTED"
     # Wyckoff Phase C (reversal setups)
     WYCKOFF_SPRING_LONG = "WYCKOFF_SPRING_LONG"
     WYCKOFF_UPTHRUST_SHORT = "WYCKOFF_UPTHRUST_SHORT"
-    # ICT BOS confirmed
-    BREAKDOWN_CONTINUATION = "BREAKDOWN_CONTINUATION"
-    BREAKOUT_CONTINUATION = "BREAKOUT_CONTINUATION"
     # Exhaustion / Terminal
     EXHAUSTION_TOP = "EXHAUSTION_TOP"
     EXHAUSTION_BOTTOM = "EXHAUSTION_BOTTOM"
     # Reset / error
     INVALIDATED = "INVALIDATED"
+
+
+# Whitelist M1 fix : etats permis pour Wyckoff Phase C (Spring/Upthrust)
+# Phase A (SC+AR) + Phase B (range building) prerequis Pruden Ch.7.
+# Acceptable : range respecte, trend contraire (epuisement), open rotation.
+_WYCKOFF_SPRING_ALLOWED_STATES: frozenset[NarrativeState] = frozenset({
+    NarrativeState.RANGE_RESPECTED,
+    NarrativeState.TREND_DOWN_CONTINUATION,
+    NarrativeState.OPEN_ROTATION,
+})
+_WYCKOFF_UPTHRUST_ALLOWED_STATES: frozenset[NarrativeState] = frozenset({
+    NarrativeState.RANGE_RESPECTED,
+    NarrativeState.TREND_UP_CONTINUATION,
+    NarrativeState.OPEN_ROTATION,
+})
 
 
 # Set des etats PRE_OPEN_* (T6/T7/T8/T9 transitions multi-from)
@@ -208,12 +293,21 @@ def _evaluate_transitions(
     story: dict[str, Any],
     swing_state: Any,
 ) -> tuple[NarrativeState, int, float, dict[str, Any]] | None:
-    """Evaluate les 32 transitions T1-T32 dans l'ordre priorite.
+    """Evaluate les 32+ transitions T1-T32 dans l'ordre priorite.
 
     Retourne (next_state, bias_dir, confidence, triggering_features) si transition
     legitime, None sinon (= stay current state).
 
     Premier match wins. Anti-flicker guard applique en amont par caller.
+
+    INVARIANTS :
+    - T1 (cross-session reset) prioritaire absolu : capture le cas general avant T32
+    - T22/T23 (Wyckoff) ordre prioritaire vs T20/T21 (BOS) : Spring/Upthrust
+      decouvre AVANT que le BOS T20/T21 fire (mutex naturelle car close conditions
+      sont opposees mais guard whitelist M1 ajoute pour proteger)
+    - T30/T31 (EXHAUSTION follow-through) interprete close<high-atr comme
+      CONFIRMATION de thesis baissiere (-> TREND_DOWN_CONT), pas invalidation
+      (fix B3 post-review market-analyst NOGO)
     """
     state = current.state
     close = _safe_float(bar.get("close"))
@@ -233,7 +327,7 @@ def _evaluate_transitions(
     ib_range = _safe_float(ctx.get("ib_range") or bar.get("ib_range"))
     prev_vah = _safe_float(ctx.get("prev_vah") or bar.get("prev_vah"))
     prev_val = _safe_float(ctx.get("prev_val") or bar.get("prev_val"))
-    tick_size = _safe_float(ctx.get("tick_size")) or 0.25
+    tick_size = _safe_float(ctx.get("tick_size")) or TICK_SIZE_DEFAULT
 
     # Story trackers (consumer NSM)
     slope_60 = float(story.get("slope_close_60", 0.0))
@@ -248,275 +342,351 @@ def _evaluate_transitions(
     swing_high = _swing_high_price(swing_state)
     swing_low = _swing_low_price(swing_state)
 
-    # T32: INVALIDATED + session_date_trading changed → PRE_OPEN_NEUTRAL
+    # T1: * + session_date_trading changed + session=ASIA → PRE_OPEN_NEUTRAL
+    # (cross-session reset, anti sticky state Mark Douglas every-moment-is-unique)
     sdt = bar.get("session_date_trading")
+    sdt_changed = sdt != current.current_session_date_trading
+    if sdt_changed and session == "ASIA":
+        return (
+            NarrativeState.PRE_OPEN_NEUTRAL, 0, CONF_NEUTRAL,
+            {"trigger": "T1_cross_session_reset", "new_sdt": str(sdt)},
+        )
+
+    # T32: INVALIDATED + session_date_trading changed → PRE_OPEN_NEUTRAL
+    # (couvre cas INVALIDATED hors fenetre ASIA, ex: session=LONDON apres invalidation)
     if state == NarrativeState.INVALIDATED:
-        if sdt != current.current_session_date_trading:
+        if sdt_changed:
             return (
-                NarrativeState.PRE_OPEN_NEUTRAL, 0, 0.5,
+                NarrativeState.PRE_OPEN_NEUTRAL, 0, CONF_NEUTRAL,
                 {"trigger": "T32_sdt_change_from_invalidated"},
             )
-        return None  # stay INVALIDATED
+        return None  # stay INVALIDATED (anti instant recovery)
 
-    # T22: any (sauf INVAL) + low<=last_swing_low + close>last_swing_low+2*tick
-    # + vol_zscore>+1.5 + bars_since_BOS>5 → WYCKOFF_SPRING_LONG
-    if (low is not None and close is not None and swing_low is not None
-            and vol_z is not None and atr is not None):
-        if (low <= swing_low
-                and close > swing_low + 2 * tick_size
-                and vol_z > 1.5
-                and bars_since_BOS > 5):
-            return (
-                NarrativeState.WYCKOFF_SPRING_LONG, +1, 0.85,
-                {"trigger": "T22_wyckoff_spring", "low": low, "swing_low": swing_low,
-                 "close": close, "vol_z": vol_z, "bars_since_BOS": bars_since_BOS},
-            )
+    # T22: WYCKOFF_SPRING_LONG (guard whitelist M1)
+    # state in {RANGE_RESPECTED, TREND_DOWN_CONTINUATION, OPEN_ROTATION}
+    # + low<=last_swing_low + close>last_swing_low+2*tick + vol_zscore>+1.5
+    # + bars_since_BOS>5 → WYCKOFF_SPRING_LONG (conf 0.65 pre-SOS)
+    if state in _WYCKOFF_SPRING_ALLOWED_STATES:
+        if (low is not None and close is not None and swing_low is not None
+                and vol_z is not None and atr is not None):
+            if (low <= swing_low
+                    and close > swing_low + TICK_WYCKOFF_MULT * tick_size
+                    and vol_z > VOL_Z_SPRING_MIN
+                    and bars_since_BOS > BARS_SINCE_BOS_MIN_WYCKOFF):
+                return (
+                    NarrativeState.WYCKOFF_SPRING_LONG, +1, CONF_WYCKOFF_PRE_SOS,
+                    {"trigger": "T22_wyckoff_spring", "low": low,
+                     "swing_low": swing_low, "close": close, "vol_z": vol_z,
+                     "bars_since_BOS": bars_since_BOS},
+                )
 
-    # T23: any (sauf INVAL) + high>=last_swing_high + close<last_swing_high-2*tick
-    # + vol_zscore>+1.5 + bars_since_BOS>5 → WYCKOFF_UPTHRUST_SHORT
-    if (high is not None and close is not None and swing_high is not None
-            and vol_z is not None and atr is not None):
-        if (high >= swing_high
-                and close < swing_high - 2 * tick_size
-                and vol_z > 1.5
-                and bars_since_BOS > 5):
-            return (
-                NarrativeState.WYCKOFF_UPTHRUST_SHORT, -1, 0.85,
-                {"trigger": "T23_wyckoff_upthrust", "high": high, "swing_high": swing_high,
-                 "close": close, "vol_z": vol_z, "bars_since_BOS": bars_since_BOS},
-            )
+    # T23: WYCKOFF_UPTHRUST_SHORT (guard whitelist M1)
+    # state in {RANGE_RESPECTED, TREND_UP_CONTINUATION, OPEN_ROTATION}
+    # + high>=last_swing_high + close<last_swing_high-2*tick + vol_zscore>+1.5
+    # + bars_since_BOS>5 → WYCKOFF_UPTHRUST_SHORT (conf 0.65 pre-SOS)
+    if state in _WYCKOFF_UPTHRUST_ALLOWED_STATES:
+        if (high is not None and close is not None and swing_high is not None
+                and vol_z is not None and atr is not None):
+            if (high >= swing_high
+                    and close < swing_high - TICK_WYCKOFF_MULT * tick_size
+                    and vol_z > VOL_Z_SPRING_MIN
+                    and bars_since_BOS > BARS_SINCE_BOS_MIN_WYCKOFF):
+                return (
+                    NarrativeState.WYCKOFF_UPTHRUST_SHORT, -1, CONF_WYCKOFF_PRE_SOS,
+                    {"trigger": "T23_wyckoff_upthrust", "high": high,
+                     "swing_high": swing_high, "close": close, "vol_z": vol_z,
+                     "bars_since_BOS": bars_since_BOS},
+                )
 
     # T24/T25/T26/T27 : WYCKOFF spring/upthrust exit conditions
     if state == NarrativeState.WYCKOFF_SPRING_LONG and atr is not None:
         if close is not None and swing_low is not None:
-            if close > swing_low + atr:
+            if close > swing_low + ATR_MULT_WYCKOFF_RECOVERY * atr:
                 return (
-                    NarrativeState.TREND_UP_CONTINUATION, +1, 0.80,
+                    NarrativeState.TREND_UP_CONTINUATION, +1, CONF_WYCKOFF_POST_SOS,
                     {"trigger": "T24_spring_recovery_confirmed"},
                 )
-            if close < swing_low - atr:
+            if close < swing_low - ATR_MULT_WYCKOFF_RECOVERY * atr:
                 return (
-                    NarrativeState.INVALIDATED, 0, 0.0,
+                    NarrativeState.INVALIDATED, 0, CONF_INVALIDATED,
                     {"trigger": "T26_spring_failed"},
                 )
 
     if state == NarrativeState.WYCKOFF_UPTHRUST_SHORT and atr is not None:
         if close is not None and swing_high is not None:
-            if close < swing_high - atr:
+            if close < swing_high - ATR_MULT_WYCKOFF_RECOVERY * atr:
                 return (
-                    NarrativeState.TREND_DOWN_CONTINUATION, -1, 0.80,
+                    NarrativeState.TREND_DOWN_CONTINUATION, -1, CONF_WYCKOFF_POST_SOS,
                     {"trigger": "T25_upthrust_confirmed"},
                 )
-            if close > swing_high + atr:
+            if close > swing_high + ATR_MULT_WYCKOFF_RECOVERY * atr:
                 return (
-                    NarrativeState.INVALIDATED, 0, 0.0,
+                    NarrativeState.INVALIDATED, 0, CONF_INVALIDATED,
                     {"trigger": "T27_upthrust_failed"},
                 )
 
     # T28: TREND_UP + vol_zscore>+2.5 + close<open + bar_range>2*atr → EXHAUSTION_TOP
     if state == NarrativeState.TREND_UP_CONTINUATION:
-        if (vol_z is not None and vol_z > 2.5 and close is not None and open_ is not None
+        if (vol_z is not None and vol_z > VOL_Z_EXHAUSTION_MIN
+                and close is not None and open_ is not None
                 and high is not None and low is not None and atr is not None):
-            if close < open_ and (high - low) > 2 * atr:
+            if close < open_ and (high - low) > ATR_MULT_EXHAUSTION_RANGE * atr:
                 return (
-                    NarrativeState.EXHAUSTION_TOP, -1, 0.75,
-                    {"trigger": "T28_exhaustion_top", "vol_z": vol_z, "bar_range": high - low},
+                    NarrativeState.EXHAUSTION_TOP, -1, CONF_EXHAUSTION,
+                    {"trigger": "T28_exhaustion_top", "vol_z": vol_z,
+                     "bar_range": high - low},
                 )
 
     # T29: TREND_DOWN + vol_zscore>+2.5 + close>open + bar_range>2*atr → EXHAUSTION_BOTTOM
     if state == NarrativeState.TREND_DOWN_CONTINUATION:
-        if (vol_z is not None and vol_z > 2.5 and close is not None and open_ is not None
+        if (vol_z is not None and vol_z > VOL_Z_EXHAUSTION_MIN
+                and close is not None and open_ is not None
                 and high is not None and low is not None and atr is not None):
-            if close > open_ and (high - low) > 2 * atr:
+            if close > open_ and (high - low) > ATR_MULT_EXHAUSTION_RANGE * atr:
                 return (
-                    NarrativeState.EXHAUSTION_BOTTOM, +1, 0.75,
-                    {"trigger": "T29_exhaustion_bottom", "vol_z": vol_z, "bar_range": high - low},
+                    NarrativeState.EXHAUSTION_BOTTOM, +1, CONF_EXHAUSTION,
+                    {"trigger": "T29_exhaustion_bottom", "vol_z": vol_z,
+                     "bar_range": high - low},
                 )
 
-    # T30: EXHAUSTION_TOP + next.close<high-atr → INVALIDATED
+    # T30 (fix B3 INVERSE) :
+    # EXHAUSTION_TOP + close<high-atr → TREND_DOWN_CONTINUATION (follow-through baissier
+    # = thesis confirmee, Wyckoff buying climax canon Pruden Ch.7)
+    # T30b : EXHAUSTION_TOP + close>=high (high preserve, pas de follow-through)
+    #        → INVALIDATED (faux climax)
     if state == NarrativeState.EXHAUSTION_TOP and atr is not None:
-        if close is not None and high is not None and close < high - atr:
-            return (
-                NarrativeState.INVALIDATED, 0, 0.0,
-                {"trigger": "T30_exhaustion_top_followthrough"},
-            )
+        if close is not None and high is not None:
+            if close < high - atr:
+                return (
+                    NarrativeState.TREND_DOWN_CONTINUATION, -1, CONF_WYCKOFF_POST_SOS,
+                    {"trigger": "T30_exhaustion_top_followthrough_confirmed",
+                     "close": close, "high": high},
+                )
+            if close >= high:
+                return (
+                    NarrativeState.INVALIDATED, 0, CONF_INVALIDATED,
+                    {"trigger": "T30b_exhaustion_top_no_followthrough",
+                     "close": close, "high": high},
+                )
 
-    # T31: EXHAUSTION_BOTTOM + next.close>low+atr → INVALIDATED
+    # T31 (fix B3 INVERSE) :
+    # EXHAUSTION_BOTTOM + close>low+atr → TREND_UP_CONTINUATION (follow-through haussier
+    # = thesis confirmee, Wyckoff selling climax canon Pruden Ch.7)
+    # T31b : EXHAUSTION_BOTTOM + close<=low → INVALIDATED (faux climax)
     if state == NarrativeState.EXHAUSTION_BOTTOM and atr is not None:
-        if close is not None and low is not None and close > low + atr:
-            return (
-                NarrativeState.INVALIDATED, 0, 0.0,
-                {"trigger": "T31_exhaustion_bottom_followthrough"},
-            )
+        if close is not None and low is not None:
+            if close > low + atr:
+                return (
+                    NarrativeState.TREND_UP_CONTINUATION, +1, CONF_WYCKOFF_POST_SOS,
+                    {"trigger": "T31_exhaustion_bottom_followthrough_confirmed",
+                     "close": close, "low": low},
+                )
+            if close <= low:
+                return (
+                    NarrativeState.INVALIDATED, 0, CONF_INVALIDATED,
+                    {"trigger": "T31b_exhaustion_bottom_no_followthrough",
+                     "close": close, "low": low},
+                )
 
-    # T20: TREND_UP_CONT + close<last_swing_low + close[-1]>=last_swing_low + vol_zscore>0
+    # T20 (fusion B2) : TREND_UP_CONT + close<last_swing_low + close[-1]>=last_swing_low
+    # + vol_zscore>0 → TREND_DOWN_CONTINUATION (BOS bearish reversal)
     if state == NarrativeState.TREND_UP_CONTINUATION:
         if (close is not None and swing_low is not None and prev_close is not None
                 and vol_z is not None):
-            if close < swing_low and prev_close >= swing_low and vol_z > 0:
+            if (close < swing_low and prev_close >= swing_low
+                    and vol_z > VOL_Z_BOS_MIN):
                 return (
-                    NarrativeState.BREAKDOWN_CONTINUATION, -1, 0.70,
-                    {"trigger": "T20_BOS_bearish_from_trendup", "swing_low": swing_low},
+                    NarrativeState.TREND_DOWN_CONTINUATION, -1, CONF_BOS,
+                    {"trigger": "T20_BOS_bearish_from_trendup",
+                     "swing_low": swing_low},
                 )
 
-    # T21: TREND_DOWN_CONT + close>last_swing_high + close[-1]<=last_swing_high + vol_zscore>0
+    # T21 (fusion B2) : TREND_DOWN_CONT + close>last_swing_high + close[-1]<=last_swing_high
+    # + vol_zscore>0 → TREND_UP_CONTINUATION (BOS bullish reversal)
     if state == NarrativeState.TREND_DOWN_CONTINUATION:
         if (close is not None and swing_high is not None and prev_close is not None
                 and vol_z is not None):
-            if close > swing_high and prev_close <= swing_high and vol_z > 0:
+            if (close > swing_high and prev_close <= swing_high
+                    and vol_z > VOL_Z_BOS_MIN):
                 return (
-                    NarrativeState.BREAKOUT_CONTINUATION, +1, 0.70,
-                    {"trigger": "T21_BOS_bullish_from_trenddown", "swing_high": swing_high},
+                    NarrativeState.TREND_UP_CONTINUATION, +1, CONF_BOS,
+                    {"trigger": "T21_BOS_bullish_from_trenddown",
+                     "swing_high": swing_high},
                 )
 
     # T10: OPEN_DRIVE_UP + bar_idx>30 + story.hh_count_60>=3 → TREND_UP_CONTINUATION
-    if state == NarrativeState.OPEN_DRIVE_UP and bar_idx > 30 and hh_60 >= 3:
+    if (state == NarrativeState.OPEN_DRIVE_UP
+            and bar_idx > BAR_IDX_OD_CONTINUATION_MIN and hh_60 >= 3):
         return (
-            NarrativeState.TREND_UP_CONTINUATION, +1, 0.80,
+            NarrativeState.TREND_UP_CONTINUATION, +1, CONF_TREND_CONTINUATION,
             {"trigger": "T10_open_drive_up_continuation", "hh_60": hh_60},
         )
 
     # T11: OPEN_DRIVE_DOWN + bar_idx>30 + story.ll_count_60>=3 → TREND_DOWN_CONTINUATION
-    if state == NarrativeState.OPEN_DRIVE_DOWN and bar_idx > 30 and ll_60 >= 3:
+    if (state == NarrativeState.OPEN_DRIVE_DOWN
+            and bar_idx > BAR_IDX_OD_CONTINUATION_MIN and ll_60 >= 3):
         return (
-            NarrativeState.TREND_DOWN_CONTINUATION, -1, 0.80,
+            NarrativeState.TREND_DOWN_CONTINUATION, -1, CONF_TREND_CONTINUATION,
             {"trigger": "T11_open_drive_down_continuation", "ll_60": ll_60},
         )
 
     # T12: OPEN_DRIVE_UP + close<open_cash + vol_zscore_20<-0.5 → OPEN_ROTATION
     if state == NarrativeState.OPEN_DRIVE_UP:
         if (close is not None and open_cash is not None and vol_z is not None
-                and close < open_cash and vol_z < -0.5):
+                and close < open_cash and vol_z < VOL_Z_REVERT_MAX):
             return (
-                NarrativeState.OPEN_ROTATION, 0, 0.5,
+                NarrativeState.OPEN_ROTATION, 0, CONF_OTD_NEUTRAL,
                 {"trigger": "T12_open_drive_up_reverted"},
             )
 
     # T13: OPEN_DRIVE_DOWN + close>open_cash + vol_zscore_20<-0.5 → OPEN_ROTATION
     if state == NarrativeState.OPEN_DRIVE_DOWN:
         if (close is not None and open_cash is not None and vol_z is not None
-                and close > open_cash and vol_z < -0.5):
+                and close > open_cash and vol_z < VOL_Z_REVERT_MAX):
             return (
-                NarrativeState.OPEN_ROTATION, 0, 0.5,
+                NarrativeState.OPEN_ROTATION, 0, CONF_OTD_NEUTRAL,
                 {"trigger": "T13_open_drive_down_reverted"},
             )
 
     # T14: OPEN_TEST_DRIVE + bar_idx∈[5,15] + close>open_cash+0.5*atr + vol_zscore>+0.5 → OPEN_DRIVE_UP
-    if state == NarrativeState.OPEN_TEST_DRIVE and 5 <= bar_idx <= 15:
+    if (state == NarrativeState.OPEN_TEST_DRIVE
+            and BAR_IDX_OTD_WINDOW_MIN <= bar_idx <= BAR_IDX_OTD_WINDOW_MAX):
         if (close is not None and open_cash is not None and atr is not None
                 and vol_z is not None
-                and close > open_cash + 0.5 * atr and vol_z > 0.5):
+                and close > open_cash + ATR_MULT_OTD_DIRECTION * atr
+                and vol_z > VOL_Z_OTD_CONFIRM_MIN):
             return (
-                NarrativeState.OPEN_DRIVE_UP, +1, 0.70,
+                NarrativeState.OPEN_DRIVE_UP, +1, CONF_OTD_CONFIRM,
                 {"trigger": "T14_OTD_confirmed_up"},
             )
 
     # T15: OPEN_TEST_DRIVE + bar_idx∈[5,15] + close<open_cash-0.5*atr + vol_zscore>+0.5 → OPEN_DRIVE_DOWN
-    if state == NarrativeState.OPEN_TEST_DRIVE and 5 <= bar_idx <= 15:
+    if (state == NarrativeState.OPEN_TEST_DRIVE
+            and BAR_IDX_OTD_WINDOW_MIN <= bar_idx <= BAR_IDX_OTD_WINDOW_MAX):
         if (close is not None and open_cash is not None and atr is not None
                 and vol_z is not None
-                and close < open_cash - 0.5 * atr and vol_z > 0.5):
+                and close < open_cash - ATR_MULT_OTD_DIRECTION * atr
+                and vol_z > VOL_Z_OTD_CONFIRM_MIN):
             return (
-                NarrativeState.OPEN_DRIVE_DOWN, -1, 0.70,
+                NarrativeState.OPEN_DRIVE_DOWN, -1, CONF_OTD_CONFIRM,
                 {"trigger": "T15_OTD_confirmed_down"},
             )
 
     # T16: OPEN_TEST_DRIVE + bar_idx_session>15 → OPEN_ROTATION
-    if state == NarrativeState.OPEN_TEST_DRIVE and bar_idx > 15:
+    if (state == NarrativeState.OPEN_TEST_DRIVE
+            and bar_idx > BAR_IDX_OTD_TIMEOUT):
         return (
-            NarrativeState.OPEN_ROTATION, 0, 0.4,
+            NarrativeState.OPEN_ROTATION, 0, CONF_ROTATION_TIMEOUT,
             {"trigger": "T16_OTD_timeout_rotation"},
         )
 
     # T17: OPEN_ROTATION + ib_complete + inside_value_area + ib_range/atr<1.2 → RANGE_RESPECTED
     if state == NarrativeState.OPEN_ROTATION and ib_complete and inside_va:
-        if ib_range is not None and atr is not None and atr > 0 and (ib_range / atr) < 1.2:
+        if (ib_range is not None and atr is not None and atr > 0
+                and (ib_range / atr) < IB_RANGE_ATR_MAX):
             return (
-                NarrativeState.RANGE_RESPECTED, 0, 0.70,
+                NarrativeState.RANGE_RESPECTED, 0, CONF_RANGE_RESPECTED,
                 {"trigger": "T17_rotation_range_respected"},
             )
 
-    # T18: RANGE_RESPECTED + close>prev_vah + close[-1]>prev_vah → BREAKOUT_CONTINUATION
+    # T18 (fusion B2) : RANGE_RESPECTED + close>prev_vah + close[-1]>prev_vah
+    # → TREND_UP_CONTINUATION (range breakout VAH = trend up structurel)
     if state == NarrativeState.RANGE_RESPECTED:
         if (close is not None and prev_vah is not None and prev_close is not None
                 and close > prev_vah and prev_close > prev_vah):
             return (
-                NarrativeState.BREAKOUT_CONTINUATION, +1, 0.75,
+                NarrativeState.TREND_UP_CONTINUATION, +1, CONF_RANGE_BREAKOUT,
                 {"trigger": "T18_range_breakout_VAH"},
             )
 
-    # T19: RANGE_RESPECTED + close<prev_val + close[-1]<prev_val → BREAKDOWN_CONTINUATION
+    # T19 (fusion B2) : RANGE_RESPECTED + close<prev_val + close[-1]<prev_val
+    # → TREND_DOWN_CONTINUATION (range breakdown VAL = trend down structurel)
     if state == NarrativeState.RANGE_RESPECTED:
         if (close is not None and prev_val is not None and prev_close is not None
                 and close < prev_val and prev_close < prev_val):
             return (
-                NarrativeState.BREAKDOWN_CONTINUATION, -1, 0.75,
+                NarrativeState.TREND_DOWN_CONTINUATION, -1, CONF_RANGE_BREAKOUT,
                 {"trigger": "T19_range_breakdown_VAL"},
             )
 
-    # T6: PRE_OPEN_* + session=NY + open_type=0 + close>open_cash+atr + vol_zscore>+1.0 → OPEN_DRIVE_UP
-    if state in _PRE_OPEN_STATES and session == "NY" and open_type == 0:
+    # T6 (fix B1) : PRE_OPEN_* + session=NY + open_type=OpenType.OD_UP
+    # + close>open_cash+atr + vol_zscore>+1.0 → OPEN_DRIVE_UP
+    if (state in _PRE_OPEN_STATES and session == "NY"
+            and open_type == OpenType.OD_UP):
         if (close is not None and open_cash is not None and atr is not None
                 and vol_z is not None
-                and close > open_cash + atr and vol_z > 1.0):
+                and close > open_cash + ATR_MULT_OD * atr
+                and vol_z > VOL_Z_OPEN_DRIVE_MIN):
             return (
-                NarrativeState.OPEN_DRIVE_UP, +1, 0.85,
-                {"trigger": "T6_open_drive_up", "vol_z": vol_z, "atr_mult": close - open_cash},
+                NarrativeState.OPEN_DRIVE_UP, +1, CONF_OPEN_DRIVE,
+                {"trigger": "T6_open_drive_up", "vol_z": vol_z,
+                 "atr_mult": close - open_cash},
             )
 
-    # T7: PRE_OPEN_* + session=NY + open_type=0 + close<open_cash-atr + vol_zscore>+1.0 → OPEN_DRIVE_DOWN
-    if state in _PRE_OPEN_STATES and session == "NY" and open_type == 0:
+    # T7 (fix B1) : PRE_OPEN_* + session=NY + open_type=OpenType.OD_DOWN
+    # + close<open_cash-atr + vol_zscore>+1.0 → OPEN_DRIVE_DOWN
+    if (state in _PRE_OPEN_STATES and session == "NY"
+            and open_type == OpenType.OD_DOWN):
         if (close is not None and open_cash is not None and atr is not None
                 and vol_z is not None
-                and close < open_cash - atr and vol_z > 1.0):
+                and close < open_cash - ATR_MULT_OD * atr
+                and vol_z > VOL_Z_OPEN_DRIVE_MIN):
             return (
-                NarrativeState.OPEN_DRIVE_DOWN, -1, 0.85,
-                {"trigger": "T7_open_drive_down", "vol_z": vol_z, "atr_mult": open_cash - close},
+                NarrativeState.OPEN_DRIVE_DOWN, -1, CONF_OPEN_DRIVE,
+                {"trigger": "T7_open_drive_down", "vol_z": vol_z,
+                 "atr_mult": open_cash - close},
             )
 
-    # T8: PRE_OPEN_* + session=NY + open_type=1 → OPEN_TEST_DRIVE
-    if state in _PRE_OPEN_STATES and session == "NY" and open_type == 1:
+    # T8 (fix B1) : PRE_OPEN_* + session=NY + open_type ∈ {OTD_UP, OTD_DOWN}
+    # → OPEN_TEST_DRIVE (les deux directions OTD couvertes ici, direction
+    # affinee par T14/T15 dans la fenetre [5,15] bars)
+    if (state in _PRE_OPEN_STATES and session == "NY"
+            and open_type in (OpenType.OTD_UP, OpenType.OTD_DOWN)):
         return (
-            NarrativeState.OPEN_TEST_DRIVE, 0, 0.5,
-            {"trigger": "T8_open_test_drive"},
+            NarrativeState.OPEN_TEST_DRIVE, 0, CONF_OTD_NEUTRAL,
+            {"trigger": "T8_open_test_drive", "open_type": int(open_type)},
         )
 
-    # T9: PRE_OPEN_* + session=NY + open_type=3 → OPEN_ROTATION
-    if state in _PRE_OPEN_STATES and session == "NY" and open_type == 3:
+    # T9 (fix B1) : PRE_OPEN_* + session=NY + open_type=OpenType.OAIR
+    # → OPEN_ROTATION (Open Auction In Range = D4 Dalton)
+    if (state in _PRE_OPEN_STATES and session == "NY"
+            and open_type == OpenType.OAIR):
         return (
-            NarrativeState.OPEN_ROTATION, 0, 0.6,
+            NarrativeState.OPEN_ROTATION, 0, CONF_OPEN_ROTATION,
             {"trigger": "T9_open_auction_rotation"},
         )
 
     # T2: PRE_OPEN_NEUTRAL + slope_60<-0.2 + asia_close<asia_open → PRE_OPEN_BEARISH
     if state == NarrativeState.PRE_OPEN_NEUTRAL and session in ("ASIA", "LONDON"):
-        if slope_60 < -0.2 and asia_close is not None and asia_open is not None:
+        if slope_60 < -SLOPE_PREOPEN_THRESHOLD and asia_close is not None and asia_open is not None:
             if asia_close < asia_open:
                 return (
-                    NarrativeState.PRE_OPEN_BEARISH, -1, 0.6,
+                    NarrativeState.PRE_OPEN_BEARISH, -1, CONF_PRE_OPEN_DIRECTIONAL,
                     {"trigger": "T2_preopen_bearish", "slope_60": slope_60},
                 )
 
     # T3: PRE_OPEN_NEUTRAL + slope_60>+0.2 + asia_close>asia_open → PRE_OPEN_BULLISH
     if state == NarrativeState.PRE_OPEN_NEUTRAL and session in ("ASIA", "LONDON"):
-        if slope_60 > 0.2 and asia_close is not None and asia_open is not None:
+        if slope_60 > SLOPE_PREOPEN_THRESHOLD and asia_close is not None and asia_open is not None:
             if asia_close > asia_open:
                 return (
-                    NarrativeState.PRE_OPEN_BULLISH, +1, 0.6,
+                    NarrativeState.PRE_OPEN_BULLISH, +1, CONF_PRE_OPEN_DIRECTIONAL,
                     {"trigger": "T3_preopen_bullish", "slope_60": slope_60},
                 )
 
     # T4: PRE_OPEN_BEARISH + slope_60 ∈ [-0.1, +0.1] → PRE_OPEN_NEUTRAL
-    if state == NarrativeState.PRE_OPEN_BEARISH and -0.1 <= slope_60 <= 0.1:
+    if (state == NarrativeState.PRE_OPEN_BEARISH
+            and -SLOPE_NEUTRAL_BAND <= slope_60 <= SLOPE_NEUTRAL_BAND):
         return (
-            NarrativeState.PRE_OPEN_NEUTRAL, 0, 0.5,
+            NarrativeState.PRE_OPEN_NEUTRAL, 0, CONF_NEUTRAL,
             {"trigger": "T4_rebalance_neutral", "slope_60": slope_60},
         )
 
     # T5: PRE_OPEN_BULLISH + slope_60 ∈ [-0.1, +0.1] → PRE_OPEN_NEUTRAL
-    if state == NarrativeState.PRE_OPEN_BULLISH and -0.1 <= slope_60 <= 0.1:
+    if (state == NarrativeState.PRE_OPEN_BULLISH
+            and -SLOPE_NEUTRAL_BAND <= slope_60 <= SLOPE_NEUTRAL_BAND):
         return (
-            NarrativeState.PRE_OPEN_NEUTRAL, 0, 0.5,
+            NarrativeState.PRE_OPEN_NEUTRAL, 0, CONF_NEUTRAL,
             {"trigger": "T5_rebalance_neutral", "slope_60": slope_60},
         )
 
@@ -550,6 +720,13 @@ class NarrativeStateMachine:
         self._locks: dict[str, threading.RLock] = {}
         self._lock_creation_lock: threading.Lock = threading.Lock()
         self._pending_events: list[NarrativeEvent] = []
+        # F1 fix: lock separe pour _pending_events buffer.
+        # transition() peut etre appele concurremment par 2 symboles (ES/NQ) sous
+        # locks per-symbol differents, mais ils partagent _pending_events. Sans ce
+        # lock dedie, consume_events() peut swap pendant que transition() append
+        # = events perdus silencieusement. Race detectee par review code-reviewer
+        # ULTRATHINK 18/05.
+        self._events_lock: threading.Lock = threading.Lock()
 
     def _get_lock(self, symbol: str) -> threading.RLock:
         """Lazy-create RLock per symbol. Thread-safe creation."""
@@ -600,19 +777,16 @@ class NarrativeStateMachine:
                     state_entered_at_bar_idx=0,
                     bar_idx_current=0,
                     bias_dir=0,
-                    confidence=0.5,
+                    confidence=CONF_NEUTRAL,
                     triggering_features={"trigger": "cold_start"},
                     current_session_date_trading=bar.get("session_date_trading"),
                 )
                 self._states[symbol] = current
 
-            # Increment bar counter
-            current.bar_idx_current += 1
-
             # Reset n_transitions_today si SDT change
             # NB: ne PAS mettre a jour current.current_session_date_trading ici —
-            # _evaluate_transitions (T32) en a besoin pour detecter le change.
-            # L'update est faite apres evaluate (cf. ligne ~702).
+            # _evaluate_transitions (T1/T32) en a besoin pour detecter le change.
+            # L'update est faite apres evaluate (cf. fin de methode).
             sdt = bar.get("session_date_trading")
             sdt_changed = sdt != current.current_session_date_trading
             if sdt_changed:
@@ -633,14 +807,25 @@ class NarrativeStateMachine:
                     sym=symbol,
                     n=current.n_transitions_today,
                 )
-                # Still update prev_close + return current (no transition)
+                # Still update prev_close + bar_idx + return current (no transition)
                 close = _safe_float(bar.get("close"))
                 if close is not None:
                     current.engine_states["prev_close"] = close
+                current.bar_idx_current += 1
+                if sdt_changed:
+                    current.current_session_date_trading = sdt
                 return current
 
-            # Evaluate transitions
-            result = _evaluate_transitions(current, bar, ctx, story_trackers, swing_state)
+            # Evaluate transitions FIRST (F6 fix : avant increment bar_idx_current)
+            # _evaluate_transitions utilise current.bar_idx_current comme fallback si
+            # bar.bar_idx_session absent. Garder l'ancienne valeur ici donne la
+            # semantique correcte "bar courant = N, on l'evalue".
+            result = _evaluate_transitions(
+                current, bar, ctx, story_trackers, swing_state
+            )
+
+            # Increment bar counter APRES evaluate (F6 fix)
+            current.bar_idx_current += 1
 
             if result is not None:
                 next_state, bias_dir, confidence, triggering = result
@@ -670,7 +855,9 @@ class NarrativeStateMachine:
                             "triggering": triggering,
                         },
                     )
-                    self._pending_events.append(event)
+                    # F1 fix : append _pending_events sous _events_lock (race vs consume_events)
+                    with self._events_lock:
+                        self._pending_events.append(event)
                     emit(
                         "BOT3_NSM_STATE_TRANSITION",
                         log_fn=log_fn,
@@ -710,7 +897,7 @@ class NarrativeStateMachine:
                 current.engine_states["prev_close"] = close
 
             # Sync current_session_date_trading apres evaluate_transitions
-            # (T32 a deja consomme la valeur prev pour detecter le change).
+            # (T1/T32 a deja consomme la valeur prev pour detecter le change).
             if sdt_changed:
                 current.current_session_date_trading = sdt
 
@@ -722,15 +909,31 @@ class NarrativeStateMachine:
             return self._states.get(symbol)
 
     def consume_events(self) -> list[NarrativeEvent]:
-        """Pop all pending events buffer. Caller emit logs externe si necessaire."""
-        evts, self._pending_events = self._pending_events, []
+        """Pop all pending events buffer. Caller emit logs externe si necessaire.
+
+        F1 fix : swap sous _events_lock pour empecher race vs transition() qui
+        peut etre appele concurremment depuis 2 symboles ES/NQ (locks per-symbol
+        differents mais _pending_events partage).
+
+        Note pickle (contract documente) :
+        - `pickle.dumps(nsm)` direct : _pending_events PRESERVE
+        - via NarrativePersistedState wrapper (bot3_narrative_persistence.py:73) :
+          _pending_events NON serialise (intentionnel, anti double-emit au restore)
+        """
+        with self._events_lock:
+            evts, self._pending_events = self._pending_events, []
         return evts
 
     def __getstate__(self) -> dict:
-        """Exclude _locks + _lock_creation_lock du pickle."""
+        """Exclude _locks + _lock_creation_lock + _events_lock du pickle.
+
+        _pending_events EST preserve si pickle direct mais le wrapper
+        NarrativePersistedState ne l'extrait pas (cf consume_events docstring).
+        """
         state = self.__dict__.copy()
         state.pop("_locks", None)
         state.pop("_lock_creation_lock", None)
+        state.pop("_events_lock", None)
         return state
 
     def __setstate__(self, state: dict) -> None:
@@ -738,3 +941,4 @@ class NarrativeStateMachine:
         self.__dict__.update(state)
         self._locks = {}
         self._lock_creation_lock = threading.Lock()
+        self._events_lock = threading.Lock()
