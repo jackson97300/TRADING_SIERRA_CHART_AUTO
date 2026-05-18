@@ -59,15 +59,31 @@ class _SwingState:
 
 
 def _row_to_bar(row: pd.Series, bar_idx_session: int) -> dict:
-    """Convert parquet row to bar dict for NSM. Map ts_event -> ts_event_iso."""
+    """Convert parquet row to bar dict for NSM. Map ts_event -> ts_event_iso.
+
+    Fix 2026-05-18 : passe `atr_intraday` (ATR Wilder 14-bars 1-min) en plus
+    de `atr` (ATR daily). Le NSM utilise atr_intraday pour les conditions
+    par-bar T22-T27 + T28/T29 + T30/T31 (sinon seuils inatteignables sur 1-min).
+    Source : `atr_14m` si dispo, sinon `atr_14m_pct * close` (reconstruction
+    points), sinon fallback `atr` (incoherent d'echelle mais evite crash).
+    """
+    close_v = _safe(row.get("close"))
+    # ATR intraday : preferer atr_14m natif, sinon reconstituer depuis atr_14m_pct
+    atr_intraday = _safe(row.get("atr_14m"))
+    if atr_intraday is None or atr_intraday == 0:
+        atr_14m_pct = _safe(row.get("atr_14m_pct"))
+        if atr_14m_pct is not None and close_v is not None:
+            # atr_14m_pct est en pourcentage (0.024 = 0.024%)
+            atr_intraday = atr_14m_pct * close_v / 100.0
     return {
         "ts_event_iso": str(row.get("ts_event", "")),
         "ts_event": str(row.get("ts_event", "")),
-        "close": _safe(row.get("close")),
+        "close": close_v,
         "open": _safe(row.get("open")),
         "high": _safe(row.get("high")),
         "low": _safe(row.get("low")),
         "atr": _safe(row.get("atr")),
+        "atr_intraday": atr_intraday,
         "vol_zscore_20": _safe(row.get("vol_zscore_20")),
         "bar_idx_session": bar_idx_session,
         "volume": _safe(row.get("volume")) or 1000,

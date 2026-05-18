@@ -31,6 +31,94 @@
 
 ---
 
+### 2026-05-18 23:30 (7) - [CONTEXT_MISS] NSM T17 RANGE_RESPECTED formule semantiquement fausse
+
+**Contexte** : Apres fix (6) atr_intraday, T17 reste a 0 occurrences sur 14919 bars ES Mai (S07/S08 RANGE_* scenarios = 0). Audit market-analyst pointe la formule actuelle `ib_range / atr_daily < 1.2` qui mesure "IB etroit en absolu", PAS canon Dalton MOM Ch.9 "Day Type Recognition" qui dit Range Day = prix oscille DANS l'IB toute la session.
+
+**Ce qui a mal tourne** : `bot3_narrative_state_machine.py:603-610` testait `ib_range/atr<IB_RANGE_ATR_MAX(1.2)` :
+- Empirique ES batch : ratio mean=5.24, seuil <1.2 capture 0.31% des bars
+- + state guard OPEN_ROTATION (71 cas observed) + ib_complete (53.5%) + inside_va (64.4%)
+- Intersection complete = 0 cas en 11 jours -> RANGE_RESPECTED never fires
+
+**Cause racine** : confusion entre 2 metriques semantiquement opposees :
+- "IB etroit en absolu" (formule actuelle): mesure si l'IB est petite vs ATR daily. Rare et indirectement lie au Range Day.
+- "Prix oscille DANS l'IB" (canon Dalton): mesure si le price stays inside IB without breakout. C'est la vraie definition Range Day.
+
+**Lecon** : avant calibrer un seuil quantitatif, valider que la **formule reflete le canon**. Sinon le seuil sera tune-to-fit (Pattern 11 V1).
+
+**Fix applique** (commits a suivre) :
+- T17 nouvelle formule : `not ib_broken_up AND not ib_broken_dn AND bars_since_BOS > 90`
+- State guard elargi : {OPEN_ROTATION, TREND_UP, TREND_DOWN}. Garde-fou anti-cycle TREND<->RANGE = bars_since_BOS > 90 (canon Dalton "range confirme apres consolidation prolongee", evite flip immediat).
+- IB_RANGE_ATR_MAX deprecated (kept pour back-compat imports).
+- Test calibration : seuil 30 cannibalise EXHAUSTION (S10 257->2 = perdu), seuil 90 preserve tout (S10 257->251, S07=81, S08=97).
+- 3 nouveaux tests : `test_T17_blocked_if_ib_broken_up`, `test_T17_blocked_if_bars_since_BOS_too_recent`, `test_T17_from_trend_up_to_range_respected_after_long_consolidation`.
+
+**Verification post-fix (replay ES Mai 11j)** :
+- RANGE_RESPECTED state : 0 -> **137**
+- S07 RANGE_support_long : 0 -> **81**
+- S08 RANGE_resistance_short : 0 -> **97**
+- S09 EXHAUSTION_TOP_short : 75 -> 52 (preserve)
+- S10 EXHAUSTION_BOTTOM_long : 257 -> **251** (preserve, anti-cannibalisation BOS>90 valide)
+- Tests : 67/67 PASS
+- NQ Mai 11j : RANGE_RESPECTED=137, S07=80, S08=75 (cross-symbole OK)
+
+**Phase 5 walk-forward maintenant possible sur** :
+- S07 (PF 3.10 LEVEL_PROB) ES=81, NQ=80
+- S08 (PF 7.96 LEVEL_PROB) ES=97, NQ=75
+- S09 (PF 11.26 LEVEL_PROB) ES=52, NQ=26
+- S10 (PF 4.93 LEVEL_PROB n=393) ES=251, NQ=4
+
+**Trigger prevention** :
+- Avant tout seuil quantitatif sur condition narrative, **mapper a une source canon** (Dalton/Wyckoff/Pruden). Si la formule ne reflete pas le canon = formule fausse meme avec seuil "calibrre".
+- Cross-check empirique : compter les bars qui passent les sub-conds individuellement, puis intersection. Si intersection = 0 sur dataset reel = formule cassee.
+- Anti-cycle multi-state : utiliser bars_since_BOS (proxy duree consolidation) comme garde-fou si on permet transitions cross-state.
+
+**Reviewed** : Jackson (priorite absolue post-replay) + self-diagnostic + market-analyst review.
+
+---
+
+### 2026-05-18 22:00 (6) - [CONTEXT_MISS] NSM Bot 3 v2 utilise atr daily pour conditions par-bar 1-min
+
+**Contexte** : STEP 1 (diagnostic distribution NarrativeState replay ES Mai 2026) revele que les states EXHAUSTION_TOP/EXHAUSTION_BOTTOM = **0 sur 11 jours** (14919 bars), bloquant Phase 5 walk-forward DSR sur S09/S10 (les 2 setups les plus solides empiriquement, PF 4.93 n=393 et PF 11.26 n=74 dans LEVEL_PROB_V4).
+
+**Ce qui a mal tourne** : `bot3_narrative_state_machine.py:332` lit `atr = bar.get("atr")` et l'utilise pour T28/T29/T30/T31 (conditions par-bar 1-min). Or :
+- Live ES `atr` = 17.5 pts (DAILY, ATR Wilder 14 jours)
+- Live ES `atr_14m` = 4.375 pts (INTRADAY, ATR Wilder 14 bars 1-min)
+- T28 demande `bar_range > 2 * atr` → seuil 35 pts ES sur barre 1-min = bar_range p99 batch = 7 pts = **inatteignable** (2/14919 cas)
+
+**Cause racine** : melange d'echelles temporelles dans une seule variable `atr`. Le canon Pruden Ch.7 "buying climax = barre exceptionnelle du timeframe d'analyse" demande l'ATR du timeframe (1-min ici), pas l'ATR daily.
+
+**Aggravant : semantique divergente live vs batch** :
+- Live enricher : `atr` = daily Wilder + `atr_14m` separe
+- Batch v4 enriched : `atr` mean=6.92 ES (echelle hybride), `atr_14m` ABSENT, `atr_14m_pct` present
+
+**Lecon** :
+1. Toute condition par-bar (T28/T29/T30/T31, T22-T27 Wyckoff recovery) DOIT utiliser un ATR d'echelle bar (atr_intraday/atr_14m).
+2. Toute condition session-scale (T6/T7 OD vs open_cash, T14/T15 OTD, T17 ib_range/atr) DOIT utiliser un ATR daily.
+3. Quand 2 echelles temporelles coexistent dans le code, ELLES DOIVENT ETRE NOMMEES DIFFEREMMENT (atr_daily, atr_intraday).
+
+**Fix applique** (commits a suivre) :
+- `bot3_narrative_state_machine.py` : ajout `atr_intraday` parsing (fallback atr_14m / atr_14m_pct*close / atr) au-dessus des transitions. T22-T27 + T28/T29 + T30/T31 utilisent maintenant atr_intraday. T6/T7/T14/T15/T17 gardent atr (daily) - leur scale est session.
+- `replay_narrative_state_machine.py` : `_row_to_bar` passe atr_intraday calcule depuis atr_14m_pct * close.
+- Docstring transition() documente la convention.
+
+**Verification post-fix** (replay ES Mai 2026 11j) :
+- EXHAUSTION_TOP : 0 -> **85** (+85)
+- EXHAUSTION_BOTTOM : 0 -> **386** (+386)
+- S09 EXHAUSTION_TOP_short scenarios : 0 -> **75** (+75)
+- S10 EXHAUSTION_BOTTOM_long scenarios : 0 -> **257** (+257)
+- WYCKOFF_UPTHRUST baisse 661 -> 30 (normalisation saine, T28 prend la place legitime)
+- Trades V2 actionable : LONG=64 + SHORT=27 = 91 sur 11j = 8.3/jour (vs 5/jour V1).
+
+**Trigger prevention** :
+- Pour toute future modif d'un module qui melange echelles temporelles (1-min vs session vs daily), CREER DES VARIABLES SEPAREES NOMMEES PAR ECHELLE.
+- Avant deploy une condition `X > N * atr`, verifier empiriquement quelle echelle d'atr est passee et p99 du ratio sur data reelle.
+- T17 (RANGE_RESPECTED ib_range/atr) reste a fixer separement : utilise atr_intraday ?atr_session ? Investiguer dans STEP 2bis.
+
+**Reviewed** : Jackson (priorite ABSOLUE post-replay 18/05) + self-diagnostic confirmant par bar live NQ/ES VPS.
+
+---
+
 ### 2026-05-18 PM (5) - [PATTERN_11] Bot 3 v2 Phase 4abc MIRROR_SHORT DATA_MINING_TRAP self-inflicted
 
 **Contexte** : Phase 4abc Bot 3 v2 livree avec 5 mirror SHORT levels TIER 1 (MQ_CALL_0DTE, IB_HIGH_SHORT, GEX_UP, VWAP_W_SD1U, PVAH_SHORT) pour symetrie LONG/SHORT objectif master plan sect 281. 176/176 pytest PASS, replay GO 9/9, commit bfa88d2 tag bot3v2-phase4abc-levels-symmetry.

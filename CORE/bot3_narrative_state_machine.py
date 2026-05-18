@@ -135,7 +135,8 @@ CONF_INVALIDATED: float = 0.0             # INVALIDATED state
 # Other thresholds
 BARS_SINCE_BOS_MIN_WYCKOFF: int = 5       # T22/T23 anti immediate Spring post-BOS
 TICK_WYCKOFF_MULT: float = 2.0            # T22/T23 close > swing + 2*tick threshold
-IB_RANGE_ATR_MAX: float = 1.2             # T17 ib_range/atr < 1.2 = NON_TREND day
+IB_RANGE_ATR_MAX: float = 1.2             # DEPRECATED 2026-05-18 : ancienne formule T17 (ib_range/atr_daily < 1.2). Remplacee par canon Dalton (no_break + inside_va). Constante gardee pour back-compat imports externes mais non utilisee. A retirer apres review tests.
+BARS_SINCE_BOS_MIN_RANGE: int = 90        # T17 anti-cycle TREND<->RANGE : RANGE_RESPECTED requires >=90 min depuis dernier swing BOS (canon Dalton : range confirme apres consolidation prolongee, pas pullback court)
 BAR_IDX_OD_CONTINUATION_MIN: int = 30     # T10/T11 OD -> TREND validation bar threshold
 BAR_IDX_OTD_WINDOW_MIN: int = 5           # T14/T15 OTD confirm window start
 BAR_IDX_OTD_WINDOW_MAX: int = 15          # T14/T15 OTD confirm window end
@@ -330,6 +331,20 @@ def _evaluate_transitions(
     low = _safe_float(bar.get("low"))
     open_ = _safe_float(bar.get("open"))
     atr = _safe_float(bar.get("atr"))
+    # ATR intraday (= ATR Wilder 14-bars 1-min) pour conditions PAR-BAR :
+    # T22-T27 Wyckoff recovery, T28/T29 EXHAUSTION climax, T30/T31 follow-through.
+    # Source primaire : bar["atr_intraday"] (alias explicite ajoute par live_enricher
+    # ou replay tool). Fallback : bar["atr_14m"] (live enricher v1.0).
+    # Dernier fallback DEGRADE : bar["atr"] (incoherent d'echelle si atr daily,
+    # mais evite crash). Le warning BOT3_NSM_ATR_FALLBACK_DAILY est emit par
+    # NarrativeStateMachine.transition() (methode classe) qui a access a symbol.
+    # Cf incident 2026-05-18 : NSM utilisait atr daily (~17 pts ES) pour seuil
+    # bar_range > 2*atr = 35 pts impossible sur 1-min (p99 bar_range = 7 pts).
+    atr_intraday = (
+        _safe_float(bar.get("atr_intraday"))
+        or _safe_float(bar.get("atr_14m"))
+        or atr  # fallback degrade, warning emit cote NarrativeStateMachine.transition()
+    )
     vol_z = _safe_float(bar.get("vol_zscore_20"))
     bar_idx = _safe_int(bar.get("bar_idx_session")) or current.bar_idx_current
     session = _get_session(ctx)
@@ -388,7 +403,7 @@ def _evaluate_transitions(
     # + bars_since_BOS>5 → WYCKOFF_SPRING_LONG (conf 0.65 pre-SOS)
     if state in _WYCKOFF_SPRING_ALLOWED_STATES:
         if (low is not None and close is not None and swing_low is not None
-                and vol_z is not None and atr is not None):
+                and vol_z is not None and atr_intraday is not None):
             if (low <= swing_low
                     and close > swing_low + TICK_WYCKOFF_MULT * tick_size
                     and vol_z > VOL_Z_SPRING_MIN
@@ -406,7 +421,7 @@ def _evaluate_transitions(
     # + bars_since_BOS>5 → WYCKOFF_UPTHRUST_SHORT (conf 0.65 pre-SOS)
     if state in _WYCKOFF_UPTHRUST_ALLOWED_STATES:
         if (high is not None and close is not None and swing_high is not None
-                and vol_z is not None and atr is not None):
+                and vol_z is not None and atr_intraday is not None):
             if (high >= swing_high
                     and close < swing_high - TICK_WYCKOFF_MULT * tick_size
                     and vol_z > VOL_Z_SPRING_MIN
@@ -419,50 +434,58 @@ def _evaluate_transitions(
                 )
 
     # T24/T25/T26/T27 : WYCKOFF spring/upthrust exit conditions
-    if state == NarrativeState.WYCKOFF_SPRING_LONG and atr is not None:
+    # PAR-BAR : recovery mesure dans la barre actuelle relatif au swing → atr_intraday
+    if state == NarrativeState.WYCKOFF_SPRING_LONG and atr_intraday is not None:
         if close is not None and swing_low is not None:
-            if close > swing_low + ATR_MULT_WYCKOFF_RECOVERY * atr:
+            if close > swing_low + ATR_MULT_WYCKOFF_RECOVERY * atr_intraday:
                 return (
                     NarrativeState.TREND_UP_CONTINUATION, +1, CONF_WYCKOFF_POST_SOS,
                     {"trigger": "T24_spring_recovery_confirmed"},
                 )
-            if close < swing_low - ATR_MULT_WYCKOFF_RECOVERY * atr:
+            if close < swing_low - ATR_MULT_WYCKOFF_RECOVERY * atr_intraday:
                 return (
                     NarrativeState.INVALIDATED, 0, CONF_INVALIDATED,
                     {"trigger": "T26_spring_failed"},
                 )
 
-    if state == NarrativeState.WYCKOFF_UPTHRUST_SHORT and atr is not None:
+    if state == NarrativeState.WYCKOFF_UPTHRUST_SHORT and atr_intraday is not None:
         if close is not None and swing_high is not None:
-            if close < swing_high - ATR_MULT_WYCKOFF_RECOVERY * atr:
+            if close < swing_high - ATR_MULT_WYCKOFF_RECOVERY * atr_intraday:
                 return (
                     NarrativeState.TREND_DOWN_CONTINUATION, -1, CONF_WYCKOFF_POST_SOS,
                     {"trigger": "T25_upthrust_confirmed"},
                 )
-            if close > swing_high + ATR_MULT_WYCKOFF_RECOVERY * atr:
+            if close > swing_high + ATR_MULT_WYCKOFF_RECOVERY * atr_intraday:
                 return (
                     NarrativeState.INVALIDATED, 0, CONF_INVALIDATED,
                     {"trigger": "T27_upthrust_failed"},
                 )
 
-    # T28: TREND_UP + vol_zscore>+2.5 + close<open + bar_range>2*atr → EXHAUSTION_TOP
+    # T28: TREND_UP + vol_zscore>+2.5 + close<open + bar_range>2*atr_intraday → EXHAUSTION_TOP
+    # PAR-BAR : climax = bar exceptionnelle relative au timeframe d'analyse (1-min).
+    # Fix 2026-05-18 : atr daily ecrasait seuil 2*atr = 35pts ES impossible.
+    # Avec atr_intraday (~1.7pts ES mean batch / ~4.4pts ES live), seuil
+    # 2*atr_intraday capture ~3.4% des bars en ratio brut, ~1.1% en intersection
+    # vol_z>2.5 & color (empirique ES batch Mai 2026). Sensitivity sweep
+    # ATR_MULT_EXHAUSTION_RANGE in {2.0, 2.5, 3.0} prevu Phase 5 walk-forward
+    # DSR Lopez (recommendation market-analyst 2026-05-18 review).
     if state == NarrativeState.TREND_UP_CONTINUATION:
         if (vol_z is not None and vol_z > VOL_Z_EXHAUSTION_MIN
                 and close is not None and open_ is not None
-                and high is not None and low is not None and atr is not None):
-            if close < open_ and (high - low) > ATR_MULT_EXHAUSTION_RANGE * atr:
+                and high is not None and low is not None and atr_intraday is not None):
+            if close < open_ and (high - low) > ATR_MULT_EXHAUSTION_RANGE * atr_intraday:
                 return (
                     NarrativeState.EXHAUSTION_TOP, -1, CONF_EXHAUSTION,
                     {"trigger": "T28_exhaustion_top", "vol_z": vol_z,
                      "bar_range": high - low},
                 )
 
-    # T29: TREND_DOWN + vol_zscore>+2.5 + close>open + bar_range>2*atr → EXHAUSTION_BOTTOM
+    # T29: TREND_DOWN + vol_zscore>+2.5 + close>open + bar_range>2*atr_intraday → EXHAUSTION_BOTTOM
     if state == NarrativeState.TREND_DOWN_CONTINUATION:
         if (vol_z is not None and vol_z > VOL_Z_EXHAUSTION_MIN
                 and close is not None and open_ is not None
-                and high is not None and low is not None and atr is not None):
-            if close > open_ and (high - low) > ATR_MULT_EXHAUSTION_RANGE * atr:
+                and high is not None and low is not None and atr_intraday is not None):
+            if close > open_ and (high - low) > ATR_MULT_EXHAUSTION_RANGE * atr_intraday:
                 return (
                     NarrativeState.EXHAUSTION_BOTTOM, +1, CONF_EXHAUSTION,
                     {"trigger": "T29_exhaustion_bottom", "vol_z": vol_z,
@@ -470,13 +493,14 @@ def _evaluate_transitions(
                 )
 
     # T30 (fix B3 INVERSE) :
-    # EXHAUSTION_TOP + close<high-atr → TREND_DOWN_CONTINUATION (follow-through baissier
-    # = thesis confirmee, Wyckoff buying climax canon Pruden Ch.7)
+    # EXHAUSTION_TOP + close<high-atr_intraday → TREND_DOWN_CONTINUATION
+    # (follow-through baissier = thesis confirmee, Wyckoff buying climax canon Pruden Ch.7)
     # T30b : EXHAUSTION_TOP + close>=high (high preserve, pas de follow-through)
     #        → INVALIDATED (faux climax)
-    if state == NarrativeState.EXHAUSTION_TOP and atr is not None:
+    # PAR-BAR : follow-through mesure dans la barre actuelle → atr_intraday.
+    if state == NarrativeState.EXHAUSTION_TOP and atr_intraday is not None:
         if close is not None and high is not None:
-            if close < high - atr:
+            if close < high - atr_intraday:
                 return (
                     NarrativeState.TREND_DOWN_CONTINUATION, -1, CONF_WYCKOFF_POST_SOS,
                     {"trigger": "T30_exhaustion_top_followthrough_confirmed",
@@ -490,12 +514,12 @@ def _evaluate_transitions(
                 )
 
     # T31 (fix B3 INVERSE) :
-    # EXHAUSTION_BOTTOM + close>low+atr → TREND_UP_CONTINUATION (follow-through haussier
-    # = thesis confirmee, Wyckoff selling climax canon Pruden Ch.7)
+    # EXHAUSTION_BOTTOM + close>low+atr_intraday → TREND_UP_CONTINUATION
+    # (follow-through haussier = thesis confirmee, Wyckoff selling climax canon Pruden Ch.7)
     # T31b : EXHAUSTION_BOTTOM + close<=low → INVALIDATED (faux climax)
-    if state == NarrativeState.EXHAUSTION_BOTTOM and atr is not None:
+    if state == NarrativeState.EXHAUSTION_BOTTOM and atr_intraday is not None:
         if close is not None and low is not None:
-            if close > low + atr:
+            if close > low + atr_intraday:
                 return (
                     NarrativeState.TREND_UP_CONTINUATION, +1, CONF_WYCKOFF_POST_SOS,
                     {"trigger": "T31_exhaustion_bottom_followthrough_confirmed",
@@ -600,14 +624,35 @@ def _evaluate_transitions(
             {"trigger": "T16_OTD_timeout_rotation"},
         )
 
-    # T17: OPEN_ROTATION + ib_complete + inside_value_area + ib_range/atr<1.2 → RANGE_RESPECTED
-    if state == NarrativeState.OPEN_ROTATION and ib_complete and inside_va:
-        if (ib_range is not None and atr is not None and atr > 0
-                and (ib_range / atr) < IB_RANGE_ATR_MAX):
-            return (
-                NarrativeState.RANGE_RESPECTED, 0, CONF_RANGE_RESPECTED,
-                {"trigger": "T17_rotation_range_respected"},
-            )
+    # T17 (refacto 2026-05-18 P0/P1 review market-analyst) :
+    # Canon Dalton MOM Ch.9 "Day Type Recognition" : Range Day = prix oscille
+    # DANS l'IB toute la session.
+    # State guard elargi : {OPEN_ROTATION, TREND_UP, TREND_DOWN} car OPEN_ROTATION
+    # arrive souvent AVANT IB complete (bar 16-30 via T16), et le state peut
+    # avoir transite vers TREND avant IB complete (bar 60+). Le canon dit "range
+    # confirme apres IB+1h", donc on accepte TREND→RANGE_RESPECTED quand l'IB
+    # complete sans breakout et price reste in VA.
+    # Anti-cycle TREND<->RANGE : guard bars_since_BOS > 30 (= ~30 min depuis
+    # dernier swing break, proxy "consolidation prolongee").
+    # Conditions :
+    #   - state in {OPEN_ROTATION, TREND_UP_CONTINUATION, TREND_DOWN_CONTINUATION}
+    #   - ib_complete (IB formed = post-bar 60)
+    #   - inside_value_area (prix dans VA = consolidation)
+    #   - not ib_broken_up AND not ib_broken_dn (pas de breakout IB)
+    #   - bars_since_BOS > 30 (anti-flip immediat depuis trend actif)
+    if state in {NarrativeState.OPEN_ROTATION,
+                 NarrativeState.TREND_UP_CONTINUATION,
+                 NarrativeState.TREND_DOWN_CONTINUATION}:
+        if ib_complete and inside_va:
+            ib_broken_up = bool(bar.get("ib_broken_up") or ctx.get("ib_broken_up"))
+            ib_broken_dn = bool(bar.get("ib_broken_dn") or ctx.get("ib_broken_dn"))
+            if (not ib_broken_up and not ib_broken_dn
+                    and bars_since_BOS > BARS_SINCE_BOS_MIN_RANGE):
+                return (
+                    NarrativeState.RANGE_RESPECTED, 0, CONF_RANGE_RESPECTED,
+                    {"trigger": "T17_range_respected_canon_dalton",
+                     "bars_since_BOS": bars_since_BOS},
+                )
 
     # T18 (fusion B2) : RANGE_RESPECTED + close>prev_vah + close[-1]>prev_vah
     # → TREND_UP_CONTINUATION (range breakout VAH = trend up structurel)
@@ -814,7 +859,15 @@ class NarrativeStateMachine:
 
         Args:
             symbol: ES.c.0 / NQ.c.0 / MGC.v.0.
-            bar: payload V4 enriched canonical (dict ~467 cols).
+            bar: payload V4 enriched canonical (dict ~467 cols). Doit contenir :
+                - "atr" (ATR daily Wilder, echelle session : T6/T7/T14/T15/T17)
+                - "atr_intraday" ou "atr_14m" (ATR Wilder 14-bars 1-min, echelle
+                  par-bar : T22-T27 Wyckoff recovery, T28/T29 EXHAUSTION climax,
+                  T30/T31 follow-through). Fix 2026-05-18 : sans cette
+                  distinction, le seuil bar_range>2*atr_daily = 35 pts ES etait
+                  inatteignable sur barre 1-min (p99 bar_range = 7 pts).
+                  Fallback : si atr_intraday absent, utilise atr (incoherent
+                  d'echelle mais evite crash).
             ctx: output bot3_context_analyzer.analyze_context.
             regime: RegimeSnapshot (output regime_engine.compute_regime). Not used Phase 1.
             story_trackers: dict snapshot output bot3_story_trackers.update_story_trackers.
@@ -846,6 +899,26 @@ class NarrativeStateMachine:
                     current_session_date_trading=bar.get("session_date_trading"),
                 )
                 self._states[symbol] = current
+
+            # P0-1 garde-fou : detecter regression silencieuse atr_intraday absent.
+            # Si pipeline ne fournit ni atr_intraday ni atr_14m, le code _evaluate_transitions
+            # tombe sur fallback atr daily -> seuils T28/T29/T30/T31 inatteignables a nouveau
+            # = retour au bug pre-fix 2026-05-18. Emit MAJEUR pour detection J+1 grep logs.
+            # Idempotence : emit 1x par symbol par session (eviter spam si fallback chronique).
+            if not current.engine_states.get("_atr_fallback_warned"):
+                has_atr_intraday = (
+                    bar.get("atr_intraday") is not None
+                    or bar.get("atr_14m") is not None
+                )
+                atr_daily_val = _safe_float(bar.get("atr"))
+                if not has_atr_intraday and atr_daily_val is not None:
+                    emit(
+                        "BOT3_NSM_ATR_FALLBACK_DAILY",
+                        log_fn=log_fn,
+                        sym=symbol,
+                        atr_daily=atr_daily_val,
+                    )
+                    current.engine_states["_atr_fallback_warned"] = True
 
             # Reset n_transitions_today si SDT change
             # NB: ne PAS mettre a jour current.current_session_date_trading ici —

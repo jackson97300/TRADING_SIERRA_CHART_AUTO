@@ -80,6 +80,8 @@ def _make_ctx(
     ib_range: float = 8.0,
     inside_value_area: bool = True,
     tick_size: float = 0.25,
+    ib_broken_up: bool = False,
+    ib_broken_dn: bool = False,
 ) -> dict:
     return {
         "session": session,
@@ -92,6 +94,8 @@ def _make_ctx(
         "ib_complete": ib_complete,
         "ib_range": ib_range,
         "inside_value_area": inside_value_area,
+        "ib_broken_up": ib_broken_up,
+        "ib_broken_dn": ib_broken_dn,
         "tick_size": tick_size,
     }
 
@@ -404,6 +408,90 @@ def test_T28_exhaustion_top_from_trend_up():
     )
     assert snap.state == NarrativeState.EXHAUSTION_TOP
     assert snap.bias_dir == -1
+
+
+# ─────────────────────────────────────────────────────────────────────
+# P0-2 anti-regression tests : valider que T28/T29 utilisent atr_intraday
+# et NON atr daily (incident 2026-05-18 22:00 CONTEXT_MISS).
+# ─────────────────────────────────────────────────────────────────────
+
+
+def test_T28_uses_atr_intraday_not_atr_daily():
+    """Anti-regression : si atr daily=17 (ES daily) et atr_intraday=5 (ES 1-min),
+    T28 doit fire avec range=15 > 2*atr_intraday=10. Si le code lisait atr daily
+    par erreur, range=15 < 2*atr_daily=34 et T28 ne firerait pas.
+
+    Cf incident INCIDENT_LOG 2026-05-18 22:00 (6) CONTEXT_MISS.
+    """
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+    nsm.transition("ES", _make_bar(close=100.0), _make_ctx(session="ASIA"),
+                   regime=None, story_trackers={}, swing_state=swing)
+    state = nsm._states["ES"]
+    state.state = NarrativeState.TREND_UP_CONTINUATION
+
+    # Bar with both atr present : atr_daily=17 (typical ES daily), atr_intraday=5 (1-min)
+    # range=15 > 2*atr_intraday=10 (fire) ; range=15 < 2*atr_daily=34 (would NOT fire)
+    bar = _make_bar(
+        close=100.0, open_=110.0, high=110.0, low=95.0,
+        atr=17.0, vol_z=3.0,
+    )
+    bar["atr_intraday"] = 5.0  # NSM doit utiliser celui-ci
+    snap = nsm.transition(
+        "ES", bar, _make_ctx(session="NY"),
+        regime=None, story_trackers={}, swing_state=swing,
+    )
+    assert snap.state == NarrativeState.EXHAUSTION_TOP, (
+        f"Expected EXHAUSTION_TOP using atr_intraday=5, got {snap.state}. "
+        "Si fail : code utilise atr daily, regression du fix 2026-05-18."
+    )
+
+
+def test_T28_does_not_fire_when_only_atr_daily_too_large():
+    """Anti-regression : si SEUL atr daily est passe (atr_intraday/atr_14m absents),
+    le fallback degrade utilise atr daily, et le seuil bar_range>2*atr devient
+    inatteignable sur bar 1-min realiste. T28 ne fire PAS. Un warning
+    BOT3_NSM_ATR_FALLBACK_DAILY doit etre emit (1x par symbol/session, idempotent).
+    """
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+
+    captured_logs: list[tuple[str, dict]] = []
+
+    def _capture(code: str, **kwargs):
+        captured_logs.append((code, kwargs))
+
+    # Premier appel cold start AVEC log_fn pour capturer le warning
+    nsm.transition("ES", _make_bar(close=100.0, atr=17.0),
+                   _make_ctx(session="ASIA"),
+                   regime=None, story_trackers={}, swing_state=swing,
+                   log_fn=_capture)
+    state = nsm._states["ES"]
+    state.state = NarrativeState.TREND_UP_CONTINUATION
+
+    # Bar typique 1-min ES : range=2.5 pts (bar normale)
+    # atr_daily=17 (ES daily typique) -> seuil 2*17=34 pts INATTEIGNABLE
+    bar = _make_bar(
+        close=99.5, open_=100.5, high=100.5, low=98.0,  # range=2.5
+        atr=17.0, vol_z=3.0,
+    )
+    # PAS de atr_intraday ni atr_14m -> fallback
+    snap = nsm.transition(
+        "ES", bar, _make_ctx(session="NY"),
+        regime=None, story_trackers={}, swing_state=swing,
+        log_fn=_capture,
+    )
+    # T28 NE doit PAS fire (seuil inatteignable avec atr daily)
+    assert snap.state == NarrativeState.TREND_UP_CONTINUATION, (
+        f"T28 a fire avec atr daily : state={snap.state}. "
+        "Le seuil bar_range>2*atr_daily devrait etre inatteignable."
+    )
+    # Warning fallback doit etre emit (1x grace a idempotence _atr_fallback_warned)
+    fallback_codes = [c for c, _ in captured_logs if c == "BOT3_NSM_ATR_FALLBACK_DAILY"]
+    assert len(fallback_codes) >= 1, (
+        f"Expected >=1 BOT3_NSM_ATR_FALLBACK_DAILY emit, got {len(fallback_codes)}. "
+        f"All captured: {[c for c, _ in captured_logs]}"
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -931,17 +1019,71 @@ def test_T16_OTD_timeout_rotation():
 
 
 def test_T17_rotation_to_range_respected():
-    """T17 : OPEN_ROTATION + ib_complete + inside_va + ib_range/atr<1.2
-    → RANGE_RESPECTED."""
+    """T17 refacto 2026-05-18 canon Dalton MOM Ch.9 :
+    OPEN_ROTATION + ib_complete + inside_va + not ib_broken + bars_since_BOS>90
+    → RANGE_RESPECTED.
+    """
     nsm = NarrativeStateMachine()
     swing = StubSwingState()
     _force_state(nsm, "ES", NarrativeState.OPEN_ROTATION)
     snap = nsm.transition(
         "ES",
-        _make_bar(close=100.0, atr=10.0, bar_idx=30),
+        _make_bar(close=100.0, atr=10.0, bar_idx=100),
         _make_ctx(session="NY", ib_complete=True, inside_value_area=True,
-                  ib_range=8.0),  # 8/10 = 0.8 < 1.2
-        regime=None, story_trackers={}, swing_state=swing,
+                  ib_range=8.0),
+        regime=None, story_trackers={"bars_since_last_BOS": 100},  # > 90 anti-flip
+        swing_state=swing,
+    )
+    assert snap.state == NarrativeState.RANGE_RESPECTED
+
+
+def test_T17_blocked_if_ib_broken_up():
+    """T17 ne fire PAS si ib_broken_up=True (breakout = pas Range Day canon Dalton)."""
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+    _force_state(nsm, "ES", NarrativeState.OPEN_ROTATION)
+    snap = nsm.transition(
+        "ES",
+        _make_bar(close=100.0, atr=10.0, bar_idx=100),
+        _make_ctx(session="NY", ib_complete=True, inside_value_area=True,
+                  ib_range=8.0, ib_broken_up=True),
+        regime=None, story_trackers={"bars_since_last_BOS": 100},
+        swing_state=swing,
+    )
+    assert snap.state == NarrativeState.OPEN_ROTATION
+
+
+def test_T17_blocked_if_bars_since_BOS_too_recent():
+    """T17 anti-flip TREND<->RANGE : bars_since_BOS<=90 → block (canon Dalton
+    'range confirme apres consolidation prolongee', evite flip TREND<->RANGE).
+    """
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+    _force_state(nsm, "ES", NarrativeState.OPEN_ROTATION)
+    snap = nsm.transition(
+        "ES",
+        _make_bar(close=100.0, atr=10.0, bar_idx=100),
+        _make_ctx(session="NY", ib_complete=True, inside_value_area=True,
+                  ib_range=8.0),
+        regime=None, story_trackers={"bars_since_last_BOS": 60},  # 60 <= 90
+        swing_state=swing,
+    )
+    assert snap.state == NarrativeState.OPEN_ROTATION
+
+
+def test_T17_from_trend_up_to_range_respected_after_long_consolidation():
+    """T17 fire AUSSI depuis TREND_UP_CONTINUATION si consolidation prolongee
+    post-IB (canon Dalton : range peut emerger d'un trend qui s'epuise)."""
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+    _force_state(nsm, "ES", NarrativeState.TREND_UP_CONTINUATION)
+    snap = nsm.transition(
+        "ES",
+        _make_bar(close=100.0, atr=10.0, bar_idx=120),
+        _make_ctx(session="NY", ib_complete=True, inside_value_area=True,
+                  ib_range=8.0),
+        regime=None, story_trackers={"bars_since_last_BOS": 100},
+        swing_state=swing,
     )
     assert snap.state == NarrativeState.RANGE_RESPECTED
 

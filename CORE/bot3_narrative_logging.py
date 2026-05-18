@@ -59,6 +59,7 @@ BOT3V2_NARRATIVE_CODES: frozenset[str] = frozenset({
     "BOT3_NSM_PERSIST_FAIL",
     "BOT3_NSM_PERSIST_RECOVERED",
     "BOT3_NSM_SESSION_RESET",
+    "BOT3_NSM_ATR_FALLBACK_DAILY",  # P0-1 fix 2026-05-18 : alerter sur regression silencieuse atr_intraday
     "BOT3_STORY_BOS_DETECTED",
     "BOT3_STORY_TREND_CONFIRMED",
     "BOT3_STORY_REVERSAL_CANDIDATE",

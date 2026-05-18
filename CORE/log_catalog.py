@@ -680,6 +680,7 @@ LOG_CODES = {
     "BOT3_NSM_PERSIST_FAIL":      (LogLevel.MAJEUR,   "events",    "NSM persist FAIL : err={err}"),
     "BOT3_NSM_PERSIST_RECOVERED": (LogLevel.ALERTE,   "events",    "NSM recovered fresh state apres corruption pickle : {sym} reason={reason}"),
     "BOT3_NSM_SESSION_RESET":     (LogLevel.INFO,     "events",    "NSM session reset : {sym} new_sdt={new_sdt} n_transitions_yesterday={n}"),
+    "BOT3_NSM_ATR_FALLBACK_DAILY": (LogLevel.MAJEUR,  "decisions", "NSM atr_intraday absent : {sym} fallback atr daily ({atr_daily:.2f}) - seuils T28/T29/T30/T31 INATTEIGNABLES sur 1-min. Fix : passer atr_14m ou atr_intraday dans bar dict (cf incident 2026-05-18 22:00)."),
 
     # StoryTrackers - 3 codes
     "BOT3_STORY_BOS_DETECTED":       (LogLevel.MAJEUR, "events",    "Bot3 STORY BOS detected : {sym} dir={bos_dir} price={bos_price} bar_idx={bar_idx} prev_close={prev_close} swing_ref={swing_ref}"),
