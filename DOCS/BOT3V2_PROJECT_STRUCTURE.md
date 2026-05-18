@@ -159,7 +159,7 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 
 | Fichier | Status | Date | Commit | Review | Notes |
 |---------|--------|------|--------|--------|-------|
-| CORE/bot3_level_definitions.py (extend) | 🟢 GO | 2026-05-18 | (next) | 22/22 pytest Phase 4 | Phase 4a `derive_nature_from_side()` + `get_level_nature()` + `_LEVEL_NATURE_OVERRIDES` (5 levels structural). Phase 4c `MIRROR_SHORT_TIER1` 5 levels symetrie (MQ_CALL_0DTE/IB_HIGH_SHORT/GEX_UP/VWAP_W_SD1U/PVAH_SHORT) |
+| CORE/bot3_level_definitions.py (extend) | 🟢 GO ZERO DETTE | 2026-05-18 | (next) | 28/28 pytest Phase 4 + reviews ULTRATHINK 2 agents fixes 12 bugs (4 P0 critiques + 4 P1 important + 4 P2 mineurs) | Phase 4a `derive_nature_from_side()` Literal Enum strict + Bug 10 NEUTRAL→None (preserve 8 NEUTRAL legacy 7 scenarios) + Bug 12 `_ALL_LEVEL_DICTS` central + Bug 6 `_LEVEL_NATURE_CACHE` O(1). Phase 4c `MIRROR_SHORT_OBSERVE` 2 levels (GEX_UP/VWAP_W_SD1U) tier=3 OBSERVE-ONLY + required_context phase_5_dsr_validated (3 originaux supprimes : MQ_CALL_0DTE asymetrie 33/57, IB_HIGH_SHORT + PVAH_SHORT doublons dist_col) |
 | CORE/bot3_config.py (extend) | 🟢 GO | 2026-05-18 | (next) | flag valide | Phase 4b kill switch `BOT3_USE_NARRATIVE_DIRECTION=False` + `BOT3_NARRATIVE_TRACKING_ONLY=True` + buffer sizes |
 | tests/bot3/test_level_definitions_phase4.py | 🟢 GO | 2026-05-18 | (next) | 22/22 PASS | nature mapping (7) + lookup (8) + MIRROR_SHORT (5) + coherence (2) |
 | CORE/bot3_mp_engine.py (extend) | ⬜ TODO Phase 4d | - | - | - | Injection NSM update + sequencing NSM→Resolver + `narrative_direction` passing |

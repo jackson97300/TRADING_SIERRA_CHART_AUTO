@@ -43,6 +43,12 @@ BOT3_USE_NARRATIVE_DIRECTION: bool = False
 # Resolver fire decisions parallele logged en shadow JSONL pour audit Phase 4-5.
 BOT3_NARRATIVE_TRACKING_ONLY: bool = True
 
+# Bug 3 fix market-analyst : flag separe pour MIRROR_SHORT_OBSERVE levels.
+# Default False = pas consume meme si BOT3_USE_NARRATIVE_DIRECTION=True.
+# Active uniquement apres Phase 5 walk-forward DSR Lopez N>=100 sur 6 mois data.
+# Permet test A/B isolement statistique : narrative SANS mirror vs AVEC mirror.
+BOT3_ENABLE_MIRROR_SHORT_OBSERVE: bool = False
+
 # Buffer sizes Phase 4 (limites mémoire prod multi-symbol).
 # Si > N pending entries actives, log warning (potential pending leak).
 BOT3_NARRATIVE_MAX_PENDING_ENTRIES: int = 50

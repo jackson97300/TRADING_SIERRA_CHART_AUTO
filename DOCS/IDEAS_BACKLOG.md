@@ -22,6 +22,24 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 - **[DETTE TIER 1 2026-05-18]** **Bot 3 v2 Phase 2 - 8 reserves Tier 1 reviews ULTRATHINK bloquantes Phase 3** | 4-6h | **HIGH BLOCKER PHASE 3** | DONE 7/8 (R1+R2+R3+R3bis+R5+R6+R7+R8 fixees, R4 reportee Phase 5 walk-forward)
 
+- **[DETTE PHASE 5 2026-05-18 PM]** **Bot 3 v2 MIRROR_SHORT_OBSERVE validation walk-forward DSR Lopez** | 4-8h Phase 5 | **HIGH BLOCKER prod activation** | PROPOSED
+  - **Source** : INCIDENT_LOG 2026-05-18 PM (5) DATA_MINING_TRAP self-inflicted Phase 4abc + reviews ULTRATHINK
+  - **Levels concernes** (2 mirrors gardes apres review) :
+    - `GEX_UP` (mirror GEX_DN) : gamma flip bilateral
+    - `VWAP_W_SD1U` (mirror VWAP_W_SD1D) : VWAP weekly institutional
+  - **3 levels supprimes apres review** :
+    - MQ_CALL_0DTE : asymetrie empirique 33% NQ vs MQ_PUT_0DTE 57.5%
+    - IB_HIGH_SHORT + PVAH_SHORT : doublons dist_col physiques
+  - **Status** : `tier=3` OBSERVE-ONLY + `required_context: {phase_5_dsr_validated: True}`
+    + Flag `BOT3_ENABLE_MIRROR_SHORT_OBSERVE=False` (default).
+  - **Critere activation prod** :
+    1. Walk-forward DSR Lopez 12 folds 6 mois (Databento ES + NQ)
+    2. N>=100 trades par mirror level
+    3. DSR>=0.95 sur 8+ folds
+    4. PF>=1.3 + EV/trade>=1 tick + WR>=45%
+  - **Si NOGO Phase 5** : supprime des MIRROR_SHORT_OBSERVE definitivement.
+  - **Action** : audit Phase 5 obligatoire avant `BOT3_ENABLE_MIRROR_SHORT_OBSERVE=True`.
+
 - **[DETTE TIER 1 2026-05-18 PM]** **Bot 3 v2 Phase 3 - 5 reserves residuelles Phase 5 (non-bloquantes Phase 4)** | 4-5h | MEDIUM | PROPOSED Phase 5
   - **Source** : 2 agents ULTRATHINK Phase 3 (market-analyst + code-reviewer) 18/05 PM
   - **Reviews archives** :

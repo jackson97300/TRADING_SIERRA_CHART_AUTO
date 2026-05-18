@@ -31,6 +31,69 @@
 
 ---
 
+### 2026-05-18 PM (5) - [PATTERN_11] Bot 3 v2 Phase 4abc MIRROR_SHORT DATA_MINING_TRAP self-inflicted
+
+**Contexte** : Phase 4abc Bot 3 v2 livree avec 5 mirror SHORT levels TIER 1 (MQ_CALL_0DTE, IB_HIGH_SHORT, GEX_UP, VWAP_W_SD1U, PVAH_SHORT) pour symetrie LONG/SHORT objectif master plan sect 281. 176/176 pytest PASS, replay GO 9/9, commit bfa88d2 tag bot3v2-phase4abc-levels-symmetry.
+
+**Ce qui a mal tourne** : reviews ULTRATHINK Tier 1 (market-analyst + code-reviewer) verdict **NOGO Phase 4d unanime**. 12 auto-findings perso confirmes (4 critiques + 4 importants + 4 mineurs) + 7 nouveaux agents.
+
+**4 bugs CRITIQUES verifies empiriquement** :
+1. **MIRROR_SHORT_TIER1 ZERO baseline empirique** : 5 levels tier=1 sans rej_/pf_/n_ (grep code confirme). Signature `DATA_MINING_TRAP` (incident 28/04 cf `feedback_data_mining_trap.md`).
+2. **dist_col doublons** : IB_HIGH_SHORT et PVAH_SHORT ont SAME dist_col que IB_HIGH/PVAH TIER2_NEUTRAL existants. Risque double-fire mp_engine si Phase 4d itere les 2 dicts.
+3. **tier=1 promotion abusive** : MQ_CALL_0DTE + IB_HIGH_SHORT marques tier=1 SANS N>=5000 (critere TIER 1 documente ligne 17-18 du module). Violation header.
+4. **level_supports_symbol() asymetrie API** : ne lookup pas MIRROR_SHORT_TIER1 (lignes 587-590 hardcoded `(TIER1, TIER2, TIER3)`). Test empirique : `level_supports_symbol('MQ_CALL_0DTE', 'ES') = False` alors que MIRROR declare `symbols=[NQ, ES]`. Silent filter out signals.
+
+**Killer fact non vu par auto-audit** : ligne 282 module **MQ_CALL baseline_rej_nq=33%** vs **MQ_PUT_0DTE rej_nq=57.5%** = asymetrie EMPIRIQUE 24 points documentee. J'ai cree MQ_CALL_0DTE tier=1 sur PRESUMPTION symetrie 57%. Refute par les propres donnees du module. Pruden Ch.7 : "Asymmetric supply/demand zones reflect long-term institutional positioning, not symmetric mean reversion".
+
+**Cause racine** :
+- Viole `feedback_backtest_before_gate.md` 17/04 : "Toujours backtest empirique (50 LOC) avant de coder un nouveau gate"
+- Reproduit pattern incident 03/05 06:30 meta-labeler (infrastructure build pour edge inexistant, espoir validation Phase N+1)
+- Tests PASS prouvent que le code compile, PAS la validite canon des decisions de design
+- Bot 3 v1 a 80% LONG biais → solution "ajouter 5 mirror SHORT" est mecanique, pas canon (asymetrie marche US 1950-2026 documentee)
+
+**Fixes appliques session 18/05 PM** :
+- Suppression IB_HIGH_SHORT + PVAH_SHORT (doublons dist_col)
+- Suppression MQ_CALL_0DTE (asymetrie 33%/57% empirique refute)
+- Demote GEX_UP + VWAP_W_SD1U → tier=3 OBSERVE-ONLY (2 mirrors finaux au lieu de 5)
+- `required_context: {phase_5_dsr_validated: True}` gate explicit
+- Flag separe `BOT3_ENABLE_MIRROR_SHORT_OBSERVE=False` (default False jusqu'a Phase 5)
+- Renomme dict `MIRROR_SHORT_TIER1` → `MIRROR_SHORT_OBSERVE`
+- Refactor `_ALL_LEVEL_DICTS` central (fix Bug 12 + Bug 6 cache)
+- `derive_nature_from_side('NEUTRAL') = None` (au lieu de structural, fix Bug 10 castrate 8 levels)
+- `LevelNature = typing.Literal` (Enum strict, fix Bug 7 regression Phase 3 R5)
+- INCIDENT_LOG entry (cet entry)
+- IDEAS_BACKLOG MIRROR_SHORT Phase 5 dette tech documentee
+
+**Lecons** :
+1. Backtest empirique 50 LOC OBLIGATOIRE avant tout ajout level / scenario / gate (rule .claude/rules/critical-tasks-review.md critere 9)
+2. Symetrie LONG/SHORT mecanique sans verifier asymetrie marche structurelle = data mining
+3. Tier=1 doit etre verifie cumulativement (rej>58% + n>5000), pas mecaniquement attribue
+4. API helpers level_supports_symbol et get_level_nature doivent itere mem set de dicts (`_ALL_LEVEL_DICTS` central DRY)
+5. NEUTRAL ≠ structural : NEUTRAL = orderflow decide (7 scenarios legacy), structural = bilateral magnet sans bias
+6. Le test "passe le pytest" ne suffit PAS - canon doit etre verifie par market-analyst Tier 1 review AVANT commit
+
+**Trigger prevention** :
+- Avant tout commit ajout level/scenario/gate : backtest empirique 50 LOC (vs spec)
+- `tier=1` requires `n>=5000` AND `rej>58%` verifies dans la dict entry (assertion au load)
+- `level_supports_symbol` + `get_level_nature` doivent partager `_ALL_LEVEL_DICTS` (DRY)
+- `LevelNature` toujours Enum strict (Literal ou Enum class), jamais str alias
+
+**Reviewed** :
+- market-analyst (1.5/5 Dalton-Wyckoff-Steidlmayer-Lopez) verdict NOGO Phase 4d
+- code-reviewer (2.75/5 code+threading+state+tests) verdict NOGO Phase 4d
+- Auto-audit perso STEP 1-3 module-review-protocol.md (12 findings)
+
+**Cross-ref** :
+- `LOGS/reviews/REVIEW_BOT3V2_phase4abc_market_analyst_20260518.json`
+- `LOGS/reviews/REVIEW_BOT3V2_phase4abc_code_reviewer_20260518.json`
+- `feedback_data_mining_trap.md` (memory pattern reference 28/04)
+- `feedback_backtest_before_gate.md` (memory rule 17/04)
+- `feedback_pattern11_repetition_avoided.md` (memory 30/04)
+- INCIDENT_LOG entry 2026-05-03 06:30 (meta-labeler DATA_MINING_TRAP precedent)
+- `DOCS/IDEAS_BACKLOG.md` MIRROR_SHORT_OBSERVE Phase 5 dette tech
+
+---
+
 ### 2026-05-18 PM (4) - [PATTERN_11] PlotTwistDetectors Phase 2 - 5 bugs critiques calibration symbol-blind
 
 **Contexte** : Phase 2 PlotTwistDetectors + ScenarioValidator livre verdict GO PHASE 2 sur 7/7 criteres replay (114/114 pytest PASS). Reviews ULTRATHINK Tier 1 dispatch (market-analyst + code-reviewer parallele).

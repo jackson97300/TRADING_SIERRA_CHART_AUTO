@@ -520,6 +520,7 @@ def get_active_levels(
     enable_tier2_neutral: bool = False,
     enable_sidak: bool = True,
     enable_combos_boosted: bool = True,
+    enable_mirror_observe: bool = False,
 ) -> dict[str, dict]:
     """Retourne dict des niveaux actifs selon les phase flags + symbole.
 
@@ -532,6 +533,10 @@ def get_active_levels(
                                reintegres en mode NEUTRAL — orderflow + structure
                                decide le side via 7 scenarios). En Phase 1 OBSERVE_ONLY
                                on les active aussi pour log baseline_rej live.
+        enable_mirror_observe : active MIRROR_SHORT_OBSERVE (P1 fix code-reviewer
+                                review re-review Phase 4abc). Default False (jusqu'a
+                                Phase 5 walk-forward DSR validated). Wire requis
+                                cf bot3_config.BOT3_ENABLE_MIRROR_SHORT_OBSERVE.
     """
     candidates = dict(TIER1)
     if enable_tier2:
@@ -544,6 +549,10 @@ def get_active_levels(
         candidates.update(SIDAK_LEVELS)
     # COMBOS_BOOSTED = check séparé dans bot3_mp_engine (priority 1)
     # pas inclus ici car structure différente (cols multiples + filter)
+    # P1 fix re-review code-reviewer 18/05 : MIRROR_SHORT_OBSERVE wire flag.
+    # Sans ce wire, BOT3_ENABLE_MIRROR_SHORT_OBSERVE est mort architecturalement.
+    if enable_mirror_observe:
+        candidates.update(MIRROR_SHORT_OBSERVE)
     if symbol is None:
         return candidates
     return {
@@ -583,67 +592,60 @@ def is_banned(level_name: str) -> bool:
 
 
 def level_supports_symbol(level_name: str, symbol: str) -> bool:
-    """Verifie qu'un niveau autorise le symbole (filtre CUR_VPOC NQ etc.)."""
-    for tier in (TIER1, TIER2, TIER3):
-        if level_name in tier:
-            return symbol in tier[level_name].get("symbols", ["NQ", "ES"])
+    """Verifie qu'un niveau autorise le symbole (filtre CUR_VPOC NQ etc.).
+
+    Bug 12 fix code-reviewer 18/05 PM : itere _ALL_LEVEL_DICTS (incl
+    TIER2_NEUTRAL + SIDAK + COMBOS + MIRROR) au lieu de hardcoded (TIER1,
+    TIER2, TIER3). Sinon API asymetrique vs get_level_nature qui lookup partout.
+    """
+    for tier_dict in _ALL_LEVEL_DICTS:
+        if level_name in tier_dict:
+            return symbol in tier_dict[level_name].get("symbols", ["NQ", "ES"])
     return False
 
 
 # ════════════════════════════════════════════════════════════════════════
-# PHASE 4 — Symetrie LONG/SHORT mirror levels (Bot 3 v2 narrative)
+# PHASE 4 — Mirror SHORT levels OBSERVE-ONLY (Bot 3 v2 narrative)
 # ════════════════════════════════════════════════════════════════════════
-# Master plan sect 281 (DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md) :
-# "Symetrie LONG/SHORT : ajouter MQ_CALL_0DTE SHORT mirror, IB_HIGH SHORT,
-# GEX_UP SHORT, VWAP_W_SD1U SHORT, PVAH SHORT"
+# Post-review market-analyst + code-reviewer ULTRATHINK 18/05 PM :
+# Verdict initial NOGO (4 bugs critiques + 8 importants). Refactor complet :
 #
-# Justification : Bot 3 v1 a 80% LONG par biais structurel (15+ levels LONG vs
-# 0-3 SHORT explicites). DirectionResolver narrative bidirectionnel doit avoir
-# acces a mirror levels SHORT explicites pour scenarios S02/S04/S06/S08/S09.
+# SUPPRIMES (3 levels)  :
+# - MQ_CALL_0DTE : asymetrie empirique CALL wall vs PUT wall refute mirror
+#   (MQ_CALL baseline_rej_nq=33% vs MQ_PUT_0DTE rej_nq=57.5%, 24 points ecart
+#   documente ligne 282 du module). Pruden Ch.7 : "asymetrie offre/demande
+#   long terme reflete biais structurel". Symetrie mecanique = wishful thinking.
+# - IB_HIGH_SHORT : doublon physique avec IB_HIGH TIER2_NEUTRAL (meme dist_col
+#   = dist_ib_high_pct). Risque double-fire mp_engine.
+# - PVAH_SHORT : doublon physique avec PVAH TIER2_NEUTRAL (meme dist_col).
 #
-# Ces 5 mirror SHORT sont des candidats Phase 4 DirectionResolver. Phase 5
-# walk-forward DSR validera empiriquement (n >= 100 par level).
-# Backwards-compat : TIER1/2/3 + TIER2_NEUTRAL inchanges (pas de regression Bot 3 v1).
+# GARDES (2 levels) tier=3 OBSERVE-ONLY :
+# - GEX_UP : gamma flip, asymetrie limitee (dealers hedgent symetrique au-dessus
+#   et en-dessous strike). Mirror de GEX_DN OK car gamma = pure structural.
+# - VWAP_W_SD1U : vrai mirror bilateral institutionnel weekly rebalancing.
+#   Banques re-equilibrent positions a VWAP_W_SD1U comme a VWAP_W_SD1D.
+#
+# CONTRAT : tier=3 + required_context phase_5_dsr_validated. Pas live consume
+# avant Phase 5 walk-forward DSR Lopez N>=100. Flag separe :
+#   BOT3_ENABLE_MIRROR_SHORT_OBSERVE (default False).
+#
+# Backwards-compat : TIER1/2/3 + TIER2_NEUTRAL inchanges. Levels NEUTRAL pour
+# IB_HIGH / PVAH / MQ_CALL gardes intacts (orderflow decide direction via
+# logique 7 scenarios existante dans bot3_decision_engine).
 # ════════════════════════════════════════════════════════════════════════
-MIRROR_SHORT_TIER1: dict[str, dict] = {
-    "MQ_CALL_0DTE": {
-        "dist_col": "dist_mq_call_0dte_pct",
-        "proximity_pct": 0.05,
-        "side": "SHORT",
-        "tier": 1,
-        "symbols": ["NQ", "ES"],
-        "description": (
-            "Mirror SHORT de MQ_PUT_0DTE. Options 0DTE Call wall = gamma "
-            "concentre dealers hedgent = resistance intraday precise. "
-            "Bot 3 v2 narrative DirectionResolver scenario S02 (OD_DOWN) + S09 "
-            "(EXHAUSTION_TOP). Empirique paper Phase 4+5 obligatoire avant prod."
-        ),
-        "_mirror_of": "MQ_PUT_0DTE",
-    },
-    "IB_HIGH_SHORT": {
-        "dist_col": "dist_ib_high_pct",
-        "proximity_pct": 0.05,
-        "side": "SHORT",
-        "tier": 1,
-        "symbols": ["NQ", "ES"],
-        "description": (
-            "Mirror SHORT de IB_LOW. Resistance Initial Balance. "
-            "Bot 3 v2 narrative scenarios S04 (TREND_DOWN) + S08 (RANGE_RESPECTED). "
-            "Distinct de IB_HIGH TIER2_NEUTRAL (side=NEUTRAL orderflow-decide) :"
-            " ce mirror est SIDE explicit pour DirectionResolver."
-        ),
-        "_mirror_of": "IB_LOW",
-    },
+MIRROR_SHORT_OBSERVE: dict[str, dict] = {
     "GEX_UP": {
         "dist_col": "dist_gex_nearest_up_pct",
         "proximity_pct": 0.05,
         "side": "SHORT",
-        "tier": 2,
+        "tier": 3,                          # observe-only jusqu'a Phase 5 DSR
         "symbols": ["NQ", "ES"],
+        "required_context": {"phase_5_dsr_validated": True},  # gate explicit
         "description": (
             "Mirror SHORT de GEX_DN. GEX up = resistance gamma. "
-            "Empirique Phase 5 walk-forward N>=100 obligatoire (Bot 3 v1 n'avait "
-            "pas ce level, donc baseline rejection inconnue)."
+            "Gamma flip = symetrique structural (dealers hedgent les 2 cotes "
+            "strike). OBSERVE-ONLY tier=3 jusqu'a Phase 5 walk-forward "
+            "N>=100 DSR Lopez >=0.95."
         ),
         "_mirror_of": "GEX_DN",
     },
@@ -651,26 +653,15 @@ MIRROR_SHORT_TIER1: dict[str, dict] = {
         "dist_col": "dist_vwap_w_sd1u_pct",
         "proximity_pct": 0.05,
         "side": "SHORT",
-        "tier": 2,
+        "tier": 3,                          # observe-only
         "symbols": ["NQ", "ES"],
+        "required_context": {"phase_5_dsr_validated": True},
         "description": (
-            "Mirror SHORT de VWAP_W_SD1D. VWAP weekly SD+1 = resistance "
-            "institutionnelle weekly rebalance side high."
+            "Mirror SHORT de VWAP_W_SD1D. VWAP weekly SD+1 = vrai mirror "
+            "institutionnel bilateral (weekly rebalancing symetrique). "
+            "OBSERVE-ONLY tier=3 jusqu'a Phase 5 walk-forward."
         ),
         "_mirror_of": "VWAP_W_SD1D",
-    },
-    "PVAH_SHORT": {
-        "dist_col": "dist_prev_vah_pct",
-        "proximity_pct": 0.05,
-        "side": "SHORT",
-        "tier": 2,
-        "symbols": ["NQ", "ES"],
-        "description": (
-            "Mirror SHORT de PVAL. Previous VAH = resistance veille. "
-            "Distinct de PVAH TIER2_NEUTRAL : ce mirror est SIDE explicit "
-            "(consumer DirectionResolver scenarios S04+S08)."
-        ),
-        "_mirror_of": "PVAL",
     },
 }
 
@@ -678,98 +669,117 @@ MIRROR_SHORT_TIER1: dict[str, dict] = {
 # ════════════════════════════════════════════════════════════════════════
 # PHASE 4 — `nature` PARALLELE de `side` (consumer DirectionResolver)
 # ════════════════════════════════════════════════════════════════════════
+# Post-review market-analyst + code-reviewer ULTRATHINK 18/05 PM.
 # Master plan sect 187 (DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md):
-# "Ajout clé `nature=` (support/resistance/structural) EN PARALLELE de `side=`.
-# NE PAS supprimer `side`."
+# "Ajout clé `nature=` EN PARALLELE de `side=`. NE PAS supprimer `side`."
 #
-# Mapping canon Bot 3 v1 legacy_side → Bot 3 v2 nature pour DirectionResolver :
-#   - LONG       → support     (level ou rebond LONG attendu)
-#   - SHORT      → resistance  (level ou rebond SHORT attendu)
-#   - REJECTION  → structural  (rebond bilateral selon cote d'approche)
-#   - NEUTRAL    → structural  (orderflow decide direction, level = magnet/pivot)
+# Mapping canon (Bug 10 fix : NEUTRAL → None, pas structural mort) :
+#   - LONG       → "support"     (level ou rebond LONG attendu)
+#   - SHORT      → "resistance"  (level ou rebond SHORT attendu)
+#   - REJECTION  → "structural"  (rebond bilateral selon cote d'approche)
+#   - NEUTRAL    → None          (orderflow decide via 7 scenarios legacy
+#                                  bot3_decision_engine, PAS DirectionResolver)
 #
-# Implementation : helper `derive_nature_from_side()` + lookup `get_level_nature()`.
-# Approche DRY (vs 30+ entries explicit edits) car :
-#   1. Mapping deterministe legacy_side → nature (zero ambiguite)
-#   2. Phase 5+ ajouts levels auto-mappes sans modification
-#   3. Override possible via `_LEVEL_NATURE_OVERRIDES` si exception canon
+# Bug 7 fix code-reviewer : typing.Literal strict (vs str alias floue).
+# Bug 6 fix : pre-computed cache `_LEVEL_NATURE_CACHE` au load module (O(1) lookup).
+# Bug 12 fix : `_ALL_LEVEL_DICTS` central tuple (consume par helpers).
 # ════════════════════════════════════════════════════════════════════════
+from typing import Literal
 
-# Type alias pour clarte (Phase 5+ pourra migrer en Enum strict)
-LevelNature = str  # "support" / "resistance" / "structural"
+# Bug 7 fix : Literal strict pour mypy + IDE autocomplete.
+LevelNature = Literal["support", "resistance", "structural"]
 
-# Override explicite pour levels avec semantique nature ≠ derivation auto.
-# Exemple : niveaux structural-only sans direction biais (VPOC, naked POC).
-_LEVEL_NATURE_OVERRIDES: dict[str, LevelNature] = {
-    # SINGLE_PRINT est REJECTION bilaterale = magnet/air pocket Wyckoff
-    # Mais semantiquement c'est structural (trou de volume = pas un support/resistance)
-    "SINGLE_PRINT": "structural",
-    # VPOC = developing point of control = magnet structural pur
-    "CUR_VPOC": "structural",
-    # HVL = High Volume Level = pivot structural bilateral
-    "MQ_HVL": "structural",
-    # OPEN_830 / OPEN_930 = niveaux temporels (open premarket/cash) = structural
-    # (Pas un support OU resistance, c'est un PIVOT temporel)
-    "OPEN_830": "structural",
-    "OPEN_930": "structural",
-}
+# Bug 12 fix : _ALL_LEVEL_DICTS central tuple. Consume par level_supports_symbol,
+# get_level_nature, et helpers futurs Phase 4d+. DRY centralisation.
+# Order : TIER1 > TIER2 > TIER3 > TIER2_NEUTRAL > SIDAK > COMBOS > MIRROR (priority lookup).
+_ALL_LEVEL_DICTS: tuple = (
+    TIER1, TIER2, TIER3, TIER2_LEVELS_NEUTRAL,
+    SIDAK_LEVELS, COMBOS_BOOSTED, MIRROR_SHORT_OBSERVE,
+)
+
+# Bug 10 fix : OVERRIDES MINIMAL (post review : 5 entries originales etaient
+# REDONDANTES avec derive auto REJECTION→structural). Garde dict vide comme
+# placeholder pour exceptions canon futures Phase 5+.
+# Documentation : "Currently empty. All 5 prior overrides (SINGLE_PRINT,
+# CUR_VPOC, MQ_HVL, OPEN_830, OPEN_930) verified redundant 18/05 (side=REJECTION
+# auto-derive → structural). Reserved for future levels where nature != derive(side)."
+_LEVEL_NATURE_OVERRIDES: dict[str, LevelNature] = {}
 
 
-def derive_nature_from_side(side: str) -> LevelNature:
-    """Map legacy_side → nature (Phase 4 mapping canon).
+def derive_nature_from_side(side: str) -> LevelNature | None:
+    """Map legacy_side → nature (Phase 4 mapping canon, Bug 10 fix).
 
     Args:
         side : "LONG" / "SHORT" / "REJECTION" / "NEUTRAL" (legacy Bot 3 v1)
 
     Returns:
-        nature : "support" / "resistance" / "structural"
+        nature : "support" / "resistance" / "structural" OR None pour NEUTRAL.
+        Bug 10 fix : NEUTRAL retourne None (orderflow decide via 7 scenarios
+        legacy bot3_decision_engine, PAS DirectionResolver Phase 3).
 
     Raises:
-        ValueError si side inconnu (fail-loud anti silent fallback)
+        ValueError si side inconnu hors LONG/SHORT/REJECTION/NEUTRAL.
     """
-    side_upper = side.upper() if isinstance(side, str) else ""
+    if not isinstance(side, str):
+        raise ValueError(f"derive_nature_from_side: side type invalide '{type(side)}'")
+    side_upper = side.upper()
     if side_upper == "LONG":
         return "support"
     if side_upper == "SHORT":
         return "resistance"
-    if side_upper in ("REJECTION", "NEUTRAL"):
+    if side_upper == "REJECTION":
         return "structural"
+    if side_upper == "NEUTRAL":
+        # Bug 10 fix : NEUTRAL = orderflow decide via 7 scenarios legacy.
+        # PAS de nature DirectionResolver (sinon castrate 8 TIER2_NEUTRAL levels).
+        return None
     raise ValueError(
         f"derive_nature_from_side: side inconnu '{side}'. "
         f"Attendu : LONG / SHORT / REJECTION / NEUTRAL."
     )
 
 
-def get_level_nature(level_name: str) -> LevelNature | None:
-    """Lookup nature pour un level_name.
+def _build_level_nature_cache() -> dict[str, LevelNature]:
+    """Bug 6 fix : pre-compute nature mapping au load module (O(1) lookup).
 
-    Priority:
-        1. `_LEVEL_NATURE_OVERRIDES` (exception canon explicite)
-        2. `derive_nature_from_side(level_def['side'])` (mapping auto)
-        3. None si level_name inconnu (caller decide)
+    Itere _ALL_LEVEL_DICTS + applique override + derive. NEUTRAL levels SKIPPES
+    (retourne None = pas dans cache). Caller doit lookup explicitement is_neutral_level()
+    pour route legacy 7 scenarios.
+    """
+    cache: dict[str, LevelNature] = {}
+    for tier_dict in _ALL_LEVEL_DICTS:
+        for level_name, level_def in tier_dict.items():
+            # Override has priority
+            if level_name in _LEVEL_NATURE_OVERRIDES:
+                cache[level_name] = _LEVEL_NATURE_OVERRIDES[level_name]
+                continue
+            side = level_def.get("side")
+            if not isinstance(side, str):
+                continue
+            try:
+                nature = derive_nature_from_side(side)
+            except ValueError:
+                continue
+            if nature is not None:  # NEUTRAL retourne None, skip cache
+                cache[level_name] = nature
+    return cache
+
+
+# Bug 6 fix : built at module load. Re-build only on hot-reload (rare).
+_LEVEL_NATURE_CACHE: dict[str, LevelNature] = _build_level_nature_cache()
+
+
+def get_level_nature(level_name: str) -> LevelNature | None:
+    """Lookup nature pour un level_name (Bug 6 cache O(1)).
+
+    Returns:
+        LevelNature support/resistance/structural si level_name dans
+        _ALL_LEVEL_DICTS avec side != NEUTRAL.
+        None si :
+        - level_name inconnu (pas dans aucun tier)
+        - level_name a side=NEUTRAL (Bug 10 fix : route legacy 7 scenarios)
 
     Args:
         level_name : ex "IB_LOW", "MQ_CALL_0DTE", "VPOC"
-
-    Returns:
-        LevelNature ou None si level_name pas dans TIER1/TIER2/TIER3/TIER2_NEUTRAL/
-        SIDAK/COMBOS.
     """
-    # 1. Override explicit
-    if level_name in _LEVEL_NATURE_OVERRIDES:
-        return _LEVEL_NATURE_OVERRIDES[level_name]
-
-    # 2. Lookup dans tous les tiers (incl TIER2_NEUTRAL + SIDAK + COMBOS + MIRROR Phase 4)
-    for tier_dict in (TIER1, TIER2, TIER3, TIER2_LEVELS_NEUTRAL,
-                      SIDAK_LEVELS, COMBOS_BOOSTED, MIRROR_SHORT_TIER1):
-        if level_name in tier_dict:
-            side = tier_dict[level_name].get("side")
-            if side is None:
-                return None
-            try:
-                return derive_nature_from_side(side)
-            except ValueError:
-                return None
-
-    # 3. Pas trouve
-    return None
+    return _LEVEL_NATURE_CACHE.get(level_name)
