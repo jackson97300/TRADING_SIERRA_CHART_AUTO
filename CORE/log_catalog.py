@@ -681,6 +681,13 @@ LOG_CODES = {
     "BOT3_NSM_PERSIST_RECOVERED": (LogLevel.ALERTE,   "events",    "NSM recovered fresh state apres corruption pickle : {sym} reason={reason}"),
     "BOT3_NSM_SESSION_RESET":     (LogLevel.INFO,     "events",    "NSM session reset : {sym} new_sdt={new_sdt} n_transitions_yesterday={n}"),
     "BOT3_NSM_ATR_FALLBACK_DAILY": (LogLevel.MAJEUR,  "decisions", "NSM atr_intraday absent : {sym} fallback atr daily ({atr_daily:.2f}) - seuils T28/T29/T30/T31 INATTEIGNABLES sur 1-min. Fix : passer atr_14m ou atr_intraday dans bar dict (cf incident 2026-05-18 22:00)."),
+    "BOT3_NSM_TRANSITION_EXCEPTION": (LogLevel.MAJEUR, "decisions", "NSM transition exception : {sym} err={err} msg={msg} consec={consec} (circuit breaker trip a 10)"),
+    "BOT3_NSM_TRANSITION_OK":      (LogLevel.INFO,   "decisions", "NSM heartbeat : {sym} count_since_boot={count_since_boot} (V2 actif et OK)"),
+    "BOT3_NSM_CIRCUIT_BREAKER_TRIPPED": (LogLevel.CRITIQUE, "events", "NSM circuit breaker TRIPPED : {sym} consec={consec} msg={msg}"),
+    "BOT3_V2_FALLBACK_V1_NEUTRAL": (LogLevel.INFO,   "decisions", "V2 fallback V1 NEUTRAL : {sym} level={level} (NEUTRAL non gere par V2 narrative, V1 7 scenarios applique)"),
+    "BOT3_V2_TRADE_CONSTRUCTION_FAILED": (LogLevel.MAJEUR, "decisions", "V2 trade construction failed : {sym} level={level} scenario={scenario} err={err}"),
+    "BOT3_V2_SHADOW_SIGNAL":       (LogLevel.INFO,   "decisions", "V2 shadow signal (tracking_only) : {sym} level={level} scenario={scenario} side={side} conf={confidence} state={narrative_state} (V1 reste decideur)"),
+    "BOT3_V2_ADVANCE_EXCEPTION":   (LogLevel.MAJEUR, "decisions", "V2 advance pending exception : {sym} err={err} msg={msg} (NSM breaker NON impacte, advance separe)"),
 
     # StoryTrackers - 3 codes
     "BOT3_STORY_BOS_DETECTED":       (LogLevel.MAJEUR, "events",    "Bot3 STORY BOS detected : {sym} dir={bos_dir} price={bos_price} bar_idx={bar_idx} prev_close={prev_close} swing_ref={swing_ref}"),

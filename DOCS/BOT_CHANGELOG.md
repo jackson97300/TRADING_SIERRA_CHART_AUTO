@@ -62,6 +62,94 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-19 02:30 — FEATURE Bot3 v2 Phase 4d MVP : integration NSM + DirectionResolver dans Bot3Engine (shadow mode)
+
+**Categorie** : FEATURE (critere 1 Trading + critere 4 Concept methodologique + critere 6 Cross-module + critere 7 Irreversible deploy VPS)
+**Impact prod** : PAPER (shadow mode `BOT3_NARRATIVE_TRACKING_ONLY=True` -> V2 log signals, V1 reste decideur)
+**Fichier(s)** : `CORE/bot3_mp_engine.py:84-105,239-263,397-510,775-870` + `CORE/log_catalog.py:684-691` + `CORE/bot3_narrative_logging.py:62-68`
+**Schema/version** : Bot 3 v2 Phase 4abc -> Phase 4d MVP
+**Reviewer(s) agent** : code-reviewer (NOGO initial 3 P0 -> fixes -> GO-AVEC-RESERVES) + market-analyst (NOGO 4 reserves -> shadow mode J+14 valide)
+
+### Quoi
+Integration V2 narrative (NSM + DirectionResolver + ConfirmationGate) dans `Bot3Engine.evaluate()` apres ECO gate + analyze_context, AVANT loop niveaux. Modes :
+- `BOT3_USE_NARRATIVE_DIRECTION=False` (default) : flow V1 inchange (sans regression).
+- `BOT3_USE_NARRATIVE_DIRECTION=True + TRACKING_ONLY=True` : NSM transit + DirectionResolver register pendings + advance confirmations + emit BOT3_V2_SHADOW_SIGNAL pour audit J+14. V1 reste decideur effectif.
+- `BOT3_USE_NARRATIVE_DIRECTION=True + TRACKING_ONLY=False` : V2 consume les trades (apres flip post-J+14 GO).
+
+### Pourquoi
+Bot 3 V1 actuel ES 30j = 50% WR PF 0.92 -$48 (marginal). V2 narrative refondue (Dalton/Wyckoff/Pruden canon) validee empiriquement par LEVEL_PROB_V4 (700K bars 318j) : 7/10 scenarios actifs, S10 PF 4.93 n=393, S09 PF 11.26, S08 PF 7.96, S07 PF 3.10. Mais V2 etait module isole (Phase 4abc complete mais kill switch sans effet en prod). Phase 4d = cablage live.
+
+### Impact attendu
+- Shadow J+14 : 0 trade V2 execute, ~10-50 BOT3_V2_SHADOW_SIGNAL logs par jour pour audit
+- Apres J+14 GO : ~3-10 V2 trades/jour, V2/V1 volume ratio cible >=15%
+- Effet bord V1 : zero regression (default kill switches OFF, flow V1 chemin code inchange)
+
+### Validation pre-deploy
+- [x] Tests unitaires : 189/189 bot3 PASS
+- [x] Smoke test 5000 bars ES : V1=520 signals V2=4 signals 0 exception bucket=NARRATIVE
+- [x] Review code-reviewer P0+P1 : GO-AVEC-RESERVES (5 reserves residuelles documentees Phase 4e)
+- [x] Review market-analyst : GO shadow / NOGO direct switch -> shadow J+14 mode valide
+- [x] INCIDENT_LOG entries (6) + (7) atr_intraday + T17 documentees
+- [x] Tests anti-regression atr_intraday distinct atr daily (3 nouveaux tests)
+- [x] Cross-symbole verify ES + NQ + MGC replay OK (commit 73c139d)
+
+### Limites Phase 4d MVP (documentees, fix Phase 4e)
+- `story_trackers={"bars_since_last_BOS": 30}` hardcoded -> S07/S08 RANGE_RESPECTED desactives (T17 requires >90). Anti faux-positif RANGE trend day.
+- `swing_state=None` -> Wyckoff Spring/Upthrust S22-S27 limites.
+- SL/TP fixe par symbol (ES 40t/80t, NQ 80t/160t) pas SLTPEngine wall-aware.
+- NEUTRAL levels (PVAH/PVAL/MQ_CALL/CUR_VAH/IB_HIGH/SWING_HIGH/VWAP_D_SD*/PVWAP_SD1U) -> fallback V1 + emit BOT3_V2_FALLBACK_V1_NEUTRAL pour audit.
+
+### Garde-fous P0/P1
+- **P0.1+P0.3** : `_advance_v2_pending_confirmations` prend `self._resolver._lock` pour iter+cleanup pop thread-safe
+- **P0.2** : Circuit breaker NSM transition apres 10 exceptions consec/symbol + emit CRITIQUE
+- **P0.2bis** : Split try/except NSM transition vs advance pending (breaker non-pollue)
+- **Heartbeat** : BOT3_NSM_TRANSITION_OK toutes 500 bars (audit J+1 grep)
+- **P1.5** : BOT3_V2_FALLBACK_V1_NEUTRAL emit pour audit
+- **P1.7** : bucket="NARRATIVE" pour distinguer V2 vs V1 dans logs/dashboard
+- **P1.8** : try/except construction Bot3Signal V2 + BOT3_V2_TRADE_CONSTRUCTION_FAILED
+- **Shadow mode** : BOT3_V2_SHADOW_SIGNAL emit pendant tracking_only J+14
+
+### 7 nouveaux codes log
+- `BOT3_NSM_TRANSITION_EXCEPTION` (MAJEUR) : exception NSM transition + counter consec
+- `BOT3_NSM_TRANSITION_OK` (INFO heartbeat) : 1/500 bars
+- `BOT3_NSM_CIRCUIT_BREAKER_TRIPPED` (CRITIQUE) : V2 disabled pour symbol
+- `BOT3_V2_FALLBACK_V1_NEUTRAL` (INFO) : level NEUTRAL -> V1 fallback
+- `BOT3_V2_TRADE_CONSTRUCTION_FAILED` (MAJEUR) : Bot3Signal V2 build error
+- `BOT3_V2_SHADOW_SIGNAL` (INFO) : V2 aurait pris trade en tracking_only
+- `BOT3_V2_ADVANCE_EXCEPTION` (MAJEUR) : advance pending error (breaker NSM non-pollue)
+
+### Revert plan (5 min total)
+**Rollback trivial 1 ligne config** : flip `BOT3_USE_NARRATIVE_DIRECTION=True` -> `False` dans `bot3_config.py`, scp VPS, restart service paper_trader_v2. **5 min total**.
+
+**Conditions auto-rollback** (cf 6 criteres market-analyst review) :
+1. n_trades V2 < 5 en J+7 -> V2 broken, kill switch off
+2. V2 WR < V1 WR * 0.8 -> rollback
+3. V2 PF < 1.0 -> rollback
+4. PSR V2 < 0.6 sur n>=30 trades -> rollback (Lopez non-significatif)
+5. % contradictions narrative_state vs V1 NEUTRAL > 15% -> rollback architecture
+6. Slippage avg entry V2 vs trigger level > 5t ES / 10t NQ -> rollback ConfirmationGate
+
+### Suivi post-deploy
+J+1 (audit logs grep) :
+- `grep BOT3_NSM_TRANSITION_OK LOGS/decisions/*.jsonl | wc -l` -> attendu >=10 (heartbeat OK)
+- `grep BOT3_NSM_CIRCUIT_BREAKER_TRIPPED LOGS/events/*.jsonl | wc -l` -> attendu 0
+- `grep BOT3_V2_SHADOW_SIGNAL LOGS/decisions/*.jsonl | jq .ctx.scenario | sort | uniq -c` -> distribution scenarios
+- `grep BOT3_V2_FALLBACK_V1_NEUTRAL LOGS/decisions/*.jsonl | wc -l` -> count fallback NEUTRAL
+
+J+7/J+14/J+30 : metriques V2 vs V1 dans dashboard + criteres rollback ci-dessus.
+
+### Cross-references
+- INCIDENT_LOG entry 2026-05-18 (6) CONTEXT_MISS atr daily/intraday
+- INCIDENT_LOG entry 2026-05-18 (7) CONTEXT_MISS T17 formule semantique
+- Memory `project_bot3v2_scenarios_empirical_validation.md` audit LEVEL_PROB_V4
+- Master plan `DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md`
+- Commit precedent `73c139d` : fix NSM atr_intraday + T17 canon Dalton
+
+reviewed-by: code-reviewer (GO-AVEC-RESERVES re-review post-fix)
+reviewed-by: market-analyst (GO shadow J+14, NOGO direct switch -> respect)
+
+---
+
 ## 2026-05-18 04:30 — FEATURE Live enricher Phase 3c-A/B/C : +32 features manquantes (17 trivial + 8 wire streaming + 7 rolling)
 
 **Categorie** : FEATURE (critere 6 Cross-module 4 fichiers + critere 8 ML Pipeline - alimente dataset v4)

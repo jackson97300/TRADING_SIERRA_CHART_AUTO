@@ -60,6 +60,13 @@ BOT3V2_NARRATIVE_CODES: frozenset[str] = frozenset({
     "BOT3_NSM_PERSIST_RECOVERED",
     "BOT3_NSM_SESSION_RESET",
     "BOT3_NSM_ATR_FALLBACK_DAILY",  # P0-1 fix 2026-05-18 : alerter sur regression silencieuse atr_intraday
+    "BOT3_NSM_TRANSITION_EXCEPTION",  # P0.2 fix Phase 4d : exceptions consec NSM
+    "BOT3_NSM_TRANSITION_OK",         # P0.2 fix Phase 4d : heartbeat NSM J+1 audit
+    "BOT3_NSM_CIRCUIT_BREAKER_TRIPPED",  # P0.2 fix Phase 4d : V2 disabled apres 10 consec exceptions
+    "BOT3_V2_FALLBACK_V1_NEUTRAL",    # P1.5 fix Phase 4d : audit V2 -> V1 NEUTRAL fallback
+    "BOT3_V2_TRADE_CONSTRUCTION_FAILED",  # P1.8 fix Phase 4d : trade construction error
+    "BOT3_V2_SHADOW_SIGNAL",          # shadow mode J+14 : V2 aurait pris ce trade (V1 reste decideur)
+    "BOT3_V2_ADVANCE_EXCEPTION",      # P1 re-review : advance pending exception (NSM breaker NON impacte)
     "BOT3_STORY_BOS_DETECTED",
     "BOT3_STORY_TREND_CONFIRMED",
     "BOT3_STORY_REVERSAL_CANDIDATE",

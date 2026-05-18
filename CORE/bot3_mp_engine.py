@@ -25,6 +25,8 @@ try:
         BOT3_ENABLE_TIER3,
         BOT3_OBSERVE_ONLY,
         BOT3_TRADE_BREAKOUTS,
+        BOT3_USE_NARRATIVE_DIRECTION,
+        BOT3_NARRATIVE_TRACKING_ONLY,
         GUARD_RAILS_BOT3,
         TRADING_WINDOW_END_UTC,
         TRADING_WINDOW_START_UTC,
@@ -56,6 +58,8 @@ except ImportError:
         BOT3_ENABLE_TIER3,
         BOT3_OBSERVE_ONLY,
         BOT3_TRADE_BREAKOUTS,
+        BOT3_USE_NARRATIVE_DIRECTION,
+        BOT3_NARRATIVE_TRACKING_ONLY,
         GUARD_RAILS_BOT3,
         TRADING_WINDOW_END_UTC,
         TRADING_WINDOW_START_UTC,
@@ -80,6 +84,27 @@ except ImportError:
         BreakoutRetestStateMachine,
         BreakoutRetestSignal,
     )
+
+# ════════════════════════════════════════════════════════════════════════
+# Phase 4d (2026-05-18 nuit Jackson directive) : import V2 narrative pour
+# branchement Bot3Engine.evaluate() quand BOT3_USE_NARRATIVE_DIRECTION=True.
+# Imports lazy en module-level pour eviter circular import si V2 modules
+# importent indirectement bot3_mp_engine.
+# ════════════════════════════════════════════════════════════════════════
+try:
+    from .bot3_narrative_state_machine import NarrativeStateMachine, NarrativeState
+    from .bot3_direction_resolver import DirectionResolver
+    _V2_NARRATIVE_AVAILABLE = True
+except ImportError:
+    try:
+        from bot3_narrative_state_machine import NarrativeStateMachine, NarrativeState
+        from bot3_direction_resolver import DirectionResolver
+        _V2_NARRATIVE_AVAILABLE = True
+    except ImportError:
+        NarrativeStateMachine = None  # type: ignore[misc,assignment]
+        NarrativeState = None  # type: ignore[misc,assignment]
+        DirectionResolver = None  # type: ignore[misc,assignment]
+        _V2_NARRATIVE_AVAILABLE = False
 
 
 # Cooldown entre 2 contacts d'un meme niveau (en bars 1m)
@@ -223,6 +248,33 @@ class Bot3Engine:
         # Buffer rempli par update_on_bar, consomme par paper_trader pour _emit
         self._pending_breakout_events: list = []
 
+        # ─── Phase 4d (2026-05-18) : V2 narrative integration ──────
+        # Lazy init si BOT3_USE_NARRATIVE_DIRECTION=True ET modules dispo.
+        # V1 (default) : nsm=None, resolver=None -> flow inchange.
+        # V2 actif : NSM + DirectionResolver instances persistantes (state cross-bars).
+        # Limites Phase 4d MVP :
+        # - story_trackers minimal (bars_since_BOS=999 default) -> T17 RANGE_RESPECTED
+        #   ne fire pas en pratique car requires evolution state machine. S07/S08
+        #   RANGE_* scenarios attendent Phase 4e ulterieure pour story_trackers reels.
+        # - swing_state = None (Wyckoff Spring/Upthrust T22-T27 attendent Phase 4e).
+        # - Cible Phase 4d MVP : S01/S02/S03/S04 OD+TREND + S09/S10 EXHAUSTION.
+        self._nsm: Optional["NarrativeStateMachine"] = None
+        self._resolver: Optional["DirectionResolver"] = None
+        if BOT3_USE_NARRATIVE_DIRECTION and _V2_NARRATIVE_AVAILABLE:
+            self._nsm = NarrativeStateMachine()
+            self._resolver = DirectionResolver()
+        # P0.2 fix (code-reviewer NOGO 18/05) : circuit breaker NSM transition.
+        # Si NSM leve a chaque bar (bug deserialisation, atr=0, etc.), le bot
+        # retomberait V1 silencieusement (fail-silent pattern interdit cf
+        # VALIDATION_MISS 11/05 Phase 1.7d boost morte production).
+        # Apres N=10 exceptions consecutives par symbol -> disable V2 + emit
+        # CRITIQUE BOT3_NSM_CIRCUIT_BREAKER_TRIPPED.
+        # Heartbeat BOT3_NSM_TRANSITION_OK toutes les 100 bars pour confirmer
+        # que NSM transit reellement (audit J+1 grep logs).
+        self._nsm_consec_exceptions: dict[str, int] = {"NQ": 0, "ES": 0, "MGC": 0}
+        self._nsm_circuit_breaker_tripped: dict[str, bool] = {"NQ": False, "ES": False, "MGC": False}
+        self._nsm_transition_ok_count: dict[str, int] = {"NQ": 0, "ES": 0, "MGC": 0}
+
     def evaluate(
         self,
         bar: dict,
@@ -341,11 +393,203 @@ class Bot3Engine:
         for evt in self.breakout_retest.consume_events():
             self._pending_breakout_events.append(evt)
 
+        # ─── Phase 4d (2026-05-18) : V2 NSM transition + pending lifecycle ──
+        # Si V2 actif ET circuit breaker pas tripped, faire 1 transition NSM par
+        # bar (avant loop niveaux) et advance les pending_entries existantes pour
+        # confirmation pattern.
+        # P0.2 fix : circuit breaker apres 10 exceptions consecutives par symbol.
+        # Cf docstring Bot3Engine.__init__ pour limites Phase 4d MVP.
+        nsm_snapshot = None
+        v2_confirmed_trades: list[tuple[str, object]] = []
+        # P1 re-review fix : breaker NSM transition vs advance pending split
+        # (eviter faux-positif breaker NSM si bug est dans resolver advance).
+        # Single-writer assumption : paper_trader sequentiel (pas multi-thread
+        # sur Bot3Engine.evaluate()). Si demain multi-thread, ajouter lock.
+        if (self._nsm is not None and self._resolver is not None
+                and not self._nsm_circuit_breaker_tripped.get(symbol, False)):
+            # Stage 1 : NSM transition (couvert par circuit breaker dedie)
+            try:
+                nsm_bar, nsm_ctx_v2 = self._build_v2_inputs(bar, ctx, symbol, bar_ts_str)
+                # P1.10 fix : bars_since_last_BOS=30 (au lieu 999) -> T17 RANGE_RESPECTED
+                # ne fire JAMAIS en MVP car requires >90. Conservatif Phase 4d :
+                # S07/S08 RANGE_* desactives jusqu'a story_trackers reels Phase 4e.
+                # Anti faux-positifs RANGE en trend day (cf market-analyst review).
+                # TODO Phase 4e : brancher story_trackers reels (bars_since_BOS
+                # calcule depuis NarrativeStoryTrackers) pour reactiver S07/S08.
+                nsm_snapshot = self._nsm.transition(
+                    symbol=symbol,
+                    bar=nsm_bar,
+                    ctx=nsm_ctx_v2,
+                    regime=None,
+                    story_trackers={"bars_since_last_BOS": 30},
+                    swing_state=None,
+                )
+                # P0.2 fix : transition OK -> reset compteur exceptions consec
+                self._nsm_consec_exceptions[symbol] = 0
+                # P2 re-review fix : heartbeat 1/500 (au lieu 1/100) pour reduire
+                # noise dans logs. Sur RTH 390 bars/sym/jour, ~1 heartbeat / 1.3j.
+                self._nsm_transition_ok_count[symbol] = (
+                    self._nsm_transition_ok_count.get(symbol, 0) + 1
+                )
+                if self._nsm_transition_ok_count[symbol] % 500 == 0:
+                    try:
+                        from logging_v2 import get_logger as _get
+                        _get("bot3_mp_engine").emit(
+                            "BOT3_NSM_TRANSITION_OK",
+                            sym=symbol,
+                            count_since_boot=self._nsm_transition_ok_count[symbol],
+                        )
+                    except Exception:
+                        pass
+            except Exception as e:
+                # P0.2 fix : increment compteur exceptions consec + check breaker
+                # SCOPE : NSM transition seulement (advance pending separe ci-dessous).
+                self._nsm_consec_exceptions[symbol] = (
+                    self._nsm_consec_exceptions.get(symbol, 0) + 1
+                )
+                try:
+                    from logging_v2 import get_logger as _get
+                    _logger = _get("bot3_mp_engine")
+                    _logger.emit(
+                        "BOT3_NSM_TRANSITION_EXCEPTION",
+                        err=type(e).__name__, msg=str(e)[:200],
+                        sym=symbol,
+                        consec=self._nsm_consec_exceptions[symbol],
+                    )
+                    # Si 10 exceptions consec -> trip circuit breaker
+                    if self._nsm_consec_exceptions[symbol] >= 10:
+                        self._nsm_circuit_breaker_tripped[symbol] = True
+                        _logger.emit(
+                            "BOT3_NSM_CIRCUIT_BREAKER_TRIPPED",
+                            sym=symbol,
+                            consec=self._nsm_consec_exceptions[symbol],
+                            msg="NSM disabled for symbol after 10 consec exceptions. V1 fallback active. Investigation requise.",
+                        )
+                except Exception:
+                    pass
+                nsm_snapshot = None
+
+            # Stage 2 : advance pending (try/except dedie, ne pollue PAS breaker NSM)
+            # ATTENTION : advance TOUJOURS (meme en tracking_only) pour que
+            # les logs BOT3_RESOLVER_CONFIRMATION_OK soient emit en shadow
+            # mode J+14. La consommation finale en signal Bot3 est gardee
+            # plus bas (cf "if not BOT3_NARRATIVE_TRACKING_ONLY").
+            # NOTE : en mode shadow, les pendings sont consommees DEFINITIVEMENT
+            # par _check_pending_confirmation (del internal). Si on flip
+            # tracking_only=False plus tard, les pendings deja consommees
+            # en shadow ne reviennent pas. Comportement attendu.
+            if nsm_snapshot is not None:
+                try:
+                    v2_confirmed_trades = self._advance_v2_pending_confirmations(
+                        symbol, nsm_snapshot, nsm_bar,
+                    )
+                    # Si tracking_only, logger "V2 aurait pris X" pour audit shadow
+                    # mais ne pas consommer le signal (V1 reste decideur).
+                    if BOT3_NARRATIVE_TRACKING_ONLY and v2_confirmed_trades:
+                        for lvl_nm, _resolved in v2_confirmed_trades:
+                            try:
+                                from logging_v2 import get_logger as _get
+                                _get("bot3_mp_engine").emit(
+                                    "BOT3_V2_SHADOW_SIGNAL",
+                                    sym=symbol, level=lvl_nm,
+                                    scenario=_resolved.scenario_id,
+                                    side=_resolved.side,
+                                    confidence=int(_resolved.confidence * 100),
+                                    narrative_state=nsm_snapshot.state.value,
+                                )
+                            except Exception:
+                                pass
+                        # Vider la liste pour ne pas declencher la branche trade
+                        v2_confirmed_trades = []
+                except Exception as e:
+                    # P1 re-review : advance exception loggee separement,
+                    # ne pollue PAS le breaker NSM transition.
+                    try:
+                        from logging_v2 import get_logger as _get
+                        _get("bot3_mp_engine").emit(
+                            "BOT3_V2_ADVANCE_EXCEPTION",
+                            err=type(e).__name__, msg=str(e)[:200],
+                            sym=symbol,
+                        )
+                    except Exception:
+                        pass
+                    v2_confirmed_trades = []
+
         # ─── Loop niveaux ───
         signal: Optional[Bot3Signal] = None
         # Si la state machine a genere un retest signal, on le convertit en Bot3Signal
         if retest_signal is not None and not BOT3_OBSERVE_ONLY:
             signal = self._build_signal_from_retest(retest_signal, ctx, bar)
+
+        # Phase 4d : si une pending V2 confirme sur cette bar, on prend trade
+        # (priorite haute, AVANT loop niveaux car la pending = scenario deja fire,
+        # confirmation pattern valide = signal de meilleure qualite que touch)
+        # P1.8 fix : try/except autour construction signal pour eviter pending zombie.
+        if signal is None and v2_confirmed_trades and not BOT3_OBSERVE_ONLY:
+            for lvl_name_conf, resolved in v2_confirmed_trades:
+                lvl_def = active_levels.get(lvl_name_conf)
+                if lvl_def is None:
+                    continue
+                try:
+                    dist_col = lvl_def["dist_col"]
+                    dist_signed_conf = bar.get(dist_col) if hasattr(bar, "get") else None
+                    try:
+                        dist_signed_conf = float(dist_signed_conf or 0.0)
+                    except (TypeError, ValueError):
+                        dist_signed_conf = 0.0
+                    tier_conf = lvl_def.get("tier", 1)
+                    sig_id_v2 = uuid.uuid4().hex[:12]
+                    params_v2 = {
+                        "side": resolved.side,
+                        "action": "REJECTION",
+                        "confidence": int(resolved.confidence * 100),
+                        "sl_ticks": 40 if symbol == "ES" else 80,
+                        "atr_multiplier": 1.5,
+                        "scenario_id": resolved.scenario_id,
+                        "narrative_state": (nsm_snapshot.state.value
+                                             if nsm_snapshot else "?"),
+                        "v2_source": "phase_4d_pending_confirmed",
+                    }
+                    decisions.append(Bot3DecisionLog(
+                        signal_id=sig_id_v2,
+                        symbol=symbol,
+                        ts_event=_now_iso(),
+                        bar_ts=bar_ts_str,
+                        level_name=lvl_name_conf,
+                        level_tier=tier_conf,
+                        decision="GO",
+                        reason="V2_PENDING_CONFIRMED",
+                        ctx=ctx,
+                        params=params_v2,
+                    ))
+                    signal = self._build_signal(
+                        sig_id=sig_id_v2,
+                        symbol=symbol,
+                        bar_ts_str=bar_ts_str,
+                        level_name=lvl_name_conf,
+                        level_def=lvl_def,
+                        params=params_v2,
+                        ctx=ctx,
+                        bar=bar,
+                        dist_signed=dist_signed_conf,
+                    )
+                    # P1.7 fix : marquer le bucket NARRATIVE pour distinguer V2 vs V1
+                    if signal is not None:
+                        signal.bucket = "NARRATIVE"
+                    break  # 1 trade par bar
+                except Exception as e:
+                    # P1.8 fix : log construction failure + continue (ne pas crash bot)
+                    try:
+                        from logging_v2 import get_logger as _get
+                        _get("bot3_mp_engine").emit(
+                            "BOT3_V2_TRADE_CONSTRUCTION_FAILED",
+                            sym=symbol, level=lvl_name_conf,
+                            scenario=resolved.scenario_id if resolved else "?",
+                            err=type(e).__name__,
+                        )
+                    except Exception:
+                        pass
+                    continue  # try next confirmed trade
 
         # ─── 🆕 PRIORITY 1 (Bot 3 v2 09/05) : COMBOS BOOSTED ───
         # Combos haute conviction validés Bonferroni (audit 09/05). Scan AVANT
@@ -391,14 +635,31 @@ class Bot3Engine:
 
             tier = level_def.get("tier", 1)
 
-            # Decision (Tier 1/2/3 + NEUTRAL via 7 scenarios)
-            trade, reason, params = evaluate_decision(
-                level_name=level_name,
-                level_def=level_def,
-                ctx=ctx,
-                symbol=symbol,
-                dist_signed=dist_signed,
-            )
+            # Phase 4d (2026-05-18) : si V2 actif ET tracking_only=False, route
+            # decision via V2 narrative. Sinon V1 evaluate_decision().
+            # tracking_only=True permet d'avoir nsm/resolver instancies (logs)
+            # SANS consommer les trades V2 (= shadow mode integre).
+            if (self._nsm is not None and self._resolver is not None
+                    and nsm_snapshot is not None
+                    and not BOT3_NARRATIVE_TRACKING_ONLY):
+                trade, reason, params = self._evaluate_v2_level(
+                    level_name=level_name,
+                    level_def=level_def,
+                    ctx=ctx,
+                    symbol=symbol,
+                    dist_signed=dist_signed,
+                    nsm_snapshot=nsm_snapshot,
+                    bar=bar,
+                )
+            else:
+                # V1 legacy (default) ou V2 tracking-only
+                trade, reason, params = evaluate_decision(
+                    level_name=level_name,
+                    level_def=level_def,
+                    ctx=ctx,
+                    symbol=symbol,
+                    dist_signed=dist_signed,
+                )
 
             # PENDING_BREAKOUT_REGISTERED : ne pas trader, register dans state machine
             if not trade and reason == "PENDING_BREAKOUT_REGISTERED":
@@ -451,12 +712,251 @@ class Bot3Engine:
                     bar=bar,
                     dist_signed=dist_signed,
                 )
+                # P1.7 fix : si reason=V2_TRADE -> marquer bucket NARRATIVE
+                if signal is not None and reason == "V2_TRADE":
+                    signal.bucket = "NARRATIVE"
 
         # En mode observe-only : on n'execute pas le trade mais on log tout
         if BOT3_OBSERVE_ONLY:
             return None, decisions
 
         return signal, decisions
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Phase 4d (2026-05-18) — V2 narrative helpers
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _build_v2_inputs(
+        self,
+        bar: dict,
+        ctx: dict,
+        symbol: str,
+        bar_ts_str: str,
+    ) -> tuple[dict, dict]:
+        """Map (bar V4 enriched, ctx decision_engine) -> (nsm_bar, nsm_ctx).
+
+        Phase 4d MVP : projection minimale des champs requis par NSM.transition().
+        Fallback chain pour atr_intraday : atr_intraday -> atr_14m -> atr_14m_pct*close.
+        """
+        def _f(k):
+            v = bar.get(k) if hasattr(bar, "get") else None
+            try:
+                f = float(v) if v is not None else None
+                if f != f:  # NaN
+                    return None
+                return f
+            except (TypeError, ValueError):
+                return None
+
+        close_v = _f("close")
+        # atr_intraday calcul depuis live_enricher fields disponibles
+        atr_intraday = _f("atr_intraday") or _f("atr_14m")
+        if atr_intraday is None and close_v is not None:
+            atr_pct = _f("atr_14m_pct")
+            if atr_pct is not None:
+                atr_intraday = atr_pct * close_v / 100.0
+
+        nsm_bar = {
+            "ts_event_iso": bar_ts_str,
+            "ts_event": bar_ts_str,
+            "close": close_v,
+            "open": _f("open"),
+            "high": _f("high"),
+            "low": _f("low"),
+            "atr": _f("atr"),
+            "atr_intraday": atr_intraday,
+            "vol_zscore_20": _f("vol_zscore_20"),
+            "bar_idx_session": self._bar_counter.get(symbol, 0),
+            "volume": _f("volume") or 1000,
+            "session_date_trading": str(bar.get("session_date_trading", "")),
+            "symbol": symbol,
+            "ib_complete": int(bar.get("ib_complete") or 0),
+            "ib_broken_up": int(bar.get("ib_broken_up") or 0),
+            "ib_broken_dn": int(bar.get("ib_broken_dn") or 0),
+        }
+
+        # NSM ctx : session string + open_type + open_cash + ib_* + prev_va*
+        session_id = bar.get("session_id")
+        sess_map = {0: "ASIA", 1: "LONDON", 2: "NY", 3: "US_AH"}
+        try:
+            session = sess_map.get(int(session_id) if session_id is not None else -1, "OTHER")
+        except (TypeError, ValueError):
+            session = "OTHER"
+        nsm_ctx = {
+            "session": session,
+            "open_type": int(bar.get("open_type") or 0),
+            "open_cash": _f("open_cash") or close_v,
+            "asia_close": _f("asia_close"),
+            "asia_open": _f("asia_open"),
+            "ib_complete": int(bar.get("ib_complete") or 0),
+            "inside_value_area": int(bar.get("inside_value_area") or 0),
+            "ib_range": _f("ib_range"),
+            "ib_broken_up": int(bar.get("ib_broken_up") or 0),
+            "ib_broken_dn": int(bar.get("ib_broken_dn") or 0),
+            "prev_vah": _f("prev_vah"),
+            "prev_val": _f("prev_val"),
+            "tick_size": 0.25,
+        }
+        return nsm_bar, nsm_ctx
+
+    def _advance_v2_pending_confirmations(
+        self,
+        symbol: str,
+        snap,
+        nsm_bar: dict,
+    ) -> list[tuple[str, "object"]]:
+        """Poll les pending_entries pour ce symbol -> advance confirmation pattern.
+
+        Le DirectionResolver auto-route vers _check_pending_confirmation si une
+        pending existe pour (symbol, level_name). Cet helper itere les pendings
+        actives et appelle resolve() pour les faire avancer (timeout ou validation).
+        Sans cet appel, les pendings restent infiniment en attente.
+
+        FIX P0.1 + P0.3 (code-reviewer NOGO 18/05) : prend `self._resolver._lock`
+        externalement pour :
+        - Iter `_pending_entries.keys()` thread-safe (P0.1)
+        - Copy snapshot des pendings AVANT release du lock (P0.1)
+        - Cleanup pop sur exception persistante sous lock (P0.3)
+        Le `RLock` permet reprise interne via `resolver.resolve()` (qui prend le
+        meme lock RLock -> ok reentrant).
+
+        Returns:
+            list de (level_name, resolved_direction) pour les pendings qui ont
+            valide la confirmation cette bar (resolved.side in LONG/SHORT).
+            Caller doit construire Bot3Signal pour ces trades en utilisant
+            les level_defs correspondants.
+            Les timeouts/invalidations ne sont pas retournes (juste cleanup).
+        """
+        validated: list[tuple[str, object]] = []
+        if self._resolver is None:
+            return validated
+        # P0.1 fix : acquire resolver lock pour iter+copy snapshot atomique
+        with self._resolver._lock:
+            pending_snapshot = [
+                (k, self._resolver._pending_entries.get(k))
+                for k in list(self._resolver._pending_entries.keys())
+                if k[0] == symbol
+            ]
+        # Iter HORS lock pour appeler resolve() (qui reprend le lock RLock interne)
+        for (sym_k, lvl_name_k), pending in pending_snapshot:
+            if pending is None:
+                continue
+            # Resolver auto-routes vers _check_pending_confirmation
+            try:
+                resolved = self._resolver.resolve(
+                    snapshot=snap,
+                    level_name=lvl_name_k,
+                    level_nature="support",  # ignore car pending existant
+                    level_price=pending.target_price,
+                    bar=nsm_bar,
+                )
+                if resolved is not None and resolved.side in ("LONG", "SHORT"):
+                    validated.append((lvl_name_k, resolved))
+            except Exception:
+                # P0.3 fix : cleanup orphan pending UNDER LOCK
+                with self._resolver._lock:
+                    self._resolver._pending_entries.pop((sym_k, lvl_name_k), None)
+        return validated
+
+    def _evaluate_v2_level(
+        self,
+        level_name: str,
+        level_def: dict,
+        ctx: dict,
+        symbol: str,
+        dist_signed: float,
+        nsm_snapshot,
+        bar: dict,
+    ) -> tuple[bool, str, dict]:
+        """V2 narrative wrapper - retourne format compatible evaluate_decision V1.
+
+        Returns:
+            (trade : bool, reason : str, params : dict)
+            params si trade=True : {side, action, confidence, sl_ticks,
+                                    atr_multiplier, scenario_id, narrative_state}
+        """
+        # 1. Determine level_nature depuis level_def["side"]
+        level_side = level_def.get("side", "REJECTION")
+        if level_side == "LONG":
+            nature = "support"
+        elif level_side == "SHORT":
+            nature = "resistance"
+        elif level_side == "REJECTION":
+            nature = "support" if dist_signed < 0 else "resistance"
+        elif level_side == "NEUTRAL":
+            # V2 ne gere pas NEUTRAL en MVP -> fallback V1.
+            # P1.5 fix : emit log audit pour quantifier J+1.
+            try:
+                from logging_v2 import get_logger as _get
+                _get("bot3_mp_engine").emit(
+                    "BOT3_V2_FALLBACK_V1_NEUTRAL",
+                    sym=symbol,
+                    level=level_name,
+                )
+            except Exception:
+                pass
+            return evaluate_decision(level_name, level_def, ctx, symbol, dist_signed)
+        else:
+            return False, f"V2_SKIP_SIDE_INVALID_{level_side}", {}
+
+        # 2. Compute level_price (convention V4 dist_signed = (level - close) / close * 100)
+        close_v = float(bar.get("close", 0)) if hasattr(bar, "get") else 0.0
+        if close_v <= 0:
+            return False, "V2_SKIP_CLOSE_INVALID", {}
+        level_price = close_v * (1.0 + dist_signed / 100.0) if dist_signed else close_v
+
+        # 3. Build nsm_bar pour resolver (re-utiliser ou minimal)
+        nsm_bar_min = {
+            "close": close_v,
+            "high": float(bar.get("high") or close_v),
+            "low": float(bar.get("low") or close_v),
+            "vol_zscore_20": float(bar.get("vol_zscore_20") or 0.0),
+            "session_date_trading": str(bar.get("session_date_trading", "")),
+            "atr_intraday": float(bar.get("atr_14m")
+                                   or (float(bar.get("atr_14m_pct") or 0.024) * close_v / 100.0)),
+        }
+
+        # 4. Resolve via DirectionResolver
+        try:
+            resolved = self._resolver.resolve(
+                snapshot=nsm_snapshot,
+                level_name=level_name,
+                level_nature=nature,
+                level_price=level_price,
+                bar=nsm_bar_min,
+            )
+        except Exception as e:
+            return False, f"V2_RESOLVE_EXCEPTION_{type(e).__name__}", {}
+
+        if resolved is None:
+            return False, "V2_NO_RESOLVED", {}
+
+        # 5. Si resolved.side == NO_TRADE ou pending registered, pas de trade
+        if resolved.side in ("NO_TRADE", "PENDING", None):
+            return False, f"V2_{resolved.side or 'NO_RESOLVE'}_{resolved.scenario_id}", {
+                "narrative_state": nsm_snapshot.state.value if nsm_snapshot else "?",
+                "scenario_id": resolved.scenario_id,
+                "v2_confidence": resolved.confidence,
+            }
+
+        # 6. TRADE confirmé : map vers format V1 params
+        side = resolved.side
+        if side not in ("LONG", "SHORT"):
+            return False, f"V2_UNEXPECTED_SIDE_{side}", {}
+
+        # SL/atr_multiplier : default Phase 4d MVP (a raffiner Phase 4e via SLTPEngine)
+        sl_ticks_default = 40 if symbol == "ES" else 80
+        params = {
+            "side": side,
+            "action": "REJECTION",  # V2 default action
+            "confidence": int(resolved.confidence * 100),
+            "sl_ticks": sl_ticks_default,
+            "atr_multiplier": 1.5,
+            "scenario_id": resolved.scenario_id,
+            "narrative_state": nsm_snapshot.state.value if nsm_snapshot else "?",
+            "v2_source": "phase_4d_mvp",
+        }
+        return True, "V2_TRADE", params
 
     def _build_signal_from_retest(
         self,
