@@ -137,7 +137,7 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 | Fichier | Status | Date | Commit | Review | Notes |
 |---------|--------|------|--------|--------|-------|
 | DOCS/specs/2026-05-18-bot3v2-phase1-nsm-spec.md | 🟢 GO | 2026-05-18 | (next) | market-analyst ULTRATHINK 4.20/5 | Spec NSM complete 17 etats 32 transitions |
-| CORE/bot3_narrative_state_machine.py | ⬜ TODO | - | - | - | Mirror LiveEnricherState (ADR 0002) ~650 LOC |
+| CORE/bot3_narrative_state_machine.py | 🔵 REVIEW | 2026-05-18 | (next) | spec 4.20/5 + 26/26 pytest PASS + bench p50=13.4us | NSM ~700 LOC + 17 etats + 32 transitions + fix T32 sdt sync |
 | CORE/bot3_story_trackers.py | 🔵 REVIEW | 2026-05-18 | (next) | spec 4.30/5 + 13/13 pytest PASS + bench p50=287us | 13 trackers code livre (~340 LOC) |
 | CORE/bot3_narrative_persistence.py | 🔵 REVIEW | 2026-05-18 | (next) | ADR 0003 + 3 tests inline PASS | Pickle commun + backup rotation 24h |
 | CORE/bot3_narrative_logging.py | 🔵 REVIEW | 2026-05-18 | (next) | 11/11 codes resolve PASS | emit helpers + verify codes registered au load |
@@ -145,7 +145,7 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 | CORE/bot3_config.py (refactor) | ⬜ TODO | - | - | - | +flags kill switch |
 | CORE/bot3_mp_engine.py (refactor) | ⬜ TODO | - | - | - | Injection NSM tracking only |
 | CORE/log_catalog.py (extend) | ⬜ TODO | - | - | - | +8 codes BOT3_NSM_* |
-| tests/bot3/test_narrative_state_machine.py | ⬜ TODO | - | - | - | 30+ tests J+1 |
+| tests/bot3/test_narrative_state_machine.py | 🟢 GO | 2026-05-18 | (next) | 26/26 pytest PASS | cold start/T2/T3/T6/T7/T9/T10/T22/T23/T28/T32/flicker/session/pickle/concurrency |
 | tests/bot3/test_story_trackers.py | 🟢 GO | 2026-05-18 | (next) | 13/13 pytest PASS | trend/BOS/pickle/concurrency/reset/rejection/snap/ringbuf/slope/nan |
 | tests/bot3/__init__.py + conftest.py | 🟢 GO | 2026-05-18 | (next) | - | Fixtures Stub Regime/Swing/Story |
 | tests/bot3/test_story_trackers.py | ⬜ TODO | - | - | - | 20+ tests |
