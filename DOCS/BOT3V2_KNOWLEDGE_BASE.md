@@ -5,6 +5,25 @@
 
 Si tu (Claude ou agent) attaques un module Bot 3 v2, lire ce fichier EN ENTIER avant de coder ou reviewer.
 
+## CONVENTIONS PROJET SOUVERAINES (Jackson 18/05)
+
+### Data source : Databento UNIQUEMENT
+- Bot 3 v2 consomme **exclusivement** Databento via `live_enriched` (~465 cols/bar)
+- **PAS de DMP Sierra Chart** (`bn_*`, `ext_*_px`, `bar_color_*` lus du JSONL DMP raw = INTERDITS)
+- Engines Python streaming autorisés : `edge_zones_streaming`, `phase_b_plus_color_streaming`, `phase_d_dalton_levels`, `footprint_builder_streaming`, etc.
+
+### Commits Git réguliers + structure auto-update
+- Commit séparé par étape logique
+- Message structuré (cf master plan section "Commits Git réguliers")
+- Tag Git par phase complétée
+- Update `DOCS/BOT3V2_PROJECT_STRUCTURE.md` à CHAQUE modif (non-négociable)
+- Update checkbox master plan + memory chantier
+
+### Headers fichiers Python (NEW modules obligatoire)
+- Docstring début : module name + role + data source + dates + phase + review trace
+- Section HISTORY commentée mise à jour à chaque modif >20 LOC
+- Cf master plan section "Headers fichiers Python"
+
 ---
 
 ## 1. Knowledge base livres — 7 ouvrages canon

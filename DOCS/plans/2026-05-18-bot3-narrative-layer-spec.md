@@ -241,11 +241,90 @@ Pour CHAQUE module, le brief agent doit inclure :
 
 Template brief : `DOCS/BOT3V2_AGENT_BRIEF_TEMPLATE.md`.
 
+## Conventions projet (souveraines Jackson 18/05)
+
+### Data source unique : Databento UNIQUEMENT
+- Bot 3 v2 consomme **EXCLUSIVEMENT** les données Databento via le payload `live_enriched` (~465 cols/bar)
+- **PAS de DMP Sierra Chart** comme source pour Bot 3 v2 (réservé Bot 1 / Bot 2 V6 fallback)
+- Cohérence philosophique : Bot 3 v2 = "DMP DB" pure (Databento Python streaming)
+- Datasets test : `DATA/DATASETS/V4/*.parquet` (Databento batch) + `DATA/live_enriched/{sym}/*.jsonl` (Databento live)
+- **Toute feature qui dépend du DMP SC est interdite** dans Bot 3 v2 (`bn_*`, `ext_*_px`, `bar_color_*` lus depuis JSONL DMP raw NQ/ES = INTERDITS)
+- Seuls les engines Python streaming Databento sont autorisés (`edge_zones_streaming`, `phase_b_plus_color_streaming`, `phase_d_dalton_levels`, etc.)
+
+### Commits Git réguliers
+À chaque livraison incrémentale (module / phase / fix) :
+- **Commit séparé** par étape logique (un commit = un changement clair)
+- **Message structuré** :
+  ```
+  feat(bot3v2-{phase}): {module_name} - {short description}
+
+  - Quoi : {ce qui change}
+  - Pourquoi : {raison business / agent finding}
+  - Tests : {empiric tests passed}
+  - Review : {agent} verdict {GO/GO-RES/NOGO}
+
+  Trace review : LOGS/reviews/REVIEW_BOT3V2_{module}_{agent}_{date}.json
+  Phase : {phase_name} (cf DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md)
+
+  reviewed-by: {agent}
+
+  Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+  ```
+- **Push après chaque phase complétée** (Phase 1, Phase 2, etc.)
+- **Tag Git par phase** : `git tag bot3v2-phase1-go-20260525`
+
+### Headers fichiers Python (convention obligatoire NEW modules)
+
+Chaque nouveau module Bot 3 v2 commence par :
+
+```python
+"""bot3_{module_name}.py — {one-line role}.
+
+Module : {short description, 2-3 lignes}
+
+Architecture : Bot 3 v2 Narrative Layer (Phase {N}).
+Mirror pattern : {existing_module_if_applicable}.
+
+Data source : Databento UNIQUEMENT (PAS DMP SC).
+  Inputs : payload V4 enriched + state engines streaming.
+
+Created : 2026-MM-DD by Jackson + Claude (agent {primary_agent_review})
+Last modified : 2026-MM-DD — {what changed last}
+
+Phase tracker : DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md
+Review trace : LOGS/reviews/REVIEW_BOT3V2_{module}_*.json
+Memory feedback : .claude/memory/feedback_bot3v2_{module}_*.md
+
+Auteur : Bot 3 v2 Narrative Layer
+"""
+```
+
+À chaque modif substantive (>20 LOC) :
+- Update `Last modified` date + commentaire
+- Ajouter dans le module une section commentée :
+  ```python
+  # ─── HISTORY ─────────────────────────────────────────────
+  # 2026-05-20 : creation skeleton (agent : market-analyst GO)
+  # 2026-05-22 : ajout 3 nouveaux états (agent : market-analyst GO-RES)
+  # 2026-05-25 : fix race condition multi-symbol (agent : code-reviewer GO)
+  # ───────────────────────────────────────────────────────
+  ```
+
+### Project structure auto-update
+
+À chaque création / modif module Bot 3 v2 :
+- **Mettre à jour `DOCS/BOT3V2_PROJECT_STRUCTURE.md`** (arbo + status tracker)
+- **Update checkbox** dans le master plan (Phase X.Y checked)
+- **Update memory** `project_bot3_v2_narrative_chantier.md` état courant
+- **Update `MEMORY.md` index** si évolution status majeur
+
+C'est non-négociable : pas de modif sans update structure.
+
 ## État d'avancement (à jour à chaque session)
 
-**Dernière mise à jour** : 2026-05-18 (session initiale)
+**Dernière mise à jour** : 2026-05-18 (session initiale, conventions ajoutées)
 
-- **Phase 0** : ✅ Spec finalisée + docs persistantes créées
+- **Phase 0** : ✅ Spec finalisée + docs persistantes créées + conventions Databento/Git/headers/structure
 - **Phase 1** : ⬜ À démarrer
 - **Phase 2-7** : ⬜ Pending
 
