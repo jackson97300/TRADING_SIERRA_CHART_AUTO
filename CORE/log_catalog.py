@@ -663,6 +663,28 @@ LOG_CODES = {
     "ENRICHER_SESSIONS_OPEN_APPROXIMATE": (LogLevel.ALERTE, "decisions", "Enricher session open APPROXIMATE : {sym} session={session} mins_et={mins_et} start_exact={start_exact} (live boot mid-session, parite batch cassee, V4 batch ne refletera pas cet open)"),
     "ENRICHER_SEED_IB_FROM_V4": (LogLevel.INFO, "events", "Enricher seed IB (ib_high/ib_low) depuis V4 : {sym} sdt={sdt} ib_high={ib_high} ib_low={ib_low} (BUG #2 fix - cold/HOT restart > 10:30 ET)"),
     "ENRICHER_SEED_IB_FAIL": (LogLevel.ALERTE, "events", "Enricher seed IB FAIL : {sym} reason={reason} (BUG #2 - ib_high/ib_low restera NaN si live down 09:30-10:30 ET aujourd'hui)"),
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Bot 3 v2 Narrative Layer (Phase 1 TRACKING ONLY, 18/05/2026)
+    # ════════════════════════════════════════════════════════════════════════
+    # Cf DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md
+    # Cf DOCS/specs/2026-05-18-bot3v2-phase1-nsm-spec.md
+    # Cf DOCS/specs/2026-05-18-bot3v2-phase1-story-trackers-spec.md
+
+    # NSM (NarrativeStateMachine) - 8 codes
+    "BOT3_NSM_STATE_TRANSITION":  (LogLevel.MAJEUR,   "decisions", "NSM transition : {sym} {from_state} -> {to_state} bias={bias_dir} conf={confidence:.2f} bar={bar_ts}"),
+    "BOT3_NSM_STATE_OBSERVE":     (LogLevel.INFO,     "decisions", "NSM observe : {sym} state={state} bar_idx={bar_idx} bars_in_state={bars_in_state}"),
+    "BOT3_NSM_INVALIDATED":       (LogLevel.CRITIQUE, "events",    "NSM scenario invalidated : {sym} from={from_state} trigger={trigger} bar={bar_ts}"),
+    "BOT3_NSM_FLICKER_GUARD":     (LogLevel.ALERTE,   "decisions", "NSM flicker guard : {sym} blocked transition n_transitions_today={n}"),
+    "BOT3_NSM_PERSIST_OK":        (LogLevel.INFO,     "events",    "NSM persist OK : symbols={symbols} n_events_flushed={n_events}"),
+    "BOT3_NSM_PERSIST_FAIL":      (LogLevel.MAJEUR,   "events",    "NSM persist FAIL : err={err}"),
+    "BOT3_NSM_PERSIST_RECOVERED": (LogLevel.ALERTE,   "events",    "NSM recovered fresh state apres corruption pickle : {sym} reason={reason}"),
+    "BOT3_NSM_SESSION_RESET":     (LogLevel.INFO,     "events",    "NSM session reset : {sym} new_sdt={new_sdt} n_transitions_yesterday={n}"),
+
+    # StoryTrackers - 3 codes
+    "BOT3_STORY_BOS_DETECTED":       (LogLevel.MAJEUR, "events",    "Bot3 STORY BOS detected : {sym} dir={bos_dir} price={bos_price} bar_idx={bar_idx} prev_close={prev_close} swing_ref={swing_ref}"),
+    "BOT3_STORY_TREND_CONFIRMED":    (LogLevel.MAJEUR, "decisions", "Bot3 STORY trend confirmed : {sym} dir={trend_dir} hh={hh} ll={ll} slope60={slope60:.4f} bar_idx={bar_idx}"),
+    "BOT3_STORY_REVERSAL_CANDIDATE": (LogLevel.ALERTE, "events",    "Bot3 STORY reversal candidate : {sym} slope60_prev={slope60_prev:.4f} slope60={slope60:.4f} hh5={hh5} ll5={ll5}"),
 }
 
 
