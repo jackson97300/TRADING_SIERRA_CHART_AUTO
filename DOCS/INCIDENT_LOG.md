@@ -31,6 +31,22 @@
 
 ---
 
+### 2026-05-18 04:30 - [VALIDATION_MISS] Roll detection streaming divergence batch (is_roll_day from-roll-onwards only)
+
+**Contexte** : Phase 3c-C live_enricher porte `is_roll_day` batch -> streaming (CORE/build_dataset_v4_dmp_databento.py:749 -> CORE/enricher_chain.py:1697). Code-reviewer 18/05 03:00 a flagge divergence.
+
+**Ce qui a mal tourne** (DOCUMENTE pre-deploy) : Le batch retro-flagge `is_roll_day=1` pour TOUTES les bars du jour ou un roll s'est produit (incluant les bars AVANT le roll dans la session, via `groupby(date).transform("max")`). Le streaming ne peut pas savoir en avance qu'un roll va arriver dans la session, donc `is_roll_day=1` n'est emis qu'a partir de la bar du roll jusqu'a fin session.
+
+**Cause racine** : conversion algorithme "EOD broadcast" -> "running streaming" impossible sans lookahead.
+
+**Lecon** : Pour roll detection, si Bot 2 V6 ou Bot 3 utilise `is_roll_day` en gate, il aura une vue partielle des bars roll-day du matin. Faible impact car features = rare events (rolls quarterly ES/NQ, mensuel GC).
+
+**Trigger prevention** : Quand on porte batch -> streaming, identifier le pattern "EOD broadcast" (transform/groupby) et documenter divergence acceptee dans CHANGELOG + code comment. Cf code commentaire CORE/enricher_chain.py:1675-1679.
+
+**Reviewed** : code-reviewer (18/05 review Phase 3c-C verdict GO-AVEC-RESERVES finding #4 "VRAI mais ACCEPTABLE")
+
+---
+
 ### 2026-05-17 19:00 - [VALIDATION_MISS] Ghost feature names brain_v6 + entry_quality_gate (2 gates morts depuis creation)
 
 **Contexte** : Audit Etape 3 Bot 2 V7 (mapping rules -> features V4 enriched). Cross-check empirique parquet mai 2026 + grep code brain_v6/entry_quality_gate.

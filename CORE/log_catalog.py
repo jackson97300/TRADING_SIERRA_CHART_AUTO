@@ -641,6 +641,23 @@ LOG_CODES = {
     "ENRICHER_SEED_SWINGS_LAG_FROM_V4": (LogLevel.INFO, "events", "Enricher seed SessionsSwingsLag depuis V4 : {sym} n_bars={n_bars} n_pivots={n_pivots} (P1.2 fix init swing tracker cold start)"),
     "ENRICHER_SEED_SWINGS_LAG_FAIL": (LogLevel.ALERTE, "events", "Enricher seed SessionsSwingsLag FAIL : {sym} reason={reason} (P1.2 - dist_swing_* sera null pendant 10-21 min jusqu'a detection live)"),
     "ENRICHER_SEED_VP_FROM_V4": (LogLevel.INFO, "events", "Enricher seed VolumeProfile (prev_*/pdh/pdl) depuis V4 : {sym} n_values={n_values} keys={keys} (P2.1 fix prev_* null cold start)"),
+    # ============================================================
+    # Phase 3c-A (18/05/2026 03:00 Paris nuit) — 17 features manquantes
+    # ============================================================
+    "PHASE_3C_A_FAIL":             (LogLevel.MAJEUR,  "events", "Phase 3c-A enrichment crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_A_REGIME_FAIL":      (LogLevel.ALERTE,  "events", "Phase 3c-A regime compute crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_B_FAIL":             (LogLevel.MAJEUR,  "events", "Phase 3c-B wire streaming crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_B_EDGE_FAIL":        (LogLevel.ALERTE,  "events", "Phase 3c-B edge_zones_streaming crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_B_COLOR_FAIL":       (LogLevel.ALERTE,  "events", "Phase 3c-B color_streaming crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_C_FAIL":             (LogLevel.MAJEUR,  "events", "Phase 3c-C rolling streaming crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_C_ATR_Z_FAIL":       (LogLevel.ALERTE,  "events", "Phase 3c-C atr_regime_zscore_60d crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_C_NPOC_FAIL":        (LogLevel.ALERTE,  "events", "Phase 3c-C naked_poc tracker crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_C_ROLL_FAIL":        (LogLevel.ALERTE,  "events", "Phase 3c-C roll detection crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_C_FFD_FAIL":         (LogLevel.ALERTE,  "events", "Phase 3c-C cvd_5d_ffd crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_C_VA_FAIL":          (LogLevel.ALERTE,  "events", "Phase 3c-C cur_va_* read crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
+    "PHASE_3C_C_ATR_STALE":        (LogLevel.MAJEUR,  "events", "Phase 3c-C atr feed STALE : sym={sym} n_bars_consec_none={n_bars} (anti-pattern 11 V1 - atr_regime_zscore_60d reste None silencieux)"),
+    "PHASE_3C_C_CVD_STALE":        (LogLevel.MAJEUR,  "events", "Phase 3c-C cvd_day feed STALE : sym={sym} n_bars_consec_none={n_bars} (anti-pattern 11 V1 - cvd_5d_rolling_ffd reste None silencieux)"),
+    "PHASE_3C_C_NPOC_SESS_SKIP":   (LogLevel.INFO,    "events", "Phase 3c-C naked_poc skip push history : sym={sym} old_sess={old_sess} new_sess={new_sess} reason={reason} (boot mi-session ou prev_vpoc None - feature reste None pendant 7j)"),
     "ENRICHER_SEED_VP_FAIL": (LogLevel.ALERTE, "events", "Enricher seed VolumeProfile FAIL : {sym} reason={reason} (P2.1 - prev_*/pdh/pdl restera null jusqu'a session change)"),
     "ENRICHER_DATA_QUALITY_FLAG_SET": (LogLevel.ALERTE, "decisions", "Enricher data_quality_flag SET : {sym} flag={flag} n_bars={n_bars} sid={sid} (bit0=warmup bit1=sentinel999 bit2=sd_collapse bit3=swing_reset bit4=session_corrupt bit5=open_approximate bit6=ib_missing - ETL/ML drop si bit relevant)"),
     "ENRICHER_SESSIONS_OPEN_APPROXIMATE": (LogLevel.ALERTE, "decisions", "Enricher session open APPROXIMATE : {sym} session={session} mins_et={mins_et} start_exact={start_exact} (live boot mid-session, parite batch cassee, V4 batch ne refletera pas cet open)"),

@@ -62,6 +62,58 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-05-18 04:30 — FEATURE Live enricher Phase 3c-A/B/C : +32 features manquantes (17 trivial + 8 wire streaming + 7 rolling)
+
+**Categorie** : FEATURE (critere 6 Cross-module 4 fichiers + critere 8 ML Pipeline - alimente dataset v4)
+**Impact prod** : LIVE (live_enricher_v2 producer 24/7) + OFFLINE (parite batch v4 attendue)
+**Fichier(s)** :
+- `CORE/enricher_chain.py` : +3 fonctions `_apply_phase_3c_A/B/C` (~580 LOC), +3 hooks fail-soft + lock R1 fix, +ligne state expose footprint_cells pour Phase B (B1 fix)
+- `CORE/log_catalog.py` : +14 codes log Phase 3c-A/B/C (FAIL parents + sub-blocs + STALE detection)
+- `tools/test_phase_3c_a.py` + `test_phase_3c_b.py` + `test_phase_3c_c.py` : suites tests empiriques (17/8/5 features validees sur snapshot reel NQ 15/05)
+**Reviewer(s) agent** : code-reviewer 3x (Phase A GO-AVEC-RESERVES, Phase B re-review GO apres 3 fixes B1/M1/M2, Phase C GO-AVEC-RESERVES apres 3 fixes lock+stale_counters+npoc_skip)
+
+### Quoi
+Ajout de 32 features absentes du payload live_enrichi (433 cols -> ~465 cols) qui sont consommees par Bot 2 V6 et Bot 3 :
+- **Phase 3c-A (17)** : wicks, bar_no_trade, position_in_range, dist_1d_max/min_ticks(_pct), sess_range_atr, delta_day, 7 cles regime split.
+- **Phase 3c-B (8)** : 4 features edge_zones_streaming + 4 features color_streaming wire-up (engines deja existants mais non-cables).
+- **Phase 3c-C (7)** : atr_regime_zscore_60d (Welford rolling 60j ATR), dist_naked_poc_nearest_pct (tracker 7j J-1..J-7), is_roll_day + days_since_roll + roll_phase (instrument_id discontinuity), cvd_5d_rolling_ffd (Fractional Diff Lopez d=0.4, width=282), cur_va_n_buckets + cur_va_total_vol (diagnostics VAP running session).
+
+### Pourquoi
+Audit cross-bots 17/05 + master directive Jackson 18/05 "EN LIVE ON DOIS UTILISER LES DONNER FRAICHE POUR PRENDRE LES MEILLEUR DE CISON". Bot 2 V6 actuellement en fallback DMP car features Databento V4 absentes du live_enrichi (cf memoire `project_bot2v6_dmp_in_practice.md`). Bascule Bot 2 V6 -> V4 enriched prevu 18/05 jour suit ces additions.
+
+### Impact attendu
+- 32 features additionnelles cross-bots V4-compliant pour Bot 2 V6 + Bot 3.
+- Parite live vs batch attendue : ATR z-score / FFD / roll detection produisent meme valeur que `build_dataset_v4_dmp_databento.py` (formules identiques verifies cross-check).
+- Divergence acceptee documentee : `is_roll_day` flagge from-roll-onwards en streaming (batch retro-flagge tout le jour) - cf INCIDENT_LOG 2026-05-18 04:30.
+
+### Validation pre-deploy
+- Tests empiriques Phase A : 17/17 features generees + cross-check formules (sess_range_atr=15.07 vs bug initial 241, position_in_range clip [0,1] OK).
+- Tests empiriques Phase B : 8/8 features wire OK, n_edge_buy_active=1->2 cross-bars (state persistant), color lag-1 warmup attendu.
+- Tests empiriques Phase C : 5/5 tests PASS (warmup, naked_poc bascule session, roll detection, FFD warmup 282 bars, ATR z-score post-warmup).
+- 3 reviews agent code-reviewer (1 par phase) - tous GO-AVEC-RESERVES fixes appliques avant deploy.
+
+### Nouveaux logs (regle log-debug-protocol.md)
+- `PHASE_3C_A_FAIL`, `PHASE_3C_A_REGIME_FAIL`
+- `PHASE_3C_B_FAIL`, `PHASE_3C_B_EDGE_FAIL`, `PHASE_3C_B_COLOR_FAIL`
+- `PHASE_3C_C_FAIL`, `PHASE_3C_C_ATR_Z_FAIL`, `PHASE_3C_C_NPOC_FAIL`, `PHASE_3C_C_ROLL_FAIL`, `PHASE_3C_C_FFD_FAIL`, `PHASE_3C_C_VA_FAIL`
+- `PHASE_3C_C_ATR_STALE` (MAJEUR, > 30 bars atr None consec), `PHASE_3C_C_CVD_STALE` (MAJEUR, > 30 bars cvd None consec), `PHASE_3C_C_NPOC_SESS_SKIP` (INFO, push history skip boot mi-session)
+
+### Revert plan
+Toggle `enricher_chain.py` lignes 1180-1224 (3 hooks try/except) commentes en bloc -> features disparaissent du payload mais reste de la chain intacte (fail-soft).
+
+### Suivi post-deploy
+- J+1 : grep `wc -l LOGS/events/events_*.jsonl | grep PHASE_3C_C_` doit etre 0 (FAIL) + tracer 0 STALE en condition normale.
+- J+1 : `python -c "import pandas as pd; df=pd.read_json('DATA/live_enriched/NQ/20260518_NQ.jsonl', lines=True); print(df[['atr_regime_zscore_60d','cvd_5d_rolling_ffd','is_roll_day']].describe())"` - valider distributions raisonnables.
+- J+7 : cross-check parite live vs batch sur 1 jour complet (re-run build_dataset_v4 sur 17/05 ET diff vs live_enriched).
+- J+30 : re-baseline Bot 2 V6 paper perf avec features V4 actives.
+
+### Liens
+- INCIDENT_LOG : 2026-05-18 04:30 entry (roll divergence batch documentee)
+- Memory : `project_bot2v6_dmp_in_practice.md` (rationale bascule V4)
+- Review agent : code-reviewer Phase 3c-C 18/05 GO-AVEC-RESERVES, 3 fixes appliques (state.lock + stale counters atr/cvd + NPOC_SESS_SKIP log)
+
+---
+
 ## 2026-05-17 16:00 — FEATURE Dashboard Bot 3 audit Jackson : SETUP COMPLET + staleness + MGC + race fix
 
 **Categorie** : FEATURE + REFACTO (critere 1 Trading + 6 Cross-module 6 fichiers ~250 LOC)
