@@ -49,10 +49,33 @@ except ModuleNotFoundError:
 # ─── Constants ────────────────────────────────────────────────────────────
 
 # Time decay : bars max dans un etat avant force INVALIDATED.
-# 240 bars = 4h sur 1m. Au-dela, le narratif est "trop vieux" - le marche
-# a probablement change de regime. Aligne Dalton MOM Ch.10 "auction cycles
-# de 4-6h typique RTH". Apres 4h, on devrait avoir vu un nouveau setup.
-TIME_DECAY_BARS_DEFAULT: int = 240
+# FIX R5 review market-analyst : per-state time decay (vs unique 240 bars).
+# Dalton MOM Ch.10 : auction cycles 4-6h typique RTH. Trend Day Dalton-canon
+# dure facilement la session entiere (= 6.5h = 390 bars 1m).
+# Au seuil unique 240 bars, OPEN_DRIVE_UP a 09:35 INVALIDATED a 13:35 alors
+# que le trend continue jusqu'a la cloche = NSM coupe le narratif legitime.
+TIME_DECAY_BARS_DEFAULT: int = 240  # fallback si state pas dans dict
+
+# Per-state time decay (R5 fix) :
+# - TREND_*_CONTINUATION : 390 bars (full RTH 6.5h) - Trend Day Dalton-canon
+# - OPEN_DRIVE_* : 240 bars (4h = open auction window classic Dalton)
+# - WYCKOFF_SPRING_LONG / UPTHRUST_SHORT : 120 bars (2h post-spring decision)
+# - EXHAUSTION_TOP / BOTTOM : 60 bars (1h terminal state)
+# - RANGE_RESPECTED : 240 bars (range peut tenir half session)
+# - OPEN_ROTATION / OPEN_TEST_DRIVE : 60 bars (1h decision rapide)
+_TIME_DECAY_BARS_BY_STATE: dict[NarrativeState, int] = {
+    NarrativeState.TREND_UP_CONTINUATION:    390,
+    NarrativeState.TREND_DOWN_CONTINUATION:  390,
+    NarrativeState.OPEN_DRIVE_UP:            240,
+    NarrativeState.OPEN_DRIVE_DOWN:          240,
+    NarrativeState.WYCKOFF_SPRING_LONG:      120,
+    NarrativeState.WYCKOFF_UPTHRUST_SHORT:   120,
+    NarrativeState.EXHAUSTION_TOP:           60,
+    NarrativeState.EXHAUSTION_BOTTOM:        60,
+    NarrativeState.RANGE_RESPECTED:          240,
+    NarrativeState.OPEN_ROTATION:            60,
+    NarrativeState.OPEN_TEST_DRIVE:          60,
+}
 
 # Etats exempts du time decay (terminal states ou PRE_OPEN long-running)
 _TIME_DECAY_EXEMPT_STATES: frozenset[NarrativeState] = frozenset({
@@ -159,17 +182,26 @@ def is_narrative_still_valid(
         return True, ""
     bars_in_state = delta
 
-    # 1. Time decay check (sauf etats exemptes)
-    if state not in _TIME_DECAY_EXEMPT_STATES and bars_in_state > time_decay_bars:
-        emit(
-            "BOT3_SCENARIO_TIME_DECAY",
-            log_fn=log_fn,
-            sym=snapshot.symbol,
-            state=state.value,
-            bars_in_state=bars_in_state,
-            threshold=time_decay_bars,
-        )
-        return False, "TIME_DECAY"
+    # 1. Time decay check (R5 fix : per-state threshold).
+    # Priorite : _TIME_DECAY_BARS_BY_STATE > time_decay_bars param > default.
+    if state not in _TIME_DECAY_EXEMPT_STATES:
+        # Si caller a passe override explicite (non-default), on respecte.
+        if time_decay_bars != TIME_DECAY_BARS_DEFAULT:
+            effective_threshold = time_decay_bars
+        else:
+            effective_threshold = _TIME_DECAY_BARS_BY_STATE.get(
+                state, time_decay_bars
+            )
+        if bars_in_state > effective_threshold:
+            emit(
+                "BOT3_SCENARIO_TIME_DECAY",
+                log_fn=log_fn,
+                sym=snapshot.symbol,
+                state=state.value,
+                bars_in_state=bars_in_state,
+                threshold=effective_threshold,
+            )
+            return False, "TIME_DECAY"
 
     # 2. PlotTwist incompatibility check
     invalidating_rules = _INVALIDATING_TWISTS.get(state, [])

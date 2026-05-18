@@ -159,7 +159,8 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 
 | Fichier | Status | Date | Commit | Review | Notes |
 |---------|--------|------|--------|--------|-------|
-| CORE/bot3_plot_twist_detectors.py | 🟢 GO | 2026-05-18 | (next) | 24/24 pytest + 5 fixes Tier 1 ULTRATHINK (R1+R2+R3+R3bis+R8) + 3 fixes Claude 4.7 (asymetrie/severity/throttle) + 4 detectors canon | schema 2.1.0 - VOLUME_ANOMALY direction Wyckoff INVERSE + severity tick-normalized cross-symbol + tick_size None + BOS trackers separes |
+| CORE/bot3_plot_twist_detectors.py | 🟢 GO | 2026-05-18 | (next) | 30/30 pytest + 8 fixes Tier 1 ULTRATHINK (R1+R2+R3+R3bis+R6+R7+R8) + 3 fixes Claude 4.7 + 4 detectors canon ZERO DETTE | schema 2.1.0 - R1 acceptance multi-bar + R2 Wyckoff INVERSE + R3 tick-normalized cross-symbol + R3bis tick None + R6 CHoCH context + R7 window-based + R8 trackers separes |
+| CORE/bot3_scenario_validator.py | 🟢 GO | 2026-05-18 | (next) | 17/17 pytest + R5 per-state time decay + 4 fixes review | TREND_*=390 OPEN_DRIVE_*=240 EXHAUSTION_*=60 WYCKOFF=120 OPEN_ROT/TEST=60 RANGE=240 |
 | CORE/bot3_scenario_validator.py | 🟢 GO | 2026-05-18 | (next) | 14/14 pytest + 3 fixes Claude 4.7 externe (strongest signal + bars negatifs defensif + RANGE doc decision) | Time decay 240 bars + 10 etats whitelist invalidating twists |
 | CORE/log_catalog.py (extend) | 🟢 GO | 2026-05-18 | (next) | 17 codes load OK | +6 codes PLOT_TWIST_* + SCENARIO_* |
 | CORE/bot3_narrative_logging.py (extend) | 🟢 GO | 2026-05-18 | (next) | _verify_codes_registered PASS | BOT3V2_NARRATIVE_CODES +6 Phase 2 |

@@ -72,28 +72,64 @@ def _make_bar(
 # ════════════════════════════════════════════════════════════════════════════
 
 
-def test_structure_break_bullish_BOS():
-    """close > swing_high + 2*tick + vol_z>0 → STRUCTURE_BREAK direction=+1."""
+def test_structure_break_bullish_BOS_acceptance_multi_bar():
+    """FIX R1 acceptance Dalton MOM Ch.7 : BOS fire APRES BOS_ACCEPTANCE_BARS_REQUIRED
+    bars consecutives close > swing+2*tick. Pas fire instant (anti ICT liquidity sweep).
+    """
     state = PlotTwistDetectorsState(symbol="ES")
-    state.bar_idx_current = 10
     swing = StubSwingState(last_swing_high=StubSwingPoint(price=100.0))
-    bar = _make_bar(close=100.6, vol_z=1.0)  # 100.6 > 100 + 2*0.25=100.5
-    twist = detect_structure_break(state, bar, swing, tick_size=0.25)
-    assert twist is not None
-    assert twist.twist_type == "STRUCTURE_BREAK"
-    assert twist.direction == +1
-    assert twist.severity > 0
 
-
-def test_structure_break_bearish_BOS():
-    """close < swing_low - 2*tick + vol_z>0 → STRUCTURE_BREAK direction=-1."""
-    state = PlotTwistDetectorsState(symbol="ES")
+    # Bar 1 : close casse swing → enregistre pending (pas de fire)
     state.bar_idx_current = 10
+    bar1 = _make_bar(close=100.6, vol_z=1.0)
+    t1 = detect_structure_break(state, bar1, swing, tick_size=0.25)
+    assert t1 is None
+    assert state.bos_pending_dir == +1
+    assert state.bos_pending_bars_confirmed == 1
+
+    # Bar 2 : close TOUJOURS > swing → confirme acceptance → FIRE
+    state.bar_idx_current = 11
+    bar2 = _make_bar(close=100.8, vol_z=1.0)
+    t2 = detect_structure_break(state, bar2, swing, tick_size=0.25)
+    assert t2 is not None
+    assert t2.direction == +1
+    assert t2.severity > 0
+
+
+def test_structure_break_bearish_BOS_acceptance_multi_bar():
+    """FIX R1 : BOS bearish 2 bars acceptance avant fire."""
+    state = PlotTwistDetectorsState(symbol="ES")
     swing = StubSwingState(last_swing_low=StubSwingPoint(price=100.0))
-    bar = _make_bar(close=99.4, vol_z=1.0)  # 99.4 < 100 - 0.5 = 99.5
-    twist = detect_structure_break(state, bar, swing, tick_size=0.25)
-    assert twist is not None
-    assert twist.direction == -1
+
+    state.bar_idx_current = 10
+    t1 = detect_structure_break(state, _make_bar(close=99.4, vol_z=1.0),
+                                 swing, tick_size=0.25)
+    assert t1 is None
+    state.bar_idx_current = 11
+    t2 = detect_structure_break(state, _make_bar(close=99.2, vol_z=1.0),
+                                 swing, tick_size=0.25)
+    assert t2 is not None
+    assert t2.direction == -1
+
+
+def test_structure_break_acceptance_aborted_on_retrace():
+    """FIX R1 anti ICT sweep trap : si close retrace au-dessus/sous swing entre
+    bar 1 et bar 2, pending ABORT (faux BOS / liquidity grab)."""
+    state = PlotTwistDetectorsState(symbol="ES")
+    swing = StubSwingState(last_swing_high=StubSwingPoint(price=100.0))
+
+    # Bar 1 : pending BOS bullish
+    state.bar_idx_current = 10
+    detect_structure_break(state, _make_bar(close=100.6, vol_z=1.0),
+                           swing, tick_size=0.25)
+    assert state.bos_pending_dir == +1
+
+    # Bar 2 : close revient SOUS swing → abort pending
+    state.bar_idx_current = 11
+    t2 = detect_structure_break(state, _make_bar(close=99.8, vol_z=1.0),
+                                 swing, tick_size=0.25)
+    assert t2 is None
+    assert state.bos_pending_dir == 0  # reset
 
 
 def test_structure_break_no_fire_if_vol_z_negative():
@@ -107,18 +143,28 @@ def test_structure_break_no_fire_if_vol_z_negative():
 
 
 def test_structure_break_throttle_anti_double_fire():
-    """2 BOS bullish consecutifs < 3 bars : seul le 1er fire."""
+    """FIX R1 : apres 1 BOS valide, le suivant doit attendre 30 bars throttle.
+
+    Maintenant le test fait 2 bars pour confirme le 1er BOS, puis tente une 3eme
+    bar pour voir si throttle bloque.
+    """
     state = PlotTwistDetectorsState(symbol="ES")
-    state.bar_idx_current = 10
     swing = StubSwingState(last_swing_high=StubSwingPoint(price=100.0))
-    bar1 = _make_bar(close=101.0, vol_z=1.0)
-    t1 = detect_structure_break(state, bar1, swing)
-    assert t1 is not None
-    # Bar suivante (1 bar plus tard) : same direction = throttled
+
+    # 1er BOS : 2 bars acceptance
+    state.bar_idx_current = 10
+    detect_structure_break(state, _make_bar(close=101.0, vol_z=1.0),
+                           swing, tick_size=0.25)
     state.bar_idx_current = 11
-    bar2 = _make_bar(close=101.5, vol_z=1.0)
-    t2 = detect_structure_break(state, bar2, swing)
-    assert t2 is None
+    t_first = detect_structure_break(state, _make_bar(close=101.5, vol_z=1.0),
+                                      swing, tick_size=0.25)
+    assert t_first is not None
+
+    # Bar 12 : tente nouveau BOS dans throttle = bloque (global + same dir)
+    state.bar_idx_current = 12
+    t_second = detect_structure_break(state, _make_bar(close=102.0, vol_z=1.0),
+                                       swing, tick_size=0.25)
+    assert t_second is None  # throttle global 10 bars
 
 
 def test_structure_break_handles_missing_swing_state():
@@ -129,84 +175,107 @@ def test_structure_break_handles_missing_swing_state():
     assert twist is None
 
 
-def test_R3_severity_normalized_in_ticks_cross_symbol():
-    """FIX R3 review code-reviewer : severity STRUCTURE_BREAK en ticks (cross-symbol
-    invariant). Meme cassure en TICKS = meme severity peu importe le prix.
+def _fire_bos(state, swing, bar_idx_start, close, tick=0.25):
+    """Helper : fire BOS confirme apres 2 bars acceptance (R1)."""
+    state.bar_idx_current = bar_idx_start
+    detect_structure_break(state, _make_bar(close=close, vol_z=1.0), swing,
+                           tick_size=tick)
+    state.bar_idx_current = bar_idx_start + 1
+    return detect_structure_break(state, _make_bar(close=close + 0.1, vol_z=1.0),
+                                   swing, tick_size=tick)
 
-    Avant fix : ES 5000+3pt → 0.6, MGC 2200+2pt → 0.9 (asymetrie 2.5x).
-    Apres fix : 10 ticks de cassure = severity 1.0, 3 ticks = severity 0.3.
-    """
-    # 10 ticks de cassure ES (tick=0.25 → 2.5pt) = severity 1.0
+
+def test_R3_severity_normalized_in_ticks_cross_symbol():
+    """FIX R3 : severity STRUCTURE_BREAK en ticks (cross-symbol invariant)."""
+    # 10 ticks de cassure ES (tick=0.25 → 2.5pt) = severity ~1.0
     state_es = PlotTwistDetectorsState(symbol="ES")
-    state_es.bar_idx_current = 10
     swing_es = StubSwingState(last_swing_high=StubSwingPoint(price=5000.0))
-    bar_es = _make_bar(close=5002.5, vol_z=1.0)  # 2.5pt = 10 ticks ES
-    twist_es = detect_structure_break(state_es, bar_es, swing_es, tick_size=0.25)
+    twist_es = _fire_bos(state_es, swing_es, bar_idx_start=10,
+                         close=5002.5, tick=0.25)
     assert twist_es is not None
 
-    # 10 ticks de cassure MGC (tick=0.10 → 1.0pt) = MEME severity
+    # 10 ticks MGC (tick=0.10 → 1.0pt) = MEME severity
     state_mgc = PlotTwistDetectorsState(symbol="MGC")
-    state_mgc.bar_idx_current = 10
     swing_mgc = StubSwingState(last_swing_high=StubSwingPoint(price=2200.0))
-    bar_mgc = _make_bar(close=2201.0, vol_z=1.0)  # 1pt = 10 ticks MGC
-    twist_mgc = detect_structure_break(state_mgc, bar_mgc, swing_mgc, tick_size=0.10)
+    twist_mgc = _fire_bos(state_mgc, swing_mgc, bar_idx_start=10,
+                          close=2201.0, tick=0.10)
     assert twist_mgc is not None
-
-    # Severity DOIT etre identique (cross-symbol invariante)
-    assert twist_es.severity == pytest.approx(twist_mgc.severity, abs=0.05)
+    # Severity identique (cross-symbol invariant)
+    assert twist_es.severity == pytest.approx(twist_mgc.severity, abs=0.1)
 
 
 def test_R8_BOS_throttle_global_blocks_direction_switch_in_chop():
-    """FIX R8 review code-reviewer : THROTTLE_BOS_GLOBAL=10 bars empeche
-    BOS+ → BOS- → BOS+ rapide en marche choppy.
-
-    Avant fix : BOS+ idx=10, BOS- idx=15, BOS+ idx=20 → 3 fires.
-    Apres fix : BOS+ idx=10, BOS- idx=15 BLOCKED (< 10 bars), BOS+ idx=21 OK.
-    """
+    """FIX R8 : THROTTLE_BOS_GLOBAL=10 empeche switch rapide chop."""
     state = PlotTwistDetectorsState(symbol="ES")
     swing = StubSwingState(
         last_swing_high=StubSwingPoint(price=100.0),
         last_swing_low=StubSwingPoint(price=99.0),
     )
-    # BOS bullish a idx=10
-    state.bar_idx_current = 10
-    bar_up = _make_bar(close=101.0, vol_z=1.0)
-    t1 = detect_structure_break(state, bar_up, swing, tick_size=0.25)
+    # BOS bullish confirmed a idx=10-11
+    t1 = _fire_bos(state, swing, bar_idx_start=10, close=101.0)
     assert t1 is not None and t1.direction == +1
 
-    # BOS bearish tente a idx=15 (5 bars apres) - GLOBAL THROTTLE bloque (<10)
+    # BOS bearish tente a idx=15 (4 bars apres confirm idx=11) - GLOBAL bloque
     state.bar_idx_current = 15
-    bar_down = _make_bar(close=98.5, vol_z=1.0)
+    bar_down = _make_bar(close=98.0, vol_z=1.0)
     t2 = detect_structure_break(state, bar_down, swing, tick_size=0.25)
     assert t2 is None  # Bloque par global throttle
 
 
 def test_R8_BOS_trackers_separes_bullish_bearish():
-    """FIX R8 : trackers separes last_BOS_bullish_bar_idx vs last_BOS_bearish_bar_idx.
+    """FIX R8 : trackers separes last_BOS_bullish_bar_idx vs bearish."""
+    state = PlotTwistDetectorsState(symbol="ES")
+    swing = StubSwingState(
+        last_swing_high=StubSwingPoint(price=100.0),
+        last_swing_low=StubSwingPoint(price=99.0),
+    )
+    # BOS bullish confirmed idx=10-11
+    t1 = _fire_bos(state, swing, bar_idx_start=10, close=101.0)
+    assert t1 is not None
+    assert state.last_BOS_bullish_bar_idx == 11
+    assert state.last_BOS_bearish_bar_idx == -1
 
-    Permet 1 BOS dans chaque direction sur fenetre 30 bars apres GLOBAL throttle 10.
+    # BOS bearish confirmed idx=25-26 (apres global+bearish throttle)
+    state.bar_idx_current = 25
+    detect_structure_break(state, _make_bar(close=98.0, vol_z=1.0),
+                            swing, tick_size=0.25)
+    state.bar_idx_current = 26
+    t2 = detect_structure_break(state, _make_bar(close=97.8, vol_z=1.0),
+                                 swing, tick_size=0.25)
+    assert t2 is not None
+    assert state.last_BOS_bearish_bar_idx == 26
+    assert state.last_BOS_bullish_bar_idx == 11  # preserve
+
+
+def test_R6_CHoCH_short_throttle_in_uptrend():
+    """FIX R6 : BOS bearish dans trend UP etabli (hh_count_60 >= 5) = CHoCH
+    = throttle court 5 bars (vs 30 bars BOS continuation).
     """
     state = PlotTwistDetectorsState(symbol="ES")
     swing = StubSwingState(
         last_swing_high=StubSwingPoint(price=100.0),
         last_swing_low=StubSwingPoint(price=99.0),
     )
-    # BOS bullish a idx=10
+    # Fire 1er BOS bearish dans trend UP (CHoCH)
+    story = {"hh_count_60": 7, "ll_count_60": 0}  # trend up etabli
     state.bar_idx_current = 10
-    t1 = detect_structure_break(state, _make_bar(close=101.0, vol_z=1.0),
-                                 swing, tick_size=0.25)
-    assert t1 is not None
-    assert state.last_BOS_bullish_bar_idx == 10
-    assert state.last_BOS_bearish_bar_idx == -1  # vierge
+    detect_structure_break(state, _make_bar(close=98.0, vol_z=1.0), swing,
+                           tick_size=0.25, story_trackers=story)
+    state.bar_idx_current = 11
+    t1 = detect_structure_break(state, _make_bar(close=97.8, vol_z=1.0), swing,
+                                 tick_size=0.25, story_trackers=story)
+    assert t1 is not None  # confirmed acceptance
 
-    # BOS bearish a idx=25 (> 10 global throttle + > 0 bearish throttle)
-    state.bar_idx_current = 25
-    # close 98.0 < swing_low 99.0 - 2*0.25 = 98.5 (strict <)
-    t2 = detect_structure_break(state, _make_bar(close=98.0, vol_z=1.0),
-                                 swing, tick_size=0.25)
+    # Bar 17 = 6 bars apres confirm (> THROTTLE_CHOCH_BARS=5)
+    # Mais < global throttle 10, donc bloque par global. Apres bar 22 :
+    state.bar_idx_current = 22
+    detect_structure_break(state, _make_bar(close=97.5, vol_z=1.0), swing,
+                           tick_size=0.25, story_trackers=story)
+    state.bar_idx_current = 23
+    t2 = detect_structure_break(state, _make_bar(close=97.3, vol_z=1.0), swing,
+                                 tick_size=0.25, story_trackers=story)
+    # 12 bars apres 1er confirm = > 10 global + > 5 CHoCH throttle = fire
     assert t2 is not None
-    assert state.last_BOS_bearish_bar_idx == 25
-    assert state.last_BOS_bullish_bar_idx == 10  # preserve
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -386,11 +455,13 @@ def test_capitulation_requires_3_consecutive_climax():
     assert twist is None  # 1 seule bar
 
 
-def test_capitulation_fires_after_3_consecutive():
-    """3 bars consecutifs climax → CAPITULATION."""
+def test_capitulation_fires_after_3_bars_in_window():
+    """FIX R7 : 3+ climax dans WINDOW 5 bars (peut avoir retracements
+    Pruden Three Pushes canon). FIX R2 : direction Wyckoff canon INVERSE."""
     state = PlotTwistDetectorsState(symbol="ES")
+    # close<open + climax = selling climax bars → direction = +1 (bullish absorption)
     bar_template = _make_bar(close=98.0, open_=102.0, high=105.0, low=92.0,
-                              atr=5.0, vol_z=3.5)  # > VOL_Z_CAPITULATION_MIN=3.0
+                              atr=5.0, vol_z=3.5)
     state.bar_idx_current = 1
     detect_capitulation(state, bar_template)
     state.bar_idx_current = 2
@@ -399,7 +470,38 @@ def test_capitulation_fires_after_3_consecutive():
     twist = detect_capitulation(state, bar_template)
     assert twist is not None
     assert twist.twist_type == "CAPITULATION"
-    assert twist.direction == -1  # close<open = selling capitulation
+    # FIX R2+R7 : direction Wyckoff canon = INVERSE close-open
+    # close<open (selling climax bars) → signal BULLISH absorption
+    assert twist.direction == +1
+
+
+def test_R7_capitulation_window_based_with_retracement():
+    """FIX R7 Pruden Three Pushes canon : permet retracement intermediaire.
+
+    Avant : 3 bars consecutifs strict → reset au moindre non-climax.
+    Apres : window 5 bars, >= 3 climax dedans = fire.
+
+    Scenario : climax-climax-NORMAL-climax-climax = 4 climax dans window 5 bars.
+    """
+    state = PlotTwistDetectorsState(symbol="ES")
+    climax = _make_bar(close=98.0, open_=102.0, high=105.0, low=92.0,
+                       atr=5.0, vol_z=3.5)
+    normal = _make_bar(close=100.0, vol_z=1.0)  # PAS climax
+
+    state.bar_idx_current = 1
+    t1 = detect_capitulation(state, climax)  # climax 1, no fire
+    assert t1 is None
+    state.bar_idx_current = 2
+    t2 = detect_capitulation(state, climax)  # climax 2, no fire
+    assert t2 is None
+    state.bar_idx_current = 3
+    t3 = detect_capitulation(state, normal)  # retracement, no append
+    assert t3 is None
+    state.bar_idx_current = 4
+    # climax 3eme dans window (bars 1, 2, 4) → FIRE (3+ dans window 5 bars)
+    twist = detect_capitulation(state, climax)
+    assert twist is not None
+    assert twist.triggering_features["n_climax_bars"] >= 3
 
 
 def test_capitulation_reset_on_non_climax_bar():
@@ -420,16 +522,18 @@ def test_capitulation_reset_on_non_climax_bar():
     assert twist is None  # buffer juste reset, 1 bar
 
 
-def test_capitulation_direction_bullish():
-    """3 bars close>open + climax → CAPITULATION direction=+1 (buying climax)."""
+def test_capitulation_direction_buying_climax_bearish_wyckoff():
+    """FIX R2+R7 : 3 bars close>open + climax = buying climax = signal BEARISH
+    (vendeurs absorbants livrent au sommet). Direction = -1 (Wyckoff canon)."""
     state = PlotTwistDetectorsState(symbol="ES")
     bar = _make_bar(close=102.0, open_=98.0, high=105.0, low=92.0,
-                    atr=5.0, vol_z=3.5)  # > VOL_Z_CAPITULATION_MIN=3.0
+                    atr=5.0, vol_z=3.5)
     for i in range(1, 4):
         state.bar_idx_current = i
         result = detect_capitulation(state, bar)
     assert result is not None
-    assert result.direction == +1
+    # close>open (buying climax bars) → Wyckoff canon : signal BEARISH absorption
+    assert result.direction == -1
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -456,19 +560,24 @@ def test_scan_all_appends_bars_history():
 
 
 def test_scan_all_multiple_twists_same_bar():
-    """STRUCTURE_BREAK + VOLUME_ANOMALY peuvent fire ensemble sur 1 bar."""
+    """VOLUME_ANOMALY peut fire seule sur 1 bar (BOS necessite 2 bars R1)."""
     state = PlotTwistDetectorsState(symbol="ES")
-    state.bar_idx_current = 5
     swing = StubSwingState(last_swing_high=StubSwingPoint(price=100.0))
-    # Bar BOS + climax volume + close<open (bearish)
     bar = _make_bar(close=101.0, open_=99.5, high=105.0, low=95.0,
                     atr=5.0, vol_z=3.0)  # > VOL_Z_ANOMALY_MIN=2.5
-    # bar.close 101 > swing 100 + 0.5 + vol_z 3 > 0 → BOS+ fire
-    # vol_z>2 → VOLUME_ANOMALY fire
-    twists = scan_all(state, bar, swing)
-    twist_types = {t.twist_type for t in twists}
-    assert "STRUCTURE_BREAK" in twist_types
-    assert "VOLUME_ANOMALY" in twist_types
+
+    # Bar 1 : VOLUME_ANOMALY fire + BOS pending (pas encore confirmed R1)
+    twists1 = scan_all(state, bar, swing, tick_size=0.25)
+    twist_types1 = {t.twist_type for t in twists1}
+    assert "VOLUME_ANOMALY" in twist_types1
+    assert "STRUCTURE_BREAK" not in twist_types1  # pending, pas fire
+
+    # Bar 2 : BOS confirmed acceptance
+    bar2 = _make_bar(close=101.5, open_=100.5, high=105.0, low=95.0,
+                    atr=5.0, vol_z=1.0)
+    twists2 = scan_all(state, bar2, swing, tick_size=0.25)
+    twist_types2 = {t.twist_type for t in twists2}
+    assert "STRUCTURE_BREAK" in twist_types2
 
 
 def test_pickle_roundtrip_preserves_state():

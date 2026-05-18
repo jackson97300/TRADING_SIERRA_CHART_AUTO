@@ -20,7 +20,7 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
   - **Trigger** : POST Phase 5 GO/NOGO Bot 3 v2 (cf master plan sect 287-299)
   - **Bloqueurs prerequis** : 8 reserves Tier 1 Phase 3 (cf entry suivante) doivent etre fixees AVANT exposition cross-bot. Sinon Bot 1/2/4 consomment biaised narrative (VOLUME_ANOMALY direction inversee, severity ES-only).
 
-- **[DETTE TIER 1 2026-05-18]** **Bot 3 v2 Phase 2 - 8 reserves Tier 1 reviews ULTRATHINK bloquantes Phase 3** | 4-6h | **HIGH BLOCKER PHASE 3** | IN_PROGRESS (R1/R2/R3 critiques fix maintenant, R4-R8 J+1)
+- **[DETTE TIER 1 2026-05-18]** **Bot 3 v2 Phase 2 - 8 reserves Tier 1 reviews ULTRATHINK bloquantes Phase 3** | 4-6h | **HIGH BLOCKER PHASE 3** | DONE 7/8 (R1+R2+R3+R3bis+R5+R6+R7+R8 fixees, R4 reportee Phase 5 walk-forward)
   - **Source** : 2 agents ULTRATHINK 18/05 PM convergent verdict GO-AVEC-RESERVES Phase 2 TRACKING + NOGO PHASE 3 sans fixes R1-R3.
   - **Reviews archives** :
     - `LOGS/reviews/REVIEW_BOT3V2_phase2_market_analyst_20260518.json`

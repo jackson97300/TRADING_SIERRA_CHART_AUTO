@@ -53,13 +53,36 @@ def _make_twist(
 # ════════════════════════════════════════════════════════════════════════════
 
 
-def test_time_decay_invalidates_after_threshold():
-    """bars_in_state > TIME_DECAY_BARS_DEFAULT (240) → INVALIDATED via TIME_DECAY."""
-    snap = _make_snapshot(
+def test_time_decay_invalidates_after_per_state_threshold():
+    """FIX R5 : per-state time decay. TREND_UP_CONTINUATION = 390 bars (full RTH).
+    EXHAUSTION_TOP = 60 bars (1h terminal).
+
+    bars_in_state=300 → TREND_UP NOT invalidated (300 < 390 per-state).
+    bars_in_state=100 → EXHAUSTION_TOP INVALIDATED (100 > 60 per-state).
+    """
+    # TREND_UP 300 bars : OK (< 390 per-state)
+    snap_trend = _make_snapshot(
         state=NarrativeState.TREND_UP_CONTINUATION,
         bars_in_state=300,
     )
-    is_valid, reason = is_narrative_still_valid(snap, twists=[])
+    is_valid, reason = is_narrative_still_valid(snap_trend, twists=[])
+    assert is_valid is True
+
+    # TREND_UP 400 bars : INVALIDATED (> 390 per-state)
+    snap_trend_long = _make_snapshot(
+        state=NarrativeState.TREND_UP_CONTINUATION,
+        bars_in_state=400,
+    )
+    is_valid, reason = is_narrative_still_valid(snap_trend_long, twists=[])
+    assert is_valid is False
+    assert reason == "TIME_DECAY"
+
+    # EXHAUSTION_TOP 100 bars : INVALIDATED (> 60 per-state)
+    snap_exh = _make_snapshot(
+        state=NarrativeState.EXHAUSTION_TOP,
+        bars_in_state=100,
+    )
+    is_valid, reason = is_narrative_still_valid(snap_exh, twists=[])
     assert is_valid is False
     assert reason == "TIME_DECAY"
 

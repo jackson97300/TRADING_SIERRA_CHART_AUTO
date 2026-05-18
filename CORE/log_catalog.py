@@ -695,6 +695,17 @@ LOG_CODES = {
     # ScenarioValidator Phase 2 - 2 codes
     "BOT3_SCENARIO_INVALIDATED":      (LogLevel.CRITIQUE,"events",   "Bot3 SCENARIO invalidated : {sym} state={state} reason={reason} bars_in_state={bars_in_state}"),
     "BOT3_SCENARIO_TIME_DECAY":       (LogLevel.ALERTE,  "events",   "Bot3 SCENARIO time decay : {sym} state={state} bars_in_state={bars_in_state} threshold={threshold}"),
+
+    # DirectionResolver Phase 3 - 6 codes
+    "BOT3_RESOLVER_DIRECTION_RESOLVED":     (LogLevel.MAJEUR,  "decisions", "Bot3 RESOLVER direction : {sym} side={side} conf={confidence:.2f} scenario={scenario_id} state={state}"),
+    "BOT3_RESOLVER_NO_TRADE":               (LogLevel.INFO,    "decisions", "Bot3 RESOLVER no_trade : {sym} reason={reason} state={state}"),
+    "BOT3_RESOLVER_PENDING_ENTRY":          (LogLevel.INFO,    "decisions", "Bot3 RESOLVER pending entry : {sym} scenario={scenario_id} pattern={pattern} bars_to_wait={bars_to_wait}"),
+    "BOT3_RESOLVER_CONFIRMATION_OK":        (LogLevel.MAJEUR,  "decisions", "Bot3 RESOLVER confirmation OK : {sym} scenario={scenario_id} side={side} bars_waited={bars_waited}"),
+    "BOT3_RESOLVER_CONFIRMATION_INVALIDATED":(LogLevel.MAJEUR, "decisions", "Bot3 RESOLVER confirmation invalidated : {sym} scenario={scenario_id} reason={reason}"),
+    "BOT3_RESOLVER_CONFIRMATION_TIMEOUT":   (LogLevel.INFO,    "decisions", "Bot3 RESOLVER confirmation timeout : {sym} scenario={scenario_id} max_bars={max_bars}"),
+
+    # ShadowMode Phase 3 - 1 code
+    "BOT3_SHADOW_DIVERGENCE":               (LogLevel.MAJEUR,  "decisions", "Bot3 SHADOW divergence v1 vs v2 : {sym} legacy={legacy_side} narrative={narrative_side} scenario={scenario_id}"),
 }
 
 

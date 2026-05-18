@@ -64,6 +64,17 @@ THROTTLE_TWIST_BARS: int = 3            # Min bars entre 2 fires (volume/diverge
 THROTTLE_BOS_BARS: int = 30             # BOS meme direction (Pruden 1-3 BOS reels/jour)
 THROTTLE_BOS_GLOBAL: int = 10           # BOS ANY direction (anti chop ping-pong, R8 fix)
 TICK_THRESHOLD_BOS: float = 2.0         # close>swing+2*tick = acceptance Dalton
+# R1 fix : acceptance multi-bar (Dalton MOM Ch.7 + ICT displacement+follow-through).
+# BOS confirme apres N bars maintenu au-dessus/dessous swing. Pas fire instant.
+BOS_ACCEPTANCE_BARS_REQUIRED: int = 2   # 2 bars consecutifs maintien acceptance
+# R6 fix : throttle CHoCH (Change of Character) plus court que BOS continuation.
+# Pattern ICT : BOS dans trend + bullish HH count fort = continuation legitimate.
+# CHoCH dans trend oppose = signal critique, throttle 5 bars uniquement.
+THROTTLE_CHOCH_BARS: int = 5
+CHOCH_TREND_THRESHOLD: int = 5          # hh_count_60 ou ll_count_60 >= 5 = trend etabli
+# R7 fix : CAPITULATION Pruden "Three Pushes" canon - peut avoir retracements.
+# Window de 5 bars contenant >= 3 climax bars (pas strictement consecutifs).
+CAPITULATION_WINDOW_BARS: int = 5
 # R3 fix : severity STRUCTURE_BREAK normalisee en ticks (cross-symbol invariant)
 # 10 ticks = severity 1.0, 3 ticks = severity 0.3 (~ seuil invalidation)
 SEVERITY_BOS_TICKS_DIVISOR: float = 10.0
@@ -104,8 +115,10 @@ class PlotTwistDetectorsState:
     symbol: str = ""
     schema_version: str = PLOT_TWIST_SCHEMA_VERSION
     bars_history: deque = field(default_factory=lambda: deque(maxlen=BARS_HISTORY_MAXLEN))
+    # R7 fix : maxlen aligne sur WINDOW (5) au lieu de REQUIRED (3) pour permettre
+    # tracking climax bars dans une fenetre Pruden "Three Pushes" avec retracements.
     climax_buffer: deque = field(
-        default_factory=lambda: deque(maxlen=CAPITULATION_BARS_REQUIRED)
+        default_factory=lambda: deque(maxlen=CAPITULATION_WINDOW_BARS)
     )
     last_twist_bar_idx: dict[str, int] = field(default_factory=dict)
     bar_idx_current: int = 0
@@ -115,6 +128,13 @@ class PlotTwistDetectorsState:
     last_BOS_bar_idx: int = -1
     last_BOS_bullish_bar_idx: int = -1
     last_BOS_bearish_bar_idx: int = -1
+    # R1 fix : pending BOS state machine (acceptance multi-bar Dalton/ICT)
+    # When close casse swing : on enregistre pending. Si bar suivante CONFIRME
+    # (close still beyond swing + N bars), fire. Sinon abort.
+    bos_pending_dir: int = 0                 # 0 si pas pending, +1 / -1 sinon
+    bos_pending_swing_ref: float = 0.0       # swing au moment du pending
+    bos_pending_start_bar_idx: int = -1      # bar_idx initial du pending
+    bos_pending_bars_confirmed: int = 0      # nb bars consecutives validees
     engine_states: dict[str, Any] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
@@ -181,22 +201,24 @@ def detect_structure_break(
     bar: dict,
     swing_state: Any,
     tick_size: float | None = None,
+    story_trackers: dict[str, Any] | None = None,
     log_fn: Callable[..., None] | None = None,
 ) -> PlotTwist | None:
-    """ICT BOS/CHoCH : close casse swing avec confirmation.
+    """ICT BOS/CHoCH : close casse swing avec acceptance multi-bar.
 
-    BOS bullish : close > last_swing_high + 2*tick + vol_z>0 (acceptance Dalton).
-    BOS bearish : close < last_swing_low - 2*tick + vol_z>0.
+    FIX R1 (Dalton MOM Ch.7 + ICT canonical) : acceptance multi-bar OBLIGATOIRE.
+    Etape 1 : close > swing + 2*tick → enregistre `bos_pending_*`.
+    Etape 2 : N bars consecutives close > swing (=BOS_ACCEPTANCE_BARS_REQUIRED)
+              → fire PlotTwist. Sinon abort pending si close revient.
+    Anti ICT liquidity sweep trap (algo run stops + wick reverse instant).
 
-    FIX R3bis (.claude/rules/tick-size-policy.md) : tick_size MANDATORY (no default).
-    Si None : tente get_tick_size(state.symbol). Si echec : raise ValueError loud.
+    FIX R6 (ICT CHoCH discrimination) : CHoCH = cassure dir CONTRAIRE au trend
+    etabli (hh_count_60 / ll_count_60 fort). Throttle court 5 bars sur CHoCH
+    (signal critique reversal). BOS continuation = throttle long 30 bars.
 
-    FIX R3 : severity normalisee en ticks (cross-symbol invariant) :
-        severity = min(1.0, (abs(close - swing) / tick_size) / SEVERITY_BOS_TICKS_DIVISOR)
-        10 ticks de cassure = severity 1.0, 3 ticks = severity 0.3 (~ seuil invalid)
-
-    FIX R8 : trackers BOS bullish/bearish separes + throttle GLOBAL ALL_BOS=10 bars
-        (anti chop ping-pong direction switch rapide).
+    FIX R3 (cross-symbol invariant) : severity en ticks normalisee.
+    FIX R3bis (.claude/rules/tick-size-policy.md) : tick_size MANDATORY.
+    FIX R8 : trackers BOS bullish/bearish separes + throttle GLOBAL 10 bars.
     """
     # Fix R3bis : resolve tick_size si None
     if tick_size is None:
@@ -217,7 +239,68 @@ def detect_structure_break(
     swing_high_valid = swing_high is not None and swing_high > 0.0
     swing_low_valid = swing_low is not None and swing_low > 0.0
 
-    # Fix R8 : throttle global ALL_BOS (anti chop). Si N'IMPORTE QUEL BOS fire
+    # R1 fix : si pending BOS deja enregistre, check si on confirme/abort
+    if state.bos_pending_dir != 0:
+        pending_swing = state.bos_pending_swing_ref
+        pending_dir = state.bos_pending_dir
+        # Maintien acceptance ?
+        if pending_dir == +1 and close > pending_swing + TICK_THRESHOLD_BOS * tick_size:
+            state.bos_pending_bars_confirmed += 1
+        elif pending_dir == -1 and close < pending_swing - TICK_THRESHOLD_BOS * tick_size:
+            state.bos_pending_bars_confirmed += 1
+        else:
+            # Retracement intra-pending = abort (faux BOS / sweep trap ICT)
+            state.bos_pending_dir = 0
+            state.bos_pending_bars_confirmed = 0
+            state.bos_pending_swing_ref = 0.0
+            state.bos_pending_start_bar_idx = -1
+            # Tomber sur detection nouvelle ci-dessous
+
+        # Acceptance confirmee ? Fire.
+        if state.bos_pending_dir != 0 \
+                and state.bos_pending_bars_confirmed >= BOS_ACCEPTANCE_BARS_REQUIRED:
+            confirmed_dir = state.bos_pending_dir
+            confirmed_swing = state.bos_pending_swing_ref
+            # Reset pending state
+            state.bos_pending_dir = 0
+            state.bos_pending_bars_confirmed = 0
+            state.bos_pending_swing_ref = 0.0
+            state.bos_pending_start_bar_idx = -1
+            # Update trackers + emit
+            if confirmed_dir == +1:
+                state.last_BOS_bullish_bar_idx = state.bar_idx_current
+            else:
+                state.last_BOS_bearish_bar_idx = state.bar_idx_current
+            state.last_BOS_dir = confirmed_dir
+            state.last_BOS_bar_idx = state.bar_idx_current
+            state.last_twist_bar_idx["STRUCTURE_BREAK"] = state.bar_idx_current
+
+            ticks_break = abs(close - confirmed_swing) / tick_size
+            severity = min(1.0, ticks_break / SEVERITY_BOS_TICKS_DIVISOR)
+            emit(
+                "BOT3_PLOT_TWIST_STRUCTURE_BREAK",
+                log_fn=log_fn, sym=state.symbol, direction=confirmed_dir,
+                close=close, swing_ref=confirmed_swing,
+                bar_ts=str(bar.get("ts_event_iso", "")),
+            )
+            return PlotTwist(
+                twist_type="STRUCTURE_BREAK",
+                direction=confirmed_dir,
+                severity=severity,
+                bar_ts=str(bar.get("ts_event_iso", "")),
+                bar_idx=state.bar_idx_current,
+                symbol=state.symbol,
+                triggering_features={
+                    "close": close, "swing": confirmed_swing, "vol_z": vol_z,
+                    "ticks_break": ticks_break,
+                    "bars_acceptance": state.bos_pending_bars_confirmed,
+                },
+            )
+        elif state.bos_pending_dir != 0:
+            # Pending toujours actif, attente confirmation. Pas de fire.
+            return None
+
+    # R8 fix : throttle global ALL_BOS (anti chop). Si N'IMPORTE QUEL BOS fire
     # < THROTTLE_BOS_GLOBAL bars ago, on bloque tout (meme direction inverse).
     last_any_bos_idx = max(state.last_BOS_bullish_bar_idx,
                            state.last_BOS_bearish_bar_idx)
@@ -226,83 +309,43 @@ def detect_structure_break(
     ) < THROTTLE_BOS_GLOBAL:
         return None
 
-    # BOS bullish
+    # R6 fix : CHoCH discrimination via story_trackers.
+    # Trend up etabli (hh_count_60 >= 5) + BOS bearish = CHoCH = throttle court.
+    hh_60 = int(story_trackers.get("hh_count_60", 0)) if story_trackers else 0
+    ll_60 = int(story_trackers.get("ll_count_60", 0)) if story_trackers else 0
+
+    # BOS bullish - detection initiale (enregistrement pending)
     if (swing_high_valid
             and close > swing_high + TICK_THRESHOLD_BOS * tick_size):
-        # Anti double-fire meme direction (R8 tracker bullish-specifique)
+        # R6 : CHoCH = BOS bullish dans trend DOWN etabli
+        is_choch = ll_60 >= CHOCH_TREND_THRESHOLD
+        throttle = THROTTLE_CHOCH_BARS if is_choch else THROTTLE_BOS_BARS
         if state.last_BOS_bullish_bar_idx >= 0 and (
             state.bar_idx_current - state.last_BOS_bullish_bar_idx
-        ) < THROTTLE_BOS_BARS:
+        ) < throttle:
             return None
-        state.last_BOS_bullish_bar_idx = state.bar_idx_current
-        # Compat legacy fields (pickle deprec)
-        state.last_BOS_dir = +1
-        state.last_BOS_bar_idx = state.bar_idx_current
-        state.last_twist_bar_idx["STRUCTURE_BREAK"] = state.bar_idx_current
+        # R1 : enregistre pending, attendre acceptance
+        state.bos_pending_dir = +1
+        state.bos_pending_swing_ref = swing_high
+        state.bos_pending_start_bar_idx = state.bar_idx_current
+        state.bos_pending_bars_confirmed = 1
+        return None
 
-        # Fix R3 : severity en ticks (cross-symbol invariant)
-        ticks_break = abs(close - swing_high) / tick_size
-        severity = min(1.0, ticks_break / SEVERITY_BOS_TICKS_DIVISOR)
-
-        emit(
-            "BOT3_PLOT_TWIST_STRUCTURE_BREAK",
-            log_fn=log_fn,
-            sym=state.symbol,
-            direction=+1,
-            close=close,
-            swing_ref=swing_high,
-            bar_ts=str(bar.get("ts_event_iso", "")),
-        )
-        return PlotTwist(
-            twist_type="STRUCTURE_BREAK",
-            direction=+1,
-            severity=severity,
-            bar_ts=str(bar.get("ts_event_iso", "")),
-            bar_idx=state.bar_idx_current,
-            symbol=state.symbol,
-            triggering_features={
-                "close": close, "swing_high": swing_high, "vol_z": vol_z,
-                "ticks_break": ticks_break,
-            },
-        )
-
-    # BOS bearish
+    # BOS bearish - detection initiale
     if (swing_low_valid
             and close < swing_low - TICK_THRESHOLD_BOS * tick_size):
-        # Anti double-fire meme direction (R8 tracker bearish-specifique)
+        # R6 : CHoCH = BOS bearish dans trend UP etabli
+        is_choch = hh_60 >= CHOCH_TREND_THRESHOLD
+        throttle = THROTTLE_CHOCH_BARS if is_choch else THROTTLE_BOS_BARS
         if state.last_BOS_bearish_bar_idx >= 0 and (
             state.bar_idx_current - state.last_BOS_bearish_bar_idx
-        ) < THROTTLE_BOS_BARS:
+        ) < throttle:
             return None
-        state.last_BOS_bearish_bar_idx = state.bar_idx_current
-        state.last_BOS_dir = -1
-        state.last_BOS_bar_idx = state.bar_idx_current
-        state.last_twist_bar_idx["STRUCTURE_BREAK"] = state.bar_idx_current
-
-        ticks_break = abs(swing_low - close) / tick_size
-        severity = min(1.0, ticks_break / SEVERITY_BOS_TICKS_DIVISOR)
-
-        emit(
-            "BOT3_PLOT_TWIST_STRUCTURE_BREAK",
-            log_fn=log_fn,
-            sym=state.symbol,
-            direction=-1,
-            close=close,
-            swing_ref=swing_low,
-            bar_ts=str(bar.get("ts_event_iso", "")),
-        )
-        return PlotTwist(
-            twist_type="STRUCTURE_BREAK",
-            direction=-1,
-            severity=severity,
-            bar_ts=str(bar.get("ts_event_iso", "")),
-            bar_idx=state.bar_idx_current,
-            symbol=state.symbol,
-            triggering_features={
-                "close": close, "swing_low": swing_low, "vol_z": vol_z,
-                "ticks_break": ticks_break,
-            },
-        )
+        state.bos_pending_dir = -1
+        state.bos_pending_swing_ref = swing_low
+        state.bos_pending_start_bar_idx = state.bar_idx_current
+        state.bos_pending_bars_confirmed = 1
+        return None
 
     return None
 
@@ -482,11 +525,16 @@ def detect_capitulation(
     bar: dict,
     log_fn: Callable[..., None] | None = None,
 ) -> PlotTwist | None:
-    """Pruden Ch.7 capitulation : 3+ bars consecutifs avec vol_z>2.5 ET
-    bar_range > 1.5*atr.
+    """Pruden Ch.7 "Three Pushes" canon : 3+ bars climax dans WINDOW 5 bars.
 
-    Direction = -1 si majorite des bars close<open (selling climax),
-                +1 si majorite close>open (buying climax).
+    FIX R7 (review market-analyst) : avant version exigeait 3 CONSECUTIFS strict.
+    Pruden permet retracements 1-5 bars entre pushes (80% des three-pushes
+    historiques ont retracements intermediaires). Maintenant window-based :
+    si dans les 5 dernieres bars on a >= 3 climax bars, fire.
+
+    Direction Wyckoff canon (R2 aligned) :
+    - majorite close<open = selling climax bars = signal BULLISH (+1)
+    - majorite close>open = buying climax bars = signal BEARISH (-1)
     """
     if _throttled(state, "CAPITULATION"):
         return None
@@ -506,53 +554,56 @@ def detect_capitulation(
         and close is not None and open_ is not None
     )
 
+    # R7 fix : track climax bars dans une fenetre window (vs reset strict).
+    # On utilise toujours climax_buffer pour stocker mais SANS clear sur non-climax.
+    # Au lieu : on filtre par bar_idx_current - bar_idx_in_buffer <= WINDOW.
     if is_climax:
         state.climax_buffer.append({
             "close": close, "open": open_, "vol_z": vol_z,
             "bar_idx": state.bar_idx_current,
         })
+
+    # Filter buffer : garder uniquement bars dans la window (5 dernieres)
+    window_start = state.bar_idx_current - CAPITULATION_WINDOW_BARS + 1
+    # rebuild deque avec items dans window
+    in_window = [b for b in state.climax_buffer if b["bar_idx"] >= window_start]
+    # On NE peut pas modifier deque size (maxlen=3), donc tracking via copie locale
+    n_climax_in_window = len(in_window)
+
+    if n_climax_in_window < CAPITULATION_BARS_REQUIRED:
+        return None
+
+    # Direction Wyckoff canon (R2 aligne) : INVERSE de bar majorite
+    downs = sum(1 for b in in_window if b["close"] < b["open"])
+    ups = sum(1 for b in in_window if b["close"] > b["open"])
+    # Selling climax = bars majoritairement close<open = signal BULLISH
+    # Buying climax = bars majoritairement close>open = signal BEARISH
+    if downs > ups:
+        direction = +1  # selling climax → absorbers entrent → bullish
+    elif ups > downs:
+        direction = -1  # buying climax → absorbers vendent → bearish
     else:
-        # Bar non climax : reset buffer (capitulation = consecutive bars)
-        state.climax_buffer.clear()
-        return None
-
-    # Check si on a CAPITULATION_BARS_REQUIRED bars consecutifs
-    if len(state.climax_buffer) < CAPITULATION_BARS_REQUIRED:
-        return None
-
-    # Verifier consecutifs (bar_idx successifs)
-    indices = [b["bar_idx"] for b in state.climax_buffer]
-    if not all(indices[i] == indices[i - 1] + 1 for i in range(1, len(indices))):
-        # Pas consecutifs : reset partiel garde le dernier
-        last_bar = state.climax_buffer[-1]
-        state.climax_buffer.clear()
-        state.climax_buffer.append(last_bar)
-        return None
-
-    # Determiner direction
-    downs = sum(1 for b in state.climax_buffer if b["close"] < b["open"])
-    ups = sum(1 for b in state.climax_buffer if b["close"] > b["open"])
-    direction = -1 if downs > ups else (+1 if ups > downs else 0)
+        direction = 0
 
     state.last_twist_bar_idx["CAPITULATION"] = state.bar_idx_current
-    n_climax = len(state.climax_buffer)
     emit(
         "BOT3_PLOT_TWIST_CAPITULATION",
         log_fn=log_fn,
         sym=state.symbol,
         direction=direction,
-        n_climax=n_climax,
+        n_climax=n_climax_in_window,
         bar_ts=str(bar.get("ts_event_iso", "")),
     )
     return PlotTwist(
         twist_type="CAPITULATION",
         direction=direction,
-        severity=min(1.0, n_climax / 5.0),  # 3 bars = 0.6, 5+ = 1.0
+        severity=min(1.0, n_climax_in_window / 5.0),  # 3 bars = 0.6, 5+ = 1.0
         bar_ts=str(bar.get("ts_event_iso", "")),
         bar_idx=state.bar_idx_current,
         symbol=state.symbol,
         triggering_features={
-            "n_climax_bars": n_climax, "downs": downs, "ups": ups,
+            "n_climax_bars": n_climax_in_window, "downs": downs, "ups": ups,
+            "window_bars": CAPITULATION_WINDOW_BARS,
         },
     )
 
@@ -562,12 +613,16 @@ def scan_all(
     bar: dict,
     swing_state: Any,
     tick_size: float | None = None,
+    story_trackers: dict[str, Any] | None = None,
     log_fn: Callable[..., None] | None = None,
 ) -> list[PlotTwist]:
     """Scan tous les 4 detectors sur la bar courante.
 
     FIX R3bis (.claude/rules/tick-size-policy.md) : tick_size MANDATORY.
     Si None : resolve via get_tick_size(state.symbol). Fallback 0.25 + warning.
+
+    FIX R6 (ICT CHoCH discrimination) : story_trackers facultatif. Si fourni,
+    passe a detect_structure_break pour discriminer BOS continuation vs CHoCH.
 
     Append bar dans bars_history pour DIVERGENCE lookback APRES detection
     (anti leak : on compare bar_current vs bars[-DIVERGENCE_PRICE_LOOKBACK]
@@ -582,7 +637,10 @@ def scan_all(
         twists: list[PlotTwist] = []
 
         # Detect AVANT append pour preserver lookback CVD
-        st_break = detect_structure_break(state, bar, swing_state, tick_size, log_fn)
+        st_break = detect_structure_break(
+            state, bar, swing_state, tick_size=tick_size,
+            story_trackers=story_trackers, log_fn=log_fn,
+        )
         if st_break is not None:
             twists.append(st_break)
 
