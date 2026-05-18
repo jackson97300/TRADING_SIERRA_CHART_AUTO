@@ -7,10 +7,22 @@ Si tu (Claude ou agent) attaques un module Bot 3 v2, lire ce fichier EN ENTIER a
 
 ## CONVENTIONS PROJET SOUVERAINES (Jackson 18/05)
 
-### Data source : Databento UNIQUEMENT
-- Bot 3 v2 consomme **exclusivement** Databento via `live_enriched` (~465 cols/bar)
-- **PAS de DMP Sierra Chart** (`bn_*`, `ext_*_px`, `bar_color_*` lus du JSONL DMP raw = INTERDITS)
-- Engines Python streaming autorisés : `edge_zones_streaming`, `phase_b_plus_color_streaming`, `phase_d_dalton_levels`, `footprint_builder_streaming`, etc.
+### Data source : payload V4 enriched canonical Databento (clarification 18/05)
+
+Bot 3 v2 consomme **exclusivement le payload `live_enriched` canonical** (~465 cols/bar) produit par le service `live_enricher` (nssm 24/7).
+
+**Distinction explicite** :
+
+| Source | Status | Exemple |
+|--------|--------|---------|
+| Payload V4 enriched canonical (`databento_paper_trader_v2` → `ctx`) | ✅ AUTORISÉ | `bn_*` re-emits, `dist_edge_*`, `n_color_*`, `regime_*`, etc. (465 cols) |
+| Lecture directe `DATA/{sym}/{date}_{sym}.jsonl` (DMP SC raw bypass) | ❌ INTERDIT | Bypass live_enricher = risk drift |
+| Engines Python streaming (`edge_zones_streaming.py`, etc.) | ✅ AUTORISÉ | Calculs derived in-pipeline |
+| Sierra Chart Studies API directe (ACSIL) | ❌ INTERDIT | C'est le job du DMP SC |
+
+`live_enricher` est la **seule porte d'entrée** pour Bot 3 v2. Les features `bn_*` (Wyckoff VSA, ex absorption) sont autorisées car re-emits dans le payload canonical.
+
+Cf master plan section "Data source unique" pour justification complète.
 
 ### Commits Git réguliers + structure auto-update
 - Commit séparé par étape logique

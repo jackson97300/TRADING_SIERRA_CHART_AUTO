@@ -66,21 +66,119 @@ SOURCES (V4 enriched ~465 cols/bar 1m) + buffer 60 bars history
    ELSE: fallback level_def["side"] heritage  ← KILL SWITCH
 ```
 
+## NSM pattern reference : `LiveEnricherState` (PAS BreakoutRetestStateMachine)
+
+**Correction agent ULTRATHINK 18/05** :
+
+`BreakoutRetestStateMachine` (BRS) a été initialement proposé comme "mirror pattern" pour NSM. **C'est trompeur** car les deux state machines ont des sémantiques fondamentalement différentes :
+
+| Aspect | BreakoutRetestStateMachine (BRS) | NarrativeStateMachine (NSM) |
+|--------|----------------------------------|------------------------------|
+| **Key shape** | `dict[(symbol, level_name), State]` | `dict[symbol, NarrativeStateSnapshot]` |
+| **Instances par symbol** | N en parallèle (1 par niveau touché) | 1 (état narratif global du symbole) |
+| **Lifecycle** | Instance per event (TOUCH → CANCEL/ENTRY → DISPOSE) | Persistent FSM 24/7 |
+| **Events emitted** | Lifecycle terminal (PENDING→ACCEPTED→DONE) | Transitions sémantiques (PRE_OPEN→OPEN_DRIVE_UP) |
+| **Cooldown** | Per (symbol, level), 5 bars | N/A (time decay 4h via ScenarioValidator) |
+| **Persistence** | None native (perte état au restart, dette tech connue) | **OBLIGATOIRE** pickle atomic write + recovery |
+
+**Pattern reference correct** : `CORE/live_enricher_state.py` (`LiveEnricherState`)
+
+```python
+# Cf CORE/live_enricher_state.py — pattern à mirror pour NSM
+@dataclass
+class LiveEnricherState:
+    """1 instance per symbol, pickle persistent, schema_version'ed."""
+    symbol: str
+    current_session_date_trading: Optional[str] = None
+    engine_states: dict[str, Any] = field(default_factory=dict)
+    n_bars_processed: int = 0
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    # ...
+```
+
+Caractéristiques à mirror dans NSM :
+1. **1 instance per symbol** (`dict[symbol, NarrativeStateSnapshot]`)
+2. **Pickle persistent** avec atomic write + recovery
+3. **schema_version'ed** (Pydantic v2 backward compat futur)
+4. **threading.RLock par symbol** (concurrency safety)
+5. **engine_states dict** (extensible sans migration)
+
+BRS reste utile comme **inspiration partielle** pour le pattern Events buffer + `consume_events()`, mais la structure principale = `LiveEnricherState`.
+
+→ Ajout ADR Phase 0.5 : `DOCS/ADR/0001-nsm-pattern-reference-live-enricher-state.md`
+
 ## 9 modules NEW à construire
 
 | # | Module | LOC | Rôle |
 |---|--------|-----|------|
-| 1 | `CORE/bot3_narrative_state_machine.py` | ~600 | NSM stateful, mirror `BreakoutRetestStateMachine` pattern. 17 états (PRE_OPEN, OPEN_DRIVE, CONTINUATION/REVERSAL/RANGE/EXHAUSTION par session, INVALIDATED). Transitions déterministes. Events consommables (state_transition, scenario_invalidated, plot_twist) |
+| 1 | `CORE/bot3_narrative_state_machine.py` | ~600 | NSM stateful **inspired by `LiveEnricherState` pattern** (cf clarification ci-dessous). 17 états (PRE_OPEN, OPEN_DRIVE, CONTINUATION/REVERSAL/RANGE/EXHAUSTION par session, INVALIDATED). Transitions déterministes. Events consommables (state_transition, scenario_invalidated, plot_twist) |
 | 2 | `CORE/bot3_story_trackers.py` | ~350 | Story trackers : hh_count_60, ll_count_60, bars_since_BOS, slope_close_30/60, acceptance_zones, rejection_count_at_level, swing_progression_score |
 | 3 | `CORE/bot3_plot_twist_detectors.py` | ~300 | 4 detectors : STRUCTURE_BREAK (BOS/CHoCH ICT), VOLUME_ANOMALY (z>2 vs prev 5), DIVERGENCE (price/CVD), CAPITULATION (3+climax pattern) |
 | 4 | `CORE/bot3_scenario_validator.py` | ~200 | `is_narrative_still_valid()` : evalue triggers d'invalidation + time decay 4h |
-| 5 | `CORE/bot3_direction_resolver.py` | ~400 | 10-15 scenarios pre-écrits table-driven `(state, level_nature) → {side, confidence, rationale}`. Fallback heritage si NEUTRAL + no scenario match |
+| 5 | `CORE/bot3_direction_resolver.py` | ~500 | 10-15 scenarios pre-écrits table-driven `(state, level_nature) → {side, confidence, rationale, wait_for}`. **`wait_for` field ADAPTATIVE selon narrative_state** : OPEN_DRIVE_DOWN = 1 bar suffisant (momentum visible), RANGE_FLOOR_REBOUND = 2-3 bars (Dalton attente confirmation). Fallback heritage si NEUTRAL + no scenario match. Inclut state machine pending entries (mini-ConfirmationGate intégré) |
 | 6 | `CORE/bot3_shadow_mode.py` | ~150 | Logger parallèle Phase 3 (legacy vs narrative comparison) |
 | 7 | `CORE/bot3_narrative_persistence.py` | ~120 | Pickle atomic write + recovery (fix dette `BreakoutRetestStateMachine` perd son état au restart) |
 | 8 | `CORE/bot3_narrative_logging.py` | ~80 | 8 codes log + extend `_REASON_TO_LOG_CODE` (mp_engine:97-118) |
 | 9 | `CORE/audit_narrative_phase5.py` | ~400 | Backtest comparatif legacy vs narrative + DSR Lopez par scenario_id walk-forward 12 folds |
 
-**Total NEW** : ~2600 LOC code + ~1200 LOC tests
+**Total NEW** : ~2700 LOC code + ~1300 LOC tests
+
+## ConfirmationGate INTÉGRÉ DirectionResolver (correction 18/05)
+
+**Décision Phase 0.5** : `ConfirmationGate` n'est PAS un module séparé. Le mechanism de confirmation 1-3 bars est intégré dans `DirectionResolver` via :
+
+1. **Field `wait_for` adaptive** dans `ResolvedDirection` :
+   ```python
+   @dataclass
+   class ResolvedDirection:
+       side: str                  # "LONG" / "SHORT" / "NO_TRADE"
+       confidence: float
+       rationale: str
+       scenario_id: str
+       wait_for: dict             # NEW : pattern à confirmer + timeout adaptive
+       # ex: {"pattern": "break_below_strike_confirmed", "min_bars": 1, "max_bars": 3,
+       #      "delta_threshold": -20, "finish_threshold": -10}
+   ```
+
+2. **State machine pending entries** dans `DirectionResolver` :
+   ```python
+   class DirectionResolver:
+       def __init__(self):
+           self._pending_entries: dict[tuple[str, str], PendingEntry] = {}
+           # key: (symbol, level_name), state: PendingEntry tracking bars_waited
+
+       def resolve(self, ...) -> ResolvedDirection:
+           # Si pending entry existe : check confirmation pattern
+           # Si confirmé : retourne side + confidence final
+           # Si invalidated (state change mid-wait) : abort + log
+           # Si timeout max_bars : retourne NO_TRADE_CONFIRMATION_TIMEOUT
+           ...
+   ```
+
+3. **Adaptive bars selon narrative_state** :
+   - `OPEN_DRIVE_DOWN/UP` + level touched : `min_bars=1` (momentum visible, action rapide)
+   - `*_CONTINUATION` : `min_bars=1, max_bars=2` (trend confirmé)
+   - `RANGE_FLOOR_REBOUND` / `RANGE_TOP_REJECTION` : `min_bars=2, max_bars=3` (Dalton attente confirmation)
+   - `WYCKOFF_SPRING_LONG` / `UPTHRUST_SHORT` : `min_bars=2, max_bars=3` (Wyckoff spring confirmé via recouvrement)
+   - `BREAKDOWN_CONTINUATION` : `min_bars=1, max_bars=2` (acceptance break)
+
+4. **Pattern validation** :
+   - `break_below_strike_confirmed` : `close < strike ET bar suivante close < strike` (acceptance Dalton)
+   - `rejection_with_volume` : `lower_wick > 30% bar_range ET delta_pct > +0.20 ET vol_zscore_20 > 0.5`
+   - `spring_recovery` : `low < swing_low ET close > swing_low + 2 ticks` (Wyckoff Ch C)
+
+5. **Logging** :
+   - `BOT3_RESOLVER_PENDING_ENTRY` (INFO) : entry en attente confirmation
+   - `BOT3_RESOLVER_CONFIRMATION_OK` (MAJEUR) : pattern confirmé, fire trade
+   - `BOT3_RESOLVER_CONFIRMATION_INVALIDATED` (MAJEUR) : state change mid-wait → abort
+   - `BOT3_RESOLVER_CONFIRMATION_TIMEOUT` (INFO) : max_bars sans confirmation → NO_TRADE
+   - JSONL `LOGS/bot3_v2/resolver_pending_entries_YYYYMMDD.jsonl` (renomme ex-`gate_pending`)
+
+Justification (cf agent ULTRATHINK + reco Jackson) :
+- **Lopez AFML Ch 3 Meta-labeling** : primary (DirectionResolver) + meta (confirmation logic) — implémenté en un module compact évite over-engineering
+- **Mark Douglas Trading in the Zone 5 truths #4** : edge = probabilité, pas certitude → fenêtre validation 1-3 bars (anti-projection bias)
+- **Dalton "Mind over Markets" Ch 7 p.84-92** : Open Test Drive requires 30-60 min validation = bars adaptives selon état
+- Pas de module séparé = -250 LOC + simplicité testing + ablation possible Phase 5 (toggle `BOT3_DIRECTION_RESOLVER_CONFIRMATION_ENABLED`)
 
 ## 5 modules REFACTOR existants (chirurgical, kill switch obligatoire)
 
@@ -243,13 +341,33 @@ Template brief : `DOCS/BOT3V2_AGENT_BRIEF_TEMPLATE.md`.
 
 ## Conventions projet (souveraines Jackson 18/05)
 
-### Data source unique : Databento UNIQUEMENT
-- Bot 3 v2 consomme **EXCLUSIVEMENT** les données Databento via le payload `live_enriched` (~465 cols/bar)
-- **PAS de DMP Sierra Chart** comme source pour Bot 3 v2 (réservé Bot 1 / Bot 2 V6 fallback)
-- Cohérence philosophique : Bot 3 v2 = "DMP DB" pure (Databento Python streaming)
-- Datasets test : `DATA/DATASETS/V4/*.parquet` (Databento batch) + `DATA/live_enriched/{sym}/*.jsonl` (Databento live)
-- **Toute feature qui dépend du DMP SC est interdite** dans Bot 3 v2 (`bn_*`, `ext_*_px`, `bar_color_*` lus depuis JSONL DMP raw NQ/ES = INTERDITS)
-- Seuls les engines Python streaming Databento sont autorisés (`edge_zones_streaming`, `phase_b_plus_color_streaming`, `phase_d_dalton_levels`, etc.)
+### Data source unique : payload V4 enriched canonical Databento
+
+**CLARIFICATION 18/05 (correction agent ULTRATHINK)** :
+
+Bot 3 v2 consomme **exclusivement le payload `live_enriched` canonical** (~465 cols/bar) produit par `live_enricher` (service nssm 24/7) qui ingère :
+- **Databento Python streaming** (source primaire bars OHLCV + trades + footprint)
+- **Engines Python derived** (`edge_zones_streaming`, `phase_b_plus_color_streaming`, `phase_d_dalton_levels`, `value_area_running`, etc.)
+- **Features `bn_*` re-emits via live_enricher** : ces features étaient initialement extraites du DMP SC raw mais sont **propagées dans le payload V4 enriched canonical** par `live_enricher`. Elles sont donc des "Python streaming features canonicalisées", autorisées dans Bot 3 v2.
+
+**Distinction explicite** :
+
+| Source data | Status Bot 3 v2 | Exemple |
+|-------------|-----------------|---------|
+| `payload V4 enriched canonical` (lecture via `databento_paper_trader_v2` → ctx) | ✅ AUTORISÉ | `bn_absorb_bid_at_level`, `bn_color_up_2`, `dist_edge_buy_nearest_pct`, etc. (toutes les 465 cols) |
+| Lecture directe `DATA/{sym}/{date}_{sym}.jsonl` (DMP SC raw bypass) | ❌ INTERDIT | `ext_color_up_px`, `dist_ext_edge_buy` (lus directement depuis JSONL DMP raw) |
+| Engines Python streaming (`edge_zones_streaming.py`, etc.) | ✅ AUTORISÉ | Stacks imbalance via `ExtensionLineBuffer` Python |
+| Sierra Chart Studies API directe (ACSIL) | ❌ INTERDIT | C'est le job du DMP SC, pas Bot 3 v2 |
+
+**Justification philosophique** :
+- Bot 3 v2 = "consommateur du payload canonical" (single source of truth via `live_enricher`)
+- Le payload canonical contient des features dont l'origine est Sierra Chart MAIS qui ont été **re-emits + validées** dans le pipeline canonical
+- Une lecture directe `DATA/{sym}.jsonl` contournerait le pipeline → interdit (risk drift)
+- `live_enricher` reste la **seule porte d'entrée** pour Bot 3 v2
+
+**Datasets test** :
+- `DATA/DATASETS/V4/*.parquet` (Databento batch enriched canonical)
+- `DATA/live_enriched/{sym}/*.jsonl` (Databento live enriched canonical)
 
 ### Commits Git réguliers
 À chaque livraison incrémentale (module / phase / fix) :
@@ -322,11 +440,20 @@ C'est non-négociable : pas de modif sans update structure.
 
 ## État d'avancement (à jour à chaque session)
 
-**Dernière mise à jour** : 2026-05-18 (session initiale, conventions ajoutées)
+**Dernière mise à jour** : 2026-05-18 (Phase 0.5 livrée, agent ULTRATHINK NOGO résolu)
 
-- **Phase 0** : ✅ Spec finalisée + docs persistantes créées + conventions Databento/Git/headers/structure
-- **Phase 1** : ⬜ À démarrer
+- **Phase 0** : ✅ Spec finalisée + docs persistantes créées + conventions
+- **Phase 0.5** : ✅ Convention Databento clarifiée + NSM pattern ref LiveEnricherState + ConfirmationGate intégré Resolver + ADR 0001-0002 + Baseline Bot 3 v1 11j (WR 44%, LONG 80%)
+- **Phase 1** : 🟡 Démarrage 18/05 — Foundations NSM + StoryTrackers + pyproject.toml + pre-commit + CI
 - **Phase 2-7** : ⬜ Pending
+
+## Justification mentor — pourquoi ce chantier maintenant
+
+Jackson 18/05 : "En faisant ça on prévue, c'est remettre sur le droit chemin en appliquant les bonnes pratiques du trading."
+
+Le Bot 3 v1 ne pourra pas être pire que sa baseline actuelle (WR 44%, LONG biais 80%, 46% timeouts). La refonte v2 applique les principes pros canoniques (Dalton/Steidlmayer/Wyckoff/Douglas/Lopez/ICT/Bookmap) que Jackson utilise déjà en manuel. C'est remettre Bot 3 sur le chemin de la bonne pratique trading.
+
+Phase 1 = TRACKING ONLY = zéro impact production Bot 3 v1 actif. Démarrage immédiat safe.
 
 ## Liens
 

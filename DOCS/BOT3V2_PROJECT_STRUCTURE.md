@@ -4,7 +4,7 @@
 
 **Convention** : pas de modif fichier Bot 3 v2 sans update ce tracker. Non-négociable.
 
-**Dernière mise à jour** : 2026-05-18 (Phase 0 finalisée)
+**Dernière mise à jour** : 2026-05-18 (Phase 0.5 finalisée — agent ULTRATHINK NOGO résolu, baseline 11j Bot 3 v1)
 
 ---
 
@@ -88,6 +88,24 @@ D:\TRADING_SIERRA_CHART_AUTO\
 ---
 
 ## Status tracker par phase
+
+### Phase 0.5 — Pro Standard Foundation ✅ GO (18/05)
+
+| Fichier | Status | Date | Commit | Review |
+|---------|--------|------|--------|--------|
+| DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md (v2 conventions clarifiées) | 🟢 GO | 2026-05-18 | (next) | agent Plan ULTRATHINK |
+| DOCS/BOT3V2_KNOWLEDGE_BASE.md (v2 Databento canonical) | 🟢 GO | 2026-05-18 | (next) | - |
+| DOCS/ADR/0001-dsr-statistical-design.md | 🟢 GO | 2026-05-18 | (next) | ml-trainer pending Phase 5 |
+| DOCS/ADR/0002-nsm-pattern-reference-live-enricher-state.md | 🟢 GO | 2026-05-18 | (next) | market-analyst pending Phase 1 |
+| DOCS/BOT3_V1_BASELINE_11D_20260518.md | 🟢 GO | 2026-05-18 | (next) | baseline empirique |
+
+**Findings clés Phase 0.5** :
+- Convention "Databento" reformulée : payload V4 enriched canonical AUTORISÉ (inclut `bn_*` re-emits), lecture directe DMP raw INTERDITE
+- NSM pattern reference = `LiveEnricherState` (NOT BRS) — différences shape clé + lifecycle documentées
+- ConfirmationGate INTÉGRÉ DirectionResolver via `wait_for` field adaptive (pas module séparé) — économie 250 LOC
+- DSR Phase 5 design : 5-7 scenarios canonical + 12 mois data + Bonferroni + sample weights Lopez Ch 4
+- Baseline Bot 3 v1 réelle 11j : WR 44% (vs 13% sample biaisé 2j), LONG 80% (vs 93% biaisé), 46% timeouts
+- Cibles Phase 5 GO révisées : WR v2 ≥54% (10pp gain), SHORT ratio ≥35%, timeouts ≤30%
 
 ### Phase 0 — Spec & Docs persistance ✅ GO
 
