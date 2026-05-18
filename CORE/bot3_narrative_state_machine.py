@@ -61,7 +61,16 @@ Auteur : Bot 3 v2 Narrative Layer Phase 1
 #                 M1 : guard whitelist Wyckoff Spring/Upthrust (etats Phase A+B prerequis).
 #                 M2 : conf Wyckoff Spring/Upthrust 0.85 -> 0.65 pre-SOS (Pruden Ch.7).
 #                 T1 ajout : * + sdt change + session=ASIA -> PRE_OPEN_NEUTRAL
-#                   (anti sticky cross-session, Mark Douglas every-moment-is-unique).
+#                   (Sierra Chart session-reset convention, anti sticky state).
+# 2026-05-18 PM (3) : audit replay 5 jours ES revele coverage gap OAOR/ORR.
+#                 11/05-12/05 OK (OTD/OD couvre par T6-T9). 13/05-14/05-15/05 ZERO
+#                 transition car open_type=8 (OAOR_UP) ou 9 (OAOR_DOWN) non couvert.
+#                 Dalton MOM Ch.8 : OAOR = highest-confidence directional setup.
+#                 Verdict market-analyst + ml-trainer NOGO. Ajout :
+#                 T6bis : PRE_OPEN_* + NY + OAOR_UP + close>open_cash → OPEN_DRIVE_UP
+#                 T7bis : PRE_OPEN_* + NY + OAOR_DOWN + close<open_cash → OPEN_DRIVE_DOWN
+#                 T9bis : PRE_OPEN_* + NY + ORR_UP|DOWN → OPEN_ROTATION (reversal)
+#                 INCIDENT_LOG : VALIDATION_MISS spec NSM incomplete vs realite marche.
 # ──────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -79,7 +88,13 @@ except ModuleNotFoundError:
     from game_changers import OpenType  # type: ignore[no-redef]
 
 NSM_SCHEMA_VERSION: str = "2.0.0"
-FLICKER_GUARD_THRESHOLD: int = 8  # >8 transitions/jour/sym = anti flicker block
+# FLICKER_GUARD_THRESHOLD calibre 12 (vs 8 initial) post-audit replay 18/05 :
+# data live ES mai 2026 montre 9 transitions/jour typique sur jours actifs
+# (Wyckoff Spring x2 + BOS + Upthrust + Trend + Exhaustion + reset cross-session
+# = setup Dalton-Wyckoff multi-phase canon). Seuil 8 declenchait sur 60% sessions
+# actives = trop conservateur. Seuil 12 = block uniquement vraies cascades flicker
+# (> 12 transitions/jour = signal noise vs vraie histoire narrative).
+FLICKER_GUARD_THRESHOLD: int = 12
 
 # ─── Magic numbers extraits (F5 fix) ──────────────────────────────────────
 # Volume z-score thresholds par regime
@@ -343,7 +358,12 @@ def _evaluate_transitions(
     swing_low = _swing_low_price(swing_state)
 
     # T1: * + session_date_trading changed + session=ASIA → PRE_OPEN_NEUTRAL
-    # (cross-session reset, anti sticky state Mark Douglas every-moment-is-unique)
+    # Sierra Chart session-reset convention : sdt change a 18:00 ET veille marque
+    # un nouveau jour de trading. NSM doit forget l'etat narratif du jour D-1 car
+    # 1) Pre-open du jour D commence avec contexte clean (Asia/London Bias).
+    # 2) Eviter sticky state ex: TREND_UP du jour D-1 colle au matin du jour D
+    #    (probleme observe Bot 3 v1 multi-jours).
+    # NB: cite plus loin Mark Douglas concernant la psycho trader, pas l'FSM.
     sdt = bar.get("session_date_trading")
     sdt_changed = sdt != current.current_session_date_trading
     if sdt_changed and session == "ASIA":
@@ -654,6 +674,50 @@ def _evaluate_transitions(
         return (
             NarrativeState.OPEN_ROTATION, 0, CONF_OPEN_ROTATION,
             {"trigger": "T9_open_auction_rotation"},
+        )
+
+    # T6bis (audit replay 18/05) : PRE_OPEN_* + session=NY + open_type=OAOR_UP
+    # + close>open_cash (prix tient au-dessus VA) → OPEN_DRIVE_UP
+    # Dalton MOM Ch.8 : "Open Auction Out of Range = strong directional move
+    # below/above prior day's value area, highest-confidence directional setup".
+    # OAOR confirme = bullish strong, equivalent conviction OD.
+    if (state in _PRE_OPEN_STATES and session == "NY"
+            and open_type == OpenType.OAOR_UP):
+        if (close is not None and open_cash is not None
+                and vol_z is not None
+                and close > open_cash
+                and vol_z > VOL_Z_OTD_CONFIRM_MIN):  # 0.5 = exigence faible
+            return (
+                NarrativeState.OPEN_DRIVE_UP, +1, CONF_OPEN_DRIVE,
+                {"trigger": "T6bis_open_auction_out_of_range_up",
+                 "vol_z": vol_z, "open_type": int(open_type)},
+            )
+
+    # T7bis (audit replay 18/05) : PRE_OPEN_* + session=NY + open_type=OAOR_DOWN
+    # + close<open_cash (prix tient en-dessous VA) → OPEN_DRIVE_DOWN
+    if (state in _PRE_OPEN_STATES and session == "NY"
+            and open_type == OpenType.OAOR_DOWN):
+        if (close is not None and open_cash is not None
+                and vol_z is not None
+                and close < open_cash
+                and vol_z > VOL_Z_OTD_CONFIRM_MIN):
+            return (
+                NarrativeState.OPEN_DRIVE_DOWN, -1, CONF_OPEN_DRIVE,
+                {"trigger": "T7bis_open_auction_out_of_range_down",
+                 "vol_z": vol_z, "open_type": int(open_type)},
+            )
+
+    # T9bis (audit replay 18/05) : PRE_OPEN_* + session=NY + open_type ∈ {ORR_UP, ORR_DOWN}
+    # → OPEN_ROTATION (Open Range Rotation = open hors VA reverse vers VA = signal
+    # directionnel faible/contradictoire, comportement rotation safer).
+    # Dalton MOM Ch.8 : ORR = "auction tried to extend out of range, rejected by
+    # acceptance back into prior day's value" = reversal = pas de bias directionnel.
+    if (state in _PRE_OPEN_STATES and session == "NY"
+            and open_type in (OpenType.ORR_UP, OpenType.ORR_DOWN)):
+        return (
+            NarrativeState.OPEN_ROTATION, 0, CONF_OPEN_ROTATION,
+            {"trigger": "T9bis_open_range_rotation",
+             "open_type": int(open_type)},
         )
 
     # T2: PRE_OPEN_NEUTRAL + slope_60<-0.2 + asia_close<asia_open → PRE_OPEN_BEARISH

@@ -411,14 +411,16 @@ def test_T28_exhaustion_top_from_trend_up():
 # ════════════════════════════════════════════════════════════════════════════
 
 
-def test_flicker_guard_blocks_after_8_transitions():
-    """>8 transitions/jour/sym = block + log BOT3_NSM_FLICKER_GUARD."""
+def test_flicker_guard_blocks_after_threshold_transitions():
+    """>FLICKER_GUARD_THRESHOLD (=12 post-calibration 18/05) transitions/jour/sym
+    = block + log BOT3_NSM_FLICKER_GUARD."""
+    from CORE.bot3_narrative_state_machine import FLICKER_GUARD_THRESHOLD
     nsm = NarrativeStateMachine()
     swing = StubSwingState()
     nsm.transition("ES", _make_bar(close=100.0), _make_ctx(session="ASIA"),
                    regime=None, story_trackers={}, swing_state=swing)
-    # Force 9 transitions
-    nsm._states["ES"].n_transitions_today = 9
+    # Force threshold+1 transitions
+    nsm._states["ES"].n_transitions_today = FLICKER_GUARD_THRESHOLD + 1
 
     # Capture les logs emit
     captured: list[tuple[str, dict]] = []
@@ -1221,6 +1223,160 @@ def test_F1_concurrent_transition_and_consume_no_event_loss():
     # Pas de check count exact car consumer peut polluer entre transitions,
     # mais au moins 1 event capture (le bot tourne)
     assert isinstance(captured_events, list)
+
+
+# ─── T6bis/T7bis : OAOR (Open Auction Out of Range) Dalton MOM Ch.8 ──────
+
+
+def test_T6bis_OAOR_UP_to_open_drive_up():
+    """T6bis : PRE_OPEN_* + NY + open_type=OAOR_UP + close>open_cash + vol_z>0.5
+    → OPEN_DRIVE_UP (Dalton highest confidence directional setup).
+
+    Audit post-replay 18/05 : OAOR_UP est dominant 3/5 jours mai 2026.
+    Avant fix : ZERO transition (NSM coince en PRE_OPEN_NEUTRAL).
+    """
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+    nsm.transition("ES", _make_bar(close=100.0), _make_ctx(session="ASIA"),
+                   regime=None, story_trackers={}, swing_state=swing)
+    snap = nsm.transition(
+        "ES",
+        _make_bar(close=112.0, atr=10.0, vol_z=1.5, bar_idx=1),
+        _make_ctx(session="NY", open_type=int(OpenType.OAOR_UP),
+                  open_cash=110.0,  # close>open_cash (tient au-dessus VA)
+                  prev_vah=105.0),
+        regime=None, story_trackers={}, swing_state=swing,
+    )
+    assert snap.state == NarrativeState.OPEN_DRIVE_UP
+    assert snap.bias_dir == +1
+    assert snap.confidence == pytest.approx(CONF_OPEN_DRIVE, abs=0.01)
+
+
+def test_T7bis_OAOR_DOWN_to_open_drive_down():
+    """T7bis : PRE_OPEN_* + NY + open_type=OAOR_DOWN + close<open_cash + vol_z>0.5
+    → OPEN_DRIVE_DOWN."""
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+    nsm.transition("ES", _make_bar(close=100.0), _make_ctx(session="ASIA"),
+                   regime=None, story_trackers={}, swing_state=swing)
+    snap = nsm.transition(
+        "ES",
+        _make_bar(close=88.0, atr=10.0, vol_z=1.5, bar_idx=1),
+        _make_ctx(session="NY", open_type=int(OpenType.OAOR_DOWN),
+                  open_cash=90.0,  # close<open_cash (tient en-dessous VA)
+                  prev_val=95.0),
+        regime=None, story_trackers={}, swing_state=swing,
+    )
+    assert snap.state == NarrativeState.OPEN_DRIVE_DOWN
+    assert snap.bias_dir == -1
+
+
+def test_T6bis_OAOR_UP_blocked_if_close_below_open_cash():
+    """T6bis exige close>open_cash (prix tient au-dessus VA). Sinon = retracement
+    = pas de confirmation OAOR directionnelle = NSM ne fire pas."""
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+    nsm.transition("ES", _make_bar(close=100.0), _make_ctx(session="ASIA"),
+                   regime=None, story_trackers={}, swing_state=swing)
+    snap = nsm.transition(
+        "ES",
+        _make_bar(close=108.0, atr=10.0, vol_z=1.5, bar_idx=1),
+        _make_ctx(session="NY", open_type=int(OpenType.OAOR_UP),
+                  open_cash=110.0),  # close<open_cash = retracement
+        regime=None, story_trackers={}, swing_state=swing,
+    )
+    # No fire : state persiste PRE_OPEN_NEUTRAL
+    assert snap.state == NarrativeState.PRE_OPEN_NEUTRAL
+
+
+# ─── T9bis : ORR (Open Range Rotation) Dalton MOM Ch.8 ───────────────────
+
+
+def test_T9bis_ORR_UP_to_open_rotation():
+    """T9bis : PRE_OPEN_* + NY + open_type=ORR_UP → OPEN_ROTATION.
+
+    ORR_UP : open below VA, reverse au-dessus VAL = rejection du breakdown,
+    auction back into prior day's value = comportement de rotation, pas de
+    bias directionnel fort. Conf modéré 0.6."""
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+    nsm.transition("ES", _make_bar(close=100.0), _make_ctx(session="ASIA"),
+                   regime=None, story_trackers={}, swing_state=swing)
+    snap = nsm.transition(
+        "ES",
+        _make_bar(close=100.0, bar_idx=1),
+        _make_ctx(session="NY", open_type=int(OpenType.ORR_UP)),
+        regime=None, story_trackers={}, swing_state=swing,
+    )
+    assert snap.state == NarrativeState.OPEN_ROTATION
+    assert snap.bias_dir == 0
+
+
+def test_T9bis_ORR_DOWN_to_open_rotation():
+    """T9bis : PRE_OPEN_* + NY + open_type=ORR_DOWN → OPEN_ROTATION (symetrique)."""
+    nsm = NarrativeStateMachine()
+    swing = StubSwingState()
+    nsm.transition("ES", _make_bar(close=100.0), _make_ctx(session="ASIA"),
+                   regime=None, story_trackers={}, swing_state=swing)
+    snap = nsm.transition(
+        "ES",
+        _make_bar(close=100.0, bar_idx=1),
+        _make_ctx(session="NY", open_type=int(OpenType.ORR_DOWN)),
+        regime=None, story_trackers={}, swing_state=swing,
+    )
+    assert snap.state == NarrativeState.OPEN_ROTATION
+
+
+# ─── Regression : tous les OpenType values du parquet mai 2026 sont couverts ──
+
+
+def test_all_observed_open_types_have_transition():
+    """Audit replay 18/05 : 5 valeurs observees sur 5 jours mai 2026
+    (0=UNKNOWN, 2=OD_DOWN, 3=OTD_UP, 8=OAOR_UP, 9=OAOR_DOWN).
+    Verifier que CHAQUE valeur produit soit une transition, soit UNKNOWN=0
+    qui reste neutre par design (pas de classification = pas d'action)."""
+    observed_types = [
+        (OpenType.UNKNOWN, NarrativeState.PRE_OPEN_NEUTRAL, "neutral"),
+        (OpenType.OD_UP, NarrativeState.OPEN_DRIVE_UP, "T6"),
+        (OpenType.OD_DOWN, NarrativeState.OPEN_DRIVE_DOWN, "T7"),
+        (OpenType.OTD_UP, NarrativeState.OPEN_TEST_DRIVE, "T8"),
+        (OpenType.OTD_DOWN, NarrativeState.OPEN_TEST_DRIVE, "T8"),
+        (OpenType.OAIR, NarrativeState.OPEN_ROTATION, "T9"),
+        (OpenType.OAOR_UP, NarrativeState.OPEN_DRIVE_UP, "T6bis"),
+        (OpenType.OAOR_DOWN, NarrativeState.OPEN_DRIVE_DOWN, "T7bis"),
+        (OpenType.ORR_UP, NarrativeState.OPEN_ROTATION, "T9bis"),
+        (OpenType.ORR_DOWN, NarrativeState.OPEN_ROTATION, "T9bis"),
+    ]
+    for ot, expected_state, source in observed_types:
+        nsm = NarrativeStateMachine()
+        swing = StubSwingState()
+        nsm.transition("ES", _make_bar(close=100.0),
+                       _make_ctx(session="ASIA"),
+                       regime=None, story_trackers={}, swing_state=swing)
+        # OAOR_UP requires close>open_cash + vol_z; OAOR_DOWN inverse
+        if ot == OpenType.OAOR_UP:
+            bar = _make_bar(close=112.0, atr=10.0, vol_z=1.5, bar_idx=1)
+            ctx = _make_ctx(session="NY", open_type=int(ot),
+                            open_cash=110.0, prev_vah=105.0)
+        elif ot == OpenType.OAOR_DOWN:
+            bar = _make_bar(close=88.0, atr=10.0, vol_z=1.5, bar_idx=1)
+            ctx = _make_ctx(session="NY", open_type=int(ot),
+                            open_cash=90.0, prev_val=95.0)
+        elif ot in (OpenType.OD_UP,):
+            bar = _make_bar(close=111.0, atr=10.0, vol_z=1.5, bar_idx=1)
+            ctx = _make_ctx(session="NY", open_type=int(ot), open_cash=100.0)
+        elif ot == OpenType.OD_DOWN:
+            bar = _make_bar(close=89.0, atr=10.0, vol_z=1.5, bar_idx=1)
+            ctx = _make_ctx(session="NY", open_type=int(ot), open_cash=100.0)
+        else:
+            bar = _make_bar(close=100.0, bar_idx=1)
+            ctx = _make_ctx(session="NY", open_type=int(ot))
+        snap = nsm.transition("ES", bar, ctx, regime=None,
+                              story_trackers={}, swing_state=swing)
+        assert snap.state == expected_state, (
+            f"OpenType.{ot.name} (source {source}) -> {snap.state.value} "
+            f"(expected {expected_state.value})"
+        )
 
 
 # ─── Coverage : default open_type=0 (UNKNOWN) ne fire aucune T6-T9 ───────

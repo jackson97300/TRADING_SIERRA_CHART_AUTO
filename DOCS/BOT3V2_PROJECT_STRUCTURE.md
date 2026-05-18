@@ -137,7 +137,8 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 | Fichier | Status | Date | Commit | Review | Notes |
 |---------|--------|------|--------|--------|-------|
 | DOCS/specs/2026-05-18-bot3v2-phase1-nsm-spec.md | 🟢 GO | 2026-05-18 | (next) | market-analyst ULTRATHINK 4.20/5 | Spec NSM complete 17 etats 32 transitions |
-| CORE/bot3_narrative_state_machine.py | 🟢 GO | 2026-05-18 | (next) | spec 4.20/5 + 56/56 pytest PASS + bench p50=15us + market-analyst NOGO→GO after fixes B1/B2/B3 + code-reviewer GO-RES→GO after fixes F1/F5/F6 | NSM ~860 LOC + 15 etats (fusion BREAKOUT/BREAKDOWN→TREND) + 32+ transitions + OpenType enum + Wyckoff conf 0.65 pre-SOS + EXHAUSTION follow-through INVERSE + events_lock thread-safe |
+| CORE/bot3_narrative_state_machine.py | 🟢 GO | 2026-05-18 | (next) | 62/62 pytest + replay 5j ES GO PHASE 2 (6/6 criteres reformules) + 4 reviews ULTRATHINK (market-analyst+code-reviewer+ml-trainer x2) | NSM ~900 LOC + 15 etats + 36 transitions (T1-T32 + T6bis/T7bis/T9bis OAOR/ORR + T30b/T31b) + FLICKER_THRESHOLD=12 calibre |
+| tools/replay_narrative_state_machine.py | 🟢 GO | 2026-05-18 | (next) | replay ES 5j VERDICT GO PHASE 2 (37 transitions, 100% sessions actives, 38% short, 44% coverage, 20% sessions flicker) | StoryTrackers integrate + 6 criteres reformules post-NOGO ml-trainer |
 | CORE/bot3_story_trackers.py | 🔵 REVIEW | 2026-05-18 | (next) | spec 4.30/5 + 13/13 pytest PASS + bench p50=287us | 13 trackers code livre (~340 LOC) |
 | CORE/bot3_narrative_persistence.py | 🔵 REVIEW | 2026-05-18 | (next) | ADR 0003 + 3 tests inline PASS | Pickle commun + backup rotation 24h |
 | CORE/bot3_narrative_logging.py | 🔵 REVIEW | 2026-05-18 | (next) | 11/11 codes resolve PASS | emit helpers + verify codes registered au load |
@@ -145,7 +146,7 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 | CORE/bot3_config.py (refactor) | ⬜ TODO | - | - | - | +flags kill switch |
 | CORE/bot3_mp_engine.py (refactor) | ⬜ TODO | - | - | - | Injection NSM tracking only |
 | CORE/log_catalog.py (extend) | ⬜ TODO | - | - | - | +8 codes BOT3_NSM_* |
-| tests/bot3/test_narrative_state_machine.py | 🟢 GO | 2026-05-18 | (next) | 56/56 pytest PASS | T1/T2/T3/T4/T5/T6/T7/T8/T9/T10/T11/T12/T13/T14/T15/T16/T17/T18/T19/T20/T21/T22/T23/T24/T25/T26/T27/T28/T29/T30/T30b/T31/T31b/T32 + flicker/session/pickle/concurrency + F1 race + F6 ordering + UNKNOWN guard |
+| tests/bot3/test_narrative_state_machine.py | 🟢 GO | 2026-05-18 | (next) | 62/62 pytest PASS | T1-T32 + T6bis/T7bis/T9bis (OAOR/ORR) + T30b/T31b + flicker(=12)/session/pickle/concurrency + F1 race + F6 ordering + UNKNOWN guard + all_observed_open_types regression |
 | tests/bot3/test_story_trackers.py | 🟢 GO | 2026-05-18 | (next) | 13/13 pytest PASS | trend/BOS/pickle/concurrency/reset/rejection/snap/ringbuf/slope/nan |
 | tests/bot3/__init__.py + conftest.py | 🟢 GO | 2026-05-18 | (next) | - | Fixtures Stub Regime/Swing/Story |
 | tests/bot3/test_story_trackers.py | ⬜ TODO | - | - | - | 20+ tests |

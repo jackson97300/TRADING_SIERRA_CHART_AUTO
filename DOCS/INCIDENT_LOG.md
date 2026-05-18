@@ -31,6 +31,70 @@
 
 ---
 
+### 2026-05-18 PM (3) - [VALIDATION_MISS] NSM Bot 3 v2 trou couverture OAOR/ORR open_types non testes par replay
+
+**Contexte** : Replay tracking-only NSM ES 5 jours (11-15/05/2026) post-fix Tier 1 reviews. Verdict initial GO (56/56 pytest PASS + bench p99=28us). Replay donne 15 transitions reelles sur 6817 bars, dont 9 sur 11/05 et **ZERO sur 14-15/05**.
+
+**Ce qui a mal tourne** : market-analyst dispatch verdict NOGO sur 73% des jours non couverts : OpenType.OAOR_UP=8, OAOR_DOWN=9, ORR_UP=5, ORR_DOWN=6, UNKNOWN=0 → **aucune transition T6-T9 ne matche**. NSM coince en PRE_OPEN_NEUTRAL toute la session NY pour ces setups. Dalton MOM Ch.8 (Mind Over Markets) : OAOR = "highest confidence directional setup" — ignore par NSM.
+
+ml-trainer cross-check confirme : coverage transitions ~20% (5-7 trigger codes sur 32). Tests pytest 56/56 PASS car ils testent UNIQUEMENT les transitions definies (selection biais). Aucun test sur OAOR/ORR.
+
+**Cause racine** :
+- Spec NSM (DOCS/specs/2026-05-18-bot3v2-phase1-nsm-spec.md) covers OpenType.OD_UP/OD_DOWN/OTD_UP/OTD_DOWN/OAIR mais OMET OAOR/ORR. C'est un OVERSIGHT de la spec, pas du code.
+- Tests TDD ont valide ce que la spec demande, pas ce que la realite demande.
+- Validation = self-referential : test code matches spec, mais spec incomplete vs marche reel.
+
+**Lecon** : avant tests TDD sur un FSM narrative, faire :
+1. Histogramme empirique des INPUTS sur 30 jours data live (open_type distribution)
+2. Verifier que CHAQUE valeur observee a au moins 1 transition matchant
+3. Si gap : completer spec AVANT d'ecrire les tests
+
+**Trigger prevention** :
+- Pour tout FSM consommant une feature categorical (enum) : audit empirique distribution AVANT lock spec
+- "Couverture spec >= 90% des valeurs observees" comme critere bloquant avant pytest
+
+**Reviewed** : market-analyst (NOGO empirique) + ml-trainer (NOGO methodo) 18/05 PM
+
+**Cross-ref** :
+- `LOGS/reviews/REVIEW_BOT3V2_narrative_state_machine_*_replay_20260518.json`
+- `CORE/bot3_narrative_state_machine.py` T6-T9 (coverage gap OAOR/ORR)
+- `CORE/game_changers.py:38-51` OpenType IntEnum
+- Distribution observee 11 sessions mai : 9/11 sessions ont 2 valeurs open_type unique (bug pipeline V4 broadcast partial — cf entry suivante)
+
+---
+
+### 2026-05-18 PM (2) - [PATTERN_11] Pipeline V4 broadcast open_type partial sur session_date_trading
+
+**Contexte** : Audit `DATA/V4_TEMP/ES_mai_v4_freshest.parquet` (mtime 17/05) revele 9/11 sessions ont >1 valeur unique d'open_type. Pipeline V4 cense broadcast une seule valeur par session (cf `CORE/build_dataset_v4_phase_b.py:325` `out_open_type.extend([int(ot)] * n_bars)`).
+
+**Ce qui a mal tourne** : Frontiere de changement systematique a **04:00 UTC = 00:00 ET (minuit ET)** :
+- Bars 22:00 UTC veille → 04:00 UTC jour D : open_type = 0 (UNKNOWN, valeur initiale)
+- Bars 04:00 UTC → 21:00 UTC jour D : open_type = valeur classifiee
+A 04:00 UTC : ib_high=NaN, ib_low=NaN, mais open_type devient non-zero. Implique que `classify_open_type` a recu inputs invalides ou que le broadcast n'est pas atomique.
+
+**Cause racine probable** :
+- Parquet buildé avec une vieille version du code (avant fix 14/05 v2 de `apply_game_changers`) qui groupait par `date_et` au lieu de `session_date_trading` complete
+- OU build incremental qui a ecrase partiellement les bars
+
+**Lecon** : pour features de niveau session (1 valeur/session via broadcast), AUDIT empirique de l'unicite par session apres CHAQUE build :
+```python
+assert df.groupby('session_date_trading')['open_type'].nunique().eq(1).all()
+```
+
+**Trigger prevention** :
+- Ajouter validation `df.groupby(sdt).nunique() == 1` pour features broadcastees dans `quality_validator.py`
+- Documenter que tout build V4 doit etre REGENERE quand fix de `apply_game_changers` change
+
+**Impact sur NSM** : LIMITE — pendant session NY (13:30-20:00 UTC), open_type est correctement broadcaste (toujours >04:00 UTC). Donc T6-T9 voient la bonne valeur. Le bug affecte seulement les bars overnight (Asia/London partial).
+
+**Action** : rebuild parquet ES/NQ mai 2026 avec fix 14/05 v2 du `apply_game_changers` LORS DE LA PROCHAINE Phase pipeline V4.
+
+**Cross-ref** :
+- `CORE/build_dataset_v4_phase_b.py:243-336` `apply_game_changers` (fix 14/05 v2 documente lignes 282-286)
+- `DATA/V4_TEMP/ES_mai_v4_freshest.parquet` (a regenerer)
+
+---
+
 ### 2026-05-18 PM - [PATTERN_11] NSM Bot 3 v2 open_type mapping hardcoded numerique vs IntEnum officielle
 
 **Contexte** : Phase 1 NSM Bot 3 v2 (`CORE/bot3_narrative_state_machine.py`) avait pour but EXPLICITE d'eliminer Pattern 11 V1 (composite hardcoded). Tag bot3v2-phase1-nsm-foundation-20260518, 26/26 pytest PASS, bench p50=13.4us, presente comme GO interne.

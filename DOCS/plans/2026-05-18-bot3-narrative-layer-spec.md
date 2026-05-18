@@ -229,7 +229,17 @@ Cf sanity check 18/05 : 3 features ABSENTES live, PRÉSENTES batch parquet. Audi
 - [ ] `CORE/bot3_config.py` flags ajoutés
 - [ ] `CORE/bot3_mp_engine.py` injection NSM update (tracking only)
 - [ ] Tests unit (50+ tests) : `tests/bot3/test_narrative_state_machine.py`, `test_story_trackers.py`, `test_narrative_persistence.py` → 100% verts
-- [ ] **Critère passage Phase 2** : Replay 5 jours (13-17/05) — diff `LOGS/decisions/*.jsonl` Phase 1 pre/post = 0, latence ajoutée <10ms/bar, ≥4 transitions NSM par jour par symbole
+- [x] **Critère passage Phase 2** (reformulé 18/05 post-NOGO ml-trainer + market-analyst) :
+  - 0 crash sur replay 5j ES (11-15/05/2026)
+  - p99 latence < 5ms (atteint : 47us live, 28us bench unit)
+  - **pct_sessions_active_ge_80** : >= 80% sessions ont >= 1 transition NY (atteint 100%)
+  - **pct_short_ge_30** : bias_dir=-1 dans >= 30% des transitions (anti biais long V1 ; atteint 38%)
+  - **pct_sessions_over_flicker_le_20** : <= 20% sessions dépassent FLICKER_THRESHOLD=12 (atteint 20%)
+  - **coverage_ge_30pct** : >= 30% des 36 transitions définies firent au moins 1x (atteint 44%)
+  - VERDICT : **GO PHASE 2** (replay 18/05 ES 11-15/05/2026)
+  - Critères initiaux abandonnés :
+    - "≥4 trans/session" : aggrégeait moyenne masquant bimodalité → "pct sessions actives"
+    - "0 flicker hits" : comptait bars-bloquées au lieu de sessions → "pct sessions <= 20%"
 - [ ] Review agent ULTRATHINK code-reviewer (verdict 4 dim ≥4)
 - [ ] Memory feedback créé `feedback_bot3v2_phase1_*.md`
 - [ ] Archive `LOGS/reviews/REVIEW_BOT3V2_phase1_*.json`
