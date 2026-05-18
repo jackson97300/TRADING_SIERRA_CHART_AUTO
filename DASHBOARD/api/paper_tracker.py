@@ -224,6 +224,21 @@ def _iter_trades_from_files(since_utc: datetime, pattern: str = "*_trades.jsonl"
                         # Voir DOCS/INCIDENT_LOG.md cat VALIDATION_MISS.
                         if trade.get("invalidated"):
                             continue
+                        # FIX 19/05/2026 (Jackson directive : SUPPRIME ZOMBIES DES DONNER) :
+                        # Skip les trades zombies RECOVERED_TIMEOUT. Quand le service
+                        # paper_trader_v2 redemarre avec une position ouverte cote
+                        # broker sans tracking interne (level/scenario perdus), le
+                        # bot detecte la position via `_bot3_recover_open_positions`
+                        # et la marque level="_RECOVERED_BOOT_" + action="RECOVERED".
+                        # Au timeout 60min, fermeture mark-to-market => PnL aleatoire
+                        # (chance pure, pas un edge). Cf incident Phase 4d deploy 18/05 :
+                        # NQ SHORT +$1968 par chance, mfe=0/mae=0 = preuve absence
+                        # tracking. NE PAS COMPTER dans stats edge analysis.
+                        if (trade.get("level") == "_RECOVERED_BOOT_"
+                                or trade.get("outcome") == "RECOVERED_TIMEOUT"
+                                or trade.get("action") == "RECOVERED"
+                                or trade.get("exit_reason") == "RECOVERED_TIMEOUT"):
+                            continue
                         exit_time_str = trade.get("exit_time", "")
                         try:
                             trade_ts = datetime.fromisoformat(exit_time_str.replace("Z", "+00:00"))

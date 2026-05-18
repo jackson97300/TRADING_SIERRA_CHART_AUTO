@@ -31,6 +31,41 @@
 
 ---
 
+### 2026-05-19 03:30 (8) - [VALIDATION_MISS] Zombie trade RECOVERED_TIMEOUT fausse stats dashboard
+
+**Contexte** : Apres deploy Phase 4d shadow mode (15:16 UTC), restart MIA-DataBento-Paper-V2. Service ancien (PID 122476) killed alors qu'une position NQ SHORT etait ouverte cote broker Sim1 (entry 29294.25). Nouveau service (PID 32844) detecte la position via `_bot3_recover_open_positions` mais SANS tracking interne (level/scenario/entry_ts perdus).
+
+**Ce qui a mal tourne** : trade marque `level="_RECOVERED_BOOT_"` + `action="RECOVERED"` + `mfe=0/mae=0`. Bot ne peut PAS gerer (pas de trailing, pas de SL move). Attend juste timeout 60min. A 19:16:24 UTC, fermeture mark-to-market a 28966.25 = **+$1968 par chance** (marche a bouge favorable). PnL aurait pu etre -$1968 ou pire.
+
+**Impact** : Dashboard affichait stats today PnL +$1364 (incluant +$1968 fake). 30j PnL +$4378 gonfle. **Stats edge analysis biaisees** (chance non-reproductible compte comme edge).
+
+**Cause racine** : 
+1. Protocole restart sans check positions ouvertes prealable
+2. `_bot3_recover_open_positions` cree trade zombie sans flatten immediat
+3. Filtre dashboard `_iter_trades_from_files` n'excluait pas les RECOVERED_TIMEOUT (precedent fix 13/05 ne filtrait que pnl_ticks=None, mais aujourd'hui pnl_ticks=2022 passe au travers)
+
+**Lecon** : 
+1. Tout trade marque `_RECOVERED_BOOT_` / `RECOVERED_TIMEOUT` / `action=RECOVERED` = NON-EDGE = exclu des stats
+2. Pre-restart paper_v2 : verifier 0 positions ouvertes via `list_open_orders_bot3.py` ou DTC query
+3. `_bot3_recover_open_positions` doit flatten immediatement (P0 fix Phase 4d2)
+
+**Trigger prevention** :
+- Avant restart paper_v2 (ou tout service avec positions) : `ssh ... "list_open_positions"` + attendre EOD si positions ouvertes
+- Tout fix recovery : flatten immediat zombie au lieu de timeout
+- Dashboard data_reader exclut les 4 markers (level/outcome/action/exit_reason)
+
+**Fix applique** (commits a suivre) :
+- `DASHBOARD/api/paper_tracker.py:_iter_trades_from_files` : skip si `level=="_RECOVERED_BOOT_"` OR `outcome=="RECOVERED_TIMEOUT"` OR `action=="RECOVERED"` OR `exit_reason=="RECOVERED_TIMEOUT"`. Filtre applique a TOUS les consumers (stats_today, stats_7d, stats_30d).
+- SCP `paper_tracker.py` vers VPS + restart MIA-Dashboard. Effet immediat sur stats live.
+
+**A FAIRE Phase 4d2 (P0)** :
+- `CORE/databento_paper_trader_v2.py:_bot3_recover_open_positions` : ajouter flatten immediat zombie + emit BOT3_RECOVERED_ZOMBIE_FLATTENED CRITIQUE
+- Creer `.claude/rules/deploy-protocol.md` : check positions ouvertes avant restart
+
+**Reviewed** : Jackson (directive "SUPPRIME LES DES DONNER ON VEUX DES STATE REEL") + self-diagnostic confirme via grep VPS logs.
+
+---
+
 ### 2026-05-18 23:30 (7) - [CONTEXT_MISS] NSM T17 RANGE_RESPECTED formule semantiquement fausse
 
 **Contexte** : Apres fix (6) atr_intraday, T17 reste a 0 occurrences sur 14919 bars ES Mai (S07/S08 RANGE_* scenarios = 0). Audit market-analyst pointe la formule actuelle `ib_range / atr_daily < 1.2` qui mesure "IB etroit en absolu", PAS canon Dalton MOM Ch.9 "Day Type Recognition" qui dit Range Day = prix oscille DANS l'IB toute la session.
