@@ -155,6 +155,17 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 
 **Critère passage Phase 2** : 100% tests verts, replay 5 jours OK, latency <10ms/bar, diff `LOGS/decisions` pre/post = 0 (tracking-only).
 
+### Phase 4 — Refactor levels + integration 🟢 PARTIEL (4abc DONE, 4d deferred J+5)
+
+| Fichier | Status | Date | Commit | Review | Notes |
+|---------|--------|------|--------|--------|-------|
+| CORE/bot3_level_definitions.py (extend) | 🟢 GO | 2026-05-18 | (next) | 22/22 pytest Phase 4 | Phase 4a `derive_nature_from_side()` + `get_level_nature()` + `_LEVEL_NATURE_OVERRIDES` (5 levels structural). Phase 4c `MIRROR_SHORT_TIER1` 5 levels symetrie (MQ_CALL_0DTE/IB_HIGH_SHORT/GEX_UP/VWAP_W_SD1U/PVAH_SHORT) |
+| CORE/bot3_config.py (extend) | 🟢 GO | 2026-05-18 | (next) | flag valide | Phase 4b kill switch `BOT3_USE_NARRATIVE_DIRECTION=False` + `BOT3_NARRATIVE_TRACKING_ONLY=True` + buffer sizes |
+| tests/bot3/test_level_definitions_phase4.py | 🟢 GO | 2026-05-18 | (next) | 22/22 PASS | nature mapping (7) + lookup (8) + MIRROR_SHORT (5) + coherence (2) |
+| CORE/bot3_mp_engine.py (extend) | ⬜ TODO Phase 4d | - | - | - | Injection NSM update + sequencing NSM→Resolver + `narrative_direction` passing |
+| CORE/bot3_decision_engine.py (extend) | ⬜ TODO Phase 4d | - | - | - | Signature etendue avec `narrative_direction: Optional[ResolvedDirection]=None` |
+| CORE/bot3_snapshot_recorder.py (extend) | ⬜ TODO Phase 4d | - | - | - | +narrative fields (state, scenario_id, rationale) snapshots |
+
 ### Phase 3 — DirectionResolver + Shadow mode 🟢 EN COURS (J+2 base ZERO DETTE)
 
 | Fichier | Status | Date | Commit | Review | Notes |

@@ -26,6 +26,29 @@ BOT3_TRADE_REJECTIONS = True
 BOT3_TRADE_BREAKOUTS = True
 
 # ════════════════════════════════════════════════════════════════════════
+# PHASE 4 Bot 3 v2 Narrative Layer - flags (Jackson 18/05)
+# ════════════════════════════════════════════════════════════════════════
+# Master plan : DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md sect 187-191
+# Kill switch principal : `BOT3_USE_NARRATIVE_DIRECTION`.
+# - False = legacy Bot 3 v1 hardcoded `side` au level (comportement actuel)
+# - True  = Bot 3 v2 DirectionResolver consume `narrative_direction` (post Phase 4d
+#           backtest comparatif GO + Phase 5 DSR Lopez GO)
+#
+# Default False (kill switch) tant que Phase 4d + Phase 5 pas validees paper.
+# Activation manuelle uniquement apres review Tier 1 + GO Jackson.
+BOT3_USE_NARRATIVE_DIRECTION: bool = False
+
+# Tracking-only Phase 1-3 : NSM + StoryTrackers + PlotTwist + Validator +
+# DirectionResolver consument data MAIS ne MODIFIENT PAS le comportement legacy.
+# Resolver fire decisions parallele logged en shadow JSONL pour audit Phase 4-5.
+BOT3_NARRATIVE_TRACKING_ONLY: bool = True
+
+# Buffer sizes Phase 4 (limites mémoire prod multi-symbol).
+# Si > N pending entries actives, log warning (potential pending leak).
+BOT3_NARRATIVE_MAX_PENDING_ENTRIES: int = 50
+BOT3_NARRATIVE_MAX_SHADOW_LOG_SIZE_MB: int = 100  # rotation JSONL
+
+# ════════════════════════════════════════════════════════════════════════
 # Connexion DTC Bot 3 — Sim1 isole via TradeAccount (Jackson 03/05 DEFINITIF)
 # ════════════════════════════════════════════════════════════════════════
 # Mapping bots : Bot 1 = Sim3, Bot 2 = Sim2, Bot 3 = Sim1.
