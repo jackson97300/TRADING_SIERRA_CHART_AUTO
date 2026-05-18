@@ -31,6 +31,44 @@
 
 ---
 
+### 2026-05-18 12:30 - [VALIDATION_MISS] Hook V1 check_bot3v2_structure.py commit sans validation logique reelle
+
+**Contexte** : Phase 1.0 quality stack Bot 3 v2 a livre 2 custom hooks pre-commit (check_bot3v2_structure.py + check_bot3v2_headers.py). Commit (current session) sans test de la LOGIQUE reelle des hooks, juste self-test surface "EXIT 0 / EXIT 1".
+
+**Ce qui a mal tourne** : Jackson 18/05 12:25 a fait code review adversarial impitoyable du hook V1 et identifie 5 faiblesses serieuses :
+1. **Substring match faible** : `if module_name not in structure_content` passe meme si module mentionne en "DEPRECATED" 2024 → faux GO permanent.
+2. **Pattern docstring vs code incoherent** : docstring `bot3_(narrative|story|...)*.py` vs code `bot3_(narrative_|story_|...).*\.py$` → faux negatif silencieux sur `bot3_narrative.py` (sans suffixe).
+3. Variable `missing` capturee pour rien.
+4. Pas de fallback git si argv vide.
+5. Pattern dupliquee pre-commit/script (pas grave mais doc).
+
+**Ironie cruelle** : le hook etait CENSE empecher Pattern 11 V1 (silent fallback / convention non tenue). Il REPRODUIT le Pattern 11 V1 lui-meme = check faible avec docstring qui promet plus que le code ne livre.
+
+**Cause racine** :
+- Self-test SURFACE uniquement (EXIT codes), pas LOGIQUE (cas negatif vs positif vs edge)
+- Pas teste les 3 cas obligatoires : module pas dans tracker, entry stale, status invalide
+- Pas relu docstring vs code apres ecriture (cross-check inconsistance manquant)
+- Commit precipite (4 fichiers groupes : __init__.py + conftest.py + 2 hooks) sans review separe par fichier
+
+**Lecon** : pour CHAQUE nouveau script Phase 1+ Bot 3 v2 :
+1. AVANT commit, tests OBLIGATOIRES :
+   - cas negatif (input devrait fail) → verifier EXIT non-zero + message stderr utile
+   - cas positif (input devrait pass) → verifier EXIT 0
+   - edge case (input ambigu) → verifier comportement defini
+2. Auto-review docstring vs code en relecture (5 sec scan) : promesses doc tient-elles ?
+3. Si hook : tester avec fichier hypothetique qui DEVRAIT bloquer
+
+**Trigger prevention** : si Claude commit un script `tools/check_*.py` ou `tools/validate_*.py` ou `tools/*lint*.py` :
+- Faire au minimum 3 tests : NEGATIVE (fail attendu) + POSITIVE (pass attendu) + EDGE (case ambigu)
+- Verifier coherence docstring/code (regex pattern, claims fonctionnelles)
+- Cf cette entry comme exemple anti-pattern
+
+**Reviewed** : Jackson (mode mentor adversarial) → V2 reecrite avec P1+P2+P3 fix immediatement, validation tests obligatoire avant commit V2.
+
+**Cross-reference** : pattern identique a `feedback_validation_miss_patterns.md` (code defini sans emit reel grep cross-codebase).
+
+---
+
 ### 2026-05-18 11:00 - [PATTERN_11_INVERSE] Bot 3 v1 catastrophique weekend 15-18/05 - features extraites mais pas utilisees decision
 
 **Contexte** : Bot 3 paper trader v1 = 15 trades sur weekend 15-18/05, WR 13% (2 TP / 10 SL / 3 TIMEOUT). 14/15 LONG / 1 SHORT. Jackson critique : "ce n'est pas trader, le bot prend ses decisions sur 1 bar isolee comme s'il arrivait au milieu du film et speculait au doigt mouille".
