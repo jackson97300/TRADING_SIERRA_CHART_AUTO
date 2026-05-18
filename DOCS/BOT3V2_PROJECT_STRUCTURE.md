@@ -122,11 +122,22 @@ D:\TRADING_SIERRA_CHART_AUTO\
 | LOGS/reviews/.gitkeep + README.md | 🟢 GO | 2026-05-18 | (next) | - |
 | LOGS/bot3_v2/.gitkeep | 🟢 GO | 2026-05-18 | (next) | - |
 
-### Phase 1 — Foundations NSM + StoryTrackers ⬜ TODO
+### Phase 1.5 — Mini-detour features manquantes live 🟡 J+1 AM
+
+Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch parquet.
 
 | Fichier | Status | Date | Commit | Review | Notes |
 |---------|--------|------|--------|--------|-------|
-| CORE/bot3_narrative_state_machine.py | ⬜ TODO | - | - | - | Mirror BreakoutRetestSM pattern |
+| CORE/enricher_chain.py (port session_segment) | ⬜ TODO | - | - | - | Phase B option_c_plus extend |
+| CORE/enricher_chain.py (port profile_shape) | ⬜ TODO | - | - | - | game_changers extend |
+| CORE/enricher_chain.py (port cvd_session) | ⬜ TODO | - | - | - | cvd_features extend |
+
+### Phase 1 — Foundations NSM + StoryTrackers 🟡 EN COURS (spec done, code J+2-3)
+
+| Fichier | Status | Date | Commit | Review | Notes |
+|---------|--------|------|--------|--------|-------|
+| DOCS/specs/2026-05-18-bot3v2-phase1-nsm-spec.md | 🟢 GO | 2026-05-18 | (next) | market-analyst ULTRATHINK 4.20/5 | Spec NSM complete 17 etats 32 transitions |
+| CORE/bot3_narrative_state_machine.py | ⬜ TODO | - | - | - | Mirror LiveEnricherState (ADR 0002) ~650 LOC |
 | CORE/bot3_story_trackers.py | ⬜ TODO | - | - | - | 10 trackers (HH, LL, BOS, slope, etc.) |
 | CORE/bot3_narrative_persistence.py | ⬜ TODO | - | - | - | Atomic write + recovery |
 | CORE/bot3_narrative_logging.py | ⬜ TODO | - | - | - | 8 codes log + extend `_REASON_TO_LOG_CODE` |

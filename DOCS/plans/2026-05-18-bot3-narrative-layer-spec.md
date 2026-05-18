@@ -194,8 +194,27 @@ Justification (cf agent ULTRATHINK + reco Jackson) :
 
 ### Phase 1 — Foundations : NSM + StoryTrackers (TRACKING ONLY)
 **Durée** : ~1 semaine
-**Statut** : `[ ]` Not started
+**Statut** : 🟡 **EN COURS** (J+0 fin journée 18/05)
 
+#### Phase 1.5 — Mini-detour features live (J+1 AM, ~3h)
+Cf sanity check 18/05 : 3 features ABSENTES live, PRÉSENTES batch parquet :
+- `session_segment` (T1/T2/T3 transitions NSM session-aware)
+- `profile_shape` (T6/T7 OPEN_DRIVE detection Dalton)
+- `cvd_session` (Wyckoff VSA effort-result)
+
+- [ ] **J+1 AM** Port `session_segment` live (`enricher_chain.py` extend Phase B option_c_plus)
+- [ ] **J+1 AM** Port `profile_shape` live (`enricher_chain.py` extend game_changers)
+- [ ] **J+1 AM** Port `cvd_session` live (`enricher_chain.py` extend cvd_features)
+- [ ] **J+1 AM** Test 3 bars live + commit + deploy VPS si validé
+- [ ] **J+1 AM** Drop `bn_color_up_2`/`dn_2` du plan (absent batch ET live, jamais existé)
+
+#### Phase 1 (J+1 PM → fin semaine)
+
+- [x] **Spec NSM** Phase 1 livrée (`DOCS/specs/2026-05-18-bot3v2-phase1-nsm-spec.md`)
+  Agent market-analyst ULTRATHINK 4.20/5 GO-AVEC-RESERVES.
+  17 états + 32 transitions + 50 tests + 8 codes log + persistence module.
+- [ ] **J+1 PM** Spec `bot3_story_trackers.py` (module 2, input critique NSM)
+- [ ] **J+1 PM** Spec `tools/replay_narrative_state_machine.py` (replay 5j 13-17/05)
 - [ ] **Spec Phase 1** approuvée par Jackson
 - [ ] `CORE/bot3_narrative_state_machine.py` créé (skeleton + 5 états core ASIA/LONDON/NY/INVALIDATED + persistence pickle)
 - [ ] `CORE/bot3_story_trackers.py` créé (10 story trackers)
