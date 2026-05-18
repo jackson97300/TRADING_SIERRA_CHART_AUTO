@@ -1,0 +1,86 @@
+# Pre-commit hooks Bot 3 v2 Pro Standard Foundation
+#
+# Cf DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md (Phase 1.0)
+#
+# Installation : pip install pre-commit && pre-commit install
+# Bypass urgences : git commit --no-verify (cf BOT3V2_RUNBOOK.md)
+
+repos:
+  # Hygiene basique
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '^(BACKUP|DATA|LOGS|CPP|V1_ARCHIVE|DOCS)/'
+      - id: end-of-file-fixer
+        exclude: '^(BACKUP|DATA|LOGS|CPP|V1_ARCHIVE|DOCS)/'
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+        exclude: '^(BACKUP|DATA|LOGS)/'
+      - id: detect-private-key
+
+  # Format Python (black)
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        files: '^(CORE/bot3_narrative_|CORE/bot3_story_|CORE/bot3_plot_|CORE/bot3_scenario_|CORE/bot3_direction_resolver|CORE/bot3_shadow_mode|tests/bot3/).*\.py$'
+
+  # Imports tri (isort)
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ["--profile=black"]
+        files: '^(CORE/bot3_narrative_|CORE/bot3_story_|CORE/bot3_plot_|CORE/bot3_scenario_|CORE/bot3_direction_resolver|CORE/bot3_shadow_mode|tests/bot3/).*\.py$'
+
+  # Lint Python (ruff)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.0
+    hooks:
+      - id: ruff
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        files: '^(CORE/bot3_narrative_|CORE/bot3_story_|CORE/bot3_plot_|CORE/bot3_scenario_|CORE/bot3_direction_resolver|CORE/bot3_shadow_mode|tests/bot3/).*\.py$'
+
+  # Type checking strict (mypy)
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        files: '^(CORE/bot3_narrative_|CORE/bot3_story_|CORE/bot3_plot_|CORE/bot3_scenario_|CORE/bot3_direction_resolver|CORE/bot3_shadow_mode).*\.py$'
+        additional_dependencies:
+          - "pydantic>=2.0"
+          - "types-PyYAML"
+          - "numpy"
+          - "pandas-stubs"
+        args: ["--strict", "--ignore-missing-imports"]
+
+  # Project structure auto-update enforcement (custom)
+  - repo: local
+    hooks:
+      - id: bot3v2-structure-check
+        name: Bot 3 v2 PROJECT_STRUCTURE.md sync check
+        entry: python tools/check_bot3v2_structure.py
+        language: system
+        files: '^CORE/bot3_(narrative_|story_|plot_|scenario_|direction_resolver|shadow_mode).*\.py$'
+        pass_filenames: true
+        description: |
+          Bloquer si module Bot 3 v2 modifie sans update PROJECT_STRUCTURE.md.
+          Cf convention souveraine Jackson 18/05.
+
+      - id: bot3v2-headers-check
+        name: Bot 3 v2 file headers convention check
+        entry: python tools/check_bot3v2_headers.py
+        language: system
+        files: '^CORE/bot3_(narrative_|story_|plot_|scenario_|direction_resolver|shadow_mode).*\.py$'
+        pass_filenames: true
+        description: |
+          Verifie docstring header + section HISTORY conforme master plan.
+
+# Pytest rapide (smoke tests Bot 3 v2 only)
+# Note : pytest full suite execute par CI GitHub Actions, pas pre-commit
+# (trop lent pour hook commit).

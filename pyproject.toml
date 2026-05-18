@@ -1,0 +1,184 @@
+# pyproject.toml — Bot 3 v2 Pro Standard Foundation
+#
+# Phase 1.0 Bot 3 v2 Narrative Layer.
+# Cf DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md
+#
+# Scope INITIAL : CORE/bot3_v2/ + tests/bot3/ + tools/bot3_v2_*.py
+# Scope autres modules MIA : graduel apres validation pattern Bot 3 v2.
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mia-trading-system-v2"
+version = "2.0.0-bot3v2-phase1"
+description = "MIA Trading System V2 - Bot 3 v2 Narrative Layer"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Jackson", email = "lazardjackson5@gmail.com"},
+]
+license = {text = "Proprietary"}
+
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    BACKUP
+  | DATA
+  | LOGS
+  | CPP
+  | V1_ARCHIVE
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["CORE", "BOT", "DASHBOARD"]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+default_section = "THIRDPARTY"
+skip = ["BACKUP", "DATA", "LOGS", "CPP", "V1_ARCHIVE"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["CORE", "BOT", "tests"]
+extend-exclude = ["BACKUP", "DATA", "LOGS", "CPP", "V1_ARCHIVE", "DOCS"]
+
+[tool.ruff.lint]
+# Lint rules : start strict on Bot 3 v2, graduel autres modules
+# Cf https://docs.astral.sh/ruff/rules/
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "B",    # flake8-bugbear (safety)
+    "UP",   # pyupgrade (modern Python idioms)
+    "N",    # pep8-naming
+    "RUF",  # ruff-specific
+    "I",    # isort
+    "C90",  # mccabe complexity
+    "ANN",  # flake8-annotations (type hints obligatoires Bot 3 v2)
+    "S",    # flake8-bandit (security)
+    "PTH",  # flake8-use-pathlib
+    "PL",   # pylint
+]
+ignore = [
+    "E501",  # line-too-long (handled by black)
+    "ANN101", "ANN102",  # self/cls type hints (deprecated)
+    "PLR0913",  # too many arguments (often legitimate trading code)
+    "PLR2004",  # magic-value-comparison (constants extracted per audit)
+    "S101",  # assert (used in tests)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "ANN", "PLR2004"]
+"tools/**/*.py" = ["S101"]
+# Modules legacy non-narrative-layer (relax temporary, tighten module-par-module)
+"CORE/*.py" = ["ANN", "C90", "PLR", "B", "UP"]
+"CORE/research/**/*.py" = ["S", "ANN", "C90", "PLR", "B", "UP"]
+# Modules Bot 3 v2 STRICT (cf .claude/rules/bot3v2-coding.md a creer)
+"CORE/bot3_narrative_*.py" = []
+"CORE/bot3_story_*.py" = []
+"CORE/bot3_plot_*.py" = []
+"CORE/bot3_scenario_*.py" = []
+"CORE/bot3_direction_resolver.py" = []
+"CORE/bot3_shadow_mode.py" = []
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.mypy]
+python_version = "3.11"
+# Strict typing pour Bot 3 v2 + relax autres modules graduel
+files = ["CORE/bot3_narrative_*.py", "CORE/bot3_story_*.py", "CORE/bot3_plot_*.py", "CORE/bot3_scenario_*.py", "CORE/bot3_direction_resolver.py", "CORE/bot3_shadow_mode.py", "tests/bot3/"]
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_unimported = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+# Exclude legacy modules from strict typing (graduel)
+exclude = [
+    "BACKUP/",
+    "DATA/",
+    "LOGS/",
+    "CPP/",
+    "V1_ARCHIVE/",
+    "DOCS/",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "lightgbm.*",
+    "databento.*",
+    "sklearn.*",
+    "pyarrow.*",
+    "pandas.*",
+    "numpy.*",
+    "scipy.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--cov=CORE",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-fail-under=85",  # global threshold, Bot 3 v2 individual modules 90%
+]
+markers = [
+    "slow: tests > 5s",
+    "integration: integration tests (multi-module)",
+    "e2e: end-to-end tests (full pipeline replay)",
+    "stress: stress tests (kill -9, OOM, disk full, etc.)",
+    "bot3v2: Bot 3 v2 Narrative Layer tests",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:pandas.*",
+    "ignore::DeprecationWarning:sklearn.*",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["CORE"]
+omit = [
+    "*/tests/*",
+    "*/research/*",
+    "*/V1_ARCHIVE/*",
+    "*/BACKUP/*",
+]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+skip_covered = false
+fail_under = 85
+
+[tool.coverage.html]
+directory = "htmlcov"
