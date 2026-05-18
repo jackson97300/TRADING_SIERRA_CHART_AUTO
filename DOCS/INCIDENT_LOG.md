@@ -31,6 +31,33 @@
 
 ---
 
+### 2026-05-18 11:00 - [PATTERN_11_INVERSE] Bot 3 v1 catastrophique weekend 15-18/05 - features extraites mais pas utilisees decision
+
+**Contexte** : Bot 3 paper trader v1 = 15 trades sur weekend 15-18/05, WR 13% (2 TP / 10 SL / 3 TIMEOUT). 14/15 LONG / 1 SHORT. Jackson critique : "ce n'est pas trader, le bot prend ses decisions sur 1 bar isolee comme s'il arrivait au milieu du film et speculait au doigt mouille".
+
+**Ce qui a mal tourne** (3 agents converges : code-reviewer + market-analyst + Plan) :
+1. **108 ctx writes** dans `bot3_context_analyzer.py` (50+ features extraites) vs **4 ctx reads** dans `bot3_decision_engine.py` hors safe defaults = Pattern 11 V1 inverse confirme empiriquement.
+2. **13 niveaux LONG / 4 SHORT / 8 NEUTRAL** dans `bot3_level_definitions.py` = bias structurel 3:1 LONG mathematique par construction du dict, pas algorithmique.
+3. **91.7% trades fires avec `regime.is_actionable=0`** (11/12 vendredi) = regime engine extrait, logue `BOT3_REGIME_OBSERVE` 600x/jour, mais IGNORE en decision (gate post-hoc avec bypass SIDAK/COMBO).
+4. **Cooldown level = 5 bars** depuis TOUCH initial, pas depuis FAIL → MQ_PUT_0DTE re-fire 3x en 4h apres 2 echecs.
+5. **Score = somme arithmetique sans ponderation direction** : `cross_delta_agree=0.8` en bear (ES+NQ vendent ensemble) BOOST le LONG +10 car le code regarde l'intensite, pas le signe.
+6. **Tier 1 fixe (MQ_PUT_0DTE)** = aucun check orderflow positif requis avant LONG. Tier 2/3 NEUTRAL ont check `delta_pct > +0.20 + finish > +10 + n_big_bid > 0`. Asymetrie inverse : Tier 1 fragiles MOINS filtres que Tier 2.
+7. **`cvd_5d_rolling` ghost feature** `bot3_context_analyzer.py:97` lit ancien nom, vrai nom Phase 3c-C = `cvd_5d_rolling_ffd` → fallback 0.0 silencieux depuis creation.
+
+**Cause racine** : decision_engine = detecteur microstructure intra-bar habille en moteur decision. Cecite macro structurelle, asymetrie LONG mathematique. WR 13% = expression statistique attendue.
+
+**Lecon** : Refonte fondamentale via **Narrative Layer** : StoryTrackers + NarrativeStateMachine + PlotTwistDetectors + ScenarioValidator + DirectionResolver. Levels deviennent NEUTRAL avec clef `nature=` parallele. Direction decidee par contexte. Kill switch `BOT3_USE_NARRATIVE_DIRECTION=False` rollback safety.
+
+**Trigger prevention** :
+- Avant deploy gate Bot 3, **verifier que TOUTES les features extraites dans context_analyzer sont utilisees dans decision_engine** (grep cross-codebase `ctx.get(feature_name)` count).
+- Avant ajout niveau Tier 1, **valider DSR Lopez OR n>=200 par direction** (cf `feedback_data_mining_trap.md`).
+- Avant fire LONG sur support en marche baissier, **verifier symetrie LONG/SHORT dans dict niveaux** (ratio LONG/SHORT cible 40-60%).
+
+**Reviewed** : code-reviewer + market-analyst + Plan (3 agents converges)
+**Chantier** : `DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md` (5 phases 5 semaines)
+
+---
+
 ### 2026-05-18 04:30 - [VALIDATION_MISS] Roll detection streaming divergence batch (is_roll_day from-roll-onwards only)
 
 **Contexte** : Phase 3c-C live_enricher porte `is_roll_day` batch -> streaming (CORE/build_dataset_v4_dmp_databento.py:749 -> CORE/enricher_chain.py:1697). Code-reviewer 18/05 03:00 a flagge divergence.

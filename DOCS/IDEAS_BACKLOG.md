@@ -7,6 +7,22 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[CHANTIER MAJEUR 2026-05-18]** **Bot 3 v2 Narrative Layer — refonte decision contextuelle bidirectionnelle** | 5 semaines / ~2600 LOC NEW + ~500 LOC refactor + ~1200 LOC tests | **CRITIQUE** (Bot 3 v1 WR 13% weekend 15-18/05) | IN_PROGRESS Phase 0 spec
+  - **Source** : 3 agents converges (code-reviewer + market-analyst + Plan) Pattern 11 V1 inverse Bot 3 + diagnostic empirique 15-18/05 (108 ctx writes vs 4 reads, 14/15 LONG par construction, 91.7% trades fires avec `regime.is_actionable=0`)
+  - **Vision** : Jackson souverain "bidirectionnel + contexte decide direction" + "le marche raconte une histoire continue, le job du trader = etre a l'ecoute"
+  - **Architecture** : NarrativeStateMachine (mirror BreakoutRetestSM pattern) + StoryTrackers + PlotTwistDetectors + ScenarioValidator + DirectionResolver (10-15 scenarios pre-ecrits) + ShadowMode + Persistence + Logging
+  - **Plan** : 5 phases checkboxes dans DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md
+    - Phase 1 : Foundations NSM + StoryTrackers (tracking only)
+    - Phase 2 : PlotTwist + ScenarioValidator
+    - Phase 3 : DirectionResolver + Shadow mode
+    - Phase 4 : Refactor levels + integration
+    - Phase 5 : Backtest DSR Lopez + GO/NOGO live
+  - **Knowledge base** : DOCS/BOT3V2_KNOWLEDGE_BASE.md (7 livres canon Dalton/Steidlmayer/Wyckoff/Douglas/Lopez/ICT/Bookmap + 16 modules MIA + 10 rules + 8 tests empiriques)
+  - **Templates briefs agents** : DOCS/BOT3V2_AGENT_BRIEF_TEMPLATE.md (4 templates market-analyst/code-reviewer/ml-trainer/Plan tous mode ULTRATHINK)
+  - **Memory persistance** : project_bot3_v2_narrative_chantier.md (auto-charge debut session)
+  - **Cibles mesurables Phase 5 GO** : WR ≥40%, bidirectional 40-60%, DSR Lopez ≥0.95 sur 8+ scenarios, regime alignment 100%
+  - **Risques** : Pattern 11 V1 (mitige : table-driven deterministe), Data mining trap (mitige : DSR ≥0.95 OR n≥200), Regression edge actuel (mitige : kill switch BOT3_USE_NARRATIVE_DIRECTION)
+
 - **[DETTE BLOCKER 2026-05-15]** **Retraitement V4 batch avec proxies streaming `diag_imbalance` + `large_trader_ratio` OU drop definitif** | 4-6h | **HIGH BLOCKER** | PROPOSED (AVANT training mid-juin)
   - **Source** : Code-reviewer Review #4 Pass 4 NOGO - asymetrie semantique batch/stream pour `diag_imbalance` et `large_trader_ratio`. Batch DMP-C++ exact (footprint VAP cellule) vs stream proxy (OFI / max_size). Meme nom, definition opposee → ML drift train/inference garanti.
   - **Fix R2 partiel** : streaming proxies renames `diag_imbalance_ofi_proxy` + `large_trader_max_size_proxy` (eviter collision). RE-ENABLE ctx_* REVERTED (re-dropped).

@@ -49,10 +49,20 @@
    - **TOUJOURS commencer par "montre-moi un trade concret"** (Klein 1998).
    - Protocoles A/B/C : replay trade, think-aloud, comparaison 2 situations.
 
+4. **`DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md`** — CHANTIER MAJEUR Bot 3 v2
+   - **Si Jackson parle de Bot 3 narrative / refonte decision Bot 3** :
+     lire CE FICHIER + `DOCS/BOT3V2_KNOWLEDGE_BASE.md` + `DOCS/BOT3V2_AGENT_BRIEF_TEMPLATE.md`
+     + memory `project_bot3_v2_narrative_chantier.md`
+   - 5 phases 5 semaines, status tracking checkboxes dans master plan
+   - Protocole review ULTRATHINK obligatoire (verdict 4 dim, cross-check Tier 1)
+   - Tous briefs agents passent par templates standardisés (anti perte cross-sessions)
+
 **Actions declencheurs lecture cible** (en plus INCIDENT_LOG) :
 - Fix feature liee a Sierra Chart / DMP / formula → grep MANUEL_EDGE_JACKSON
 - Proposition nouvelle feature → grep INVENTAIRE pour voir si deja existante
 - Demande extraction expertise Jackson → relire feedback_extraction_expertise
+- **Bot 3 narrative / refonte decision Bot 3** → lire DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md + DOCS/BOT3V2_KNOWLEDGE_BASE.md (livres canon Dalton/Wyckoff/Lopez/ICT + 16 modules MIA + 10 rules + 8 tests + verdict 4 dim) + DOCS/BOT3V2_AGENT_BRIEF_TEMPLATE.md (briefs agents standardises)
+- **Dispatch agent review Bot 3 v2** → utiliser obligatoirement les 4 templates de BOT3V2_AGENT_BRIEF_TEMPLATE.md, archive verdict LOGS/reviews/REVIEW_BOT3V2_*.json, memory feedback auto
 
 **Protocole complet auto-amelioration** : `auto_improvement_protocol.md` (memory).
 
