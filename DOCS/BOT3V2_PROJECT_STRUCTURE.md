@@ -155,6 +155,16 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 
 **Critère passage Phase 2** : 100% tests verts, replay 5 jours OK, latency <10ms/bar, diff `LOGS/decisions` pre/post = 0 (tracking-only).
 
+### Phase 3 — DirectionResolver + Shadow mode 🟢 EN COURS (J+2 base ZERO DETTE)
+
+| Fichier | Status | Date | Commit | Review | Notes |
+|---------|--------|------|--------|--------|-------|
+| CORE/bot3_direction_resolver.py | 🟢 GO | 2026-05-18 | (next) | 18/18 pytest + 10 scenarios canon + ConfirmationGate state machine | S01-S10 Dalton/Wyckoff/Pruden + pending_entries + 3 patterns confirmation |
+| CORE/bot3_shadow_mode.py | 🟢 GO | 2026-05-18 | (next) | 6/6 pytest + emit divergence | Logger JSONL append-only + detect_divergence pure |
+| CORE/log_catalog.py (extend) | 🟢 GO | 2026-05-18 | (next) | +7 codes Phase 3 | RESOLVER 6 + SHADOW 1 |
+| tests/bot3/test_direction_resolver.py | 🟢 GO | 2026-05-18 | (next) | 18/18 pytest | S01/S02/S03/S05/S09 + NO_TRADE fallback + pending state machine + pickle |
+| tests/bot3/test_shadow_mode.py | 🟢 GO | 2026-05-18 | (next) | 6/6 pytest | detect_divergence + JSONL append + emit + groupage YYYYMMDD |
+
 ### Phase 2 — PlotTwist + ScenarioValidator 🟢 EN COURS (J+1)
 
 | Fichier | Status | Date | Commit | Review | Notes |
@@ -168,12 +178,12 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 | tests/bot3/test_scenario_validator.py | 🟢 GO | 2026-05-18 | (next) | 14/14 pytest PASS | time decay + invalidating twists + strongest + bars negative + 8 etats |
 | tools/replay_narrative_state_machine.py (extend) | 🟢 GO | 2026-05-18 | (next) | replay 5j ES VERDICT GO PHASE 2 (7/7 criteres) | +PlotTwistDetectorsState + scan_all + validator pipeline |
 
-### Phase 3 — DirectionResolver + Shadow mode ⬜ TODO
+### Phase 3 — DirectionResolver + Shadow mode (legacy section deprecated, voir au-dessus)
 
 | Fichier | Status | Date | Commit | Review | Notes |
 |---------|--------|------|--------|--------|-------|
-| CORE/bot3_direction_resolver.py | ⬜ TODO | - | - | - | 10-15 scenarios table-driven |
-| CORE/bot3_shadow_mode.py | ⬜ TODO | - | - | - | Logger parallèle JSONL |
+| CORE/bot3_direction_resolver.py | 🟢 GO | 2026-05-18 | (live) | cf section Phase 3 ci-dessus | dedup |
+| CORE/bot3_shadow_mode.py | 🟢 GO | 2026-05-18 | (live) | cf section Phase 3 ci-dessus | dedup |
 | CORE/bot3_mp_engine.py (extend) | ⬜ TODO | - | - | - | Integration resolver |
 | LOGS/bot3_v2/resolver_decisions_*.jsonl | ⬜ TODO | - | - | - | Auto-créé runtime |
 | LOGS/bot3_v2/shadow_divergences_*.jsonl | ⬜ TODO | - | - | - | Auto-créé runtime |
