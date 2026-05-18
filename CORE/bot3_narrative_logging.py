@@ -1,4 +1,4 @@
-"""bot3_narrative_logging.py — Centralized emit helpers Bot 3 v2 Narrative Layer.
+"""CORE/bot3_narrative_logging.py — Centralized emit helpers Bot 3 v2 Narrative Layer.
 
 Module : helpers d'emit logs structures pour NSM + StoryTrackers + persistence.
 Centralise les call site vers log_catalog.resolve() pour permettre :
@@ -14,7 +14,7 @@ Data source : N/A (module utility logging, pas de consume payload).
   Inputs : code + ctx dict de la fonction appelante (NSM, Story, Persistence).
 
 Created : 2026-05-18 by Jackson + Claude (mode mentor proactif)
-Last modified : 2026-05-18 - creation Phase 1 J+0 PM
+Last modified : 2026-05-18 PM - V1.1 fix critique Claude 4.7 review (4 bugs reels)
 
 Phase tracker : DOCS/plans/2026-05-18-bot3-narrative-layer-spec.md
 Review trace : LOGS/reviews/REVIEW_BOT3V2_narrative_logging_*.json (Phase 1)
@@ -23,17 +23,25 @@ Memory feedback : .claude/memory/feedback_bot3v2_logging_*.md (post-review)
 Auteur : Bot 3 v2 Narrative Layer Phase 1
 """
 # ─── HISTORY ──────────────────────────────────────────────────────────────
-# 2026-05-18 : creation skeleton (Phase 1 foundation, 11 codes BOT3_NSM/STORY)
+# 2026-05-18 AM : creation skeleton (Phase 1 foundation, 11 codes BOT3_NSM/STORY)
+# 2026-05-18 PM : V1.1 fix critique Claude 4.7 review - 4 bugs reels
+#   #1 get_action() exec inutile -> commented out (perf + intent)
+#   #2 logger f-strings -> %-formatting (lint G004/PLW1203 + lazy eval perf)
+#   #3 double resolve (format_message re-call resolve) -> single resolve + template.format
+#   #4 except ImportError -> except ModuleNotFoundError (anti silent CORE/log_catalog brisé)
 # ──────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
 
 import logging
 from typing import Any, Callable
 
+# Fix #4 : ModuleNotFoundError (sous-classe ImportError Python 3.6+) plus specifique.
+# Si CORE/log_catalog.py existe mais a une ImportError interne (typo, dep manquante),
+# on ne fallback PAS silencieusement vers log_catalog -> le vrai bug remonte.
 try:
-    from CORE.log_catalog import LogLevel, format_message, get_action, resolve
-except ImportError:
-    from log_catalog import LogLevel, format_message, get_action, resolve
+    from CORE.log_catalog import LogLevel, resolve
+except ModuleNotFoundError:
+    from log_catalog import LogLevel, resolve  # type: ignore[no-redef]
 
 logger = logging.getLogger("bot3_v2.narrative")
 
@@ -100,18 +108,25 @@ def emit(code: str, log_fn: Callable[..., None] | None = None, **ctx: Any) -> No
         log_fn(code, **ctx)
         return
 
-    level, _category, _template = resolve(code)
-    msg = format_message(code, **ctx)
-    actions = get_action(level)
+    # Fix #3 : single resolve + template.format local (vs double resolve via
+    # format_message qui re-appelait resolve interne).
+    level, _category, template = resolve(code)
+    try:
+        msg = template.format(**ctx)
+    except KeyError as e:
+        msg = f"{template} [MISSING_CTX: {e}]"
 
+    # Fix #2 : %-formatting (lazy eval lint G004/PLW1203 compliant).
+    # Le formatage du msg n'a lieu que si le record est effectivement emit
+    # selon level filter du logger root.
     if level == LogLevel.CRITIQUE:
-        logger.critical(f"[{code}] {msg}")
+        logger.critical("[%s] %s", code, msg)
     elif level == LogLevel.MAJEUR:
-        logger.error(f"[{code}] {msg}")
+        logger.error("[%s] %s", code, msg)
     elif level == LogLevel.ALERTE:
-        logger.warning(f"[{code}] {msg}")
+        logger.warning("[%s] %s", code, msg)
     else:
-        logger.info(f"[{code}] {msg}")
+        logger.info("[%s] %s", code, msg)
 
-    # Discord/snapshot actions deferred Phase 3+ (cf master plan section Logging)
-    _ = actions  # silence unused (reserved for future Discord webhook)
+    # Fix #1 : get_action() pas execute (perf + intent visible).
+    # Phase 3+ : actions = get_action(level)  # routing Discord webhook auto
