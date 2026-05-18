@@ -159,7 +159,7 @@ Cf sanity check 18/05 : 3 features absentes du payload live, présentes batch pa
 
 | Fichier | Status | Date | Commit | Review | Notes |
 |---------|--------|------|--------|--------|-------|
-| CORE/bot3_direction_resolver.py | 🟢 GO | 2026-05-18 | (next) | 18/18 pytest + 10 scenarios canon + ConfirmationGate state machine | S01-S10 Dalton/Wyckoff/Pruden + pending_entries + 3 patterns confirmation |
+| CORE/bot3_direction_resolver.py | 🟢 GO | 2026-05-18 | (next) | 27/27 pytest + 11 fixes Tier 1 ULTRATHINK (7 reviews + 4 Claude 4.7) + canon Dalton/Wyckoff/Pruden | schema 3.0.0 - R1 acceptance Dalton 2 bars + R3 vol_z 1.0 + R6 magic + Bug 5 silent fix + Bug 6 pickle race lock + Mismatch 3 max_bars=4 |
 | CORE/bot3_shadow_mode.py | 🟢 GO | 2026-05-18 | (next) | 6/6 pytest + emit divergence | Logger JSONL append-only + detect_divergence pure |
 | CORE/log_catalog.py (extend) | 🟢 GO | 2026-05-18 | (next) | +7 codes Phase 3 | RESOLVER 6 + SHADOW 1 |
 | tests/bot3/test_direction_resolver.py | 🟢 GO | 2026-05-18 | (next) | 18/18 pytest | S01/S02/S03/S05/S09 + NO_TRADE fallback + pending state machine + pickle |

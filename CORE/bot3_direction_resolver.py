@@ -23,6 +23,7 @@ Auteur : Bot 3 v2 Narrative Layer Phase 3
 # ──────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -46,6 +47,13 @@ CONF_RANGE_PLAY: float = 0.60  # RANGE rebounds
 CONF_LOW: float = 0.50        # OPEN_ROTATION/TEST baseline
 CONF_NO_TRADE: float = 0.0
 
+# Pattern validation thresholds (R6 fix : extracted magic numbers).
+# Aligne avec NSM Phase 1 constantes (cf bot3_narrative_state_machine.py:101-143).
+WICK_REJECTION_MIN_RATIO: float = 0.30   # Dalton MOM Ch.7 "strong rejection" (30% bar_range)
+VOL_Z_REJECTION_MIN: float = 1.0         # R3 fix : aligne NSM VOL_Z_OPEN_DRIVE_MIN
+                                          # (etait 0.5 trop laxiste - Pruden canon climax >= 1.5,
+                                          # confirm rejection 1.0 = entre Open Drive et Spring)
+
 
 @dataclass
 class ResolvedDirection:
@@ -65,6 +73,9 @@ class PendingEntry:
 
     Created quand resolve() detecte un scenario valid mais besoin de
     confirmation pattern (ex: break_below_strike_confirmed = 2 bars).
+
+    R1 fix market-analyst : `prev_close` tracker pour acceptance Dalton 2 bars
+    (close ET prev_close beyond target avant fire).
     """
     scenario_id: str
     side: str
@@ -76,6 +87,9 @@ class PendingEntry:
     target_price: float = 0.0
     bars_waited: int = 0
     final_confidence: float = 0.0
+    # R1 fix : track close bar precedente pour acceptance Dalton 2 bars.
+    # Mis a jour a chaque _check_pending_confirmation call avant validation.
+    prev_close: float | None = None
     triggering_features: dict[str, Any] = field(default_factory=dict)
 
 
@@ -156,17 +170,21 @@ _SCENARIOS: dict[tuple[NarrativeState, str], ScenarioRule] = {
     ),
 
     # ─── EXHAUSTION reversal (Pruden Ch.7 climax) ────────────────────────
+    # Mismatch 3 Claude 4.7 fix : max_bars bump 2 → 4 car R1 fix acceptance 2 bars
+    # consomme deja la 1ere bar pour set prev_close. Avant : 1 chance unique de
+    # confirm (bar 2 = last). Apres : 2-3 chances (bars 2/3/4). Cf review : "Donc
+    # tu as exactement UNE bar pour confirmer en marche bruyant = timeout premature".
     (NarrativeState.EXHAUSTION_TOP, "resistance"): ScenarioRule(
         scenario_id="S09_EXHAUSTION_TOP_short",
         side="SHORT", confidence=CONF_REVERSAL,
         rationale="Wyckoff buying climax (Pruden Ch.7) : short at exhaustion top",
-        wait_for_pattern="break_below_strike_confirmed", min_bars=1, max_bars=2,
+        wait_for_pattern="break_below_strike_confirmed", min_bars=2, max_bars=4,
     ),
     (NarrativeState.EXHAUSTION_BOTTOM, "support"): ScenarioRule(
         scenario_id="S10_EXHAUSTION_BOTTOM_long",
         side="LONG", confidence=CONF_REVERSAL,
         rationale="Wyckoff selling climax (Pruden Ch.7) : long at exhaustion bottom",
-        wait_for_pattern="break_below_strike_confirmed", min_bars=1, max_bars=2,
+        wait_for_pattern="break_below_strike_confirmed", min_bars=2, max_bars=4,
     ),
 
     # ─── OPEN_ROTATION/TEST_DRIVE = pas de bias directionnel fort ──────
@@ -303,10 +321,30 @@ class DirectionResolver:
         - side=LONG/SHORT si pattern confirme dans [min_bars, max_bars]
         - side=NO_TRADE si pas encore confirme (continue d'attendre)
         - side=NO_TRADE + cleanup si invalidated (state change) ou timeout (max_bars)
+
+        R1 code-reviewer fix : bars_waited negatif (pickle epoch mismatch apres
+        reboot VPS) = abort defensif + emit (anti-zombie permanent).
         """
         symbol = snapshot.symbol
         key = (symbol, pending.level_name)
         pending.bars_waited = snapshot.bar_idx_current - pending.start_bar_idx
+
+        # R1 code-reviewer fix : pickle epoch mismatch detection
+        # Apres restart NSM (bar_idx_current reset 0), pending.start_bar_idx
+        # est de l'epoch precedent. bars_waited devient negatif = zombie.
+        if pending.bars_waited < 0:
+            del self._pending_entries[key]
+            emit(
+                "BOT3_RESOLVER_CONFIRMATION_INVALIDATED",
+                log_fn=log_fn, sym=symbol,
+                scenario_id=pending.scenario_id,
+                reason="pickle_epoch_mismatch_negative_bars_waited",
+            )
+            return ResolvedDirection(
+                side="NO_TRADE", confidence=CONF_NO_TRADE,
+                rationale="Pending zombie cleanup (NSM bar_idx_current reset post-restart)",
+                scenario_id=pending.scenario_id,
+            )
 
         # 1. State change mid-wait = invalidated (narrative shift)
         # Approximation : si state n'est plus dans les scenarios qui ont cree
@@ -356,6 +394,11 @@ class DirectionResolver:
 
         # 4. Pattern validation (canon Dalton/Wyckoff/ICT)
         confirmed = self._validate_pattern(pending, bar)
+        # Update prev_close pour next bar (R1 fix acceptance Dalton 2 bars).
+        # Capture APRES validation pour preserver l'historique au moment du fire.
+        close_now = _safe_float(bar.get("close"))
+        if not confirmed and close_now is not None:
+            pending.prev_close = close_now
         if confirmed:
             del self._pending_entries[key]
             emit(
@@ -392,10 +435,11 @@ class DirectionResolver:
     def _validate_pattern(self, pending: PendingEntry, bar: dict) -> bool:
         """Verifie pattern de confirmation selon canon.
 
-        Patterns supportes Phase 3 J+2 :
-        - "rejection_with_volume" : lower_wick > 30% bar_range + vol_zscore_20 > 0.5
-        - "break_below_strike_confirmed" : close < target_price (SHORT) ou > (LONG)
-        - "spring_recovery" : low/high penetration + close recovery
+        Patterns supportes Phase 3 J+2 (R1/R3/R6 fixes Tier 1) :
+        - "rejection_with_volume" : lower_wick > 30% bar_range + vol_z > VOL_Z_REJECTION_MIN
+        - "break_below_strike_confirmed" : close ET prev_close beyond target (Dalton
+          MOM Ch.5 p.61-63 "two TPOs of acceptance" canonique, R1 market-analyst fix)
+        - "spring_recovery" : low/high penetration + close recovery (Wyckoff Pruden Ch.7)
         """
         close = _safe_float(bar.get("close"))
         high = _safe_float(bar.get("high"))
@@ -404,26 +448,39 @@ class DirectionResolver:
         vol_z = _safe_float(bar.get("vol_zscore_20"))
 
         if pending.pattern == "rejection_with_volume":
-            if close is None or high is None or low is None or vol_z is None:
+            # R2 code-reviewer fix : check open_ aussi (silent fallback bug avant)
+            if any(v is None for v in (close, high, low, vol_z, open_)):
                 return False
             bar_range = high - low
             if bar_range <= 0:
                 return False
             # Rejection LONG : lower wick fort + vol confirm
+            # Lower wick = body_bottom - low = min(close, open) - low (body bottom au low)
             if pending.side == "LONG":
-                lower_wick = min(close, open_ if open_ is not None else close) - low
-                return (lower_wick / bar_range) > 0.3 and vol_z > 0.5
-            else:  # SHORT : upper wick fort
-                upper_wick = high - max(close, open_ if open_ is not None else close)
-                return (upper_wick / bar_range) > 0.3 and vol_z > 0.5
+                lower_wick = min(close, open_) - low
+                return (
+                    (lower_wick / bar_range) > WICK_REJECTION_MIN_RATIO
+                    and vol_z > VOL_Z_REJECTION_MIN
+                )
+            else:  # SHORT : upper wick fort = high - body_top
+                upper_wick = high - max(close, open_)
+                return (
+                    (upper_wick / bar_range) > WICK_REJECTION_MIN_RATIO
+                    and vol_z > VOL_Z_REJECTION_MIN
+                )
 
         elif pending.pattern == "break_below_strike_confirmed":
-            if close is None:
-                return False
+            # R1 market-analyst fix : Dalton MOM Ch.5 p.61-63 "two TPOs of acceptance".
+            # Avant : close < target seul = pseudo-BOS retail (sweep trap ICT).
+            # Apres : close ET prev_close beyond target = acceptance canon 2 bars.
+            if close is None or pending.prev_close is None:
+                return False  # bar precedente requise pour acceptance
             if pending.side == "SHORT":
-                return close < pending.target_price
+                return (close < pending.target_price
+                        and pending.prev_close < pending.target_price)
             else:  # LONG
-                return close > pending.target_price
+                return (close > pending.target_price
+                        and pending.prev_close > pending.target_price)
 
         elif pending.pattern == "spring_recovery":
             if low is None or high is None or close is None:
@@ -434,7 +491,17 @@ class DirectionResolver:
             else:  # SHORT (Upthrust mirror)
                 return high > pending.target_price and close < pending.target_price
 
-        # Pattern inconnu : prudent return False (anti silent fail)
+        # Bug 5 Claude 4.7 fix : pattern inconnu = vrai silent fail avant.
+        # Si typo dans _SCENARIOS (wait_for_pattern="rejection_with_volumes"),
+        # tous les pendings timeout silencieusement = invisible debug Phase 3.
+        # Maintenant emit log warning pour traceabilite.
+        emit(
+            "BOT3_RESOLVER_CONFIRMATION_INVALIDATED",
+            log_fn=None,  # log_fn pas dispo ici, emit niveau MAJEUR via logger root
+            sym=pending.scenario_id.split("_")[0] if "_" in pending.scenario_id else "UNKNOWN",
+            scenario_id=pending.scenario_id,
+            reason=f"unknown_pattern_{pending.pattern}",
+        )
         return False
 
     def pending_count(self) -> int:
@@ -443,10 +510,17 @@ class DirectionResolver:
             return len(self._pending_entries)
 
     def __getstate__(self) -> dict:
-        """Exclude _lock du pickle."""
-        state = self.__dict__.copy()
-        state.pop("_lock", None)
-        return state
+        """Exclude _lock du pickle.
+
+        Bug 6 Claude 4.7 fix : acquire lock pendant copy pour anti-race vs resolve()
+        concurrent. Avant : __dict__.copy() pendant resolve() en cours pouvait
+        capturer _pending_entries dans etat intermediaire (entry deja del mais
+        cleanup pas fait sur autre thread).
+        """
+        with self._lock:
+            state = self.__dict__.copy()
+            state.pop("_lock", None)
+            return state
 
     def __setstate__(self, state: dict) -> None:
         self.__dict__.update(state)
@@ -457,11 +531,14 @@ class DirectionResolver:
 
 
 def _safe_float(v: Any) -> float | None:
-    """Cast safe en float, retourne None si invalide/NaN."""
+    """Cast safe en float, retourne None si invalide/NaN.
+
+    Bug 4 Claude 4.7 fix : `import math` deplace au top du module (etait dans
+    le try block, sys.modules cache mais code smell + import duplicate evalue).
+    """
     if v is None:
         return None
     try:
-        import math
         f = float(v)
         if math.isnan(f) or math.isinf(f):
             return None

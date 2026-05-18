@@ -21,6 +21,37 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
   - **Bloqueurs prerequis** : 8 reserves Tier 1 Phase 3 (cf entry suivante) doivent etre fixees AVANT exposition cross-bot. Sinon Bot 1/2/4 consomment biaised narrative (VOLUME_ANOMALY direction inversee, severity ES-only).
 
 - **[DETTE TIER 1 2026-05-18]** **Bot 3 v2 Phase 2 - 8 reserves Tier 1 reviews ULTRATHINK bloquantes Phase 3** | 4-6h | **HIGH BLOCKER PHASE 3** | DONE 7/8 (R1+R2+R3+R3bis+R5+R6+R7+R8 fixees, R4 reportee Phase 5 walk-forward)
+
+- **[DETTE TIER 1 2026-05-18 PM]** **Bot 3 v2 Phase 3 - 5 reserves residuelles Phase 5 (non-bloquantes Phase 4)** | 4-5h | MEDIUM | PROPOSED Phase 5
+  - **Source** : 2 agents ULTRATHINK Phase 3 (market-analyst + code-reviewer) 18/05 PM
+  - **Reviews archives** :
+    - `LOGS/reviews/REVIEW_BOT3V2_phase3_market_analyst_20260518.json`
+    - `LOGS/reviews/REVIEW_BOT3V2_phase3_code_reviewer_20260518.json`
+  - **7 BLOQUANTS Phase 4 fixes immediats** (DONE) :
+    - R1 code-rev pickle epoch mismatch zombies : DONE ✓
+    - R2 code-rev open_ None silent fallback : DONE ✓
+    - R3 code-rev coverage 5 scenarios + 1 concurrent : DONE ✓
+    - R1 market-analyst acceptance Dalton MOM Ch.5 2 bars : DONE ✓
+    - R3 market-analyst VOL_Z_REJECTION 0.5→1.0 aligne Pruden : DONE ✓
+    - R6 market-analyst magic numbers extraits constants : DONE ✓
+    - R4 market-analyst sequencing NSM→Resolver doc Phase 4 spec : DONE ✓
+  - **5 RESERVES residuelles Phase 5** :
+    - **R2 market-analyst** : window OD 1-2 bars (Dalton MOM 30-60 min canon).
+      Replay 5j ES = 0 fires S01/S02. Investigation 10j data avant fix code.
+      `bot3_direction_resolver.py:_SCENARIOS S01/S02 min_bars/max_bars`.
+    - **R5 market-analyst** : inverser CONF_RANGE_PLAY=0.70 (Dalton high WR) vs
+      CONF_REVERSAL=0.60 (Pruden Spring uncertain). Calibration paradoxe canon.
+      `bot3_direction_resolver.py:42-46`.
+    - **R7 market-analyst** : spring_recovery manque volume canon Pruden Ch.7 p.180-185
+      (penetration vol vs recovery vol absorption signal). +1 check vol_z relative.
+      `bot3_direction_resolver.py:_validate_pattern spring_recovery`.
+    - **R8 market-analyst** : ajouter 4 scenarios structural (S11-S14) :
+      OD_UP/DOWN + structural (Steidlmayer naked VPOC magnet), Wyckoff Spring/Upthrust
+      + structural (Phase C test VPOC). 30% des MenthorQ levels non couverts.
+    - **R9 market-analyst** : audit distribution 9182 NO_TRADE / 9199 = 99.8%.
+      Distribution par narrative_state + level_nature pour valider "selectivite canon"
+      vs "lacune scenarios". Avant Phase 5 DSR walk-forward (n>=100 par scenario).
+  - **Action** : fixer apres Phase 4 integration mp_engine, avant Phase 5 backtest.
   - **Source** : 2 agents ULTRATHINK 18/05 PM convergent verdict GO-AVEC-RESERVES Phase 2 TRACKING + NOGO PHASE 3 sans fixes R1-R3.
   - **Reviews archives** :
     - `LOGS/reviews/REVIEW_BOT3V2_phase2_market_analyst_20260518.json`

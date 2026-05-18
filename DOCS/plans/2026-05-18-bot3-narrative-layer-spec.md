@@ -277,6 +277,19 @@ Cf sanity check 18/05 : 3 features ABSENTES live, PRÉSENTES batch parquet. Audi
 **Durée** : ~1 semaine
 **Statut** : `[ ]` Not started
 
+**SEQUENCING CRITIQUE (R4 fix market-analyst Phase 3 18/05 PM)** :
+Ordre d'evaluation par bar dans `mp_engine` DOIT etre :
+1. `nsm.transition(symbol, bar, ctx, regime, story_trackers, swing_state)` (Phase 1)
+2. `twists = scan_all(twist_state, bar, swing_state, tick_size, story_trackers)` (Phase 2)
+3. `is_valid, _ = is_narrative_still_valid(snap, twists)` (Phase 2)
+4. **APRES** transitions NSM completes : pour chaque level touche,
+   `resolver.resolve(snap, level_name, level_nature, level_price, bar)` (Phase 3)
+
+Justification : EXHAUSTION_TOP transitionne via T30 vers TREND_DOWN_CONT. Si Resolver
+fire AVANT transition, il voit snapshot.state=EXHAUSTION_TOP → S09 SHORT, puis bar
+suivante S04 SHORT aussi = double comptabilite DSR par scenario_id.
+INTERDIT : resolver.resolve() AVANT nsm.transition() (consume snapshot stale).
+
 - [ ] `CORE/bot3_level_definitions.py` ajout `nature=` parallèle
 - [ ] `CORE/bot3_decision_engine.py` signature étendue
 - [ ] `CORE/bot3_mp_engine.py` passe `narrative_direction`
