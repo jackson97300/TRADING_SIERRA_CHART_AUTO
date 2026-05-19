@@ -325,7 +325,7 @@ class Bot3Engine:
             # FAIL-CLOSED : block conservatif + log CRITIQUE (pas pass)
             try:
                 from logging_v2 import get_logger as _get
-                _get("bot3_mp_engine").emit("BOT3_ECO_EXCEPTION",
+                _get("bot3_mp_engine", process="paper_v2").emit("BOT3_ECO_EXCEPTION",
                                              err=type(e).__name__,
                                              msg=str(e)[:200])
             except Exception:
@@ -434,7 +434,7 @@ class Bot3Engine:
                 if self._nsm_transition_ok_count[symbol] % 500 == 0:
                     try:
                         from logging_v2 import get_logger as _get
-                        _get("bot3_mp_engine").emit(
+                        _get("bot3_mp_engine", process="paper_v2").emit(
                             "BOT3_NSM_TRANSITION_OK",
                             sym=symbol,
                             count_since_boot=self._nsm_transition_ok_count[symbol],
@@ -489,7 +489,7 @@ class Bot3Engine:
                         for lvl_nm, _resolved in v2_confirmed_trades:
                             try:
                                 from logging_v2 import get_logger as _get
-                                _get("bot3_mp_engine").emit(
+                                _get("bot3_mp_engine", process="paper_v2").emit(
                                     "BOT3_V2_SHADOW_SIGNAL",
                                     sym=symbol, level=lvl_nm,
                                     scenario=_resolved.scenario_id,
@@ -506,7 +506,7 @@ class Bot3Engine:
                     # ne pollue PAS le breaker NSM transition.
                     try:
                         from logging_v2 import get_logger as _get
-                        _get("bot3_mp_engine").emit(
+                        _get("bot3_mp_engine", process="paper_v2").emit(
                             "BOT3_V2_ADVANCE_EXCEPTION",
                             err=type(e).__name__, msg=str(e)[:200],
                             sym=symbol,
@@ -581,7 +581,7 @@ class Bot3Engine:
                     # P1.8 fix : log construction failure + continue (ne pas crash bot)
                     try:
                         from logging_v2 import get_logger as _get
-                        _get("bot3_mp_engine").emit(
+                        _get("bot3_mp_engine", process="paper_v2").emit(
                             "BOT3_V2_TRADE_CONSTRUCTION_FAILED",
                             sym=symbol, level=lvl_name_conf,
                             scenario=resolved.scenario_id if resolved else "?",
@@ -756,6 +756,22 @@ class Bot3Engine:
             if atr_pct is not None:
                 atr_intraday = atr_pct * close_v / 100.0
 
+        # P0 fix 19/05 (Jackson VPS debug agent) : helper anti-NaN
+        # int(NaN) -> ValueError. `NaN or 0` -> NaN (NaN truthy en Python).
+        # Donc int(bar.get("ib_complete") or 0) crash si bar contient NaN.
+        # Bug a fait crasher V2 sur 100% des bars en prod VPS 18-19/05 (28 exceptions
+        # consec=1 NQ+ES = NSM transition jamais reussie).
+        def _safe_int_or_zero(v):
+            if v is None:
+                return 0
+            try:
+                f = float(v)
+                if f != f:  # NaN
+                    return 0
+                return int(f)
+            except (TypeError, ValueError):
+                return 0
+
         nsm_bar = {
             "ts_event_iso": bar_ts_str,
             "ts_event": bar_ts_str,
@@ -770,29 +786,30 @@ class Bot3Engine:
             "volume": _f("volume") or 1000,
             "session_date_trading": str(bar.get("session_date_trading", "")),
             "symbol": symbol,
-            "ib_complete": int(bar.get("ib_complete") or 0),
-            "ib_broken_up": int(bar.get("ib_broken_up") or 0),
-            "ib_broken_dn": int(bar.get("ib_broken_dn") or 0),
+            "ib_complete": _safe_int_or_zero(bar.get("ib_complete")),
+            "ib_broken_up": _safe_int_or_zero(bar.get("ib_broken_up")),
+            "ib_broken_dn": _safe_int_or_zero(bar.get("ib_broken_dn")),
         }
 
         # NSM ctx : session string + open_type + open_cash + ib_* + prev_va*
         session_id = bar.get("session_id")
         sess_map = {0: "ASIA", 1: "LONDON", 2: "NY", 3: "US_AH"}
         try:
-            session = sess_map.get(int(session_id) if session_id is not None else -1, "OTHER")
+            sid_int = _safe_int_or_zero(session_id) if session_id is not None else -1
+            session = sess_map.get(sid_int, "OTHER")
         except (TypeError, ValueError):
             session = "OTHER"
         nsm_ctx = {
             "session": session,
-            "open_type": int(bar.get("open_type") or 0),
+            "open_type": _safe_int_or_zero(bar.get("open_type")),
             "open_cash": _f("open_cash") or close_v,
             "asia_close": _f("asia_close"),
             "asia_open": _f("asia_open"),
-            "ib_complete": int(bar.get("ib_complete") or 0),
-            "inside_value_area": int(bar.get("inside_value_area") or 0),
+            "ib_complete": _safe_int_or_zero(bar.get("ib_complete")),
+            "inside_value_area": _safe_int_or_zero(bar.get("inside_value_area")),
             "ib_range": _f("ib_range"),
-            "ib_broken_up": int(bar.get("ib_broken_up") or 0),
-            "ib_broken_dn": int(bar.get("ib_broken_dn") or 0),
+            "ib_broken_up": _safe_int_or_zero(bar.get("ib_broken_up")),
+            "ib_broken_dn": _safe_int_or_zero(bar.get("ib_broken_dn")),
             "prev_vah": _f("prev_vah"),
             "prev_val": _f("prev_val"),
             "tick_size": 0.25,
@@ -888,7 +905,7 @@ class Bot3Engine:
             # P1.5 fix : emit log audit pour quantifier J+1.
             try:
                 from logging_v2 import get_logger as _get
-                _get("bot3_mp_engine").emit(
+                _get("bot3_mp_engine", process="paper_v2").emit(
                     "BOT3_V2_FALLBACK_V1_NEUTRAL",
                     sym=symbol,
                     level=level_name,
@@ -1205,7 +1222,7 @@ class Bot3Engine:
             # Sinon code défini dans log_catalog mais jamais émis = VALIDATION_MISS.
             try:
                 from logging_v2 import get_logger as _get
-                _get("bot3_mp_engine").emit(
+                _get("bot3_mp_engine", process="paper_v2").emit(
                     "BOT3_COMBO_BOOSTED_FIRE",
                     sym=symbol,
                     level=combo_name,
@@ -1288,7 +1305,7 @@ class Bot3Engine:
             # Pas de timestamp = on bloque + log unique (Phase 1 OBSERVE peu impacte)
             try:
                 from logging_v2 import get_logger as _get
-                _get("bot3_mp_engine").emit("BOT3_TRADING_WINDOW_PARSE_FAIL",
+                _get("bot3_mp_engine", process="paper_v2").emit("BOT3_TRADING_WINDOW_PARSE_FAIL",
                                              ts="?", err="empty_or_marker")
             except Exception:
                 pass
@@ -1303,7 +1320,7 @@ class Bot3Engine:
         except Exception as e:
             try:
                 from logging_v2 import get_logger as _get
-                _get("bot3_mp_engine").emit("BOT3_TRADING_WINDOW_PARSE_FAIL",
+                _get("bot3_mp_engine", process="paper_v2").emit("BOT3_TRADING_WINDOW_PARSE_FAIL",
                                              ts=bar_ts_str, err=str(e))
             except Exception:
                 pass
