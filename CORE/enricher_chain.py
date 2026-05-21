@@ -390,6 +390,9 @@ def compose_enriched_payload(
         from phase_b_plus_streaming import (
             add_phase_b_plus_streaming, PhaseBPlusState, make_phase_b_plus_state,
         )
+        from phase_b_plus_long_streaming import (
+            add_phase_b_plus_long_streaming, make_long_bar_state,
+        )
         from phase_b_rolling_inputs_streaming import (
             make_phase_b_rolling_inputs_state, apply_rolling_inputs_streaming,
         )
@@ -481,6 +484,27 @@ def compose_enriched_payload(
                 "phase_b_plus", factory=lambda: make_phase_b_plus_state(symbol=symbol_pure),
             )
             payload = add_phase_b_plus_streaming(payload, s_bp, tick=tick)
+
+            # Phase B+ LONG : 13 features (long bars + Extension Lines actives).
+            # Wire FILTRE explicite (pas de payload = add_...() brut) : aligne le
+            # pattern color/edge. `long_dn_up_pattern`/`long_up_dn_pattern` sont
+            # aussi produits par phase_b_plus_color_streaming (formule ES) -> on
+            # tranche : phase_b_plus_long = source canonique (formule NQ
+            # NON-LOOKAHEAD). Cf note collision color_streaming.
+            s_long = state.get_engine_state(
+                "phase_b_plus_long",
+                factory=lambda: make_long_bar_state(symbol=symbol_pure),
+            )
+            _long_out = add_phase_b_plus_long_streaming(payload, s_long)
+            for _k in ("long_up_bar", "long_dn_bar", "bar_body_ticks",
+                       "range_h_minus_lprev_ticks", "range_hprev_minus_l_ticks",
+                       "n_long_up_zones_active", "n_long_dn_zones_active",
+                       "dist_long_up_nearest_pct", "dist_long_dn_nearest_pct",
+                       "n_long_up_cluster_within_0_2pct",
+                       "n_long_dn_cluster_within_0_2pct",
+                       "long_dn_up_pattern", "long_up_dn_pattern"):
+                if _k in _long_out:
+                    payload[_k] = _long_out[_k]
 
             # Pass 4a : phase_b_rolling_inputs (6 sous-fonctions, 24 features)
             s_rolling_inputs_p0 = state.get_engine_state(
