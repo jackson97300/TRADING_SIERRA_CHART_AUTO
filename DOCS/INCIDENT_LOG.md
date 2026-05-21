@@ -31,6 +31,240 @@
 
 ---
 
+### 2026-05-20 22:00 (14) - [VALIDATION_MISS] - Backtests Bot 2 sur v4_enriched alors que le live tourne sur live_enriched : 2 pipelines divergents + parquet corrompu
+
+**Contexte** : Backtests SetupEngine Bot 2 (tri 11 setups + filtre MTF) lances sur `DATA/datasets/v4_enriched`. Doute Jackson sur la data -> comparaison v4_enriched vs live_enriched (ES 20/05, 1066 barres communes).
+
+**Cause racine** : 2 moteurs de features distincts. `v4_enriched` produit par `build_dataset_v4_dmp_databento.py` (vieux), `live_enriched` par `enricher_chain.py` (moteur du live). Comparaison : `delta_bar` diverge 22% (signe oppose), `delta_day_dir` signe oppose, `vwap_slope_10` jamais identique. Seules les features MenthorQ-derivees identiques. + parquet `v4_enriched/NQ.c.0/mai` CORROMPU (ecriture non atomique, footer absent depuis 04:45).
+
+**Echec** : Backtester sur une data que le bot ne verra jamais en live. Tout setup calibre sur v4 = non transposable, PF v4 sans valeur pour le live.
+
+**Lecon** : Backtest et live DOIVENT partager le meme moteur de features. Source unique = `replay_enricher_batch.py` (rejoue `enricher_chain`). Abandonner v4_enriched pour Bot 2.
+
+**Trigger prevention** :
+1. Avant tout backtest qui informe un deploy : verifier data backtest == data live (meme pipeline)
+2. Ecriture parquet batch DOIT etre atomique (tmp + rename) — backlog fix
+3. `VALIDATION_MISS` atteint 3+ (#11, #13, #14) -> escalation memoire dediee due
+
+### 2026-05-20 11:30 (13) - [VALIDATION_MISS] - Feature selection a ignore la blacklist PROHIBITED : 6 features LEAK dans le "subset 9 winners"
+
+**Contexte** : Apres l'incident #12 (dimensionalite), pivot vers feature selection Lopez Ch.8 -> "subset 9 winners" annonce avec NQ PF 1.96 DSR=1.0. Puis search space 113 features, injection 15 features, forward selection incrementale (subset confirme PF 2.59), enfin re-backtest execution realiste backtest-runner -> **PF 6.26**.
+
+**Cause racine** : Le backtest-runner a fait un test d'ablation : retirer les 4 features swing -> PF s'effondre 6.26 -> 0.92. Investigation : 6 des 9 "winners" sont des features LOOKAHEAD LEAK **deja blacklistees** dans `CORE/build_dataset_v4_dmp_databento.py:444-461` (PROHIBITED list, audit quality-auditor 27/04/2026) :
+- `liquidity_sweep_high/low_lag5` : consultent `close[i+5]` explicitement
+- `bars_since_last_swing_high/low` : derivees contaminees (fenetre centree)
+- `dist_swing_high/low` : test ablation confirme contamination
+Le `feature_selection_lopez_ch8.py` + le search space `features_finale_v1.txt` ont ete construits SANS croiser avec la blacklist PROHIBITED du pipeline. Les features bannies le 27/04 ont ete re-introduites comme "winners". 4 agents (feature-selection, forward-selection, injection, backtest) ont travaille dessus ; seul le dernier (backtest-runner, qui fait des ablations) l'a detecte.
+
+**Echec** : Le leak-check aurait du etre l'ETAPE 0 de tout feature selection. DSR Lopez protege contre l'overfitting du backtest, PAS contre le look-ahead leak — deux problemes distincts. Le PF 1.96/2.59/6.26 = artefact, le modele voyait le futur.
+
+**Lecon** : Tout pipeline de feature selection / search space DOIT en etape 0 :
+1. Charger la blacklist `PROHIBITED` depuis `build_dataset_v4_dmp_databento.py`
+2. Exclure toute feature blacklistee du search space AVANT tout calcul MDA/PFI/DSR
+3. Test de controle : ablation des top features — si retirer K features effondre le PF de >50%, suspecter un leak (un edge propre est distribue, pas concentre)
+
+**Trigger prevention** :
+1. **Leak-check etape 0 OBLIGATOIRE** : tout search space croise avec PROHIBITED list AVANT feature selection
+2. **Test ablation systematique** : retirer les top-3 features -> si PF s'effondre >50% = red flag leak
+3. **label-shuffle test** : PF doit tomber a ~1.0 sur labels melanges (valide le moteur, pas les features)
+4. **Categorie `VALIDATION_MISS`** : escalation si 3+ -> deja proche (incidents #11, #13)
+
+**Fix applique 20/05** :
+1. Backtest-runner a stoppe avant le code Bot 4 (leak attrape a temps)
+2. Re-lancer feature selection avec blacklist PROHIBITED appliquee en etape 0
+3. Search space `features_finale_v1.txt` a nettoyer : retirer Pilier 7 swing/sweep leak
+4. Moteur `tools/backtest_bot4_realistic.py` valide sain (label-shuffle PF 1.06) — reutilisable
+
+**Reviewed** : backtest-runner (detection ablation) + Claude (verification code source `build_dataset_v4_dmp_databento.py:444-461`)
+
+---
+
+### 2026-05-21 00:10 (12) - [OVER_ENGINEERING] - 3 semaines NOGO causes par dimensionalite non-flaggee par Claude
+
+**Contexte** : Du 28/04 au 20/05, 5-6 backtests consecutifs ont produit NOGO sur dataset V4 (467-478 cols) malgre data Databento propre 8 mois :
+- 28/04 audit cross-family : 5/5 NOGO (DSR<0.1, memory `feedback_data_mining_trap.md`)
+- 07/05 BN V2 : NQ PF 0.97, ES marginal PF 1.12
+- 18/05 Bot 3 V2 narrative (2700 LOC, 5 phases) : 1/8 EDGE_CONFIRMED Phase 5
+- 19/05 Bot 3 V3 Confluence Score : 0/1798 DSR>=0.95 (ml-trainer agent)
+- 19/05 Advisory V_BASE 8 mois v4_pure : 0/16 variants GO, DSR=0.000, -$14943 sur 5887 trades
+- 17/05 Bot 1 full 17 gates v4_enriched : ES PF 0.81 / NQ PF 0.59
+
+**Cause racine identifiee par Jackson 20/05 23:30** : 478 features pour ~5887 trades V_BASE = ratio 12.3 trades/feature. Lopez AFML Ch.7.6 exige N >= 10*p (minimum absolu) a 100*p (recommande). On etait juste au-dessus du minimum (5887 > 4780) mais a **12% du recommande** (47800). Pire en walk-forward 12-fold : 500 trades/fold / 478 features = 1.05 trades/feature = SOUS le minimum absolu. **DSR Bonferroni mathematiquement inatteignable** sur 478 features x 12 folds = nb_trials gonfle.
+
+**Echec mentor (Claude)** : Claude a accompagne les 3 semaines de tests sans JAMAIS poser la question fondamentale "478 features x 5K trades est-il statistiquement viable ?". Dispatch ml-trainer + market-analyst sans flag amont sur la dimensionalite. **Industry standard quant pro (Two Sigma, AQR, RenTech publics) = 20-50 features pour modeles production** — Claude le sait mais n'a pas tire la sonnette d'alarme.
+
+**Lecon** : Tout backtest ou audit edge candidate DOIT etre precede d'un **gut check dimensionalite** :
+- Calculer ratio `n_trades / n_features` avant de lancer
+- Si < 10 : NOGO methodologique, refuser l'audit, demander feature selection prealable
+- Si < 100 : flag rouge, recommander feature selection (MDA, PFI, cluster Spearman) avant LightGBM/scoring composite
+
+**Trigger prevention** :
+1. **Pre-flight dimensionalite OBLIGATOIRE** avant dispatch ml-trainer / backtest scoring : compter features actives + estimer n_trades attendus -> ratio
+2. **Refuser de coder un scoring composite** (Bot 3 V3, narrative, advisory) sur >50 features sans feature selection rigoureuse Lopez Ch.8 prealable
+3. **Industry standard rappel auto-charge** : modeles quant prod = 20-50 features selectionnees, JAMAIS 478 brutes
+4. **Categorisation `OVER_ENGINEERING`** : si 3+ occurrences -> memory dediee `feedback_dimensionality_check_first.md`
+5. **Cross-check avec rule `awesome-performance.md`** : "Measure before optimizing" -> ici "validate dimensionality before testing edge"
+
+**Fix applique 21/05 00:00** :
+1. Kill task bf1rrdrzg (Bot 1 backtest sur 478 features) — verdict statistiquement vide attendu
+2. Dispatch ml-trainer mandat STRICT feature selection rigoureuse Lopez Ch.8 sur v4_pure 8 mois (MDA + PFI + IC + cluster Spearman)
+3. Cible : top 20-30 features stables walk-forward 12-fold
+4. INTERDICTION absolue de tester un nouvel edge sur >50 features non-selectionnees rigoureusement
+
+**Reviewed** : Jackson (mentor) - escalation directe "tu aurais du tirer la sonnette d'alarme"
+
+---
+
+### 2026-05-19 23:00 (11) - [VALIDATION_MISS] Bug FLATTEN_MANUAL Bot 2 V6 - Brain-V6 ne lisait pas le flag
+
+**Contexte** : Suite fix 19/05 PM (bouton FLATTEN dashboard cable via flag files `DATA/BOT_CONTROL/FLATTEN_{bot}_{sym}.flag`), Jackson constate empirique 19/05 nuit que FLATTEN ne marche QUE sur Bot 1. Bot 2 V6 ES SHORT entry 7375.25 ouvert 22:16 UTC reste en tracking interne 3h+ apres click FLATTEN (state_v6.json bars_held=183, aucun TRADE_CLOSE log signal_id f7eeef8e). Broker Sim2 effectivement flat (verifie Sierra Chart GUI Jackson + flatten_bot.py Type 208/209/210 a fonctionne).
+
+**Cause racine** : Le fix 19/05 PM avait code la lecture FLATTEN_2_*.flag UNIQUEMENT dans `CORE/databento_paper_trader_v2.py` (service MIA-DataBento-Paper-V2 = Bot 2 V2 SetupEngine + Bot 3 MP). Bot 2 V6 (service MIA-Brain-V6 distinct, code `CORE/mia2_brain_v6_databento.py`) ne lisait JAMAIS ce flag. Plus grave : paper_v2 supprimait le flag defensif `if self.positions[sym] is None` (ligne 3640-3645), avalant le flag avant que Brain-V6 puisse le voir (paper_v2 poll 30s vs Brain-V6 poll 10s = paper_v2 plus souvent en tete de course).
+
+**Lecon** : Avant tout fix dashboard touchant `/api/admin/bot/{id}/...`, identifier TOUS les services Python qui ont un tracking interne pour ce bot_id. Bot 2 a DEUX implementations (V2 SetupEngine + V6 brain enrichi) dans 2 services distincts. Le fix 19/05 PM avait audite paper_v2 + paper_v3 mais oublie Brain-V6.
+
+**Trigger prevention** :
+- Avant patch dashboard FLATTEN/KILL/STOP : `Get-Service MIA-* | Where-Object Status -eq Running` pour lister TOUS les services bot actifs, puis grep dans chaque code source le pattern `FLATTEN_{bot_id}` / `STOP_FLAG` correspondant
+- Regle de partage flag entre 2 process : NE JAMAIS unlink si self.positions[sym] is None sans coordination explicite (TTL ou owner explicite)
+- Codes log distincts par origine process : BOT2_* (paper_v2) vs BOT2V6_* (Brain-V6)
+
+**Fix applique 19/05 nuit** :
+1. Ajout lecture FLATTEN_2_*.flag dans `mia2_brain_v6_databento.py` boucle run() avec convention partagee (process avec position traite + delete, sinon LAISSE)
+2. Modif `databento_paper_trader_v2.py:3640-3673` : NE PAS unlink defensif si `self.positions[sym] is None` (regression corrigee)
+3. TTL flag 60s ajoute dans LES DEUX (review code-reviewer BLOQUANT) pour eviter flag orphelin sur "Flatten all"
+4. 4 nouveaux codes log catalog (BOT2V6_FLATTEN_MANUAL_EXECUTED/EXCEPTION + BOT2/BOT2V6_FLATTEN_MANUAL_FLAG_STALE)
+
+**Action immediate 19/05 23:05** (avant fix) :
+- Stop-Service MIA-Brain-V6 → backup state_v6.json → Python clear `open_by_symbol={}` → Start-Service MIA-Brain-V6
+- Verifie 23:05:03 UTC : open_by_symbol vide, updated_iso normal = service ecrit nominal
+- Trade fantome debloque sans perte $$ (broker etait deja flat)
+
+**Reviewed** : Jackson (constat empirique) + code-reviewer (verdict GO-AVEC-RESERVES, 3 reserves : BLOQUANT TTL traite, RECOMMANDE banner stale + pytest non traites)
+
+**Categorie incrementee** : VALIDATION_MISS (5+ occurrences cumulees, deja en memoire dediee `feedback_validation_miss_patterns.md`)
+
+---
+
+### 2026-05-19 13:20 (10) - [DEPLOY_UNSAFE + VALIDATION_MISS] Bug ladder Bot 3 SL fantome + kill_switch incomplet sur _bot3_positions
+
+**Contexte** : Bot 3 Phase 1b ladder ACTION deploye sur paper_v2. Quand un trade NQ atteignait MFE >= 100t (palier 1), le bot ENVOYAIT cancel ancien SL + send nouveau SL palier (lock +60t), MAIS Sierra Chart ignorait silencieusement les 2 messages DTC. Resultat : SL "affiche" sur dashboard = 28910 (virtuel), SL reel broker = 28792 (initial 108t). Quand le marche redescendait sous 28910 sans toucher 28792, le trade timeout-fermait a perte au lieu du lock attendu.
+
+**Trades affectes (19/05) confirmes empiriquement** :
+- 09:10 NQ BUY entry=29008, MFE peak=127t, ladder palier 1 attendu lock +$60, reel = TIMEOUT -$93
+- 12:12 NQ BUY entry=28900, MFE peak=116t, ladder palier 1 attendu lock +$60, reel = TIMEOUT -$84
+- **Perte cumulee jour : -$177 + opportunite manquee +$120 = deficit -$297**
+- Sur 30j stats actuelles +$652, le vrai PnL ladder-correct pourrait etre +$1500-2500 (estimation prudente +$500 gain manque)
+
+**5 bugs imbriques (convergence audit Jackson + agent code-reviewer)** :
+
+1. **`cancel_order` faux positif** (`BOT/dtc_connector.py:676-729`) : retourne True meme sans ServerOrderID dans tracking → Sierra ignore silencieusement le Type 203. Viole `orphan-prevention.md` regle "Cancel sans ServerOrderID = IGNORE silencieusement".
+
+2. **MFE retroactif sur bar contenant entry** (`databento_paper_trader_v2.py:_bot3_update_mfe_mae`) : 08:39:53 (1 sec apres fill) log mfe=127t — bar age_sec=1013s = bar vieille de 17 min, donc high pre-fill compte dans MFE → palier 1 declenche faussement.
+
+3. **Pas de tracking `new_sl_cid` dans `_bot3_cid_index`** : apres send STEP C du modify SL, code n'enregistre pas le nouveau ClientOrderID → `_bot3_handle_dtc_fill` ne sait pas router le fill SL si jamais Sierra l'avait accepte.
+
+4. **Pas de verify Type 300 OPEN_ORDERS post-modify** : code suppose `send` TCP OK = SL actif broker. Faux pour STOP orders rejetes (violation regle R9 orphan-prevention.md).
+
+5. **Race condition T+1s bracket init / palier 1** : palier 1 declenche en 1 sec (8:39:53 → 8:39:54) alors que bracket SL initial vient d'etre envoye. `BOT3_LADDER_SL_MODIFIED` emis avant que ServerOrderID ancien SL soit propage de `_recv_loop`.
+
+**BUG BONUS DECOUVERT pendant revert** (categorie VALIDATION_MISS) :
+
+6. **`kill_switch` flatte `self.positions` mais PAS `self._bot3_positions`** (`paper_trader_v2.py:3110-3119`) : la boucle iter `for sym in SYMBOLS: if self.positions[sym]:` couvre **Bot 2 V6 tracking** mais ignore le tracking dedie Bot 3. Quand `STOP.flag` global est cree, kill_switch retourne `BOT_KILL_SWITCH_ACTIVATED n_closed=0` + `BOT_SHUTDOWN` sans flatten les positions Bot 3 → orphelins potentiels si Bot 3 avait des positions ouvertes au broker Sim1.
+
+**Verifie 19/05/2026 13:20 UTC** : STOP.flag cree, kill_switch active 2x (n_closed=0 chaque), positions Sim1 verifiees via `flatten_bot.py --bot 3` = etaient deja flat par coincidence (positions naturellement closed avant le STOP). MAIS architecture buguée = bombe a retardement pour incidents futurs.
+
+**Cause racine consolidee** :
+- DEPLOY_UNSAFE : Phase 1b ACTION ladder deploye sans test verify post-modify (regle R9 orphan-prevention.md ignoree)
+- VALIDATION_MISS : kill_switch jamais audite sur Bot 3 path (tracking dedie ignore dans la boucle flatten)
+- Convergence avec ancien incident 04/05 H6 (TradeAccount=Sim3 hardcode) : meme pattern "send DTC OK = effet broker garanti" sans verify
+
+**Action immediate prise (19/05)** :
+1. STOP.flag global cree → kill_switch shutdown bot
+2. `flatten_bot.py --bot 3` execute sur Sim1 = verify positions flat (etaient deja)
+3. `nssm set MIA_BOT3_LADDER_MODE=OBSERVE` (vs ACTION) → ladder log-only, ne touche plus au SL broker
+4. STOP.flag removed + Start-Service paper_v2 → bot tourne nominal en mode safe
+5. Bouton FLATTEN dashboard ajoute (per-trade, owner-only) `POST /api/admin/bot/{bot_id}/flatten/{symbol}` → Jackson peut flatten 1 trade ou tout un bot d'un clic, sans depencer du kill_switch buggué
+
+**Lecons** :
+1. **Toute action DTC critique (cancel/modify/send) DOIT avoir verify Type 300 post-action** avant de mettre a jour le state interne (cf regle R9 orphan-prevention.md, deja documentee mais ignoree en Phase 1b)
+2. **`cancel_order` DOIT retourner False** si pas de ServerOrderID dans tracking (caller doit pouvoir detecter echec)
+3. **MFE init = -inf** au boot/recovery, jamais recompute retroactif depuis bar pre-fill
+4. **Race condition palier <T+10s** mitigee par `ladder_min_age_seconds=10` config minimum
+5. **Kill_switch DOIT iterer sur TOUS les trackings de positions** (self.positions + self._bot3_positions + futurs trackers)
+6. **Backup defense** : bouton FLATTEN dashboard granulaire (per-trade) = filet de secours quand le kill_switch ne suffit pas
+
+**Trigger prevention** :
+- Avant tout deploy ladder/scale-out/BE ACTION : sequence test obligatoire = (a) shadow OBSERVE J+7 logs comparison, (b) backtest 30j "ce qui se passerait sans bug", (c) verify Type 300 systematique
+- Toute modif `_check_stop_flags`/`kill_switch` : grep tous les `self.*positions` du fichier + iterer chacun
+- Bouton FLATTEN dashboard owner-only doit etre testable pre-incident (sandbox Sim1 vide)
+
+**Fix applique aujourd'hui** :
+- Revert ladder mode OBSERVE (immediate, deploye 13:25 UTC)
+- Bouton FLATTEN per-trade dashboard (immediate, deploye 16:30 UTC, v=137)
+- INCIDENT_LOG entry (cette entree)
+- CHANGELOG entry deja ecrite (DOCS/BOT_CHANGELOG.md 19/05 IB_NARROW THRESHOLD entry)
+
+**Fix a livrer (Phase C)** :
+- `paper_trader_v2.py:3110-3119` : ajouter boucle `for sym in SYMBOLS: if self._bot3_positions[sym] is not None: self._bot3_close_position(...)` (CRITIQUE, prevent orphelin futur)
+- `dtc_connector.py:cancel_order` : retourne False si pas de SID
+- `databento_paper_trader_v2.py:_bot3_modify_sl_via_dtc` : verify Type 300 post-send, restore ancien SL si fail
+- `_bot3_cid_index` : register new_sl_cid post-modify
+- `bot3_config.py` : `ladder_min_age_seconds = 10` (defense race)
+- `_bot3_update_mfe_mae` : skip bar contenant entry_ts
+
+**Reviewed** : Jackson directive "STOP LES 3 BOT PUIS REVERT MAINTENANT" 19/05 13:20 + audit code-reviewer (separe) + self-diagnostic logs paper_v2.
+
+**Liens** :
+- CHANGELOG : entry 19/05 IB_NARROW (separate)
+- Memory : `feedback_log_debug_protocol.md` (4 etapes diagnostic logs)
+- Regle : `.claude/rules/orphan-prevention.md` (sequence anti-orphelin V2 R9)
+- Bouton FLATTEN code : `CORE/flatten_bot.py` + `DASHBOARD/api/admin_routes.py:/api/admin/bot/{id}/flatten/{sym}`
+
+---
+
+### 2026-05-19 16:00 (9) - [VALIDATION_MISS] Seuil `IB_NARROW_THRESHOLD = 0.40` copie de C++ sans verifier convention Python
+
+**Contexte** : Implementation `phase_b_v6_extras.py` (port Python feature `trend_day_probability`) reproduisait la formule C++ DMP_Transform.h:1316-1325 incluant `if (ib_range_atr < 0.40)`. Constante recopiee telle quelle dans Python sans verifier convention.
+
+**Ce qui a mal tourne** : Convention C++ = `ib_range_points / atr_session_points` (ratio fractionnaire, range typique 0.3-0.8). Convention Python `phase_b_rolling_inputs.py:141` = `ib_range_ticks / atr_1min_ticks` (ratio multiple, range observe ES mean=21.7 / NQ mean=30.8). Seuil 0.40 jamais atteint -> critere `ib_narrow` (+0.30) inactif -> `trend_day_probability` plafonne 0.5 (au lieu max 0.65) sur 100% bars.
+
+**Impact** : Feature critique input `regime_engine` (consommee par Bot 2 V6 -> regime_actionable) defaut 0.5 unique sur 100% bars. Vote TREND vs RANGE incomplet. Bug present depuis creation du module (audit code-reviewer 19/05 ante meridien).
+
+**Cause racine** :
+1. Recopie cross-langage de constante numerique sans verifier l'unite/convention du denominateur
+2. Test inline `_test_trend_day_probability` utilisait des valeurs synthetiques `[0.30, 0.50, 0.30]` < 0.40 -> tests PASS mais ne testaient PAS la realite des donnees empiriques
+3. Pas de sanity check post-build `trend_day_probability.nunique() >= 5` sur regen pilote
+
+**Lecon** :
+1. Toute constante copiee d'un autre langage doit etre validee empiriquement contre la distribution observee de l'input
+2. Tests unitaires synthetiques ne remplacent PAS une verif distribution post-build (asserts sur unique values / mean / max)
+3. Documentation explicite des differences de convention quand meme nom est partage entre 2 langages (`IB_NARROW_THRESHOLD` C++ != `IB_NARROW_THRESHOLDS` Python)
+
+**Trigger prevention** :
+- Toute formule portee C++ -> Python : grep tous les denominateurs (atr, range, vwap) + verifier l'unite (ticks/points/pct)
+- Toute fonction utilisant un seuil "absolu" : ajouter sanity check post-build (nunique, mean dans bornes, % bars activation)
+- Si meme nom partage C++/Python pour un seuil de meme intention semantique mais convention differente : suffixer `_PYTHON_CONVENTION` ou commentaire bug history explicite
+
+**Fix applique** (`CORE/phase_b_v6_extras.py:50-69, 144-148`) :
+- `IB_NARROW_THRESHOLD = 0.40` -> `IB_NARROW_THRESHOLDS = {"ES": 15.0, "NQ": 22.0, "MGC": 15.0}` calibre p25 empirique
+- `add_trend_day_probability` lookup `IB_NARROW_THRESHOLDS.get(symbol, IB_NARROW_THRESHOLD_DEFAULT)`
+- Test TDD nouveau `test_per_symbol_threshold_es_vs_nq` isole le critere narrow ES vs NQ
+- Validation regen 10j 21-30/04 : 7 valeurs distinctes (0.0 -> 0.65), max 0.65 atteint 7.4% ES / 10.1% NQ, ib_narrow activation 27.3% ES / 29.7% NQ
+
+**Consommateurs legacy clarifies** (3 modules avec convention different non-touches) :
+- `CORE/rolling_features.py:281` `ib_range_atr < 0.40` -> column `ctx_trend_day_score` ABSENTE du V4 pure (confirmation grep) -> DEAD CODE Option C, garde pour V3 legacy
+- `CORE/dalton_features.py:421` `ib_range_atr < 0.3` -> meme statut, DEAD CODE V4 pure
+- `CORE/ib_recalc.py:24` `IB_NARROW_RATIO = 0.35` -> import seulement par `mia_bench.py`, `mia_sim.py`, `dataset_builder.py`, `test_all.py` (pipeline V3 DMP JSONL), DEAD CODE V4 pure
+
+**Reviewed** : code-reviewer (GO-AVEC-RESERVES post-fix) + market-analyst (GO-AVEC-RESERVES post-fix, reco phase observation 1 mois) + self (grep cross-langage convention).
+
+**Liens** :
+- CHANGELOG entry du jour pour ce fix (DOCS/BOT_CHANGELOG.md)
+- Memory `feedback_context_miss.md` (pattern : verifier convention avant porter formule cross-langage)
+- C++ reference : `CPP/MIA_REFACTORED/DUMPER/DMP_Transform.h:1316-1325`
+
+---
+
 ### 2026-05-19 03:30 (8) - [VALIDATION_MISS] Zombie trade RECOVERED_TIMEOUT fausse stats dashboard
 
 **Contexte** : Apres deploy Phase 4d shadow mode (15:16 UTC), restart MIA-DataBento-Paper-V2. Service ancien (PID 122476) killed alors qu'une position NQ SHORT etait ouverte cote broker Sim1 (entry 29294.25). Nouveau service (PID 32844) detecte la position via `_bot3_recover_open_positions` mais SANS tracking interne (level/scenario/entry_ts perdus).
