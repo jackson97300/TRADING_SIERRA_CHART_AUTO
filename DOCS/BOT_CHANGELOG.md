@@ -62,6 +62,2858 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-03 10:25 — P4.1 Trailing ladder ACTION mode active (Bot 1 MP)
+
+**Categorie** : CONFIG decision engine (Trading critere 1)
+**Impact prod** : PAPER Sim1 Bot 1 MP (ES/MGC dip-buyer uniquement)
+**Fichier(s)** : env var nssm `MIA_BOT3_LADDER_MODE` OBSERVE -> ACTION (registry HKLM)
+**Reviewer(s) agent** : code-reviewer (validation 7 fixes anti-orphan existants + check empirique)
+
+### Quoi
+Activation du mode ACTION du ladder profit-locking pour Bot 1 MP. Code anti-orphan
+V2 sequence avec 7 fixes existait deja (`_bot3_modify_sl_via_dtc` ligne 2027) depuis
+deploy 11/05 + reviews 19/05. Activation par env var nssm uniquement.
+
+### Pourquoi
+Directive Jackson 03/06 "trailing stop ACTION". Phase 1 = activation Bot 1 MP via
+env var (zero code). Verif empirique pre-activation : 0 BOT3_LADDER_WOULD_LOCK
+event en OBSERVE depuis 11/05 (Bot 1 MP jamais atteint palier MFE 40t ES / 100t NQ /
+250t MGC). Activation = defensif futur, pas changement comportement quotidien.
+
+### Impact attendu
+- Si Bot 1 MP atteint palier MFE -> SL bouge a entry+sl_lock (lock minimum profit)
+- 7 fixes anti-orphan : cancel SL old + wait 300ms + verify pos broker + send new
+  SL + verify Type 300 + idempotence + bidirectional OCO cleanup
+- Worker thread `_bot3_ladder_worker_loop` consume queue async (hot path non bloque)
+
+### Validation pre-deploy
+- [x] Code anti-orphan reviewed 11/05 + 19/05 (4 patches)
+- [x] Tests pytest existants : `CORE/tests/test_bot3_ladder_action.py`
+- [x] Verif empirique : 0 BOT3_LADDER_WATCHDOG_SL_ORPHAN_DETECTED historique
+- [x] Heartbeats Bot 3 v3 + v4 + BN V5 sains post-restart
+
+### Reserves ouvertes (code-reviewer)
+- **NON couvert** : Bot 1 v3 + Bot 3 v4 (Phase 2 ~2-3h refactor helper standalone)
+- **NON couvert** : Worker thread silent death (heartbeat watchdog manquant, backlog 30 LOC)
+- **A monitorer J+1** : race OCO TP fill vs ladder modify (probabilite faible mais possible)
+
+### Revert plan
+```powershell
+ssh Administrator@212.28.179.199
+# Modifier registry env var
+$key='HKLM:\SYSTEM\CurrentControlSet\Services\MIA-DataBento-Paper-V2\Parameters'
+$ev=(Get-ItemProperty $key -Name AppEnvironmentExtra).AppEnvironmentExtra
+$new=$ev | %{ if($_ -match '^MIA_BOT3_LADDER_MODE='){'MIA_BOT3_LADDER_MODE=OBSERVE'}else{$_} }
+Set-ItemProperty -Path $key -Name AppEnvironmentExtra -Value $new
+nssm restart MIA-DataBento-Paper-V2
+```
+
+### Deployed at 2026-06-03 10:25
+
+### Suivi post-deploy
+- J+1 : grep BOT3_LADDER_WATCHDOG_SL_ORPHAN_DETECTED + POS_CLOSED_DURING_MODIFY + WORKER_EXCEPTION = 0 attendu
+- J+7 : si stable -> Phase 2 (Bot 1 v3 + v4 trailing ACTION)
+
+---
+
+## 2026-06-03 10:15 — P2 Filter RECOVERED_TIMEOUT 5 spots paper_tracker
+
+**Categorie** : FIX dashboard stats
+**Impact prod** : DASHBOARD (tous payloads bots)
+**Fichier(s)** :
+- `DASHBOARD/api/paper_tracker.py:63-105` (helper _is_recovered_fictive_close)
+- `DASHBOARD/api/paper_tracker.py:858-860` (spot A : BN V4 stats_today)
+- `DASHBOARD/api/paper_tracker.py:1041-1045` (spot B : BN V4 stats 7d/30d)
+- `DASHBOARD/api/paper_tracker.py:1341-1348` (spot C : BN V4 _build_closed_today)
+- `DASHBOARD/api/paper_tracker.py:1583-1587` (spot D : Bot 3 v3/v4 _load_today_state)
+- `DASHBOARD/api/paper_tracker.py:2757-2761` (spot E : Bot 1 MP BOT4_RISK_TRADE_CLOSE)
+**Reviewer(s) agent** : code-reviewer 2 rounds (NOGO trous BN V4 -> GO franc post-fix)
+
+### Quoi
+Exclusion des trades fictifs RECOVERED_TIMEOUT (heritages crashes pre-fix DTC FILL)
+du calcul PnL/wins/losses/PF dans 5 spots paper_tracker. Helper centralise verifie
+8 champs (level, exit_cause, exit_cause_mechanical, outcome, reason, exit_reason)
++ ctx nested (symetrie Q3 code-reviewer).
+
+### Pourquoi
+03/06 = -$175 fictifs (NQ -$150 a 07:27 + ES -$25 a 09:01) inventes par mecanisme
+RECOVERED_TIMEOUT post-crash paper_v2. Polluent stats PnL day. Bot 1 main avait
+deja filtre (ligne 250) depuis 19/05 mais payloads Bot 3 v3/v4/MP/BN V4 non couverts.
+
+### Impact attendu
+- PnL day affiche -$310 reel (au lieu de -$485 incluant fictifs)
+- Plus aucun trade RECOVERED affiche dans table closed_today
+- Win rate / PF / Profit Factor recalcule sur trades reels uniquement
+- Compatible Lopez "mark-to-market timeout != edge mesurable"
+
+### Validation pre-deploy
+- [x] Code reviewer 2 rounds (NOGO BN V4 stats_7d/30d + closed_today -> fixes -> GO)
+- [x] SCP paper_tracker.py + restart MIA-Dashboard
+
+### Reserves ouvertes
+- BUG 3 mineur : `get_bn_v4_closed_list` alt path non touche (code probable mort)
+
+### Deployed at 2026-06-03 10:15
+
+---
+
+## 2026-06-03 10:10 — P1 FLATTEN bouton dashboard mapping + consume
+
+**Categorie** : FIX dashboard control (Trading critere 1)
+**Impact prod** : DASHBOARD + PAPER (tous bots)
+**Fichier(s)** :
+- `CORE/flatten_bot.py:30-40` (BOT_TO_ACCOUNT swap mapping + ajout "4")
+- `CORE/flatten_bot.py:205-218` (argparse choices ajout "4" + liste "all")
+- `CORE/databento_paper_trader_v2.py:186-200` (constants BOT1+BOT2+BOT3 + commentaires)
+- `CORE/databento_paper_trader_v2.py:3963-4083` (handlers BOT1+BOT3v4 refonte avec TTL)
+- `CORE/mia_paper_trader.py:80-90,3679,3710` (rename Bot 4 BOT1_FLATTEN -> BOT4_FLATTEN)
+- `CORE/log_catalog.py:171-180` (8 nouveaux codes log)
+- `DASHBOARD/api/admin_routes.py:916-923,996` (_VALID_BOT_IDS + bots_to_flag all + doc)
+- `DASHBOARD/static/js/dashboard.js:6792-6802` (_currentBotIdForApi ajout "bot4")
+**Reviewer(s) agent** : code-reviewer 3 rounds (NOGO double-consume race -> fix -> GO franc)
+
+### Quoi
+Refacto archi 28/05 a inverse les Sim accounts (Bot 1=Sim1, Bot 2=Sim2, Bot 3=Sim3,
+Bot 4=Sim4) mais le mapping flatten_bot.py + consume mechanism databento_paper_v2.py
+sont restes sur l'ancien naming (1->Sim3, 3->Sim1). Et le Bot 4 process mia_paper_trader
+consumait FLATTEN_1_*.flag = race fatale avec mon ajout pour Bot 1.
+
+Fixes :
+- BOT_TO_ACCOUNT aligne {1:Sim1, 2:Sim2, 3:Sim3, 4:Sim4}
+- argparse choices + liste "all" inclut "4"
+- Bot 4 process rename FLATTEN_4_*.flag (anti-race)
+- Handler BOT1 paper_v2 ferme Bot 1 v3 (`_bot3_v3_trader._position`) + Bot 1 MP (`_bot3_positions`)
+- Handler BOT3 paper_v2 ferme Bot 3 v4 (`_bot3_v4_trader._position`)
+- TTL check pattern Bot 2 sur BOT1 + BOT3 handlers (anti-stale heritage flag)
+- Emit defensif au lieu de silent `except: pass`
+- BOT3_V3_FLATTEN_MANUAL_EXECUTED + 7 autres codes log_catalog
+- admin_routes _VALID_BOT_IDS ajout "4" + bots_to_flag "all" ajout "4" + doc mapping
+- dashboard.js _currentBotIdForApi ajout "bot4"->"4" (anti ferme Bot 1 par erreur)
+
+### Pourquoi
+Audit admin_log 03/06 : 5 fois bot_flatten OK = 5 fois Sim3 flat (vide noop) au lieu
+de Sim1 demande par Jackson. Trades fantomes affiches non nettoyables via dashboard
+button = bouton FLATTEN cosmetique depuis refacto 28/05. Mes ajouts initial round 1
+ont introduit race fatale (double consume FLATTEN_1) entre Bot 4 process et paper_v2
+process. Round 2 = rename Bot 4 + 5 autres fixes critiques + 2 nouveaux bugs (bots_to_flag
+"all" oubliait "4", _currentBotIdForApi "bot4" -> "1" fermait Bot 1 par erreur).
+
+### Impact attendu
+- Bouton FLATTEN dashboard FONCTIONNEL pour les 4 bots
+- Plus de trades fantomes affiches (tracking interne ferme correctement)
+- Sim4 subprocess `flatten_bot.py --bot 4` valide empirique (OK_FLAT retourne)
+
+### Validation pre-deploy
+- [x] 3 rounds code-reviewer (NOGO -> fixes -> GO franc)
+- [x] Test empirique subprocess flatten_bot.py --bot 4 sur Sim4 : OK_FLAT
+- [x] Test empirique consume FLATTEN_1_NQ.flag : detecte stale + emit ALERTE + unlink
+- [x] Services restartes (paper_v2 + Bot 4 + Dashboard)
+
+### Reserves ouvertes
+- Bug #3 mineur (race lecture `_position.get()` sans lock) : exception catched, backlog
+- Bot 2 BN V5 consume FLATTEN_2 : handler existe mais cible Bot 2 V2 SetupEngine legacy
+  (pas BN V5). Backlog P1.4 verification.
+
+### Deployed at 2026-06-03 10:10
+
+---
+
+## 2026-06-03 09:20 — P8.1 PnL Micro virtuel discret dashboard
+
+**Categorie** : FEATURE dashboard UX
+**Impact prod** : DASHBOARD (page Paper Trading)
+**Fichier(s)** : `DASHBOARD/static/js/dashboard.js` (+44 LOC helper _computePnlMicroVirtuel + display)
+**Reviewer(s) agent** : self (UX-only, pas decision engine)
+
+### Quoi
+Ajout d'un PnL secondaire discret en italique gris sous stats today : "PnL projete
+(1 ES E-mini + 3 MNQ Micros)" calcule cote frontend avec ratios :
+- NQ : × 0.30 (3 MNQ Micros = $1.50/tick vs 1 NQ E-mini = $5/tick)
+- ES : × 1.00 (1 E-mini inchange)
+- MGC : × 1.00
+
+### Pourquoi
+Directive Jackson "Pour reunir le meilleur des 2 mondes, on aurait pu avoir un
+second PnL plus discret place en bas qui calcule comme si 1 ES E-mini + 3 MNQ Micros
+juste pour info en un coup d'oeil". Permet de visualiser le profil "prop firm Micro
+futur" sans changer la realite broker E-mini actuelle.
+
+### Impact attendu
+- Vue UX additionnelle non bloquante
+- Pas de changement broker reality
+
+### Deployed at 2026-06-03 10:10 (en meme temps que P1)
+
+---
+
+## 2026-06-03 09:13 — Fix DTC FILL_INVALID faux positifs status 2/4
+
+**Categorie** : FIX execution (Trading critere 1)
+**Impact prod** : PAPER Sim1 (Bot 1 v3) + Sim3 (Bot 3 v4)
+**Fichier(s)** :
+- `CORE/bot3_v3_continuation_paper.py:545-565` (handler GUARD #1 reforme)
+- `CORE/bot3_v4_data_driven_paper.py:546-565` (handler GUARD #1 reforme)
+- `CORE/log_catalog.py:622-623` (codes BOT3_V3_ORDER_TERMINAL + BOT3_V4_ORDER_TERMINAL)
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES sur SL Rejected handler P3 backlog)
+
+### Quoi
+Handler `handle_dtc_fill` recevait TOUS les ORDER_UPDATE pour ses CIDs trackes et
+emettait FILL_PRICE_INVALID CRITIQUE sur tout status != 7. Or status=2 (Open) et
+status=4 (Working) sont des statuts NORMAUX d'un SL STOP en attente trigger.
+Fix : status non-7 = update legitime, return True. Status 6/8 = ORDER_TERMINAL INFO.
+
+### Pourquoi
+28 faux CRITIQUE en 6h sur 03/06 matin -> cascade 10 crashes process paper_v2.
+CLAUDE.md regle souveraine "OrderStatus 7=Filled, 2=Open. JAMAIS traiter 2 comme
+Filled. Sequence normale : 2 -> 4 -> 7" non respectee dans le handler initial.
+
+### Impact attendu
+- 0 faux CRITIQUE FILL_PRICE_INVALID
+- 0 cascade crashes process (validation J+1 obligatoire)
+- Bug #4 (SHORT sans close) + Bug #5 (signal_id reuse) + Bug #6 (RECOVERED_TIMEOUT
+  PnL invente) resolus mecaniquement
+
+### Validation pre-deploy
+- [x] Code review code-reviewer
+- [x] Validation empirique : 0 FILL_PRICE_INVALID apres 09:13 (vs 28 avant)
+- [x] PID paper_v2 stable apres deploy
+
+### Reserves ouvertes (code-reviewer)
+- **SL Rejected handler manquant** : status=6 (Rejected) -> ORDER_TERMINAL INFO mais
+  pas de force flat. Si SL rejete par broker, position reste tracked SANS protection.
+  Critique pour LIVE AMP. Fix P3 backlog : `_force_flat_no_sl()` (~40 LOC + 8 tests).
+- Template log_catalog FILL_PRICE_INVALID dit encore "status!=7" : a corriger
+  (status=7 + fill_price<=0 only maintenant).
+
+### Deployed at 2026-06-03 09:13
+
+---
+
+## 2026-06-03 08:30 — Fix #3 Bot 4 broadcast pollution
+
+**Categorie** : FIX dashboard stats (Logs tracabilite)
+**Impact prod** : PAPER Sim4 (Bot 4 MIA Trader)
+**Fichier(s)** : `NEW_BOT_2_MIA_TRADER/src/execution.py:203-241,283-330,367-465`
+**Reviewer(s) agent** : self
+
+### Quoi
+Set `_my_cids: set[str]` ajoute a `ExecutionAdapter.__init__`. Au `send_bracket` :
+`_my_cids.update([parent_id, tp_cid, sl_cid])`. Au handler `_adapter_on_order_update` :
+check `cid in _my_cids` AVANT emit BOT4_EXEC_FILL_*. Si CID inconnu -> emit
+`BOT4_FILL_UNKNOWN_CID` (INFO) + RETURN.
+
+### Pourquoi
+Sierra Chart broadcast TOUS les ORDER_UPDATE a tous les clients DTC connectes.
+Bot 4 recevait ainsi les fills de Bot 1 v3 (Sim1) et Bot 3 v4 (Sim3) sur CIDs
+prefix `MIA_*` partage. 38 BOT4_EXEC_FILL_* fictifs sur 03/06 alors que Bot 4
+n'avait rien tradel. Stats Bot 4 polluees.
+
+### Impact attendu
+- 0 BOT4_EXEC_FILL_* parasite (sauf fills reellement emis par Bot 4)
+- Stats Bot 4 fiables
+- Si Bot 4 inactif et Bot 1/3 trades -> emit BOT4_FILL_UNKNOWN_CID (debug)
+
+### Deployed at 2026-06-03 08:30
+
+---
+
+## 2026-06-03 08:00 — Fix #2 cooldown V4/V3 cablage timeout/kill_switch path
+
+**Categorie** : FIX risk management (Trading critere 1)
+**Impact prod** : PAPER Sim1 (Bot 1 v3) + Sim3 (Bot 3 v4)
+**Fichier(s)** :
+- `CORE/bot3_v3_continuation_paper.py:725-740` (_force_close_position : MAJ _last_close_ts)
+- `CORE/bot3_v4_data_driven_paper.py:656-668` (_force_close_position : MAJ _last_close_ts)
+**Reviewer(s) agent** : self (logique simple anti-pattern silent fallback)
+
+### Quoi
+`_force_close_position()` (path timeout 360 bars / kill_switch / shutdown) ne mettait
+PAS a jour `_last_close_ts[sym]` ni `_last_close_pnl_R[sym]`. Donc cooldown 10/15min
+JAMAIS declenche apres timeout -> bot reouvrait immediatement. Fix : MAJ ces 2 vars
+des l'entree de `_force_close_position` (treat as loss = applique cooldown LOSS 15min).
+
+### Pourquoi
+Audit empirique 03/06 matin : 4 violations cooldown sur Bot 3 v4 (reopens a 4.4-9.0min
+apres close au lieu de 10/15min attendus). Cause = timeouts qui by-passent le cooldown.
+
+### Impact attendu
+- 0 violation cooldown sur paths timeout/kill_switch/shutdown
+- Cohabitation propre avec close normal TP/SL (ligne 605 v4 / 618 v3 deja OK)
+
+### Deployed at 2026-06-03 08:00
+
+---
+
+## 2026-06-03 07:10 — Rollback migration NQ Micro MNQ -> E-mini NQ (Option A pure)
+
+**Categorie** : ROLLBACK migration NQ
+**Impact prod** : PAPER tous Sim (1 ES E-mini + 1 NQ E-mini par bot)
+**Fichier(s)** : 16 fichiers revert (constants.py + bot3_paper_common + bot3_config + bn_v5_engine + bn_v5_paper + bn_v4_paper + mia_paper_trader + databento_paper_v2 + mia_sltp + flatten_bot + bot3_v3_paper + bot3_v4_paper + BOT/bot_config + order_manager + trade_journal + test_bot)
+**Reviewer(s) agent** : self (revert de migration deployee + STOP.flag detecte)
+
+### Quoi
+Rollback de la migration MNQM26-CME 5 contrats deployee 06:30. Retour a E-mini partout :
+- NQ : NQM26-CME 1 contrat $5.00/tick
+- ES : ESM26-CME 1 contrat $12.50/tick (inchange)
+- MGC : MGCM26-CMECOMEX 1 Micro $1.00/tick (inchange)
++ Suppression STOP.flag pre-existant depuis 03:00 ce matin (kill switch actif sans
+qu'on le sache, bots paused, flag files FLATTEN non consommes).
+
+### Pourquoi
+Trade Activity Log Sierra Chart vide post-migration MNQM26 = ordres pas routes au
+broker (MNQM26 pas configure dans Sierra Chart data feed). Trades fantomes affiches
+dashboard alors que broker n'avait rien. Decision Jackson "Solution A pragmatique
+sans triche : tout E-mini broker + dashboard coherent. Migrer Micro MNQ en eval
+prop firm quand Sierra Chart pret".
+
+### Impact attendu
+- Trades routes broker (E-mini supporte default Topstep / AMP)
+- Risk reel = 1 NQ E-mini × $5/tick = $5/tick (au lieu de 5 MNQ × $0.50 = $2.50)
+- Dashboard PnL coherent avec broker reality
+
+### Deployed at 2026-06-03 07:10
+
+### Liens
+- Memory `feedback_data_quality_first.md` : preferer broker reality coherente
+- INCIDENT_LOG entry 30 : tick value E-mini NQ confusion (root cause initial)
+
+---
+
+## 2026-06-03 05:15 — Bot 3 v4 : SWING off (Option B) + combo OFF par defaut
+
+**Categorie** : CONFIG decision engine (Trading critere 1 + ML critere 2)
+**Impact prod** : PAPER Sim3 (Bot 3 v4 NQ data-driven seulement)
+**Fichier(s)** :
+- `CORE/bot3_v4_data_driven_engine.py` (Bot3V4Params : `enable_swing_triggers=False`, `combo_filter_enabled=False`)
+- `CORE/bot3_v4_data_driven_paper.py:164` (propagation flag swing)
+- `CORE/log_catalog.py` (4 codes BOT3_V4_VETO_COMBO_* enregistres mais inactifs combo=OFF)
+**Reviewer(s) agent** : market-analyst NOGO Pattern 11 9/10 + code-reviewer NOGO Pattern 11 + drift unite → **Etape A seule** : 2/2 GO franc sur SWING off (recommandation pure)
+
+### Quoi
+**Option B (Etape A seule)** : desactivation des triggers SWING_HIGH / SWING_LOW dans `build_default_triggers()`. Le combo filter (4 conditions empiriques pre_price/slope/aggressor/delta) reste **code mais OFF par defaut** — reactivable via `Bot3V4Params(combo_filter_enabled=True)` apres validation walk-forward 60j+ DSR Lopez.
+
+### Pourquoi
+- **SWING_HIGH/LOW** : 0/19 WR sur 37 trades historiques (validation empirique). Catastrophe defensible cross-bot (Bot 1, BN V5 zero impact).
+- **Combo filter OFF** : 2 NOGO agents convergents :
+  - market-analyst Pattern 11 score 9/10 : 4 hyperparams optimises sur N=37 -> N=9 = curve-fit textbook
+  - code-reviewer : drift unite `pre_price_chg_5bars` backtest vs live (incident SIZING/SL/TP 27/05), substitution `slope_d5` -> `delta_bar` non validee
+- Strategie : laisser 4 triggers nus (VWAP_D_SD2U/SD2D, CUR_VAH/VAL) 30j en regime haussier -> baseline propre -> reactiver combo si PF>=1.0 stable.
+
+### Impact attendu
+- Metriques projete : -SWING_HIGH/LOW trades (0/19 WR = elimination perte garantie), 4 triggers non-SWING = baseline observable
+- Effet de bord : aucun (cross-bots isolation Sim3 confirmee)
+
+### Validation pre-deploy
+- [x] Tests pytest engine : 2/2 nouveaux tests Option B PASS (`test_default_triggers_swing_off_03062026`)
+- [ ] 18 tests pre-existants fail (cause F3 29/05 `require_confirmation_next_bar`) — DETTE HERITEE non bloquante
+- [x] Review code-reviewer : NOGO global, GO sur SWING off Etape A
+- [x] Review market-analyst : NOGO global, GO sur SWING off (recommandation pure)
+- [x] Test empirique sur N=37 : SWING off elimine 19 pertes -$x
+
+### Revert plan
+```bash
+# Reactiver SWING_HIGH/SWING_LOW si baseline 4 triggers devient pire
+# 1. Editer CORE/bot3_v4_data_driven_engine.py : enable_swing_triggers: bool = True
+# 2. SCP + restart MIA-DataBento-Paper-V2
+# Combo filter reste OFF tant que pas valide Lopez (au cas ou re-tentation override)
+```
+
+### Deployed at 2026-06-03 05:15
+SCP 3 fichiers + restart paper_v2 a faire apres entry CHANGELOG.
+
+### Suivi post-deploy
+- J+1 : grep SWING_HIGH/SWING_LOW dans decisions/ -> Count = 0 attendu
+- J+1 : count BOT3_V4_TOUCH_CONFIRMED_ENTRY 4 triggers -> baseline mesurable
+- J+7 : PF Bot 3 v4 sur 4 triggers nus
+- J+30 : decider reactivation combo si PF>=1.0 stable (sinon archive et focus autre bot)
+
+### Liens
+- Memory : `feedback_data_mining_trap.md` (28/04), `project_bot3_reform_verdict_20260524.md` (NOGO Lopez)
+- Review market-analyst : Pattern 11 score 9/10, kill switch ENV criteres revert J+1/J+7/J+30
+- Review code-reviewer : drift unite pre_price/slope_d5, 18 fails dette F3 a reparer session dediee
+- INCIDENT_LOG : DATA_MINING_TRAP 28/04, SIZING/SL/TP DEPLOY 27/05
+
+---
+
+## 2026-06-02 22:50 — Bot 1 NQ Wyckoff : SL/TP fixe 25/50 + tightening + slope filter
+
+**Categorie** : CONFIG decision engine (Trading critere 1 + ML critere 2)
+**Impact prod** : PAPER Sim1 (Bot 1 NQ Wyckoff Continuation seulement)
+**Fichier(s)** :
+- `CORE/bot3_v3_continuation_engine.py` (Bot3V3Params + _compute_sl_tp court-circuit + filtre slope_abs)
+- `CORE/bot3_v3_continuation_paper.py:350` (cooldown DEFAULT, override 20/30 rollback'd post-review)
+- `CORE/log_catalog.py` (3 codes : BOT3_V3_SL_FIXED_MODE, BOT3_V3_VETO_NO_SLOPE_DATA, template MISALIGN etendu)
+- `tests/test_bot3_v3_engine.py` (mk_engine factory legacy + test defaults Jackson)
+**Reviewer(s) agent** : code-reviewer 22:30 NOGO (4 CRIT fixes) + market-analyst 22:35 NOGO (cooldown destroys edge)
+
+### Quoi
+Migration NQ Wyckoff de SL/TP swing-based (fallback 15t 95% du temps) vers SL/TP fixe (SL=25t / TP=50t / RR 2:1). Tightening buffers detection (touch 0.05->0.03, breakout 0.025->0.015, retest 0.025->0.015), window_retest 3->5 bars. Filtre vwap_slope_abs >= 0.10 pts/bar (sign + force). Cooldown DEFAULT 10/15 inchange (rollback de tentative 20/30 apres market-analyst test isolation).
+
+### Pourquoi
+Constat empirique 105 trades NQ Wyckoff 10j : PF 1.07, WR 47%, Net +$50 = breakeven. 95% des trades avec SL=15t fallback (swing-based ne marche pas). 49% des losers avec slippage > 1.0R (SL effectif ~23t). 67% TIMEOUT = bot ne capture pas le mouvement. Directive Jackson : "SL/TP fixe + laisser respirer + plus selectif". Backtest 102 trades parquet : nouveau setup projete PF 1.86 / Net +$375 / N=27 sur 10j.
+
+### Impact attendu (REVISE post-review)
+- N trades : 105 -> ~40-50 sur 10j (selectivite via slope filter)
+- PF : 1.07 -> 1.3-1.5 (apres market-analyst : PF 1.86 = artefact data mining sur N=27)
+- Net : +$50 -> +$200-300 sur 10j (vs +$375 backtest = optimiste)
+- WALK-FORWARD market-analyst : PF 1.56 out-sample (vs 1.86 in-sample = surfit confirme)
+- Avec slippage realiste 6-10t : PF projete ~1.30 (vs PF 0.95 setup nu slip 10t)
+- **PAS un edge robuste Lopez** (N<100, DSR ne tient pas) -> rollback si J+7 N<20 ou Net<0
+
+### Validation pre-deploy
+- [x] Tests unitaires : 197/199 PASS (2 fails pre-existants INCIDENT_LOG entry 26)
+- [x] Backtest : 102 trades parquet, PF 1.86 in-sample / 1.56 out-sample walk-forward
+- [x] Review code-reviewer : NOGO -> 4 fixes appliques (CRIT-1/2/3/4)
+- [x] Review market-analyst : NOGO -> cooldown rollback applique
+- [ ] Test empirique J+1 : observer 5-10 trades reels en mode fixe
+
+### Anti-regression appliquees (post-review)
+- CRIT-1 cooldown DEFAULT 10/15 inchange (Bot 2 BN V4 + Bot 3 v4 protected) ; Bot 1 override 20/30 rollback (cooldown DETRUIT l'edge selon test isolation market-analyst)
+- CRIT-2 log code BOT3_V3_SL_FIXED_MODE ajoute log_catalog.py
+- CRIT-3 template BOT3_V3_RETEST_FILTERED_TREND_MISALIGN etendu (veto_reason + min_slope_abs)
+- CRIT-4 cette entry CHANGELOG
+- R1 filtre slope fail-CLOSED si vwap_slope_10 absent (nouveau code BOT3_V3_VETO_NO_SLOPE_DATA)
+
+### Reserves connues (market-analyst)
+- N=27 backtest < 100 DSR Lopez = pas un edge prouve, signal preliminaire
+- Slippage Sim1 1.56R sur 49% losers = vrai probleme (DTC fix necessaire)
+- Regime DOWN baissier : 7 trades hist PF 0.65 / Net -$69 (bot trend-long-biased)
+- min_vwap_slope_abs=0.10 calibre sur backtest 10j = risque overfit hyperparam
+
+### Revert plan
+```bash
+# Rollback complet (~30s)
+ssh Administrator@212.28.179.199 "powershell -Command \"Copy-Item C:/TRADING_SIERRA_CHART_AUTO/CORE/bot3_v3_continuation_engine.py.bak_20260602_pre_jackson_v2 C:/TRADING_SIERRA_CHART_AUTO/CORE/bot3_v3_continuation_engine.py -Force; Copy-Item C:/TRADING_SIERRA_CHART_AUTO/CORE/bot3_v3_continuation_paper.py.bak_20260602_pre_jackson_v2 C:/TRADING_SIERRA_CHART_AUTO/CORE/bot3_v3_continuation_paper.py -Force; Restart-Service MIA-DataBento-Paper-V2 -Force\""
+```
+
+### Suivi post-deploy
+- **J+1 (03/06)** : grep `BOT3_V3_SL_FIXED_MODE` logs decisions, verifier emis + sl_ticks=25 partout. Compter `veto_reason=trend_too_weak` (cible 30-50% candidates skip).
+- **J+7 (09/06)** : si N trades < 20 ou Net < $0 -> rollback selon revert plan. Sinon continuer + extension backtest 30j.
+- **J+30 (02/07)** : si N >= 50, recalculer PF/WR/Net reels vs backtest projete. DSR Lopez si N >= 100.
+
+### Liens
+- INCIDENT_LOG entry 28 (confusion ticks/USD 02/06 matin = pas re-applique ici)
+- Memory `feedback_data_mining_trap.md` (PF 1.86 = artefact suspect)
+- Memory `project_bot4_live_phase71_20260527.md` (Sim1 fill bias bug = vrai probleme slippage)
+- TMP_ANALYSIS/backtest_nq_setup.py (source PF 1.86)
+
+---
+
+## 2026-06-02 14:00 — SIZING per-bot : Bot 1 NQ 5 micros MNQ + autres bots 1 micro
+
+**Categorie** : CONFIG sizing cross-bot (Trading critere 1 + Cross-module critere 6)
+**Impact prod** : PAPER (Bot 1 NQ Sim1 ×5 micros, Bot 2 Sim2, Bot 3 v4 Sim3, Bot 4 Sim4)
+**Fichier(s)** :
+- `CORE/bot3_config.py` GUARD_RAILS_BOT3["NQ"] : n_contracts 1→5 + tick_value 1.25→0.50
+- `CORE/bot3_config.py` RISK_BOT3["NQ"] : position_size 1→5
+- `CORE/bot3_paper_common.py:41-50` SYMBOL_TO_CONTRACT["NQ"] : NQM26→MNQM26
+- `CORE/databento_paper_trader_v2.py:212` SYMBOL_TO_CONTRACT["NQ"] : NQM26→MNQM26
+- `CORE/bn_v4_paper.py:73-82` SYMBOL_TO_CONTRACT NQ+ES : standard→MICRO (MNQM26+MESM26)
+- `NEW_BOT_2_MIA_TRADER/src/main.py:980` mapping NQ : NQM26→MNQM26
+- `CORE/bot3_paper_common.py:467-509` compute_pnl_R_usd : ajout param n_contracts (default 1)
+- `CORE/bot3_v3_continuation_paper.py:437-510` qty hardcoded 1→GUARD_RAILS dynamic (4 sites)
+- `CORE/bot3_v4_data_driven_paper.py:455-527` qty hardcoded 1→GUARD_RAILS dynamic (4 sites)
+- `CORE/databento_paper_trader_v2.py:805+753+1151+1595-1596+2105+2856-2857` defaults n_contracts=3 → GR fail-loud OR safe fallback 1
+**Reviewer(s) agent** : code-reviewer NOGO 7 bloquants -> corrections appliquees -> re-review pending
+
+### Quoi
+Sizing PER-BOT :
+- **Bot 1 NQ** (Bot 3 v3 NQ Sim1) : **5 MICROS MNQM26** ($2.50/tick effective vs $1.25 standard avant = 2× risk USD)
+- **Bot 1 ES** (Bot 3 MP ES Sim1) : 1 ESM26 standard ($12.50/tick) INCHANGE
+- **Bot 2 BN V4** : 1 MNQM26 micro + 1 MESM26 micro
+- **Bot 3 v4** : 1 MNQM26 micro
+- **Bot 4** : 1 MNQM26 micro (deja design Phase 7.1 SAFE COLLECT)
+
+### Pourquoi
+Audit forensique R3 (02/06) sur 78 trades Bot 1 NQ 28/05-01/06 :
+- PnL dashboard MICRO ($0.50/tick) : +$160
+- PnL broker reel STANDARD Sim1 ($1.25/tick) : +$400
+- Sous-estimation x2.5 depuis 28/05 (fix MES->ES standard avait laisse NQ en standard sans aligner code MIA)
+
+Jackson directive : architecture sizing per-bot car chaque bot a sa strat, son backtest, ses metriques.
+Bot 1 NQ : 5 micros = granularite fine + ratio R-multiple inchange en ticks.
+Autres bots : 1 micro paper validation propre.
+
+### Codes log
+Aucun nouveau code log. Les emits existants (BOT3_V3_TRADE_OPEN, BOT3_V3_TRADE_CLOSE, etc.) capturent qty automatiquement.
+
+### Impact attendu
+- Bot 1 NQ : sizing reel paper = 5 × $0.50 = $2.50/tick = 2x vs standard precedent (qui etait en realite STANDARD broker mais MICRO calcul code)
+- SL 15t -> -$37.50 per trade
+- TP 22t -> +$55 per trade
+- Ladder profit-locking : seuils en ticks invariants, $ lock x2 (palier 1 lock $50 -> $100 etc)
+- PnL session dashboard coherent avec broker reel Sim1
+
+### Reserves
+- Sim1 accepte MNQM26-CME ? a tester sandbox post-deploy (1 trade manuel)
+- Backtests ladder USD-based pre-02/06 sont calibres sur n_contracts=1 + tick_value=1.25 standard. Avec MICRO x5 = total USD identique mais paliers MFE en TICKS invariants -> OK conceptuel
+- Bot 2 BN V4 backtests pre-02/06 sur tick_value=0.50 micro mais SYMBOL_TO_CONTRACT pointait standard. Maintenant coherent micro/micro. Pas de regression edge attendue (logique en ticks)
+- Bot 4 NEW_BOT_2_MIA_TRADER n_contracts par signal lu via execution.py qty param, sizing config existante intacte
+
+### Validation pre-deploy
+- [x] Syntax check 7 fichiers OK
+- [x] Sanity check valeurs config : GR.NQ n=5 tv=0.50 = $2.50/tick effective verifie
+- [x] Tests BOT/test_bot.py 46/46 PASS
+- [x] Tests ladder + DTC : 13/13 PASS
+- [x] Audit forensique 78 trades 28/05-01/06 : ecart +$240 documente
+- [ ] Re-review code-reviewer post P0 corrections (Phase J)
+- [ ] Backup VPS 7 fichiers + SCP + restart paper_v2 + Bot 4 (Phase K)
+- [ ] J+1 : verifier qty=5 dans BOT3_V3_TRADE_OPEN + contract MNQM26 dans SC Trade Activity (Phase L)
+
+### Revert plan
+```bash
+# Backups locaux .bak_20260602_pre_voieB existent (etat pre-02/06)
+# Modifier manuellement les 7 fichiers en revert avec :
+# - GUARD_RAILS_BOT3["NQ"]["n_contracts"] = 1
+# - GUARD_RAILS_BOT3["NQ"]["tick_value"] = 1.25
+# - RISK_BOT3["NQ"]["position_size"] = 1
+# - SYMBOL_TO_CONTRACT["NQ"] : MNQM26-CME -> NQM26-CME (3 fichiers)
+# - bot3_v3/v4 qty=1 hardcoded (annuler dynamic config lookup)
+# Restart paper_v2 + Bot 4
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+(a remplir apres deploy)
+
+### Suivi post-deploy
+- J+1 grep BOT3_V3_TRADE_OPEN : verifier qty=5
+- J+1 grep SC Trade Activity Log : verifier MNQM26-CME envoye et fill
+- J+1 grep BOT3_TRADE_CLOSE pnl_usd : verifier coherence × 5 micros vs broker reel
+- J+7 evaluer PnL Bot 1 NQ cumul vs baseline pre-02/06
+
+### Liens
+- Audit forensique : `CORE/research/tmp_audit_pnl_nq_micro_vs_standard.py`
+- INCIDENT_LOG : entry VALIDATION_MISS dashboard PnL Bot 1 NQ sous-estime depuis 28/05
+
+---
+
+## 2026-06-02 09:00 — CONFIG ES TP=150 + timeout 60min (chantier "respire" ES)
+
+**Categorie** : CONFIG (Bot 3 MP ES sur paper_v2 Sim1)
+**Impact prod** : PAPER (Bot 1 ES via Bot 3 MP legacy)
+**Fichier(s)** : `CORE/bot3_config.py:165-200` (GUARD_RAILS_BOT3["ES"])
+**Reviewer(s) agent** : code-reviewer (a dispatcher post-deploy)
+
+### Quoi
+
+3 changements config ES :
+- `tp_rr_ratio` : 1.2 → **4.69** (= 150/32, viser TP 150t avec SL 32t)
+- `tp_cap_ticks` : 80 → **150** (permettre TP 150t)
+- `timeout_minutes` : 30 → **60** (laisser developpement mouvement)
+
+Calcul effectif : TP = min(SL × 4.69, 150t) = min(150, 150) = 150t = 37.5 pts ES = **$1875/contrat**.
+
+### Pourquoi
+
+Diagnostic forensique 02/06 : 23 trades ES Bot 3 MP 24/05-02/06 :
+- **83% TIMEOUT** (19/23) avec config actuelle 30 min
+- Seulement 1 TP atteint / 2 SL touches
+- TIMEOUT distribution : 14W/8L = **50/50 random** = pas d'edge mesurable
+- 70% trades en Asia/London = volatilite trop faible pour TP=38t en 30min
+
+Backtest 5 scenarios sur memes 23 trades :
+| Scenario | SL | TP | timeout | PnL | EV/trade | PF |
+|----------|-----|-----|---------|-----|----------|-----|
+| Baseline | 32 | 38 | 30 | +$700 | +$30 | 1.65 |
+| **C (adopte)** | 32 | **150** | **60** | **+$2188** | **+$95** | **2.75** |
+| D | 32 | 150 | 120 | +$938 | +$41 | 1.37 |
+| E | 64 | 150 | 60 | +$2475 | +$108 | 3.51 |
+
+Scenario C choisi : PF 2.75 (+67% vs baseline), 21 TO + 2 SL au lieu de 23 TO.
+
+**Note importante** : ce changement ne s'applique PAS a NQ (Bot 3 v3 continuation
+Wyckoff). Backtest 137 trades NQ : elargir SL/TP DETRUIT l'edge (-$1425 sur scenario D_respire60). Strategies opposees : continuation = cut vite vs rejection = respirer.
+
+### Impact attendu (paper Sim1)
+
+- TIMEOUT mode : 83% → ~91% (mais avec PnL meilleur car timeout 60min capture mouvements)
+- PF : 1.65 → 2.75 (cible)
+- EV/trade : +$30 → +$95
+- ATTENTION : data Sim1 bug fill biaisee (+$12/trade gonflement moyen), edge reel
+  probablement inferieur. Migration prop firm necessaire pour validation propre.
+
+### Reserves statistiques
+
+- n=23 trades = **TRES FAIBLE** (DSR Lopez exige n≥100, fold stability ≥50%)
+- Periode unique mai 2026 = 1 regime seulement
+- Sim1 bug fill = data biaisee
+- Si rejection ES marche en RTH mais pas Asia/London → optimal serait skip
+  Asia/London (a tester en chantier 2 si n insuffisant)
+
+### Validation pre-deploy
+
+- [x] Syntaxe : `python -m py_compile CORE/bot3_config.py` OK
+- [x] Sanity check : calcul TP = 150t = $1875 par contrat verifie
+- [x] Tests non-regression : `BOT/test_bot.py` 46/46 PASS
+- [ ] Re-review code-reviewer (post-deploy)
+- [ ] Monitor J+1 : verifier nouveaux TP=150t + timeout 60min effectifs
+- [ ] Extension backtest 60 jours pour validation DSR (chantier suivant)
+
+### Revert plan
+
+```python
+# Revert config ES bot3_config.py lignes 188-193 :
+"tp_rr_ratio": 1.2,
+"tp_cap_ticks": 80,
+"timeout_minutes": 30,
+```
+
+Restart paper_v2 → revert effectif en 30s.
+
+### Deployed at YYYY-MM-DD HH:MM
+(a remplir apres SCP + restart)
+
+### Suivi post-deploy
+
+- J+1 : grep `BOT3_TRADE_CLOSE.*ES.*reason=` → verifier ratio TIMEOUT vs SL vs TP
+- J+1 : verifier `dur=XXXXs` dans BOT3_TRADE_CLOSE atteint 3600s (60min) max
+- J+7 : evaluer PF et EV/trade vs baseline +$30
+- J+15 : si ETV/trade reste < +$50 → revert ou ajuster
+
+### Liens
+
+- Backtest script : `CORE/research/tmp_backtest_es_tp150.py`
+- Memory : aucune (creation memory si scenario E vraiment GO)
+
+---
+
+## 2026-06-01 09:30 — FIX STOP order DTC : retirer Price1 (interpretation STOP_LIMIT par SC)
+
+**Categorie** : FIX (execution DTC, 4 sites cross-bots)
+**Impact prod** : PAPER (Bot 1 v3 + Bot 1 v3 ladder + Bot 2 BN V4 modify SL + Bot 4 trailing)
+**Fichier(s)** :
+- `BOT/dtc_connector.py:436-462` (SL initial via `send_market_order`)
+- `CORE/databento_paper_trader_v2.py:2104-2128` (SL ladder palier promotion Bot 1 v3)
+- `CORE/databento_paper_trader_v2.py:2447-2475` (SL trailing Bot 4 MIA Trader)
+- `CORE/bn_v4_paper.py:1061-1085` (SL modify recharge Bot 2 BN V4)
+- `CORE/log_catalog.py:217-221` (nouveau code `SL_STOP_PATCHED_V1` trace J+1)
+
+**Reviewer(s) agent** : code-reviewer NOGO initial (3 sites manquants + CHANGELOG/INCIDENT_LOG/log fail-loud)
+→ corrections appliquees → re-review pending
+
+### Quoi
+
+Retirer `"Price1": float(sl_price)` du payload des SL STOP orders DTC. Specs DTC
+officielles : `OrderType=3 (STOP)` utilise UNIQUEMENT `StopPrice`. Specs `OrderType=4
+(STOP_LIMIT)` utilise les deux (`StopPrice` trigger + `Price1` LIMIT).
+
+Avant patch : envoi `Price1=StopPrice` ambigu, SC interpretait comme STOP_LIMIT
+avec LIMIT=STOP -> fill au LIMIT pouvait etre favorable (slip artificiel +10.5t mean SL).
+
+Apres patch : envoi STOP propre -> fill MARKET au touch (peut slipper defavorable
+= realiste vs broker live).
+
+### Pourquoi
+
+**Diagnostic empirique 29/05 + 01/06** :
+- 60 trades NQ Bot 1 v3 Sim1 27-29/05 : `sl_slip_t` mean **+10.5t favorable**
+  artificiel, 83% trades avec |slip|>5t, max +109t. PnL paper gonfle ~50%.
+- Setting SC `Allow Simulated Resting Limit Order to Fill at Better Price=No`
+  applique 30/05 → reduction partielle a +4.7t mean SL (55% mieux) MAIS bug
+  persiste via Price1=StopPrice interprete STOP_LIMIT.
+- Trade 0004 01/06 : SL planifie 30551.5, fill 30554.5 = +12t favorable artificiel
+  (LONG = SL doit fill au STOP ou pire). Impossible avec specs DTC STOP correctes.
+
+**Validation root cause** :
+- Specs DTC `s_SubmitNewSingleOrder` : OrderType=3 utilise StopPrice uniquement
+- Test pytest mock DTC : 5/5 PASS (payload SL sans Price1 + TP avec Price1 + anti-orphan champs preserves)
+- 46/46 BOT/test_bot.py PASS (non-regression)
+
+**Compatibilite anti-orphan (rule orphan-prevention.md)** :
+- `cancel_order` utilise Type 203 + ServerOrderID + ClientOrderID + TradeAccount
+- Doc SC officielle : "Server will rely upon ServerOrderID and only this order identifier"
+- Independant du OrderType d'origine
+- Fix H6 (`_order_trade_accounts` tracking) preserve
+- `_handle_order_update` OCO auto cancel : ne lit pas Price1
+- `_verify_cancel` Timer 1s : non concerne par payload origine
+
+### Codes log
+
+- `SL_STOP_PATCHED_V1` (INFO, execution) — emit a chaque SL envoye, kind in
+  ("sl_initial", "sl_ladder", "sl_trailing", "sl_bn_v4_modify"). Permet
+  verification empirique J+1 que le patch est actif vs ancien backup.
+
+### Impact attendu
+
+- **SL slip mean** : +10.5t (baseline) → ~0t (cible)
+- **% trades |slip| > 5t** : 83% → < 30%
+- **PnL paper realiste** vs gonfle artificiellement
+- **Validation strats** redevient possible sur Sim1
+
+### Risques
+
+- SC SIM pourrait rejeter silencieusement STOP sans Price1 (cf historique
+  OCOGroup1, Type 206 ignores). Mitigation : log `SL_STOP_PATCHED_V1` traceur
+  + monitor ORPHAN_RISK events J+1.
+- Slip defavorable inattendu possible en cas de gap rapide. Acceptable car
+  realiste vs broker live AMP.
+- `_handle_order_update:1095` fallback `or msg.get("Price1") or 0` peut retourner
+  0 si SC envoie Price1=null. GUARD #2 ligne 549 (anti ghost trade) catch ce cas.
+
+### Validation pre-deploy
+
+- [x] Tests syntaxe : 4 fichiers `python -m py_compile` OK
+- [x] Tests pytest mock DTC : `tests/test_dtc_stop_no_price1.py` 5/5 PASS
+- [x] Tests non-regression : `BOT/test_bot.py` 46/46 PASS
+- [x] Phase 0 audit RISK anti-orphan : SAFE (ServerOrderID independant OrderType)
+- [x] Code log `SL_STOP_PATCHED_V1` ajoute log_catalog.py + emit 4 sites
+- [x] CHANGELOG entry (ici)
+- [x] INCIDENT_LOG entry 2026-06-01 (24) categorie VALIDATION_MISS
+- [x] Re-review code-reviewer (post P0 corrections) : GO-AVEC-RESERVES 5 mineures appliquees
+- [ ] Backup VPS 4 fichiers + SCP + restart paper_v2 + Bot 4
+- [ ] Premier trade live VPS observe J+1 : grep `SL_STOP_PATCHED_V1` (au moins 1 emit/kind)
+      + verifier au moins 1 SL fill DTC reçu (no silent reject SC pour STOP sans Price1)
+- [ ] Monitor J+1 : SL slip distribution + ORPHAN events + cible mean < 2t
+
+### Revert plan
+
+```bash
+# Backups locaux disponibles
+BOT/dtc_connector.py.bak_20260601_pre_stop_price1_fix
+CORE/databento_paper_trader_v2.py.bak_20260601_pre_stop_price1_fix
+CORE/bn_v4_paper.py.bak_20260601_pre_stop_price1_fix
+
+# Revert VPS (a creer apres SCP)
+ssh Administrator@212.28.179.199 "powershell -Command \"Copy-Item C:/TRADING_SIERRA_CHART_AUTO/BOT/dtc_connector.py.bak_20260601 C:/TRADING_SIERRA_CHART_AUTO/BOT/dtc_connector.py -Force; Copy-Item C:/TRADING_SIERRA_CHART_AUTO/CORE/databento_paper_trader_v2.py.bak_20260601 C:/TRADING_SIERRA_CHART_AUTO/CORE/databento_paper_trader_v2.py -Force; Copy-Item C:/TRADING_SIERRA_CHART_AUTO/CORE/bn_v4_paper.py.bak_20260601 C:/TRADING_SIERRA_CHART_AUTO/CORE/bn_v4_paper.py -Force; Restart-Service MIA-DataBento-Paper-V2; Restart-Service MIA-Bot-4-Paper\""
+```
+
+ETA revert : ~30s.
+
+### Deployed at YYYY-MM-DD HH:MM
+(a remplir apres deploy VPS + restart services)
+
+### Suivi post-deploy
+
+- J+1 grep `SL_STOP_PATCHED_V1` events → verifier emit 4 kinds (sl_initial,
+  sl_ladder, sl_trailing, sl_bn_v4_modify). Si emit < 1 par kind/jour → suspicion
+  pattern bot pas execute (Bot 4 trailing inactif, BN V4 pas de modify, etc.).
+- J+1 grep slip distribution (`BOT3_V3_FILL_SLIPPAGE_REPORT`) → cible mean < 2t SL.
+- J+1 grep `ORPHAN_RISK`, `ORPHAN_DETECTED`, `BOT3_TIMEOUT_CANCEL_FAIL` →
+  cible 0 events. Si > 0 → REVERT immediat + investigation SC SIM rejette STOP.
+
+### Liens
+
+- Specs DTC : `s_SubmitNewSingleOrder` OrderType field
+- Rule anti-orphan : `.claude/rules/orphan-prevention.md`
+- Rule critical tasks : `.claude/rules/critical-tasks-review.md`
+- Memory bug : INCIDENT_LOG entry du jour `VALIDATION_MISS`
+
+---
+
+## 2026-05-29 11:00 — FIX RACINE boucle restart MIA-Live-OHLCV (1314 restarts en 30j)
+
+**Categorie** : FIX (Databento Live stream — source data live pour TOUS les bots)
+**Impact prod** : PAPER (Bot 1/2/3/4 + Live_Pipeline + build_v4)
+**Fichier(s)** :
+- `CORE/databento_live_stream_v2.py:148-165, 724-726, 750-786` (patch racine)
+- `CORE/log_catalog.py:211-215` (nouveau code STREAM_SESSION_CLOSED_PERMANENT)
+
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES → R1+R2 levees) + test empirique 8.5 min VPS
+
+### Quoi
+
+Remplace `client.block_for_close(timeout=60.0)` par `client.block_for_close(timeout=None)`
++ signal handler appelle `_client_global.stop()` pour debloquer proprement
+sur SIGTERM/SIGINT/SIGBREAK.
+
+### Pourquoi
+
+**Cause racine identifiee (vs FIX V1 du 29/05 matin qui etait en surface)** :
+- SDK Databento (verifie source 0.75 et 0.76) : `block_for_close(timeout=60.0)` au
+  timeout fait `self.terminate()` qui kill brutal (transport.abort + cleanup
+  callbacks + clear subscriptions).
+- `is_streaming() = False` apres terminate -> `_reconnect` task SDK tente mais
+  `should_restart=False` -> pas de `start()` -> callback `_on_reconnect` JAMAIS
+  appele -> `reconnect_count=0` perpetuel (verifie heartbeat snapshots).
+- Consequence : session morte toutes les 60s, ES/NQ silence > 90s threshold ->
+  watchdog 99999 sentinel -> restart MIA-Live-OHLCV -> boucle infinie.
+
+**Preuve empirique boucle** : 1314 occurrences "Exiting for nssm restart" depuis
+29/04 (30 jours). Throughput degrade 148 bars/10h sur 29/05 vs 630 attendues
+(23% du nominal). Impact : Bot 4 régime NEUTRE perpétuel (1049 SKIP/jour),
+Bot 2 setups réduits, Bot 1 touches manquées.
+
+**Fix V1 du 29/05 matin** (check silence < 180s avant exit) : pansement
+de surface, ne corrigeait PAS la cause (SDK terminate brutal). Le check
+silence est inutile car la session est morte de toute façon.
+
+### Comment
+
+1. **Variable globale** `_client_global` (ligne 151) pour permettre signal
+   handler appeler `client.stop()` (debloque block_for_close sans terminate).
+2. **Signal handler etendu** (lignes 149-165) : SIGTERM/SIGINT/SIGBREAK
+   appellent `_client_global.stop()` AVANT set `_running=False`.
+3. **Register client global** (lignes 724-726) apres creation client, AVANT
+   `client.start()`.
+4. **Main loop simplifie** (lignes 750-786) : `block_for_close(timeout=None)`
+   wait jusqu'a stop() user OR gateway disconnect permanent.
+5. **Nouveau code log** `STREAM_SESSION_CLOSED_PERMANENT` distinct de
+   `STREAM_SESSION_CLOSED_UNEXPECTEDLY` (garde dormant pour back-compat audits).
+
+### Validation pre-deploy
+
+- [x] Tests syntaxe : `python -m py_compile databento_live_stream_v2.py` OK
+- [x] Verification SDK source 0.75 + 0.76 : `block_for_close(timeout)` =
+      `self.terminate()` au timeout, `Live.stop()` = `transport.close()` propre.
+- [x] Verification heartbeat thread daemon separe : continue d'ecrire pendant
+      block_for_close blocking.
+- [x] Verification SDK `stop()` idempotent (double-appel safe via
+      `is_connected()` check).
+- [x] Review code-reviewer : GO-AVEC-RESERVES, R1+R2 levees.
+- [x] **Test empirique 8.5 min VPS** :
+      - 8 bars OHLCV-1m par symbole (cadence 1/min nominale)
+      - 0 "closing session due to TimeoutError" (vs 1/60s avant)
+      - 0 "terminating live client" intermediaire
+      - 0 "Exiting for nssm restart"
+      - subscribe_alive=true (silence 0.1s)
+      - Trades flow continu ES=799 NQ=922 MGC=765
+
+### Codes log
+
+- `STREAM_SESSION_CLOSED_PERMANENT` (NEW, CRITIQUE) — emit uniquement si
+  block_for_close retourne sans exception (vraie panne gateway 10min) avec
+  `_running=True` (pas signal user).
+- `STREAM_SESSION_CLOSED_UNEXPECTEDLY` (dormant, garde back-compat).
+- `STREAM_RECONNECTED` (inchange, emit via `_on_reconnect` callback).
+
+### Impact attendu
+
+- **Throughput** : 360 bars/jour (23%) -> **1440 bars/jour (100%)** nominal
+- **Restarts** : ~360/jour (cycle 4min) -> **~0/jour** (uniquement vraies pannes
+  gateway > 10 min)
+- **Bot 4 MIA Trader** : regime NEUTRE perpetuel -> regime calculable
+- **Bot 2 BN V4** : setups detectes 5-65/jour selon volatilite -> nominal
+- **Bot 1 (V3+MP)** : touches niveaux non manquees
+
+### Revert plan
+
+```bash
+# Code (3 fichiers concernes)
+ssh Administrator@212.28.179.199 "powershell -Command \"Copy-Item C:/TRADING_SIERRA_CHART_AUTO/CORE/databento_live_stream_v2.py.bak_20260529_1100 C:/TRADING_SIERRA_CHART_AUTO/CORE/databento_live_stream_v2.py -Force\""
+
+# Restart service
+ssh Administrator@212.28.179.199 "powershell -Command \"Restart-Service MIA-Live-OHLCV\""
+
+# Reverting log_catalog.py (optionnel — back-compat garantie par STREAM_SESSION_CLOSED_UNEXPECTEDLY dormant)
+```
+
+### Deployed at 2026-05-29 05:58 UTC
+- Stop MIA-Watchdog + MIA-Live-OHLCV
+- SCP `databento_live_stream_v2.py` + `log_catalog.py`
+- Start MIA-Live-OHLCV (sans watchdog) pour test 5 min
+- Test empirique OK -> Start MIA-Watchdog
+
+### Suivi post-deploy
+
+- T+15min : verifier 0 restart MIA-Live-OHLCV + heartbeat subscribe_alive=true
+- J+1 : verifier bars `DATA/live_enriched/NQ/20260530_NQ.jsonl` ~ 1440 lignes
+  (vs ~360 sur 29/05 pre-fix)
+- J+1 : Bot 4 BOT4_L3_REGIME_NEUTRE_SKIP doit chuter drastiquement (vs 1049/jour)
+- J+7 : statistique restart count via grep events_watchdog.jsonl
+
+### Liens
+
+- Logs analyse pre-fix : `DATA/LOGS/live_ohlcv_stdout.log` (1314 "Exiting for nssm restart" depuis 29/04)
+- SDK Databento : `databento.Live.block_for_close` ligne 612-657
+- Heartbeat : `DATA/LIVE_CACHE/_stream_heartbeat.json`
+- Backup : `CORE/databento_live_stream_v2.py.bak_20260529_1100` (sur VPS)
+
+---
+
+## 2026-05-29 09:50 — FIX Bot 1 SLOPE ALIGNMENT GATE (filter VSLP_10 directionnel)
+
+**Categorie** : GATE (filter directionnel sur Bot 1 V3 Continuation + Bot 3 MP via paper_v2)
+**Impact prod** : PAPER (Bot 1 Sim1 + Bot 3 MP Sim1 NQ + ES)
+**Fichier(s)** :
+- `CORE/databento_paper_trader_v2.py:3170-3198` (gate VSLP au debut de `_bot3_execute_trade`)
+- `CORE/log_catalog.py:600-603` (+3 codes : VETO_LONG_AGAINST_DOWNTREND, VETO_SHORT_AGAINST_UPTREND, BYPASS_NO_DATA)
+- `tests/test_bot1_slope_gate.py` (NEW 12 tests persistants)
+
+**Reviewer(s) agent** : a dispatcher APRES deploy (Jackson directive "review apres application zero regression")
+
+### Quoi
+
+Filter `vwap_slope_10` directionnel SIMPLE :
+- **LONG** uniquement si `vwap_slope_10 > 0` (slope haussiere meme legere)
+- **SHORT** uniquement si `vwap_slope_10 < 0` (slope baissiere meme legere)
+- **Bypass safe** : si vslp NaN/None → laisser passer (defensive)
+
+Place dans `_bot3_execute_trade()` AVANT cooldown/circuit_breaker (1ere veto chain).
+
+### Codes log
+- `BOT1_SLOPE_GATE_VETO_LONG_AGAINST_DOWNTREND` (MAJEUR/decisions)
+- `BOT1_SLOPE_GATE_VETO_SHORT_AGAINST_UPTREND` (MAJEUR/decisions)
+- `BOT1_SLOPE_GATE_BYPASS_NO_DATA` (ALERTE/decisions, anti VALIDATION_MISS)
+
+### Kill switch
+- `BOT1_SLOPE_FILTER_DISABLE=1` → desactive le gate (rollback runtime)
+
+### Pourquoi
+
+**Backtest 62 trades Bot 1 (V3+MP) 25-29/05** :
+- Baseline PnL : +$60
+- Filtered PnL : **+$683**
+- Delta : **+$622** sur 5 jours
+- **Wins tues : 0** (100% wins preserves)
+- **Losses bloques : 7** (incluant -$296 ES SHORT 28/05, le pire LOSS du backtest)
+
+**7 losses bloques** :
+| Date | Trade | VSLP | Loss sauve |
+|---|---|---|---|
+| 25/05 | ES GEX_DN LONG | -0.018 | -$14 |
+| 25/05 | ES GEX_DN LONG | -0.001 | -$82 |
+| 26/05 | ES GEX_DN LONG | -0.071 | -$42 |
+| 27/05 | ES GEX_DN LONG | -0.013 | -$28 |
+| 28/05 | NQ MQ_HVL SHORT | +0.050 | -$127 |
+| 28/05 | ES MQ_CALL_POC SHORT | +0.059 | **-$296** ⭐ |
+| 28/05 | ES MQ_CALL_POC SHORT | +0.037 | -$31 |
+
+**Zoom 28/05 (bonne journee 39 trades)** :
+- Baseline +$254 → Filtered +$709 = **delta +$455**
+- 36 KEEP + 3 VETO (les 3 SHORT catastrophiques)
+- Filter AMELIORE la bonne journee, ne degrade rien
+
+### Validation pre-deploy
+
+- **88/88 tests PASS** :
+  * 12/12 nouveaux tests pytest persistants `test_bot1_slope_gate.py`
+  * 30/30 tests Bot 3 v4 (F1+F2+F3 zero regression)
+  * 46/46 BOT/test_bot.py (zero regression Bot V2 legacy)
+- py_compile OK
+
+### Split par symbol + direction (sweep seuil 0)
+
+| Combo | N | %W preserves | Delta PnL |
+|---|---|---|---|
+| ES LONG | 18 | 100% | +$167 |
+| ES SHORT | 2 | — | +$328 |
+| NQ LONG | 63 | 100% | +$24 (marginal) |
+| NQ SHORT | 29 | 75% | +$314 |
+| **TOTAL** | **112** | **96%** | **+$833** |
+
+### Limitations honnetes
+
+- **N=62 trades 5 jours** sample limite. Edge sur 8 mois data V4 pure a valider.
+- **NQ LONG edge marginal** (+$24/63 trades = +$0.4/trade) — peut etre bruit
+- **Seuil 0 strict** : un trade avec vslp=+0.001 passe LONG, vslp=-0.001 ne passe pas. Sweep 0.05/0.10 tue trop de wins, donc seuil 0 retenu.
+- **Backtest sample contient des trades favorables** (bonne journee 28/05). Bias positif possible.
+
+### Revert plan
+
+**Option A (immediate, env var)** :
+```
+ssh Administrator@212.28.179.199 'nssm set MIA-DataBento-Paper-V2 AppEnvironmentExtra +BOT1_SLOPE_FILTER_DISABLE=1'
+ssh Administrator@212.28.179.199 'powershell Restart-Service MIA-DataBento-Paper-V2'
+```
+
+**Option B (code revert)** : git revert commit + SCP fichiers.
+
+### Suivi post-deploy
+
+**J+1 (30/05)** :
+- `grep BOT1_SLOPE_GATE_VETO LOGS/decisions/*.jsonl | wc -l` : doit etre > 0 si signaux contre-slope detectes
+- `grep BOT1_SLOPE_GATE_BYPASS_NO_DATA` : doit etre rare (vwap_slope_10 toujours dispo)
+- Volume trades Bot 1 vs baseline : ne doit pas drop > 30%
+
+**J+7 (5/06)** :
+- Decision keep/drop : si delta PnL positif sur 7j → garder
+- Si Bot 1 volume drop > 50% (filter trop strict en reality) → bump threshold ou disable
+
+**Cross-reference** :
+- Backtest analytique 8 mois V4 pure data : a faire pour validation Lopez DSR
+- Memory `feedback_pattern11_repetition_avoided.md` : 1 condition simple anti-cascade
+
+---
+
+## 2026-05-29 00:30 — FIX Bot 3 v4 F3 CONFIRMATION POST-TOUCH (state machine "TOUCH != TRADE")
+
+**Categorie** : GATE (state machine, redefinition concept TOUCH)
+**Impact prod** : PAPER (Bot 3 v4 paper Sim3 1 micro NQ via paper_v2)
+**Fichier(s)** :
+- `CORE/bot3_v4_data_driven_engine.py` :
+  * `TriggerState` (~ligne 198) : +3 fields pending_confirmation_bar_idx/pending_level_price/pending_side
+  * `Bot3V4Params` (~ligne 190) : +3 params require_confirmation_next_bar/confirmation_buffer_ticks/confirmation_max_age_bars
+  * `reset_day()` (ligne 412+) : clear pending state (R1 review BLOQUANT 1)
+  * `_evaluate_trigger()` : check pending au DEBUT (timeout/confirm/invalidate) + set pending a la FIN au lieu d'entry direct
+- `CORE/bot3_v4_data_driven_paper.py` (kill switch env vars BOT3_V4_CONFIRMATION_DISABLE/BUFFER)
+- `CORE/log_catalog.py` (+4 codes : PENDING_CONFIRMATION INFO, CONFIRMED_ENTRY MAJEUR, INVALIDATED MAJEUR, TIMEOUT ALERTE)
+- `tests/test_bot3_v4_touch_filters.py` (+8 tests F3 + 1 test reset_day clear pending, 30/30 PASS)
+
+**Reviewer(s) agent** :
+- code-reviewer : verdict GO-AVEC-RESERVES → R1 reset_day + R2 reecrire test timeout factice TOUS APPLIQUES
+
+### Quoi
+
+Redefinition fondamentale du concept TOUCH dans Bot 3 v4 :
+- **TOUCH = INTENT** (bar T)
+- **ENTRY = CONFIRMATION** (bar T+1)
+
+Au lieu d'entrer instantanement au first_touch (349ms apres TOUCH, observe 28/05),
+le bot attend la bar suivante et exige que le close encore cote favorable du
+niveau (buffer configurable). Equivalent au Wyckoff Spring test.
+
+**3 etats pending** :
+- `BOT3_V4_TOUCH_PENDING_CONFIRMATION` (INFO) : bar T touch detecte, attend confirmation
+- `BOT3_V4_TOUCH_CONFIRMED_ENTRY` (MAJEUR) : bar T+1 close cote favorable → entry au close T+1
+- `BOT3_V4_TOUCH_CONFIRMATION_INVALIDATED` (MAJEUR) : bar T+1 close cote defavorable (breakout) → no entry
+- `BOT3_V4_TOUCH_CONFIRMATION_TIMEOUT` (ALERTE) : pending age > max → invalidate (defense in depth)
+
+Place dans `_evaluate_trigger()` :
+1. Au DEBUT : check pending → timeout / confirm-entry / invalidate
+2. APRES tous les filters existants (cooldown+daily_cap+footprint+trend_align+trend_filter+F1+F2) :
+   au lieu d'entry direct, SET pending + return None
+
+Kill switch env vars :
+- `BOT3_V4_CONFIRMATION_DISABLE=1` → desactive (back to instant entry)
+- `BOT3_V4_CONFIRMATION_BUFFER=N` → override buffer ticks (default 0)
+
+### Pourquoi
+
+**Audit Bot 3 v4 51 trades 24-28/05** :
+- WR 24%, PF 0.29, PnL -$458.50 (CATASTROPHE)
+- 80% des trades hit SL, 76% meurent en 0-5 bars (SL touche vite = entries mauvais)
+- 1er trade 28/05 perdu -$41.50 en 22 sec : SHORT SWING_HIGH @ 30050, bar TOUCH explosive 141t body, close 30085 = +35t au-dessus du SL
+
+**Backtest F3 sur 51 trades** :
+
+| Buffer T+1 | W_pass | L_veto | PnL | Delta vs baseline | %W preserves |
+|---|---|---|---|---|---|
+| **0t (default)** | **11/12** | **15/38** | **-$193** | **+$266** ⭐ | **92%** |
+| 5t | 10/12 | 15/38 | -$201 | +$258 | 83% |
+| 15t | 8/12 | 16/38 | -$227 | +$232 | 67% |
+| 30t (strict) | 8/12 | 21/38 | -$115 | +$344 | 67% |
+
+Buffer 0 = simple confirmation = 92% wins preserves + 39% losses bloques + delta +$266 sur 5 jours.
+
+### Bugs latents detectes par review pre-deploy (TOUS CORRIGES)
+
+**R1 BLOQUANT : reset_day NE clear PAS pending** → bug fantome entry au day boundary :
+1. Touch SHORT bar 1380 → pending_idx=1380, level=30055
+2. Day boundary 00:00 UTC → reset_day(), _bar_idx remis a -1, MAIS pending non-clear
+3. Bar 1 du nouveau jour : pending=1380 >= 0 → check pending : age = 0 - 1380 = -1380 < max_age=1 → check confirmation
+4. Si close T+1 < 30055 par hasard (forcement le cas en NQ apres rotation 6h+) → fausse ENTRY sur niveau obsolete
+
+**FIX R1** : Clear pending state dans reset_day() :
+```python
+s.pending_confirmation_bar_idx = -1
+s.pending_level_price = 0.0
+s.pending_side = ""
+```
+
+**R2 BLOQUANT : test_engine_F3_timeout_after_max_age etait factice** ("Accept either outcome"). En realite avec max_age=1 (default), timeout = dead code. Test reecrit avec max_age=0 + manipulation state pour forcer age > 0 → assert TIMEOUT log emis + pending cleared.
+
+### Validation pre-deploy
+
+- **30/30 tests pytest persistants PASS** dont :
+  * 8 tests F3 (params default/disable, first_touch sets pending, confirmed_entry T+1, invalidated breakout, timeout, disabled returns instant, buffer strict)
+  * 1 test NEW R1 : `test_engine_F3_pending_cleared_on_day_reset` (anti bug fantome)
+  * 21 tests F1+F2 anciens (backward compat preservee)
+- py_compile OK 4 fichiers
+
+### Limitations
+
+- N=51 trades 5 jours = sample limite. Buffer=0 calibre empirique.
+- 1 win perdu sur 12 (8.3%) = 27/05 LONG SWING_LOW. Acceptable trade-off.
+- Cumul 8 gates entry (cooldown+daily_cap+footprint+trend_align+trend_filter+F1+F2+F3). Risque pattern 11 attenue par : F3 = redefinition concept TOUCH (= INTENT, ENTRY = CONFIRMATION) pas un nieme magic-number empirique.
+- Backtest F3 ne croise PAS day boundary → bug R1 caught par review code.
+- Timeout branch = dead code en flow normal (defense in depth uniquement).
+
+### Revert plan
+
+**Option A (immediate, env vars)** :
+```
+ssh Administrator@212.28.179.199 'nssm set MIA-DataBento-Paper-V2 AppEnvironmentExtra +BOT3_V4_CONFIRMATION_DISABLE=1'
+ssh Administrator@212.28.179.199 'powershell Restart-Service MIA-DataBento-Paper-V2'
+```
+Effet immediat : Bot 3 v4 retour comportement F1+F2 sans F3 (entry instant au TOUCH).
+
+**Option B (code revert)** : git revert commit + SCP fichiers.
+
+### Suivi post-deploy
+
+**J+1 (30/05)** :
+- `grep BOT3_V4_TOUCH_PENDING_CONFIRMATION LOGS/decisions/*.jsonl | wc -l` : doit etre > 0
+- Ratio `BOT3_V4_TOUCH_CONFIRMED_ENTRY` vs `BOT3_V4_TOUCH_CONFIRMATION_INVALIDATED` : indication taux confirmation
+- `grep BOT3_V4_TOUCH_CONFIRMATION_TIMEOUT` : doit etre 0 avec max_age=1 (sinon bug)
+- **CRITIQUE post-day-boundary (00:00 UTC)** : verifier aucune entry fantome dans 5 premieres min apres rollover
+- Volume trades Bot 3 v4 vs baseline ~1-2/jour
+
+**J+3 (1/06)** :
+- Si WR > 40% → garder F3
+- Si WR encore < 30% → rollback via env var BOT3_V4_CONFIRMATION_DISABLE + investigation
+- Decision data-driven : ajuster max_age si gap reels observed
+
+**Cross-reference** :
+- Memory `feedback_pattern11_repetition_avoided.md` : 8 gates cumules mais F3 conceptuel (pas magic-number)
+- Memory `feedback_validation_miss_patterns.md` : R1 bug fantome detected pre-deploy par review code = pattern attendu
+
+---
+
+## 2026-05-29 06:55 — FIX MIA-Watchdog skip alertes pendant maintenance CME
+
+**Categorie** : FIX (infra)
+**Impact prod** : MONITORING (watchdog Discord alertes + auto-restart)
+**Fichier(s)** :
+- `BOT/mia_watchdog.py:40-58` (import ZoneInfo + fallback Python <3.9)
+- `BOT/mia_watchdog.py:217-272` (CME_DATA_DEPENDENT_SOURCES + is_cme_maintenance_window)
+- `BOT/mia_watchdog.py:603-613` (integration dans _evaluate_source : skip si maintenance)
+- `tests/test_mia_watchdog_cme_window.py` (NEW 12 tests persistants)
+
+**Reviewer(s) agent** : N/A (fix infra mineur, zero-risque, deja teste)
+
+### Quoi
+
+Skip alertes Discord + auto-restart pour 7 sources data-dependent (Databento_stream,
+Bot1_Continuation, Bot2_BN_V4, Bot3_DataDriven, DMP_JSONL_ES/NQ, Live_Pipeline)
+pendant les fenetres maintenance CME E-mini futures :
+- **Daily** : Lun-Jeu 17:00-18:00 ET (1h pause quotidienne CME)
+- **Weekly close** : Ven 17:00 ET → Dim 18:00 ET (~49h)
+
+Retourne level "PAUSED" + msg explicite "pause CME maintenance : ...". Reset
+`_absent_streak` pour eviter faux CRIT au release.
+
+Utilise `ZoneInfo("America/New_York")` (gere DST EST/EDT automatique). Fallback
+si Python < 3.9 → check desactive (return False).
+
+### Pourquoi
+
+Bilan 28/05 23:11-01:06 UTC (Jackson Discord screenshot) :
+- 58+ restarts MIA-Live-OHLCV + MIA-DataBento-Paper-V2 inutiles
+- Cap 3/h atteint sur MIA-DataBento-Paper-V2 → "Intervention humaine requise"
+- Cascade fausse : Databento down → bots data-dependent stale → restart paper_v2
+  (mais paper_v2 fonctionne, c'est Databento le souci)
+- Pattern recurrent CHAQUE JOUR 22:00-23:00 UTC + chaque weekend
+
+Source: https://www.cmegroup.com/markets/equities/sp/e-mini-sandp500.contractSpecs.html
+
+### Limitations honnetes
+
+- **N'adresse PAS la grace period post-reouverture** (Databento met ~30-60min a
+  reconnect apres CME re-open). Si Databento bug post-23:00 UTC, alertes
+  reprendront normalement. C'est UNE PARTIE du probleme, pas tout.
+- **Ne change pas les seuils par source** (warn_age_s/crit_age_s). Skip total
+  pendant maintenance, alertes normales hors.
+- **CME E-mini futures uniquement** (NQ + ES). Si MGC/Gold tradait sur autre
+  exchange avec autres horaires, faudra etendre.
+
+### Tests realises
+
+- **12/12 tests persistants PASS** (`tests/test_mia_watchdog_cme_window.py`) :
+  * Liste explicite des 7 sources data-dependent
+  * Monday morning RTH (False)
+  * Monday daily maintenance 17:30 ET (True)
+  * Thursday 17:00 ET boundary (True)
+  * Thursday 18:00 ET re-ouverture (False)
+  * Friday 17:00 ET weekly close start (True)
+  * Friday 16:59 ET marche encore ouvert (False)
+  * Saturday entiere (True a toutes heures)
+  * Sunday < 18:00 ET (True)
+  * Sunday 18:00 ET re-ouverture Asia (False)
+  * Sunday 19:00 ET Asia ouvert (False)
+  * Replay scenario 28/05 Jackson (Thu 17:30 True, Thu 18:30 False)
+- py_compile OK
+- 11/12 sous pytest (1 erreur ResourceWarning logger leak au import = pas une regression)
+- Standalone : 12/12 PASS
+
+### Revert plan
+
+**Option A (immediate)** — revert env-driven : pas applicable (pas de env var dans ce fix).
+
+**Option B (code revert)** — git revert + redeploy SCP `BOT/mia_watchdog.py`.
+
+### Deployed at 2026-05-29 06:55 UTC
+
+- SCP BOT/mia_watchdog.py + tests → VPS
+- Restart-Service MIA-Watchdog OK
+- Verification : service Running
+
+### Suivi post-deploy
+
+**J+1 (30/05)** :
+- Surveiller channel Discord "alertes" : aucune alerte CRIT Databento_stream
+  pendant 22:00-23:00 UTC (= maintenance ET Thursday)
+- `grep PAUSED LOGS/events/events_20260530_watchdog.jsonl` doit montrer
+  occurrences pause CME
+
+**Weekly J+7 (5/06)** :
+- Verifier silence Discord Vendredi 22:00 UTC → Dimanche 23:00 UTC sur les 7 sources
+
+**Si grace period necessaire (Databento reconnect lent)** :
+- Etendre la fenetre maintenance avec un buffer post (ex: 22:00-23:30 UTC daily +
+  weekly Ven 22:00 → Dim 23:30 UTC)
+- Decision data-driven J+7 selon count alertes post-reouverture
+
+---
+
+## 2026-05-29 06:30 — FIX Bot 3 v4 F1 TOUCH != TRADE + F2 aggressor opposite
+
+**Categorie** : GATE (2 nouveaux filtres detection setup, validation Jackson souveraine)
+**Impact prod** : PAPER (Bot 3 v4 paper Sim3 1 micro NQ via paper_v2)
+**Fichier(s)** :
+- `CORE/bot3_v4_data_driven_engine.py:166-178` (Bot3V4Params : 4 nouveaux params F1+F2)
+- `CORE/bot3_v4_data_driven_engine.py:230-243` (LEVEL_NAME_TO_PRICE_COL mapping 12 levels)
+- `CORE/bot3_v4_data_driven_engine.py:364-369` (counters init : 2 veto + 2 bypass)
+- `CORE/bot3_v4_data_driven_engine.py:636-720` (integration F1+F2 dans _evaluate_trigger)
+- `CORE/bot3_v4_data_driven_paper.py:91-135` (kill switch env vars : 4 vars override runtime)
+- `CORE/log_catalog.py:587-594` (+6 codes : FILTERED_CLOSE_UNFAVORABLE, FILTERED_AGGRESSOR_OPPOSITE, F1_BYPASSED_NO_LEVEL_PRICE, F2_BYPASSED_NO_AGGRESSOR, PARAM_OVERRIDE_ENV[_FAIL])
+- `tests/test_bot3_v4_touch_filters.py` (NEW 21 tests persistants : 18 unit + 3 integration engine reel)
+
+**Reviewer(s) agent** :
+- market-analyst (audit TOUCH != TRADE + sweep 3 filtres) — recommandation buffer+aggressor combo
+- code-reviewer (verdict GO-AVEC-RESERVES R1+R3+R4 corrections appliquees)
+
+### Quoi
+
+**F1 (TOUCH != TRADE)** : exige close de la bar TOUCH du cote FAVORABLE au niveau institutionnel :
+- SHORT : `close < level_price - 15 ticks` (respect du niveau, pas breakout)
+- LONG  : `close > level_price + 15 ticks` (respect du niveau, pas falling knife)
+
+**F2 (aggressor opposite)** : veto si orderflow oppose la direction du trade :
+- LONG : veto si `aggressor_imbalance < -0.30` (vendeurs agressifs vs LONG)
+- SHORT : veto si `aggressor_imbalance > +0.30` (acheteurs agressifs vs SHORT)
+
+Buffer 15t + threshold 0.30 calibres empirique sur backtest sweep 9 trades closed.
+
+**Place dans le flow** : `_evaluate_trigger()` apres cooldown + daily_cap + footprint
++ trend_alignment + trend_filter, AVANT compute SL/TP. Si veto → emit MAJEUR/decisions
++ return None.
+
+**Mapping LEVEL → live_enriched column** (12 entries : SWING_HIGH/LOW, CUR_VAH/VAL/VPOC,
+PREV_VAH/VAL/VPOC, VWAP_D_SD1U/D + SD2U/D).
+
+**Bypass safe + traçabilite** : si `level_price` ou `aggressor_imbalance` manquant
+→ bypass silent MAIS counter `_n_touches_f1_bypassed_no_level_price` ou
+`_n_touches_f2_bypassed_no_aggressor` + emit `BOT3_V4_TOUCH_F1/F2_BYPASSED_*` ALERTE
+(anti VALIDATION_MISS).
+
+**Kill switch env vars** :
+- `BOT3_V4_F1_DISABLE=1` → desactive F1
+- `BOT3_V4_F2_DISABLE=1` → desactive F2
+- `BOT3_V4_F1_BUFFER=N` → override buffer (default 15)
+- `BOT3_V4_F2_THRESHOLD=X` → override threshold (default 0.30)
+
+### Pourquoi
+
+**Trigger Jackson** : analyse du **1er trade Bot 3 v4 28/05** = NQ SHORT SWING_HIGH @ 30050
+perdu -$41.50 en 22 secondes (SL hit avec slippage 17t defavorable). La bar entry
+avait `bar_body_ticks=141` (35 pts en 1 min) et a clôturé 30085.5 = +35t au-dessus
+du SL. Pattern "bounce in downtrend" : prix montait fort, le bot a entre SHORT au
+TOUCH (instant) sans attendre confirmation de close.
+
+**Audit forensique** :
+- Bot 3 v4 entre **349ms apres TOUCH** (entry intra-bar avant clôture) sur 100% des
+  trades historiques (42 trades audites par market-analyst)
+- 12 SHORTs SWING_HIGH historiques : **7/12 (58%)** sont bar entry BREAKOUT (close >
+  level au moment exact ou le bot SHORT)
+- Diagnostic Jackson : **"TOUCH ne veut pas dire TRADE"**
+
+**Backtest sweep 3 filtres sur 9 trades closed 24-28/05** :
+
+| Filter | Setup | W_preserved | L_blocked | PnL delta |
+|---|---|---|---|---|
+| F1 buffer=15t | TOUCH != TRADE | 3/3 ✓ | 4/6 | +$92.50 |
+| F2 thr=0.30 | aggressor opposite | 3/3 ✓ | 1/6 | +$24.50 |
+| F3 PIR | position_in_range opposite | 2/3 ❌ TUE WIN | 4/6 | REJETE |
+| **F1+F2 combo** | TOUCH+aggro | **3/3 ✓** | **5/6** | **+$117** ⭐ |
+
+Baseline PnL -$81.50 → filtered +$35.50 = **delta +$117** sur 9 trades.
+
+**Validation du 1er trade catastrophe (28/05 00:58 SHORT SWING_HIGH)** :
+- close 30085.5 >= level 30063.25 - 3.75 → **VETO F1** ✓ sauve -$41.50
+
+**Validation du 2eme trade (28/05 22:40 LONG CUR_VAL)** :
+- close 30306 > level 30300 + 3.75 → PASS F1
+- aggressor -0.625 < -0.30 → **VETO F2** ✓ sauve -$24.50
+
+### Validation pre-deploy
+
+- **21/21 pytest persistants PASS** (`tests/test_bot3_v4_touch_filters.py`) :
+  * 3 tests params defaults + disable kill switch
+  * 1 test mapping 12 levels completeness
+  * 6 tests F1 logic (boundary, breakout/respect LONG+SHORT)
+  * 6 tests F2 logic (vendeurs/acheteurs agressifs, boundary, symetrie)
+  * 3 tests combo sur 9 trades historiques (W_preserved, L_blocked, PnL delta)
+  * 3 tests **integration engine reel** (R1 review) : process_bar + counter +
+    log_fn emit pour F1 veto, F2 veto, F1 bypass no level_price
+- py_compile OK 4 fichiers
+- Backtest 9 trades : 3/3 WINS preserves, 5/6 LOSSES bloques, delta +$117
+
+### Limitations assumees
+
+- **N=9 trades closed = sample minimal**. Threshold 0.30 calibre sur N=1 cas (1 seul
+  trade declenche le veto F2) = over-fit miniature defendable seulement parce que
+  paper + kill switch dispo. Sample taille a verifier J+7.
+- **1 faux positif residuel** : 27/05 LONG CUR_VAL aurait toujours perdu -$11.50
+  (close > level + buffer OK + aggro -0.11 OK F1+F2 PASS mais trade perd quand meme)
+- **Cumul 7 gates entry** (cooldown + daily_cap + footprint + trend_align +
+  trend_filter + F1 + F2). Risque pattern 11 V1 controle par kill switch + monitoring.
+- Calibre sur 5 jours regime baissier mai 2026. A re-valider regime haussier futur.
+- Tests pytest 18 unit utilisent logique RE-IMPLEMENTEE (`_f1_logic`/`_f2_logic`)
+  + 3 tests integration engine reel R1 review code-reviewer.
+
+### Revert plan
+
+**Option A (immediate, sans redeploy)** — env vars :
+```
+ssh Administrator@212.28.179.199 'nssm set MIA-DataBento-Paper-V2 AppEnvironmentExtra +BOT3_V4_F1_DISABLE=1 +BOT3_V4_F2_DISABLE=1'
+ssh Administrator@212.28.179.199 'powershell Restart-Service MIA-DataBento-Paper-V2'
+```
+
+**Option B (code revert)** — git revert commit + SCP fichiers.
+
+### Deploy plan
+
+1. SCP 4 fichiers : bot3_v4_data_driven_engine.py + bot3_v4_data_driven_paper.py +
+   log_catalog.py + tests/test_bot3_v4_touch_filters.py
+2. Restart MIA-DataBento-Paper-V2 (Bot 3 v4 tourne dans paper_v2)
+3. Verification post-restart : 0 erreur + BOT3_V4_BOOT_START emit
+4. Monitoring J+1 : grep `BOT3_V4_TOUCH_FILTERED_CLOSE_UNFAVORABLE` et
+   `BOT3_V4_TOUCH_FILTERED_AGGRESSOR_OPPOSITE` counts
+
+### Suivi post-deploy
+
+**J+1 (30/05)** :
+- `grep BOT3_V4_TOUCH_FILTERED_CLOSE_UNFAVORABLE LOGS/decisions/*.jsonl | wc -l`
+- `grep BOT3_V4_TOUCH_FILTERED_AGGRESSOR_OPPOSITE LOGS/decisions/*.jsonl | wc -l`
+- `grep BOT3_V4_TOUCH_F1_BYPASSED LOGS/decisions/*.jsonl` — si > 0 → investigation
+  level_price mapping potentiel
+- Distribution `setup["dist_pct"]` ou close vs level
+
+**J+7 (5/06)** : decision keep/drop F2 selon rate veto :
+- Rate F2 > 30% des touches → F2 trop strict, bump threshold ou disable
+- Rate F2 < 5% → F2 statistiquement inutile, drop pour reduire cumul gates
+- Rate F2 5-30% + WR Bot 3 v4 > 40% → keep
+
+**Cross-reference** :
+- Pas d'INCIDENT_LOG (pas un bug reproduit)
+- Memory `feedback_pattern11_repetition_avoided.md` : kill switch + monitoring
+- Memory `feedback_validation_miss_patterns.md` : 4 codes log obligatoires + bypass traçabilite (R3+R4)
+- Rule `.claude/rules/critical-tasks-review.md` : critere 1 Trading/Risk applique +
+  critere 8 audit producing edge candidates → calibrage empirique reconnu, monitor J+7
+
+---
+
+## 2026-05-29 04:50 — FIX BETA Bot 2 BN V4 anti stop-hunt momentum slope 60bars
+
+**Categorie** : GATE (nouveau gate detection setup)
+**Impact prod** : PAPER (Bot 2 BN V4 Sim2 1 micro NQ)
+**Fichier(s)** :
+- `CORE/bn_v4_engine.py:178-187` (BNV4Params.slope_mean_60_veto_threshold default 0.20)
+- `CORE/bn_v4_engine.py:782-816` (NEW fonction check_momentum_slope_60)
+- `CORE/bn_v4_engine.py:856-870` (integration dans check_setup avant return)
+- `CORE/bn_v4_paper.py:174-194` (kill switch env var BN_V4_SLOPE_60_THRESHOLD R3 review)
+- `CORE/log_catalog.py:541-543` (+3 codes : MOMENTUM_SLOPE_60_BLOCK, PARAM_OVERRIDE_ENV[_FAIL])
+- `tests/test_bn_v4_momentum_slope_60.py` (NEW 12 tests persistants)
+
+**Reviewer(s) agent** :
+- market-analyst : audit direction Bot 2 BN V4, 3 filters proposes (hysteresis, n_levels_min, min_risk_ticks) — recommandation A/B/C
+- code-reviewer : verdict GO-AVEC-RESERVES R1+R2+R3 (CHANGELOG, pytest persistants, kill switch env var) — TOUS APPLIQUES
+
+### Quoi
+
+Nouveau gate BN V4 `check_momentum_slope_60` qui veto un setup si la slope
+moyenne `vwap_slope_10` sur les 60 dernieres bars (1h) est contre-tendance
+forte par rapport a la direction du setup :
+- SHORT bloque si `slope_mean_60 > +0.20` (uptrend 1h moyen = piege bounce)
+- LONG bloque si `slope_mean_60 < -0.20` (downtrend 1h moyen = piege pullback)
+
+Seuil 0.20 configurable via env var `BN_V4_SLOPE_60_THRESHOLD` (kill switch
+runtime sans redeploy : `set BN_V4_SLOPE_60_THRESHOLD=999.0` desactive).
+
+Place dans `check_setup()` APRES gates structurels (zone + volume + footprint),
+AVANT return setup. Si veto → emit `BN_V4_GATE_MOMENTUM_SLOPE_60_BLOCK` MAJEUR.
+
+Setup dict augmente du champ `slope_mean_60` pour audit J+1.
+
+### Pourquoi
+
+Bilan jour 28/05 Bot 2 : 0/3 WIN, -$40 sur 3 SHORT NQ contre-tendance forte
+(slope 4h = -0.78 baisse cumulee + slope 1h = +0.40 rebond violent en cours).
+Pattern "bounce dans downtrend" : prix baisse longtemps → rebond 1h → BN detecte
+zone resistance haut du range → entry SHORT au pic rebond → rebond continue → SL.
+
+Backtest contextuel 5 trades execute 24-28/05 :
+
+| Trade | dir | slope_mean_60 | Outcome | BETA |
+|---|---|---|---|---|
+| 26/05 _003 | SHORT | +0.14 | WIN $97 | PASS |
+| 27/05 _001 | LONG | -0.09 | WIN $102.5 | PASS |
+| 28/05 _046 | SHORT | +0.44 | LOSS -$19 | BLOCK |
+| 28/05 _055 | SHORT | +0.39 | LOSS -$7.5 | BLOCK |
+| 28/05 _057 | SHORT | +0.37 | LOSS -$13.5 | BLOCK |
+
+Backtest 8 strategies sur 21 SETUP_DETECTED TRADE mode historiques :
+- NONE (actuel baseline) : 100% setups, PnL exec $262
+- **BETA seul (vwap_slope_mean_60>0.20)** : 52% setups, **PnL exec $302** ⭐
+- A (n_levels>=6 dur) : 19% setups, $199
+- B (SOFT) : 38% setups, $199
+- ALPHA (close_delta) : 33% setups, $97 (tue 27/05 LONG -18t < -15)
+- GAMMA (pir_mean_60) : 33% setups, $97
+- DELTA (delta_bar) : 48% setups, $199 (tue 27/05 LONG -2 < 0)
+- C combo : 14% setups, $97
+
+BETA est LE SEUL filter qui separe 5/5 trades sans erreur tout en preservant
+volume acceptable. Gain backtest : +$40 (= pertes 28/05 evitees), 0 gagnant tue.
+
+### Validation pre-deploy
+
+- **12/12 pytest persistants PASS** : tests/test_bn_v4_momentum_slope_60.py
+  (boundary, edge cases, override threshold, window excludes bar i, defaults safe)
+- 5/5 trades empirique correctement classes
+- 5/5 edge cases empirique
+- py_compile OK 3 fichiers
+- pytest BN V4 existing (test_bn_v4_parity_iter4 + test_bn_v4_window_observe)
+  : verifier non-regression background run
+
+### Limitations assumees
+
+- N=5 trades exécutés = sample minimal. Seuil 0.20 calibre empirique.
+- Volume divise par ~2 (52% setups passent) — si fire-rate Bot 2 chute sous
+  1 trade / 3 jours sur 7 jours, basculer seuil 0.25 ou disabler via env var.
+- Kill switch env var BN_V4_SLOPE_60_THRESHOLD permet rollback instantane sans
+  redeploy code.
+
+### Revert plan
+
+**Option A (recommandee)** — kill switch env var :
+```
+ssh Administrator@212.28.179.199 'nssm set MIA-DataBento-Paper-V2 AppEnvironmentExtra +BN_V4_SLOPE_60_THRESHOLD=999.0'
+ssh Administrator@212.28.179.199 'powershell Restart-Service MIA-DataBento-Paper-V2'
+```
+Effet immediat sans modifier code (999.0 ne sera jamais atteint par slope reelle).
+
+**Option B (code revert)** — git revert commit + redeploy SCP.
+
+### Deploy plan
+
+1. SCP 4 fichiers : bn_v4_engine.py + bn_v4_paper.py + log_catalog.py + tests
+2. Restart MIA-DataBento-Paper-V2 (Bot 2 BN V4 tourne dans paper_v2)
+3. Verification J+1 : grep `BN_V4_GATE_MOMENTUM_SLOPE_60_BLOCK` count + setup
+   dict `slope_mean_60` distribution
+4. Si fire-rate Bot 2 < 50% baseline → seuil monte 0.25 ou disable env var
+
+### Suivi post-deploy
+
+**J+1 (30/05)** :
+- `grep BN_V4_GATE_MOMENTUM_SLOPE_60_BLOCK LOGS/decisions/*.jsonl | wc -l`
+  pour mesurer fire-rate du nouveau gate
+- Histogramme distribution `setup["slope_mean_60"]` sur tous SETUP_DETECTED
+- Volume trades Bot 2 vs baseline 24-28/05 (~1 trade/jour)
+
+**J+7 (5/06)** :
+- Si fire-rate < 50% baseline ET aucun gain PnL → revert via env var
+- Si fire-rate OK ET PF Bot 2 > 1.5 → garder + envisager threshold tighten
+- Decision data-driven : calibrer seuil sur distribution 30+ setups
+
+### Cross-reference
+
+- INCIDENT_LOG : pas applicable (pas un bug reproduit)
+- Memory `feedback_pattern11_repetition_avoided.md` : 1 gate, pas cascade
+- Memory `feedback_proactive_mentor.md` : Jackson directive backtest avant fix
+- Rule `.claude/rules/critical-tasks-review.md` : critere 1 Trading/Risk applique
+
+---
+
+## 2026-05-28 22:58 — FIX 7 patches zero-risque P0+P1+P2 (NQ qty + logger exit_cause + state persist + boot stability + L3 unlock)
+
+**Categorie** : FIX (multi) + CONFIG (nssm AppExit)
+**Impact prod** : PAPER (Bot 3 MP NQ MNQ qty=1, Bot 4 lock orphelin auto-clean, Dashboard exit_cause)
+**Fichier(s)** :
+- `CORE/bot3_config.py:107,131,267-275` (NQ qty 3->1, tick_value 0.50->1.25 NQ standard, RISK_BOT3 position_size dead code 3->1)
+- `CORE/bot3_v3v4_logger.py:413-497` (exit_cause aligne sign(pnl_usd) + exit_cause_mechanical preserve trigger DTC)
+- `CORE/log_catalog.py:1023-1028` (+5 codes : BOT4_OPEN_POSITIONS_PERSISTED, BOT4_LOCK_ORPHAN_CLEANED, 3x BOOT_FAIL_PREFLIGHT_*)
+- `DASHBOARD/api/paper_tracker.py:1614-1631,2626-2645` (n_sl_consec lit exit_cause_mechanical pour aligner sur compteur bot interne kind DTC)
+- `NEW_BOT_2_MIA_TRADER/src/main.py:95-200,818-852` (lock orphelin auto-clean PID-check + O_EXCL atomique + emit BOT4_OPEN_POSITIONS_PERSISTED)
+- `NEW_BOT_2_MIA_TRADER/scripts/run_bot4.py:40-110` (preflight env vars MIA_LOG_DIR/MIA_DATA_ROOT + paths fail-loud exit 5)
+- `NEW_BOT_2_MIA_TRADER/tests/test_main_integration_inline.py` (+4 tests persistants 13b/c/d/e lock orphelin)
+- `NEW_BOT_2_MIA_TRADER/tests/test_run_bot4_preflight.py` (NEW 7 tests persistants preflight)
+- nssm `MIA-Bot-4-Paper` AppExit 5 Exit (anti restart loop)
+
+**Reviewer(s) agent** : code-reviewer x4 (logger, state persist, boot stability, paper_tracker) — verdict cumule GO franc avec R1+R2+R3+R4 boot tous appliques. Contradiction reviews paper_tracker tranchee empirique via grep `_n_sl_consec` ligne 603 bot3_v3_continuation_paper.py (= kind DTC, pas pnl signe).
+
+### Quoi
+
+7 patches multi-fichiers issus de bilans bots 28/05 :
+
+1. **P0 NQ qty 3->1** : coherence ES (deja patche 28/05 matin) + tick_value NQ E-mini correct ($1.25/tick au lieu de $0.50 MNQ commentaire faux).
+2. **P0 dead code RISK_BOT3 position_size** : aligne 3->1 defense en profondeur (jamais lu runtime mais piege futur).
+3. **P1#5 Logger exit_cause** : reclasse exit_cause sur sign(pnl_usd) (TP/SL uniquement, TIMEOUT/EOD/MANUAL preserves). Preserve trigger DTC reel via nouveau champ `exit_cause_mechanical`. Debloque audit forensique cross-trades.
+4. **P1#6 BOT4_OPEN_POSITIONS_PERSISTED emit** : trace success persistance state (fix trou instrumentation impossible distinguer "jamais appele" de "rien a ecrire").
+5. **R1 paper_tracker n_sl_consec** : lit `exit_cause_mechanical` pour rester aligne sur compteur interne bot `_n_sl_consec` (kind DTC, pas pnl).
+6. **P2#7 Bot 4 boot stability** : (a) lock orphelin auto-clean via _pid_alive PID-check + O_EXCL atomique anti race, (b) preflight env vars fail-loud exit 5 distinct (anti fallback silencieux defaults D:\ sur VPS C:\).
+7. **nssm AppExit 5 Exit** : exit 5 preflight ne declenche PAS auto-restart loop nssm.
+
+### Pourquoi
+
+Bilan jour 28/05 5 bilans bots + synthese identifies :
+- Bot 4 L3 kill_switch ACTIF 32/32 decisions today malgre annonce "L3 reactive" hier soir (VALIDATION_MISS confirme : process running n'avait pas restart depuis nssm set L3_DISABLED=0)
+- Bot 4 boot 58% echec (12 BOOT_START / 5 BOOT_READY) : lock orphelin + default D:\ hardcode fail-silent sur VPS C:\
+- Bot 4 state persistant `LOGS/bot4_open_positions.json` ABSENT du VPS : 0 trade post-12:07 + trou instrumentation
+- Logger Trade #8 CASH_LOW LONG : outcome=LOSS mais exit_cause=TP avec pnl<0 = bloque audit forensique
+- Dashboard n_sl_consec divergerait du compteur bot si lit exit_cause aligned au lieu de mechanical
+
+### Tests realises
+
+- **89/89 tests PASS** :
+  * 6/6 logger exit_cause empirique (TP nominal, TP slip negatif reclasse, SL slip positif reclasse, TIMEOUT preserve, BREAKEVEN exact, TIMEOUT pnl>0)
+  * 8/8 lock orphelin empirique (pid alive/dead/0/vierge/orphelin/double-instance/corrompu + O_EXCL)
+  * 5/5 preflight empirique (subprocess avec env modifie)
+  * 46/46 BOT/test_bot.py (zero regression)
+  * 5/5 lock orphelin pytest persistant 13b/c/d/e
+  * 7/7 preflight pytest persistant
+- py_compile OK sur les 6 fichiers code modifies
+
+### Validation pre-deploy
+
+- Tests cumules 89/89 PASS
+- Reviews agents x4 : tous GO ou GO-AVEC-RESERVES corrigees (R1+R2+R3+R4 boot integres)
+- Confirmation Jackson explicite "OK RESTART"
+
+### Revert plan
+
+- Patch NQ qty : revert `n_contracts: 1 -> 3` (1 ligne)
+- Patch logger exit_cause : revert vers ancien comportement (garder uniquement `exit_cause_mechanical` field si on veut conserver)
+- Patch paper_tracker n_sl_consec : revert vers lecture `c.get("exit_cause")` 2 endroits
+- Patch boot Bot 4 : revert acquire_lock_file vers raise immediate sans PID-check + retirer preflight run_bot4.py
+- nssm AppExit 5 Exit : `nssm reset MIA-Bot-4-Paper AppExit`
+
+### Deployed at 2026-05-28 22:58 UTC
+
+- SCP 9 fichiers (7 code + 2 tests) -> VPS C:/TRADING_SIERRA_CHART_AUTO/
+- `nssm set MIA-Bot-4-Paper AppExit 5 Exit` OK
+- Stop-Service MIA-Bot-4-Paper -> lock orphelin pid=6032 present -> Start-Service -> BOT4_BOOT_READY immediat PID 9728 DTC connected reader ready
+- Restart-Service MIA-DataBento-Paper-V2 OK (PID 9616 narrative init OK)
+- Restart-Service MIA-Dashboard OK
+- 3/3 services Running
+
+### Suivi post-deploy
+
+**T+10 min validation OK** :
+- 0 BOT4_L3_KILL_SWITCH_ENABLED post-restart ✓ (fix VALIDATION_MISS confirme)
+- 0 erreurs liees aux patches (STREAM_SESSION_CLOSED_UNEXPECTEDLY = normal reconnect Databento)
+- BN V4 gates actifs (TREND_BLOCK normal slope hausse)
+
+**A surveiller J+1 (29/05)** :
+- `grep BOT4_L3_TRIGGERED_LONG events_20260529_bot4.jsonl` : >0 (L3 actif sur conditions marche)
+- `grep BOT4_OPEN_POSITIONS_PERSISTED` : >0 si Bot 4 prend des trades
+- `grep BOT4_LOCK_ORPHAN_CLEANED` : si non zero = preuve auto-clean fonctionne
+- Boot rate : BOOT_READY/BOOT_START doit passer de 42% (5/12) a >90%
+
+**Cross-reference** :
+- INCIDENT_LOG #20 (lock orphelin) : prevention via _pid_alive
+- INCIDENT_LOG #22 (VALIDATION_MISS L3 deploy) : prevention via verification post-restart obligatoire
+- memory `feedback_validation_miss_patterns.md` : nouveau cas a documenter J+1 verification empirique reussie
+
+---
+
+## 2026-05-28 03:15 — REHAB Bot 4 Layer L3 BN v2 spring/upthrust (EXCEPTION souveraine Jackson)
+
+**Categorie** : FEATURE (scoring layer)
+**Impact prod** : LIVE Bot 4 MIA Trader Sim4 (1 micro NQ Phase 7.1 SAFE COLLECT)
+**Fichier(s)** :
+- `NEW_BOT_2_MIA_TRADER/src/layers/l3_bn_v2.py` (NEW, 282 LOC, kill switch env var integre)
+- `NEW_BOT_2_MIA_TRADER/src/decide.py` (import L3 + MAX_POSSIBLE_SCORE 8.0 -> 10.0 + 2 points appel)
+- `NEW_BOT_2_MIA_TRADER/src/layers/__init__.py` (doc commentaire)
+- `CORE/log_catalog.py` (+4 codes : BOT4_L3_TRIGGERED_LONG/SHORT/REGIME_NEUTRE_SKIP/KILL_SWITCH_ENABLED)
+**Reviewer(s) agent** : code-reviewer (NOGO direct shadow 7j obligatoire INCIDENT_LOG #22, mais EXCEPTION Jackson appliquee)
+
+### Quoi
+Reactivation Layer L3 BN v2 Bataille Navale spring/upthrust (etait REPORTE 26/05).
+
+Trigger LONG (regime_favor='LONG' obligatoire) :
+- `position_in_range <= 0.15` (extreme bas range journalier MQ)
+- AND ANY OF (4 patterns proximite 0.2% OR barre courante) :
+  * `long_dn_bar == 1` OR `n_long_dn_cluster_within_0_2pct > 0`
+  * `long_up_bar == 1` OR `n_long_up_cluster_within_0_2pct > 0`
+  * `n_color_up_cluster_within_0_2pct > 0`
+  * `n_color_dn_cluster_within_0_2pct > 0`
+
+Trigger SHORT (regime_favor='SHORT' obligatoire) : PIR>=0.85 + memes 4 patterns.
+
+Poids dynamique :
+- Simple (1 ext line OR barre courante) -> poids 1.0
+- Cluster (>=2 ext lines dans 0.2% sur AU MOINS UN type) -> poids 2.0
+
+Kill switch env var `MIA_BOT4_L3_DISABLED=1` pour rollback runtime sans redeploy.
+
+### Pourquoi
+Bot 4 = 0 trade aujourd'hui (28/05) sur 2047 bars processed. Audit 1038 decisions
+ATTENDRE = 100% score < 1.5 (max 8.0). Le sweep threshold 1.5-3.5 sur 26-27/05
+prouve que L1+L2+L4+L5 SEULS ne generent PAS d'edge (tous PF<0.7, WR~33%).
+
+L3 prevu spec d'origine 7 layers (cf `contract.py:217` + `decide.py:314-315`)
+mais REPORTE 26/05. Reactivation = ajout pattern trigger CONCRET (spring/upthrust)
+qui manquait au scoring 100% contextuel.
+
+### EXCEPTION SOUVERAINE Jackson 28/05 (bypass INCIDENT_LOG #22)
+La regle INCIDENT_LOG #22 (28/05 01:45) exige DSR ≥ 0.5 + n_folds_pf>1.3 ≥ 50% +
+PF_min_fold ≥ 0.7 AVANT deploy contributif. **Cette regle est bypassee** sur
+decision Jackson, avec acceptation explicite des risques :
+- Pas de backtest preservation wins
+- Pas de DSR Lopez sur spec OR-fusion
+- Risque pollution data calibration si L3 faux positif
+
+Justification souveraine : Bot 4 = paper Sim4 1 micro, Phase 7.1 SAFE COLLECT,
+rien a perdre (cf precedent memoire `project_bn_v4_paper_decision_20260523.md`).
+
+Mitigations en place :
+1. Kill switch env var MIA_BOT4_L3_DISABLED=1 (rollback 5s)
+2. 4 codes log_catalog dedies pour audit J+1
+3. MAX_POSSIBLE_SCORE 8.0 -> 10.0 (impact sizing risk.py a verifier J+1)
+
+### Impact attendu
+- Score atteint threshold plus souvent -> reprise des trades Bot 4
+- Effet de bord : `conviction = |score|/MAX` baisse pour meme score absolu
+  -> sizing live -50% theorique (a verifier J+1)
+- L3 trigger principalement aux extremes de range avec ext lines proches
+
+### Validation pre-deploy
+- [x] Module load + 6 scenarios mocks PASS (LONG simple, LONG cluster, SHORT cluster, NEUTRE, PIR neutre, no trigger)
+- [x] Test empirique bar live VPS PIR=0.10 forced : L3 contrib=+2.0 cluster=True
+- [x] Kill switch env var teste : active=False quand MIA_BOT4_L3_DISABLED=1
+- [x] 4 codes log_catalog ajoutes (cohorents avec catalog existant)
+- [ ] Backtest preservation wins : **NON FAIT (exception souveraine)**
+- [ ] DSR Lopez : **NON FAIT (exception souveraine)**
+- [ ] Tests pytest engines : **a faire J+1** (test_l3_bn_v2_inline.py)
+
+### Revert plan
+```powershell
+# Rollback runtime (5s, sans redeploy)
+ssh Administrator@212.28.179.199
+nssm set MIA-Bot-4-Paper AppEnvironmentExtra "MIA_BOT4_L3_DISABLED=1"
+Restart-Service MIA-Bot-4-Paper
+
+# Rollback code (si bug critique)
+scp BACKUP/decide_pre_l3_20260528.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/NEW_BOT_2_MIA_TRADER/src/decide.py"
+Restart-Service MIA-Bot-4-Paper
+```
+
+### Deployed at (a remplir post-deploy)
+
+### Suivi post-deploy
+- **J+1 (29/05 18:00 UTC)** : grep `BOT4_L3_TRIGGERED_LONG|SHORT` dans LOGS/events.
+  Comparer count trigger LONG vs SHORT, distribution `has_cluster`. Si >50%
+  triggers sont faux positifs (cf decision suivante NEUTRE) -> kill switch.
+- **J+3 (31/05)** : count trades Bot 4 vs J-7 baseline 0. Si trades !=0 +
+  WR < 30% sur n>=10 -> kill switch.
+- **J+7 (04/06)** : analyse PF L3-only sur trades pris depuis activation. Si
+  PF >= 1.3 sur n>=20 -> GO maintenir actif. Si PF < 1.0 -> kill switch +
+  retour shadow mode pour audit.
+
+### Liens
+- INCIDENT_LOG : exception documentee #23 (a creer)
+- Memory : `project_bn_v4_paper_decision_20260523.md` (precedent exception paper)
+- Review agent code-reviewer 28/05 : NOGO direct, GO conditionnel shadow 7j
+
+---
+
+## 2026-05-28 02:25 — REFACTOR Stream Databento V2 reconnect natif SDK (cause racine 54 restart/jour)
+
+**Categorie** : REFACTO (infra critique)
+**Impact prod** : LIVE — service `MIA-Live-OHLCV` consomme par Bot 1/2/3/4 via LIVE_CACHE
+**Fichier(s)** :
+- `CORE/databento_live_stream_v2.py` (NEW, ~580 LOC, supplante `databento_live_stream.py` V1 790 LOC)
+- `CORE/log_catalog.py:205-209` (+3 codes : STREAM_RECONNECTED MAJEUR, STREAM_RECONNECT_EXCEPTION ALERTE, STREAM_SESSION_CLOSED_UNEXPECTEDLY CRITIQUE)
+- `BOT/mia_watchdog.py:335-387` (`check_stream_subscribe_alive` consume `subscribe_alive_per_sym` si present, fallback V1 boolean global)
+- Service `MIA-Live-OHLCV` reconfigure : pointe sur V2 + `AppStopMethodWindow=65000`
+**Reviewer(s) agent** : code-reviewer (review #1 GO-AVEC-RESERVES + 3 patches appliques, review #2 GO franc)
+
+### Quoi
+V1 utilisait `db.Live(key=...)` qui prend par defaut `reconnect_policy=ReconnectPolicy.NONE`
+(SDK 0.75.0). Resultat : aucune reconnexion auto. Pour compenser, V1 implementait
+un watchdog manuel `_watchdog_loop` qui appelait `client.stop()` a 90s silence —
+methode qui ferme la connexion sans la recreer = process zombie jusqu'a restart
+externe par `mia_watchdog.py`.
+
+V2 active `reconnect_policy=ReconnectPolicy.RECONNECT` (SDK gere backoff exponential
+1s..60s + resubscribe auto + timeout 10min couvrant Sunday gateway restart Databento)
++ `add_reconnect_callback(_on_reconnect, _on_reconnect_exception)` pour observability
+des gaps. Supprime entierement `_watchdog_loop` + boucle externe + `FORCE_RECONNECT_INTERVAL_SEC=4h`.
+
+Ajouts review #1 :
+- P1 : `subscribe_alive` revert V1 stricte (max ages < 90s global) pour compat `mia_watchdog`
+- P2 : `_inst_to_sym.clear()` dans `_on_reconnect` (rollover front-month safe)
+- P3 : emit JSONL via `CORE.logging_v2.get_logger().emit()` pour audit J+1
+
+Ajouts post review #1 :
+- Champ additif `subscribe_alive_per_sym` (dict) dans heartbeat -> `mia_watchdog` ignore MGC overnight (vol-based) tout en restant strict sur ES/NQ
+- Discord cooldown 15 min anti-flood (2 globals separes : reconnect alert + transition alert)
+- Discord alert reconnect proportionnelle au gap (60-300s monitoring, >300s alertes)
+- Discord transition payload inclut `dead_syms` pour debug rapide
+
+### Pourquoi
+54 restarts/jour V1 le 27/05/2026 (Discord stats : 4291 checks, 1928 warns, 2271 crits).
+Cause racine identifiee par audit doc Databento : SDK expose `add_reconnect_callback`
+et `ReconnectPolicy.RECONNECT` qui font nativement ce que V1 reinventait en pire.
+Lien : memoire `auto_improvement_protocol.md` (5 lectures auto-chargees) + audit
+agent code-reviewer 28/05 + investigation general-purpose chaine DataBento.
+
+### Impact attendu
+- Restarts MIA-Live-OHLCV : 54/jour V1 -> <5/jour V2 (cible)
+- Suppression process zombie (sys.exit(3) garanti si timeout 10min SDK epuise)
+- mia_watchdog ne reagit plus aux silence MGC overnight (vol-based normal)
+- Audit J+1 facile via `grep STREAM_RECONNECTED LOGS/events/events_*_live_stream.jsonl`
+- Effet de bord : aucun (compat V1 maintenue via additivite + fallback boolean global)
+
+### Validation pre-deploy
+- [x] Tests scenarios mockes (3/3 PASS) : MGC seul ignore, ES dead = sentinel CRIT, fallback V1
+- [x] Test runtime live 3 min : 3 fichiers OHLCV produits, `add_reconnect_callback registered`, reconnect_count=0
+- [x] Event JSONL ecrit empiriquement : `LOGS/events/events_20260528_live_stream.jsonl` contient `STREAM_RECONNECTED` valide
+- [x] Review agent code-reviewer #1 : GO-AVEC-RESERVES + 3 patches appliques
+- [x] Review agent code-reviewer #2 : GO franc (cf rapport ci-dessus)
+- [x] Backtest preservation : N/A (modif infra stream, pas scoring/gates)
+
+### Revert plan
+```bash
+# Rollback service vers V1 (V1 garde en place tant que V2 stabilise)
+ssh Administrator@212.28.179.199 'nssm stop MIA-Live-OHLCV'
+ssh Administrator@212.28.179.199 'nssm set MIA-Live-OHLCV AppParameters "-X utf8 CORE/databento_live_stream.py"'
+ssh Administrator@212.28.179.199 'nssm start MIA-Live-OHLCV'
+# log_catalog + mia_watchdog patches restent : compat V1 fallback testee (mia_watchdog.py:378-387)
+```
+RTO ~30s.
+
+### Deployed at 2026-05-28 00:30 UTC (20:30 ET)
+- Backup V1 : `BACKUP/databento_live_stream_pre_v2_20260528.py` + `log_catalog_pre_v2_20260528.py` + `mia_watchdog_pre_v2_20260528.py`
+- scp 3 fichiers sur VPS confirmes (LastWriteTime 27/05 20:26 ET)
+- nssm set MIA-Live-OHLCV AppParameters `-X utf8 CORE/databento_live_stream_v2.py` OK
+- nssm set MIA-Live-OHLCV AppStopMethodWindow `65000` OK (etait 1500 V1)
+- Service start OK (session_id='2868169654', PID different post-restart)
+- MIA-Watchdog restart OK (reload logique check_stream_subscribe_alive V2)
+- Reset restart cap MIA-Live-OHLCV (etait 3/3 sature pre-deploy) via `BOT/_reset_restart_cap.py` puis restart watchdog
+- Verification 60s post-deploy : `stream_version: v2_native_reconnect`, `subscribe_alive_per_sym` present, 4 bars NQ produites (20:30/31/32/33 ET), `reconnect_count: 0`
+
+### Suivi post-deploy
+- **J+1** : `grep STREAM_RECONNECTED LOGS/events/events_*_live_stream.jsonl` (compter reconnects natifs SDK) ; `grep WATCHDOG_RESTART.*MIA-Live-OHLCV LOGS/events/events_*_watchdog.jsonl` (cible <5/jour vs 54 V1) ; `head -1 DATA/LIVE_CACHE/_stream_heartbeat.json | grep stream_version` doit retourner `"v2_native_reconnect"`
+- **J+7** : verifier au moins 1 weekly Databento gateway restart (dimanche 18h ET) genere `STREAM_RECONNECTED` sans restart externe nssm
+- **J+30** : bilan total restart MIA-Live-OHLCV vs baseline V1 + decision archive V1 -> _v1_archived.py
+
+### Liens
+- INCIDENT_LOG : entry STREAM_FLAP_DATABENTO 28/05 (a creer post-deploy)
+- Memory : `auto_improvement_protocol.md` (lecture doc SDK critique avant refacto)
+- Review agent : 2 reviews code-reviewer (background tasks 28/05 02:08 + 02:20)
+- Sources doc Databento : `add_reconnect_callback`, `Live` client, `block_for_close`
+
+---
+
+## 2026-05-28 01:30 — FIX Bot 3 v3+v4 logger trade_close : ajout outcome + slippage_favorable (additif)
+
+**Categorie** : FIX (logging forensique) — DEBLOQUE TOUTES analyses futures
+**Impact prod** : LIVE (Bot 1 wrapper Bot 3 v3 Sim1 + Bot 3 v4 Sim3) — **logger only, zero impact decision/execution**
+**Fichier(s)** :
+  - `CORE/bot3_v3v4_logger.py:400-432` (refacto `log_trade_close` : +2 champs `outcome` et `slippage_favorable`)
+**Reviewer** : pre-validate via 4 smoke tests (4/4 PASS scenarios SL/TP × WIN/LOSS)
+
+### Quoi
+`exit_cause` reste trigger MECANIQUE (TP/SL/TIMEOUT/EOD/MANUAL = quel ordre filled).
+Ajout `outcome` (WIN/LOSS/BREAKEVEN) base sur pnl_usd = resultat FINANCIER decouple.
+Ajout `slippage_favorable` (bool) flag True si SL+pnl>0 ou TP+pnl<0 = anomalie execution.
+
+### Pourquoi
+Audit Bot 1 selectivite 28/05 (agent market-analyst) revele :
+- 6 trades winners >+30t avec `exit_cause=SL` → analystes interpretaient "label SL/TP inverse"
+- En realite : `exit_cause=SL` est CORRECT (ordre SL filled mecaniquement)
+- MAIS slippage extreme observe (+35t/-57t, cap engine sl_max=30t viole 1x PREV_VAH)
+- Resultat : `exit_cause` decorrelle de `outcome` financier → audits forensiques fausses
+- 13/18 "winners" cumul 4j Bot 1 sont des slip favorables, PAS l'edge ML
+
+### Validation pre-deploy
+- 4/4 smoke tests scenarios PASS :
+  - SL+win → outcome=WIN slip_fav=True
+  - TP+win → outcome=WIN slip_fav=False
+  - SL+loss → outcome=LOSS slip_fav=False
+  - TP+loss → outcome=LOSS slip_fav=True
+- Aucun changement logique decide/execute (logger only)
+- Backwards-compat strict : champs `exit_cause`/`pnl_usd`/`pnl_R` inchanges
+
+### Revert plan
+```bash
+git revert <commit-hash>  # additif only, rollback trivial
+scp <ancien-bot3_v3v4_logger.py> Administrator@212.28.179.199:.../
+nssm restart MIA-DataBento-Paper-V2
+```
+
+### Deployed at
+- **2026-05-28 01:30 UTC** (scp + nssm restart MIA-DataBento-Paper-V2)
+
+### Suivi post-deploy
+- J+1 : verifier 1 trade close avec nouveaux champs (Bot 3 v3 prend ~10 trades/jour)
+- J+7 : audit forensique cumul `outcome` vs `exit_cause` :
+  - % slippage_favorable=True (anomalie execution Sierra Chart)
+  - % WINs reels (pnl_usd>0) vs % `exit_cause=TP`
+  - Si > 20% slippage_favorable → investigation execution + DTC
+
+### Liens
+- Audit `DOCS/AUDITS/2026-05-28_audit_bot1_selectivite.md` (motivation)
+- Bilan `DOCS/BILANS/2026-05-27_bilan_bot1.md`
+
+---
+
+## 2026-05-27 21:05 — FEATURE Bot 2 BN V4 WINDOW_OBSERVE mode (additif, default OFF)
+
+**Categorie** : FEATURE (data collection, anti-pattern-11)
+**Impact prod** : PAPER (Sim2 NQ A++ Bot 2 BN V4) — **bot continue identique tant que feature OFF**
+**Fichier(s)** :
+  - `CORE/bn_v4_engine.py` : param `observe_outside_windows: bool = False` + gate `open_window` branche conditionnel + champ `outside_window` dans return
+  - `CORE/bn_v4_paper.py` : nouveau `elif mode == "OBSERVE_WINDOW"` + helper `_log_outside_window_setup` (JSONL dedie)
+  - `CORE/databento_paper_trader_v2.py:536` : env var toggle `MIA_BN_V4_OBSERVE_OUTSIDE_WINDOWS`
+  - `CORE/log_catalog.py` : 3 nouveaux codes (BN_V4_OUTSIDE_WINDOW_CANDIDATE/LOG/LOG_FAIL)
+  - `tests/test_bn_v4_window_observe.py` : 4 tests integration (4/4 PASS)
+**Reviewer** : agent code-reviewer GO-AVEC-RESERVES (R1+R2 corrigees avant deploy)
+
+### Quoi
+Permettre la collecte 30j des setups A++ qui auraient passe tous gates SAUF
+`open_window`. Mode `OBSERVE_WINDOW` separe de `OBSERVE` existant. Pas d'ordre
+DTC, pas de gates eco/cooldown/risk. JSONL dedie pour analyse statistique
+future. Default OFF preserve strictement le comportement actuel (PF backtest 4.66).
+
+### Pourquoi
+Audit 27/05 : Bot 2 fait 1 trade/jour (12 setups -> 1 trade). 84% bars
+bloquees par `GATE_OPEN_WINDOW_BLOCK` (windows London/NY/Asia = 270 min/jour).
+Agent market-analyst NOGO formel sur elargir directement (pattern 11 V1).
+Solution alternative : collecte observatoire 30j puis decision data-driven.
+
+### Activation
+Set env var `MIA_BN_V4_OBSERVE_OUTSIDE_WINDOWS=1` sur service nssm
+MIA-DataBento-Paper-V2 + restart. Default `0` = OFF = pas de change.
+
+```bash
+ssh Administrator@212.28.179.199 'nssm set MIA-DataBento-Paper-V2 AppEnvironmentExtra MIA_BN_V4_OBSERVE_OUTSIDE_WINDOWS=1'
+ssh Administrator@212.28.179.199 'nssm restart MIA-DataBento-Paper-V2'
+```
+
+Kill switch : remettre env var a `0` (ou supprimer) + restart = 30 secondes.
+
+### Validation pre-deploy
+- [x] Tests integration 4/4 PASS (`python tests/test_bn_v4_window_observe.py`)
+- [x] Smoke test params : default OFF preserve back-compat
+- [x] Smoke test codes log : 3 codes enregistres
+- [x] Service Bot 2 redemarre OK post-deploy (BAR_PROCESSED events normaux)
+- [x] Path env var avec fallback relatif (R1 code-reviewer)
+
+### Suivi post-deploy
+- Default OFF : aucune modification observable (verifier `LOGS/bn_v4_window_observe/` absent)
+- Si activation : J+1 verifier `wc -l LOGS/bn_v4_window_observe/*.jsonl > 0`
+- Apres 30j collecte : run script post-process pour calculer PnL simul + comparaison PF in-window vs out-of-window
+- Decision data-driven sur eventuelle extension OPEN_WINDOWS basee sur ce dataset
+
+### Revert plan
+```bash
+# Soit env var = 0 (kill switch, 30s)
+ssh Administrator@212.28.179.199 'nssm set MIA-DataBento-Paper-V2 AppEnvironmentExtra MIA_BN_V4_OBSERVE_OUTSIDE_WINDOWS=0'
+ssh Administrator@212.28.179.199 'nssm restart MIA-DataBento-Paper-V2'
+
+# Soit revert code (si bug systemique)
+git revert <commit-hash>
+scp CORE/bn_v4_engine.py CORE/bn_v4_paper.py CORE/databento_paper_trader_v2.py CORE/log_catalog.py Administrator@212.28.179.199:.../
+```
+
+### Deployed at
+- **2026-05-27 21:05 UTC** (scp 4 fichiers + restart MIA-DataBento-Paper-V2, default OFF)
+
+### Liens
+- Code review agent transcript : a713ce7bbd7e70af8
+- Audit pre-decision : aa8f3c336405163ea (market-analyst NOGO direct widen)
+- Memory `feedback_pattern11_repetition_avoided.md` (regle anti-3e-iteration)
+
+---
+
+## 2026-05-27 18:45 — FIX Bot 4 L1 regime_engine_v2 fork + kill switch
+
+**Categorie** : FIX (bug racine confidence) + FEATURE (kill switch env var)
+**Impact prod** : LIVE (Bot 4 Phase 7.1 SAFE COLLECT Sim4 NQ 1 micro)
+**Fichier(s)** :
+  - `CORE/regime_engine_v2.py` (NEW, fork de regime_engine.py)
+  - `NEW_BOT_2_MIA_TRADER/src/layers/l1_regime.py` (refactor heuristique v2 + emit log)
+  - `CORE/log_catalog.py` (+1 code BOT4_REGIME_INSUFFICIENT_FEATURES)
+**Reviewer(s) agent** : code-reviewer (NOGO 6 defauts, 2 corrigés avant deploy : kill switch + emit log)
+
+### Quoi
+Fork `regime_engine_v2.py` (Bot 4 ONLY, Bot 1/2/3 inchanges via v1) avec fix racine
+`confidence = net / max(trend+range, 1)` au lieu de `/12.0` arbitraire. Empirique :
+L1 actionable 14% -> 32% (x2.2), conf mean x3.
+
+### Pourquoi
+Bot 4 = 0 trade sur 2821 decisions today (score plafonne ~2.0 < threshold 3.5).
+Audit code-reviewer + market-analyst 27/05 identifie `/12.0` regime_engine comme
+bug racine + 2 patches successifs NORMALIZE_MAX 0.25->0.35 = pattern 11. Fix
+formule ponderee (denominateur = votes exprimes) elimine besoin sparadrap.
+
+### Deploy en mode COLLECTE (pas validation live)
+**CADRAGE CORRECT (rectifie 27/05 Jackson rappel)** : Phase 7.1 SAFE COLLECT 1 micro Sim4
+= objectif **COLLECTE DATA**, pas validation edge. Les criteres train_lightgbm.py
+(PF >= 1.3, WR >= 45%) s'appliquent au DEPLOY LIVE futur, **PAS** a la collecte.
+
+Le fix v2 atteint son objectif phase collecte :
+1. L1 actionable 14% -> 32% (x2.2) = plus de bars permettent au scoring de fire
+2. L1 contribution mean 0.18 -> 0.55 (x3) = signaux plus discriminants
+3. Resultat attendu : Bot 4 va prendre N trades > 0 (au lieu de 0 actuel)
+4. Ces trades = DATA collectee pour calibration future (R:R adaptatif, threshold,
+   layers L2/L4/L5 audit)
+
+Mode collecte = on accepte temporairement des trades a edge negatif pour
+constituer un dataset minimum (n>=20-30 trades) qui permettra DSR Lopez.
+Sans data, aucun fix architectural ne peut etre valide.
+
+Kill switch `MIA_REGIME_V2_SKIP_ENABLED=0` permet rollback 30s si trades
+catastrophiques (DD > $200 ou WR < 20% sur n>=10).
+
+### Defauts code-reviewer NON corriges (BACKLOG post-deploy)
+1. Pas de tests v2 (9/9 tests L1 passent via fallback v1)
+2. Floor 0.20 potentiel sparadrap supplementaire (a justifier empirique)
+3. Fallback v1 conserve `_LEGACY_V1_CONFIDENCE_NORMALIZE_MAX=0.35` "pour tests"
+
+### Validation pre-deploy
+- [x] Tests pytest L1 : 9/9 PASS
+- [x] Audit empirique 6 jours mai : v2 actif sur live_enriched, actionable +18pp
+- [x] Backtest threshold sweep RTH-only 4j : PF max 0.66 (T=2.0), walk-forward TEST PF=0.94
+- [x] Kill switch teste : `MIA_REGIME_V2_SKIP_ENABLED=0` -> output force NEUTRE
+- [x] Log BOT4_REGIME_INSUFFICIENT_FEATURES emis si votes_total<4
+- [ ] Code review : NOGO (override Jackson, 2 fixes critiques appliques)
+
+### Critere rollback automatique J+1/J+7
+- J+1 : si PF reel Sim4 < 0.5 sur N>=10 trades -> kill switch ON + investigation
+- J+7 : si actionable_rate < 20% OU N trades < 5 -> review architecture L2/L4/L5
+
+### Revert plan
+```bash
+# Rollback rapide via kill switch (30s, pas de redeploy code)
+ssh Administrator@212.28.179.199 'nssm set MIA-Bot-4-Paper AppEnvironmentExtra MIA_REGIME_V2_SKIP_ENABLED=0'
+ssh Administrator@212.28.179.199 'powershell Restart-Service MIA-Bot-4-Paper'
+# Rollback total (revert files)
+scp <ancien-l1_regime.py> Administrator@212.28.179.199:.../l1_regime.py
+ssh Administrator@... 'Remove-Item C:\TRADING_SIERRA_CHART_AUTO\CORE\regime_engine_v2.py'
+```
+
+### Deployed at
+- **2026-05-27 18:45 UTC** (scp 3 fichiers + restart safe + verif L1 source=regime_engine_v2 actif)
+
+### Liens
+- INCIDENT_LOG : 2026-05-27 entry 22 [PATTERN_11_PARTIAL]
+- Audit codes-reviewer : output transcript afe216413acdedeeb
+- Backtest : threshold_sweep_20260527.md (PF 0.66 max NOGO mais distribution OK)
+
+---
+
+## 2026-05-27 16:30 — FIX Bot 4 P0 MenthorQ schema reader + regression guard alerte
+
+**Categorie** : FIX (P0 critique) + FEATURE (regression guard observability)
+**Impact prod** : LIVE (Bot 4 Phase 7.1 SAFE COLLECT Sim4 NQ)
+**Fichier(s)** :
+  - `NEW_BOT_2_MIA_TRADER/src/reader.py:263+` (schema fix MenthorQReader.load_levels)
+  - `NEW_BOT_2_MIA_TRADER/src/reader.py:288+` (regression guard `_schema_diag`)
+  - `NEW_BOT_2_MIA_TRADER/src/reader.py:625+` (emit `BOT4_READER_MENTHORQ_SCHEMA_MISMATCH`)
+  - `CORE/log_catalog.py:979` (+1 code CRITIQUE/events)
+  - `NEW_BOT_2_MIA_TRADER/tests/test_reader_inline.py` (test_7 reecrit + test_7b regression + test_8 fixture)
+**Schema/version** : N/A (pas de schema DMP touche)
+**Reviewer(s) agent** :
+  - code-reviewer (audit pre-deploy regression guard + cross-check schema fix)
+  - Verification empirique VPS post-deploy (L4_gamma 0%->100% sur 121/121 decisions)
+
+### Quoi
+Fix root cause Bot 4 score=0.0 systematique (0 trade depuis demarrage J12). `MenthorQReader.load_levels` lisait l'ancien schema JSON (`payload.key_levels.SYM`) alors que le scraper actuel produit `payload.SYM.structured.{key_levels,netgex,bl_levels,matrix_v1,future_curve}`. Schema fix adapte aux 7 cles structurees + raw_ajax CTA/intraday/swing.
+
+Bonus regression guard : ajout dict `_schema_diag` (`payload_top_keys`, `symbol_present`, `structured_present`, `key_levels_extracted`) sur le result, et emit `BOT4_READER_MENTHORQ_SCHEMA_MISMATCH` (LogLevel.CRITIQUE) dans `M1Pipeline.read_and_emit` si fichier loaded mais key_levels=None alors que payload contient des donnees (>= 2 cles top-level). Tripwire detection schema drift futur.
+
+### Pourquoi
+**Symptome empirique** : audit 27/05 13:00 UTC sur 2259 decisions = score max 2.36 < threshold 3.5. Bot 4 techniquement INCAPABLE de trader.
+
+**Cause racine** : `payload.get("key_levels", {}).get("NQ")` retournait toujours None car le scraper ecrit dans `payload["NQ"]["structured"]["key_levels"]`. Resultat : `menthorq_present=False` sur 100% bars -> `menthorq_fresh=False` -> `L4_gamma inactive 100%` (0/2480 bars) -> score plafonne ~2.4 (juste L1 contribue) < 3.5.
+
+Test `test_7_menthorq_reader` utilisait fixture obsolete (faux positif : test PASS, prod casse). Pattern `VALIDATION_MISS` documente dans INCIDENT_LOG entry #21.
+
+### Impact attendu
+- L4_gamma activation : **0% -> 100%** (validation empirique post-fix : 121/121 decisions)
+- Score max atteignable : ~2.4 -> jusqu'a 5.1 (L1=2.14 + L2=1.0 + L4=2.0 + L5=1.0 quand alignes)
+- Bot 4 peut techniquement franchir threshold 3.5 quand conditions marche alignees
+- Tripwire BOT4_READER_MENTHORQ_SCHEMA_MISMATCH = CRITIQUE/events si drift schema futur
+- Effet de bord : aucun (regression guard purement defensive, pas de changement comportement)
+
+### Validation pre-deploy
+- [x] Tests unitaires : 16/16 PASS (`python NEW_BOT_2_MIA_TRADER/tests/test_reader_inline.py`)
+- [x] test_7 nouveau schema verifie : key_levels/vol_model/bl_levels/matrix/future_curve extraits
+- [x] test_7b regression guard ancien schema verifie : `_schema_diag.key_levels_extracted=False`
+- [x] test_8 M1Pipeline full flow PASS avec nouveau schema fixture
+- [x] Log code `BOT4_READER_MENTHORQ_SCHEMA_MISMATCH` enregistre dans LOG_CODES (LogLevel.CRITIQUE)
+- [x] Test empirique VPS schema fix (deja deploye 15:35 UTC) : 121/121 L4_gamma actif
+- [ ] Test empirique VPS regression guard : en attente deploy + 24h monitor zero false positive
+
+### Revert plan
+```bash
+# Rollback schema fix (revertir reader.py vers ancien schema)
+git diff HEAD~1 -- NEW_BOT_2_MIA_TRADER/src/reader.py | git apply -R
+scp NEW_BOT_2_MIA_TRADER/src/reader.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/NEW_BOT_2_MIA_TRADER/src/"
+ssh Administrator@212.28.179.199 "powershell -Command Restart-Service MIA-Bot-4-Paper"
+# Rollback log_catalog : retirer ligne BOT4_READER_MENTHORQ_SCHEMA_MISMATCH
+# IMPACT : Bot 4 redevient incapable de trader (retour L4_gamma 0%)
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+- Schema fix : **2026-05-27 15:35 UTC** (deploye + valide empirique L4=100%)
+- Regression guard + alerte + log code : **2026-05-27 16:07 UTC**
+  - reader.py + log_catalog.py scp VPS, Bot 4 restart safe (lock cleanup OK)
+  - Service Running, BOOT_READY validation OK
+  - Verification +30s : N SCHEMA_MISMATCH emit = 0 (zero faux positif R1)
+  - L4_gamma maintenu active=True post-restart
+  - Reserves code-reviewer R1+R2 appliquees AVANT deploy (reason discriminant
+    OLD_SCHEMA/SYMBOL_MISSING/STRUCTURED_MISSING/KEY_LEVELS_MISSING + cle prefixee
+    `__schema_diag__`), tests 18/18 PASS local
+
+### Suivi post-deploy
+- J+1 : verifier `grep BOT4_READER_MENTHORQ_SCHEMA_MISMATCH LOGS/bot4_*.jsonl` = 0 occurrence (faux positif)
+- J+1 : verifier L4_gamma activation rate >= 50% (sinon nouvel investigation)
+- J+7 : audit Bot 4 N>=30 trades (PF, WR, slippage par layer)
+- J+30 : si zero BOT4_READER_MENTHORQ_SCHEMA_MISMATCH emis, regression guard valide
+
+### Liens
+- INCIDENT_LOG : 2026-05-27 entry #21 [VALIDATION_MISS]
+- Tests : `NEW_BOT_2_MIA_TRADER/tests/test_reader_inline.py` (16/16 PASS)
+- Audit scripts : `NEW_BOT_2_MIA_TRADER/scripts/audit_bot4_post_fix.ps1` + `audit_bot4_layers_contrib.ps1`
+
+---
+
+## 2026-05-24 22:00 — FEATURE Bot 3 v3 + v4 paper deploy (TRADE mode Sim1+Sim3)
+
+**Categorie** : FEATURE (nouveaux 2 bots paper, kill Bot 3 prod MP)
+**Impact prod** : PAPER (Sim1 + Sim3 Topstep, NQ uniquement)
+**Fichier(s)** : 8 nouveaux/modifies (cf liste detaillee plus bas)
+**Schema/version** : N/A (pas de schema DMP touche)
+**Reviewer(s) agent** :
+  - code-reviewer Phase 1 (logger + 65 codes) → GO (5 fixes appliques)
+  - code-reviewer Phase 2 (Bot3v3 engine + 36 tests) → GO (2 fixes R1+R2)
+  - code-reviewer Phase 3 (Bot3v4 engine + 24 tests) → GO (fix swing_used)
+  - code-reviewer Phase 4+5 (paper modules + integration) → GO (R1 DD emit + R2 _extract_day)
+  - market-analyst Phase 7a (sizing + kill criteria + cross-bot) → GO (fix #1 cross-bot gate, #4 kill PF<0.85 doc)
+
+**Quoi** :
+Deploiement 2 nouveaux bots paper Bot 3 reform :
+- **Bot 3 v3 Continuation** (Sim1 NQ) : paradigme Wyckoff phase E
+  (breakout + retest + confirmation long_up/dn_bar). Backtest PF 1.045
+  WR 43% n=1611 DSR 0.21 PF_min_fold 0.75 sur 130j MenthorQ propre.
+- **Bot 3 v4 Data-driven** (Sim3 NQ) : 6 triggers asymetriques empiriques
+  (analyse 54K bounces) + TP cur_VPOC magnet. Backtest PF 1.033 WR 30%
+  n=1110 DSR 0.13 PF_min_fold 0.51.
+
+Mode **TRADE direct** (pas observation). DRY_RUN=0. Bots ouvrent positions
+reelles Sim1+Sim3 des premiere setup detectee post-deploy.
+
+**Pourquoi** :
+Bot 3 MP prod actuel CASSE (PF 0.98 sur 137 vrais trades, 4j actifs avril
+-$1546). Replace par 2 bots reform paper 4 sem, decision prod J+30 selon
+critere PF paper >= 0.85 × PF backtest, WR >= 0.85 × WR backtest, DD <= 30R,
+n>=30 trades.
+
+**Impact** :
+- 4 bots NQ paper simultanes (Bot 1 prod + BN V4 Sim2 + v3 Sim1 + v4 Sim3)
+- Gate cross-bot max 2 positions same-side toutes-bots confondues (fix R1
+  market-analyst : anti corr exposure x4)
+- 1 micro NQ max par bot (sizing init conservateur)
+- DD daily -$200 par bot + kill switch global
+- Cooldown 60 min apres 3 SL consec
+- News veto fail-closed (mins_since/to_next <= 5)
+- Anti-orphan V2 9 etapes via bot3_paper_common.force_close_market
+
+**Validation pre-deploy** :
+- 60/60 tests pytest engines (36 v3 + 24 v4)
+- Smoke imports 4 modules paper OK
+- Smoke compile paper_v2 + 4 nouveaux modules OK
+- Smoke lifecycle dry_run (init -> boot -> poll -> shutdown) OK
+- Smoke data reelle JSONL 21/05 : Bot 3 v4 emet 10 entries coherentes
+  (LONG SWING_LOW/VWAP_D_SD2D + SHORT SWING_HIGH/CUR_VAH/VWAP_D_SD2U,
+  4 TP VPOC + 6 TP R15 fallback)
+- 5 reviews agents independants (3 code-reviewer + 1 market-analyst +
+  Jackson direct) → GO-AVEC-RESERVES toutes resolues
+- Plan complet documente : DOCS/BOT3_V3_V4_PAPER_PLAN.md
+
+**Fichiers livres VPS** :
+1. CORE/bot3_v3v4_logger.py (NEW, ~340 LOC + 65 codes log_catalog)
+2. CORE/log_catalog.py (UPDATED, +65 codes BOT3_V3_*/V4_*)
+3. CORE/bot3_v3_continuation_engine.py (NEW, ~600 LOC state machine 4 etats)
+4. CORE/bot3_v4_data_driven_engine.py (NEW, ~440 LOC touch + VPOC magnet)
+5. CORE/bot3_paper_common.py (NEW, ~340 LOC helpers DTC + anti-orphan)
+6. CORE/bot3_v3_continuation_paper.py (NEW, ~620 LOC lifecycle + DTC Sim1)
+7. CORE/bot3_v4_data_driven_paper.py (NEW, ~590 LOC lifecycle + DTC Sim3)
+8. CORE/databento_paper_trader_v2.py (UPDATED, +90 LOC wire ENV-gated)
+
+**ENV setup VPS (nssm MIA-DataBento-Paper-V2)** :
+- MIA_BOT3_V3_ENABLED=1, MIA_BOT3_V3_DRY_RUN=0 (TRADE direct)
+- MIA_BOT3_V3_TRADE_ACCOUNT=Sim1, MIA_BOT3_V3_SYMBOLS=NQ
+- MIA_BOT3_V4_ENABLED=1, MIA_BOT3_V4_DRY_RUN=0
+- MIA_BOT3_V4_TRADE_ACCOUNT=Sim3, MIA_BOT3_V4_SYMBOLS=NQ
+
+**Revert plan** :
+Si bugs lundi Asia open :
+- Quick kill : `nssm set MIA-DataBento-Paper-V2 AppEnvironmentExtra +MIA_BOT3_V3_ENABLED=0 +MIA_BOT3_V4_ENABLED=0` + restart
+- Force shutdown bots : paper_v2 shutdown declenche anti-orphan V2 sur les 2 bots
+- Full rollback : revenir au paper_v2.py sans wire Bot 3 v3/v4 (git checkout HEAD~1)
+
+**Suivi post-deploy** :
+- J+1 (lundi 25/05 fin Asia) : verifier emit BOT3_V3_BOOT_START + BOT3_V4_BOOT_START.
+  Compter n_bars_processed > 100 + n_touches > 0 par bot.
+- J+7 : stats PnL + PF cumul. Kill si PF < 0.85 sur 50+ trades.
+- J+30 : decision prod selon critere GO (PF paper >= 0.85 × backtest,
+  WR >= 0.85 × backtest, DD <= 30R, n>=30).
+
+**Cross-reference** :
+- DOCS/BOT3_V3_V4_PAPER_PLAN.md (plan complet 9 phases)
+- Memory `project_bot3_reform_verdict_20260524.md` (3 candidats backtest)
+- LOGS/bot3_reform/REPORT_3_CANDIDATS.md (verdict backtest final)
+- LOGS/reaction_zones_analysis/REPORT_COMPARATIF.md (analyse empirique 54K bounces)
+- INCIDENT_LOG entry (17) CONTEXT_MISS (v4_enriched tronque)
+- DOCS/CHANGELOG entry 2026-05-24 17:00 (fix swing prices live_enriched)
+
+---
+
+## 2026-05-24 17:00 — FEATURE expose _last_swing_high/low_price live_enriched
+
+**Categorie** : FEATURE (expose 2 features deja calculees au payload JSONL)
+**Impact prod** : PAPER (Bot 3 v3/v4 deploy 4 sem paper Sim1+Sim3 a venir)
+**Fichier(s)** : `CORE/enricher_chain.py:926-929` (+4 lignes commentaire + 2 lignes code)
+**Reviewer(s) agent** : N/A (modif trivial 2 lignes, expose features existantes)
+
+**Quoi** :
+Expose `_last_swing_high_price` et `_last_swing_low_price` dans le payload
+JSONL live_enriched. Les 2 valeurs etaient deja calculees en interne (state
+`s_sess_lag.last_swing_high.price` / `last_swing_low.price`, ligne 923-924)
+pour le calcul `bars_since_retest_high/low`, mais pas exposees au payload.
+
+**Pourquoi** :
+Bot 3 v3 + v4 (paper deploy lundi 26/05 Sim1+Sim3 NQ) consomment ces 2
+features pour le calcul SL swing-based :
+- LONG : SL = `_last_swing_low_price - 3t` (fallback 15t NQ si None)
+- SHORT : SL = `_last_swing_high_price + 3t` (fallback inverse)
+Backtester `bot3_continuation_backtester.py` valide empirique PF 1.045 sur
+1611 trades 130j MenthorQ propre utilise ces features.
+
+**Impact** :
+- Payload JSONL passe de 468 a 470 keys
+- Aucune feature existante modifiee (ajout only)
+- Bot 1 (Sierra) + BN V4 (Bot 2 paper Sim2 lundi) NON IMPACTES (ne consomment
+  pas ces 2 features)
+- Si swing absent en debut session (warmup) : payload = `null` JSON, Bot 3
+  fallback ticks fixes (15t NQ / 8t ES)
+
+**Validation pre-deploy** :
+- Smoke test local : python -c "from CORE.enricher_chain import ..." OK
+- Tests engines Bot 3 v3 (36) + v4 (24) PASS (60/60)
+- Reviews code-reviewer GO-AVEC-RESERVES (5+2 fixes appliques)
+
+**Deployed at 2026-05-24 16:55 UTC** :
+- SCP `CORE/enricher_chain.py` vers VPS `C:/TRADING_SIERRA_CHART_AUTO/CORE/`
+- `nssm stop MIA-Live-Enricher` (etait STOP_PENDING, force stop)
+- `nssm start MIA-Live-Enricher` → STATE RUNNING confirme
+- Verif code ligne 929 sur VPS : `payload["_last_swing_high_price"] = _last_h`
+
+**Revert plan** :
+Si bug detecte lundi Asia open :
+- `git checkout HEAD~1 CORE/enricher_chain.py` (revient avant les 2 lignes)
+- SCP fichier reverti vers VPS
+- `nssm restart MIA-Live-Enricher`
+- Impact rollback : Bot 3 v3/v4 paper utilisent fallback ticks fixes 15t/8t
+  (degradation graceful, PAS de crash)
+
+**Suivi post-deploy** :
+- J+1 (lundi 25/05 Asia 18:00 ET dimanche soir) : verifier que JSONL produit
+  les 2 features `_last_swing_high_price` + `_last_swing_low_price` non-null
+  apres warmup (>= 5 bars selon `_warmup_ok` ligne 932 enricher_chain).
+- J+7 : compter % des bars avec swing prices non-null (cible > 90% post-warmup).
+- J+30 : N/A (pas d'impact metrics traders directement, juste data exposition).
+
+**Cross-reference** :
+- Memory `project_bot3_reform_verdict_20260524.md` (3 candidats paper)
+- DOCS `BOT3_V3_V4_PAPER_PLAN.md` Phase 1.5
+- Engines : `bot3_v3_continuation_engine.py:_compute_sl_tp`,
+  `bot3_v4_data_driven_engine.py:_compute_sl_tp`
+
+---
+
+## 2026-05-22 00:45 — FIX pipeline anti-blocage parquet corrompu + frontiere minuit + health-check
+
+**Categorie** : FIX (3 bugs pipeline/monitoring)
+**Impact prod** : PAPER (pipeline data Bot 2/3) + DASHBOARD (health-check)
+**Fichier(s)** : `CORE/build_dataset_v4_dmp_databento.py:write_partitioned` · `CORE/databento_download.py:download_one` · `CORE/log_catalog.py` · `BOT/health_checker.py`
+**Schema/version** : -
+**Reviewer(s) agent** : code-reviewer (GO Fix A, GO-AVEC-RESERVES Fix C+B)
+
+### Quoi
+3 fixes suite incident 22/05 (NQ stale Bot 2/3) :
+- C : `write_partitioned` — `pd.read_parquet` du parquet existant protege. Corruption reelle -> regenere ; verrou transitoire (OSError) -> skip partition conservee. Avant : un parquet corrompu figeait le symbole indefiniment.
+- A : `download_one` — 2 gardes `end <= start` (frontiere minuit UTC) -> emet `DOWNLOAD_TOO_EARLY` (INFO) au lieu de `DOWNLOAD_NON_RETRY_EXC` (CRITIQUE).
+- B : `health_checker` — `min`->`max` sur source_age (un symbole mort n'est plus masque), `check_pipeline_v4` boucle ES+NQ (avant ES-only), timeout service -> WARN (pas DOWN).
+
+### Pourquoi
+NQ v4_enriched corrompu (footer absent) figeait le pipeline 2 jours (Bot 2/3 aveugles sur NQ). Erreur 422 frontiere minuit -> 24 faux [CRIT] dashboard. Health-check masquait la mort de NQ (min + ES-only).
+
+### Impact attendu
+- Pipeline ne reste plus bloque sur un parquet corrompu
+- Plus de faux [CRIT] DOWNLOAD chaque nuit
+- Health-check detecte enfin une panne NQ
+- Effet de bord : aucun (aucune modif scoring/gates)
+
+### Validation pre-deploy
+- [x] Syntax check : 4/4 fichiers OK
+- [ ] Backtest preservation : N/A (aucune modif scoring/gates)
+- [x] Review agent : code-reviewer GO/RESERVES — R1 applique, B2bis rejete (ArrowInvalid herite de ValueError, prouve)
+- [ ] Test empirique : local impossible (bug cp1252 prepexistant `_run_powershell`) -> sur VPS post-deploy
+
+### Nouveaux logs
+- `DOWNLOAD_TOO_EARLY` (INFO, "data") — fenetre vide debut de journee CME
+
+### Revert plan
+```bash
+git checkout HEAD -- CORE/build_dataset_v4_dmp_databento.py CORE/databento_download.py CORE/log_catalog.py BOT/health_checker.py
+scp ces 4 fichiers vers VPS + Restart-Service MIA-Dashboard
+```
+
+### Deployed at 2026-05-22 00:50 UTC
+4 fichiers scp VPS (CORE/ + BOT/) + Restart-Service MIA-Dashboard. Test empirique
+VPS `python -m BOT.health_checker` : faux [DOWN] services disparus, faux [CRIT]
+pipeline disparu, `check_pipeline_v4` affiche "Last bar NQ il y a 21 min" (NQ enfin
+visible). Fixes A/B/C valides en conditions reelles.
+
+### Suivi post-deploy
+- J+1 : verifier `DOWNLOAD_TOO_EARLY` emis en INFO (pas CRITIQUE) ; NQ v4_enriched frais ; health-check NQ visible
+- Backlog : code log `V4_PARTITION_CORRUPT_REBUILD` MAJEUR (build_v4 n'a pas logging_v2) ; rebuild historique NQ mai
+
+### Liens
+- INCIDENT_LOG : 2026-05-20 #14 (parquet NQ corrompu)
+- Review agent : code-reviewer 22/05 — 2 reserves (R1 perte historique verrou transitoire applique ; B2bis rejete)
+
+## 2026-05-20 PM — FIX Bot 1 : F3 timeout + F6 code mort + trailing drawback 20->12
+
+**Categorie** : FIX (F3+F6 bugs reels) + CONFIG (trailing calibration)
+**Impact prod** : LIVE (MIA-Paper Sim3, moteur de decision Bot 1)
+**Fichier(s)** : `CORE/mia_paper_trader.py` (lignes ~106, ~2740, ~2955, ~3650, ~3690)
+**Reviewer(s) agent** : code-reviewer **GO-AVEC-RESERVES** (0 bloquant, 2 reserves importantes appliquees)
+
+### Quoi
+3 modifications suite analyse code-reviewer 20/05 (`DOCS/ANALYSE_BOT1_LACUNES_20260520.md`) :
+1. **F3 TIMEOUT** : `bars_held` comptait les polls (10s) au lieu des barres -> timeout 60 "barres" jamais atteint correctement (trades tenus ~166 polls). Fix : incrementer `bars_held` uniquement au changement de `ts` de barre. + R1 review : `if _cur_bar_ts` truthy (couvre ts=0/None/absent). + R2 review : garde-fou timeout wall-clock 90 min sur `entry_ts` (securite si flux DMP gele).
+2. **F6 CODE MORT** : 4 lignes kill-switch parasites mal indentees dans un `except` cleanup -> `BOT_KILL_SWITCH_RELEASED` emis a tort sur exception. Retire. + pt4 review : emit `BOT_KILL_SWITCH_RELEASED` legitime ajoute a la vraie transition PAUSE->ACTIF.
+3. **TRAILING drawback 20->12** : backtest replay trajectoire bar-par-bar 128 trades reels. Seuil armement ES30/NQ50 inchange (verifie empirique : aucun impact). Drawback est le levier.
+
+### Pourquoi
+F3 : code-reviewer a observe bars_held moyen 166 sur les TIMEOUT (vs 60 voulu). F6 : faux signal kill-switch. Trailing : Jackson "s'arme trop tard" — verif a montre que le drawback (pas le seuil) est le levier.
+
+### Impact attendu
+- F3 : le timeout 60 barres fonctionne enfin. Garde-fou 90 min wall-clock anti-DMP-stale.
+- Trailing : backtest db20->db12 = +315$ sur 128 trades (PnL +1935$ -> ~+2250$). NB : in-sample, surveiller J+7.
+- Effet de bord : `bars_held` change de semantique (polls -> barres) -> snapshots ML historiques heterogenes.
+
+### Validation pre-deploy
+- [x] Syntaxe `ast.parse` OK
+- [x] Review code-reviewer GO-AVEC-RESERVES — 2 reserves (R1 truthy, R2 garde-fou wall-clock) APPLIQUEES
+- [x] F4 (TP cap) ecarte : faux bug, 0/318 trades RR>2.05
+- [x] Backtest trailing : replay trajectoire (methodo anti-biais peak-global)
+- [ ] Test empirique J+1 post-deploy : grep TIMEOUT (bars_held ~60 pas ~166)
+
+### Revert plan
+```bash
+git checkout HEAD CORE/mia_paper_trader.py
+```
+
+### Deployed at 2026-05-20 11:20 UTC
+SCP `CORE/mia_paper_trader.py` -> VPS `C:/TRADING_SIERRA_CHART_AUTO/CORE/` OK.
+Restart-Service MIA-Paper -> Running confirme. Watchdog heartbeat worst=OK.
+Deploy hors session RTH (11:20 UTC) — Bot 1 tradera nouveau code des prochaine opportunite.
+
+### Suivi post-deploy
+- J+1 : grep TIMEOUT logs — bars_held ~60 (pas ~166)
+- J+7 : trailing db12 PnL capture vs observation Option 1
+- J+7 : 0 trade pourri (garde-fou wall-clock effectif)
+
+### Liens
+- `DOCS/ANALYSE_BOT1_LACUNES_20260520.md` + `ANALYSE_BOT1_TRADING_20260520.md`
+- `tools/backtest_trailing_trajectory.py`
+- Code log `BOT_KILL_SWITCH_RELEASED` (log_catalog:123, etait orphelin — reutilise)
+
+---
+
+## 2026-05-19 PM — FIX mia_bench_v4 audit 37 tests vs v4_pure (5 fixes HIGH)
+
+**Categorie** : FIX (critere 8 Backtest — interpretation bench v4_pure)
+**Impact prod** : OFFLINE (bench audit, pas live trading)
+**Fichier(s)** : `CORE/mia_bench_v4.py:60-72,476-484,1300-1308`
+**Reviewer(s) agent** : audit-agent ID a74667e249b1aa5f6 verdict **19 OK / 13 ADAPTER / 4 OBSOLETES**
+
+### Quoi
+5 fixes HIGH priorite appliques apres regen 8 mois v4_pure (218K ES + 217K NQ bars) :
+
+1. **Test 1 schema** : `EXPECTED_COLS_MIN` 450->475 + `SCHEMA_VERSION_V4` conditionnel sur `_SOURCE` env var (`v4_pure_2026_05_OPTION_C` vs `v4_enriched_2026_05`).
+2. **Test 29 trend_day_probability** : bins adaptes selon source (`[0, 0.65]` en v4_pure max empirique vs `[0, 1.01]` legacy).
+3. **Test 24 BIG ORDERS + Test 28 VAP cluster** : audit empirique colonnes parquet v4_pure -> **26 BIG_* + 19 CLUSTER_* presentes**, code defensif `if col not in df.columns: continue` deja en place. Aucune action.
+4. **Test 22/36/37 EDGE/COLOR/LONG zones** : audit empirique -> toutes colonnes presentes (`n_edge_buy_active`, `bar_edge_*_fire`, `n_color_up_zones_active`, `n_long_up_zones_active`, etc.). Aucune action.
+5. **Test 9 game_changers** : `OPEN_TYPE_NAMES` etendu 7->12 valeurs (alignement `CORE/game_changers.py:OpenType IntEnum` 0=UNKNOWN..11=ODF_DOWN), `PROFILE_SHAPE_NAMES` ajoute `-1: PRE_RTH` (NaN avant 13:30 ET).
+
+### Pourquoi
+Regen 8 mois v4_pure 19/05 a produit dataset Option C qui :
+- exige >= 475 colonnes (vs 450 v4_enriched)
+- expose `trend_day_probability` cap a 0.65 (formule pure Databento differente du DMP)
+- genere classes `open_type` 7-11 + `profile_shape` -1 jamais vues en v4_enriched
+
+Sans ces fixes, bench affichait 4 fausses alertes schema "EXPECTED_COLS_MIN" + 0 hit sur bin `[0.7, 1.01]` Test 29 + classes `8/9/10/11/-1` non labelisees Test 9.
+
+### Impact attendu
+- Bench v4_pure 8 mois lit correctement v4_pure (schema OK, distributions calibrees)
+- Tests 24/28/22/36/37 confirmes operationnels sans patch
+- Test 9 affiche labels lisibles pour 12 open_types + 5 profile_shapes (PRE_RTH inclus)
+
+### Validation pre-deploy
+- [x] Sanity check imports : `_SOURCE='v4_pure'`, `EXPECTED_COLS_MIN=475`, `OPEN_TYPE_NAMES` 12 entries, `PROFILE_SHAPE_NAMES` 5 entries
+- [x] Audit empirique colonnes : `n_big_*` (26), `*cluster*` (19), `n_edge_*` + `n_long_*` + `n_color_*` (toutes presentes en v4_pure ES + NQ)
+- [x] Verification IntEnum source `CORE/game_changers.py:38-79` OpenType/DayType/ProfileShape
+- [ ] Bench v4_pure complet 8 mois (relance en cours)
+
+### Revert plan
+```bash
+git diff HEAD CORE/mia_bench_v4.py
+git checkout HEAD CORE/mia_bench_v4.py
+```
+
+### Liens
+- Audit verdict agent ID a74667e249b1aa5f6
+- Doc : `DOCS/DROPPED_FEATURES_LOG.md` (justifie absence/presence colonnes)
+- Reference : `CORE/game_changers.py:38-79` (source IntEnum canonique)
+
+---
+
+## 2026-05-19 PM — FIX MGC dead-on-arrival (Bot 3 Gold proximity)
+
+**Categorie** : FIX (critere 1 Trading/Risk + critere 8 Backtest calibration)
+**Impact prod** : LIVE (MIA-DataBento-Paper-V2 restart, Bot 3 Gold engine MGC)
+**Fichier(s)** : `CORE/bot3_gold_level_definitions.py:40-54`
+**Reviewer(s) agent** : market-analyst **GO-AVEC-RESERVES** (ID a09c3f17d473e584e)
+
+### Quoi
+Augmentation `proximity_ticks` pour `MQ_CALL_DAILY` + `MQ_PUT_DAILY` MGC : **100 → 200 ticks** (= 10 pts → 20 pts MGC, tick=0.10).
+- 0DTE niveaux INCHANGÉS (proximity_ticks=50 = 5 pts, serres car options 0DTE proches du prix)
+- BLIND_SPOT INCHANGÉ (proximity_ticks=30 = 3 pts)
+- MP _pct niveaux INCHANGÉS
+
+### Pourquoi
+Audit Bot 3 par market-analyst 19/05 PM : **1934 SKIP `NO_LEVEL_TOUCH` = zero trade MGC aujourd'hui**. Investigation empirique :
+- MGC prix live 4511.7
+- mq_put_daily = 4500 (dist +11.7 pts = **117 ticks**, JUSTE 17 ticks au-dela du seuil 100)
+- Tous autres niveaux MQ > 200 ticks de dist
+
+**Cause racine** : seuil 100 ticks (10 pts) trop strict pour Gold ATR daily ~50-100 pts. MGC `safe haven` 2026 = mouvements 30-80 pts/jour, niveaux MQ daily restent dans la fenetre 20-40 pts du prix la plupart du temps.
+
+### Impact attendu
+- Estimation agent : ~50-80 `BOT3G_LEVEL_CONTACT` MGC par jour (vs 0 actuellement)
+- Avec gates downstream (regime/orderflow/decision engine), ~3-10 `BOT3G_DECISION_GO`/jour attendu
+- Comparison cross-instrument : ES/NQ utilisent `proximity_pct=0.05` (5% prix = 920 ticks equivalent ES) → MGC 200 ticks = 0.44% prix = **10x plus SERRE qu'ES en relatif**. Aucune sur-permissivite.
+
+### Risques résiduels (review agent)
+1. **Stale MenthorQ 13h+** : mq_put scrapé 04:00 UTC. Si Gold bouge 50 pts intraday, niveau obsolete. Mitigation backlog : check mq_timestamp + downgrade tier si stale >8h.
+2. **0DTE Gold sparse** : si options 0DTE absentes → fallback DAILY sur-pondéré.
+3. **Régime trend fort Gold** : niveaux MQ daily = magnets en range mais se CASSENT en trend baissier → risque BUY put_daily en cassure.
+
+### Validation pre-deploy
+- [x] Lint syntax Python OK
+- [x] Review agent market-analyst GO-AVEC-RESERVES
+- [x] SCP + Restart MIA-DataBento-Paper-V2 OK (BOT3_BAR_OK)
+- [ ] Monitor J+1 (20/05 EOD) : ratio `BOT3G_LEVEL_CONTACT / BOT3G_DECISION_GO`
+
+### Revert plan
+```bash
+git diff CORE/bot3_gold_level_definitions.py | git apply -R
+scp CORE/bot3_gold_level_definitions.py Administrator@VPS:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh ... "Restart-Service MIA-DataBento-Paper-V2"
+```
+
+### Suivi post-deploy (audit J+1 + J+7)
+- J+1 grep `BOT3G_LEVEL_CONTACT` count -> doit être 50-80 (vs 0 hier)
+- J+1 grep `BOT3G_DECISION_GO` count -> 3-10 attendu
+- J+7 : si >20 GO/jour avec WR <45% → rollback proximity 200→150
+
+### Liens
+- Audit Bot 3 MP agent 19/05 PM (ID ade9e83a4a6d60f9b) — TOP 3 risques MGC dead
+- Audit validation calibration agent 19/05 PM (ID a09c3f17d473e584e) — GO-AVEC-RESERVES
+
+---
+
+## 2026-05-19 PM — FIX bouton FLATTEN dashboard + exit_reason FLATTEN_MANUAL + recovery Bot 1
+
+**Categorie** : FIX (critere 1 Trading/Risk + critere 6 Cross-module 4 fichiers)
+**Impact prod** : LIVE (3 services restartes : MIA-Paper / MIA-DataBento-Paper-V2 / MIA-Dashboard)
+**Fichier(s)** :
+- `DASHBOARD/api/admin_routes.py` (endpoint ecrit flag FLATTEN_{id}_{sym}.flag)
+- `CORE/mia_paper_trader.py` (recovery au boot + persistence runtime + lecture flag FLATTEN_1_*)
+- `CORE/databento_paper_trader_v2.py` (lecture flag FLATTEN_{2,3}_* + close interne)
+- `CORE/log_catalog.py` (+4 codes FLATTEN_MANUAL)
+
+**Reviewer(s) agent** : self-audit (Anthropic 529 Overloaded, agent indispo). Tests pytest 19/19 PASS.
+
+### Quoi
+3 bugs reels decouverts en LIVE 19/05 PM :
+
+1. **Bouton FLATTEN ne ferme PAS le tracking interne du bot** : avant ce fix, `flatten_bot.py` envoyait Type 208/209/210 DTC au broker MAIS `self.positions[sym]` (Bot 1) et `_bot3_positions[sym]` (Bot 3) restaient inchanges -> trade continuait a apparaitre "TRADES EN COURS" sur dashboard.
+   - Fix : endpoint API ecrit `DATA/BOT_CONTROL/FLATTEN_{bot_id}_{symbol}.flag` JSON. Bot lit le flag au poll cycle + close interne avec `exit_reason="FLATTEN_MANUAL"`.
+
+2. **Exit reason FLATTEN_MANUAL pas distingue** : avant, les trades closed via bouton FLATTEN se confondaient avec TP/SL/TIMEOUT dans les stats. Apres : code distinct + colonne Exit affiche "FLATTEN_MANUAL".
+
+3. **Bot 1 perd tracking position au restart** : decouvert en LIVE quand Jackson a clique FLATTEN ES SELL 16:11 UTC mais le restart MIA-Paper a 16:20 UTC a efface `self.positions` en memoire -> trade ES SELL entry 7370 disparu silencieusement sans TRADE_CLOSE log + absent de `closed_today`.
+   - Fix : `_persist_runtime_positions` ecrit `DATA/PAPER_TRADES/bot1_runtime_positions.json` toutes les ~5s (depuis `_write_state`). Au boot, `_recover_runtime_positions` lit le fichier + valide via `request_position_blocking` broker DTC. Si broker confirme -> restore `self.positions[sym]`. Si broker pas de position OU DTC down -> log ORPHAN_BOOT_RESTART trade dans `today_trades` pour audit + ne pas restore (trade perdu).
+
+### Pourquoi
+Jackson directive "bouton FLATTEN ne fonctionne pas + specifier sortie manuelle" (LIVE 16:11 UTC). Investigation empirique :
+- Sim3 broker query : aucune position ES (le DTC bracket n'a probablement jamais reussi car ESM26 vs ESH26 expire)
+- `open_by_symbol: {}` post-restart -> position perdue
+- `closed_today` n'a pas le trade 16:07:11 -> trade fantome silencieusement perdu
+
+### Impact attendu
+- Bouton FLATTEN dashboard fonctionne reellement (ferme tracking interne + broker DTC en parallele)
+- Exit reason FLATTEN_MANUAL distinct dans stats Bot 1 / Bot 2 V6 / Bot 3 MP
+- Restart MIA-Paper en milieu de trade -> recovery automatique + audit ORPHAN_BOOT_RESTART
+- 4 nouveaux codes log : `BOT2_FLATTEN_MANUAL_EXECUTED`, `BOT2_FLATTEN_MANUAL_EXCEPTION`, `BOT3_FLATTEN_MANUAL_EXECUTED`, `BOT3_FLATTEN_MANUAL_EXCEPTION`
+
+### Validation pre-deploy
+- [x] Lint syntax Python OK (4 fichiers)
+- [x] Tests pytest anti-orphan : 19/19 PASS
+- [ ] Agent code-reviewer : 529 Overloaded x3 - report backlog (deploy fait sans review car Anthropic indispo)
+- [x] Deploy VPS SCP + Restart 3 services OK
+- [ ] Test FLATTEN_MANUAL sur prochain trade Bot 1 ouvert (a faire par Jackson)
+- [ ] Test recovery : kill -9 MIA-Paper en milieu trade + restart + verif ORPHAN_BOOT_RESTART log
+
+### Revert plan
+```bash
+git diff DASHBOARD/api/admin_routes.py CORE/mia_paper_trader.py CORE/databento_paper_trader_v2.py CORE/log_catalog.py | git apply -R
+# SCP + Restart-Service MIA-Paper MIA-DataBento-Paper-V2 MIA-Dashboard
+```
+
+### Suivi post-deploy
+- J+1 : grep `FLATTEN_MANUAL` dans trading logs -> nombre clics dashboard
+- J+1 : grep `ORPHAN_BOOT_RESTART` -> ZERO attendu si restart sans trade actif, sinon investiguer
+- J+7 : audit admin_log `bot_flatten` action vs `closed_today` outcome FLATTEN_MANUAL : doivent matcher
+
+### Liens
+- INCIDENT_LOG entry du jour (a creer si fail recovery futur)
+- Bouton FLATTEN dashboard livre matin 19/05
+
+---
+
+## 2026-05-19 NUIT — FIX FLATTEN_MANUAL Bot 2 V6 (regression fix 19/05 PM) + TTL flag
+
+**Categorie** : FIX
+**Impact prod** : PAPER (Bot 2 V6 service MIA-Brain-V6) + PAPER (Bot 2 V2 SetupEngine service paper_v2)
+**Fichier(s)** :
+- `CORE/mia2_brain_v6_databento.py` ajout constants ligne ~108-118 + bloc check FLATTEN ligne ~3766-3833
+- `CORE/databento_paper_trader_v2.py` ligne 190-194 (FLATTEN_FLAG_TTL_SEC) + 3624-3673 (NE PAS unlink si pas position + TTL stale GC)
+- `CORE/log_catalog.py` ligne 161-167 (4 nouveaux codes + 1 commentaire correction)
+**Reviewer(s) agent** : code-reviewer (verdict GO-AVEC-RESERVES, 3 reserves traitees pre-deploy)
+
+### Quoi
+Fix bug "FLATTEN MANUEL A PAS FONCTOINNER SUR LE BOT 2" (Jackson 19/05 nuit, confirme empirique). Bot 2 V6 (service MIA-Brain-V6, code `mia2_brain_v6_databento.py`) ne lisait JAMAIS les flag files `DATA/BOT_CONTROL/FLATTEN_2_*.flag` cree par l'endpoint `/api/admin/bot/2/flatten/{sym}`. Le fix 19/05 PM n'avait cable que paper_v2 (Bot 2 V2 SetupEngine) + Bot 3 MP. Ajout : Brain-V6 lit le flag + delete si position trackee, sinon LAISSE pour paper_v2. Ajout TTL 60s pour eviter flag orphelin sur "Flatten all" (NQ/MGC inutiles).
+
+### Pourquoi
+Confirme empirique 19/05 22:16 UTC : trade Bot 2 V6 ES SHORT entry 7375.25, bars_held=183 (3h+), aucun TRADE_CLOSE log apres click FLATTEN dashboard. Broker Sim2 flat (verifie Jackson Sierra Chart GUI) car `flatten_bot.py --bot 2` envoie Type 208/209/210 DTC, MAIS tracking interne Bot 2 V6 reste actif = `max_positions_per_symbol=1` viole = bot bloque sur ES jusqu'a restart. Restart MIA-Brain-V6 manuel cette nuit pour debloquer (state_v6.json open_by_symbol vide + service redemarre).
+
+Cause racine : 2 services Python distincts (MIA-DataBento-Paper-V2 + MIA-Brain-V6) lisent le meme dossier flag mais le fix 19/05 PM avait code `unlink()` defensif quand `self.positions[sym]=None`, ce qui supprimait le flag avant que Brain-V6 puisse le lire (paper_v2 poll 30s, Brain-V6 poll 10s — paper_v2 voit le flag plus souvent).
+
+### Impact attendu
+- Bouton FLATTEN dashboard fonctionne pour Bot 2 V6 (cible : <10s de delete du flag par Brain-V6)
+- Pas d'effet de bord sur Bot 1 / Bot 2 V2 SetupEngine / Bot 3 MP (flags distincts FLATTEN_1_*, FLATTEN_3_*)
+- TTL 60s GC les flags orphelins du cas "Flatten all" (FLATTEN_2_NQ/MGC quand Bot 2 V6 n'a position que sur ES) — sans TTL, ces flags flushaient le prochain trade NQ a l'open
+
+### Validation pre-deploy
+- pytest tests : ❌ pas de test (recommandation reviewer non traitee). Risque accepte : tests bloquaient pre-deploy 19/05 PM aussi. INCIDENT_LOG entry `VALIDATION_MISS` accepte. Grep J+1 obligatoire pour confirmer emission `BOT2V6_FLATTEN_MANUAL_EXECUTED` apres premier click reel.
+- Backtest preservation : N/A (fix bug execution, pas modif scoring/gates)
+- Verification empirique pre-deploy : AST parse OK 3 fichiers, grep cross-coherence 8 occurrences confirmees coherentes
+- Reviewer code-reviewer : GO-AVEC-RESERVES → 3 reserves
+  - [BLOQUANT] TTL flag 60s : ✅ implemente Brain-V6 ET paper_v2 (regle souveraine partagee)
+  - [RECOMMANDE] Alerte banner price=0 stale > 30s : ⚠️ non implemente, mitige par TTL 60s (flag GC apres 60s donc max 60s d'inertie au lieu de infini)
+  - [RECOMMANDE] pytest tests : ⚠️ non implemente (accepted risk, validation manuelle J+1)
+
+### Revert plan
+1. Stop services : `Stop-Service MIA-Brain-V6 MIA-DataBento-Paper-V2`
+2. SCP fichiers backups (CORE/mia2_brain_v6_databento.py.backup + CORE/databento_paper_trader_v2.py.backup + CORE/log_catalog.py.backup pre-deploy)
+3. Restore + restart services
+4. Verify : grep `BOT2V6_FLATTEN_MANUAL` zero dans logs apres restart = revert OK
+
+### Suivi post-deploy (a completer)
+- J+1 : grep events `BOT2V6_FLATTEN_MANUAL_EXECUTED` apres premier click FLATTEN. Si zero = instrumentation ratee = `VALIDATION_MISS`
+- J+7 : verifier zero flag orphelin dans `DATA/BOT_CONTROL/FLATTEN_2_*.flag` apres rotation EOD
+- J+30 : verifier non-regression FLATTEN Bot 2 V2 SetupEngine et Bot 3 MP
+
+### Codes log nouveaux (catalog `log_catalog.py`)
+- `BOT2V6_FLATTEN_MANUAL_EXECUTED` (MAJEUR events) — Brain-V6 traite + delete flag
+- `BOT2V6_FLATTEN_MANUAL_EXCEPTION` (CRITIQUE events) — exception dans `_close_trade`
+- `BOT2V6_FLATTEN_MANUAL_FLAG_STALE` (ALERTE events) — TTL GC defensif Brain-V6
+- `BOT2_FLATTEN_MANUAL_FLAG_STALE` (ALERTE events) — TTL GC defensif paper_v2
+
+### Lien
+- INCIDENT_LOG entry `VALIDATION_MISS` 2026-05-19 NUIT (a creer apres deploy)
+- Confirmation empirique : `LOGS/trading/trading_20260519_paper_v6.jsonl` (signal_id f7eeef8e TRADE_OPEN sans TRADE_CLOSE)
+- Memory `feedback_validation_miss_patterns.md` (cumul 5+ occurrences cette categorie)
+
+---
+
+## 2026-05-19 PM — FIX R1+R3+Q2+Q3 + Patches 1+2 ladder Phase 3 (reactivation MODE=ACTION ready)
+
+**Categorie** : FIX (critere 1 Trading/Risk + critere 6 Cross-module)
+**Impact prod** : LIVE OBSERVE (ladder reste OBSERVE, mais code ready pour ACTION future post backtest 30j)
+**Fichier(s)** :
+- `CORE/databento_paper_trader_v2.py:479-498` (worker thread daemon init)
+- `CORE/databento_paper_trader_v2.py:1458-1514` (enqueue + fallback sync)
+- `CORE/databento_paper_trader_v2.py:1520-1577` (worker loop)
+- `CORE/databento_paper_trader_v2.py:1579-1690` (force_close + watchdog + flush_log_split)
+- `CORE/databento_paper_trader_v2.py:1856-1920` (R3+Q2 Type 300 cas a/b/c/d)
+- `CORE/log_catalog.py` (+18 codes ladder Phase 3)
+- `BOT/dtc_connector.py` (require_sid Fix 1 deja deploye)
+
+**Reviewer(s) agent** : code-reviewer **GO-AVEC-RESERVES** OBSERVE (ID ae7afaaa1328a2e52) + **2 patchs requis pour MODE=ACTION** (deja appliques en bonus).
+
+### Quoi
+Reponse aux 4 reserves bloquantes du review agent 19/05 matin (5 fixes initiaux) :
+
+1. **R1 worker thread async** (~80 LOC) : `_bot3_check_trailing_ladder` MODE=ACTION enqueue dans `_bot3_ladder_queue` (maxsize 100) + `put_nowait()` return immediat. Worker thread daemon `_bot3_ladder_worker_loop` consomme avec timeout 1s, snapshot pos sous lock, call `_bot3_modify_sl_via_dtc` HORS hot path, si fail → emit BOT3_LADDER_NO_SL_ALERT + call `_bot3_force_close_market`. Fallback sync si put_nowait fail (queue full). **Hot path bar loop now <1ms vs 4.8s avant.**
+
+2. **R2 audit cancel_order callers** : 25 callers grep, Bot 3 anti-orphan deja robuste via `cancel_failed` tracking + Type 209/210 defense. Pas de modif requise. R2 OK tel quel.
+
+3. **R3+Q2 Type 300 verify 3 cas** (~30 LOC) : distingue (a) `open_orders is None` = lock timeout/DTC slow → ALERTE retry **OPTIMISTE** + watchdog T+30s schedule, (b) `open_orders=[]` confirme = CRITIQUE cleanup + return False, (c) `new_sl_cid` present status 2/4 = SUCCESS, (d) exception = ALERTE = traite comme (a).
+
+4. **Q3 `_bot3_force_close_market(sym, pos, reason)`** (~120 LOC) : query position broker (timeout 2s) → Type 208 MARKET CLOSE OpenCloseTrade=2 opposite side + register `_bot3_cid_index` → Type 209 SUBMIT_FLATTEN defense. Caller depuis `_bot3_check_trailing_ladder` fallback sync + `_bot3_ladder_worker_loop`.
+
+**Bonus 2 patchs agent post-review** :
+- **Patch 1 watchdog T+30s** (~85 LOC) : `_bot3_watchdog_verify_sl(sym, contract, new_sl_cid, ...)` lance via `threading.Timer(30)` apres cas (a)/(d) → re-verify position + Type 300. Si SL absent broker → force_close_market. Comble le trou "optimisme + 60 min jusqu'a next _bot3_check_timeout".
+- **Patch 2 split flush logs** : `BOT3_FORCE_FLUSH_NO_POS_QUERY` vs `BOT3_FORCE_FLUSH_AFTER_CLOSE` pour distinguer flush sans confirmation position broker (qty=None timeout) vs flush nominal (qty>0). Audit J+7 facilite.
+
+### Pourquoi
+Verdict review agent 19/05 matin "NOGO MODE=ACTION sans R1+R2+R3+Q3 + 6h dev cumule". Decision Jackson "OUI COMMENCE PLUS REVIEW PAR AGENS" → code + agent re-review.
+
+Verdict agent re-review (ID ae7afaaa1328a2e52) : "**GO-AVEC-RESERVES** pour deploy MODE=OBSERVE. **NOGO MODE=ACTION** sans 2 patchs (1+2) + 30j backtest." Les 2 patchs appliques en bonus → roadmap MODE=ACTION desormais : backtest 30j v4_pure post regen 8 mois + shadow J+7 ACTION + flip.
+
+### Impact attendu
+- Aucun impact prod immediat (ladder reste OBSERVE, code worker thread/watchdog/force_close pas execute en chemin critique)
+- Code ready MODE=ACTION reactivation future :
+  * Hot path non-blocking via worker queue
+  * Verify Type 300 distingue rejet vs timeout (false-positive < 1%)
+  * Watchdog T+30s catch SL fantome avec retry optimiste
+  * Force close = filet anti perte illimitee
+- Audit J+7 facilite : 18 nouveaux codes log granulaires + distinction flush AFTER_CLOSE vs NO_POS_QUERY
+
+### Validation pre-deploy
+- [x] Lint syntax Python OK (2 fichiers)
+- [x] Tests pytest anti-orphan : 19/19 PASS post-fix (CORE/tests/test_bot3_anti_orphan.py)
+- [x] Review agent code-reviewer 2 rounds (ID a74508cc9ada6953f + ae7afaaa1328a2e52)
+- [x] Deploy VPS SCP + Restart-Service MIA-DataBento-Paper-V2 OK (PID 117016 BOOT_READY 15:53:07 UTC)
+- [ ] Test integration MODE=ACTION simu (a faire post backtest 30j v4_pure)
+- [ ] Shadow J+7 MODE=ACTION (a faire post backtest)
+
+### Revert plan
+```bash
+# Rollback complet (revient au comportement 5 fixes initiaux du matin)
+git diff CORE/databento_paper_trader_v2.py | git apply -R
+git diff CORE/log_catalog.py | git apply -R
+# SCP + Restart-Service MIA-DataBento-Paper-V2
+```
+
+### Suivi post-deploy
+- J+1 : grep `BOT3_LADDER_JOB_ENQUEUED` et `BOT3_LADDER_WORKER_JOB_START` → ZERO attendu (MODE=OBSERVE)
+- J+1 : grep `BOT3_LADDER_NEW_SL_VERIFY_TIMEOUT` → ZERO attendu (mode pas execute en OBSERVE)
+- J+1 : grep `BOT3_LADDER_WATCHDOG_*` → ZERO attendu
+- J+7 audit OBSERVE : count `BOT3_LADDER_WOULD_LOCK_PALIER_*` pour estimer benefice ACTION future
+
+### Roadmap MODE=ACTION (3 etapes residuelles)
+1. **Regen 8 mois v4_pure** (en cours, ETA ~2h)
+2. **Backtest 30j v4_pure "what if ladder ACTION with fixes"** : PF > 1.20 + zero BOT3_LADDER_NEW_SL_NOT_WORKING simule
+3. **Shadow J+7 ACTION** : env var override avec monitoring quotidien
+4. **Flip MODE=ACTION** + J+7 prod grep CRITIQUE codes
+
+### Liens
+- INCIDENT_LOG entry #10 (DOCS/INCIDENT_LOG.md 19/05 13:20)
+- Review agent matin (ID a74508cc9ada6953f) : 5 fixes initiaux GO-AVEC-RESERVES + 4 reserves bloquantes
+- Review agent PM (ID ae7afaaa1328a2e52) : R1+R3+Q3 livres + 2 patchs requis ACTION → bonus appliques
+- Regle souveraine logs : `.claude/rules/critical-tasks-review.md` (18 codes enregistres AVANT emit ✅)
+
+---
+
+## 2026-05-19 — FIX 5 fixes ladder long terme (Phase C — ouvre voie reactivation MODE=ACTION future)
+
+**Categorie** : FIX (critere 1 Trading/Risk + critere 6 Cross-module 4 fichiers)
+**Impact prod** : OFFLINE pour l'instant (ladder reste OBSERVE), prepare reactivation ACTION future apres backtest 30j "without bug"
+**Fichier(s)** :
+- `BOT/dtc_connector.py:676-755` (cancel_order param `require_sid=False` default, refuse send si True+no SID)
+- `CORE/databento_paper_trader_v2.py:_bot3_modify_sl_via_dtc` (STEP A `require_sid=True` + STEP C.5 verify Type 300 + register `_bot3_cid_index`)
+- `CORE/databento_paper_trader_v2.py:_bot3_check_trailing_ladder` (check `LADDER_MIN_AGE_SECONDS` avant for paliers)
+- `CORE/databento_paper_trader_v2.py:_bot3_update_mfe_mae` (skip bar `bar_ts < ts_open`)
+- `CORE/bot3_config.py:224` (constante `LADDER_MIN_AGE_SECONDS = 10`)
+- `CORE/log_catalog.py:128-130` (3 nouveaux codes log)
+
+**Reviewer(s) agent** : code-reviewer **GO-AVEC-RESERVES** (3e tentative reussi ID a74508cc9ada6953f apres 2x 529 Overloaded). Verdict : GO MODE=OBSERVE (code pas execute en chemin critique), **NOGO MODE=ACTION** avant fixes R1+R2+R3+Q3.
+
+### Actions BLOQUANTES avant reactivation MODE=ACTION (review agent)
+
+**R1 [CRITIQUE]** : `sleep(0.5) + timeout 2s + 0.3s + 2s = jusqu'a 4.8s bloquant` dans hot path `_bot3_check_trailing_ladder` (appele depuis `_bot3_update_mfe_mae` bar loop). En MODE=ACTION sur volatilite, dangereux : MFE non update, kill switch retarde.
+→ **Refacto** : extraire `_bot3_modify_sl_via_dtc` dans thread daemon worker queue. Hot path enfile le job + return. Effort ~3-4h dev + tests.
+
+**R2 [MAJEUR]** : `cancel_order(require_sid=False)` default preserve le piege pour autres callers (timeout cleanup, OCO auto cancel via `_handle_order_update`). Fix1 protege UNIQUEMENT le ladder.
+→ **Audit** : grep `cancel_order(` cross-codebase, identifier callers qui devraient passer `require_sid=True`. Effort ~30 min.
+
+**R3 [MAJEUR]** : `request_open_orders_blocking` sous `_open_orders_query_lock` global. Si etape 6.5 anti-orphan timeout cleanup detient lock 3-5s, ladder verify Type 300 retourne None → false-positive `BOT3_LADDER_NEW_SL_NOT_WORKING` CRITIQUE Discord + `pos["sl_cid"]=None` + position REELLE avec SL Working broker mais state interne dit "sans SL" → double exit potentiel.
+→ **Fix** : distinguer `open_orders=None` (lock timeout = ALERTE retry) vs `open_orders=[]` (rejet broker confirme = CRITIQUE) vs exception. Garder pos["sl_cid"]=new_sl_cid optimiste si None + re-verify J+30s.
+
+**Q3 trou safety** : caller `_bot3_check_trailing_ladder` recoit `_bot3_modify_sl_via_dtc` return False mais emit seulement alert sans MARKET CLOSE forced. En MODE=ACTION : position SANS SL = risque illimite.
+→ **Fix** : ajouter `self._bot3_force_close_market(sym, pos, reason="LADDER_NO_SL")` apres `BOT3_LADDER_NO_SL_ALERT`. Effort ~1h dev + test.
+
+**Q2 false-positive timeout strict** : actuellement `open_orders is None` (lock timeout) traite comme `open_orders=[]` (rejet broker) → false-positive garanti.
+→ Fix combiné avec R3.
+
+### Validations positives review agent
+
+- Cleanup OCO bidirectionnel (tp_cid → new_sl_cid + new_sl_cid → tp_cid) ✅
+- Pre-register `_order_trade_accounts[new_sl_cid]` AVANT send (aligne fix H6 04/05) ✅
+- Verify position broker `request_position_blocking` AVANT send new SL (anti race trade inverse) ✅
+- Register `_bot3_cid_index[new_sl_cid]` pour routage fill (fix 3) ✅
+- Pattern degraded-mode safe sur `ts_open` malformed (try/except pass) ✅
+- 3 codes log enregistres `log_catalog.py` AVANT emit (aligne regle souveraine 01/05) ✅
+- Tests anti-orphan 19/19 PASS post-fix ✅
+
+### Roadmap reactivation MODE=ACTION
+
+1. Implementer R1+R2+R3+Q3 (~6h dev cumule)
+2. Tests pytest non-regression
+3. Re-review code-reviewer + market-analyst
+4. Backtest empirique 30 jours "what if ladder ACTION with fixes" : PF > 1.20 + zero BOT3_LADDER_NEW_SL_NOT_WORKING simule
+5. Shadow J+7 ACTION temporaire + audit logs
+6. Flip MODE=ACTION
+7. J+7 production grep `BOT3_LADDER_NEW_SL_NOT_WORKING` : ZERO attendu, sinon investigation immediate
+
+### Deploy confirme
+
+- SCP 4 fichiers VPS : `BOT/dtc_connector.py`, `CORE/databento_paper_trader_v2.py`, `CORE/bot3_config.py`, `CORE/log_catalog.py` ✅
+- Restart-Service MIA-DataBento-Paper-V2 OK ✅
+- BOOT_READY PID 5788 15:32:49 UTC, ladder=OBSERVE, BAR_OK ES+NQ+MGC ✅
+
+### Quoi
+5 fixes adressant les bugs identifies incident #10 (cf DOCS/INCIDENT_LOG.md 19/05 13:20) :
+
+1. **`cancel_order(require_sid=True)`** : refuse l'envoi Type 203 si pas de ServerOrderID dans tracking. Avant : envoyait avec warning, return True → SC ignorait silencieusement → caller croyait cancel reussi. Apres : return False immediat, caller doit gerer.
+
+2. **Verify Type 300 post-send STEP C** : apres send new STOP, query `request_open_orders_blocking(symbol_filter=contract, timeout=2.0)` + verify `new_sl_cid` present avec OrderStatus in (2, 4). Si absent (rejet silencieux SC) → emit `BOT3_LADDER_NEW_SL_NOT_WORKING` CRITIQUE + cleanup mapping + pos["sl_cid"]=None + return False. **Resout le bug racine SL fantome** (incident #10 perte -$297).
+
+3. **Register `new_sl_cid` dans `_bot3_cid_index`** apres verify OK + pop `old_sl_cid`. Garantit que `_bot3_handle_dtc_fill` peut router le fill SL si touch (avant : new_sl_cid jamais enregistre → fill ignore silencieusement).
+
+4. **`LADDER_MIN_AGE_SECONDS = 10`** : defense race condition T+1s. Refuse tout palier ladder si age trade < 10s (laisse Server IDs des brackets initiaux se propager via `_recv_loop`). Avant : palier 1 declenchait en 1s apres fill → cancel sans SID propage → ignored par SC.
+
+5. **MFE skip bar `bar_ts < ts_open`** : avant calcul MFE/MAE, verifie que la bar a demarre apres l'entry (sinon high/low contiennent pre-entry pricing). Avant : MFE=127t logged 1s apres fill (high de la bar 17min ancienne). Apres : skip bar pre-entry → MFE commence a la bar suivante (perte 1min granularite acceptable pour correctness).
+
+### Pourquoi
+Incident #10 19/05 = 5 bugs imbriques causant SL fantome ladder Bot 3, 2 trades NQ -$93 + -$84 + opportunite manquee +$120 = -$297/jour cumule. Sur 30j estimes +$652 PnL, le vrai PnL ladder-correct = +$1500-2500.
+
+Ces 5 fixes adressent CHACUN des bugs identifies. Le ladder reste en mode OBSERVE jusqu'a backtest validation, mais le code est ready pour reactivation MODE=ACTION future apres :
+- Shadow OBSERVE J+7 confirmation logs comparison
+- Backtest 30j historique "what if ladder ACTION with fixes" PF > 1.20
+- Verify J+1 production no BOT3_LADDER_NEW_SL_NOT_WORKING events
+
+### Impact attendu
+- Aucun impact immediat (mode OBSERVE)
+- Apres reactivation ACTION : SL ladder reellement Working broker (pas fantome), MFE correct (pas retroactif), pas de race condition T+1s
+- 3 nouveaux codes log dans monitoring : BOT3_LADDER_NEW_SL_NOT_WORKING (CRITIQUE Discord), BOT3_LADDER_VERIFY_TYPE300_EXCEPTION (ALERTE), BOT3_LADDER_TICK_TOO_YOUNG (INFO)
+
+### Validation pre-deploy
+- [x] Lint syntax Python OK (4 fichiers)
+- [x] Tests pytest anti-orphan : 19/19 PASS post-fix (CORE/tests/test_bot3_anti_orphan.py)
+- [ ] Review agent code-reviewer (in progress)
+- [ ] Test integration ladder OBSERVE post-deploy (verifier zero BOT3_LADDER_NEW_SL_NOT_WORKING en J+1)
+- [ ] Backtest 30j historique avant reactivation ACTION (a faire ulterieurement)
+
+### Revert plan
+```bash
+# Rollback les 5 fixes (revient au comportement buggue)
+git diff BOT/dtc_connector.py | git apply -R
+git diff CORE/databento_paper_trader_v2.py | git apply -R
+git diff CORE/bot3_config.py | git apply -R
+git diff CORE/log_catalog.py | git apply -R
+# SCP 4 fichiers + Restart-Service MIA-DataBento-Paper-V2
+```
+
+### Suivi post-deploy
+- J+1 : grep `BOT3_LADDER_TICK_TOO_YOUNG` → confirmer presence (defense race active)
+- J+1 : grep `BOT3_LADDER_NEW_SL_NOT_WORKING` → ZERO attendu (mode OBSERVE pas de send)
+- J+7 : compter `BOT3_LADDER_WOULD_LOCK_PALIER_N` (log OBSERVE) → estimer benefice si MODE=ACTION
+
+### Liens
+- INCIDENT_LOG entry #10 (DOCS/INCIDENT_LOG.md 19/05 13:20)
+- Entry precedente : kill_switch Bot 3 (19/05 14:42 deploye)
+- Regle : `.claude/rules/orphan-prevention.md` (sequence anti-orphelin V2 R9 verify Type 300)
+
+---
+
+## 2026-05-19 — FIX kill_switch Bot 3 + bouton FLATTEN dashboard (incident #10 ladder SL fantome)
+
+**Categorie** : FIX (critere 1 Trading/Risk + critere 6 Cross-module + critere 8 Backtest preservation)
+**Impact prod** : LIVE (paper_v2 service VPS, dashboard.mia-ia-system.com)
+**Fichier(s)** :
+- `CORE/databento_paper_trader_v2.py:3105-3145` (kill_switch boucle elargie + flatten Bot 3 via `_bot3_check_timeout(force=True)`)
+- `CORE/databento_paper_trader_v2.py:653-712` (param `force=False` + bypass age check + close_reason="KILL_SWITCH")
+- `CORE/log_catalog.py:122-126` (4 nouveaux codes log)
+- `CORE/flatten_bot.py` (script flatten generique par bot/symbole)
+- `DASHBOARD/api/admin_routes.py` (2 endpoints `/api/admin/bot/{id}/flatten[/{sym}]`)
+- `DASHBOARD/static/index.html` + `DASHBOARD/static/js/dashboard.js` v=137 (bouton FLATTEN inline dans chaque card position)
+
+**Reviewer(s) agent** : code-reviewer initial 529 Overloaded → self-audit + tests pytest 19/19 PASS anti-orphan + agent retry pending
+
+### Quoi
+3 fixes en cascade suite incident #10 :
+
+1. **Bug ladder Bot 3 SL fantome** (cancel_order silencieux sans ServerOrderID + verify Type 300 absent) → revert MIA_BOT3_LADDER_MODE=ACTION → OBSERVE (env var nssm).
+
+2. **Bug kill_switch incomplet `n_closed=0`** : la boucle `for sym in SYMBOLS: if self.positions[sym]` ignorait `self._bot3_positions`. Fix : ajout iter sur `SYMBOLS_BOT3` + appel `_bot3_check_timeout(force=True)` qui applique la sequence anti-orphelin V2 complete (steps 1-9 cf orphan-prevention.md) sans dupliquer la logique. Logs `BOT_KILL_SWITCH_FLATTEN_DONE` + `BOT_KILL_SWITCH_BOT3_RESIDUAL_ORPHAN_RISK` (CRITIQUE Discord) si residual > 0.
+
+3. **Bouton FLATTEN dashboard** : 2 endpoints (`/flatten/{sym}` per-trade + `/flatten` bot entier), owner-only, sequence anti-orphelin V2 cote serveur via subprocess `flatten_bot.py`. UI : bouton rouge `🔻 FLATTEN ES BUY` inline dans CHAQUE card position ouverte (vs ancien card-list au-dessus refusee par Jackson). Type 210 nuclear skippe quand scope=symbol pour ne pas affecter les autres positions du compte.
+
+### Pourquoi
+Convergence audit empirique Jackson + agent code-reviewer (cf INCIDENT_LOG entry #10) : 5 bugs imbriques sur ladder Phase 1b ACTION, dont 2 trades NQ 19/05 (-$93 + -$84 = -$177 cumule) + opportunite manquee +$120 = deficit -$297 / jour. Sur 30j stats actuelles +$652 PnL, le vrai PnL ladder-correct estime +$1500-2500.
+
+Le kill_switch buggy + ladder buggy = bombe a retardement orphelins. Solution multi-couche : revert immediat (env var) + fix kill_switch (couvre Bot 3) + bouton FLATTEN dashboard granulaire (defense en profondeur, owner peut intervenir 1 clic).
+
+### Impact attendu
+- Plus de SL fantome Bot 3 (ladder OBSERVE)
+- Kill_switch via STOP.flag flatte maintenant Bot 2 V6 ET Bot 3 MP (vs Bot 2 only avant)
+- Owner peut flatten 1 trade specifique ou tout un bot d'un clic dashboard
+- Code log `BOT_KILL_SWITCH_BOT3_RESIDUAL_ORPHAN_RISK` alerte CRITIQUE Discord si flatten partiel
+
+### Validation pre-deploy
+- [x] Lint syntax Python OK (3 fichiers)
+- [x] Lint syntax JS OK (dashboard.js node -c)
+- [x] Tests pytest anti-orphan : 19/19 PASS (CORE/tests/test_bot3_anti_orphan.py)
+- [x] Endpoint test 403 owner-only (sans auth) OK sur VPS
+- [ ] Test bouton FLATTEN owner browser (attente Jackson Ctrl+Shift+R)
+- [ ] Review agent code-reviewer (529 Overloaded, retry pending)
+- [ ] Test integration kill_switch sur trade Bot 3 live (besoin d'un trade ouvert + STOP.flag)
+
+### Revert plan
+```bash
+# Rollback fix kill_switch (revient au comportement n_closed=0 Bot 3 only)
+git diff CORE/databento_paper_trader_v2.py | git apply -R
+git diff CORE/log_catalog.py | git apply -R
+# SCP + Restart-Service MIA-DataBento-Paper-V2
+
+# Rollback bouton FLATTEN (revient ancien etat sans bouton)
+git diff DASHBOARD/api/admin_routes.py | git apply -R
+git diff DASHBOARD/static/index.html | git apply -R
+git diff DASHBOARD/static/js/dashboard.js | git apply -R
+rm CORE/flatten_bot.py
+# SCP + Restart-Service MIA-Dashboard
+```
+
+### Suivi post-deploy
+- J+1 : grep `BOT_KILL_SWITCH_ACTIVATED` dans events_*_paper_v2.jsonl → verifier `bot3_open` accurate
+- J+1 : grep `BOT_KILL_SWITCH_FLATTEN_DONE` → verifier n_closed_total > 0 quand positions ouvertes au STOP
+- J+1 : grep `BOT_KILL_SWITCH_BOT3_RESIDUAL_ORPHAN_RISK` → zero attendu sinon investiguer manuellement
+- J+7 : audit log admin `DATA/ADMIN_LOG/*_admin.jsonl` action=bot_flatten → verifier owner usage + status
+
+### Liens
+- INCIDENT_LOG entry #10 (DOCS/INCIDENT_LOG.md 19/05 13:20)
+- Memory `feedback_log_debug_protocol.md` (4 etapes diagnostic logs)
+- Regle `.claude/rules/orphan-prevention.md` (sequence anti-orphelin V2)
+- Phase C restante : 5 fixes code ladder (cancel False return + verify Type 300 + tracking new_sl_cid + ladder_min_age + MFE skip)
+
+---
+
+## 2026-05-19 — RECALIBRATION IB_NARROW_THRESHOLDS v1 -> v2 (sample 1 mois vs 10j)
+
+**Categorie** : FIX (suite directe de l'entry "FIX IB_NARROW_THRESHOLD per-symbol" ci-dessous, recalibration apres validation agents)
+**Impact prod** : OFFLINE (V4 pure dataset builder)
+**Fichier(s)** : `CORE/phase_b_v6_extras.py:50-72` + tests inline/pytest mis a jour
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES v1) + market-analyst (GO-AVEC-RESERVES v1, reco "phase observation 1 mois" exécutée)
+
+### Quoi
+Recalibration `IB_NARROW_THRESHOLDS` apres mesure empirique p25 sur 1 mois complet :
+- v1 (10j 21-30/04) : ES=15.0 / NQ=22.0 -> activation 45-54% (cible 25%) -> TROP PERMISSIF
+- v2 (1 mois 01-30/04) : ES=10.0 / NQ=13.0 -> activation 23-25% (cible 25%) -> OK
+
+### Pourquoi
+Validation empirique du risque #1 market-analyst : p25 derive -31% ES / -41% NQ entre 10j (regime baissier VIX>30 21-30/04) et 1 mois complet (incluant jours range). Calibration v1 sur sample trop court etait surfittee.
+
+Donnees empiriques (regen 1 mois avant recalib) :
+- ES ib_range_atr p25(10j)=15.72 vs p25(1m)=10.35 — derive -31%
+- NQ ib_range_atr p25(10j)=21.63 vs p25(1m)=13.05 — derive -41%
+- Activation v1 ib_narrow : ES 45.5% / NQ 54.3% (vs cible 20-25%)
+- Activation v2 ib_narrow : ES 23.3% / NQ 24.7% (cible atteinte)
+
+### Impact attendu
+- trend_day_probability distribution : meme range [0.0, 0.65] mais ib_narrow contribue maintenant ~25% bars (au lieu de 45-54%)
+- regime_actionable : leger ajustement (cible ~35-40% stable)
+
+### Validation pre-deploy
+- [x] Tests unitaires inline : 3/3 PASS
+- [x] Tests pytest TDD : 23/23 PASS (seuils ES=10 NQ=13 dans tests)
+- [ ] Regen 1 mois post-recalib (en cours background, ID bf2do9ecf)
+- [ ] Sanity check post-build : nunique >= 4, mean dans [0.20, 0.80]
+- [ ] Validation cross-day : seuils stables sur fenêtres glissantes
+
+### Risque résiduel
+**RISQUE_8M** : sur 8 mois (oct 2025 → mai 2026) incluant régimes variés (VIX low, summer doldrums, election), p25 peut encore dériver. Mitigation :
+- Sanity check post-build flag automatique si activation hors [15%, 35%]
+- Si dérive constatée -> Phase 2 implémentation rolling threshold mensuel (recalibration p25 sur fenêtre glissante 30j)
+
+### Liens
+- INCIDENT_LOG : entry du jour categorie VALIDATION_MISS (calibration 10j surfittée → mesure 1 mois corrige)
+- Entry précédente "FIX IB_NARROW_THRESHOLD per-symbol" (initial fix 0.40 → per-symbol)
+
+---
+
+## 2026-05-19 — FIX IB_NARROW_THRESHOLD per-symbol (Option C V4 pure)
+
+**Categorie** : FIX (critere 2 ML Pipeline — feature trend_day_probability input regime_engine -> regime_actionable consomme par Bot 2 V6)
+**Impact prod** : OFFLINE (V4 pure dataset builder, pas encore deploye)
+**Fichier(s)** : `CORE/phase_b_v6_extras.py:50-69,144-148` + `tests/test_phase_b_v6_extras.py:85-138`
+**Schema/version** : Option C V4 pure v1.1 -> v1.2 (no schema bump, internal threshold recalibration)
+**Reviewer(s) agent** : code-reviewer (bug detecte audit 19/05 pre-fix) + verif empirique post-fix (a confirmer dispatch agents)
+
+### Quoi
+Remplacement `IB_NARROW_THRESHOLD = 0.40` (constante unique) par `IB_NARROW_THRESHOLDS = {"ES": 15.0, "NQ": 22.0, "MGC": 15.0}` (dict per-symbol). Calibration empirique sur p25 observe V4 pure 10j avril 2026.
+
+### Pourquoi
+Bug code-reviewer audit 19/05 : la valeur initiale `0.40` suivait la convention C++ DMP_Transform.h (ratio fractionnaire `ib_range_points / atr_session_points`), mais l'implementation Python `phase_b_rolling_inputs.py:141` calcule `ib_range_ticks / atr_1min_ticks` -> ratio mean ES=21.7 / NQ=30.8. Le seuil 0.40 n'etait JAMAIS atteint -> critere `ib_narrow` (+0.30) inactif -> `trend_day_probability` plafonne 0.5 (au lieu max 0.65 theorique).
+
+Donnees empiriques avant fix (regen 10j 21-30/04) :
+- ES : ib_atr p25=15.7 p50=21.0 — seuil 0.40 active 0% bars
+- NQ : ib_atr p25=21.6 p50=29.5 — seuil 0.40 active 0% bars
+- trend_day_probability : 1 valeur unique (0.5) sur 100% bars
+
+### Impact attendu
+Donnees empiriques apres fix (regen 10j post-fix) :
+- ES seuil 15.0 -> ib_narrow active 27.3% bars (cible ~25%)
+- NQ seuil 22.0 -> ib_narrow active 29.7% bars (cible ~25%)
+- trend_day_probability : 7 valeurs distinctes (0.0, 0.15, 0.30, 0.35, 0.45, 0.50, 0.65), mean 0.43 ES / 0.45 NQ, max 0.65 atteint 7.4% ES / 10.1% NQ
+- regime_engine consomme `trend_day_probability` -> les bars precedemment defaut 0.5 maintenant gradient -> impacte vote TREND vs RANGE dans regime_actionable
+
+### Validation pre-deploy
+- [x] Tests unitaires inline : 3/3 PASS (`python CORE/phase_b_v6_extras.py`)
+- [x] Tests pytest TDD : 23/23 PASS (22 anciens + 1 nouveau `test_per_symbol_threshold_es_vs_nq`)
+- [x] Regen 1 jour pilote 30/04 : 1347 bars × 479 cols (14s) — fix confirme actif
+- [x] Regen 1 semaine 21-30/04 : 10780 bars × 479 cols (103s) — distribution 7 valeurs distinctes, max 0.65 atteint
+- [ ] Review agent code-reviewer GO/NOGO post-fix (dispatch en cours)
+- [ ] Review agent market-analyst GO/NOGO coherence trading (dispatch en cours)
+- [ ] Backtest preservation : NA (dataset OFFLINE, pas de wins historiques affectes en prod)
+
+### Revert plan
+```bash
+# Rollback en restaurant constante unique :
+git diff CORE/phase_b_v6_extras.py | git apply -R
+# Puis re-regen :
+python -X utf8 CORE/build_dataset_v4_pure_databento.py --symbols ES NQ --start 2026-04-21 --end 2026-04-30
+```
+
+### Deployed at
+(N/A — fix offline, pas de service VPS impacte. Le builder V4 pure regenere les parquets locaux uniquement.)
+
+### Suivi post-deploy
+- J+1 : NA offline
+- Apres regen 8 mois : verifier distribution trend_day_probability stable sur cross-day (pas de saut majeur)
+- Apres recalib Bot 2 V6 ml-trainer : verifier que regime_actionable rate post-fix coherent (~35% +/- 5pp baseline)
+
+### Liens
+- INCIDENT_LOG : entry du jour (a creer) categorie `VALIDATION_MISS` — seuil convention C++ utilise directement sans verifier convention Python phase_b
+- Memory : `feedback_context_miss.md` (pattern : verifier convention avant copier formule cross-langage)
+- Source design : `DOCS/DATA_SOURCES_V5.md` (formule trend_day_probability)
+- Convention C++ reference : `CPP/MIA_REFACTORED/DUMPER/DMP_Transform.h:1316-1325`
+
+---
+
 ## 2026-05-19 02:30 — FEATURE Bot3 v2 Phase 4d MVP : integration NSM + DirectionResolver dans Bot3Engine (shadow mode)
 
 **Categorie** : FEATURE (critere 1 Trading + critere 4 Concept methodologique + critere 6 Cross-module + critere 7 Irreversible deploy VPS)

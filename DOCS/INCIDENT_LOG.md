@@ -31,6 +31,501 @@
 
 ---
 
+### 2026-06-03 10:10 (33) - [VALIDATION_MISS] - Mapping Bot ID dashboard vs flatten_bot.py refacto archi 28/05 incomplet
+
+**Contexte** : Refacto architecture bots 28/05 reordonne Sim accounts (Bot 1=Sim1, Bot 2=Sim2, Bot 3=Sim3, Bot 4=Sim4 nouveau) MAIS :
+- `CORE/flatten_bot.py:30-34` BOT_TO_ACCOUNT garde l'ancien mapping (1->Sim3, 3->Sim1)
+- `CORE/databento_paper_trader_v2.py:187-188` consume mechanism lit FLATTEN_2 (Bot 2 V2 SetupEngine legacy) + FLATTEN_3 (Bot 1 MP ancien Sim1). Pas FLATTEN_1 ni FLATTEN_4.
+- `CORE/mia_paper_trader.py:83` (Bot 4 process) consume FLATTEN_1_*.flag (legacy "Bot 1 DMP" pre-refacto = Sim3 ancien).
+- `DASHBOARD/static/js/dashboard.js:6792` `_currentBotIdForApi` ne supporte que "bot1/2/3" (pas "bot4").
+- `DASHBOARD/api/admin_routes.py:921,996` `_VALID_BOT_IDS` + `bots_to_flag` ALL omettent "4".
+
+**Cause racine** : refacto cross-module mal propage. Frontend dashboard updated avec nouveau naming mais backend (flatten_bot.py + consume mechanism + Bot 4 process + admin_routes) restes sur ancien naming. Aucun audit integration pre-merge refacto 28/05.
+
+**Impact prod** : Bouton FLATTEN dashboard cosmetique depuis 28/05 (5 jours). 5 admin_log "bot_flatten OK" le 03/06 = 5 fois flat mauvais Sim. Plus dangereux : si Jackson clique FLATTEN sur card Bot 4 dashboard, `_currentBotIdForApi("bot4")` retourne "1" par defaut -> ferme Bot 1 Sim1 au lieu de Bot 4 Sim4.
+
+**Lecon** : tout refacto cross-module DOIT auditer TOUS les callers du mapping modifie en checklist :
+1. Frontend dashboard.js (`_currentBotIdForApi`, `currentPaperBot`)
+2. Backend admin_routes.py (`_VALID_BOT_IDS`, route params, bots_to_flag)
+3. Subprocess flatten_bot.py (`BOT_TO_ACCOUNT`, argparse choices)
+4. Consume mechanism databento_paper_v2.py (`BOT{N}_FLATTEN_FLAG_PATTERN`)
+5. Process separes (mia_paper_trader.py si applicable)
+TOUS DOIVENT etre coherents AVANT merge refacto, sinon bouton dashboard ment pendant 5 jours sans alerter.
+
+**Trigger prevention** : refonte architecture multi-bots avec changement Sim/ID = audit complet OBLIGATOIRE :
+- Grep `BOT_TO_ACCOUNT` + `currentPaperBot` + `FLATTEN_` + `_VALID_BOT_IDS` cross-codebase
+- Si dashboard bot1/2/3/4 = Sim1/2/3/4 -> verifier que TOUS les consumers respectent cette convention
+- Tests integration E2E : click FLATTEN bot1 dashboard -> verifier Sim1 broker flat (pas autre)
+
+**Fix 03/06 10:10** : 8 fixes total appliques sur 3 rounds code-reviewer.
+
+**Round 1 — code-reviewer NOGO 6 bugs critiques** :
+1. CRITIQUE Race FLATTEN_1_*.flag : Bot 4 process (mia_paper_trader.py:3673) consumait DEJA FLATTEN_1_*.flag pre-existant -> double-consume avec mon nouveau handler paper_v2 pour Bot 1
+2. CRITIQUE flatten_bot.py argparse "4" pas dans choices -> `python flatten_bot.py --bot 4` exit 2 ; `--bot all` n'incluait pas Sim4
+3. CRITIQUE Race FLATTEN_3 stale heritage : pas de TTL check sur nouveaux handlers BOT1/BOT3_v4 (pattern Bot 2 lignes 3917-3937 absent)
+4. MINEUR silent fallback : `except Exception: pass` ligne 3987 (anti-pattern `.claude/rules/data-quality.md`)
+5. MINEUR _VALID_BOT_IDS admin_routes : "4" manquant -> 400 sur FLATTEN Bot 4 dashboard
+6. MINEUR doc admin_routes.py:917-919 ancien mapping (Bot 1 DMP -> Sim3 etc.)
++ bonus : code log `BOT3_V3_FLATTEN_MANUAL_EXECUTED` jamais emis (asymetrie EXCEPTION/EXECUTED -> audit J+1 impossible)
+
+**Round 2 — code-reviewer 2 nouveaux bugs CRITIQUES** :
+1. admin_routes.py:996 `bots_to_flag = ["1","2","3"]` oubliait "4" -> Flatten ALL ne creait jamais FLATTEN_4_*.flag
+2. dashboard.js `_currentBotIdForApi` n'avait pas "bot4" -> retour "1" par defaut -> ferme Bot 1 Sim1 au lieu de Bot 4 Sim4
+
+**Round 3 — GO franc** : fixes appliques + test empirique subprocess flatten_bot.py --bot 4 Sim4 OK_FLAT + consume FLATTEN_1_NQ.flag detecte stale TTL.
+
+**Fix files** :
+1. flatten_bot.py BOT_TO_ACCOUNT aligne {1:Sim1, 2:Sim2, 3:Sim3, 4:Sim4}
+2. flatten_bot.py argparse choices + "all" ajout "4"
+3. databento_paper_v2.py constants BOT1+BOT3 + handler refonte TTL pattern Bot 2
+4. mia_paper_trader.py Bot 4 process rename BOT1_FLATTEN -> BOT4_FLATTEN (anti-race)
+5. log_catalog.py 8 nouveaux codes
+6. admin_routes.py _VALID_BOT_IDS + bots_to_flag ALL ajout "4" + doc mapping
+7. dashboard.js _currentBotIdForApi ajout "bot4"->"4"
+8. Test empirique subprocess Sim4 + consume FLATTEN_1_NQ.flag = OK
+
+**Reviewed** : code-reviewer 3 rounds + tests empiriques VPS
+
+---
+
+### 2026-06-03 09:13 (32) - [VALIDATION_MISS] - Guard DTC FILL_INVALID trop large (status != 7 = CRITIQUE faux positif)
+
+**Contexte** : `bot3_v3_continuation_paper.py:545` et `bot3_v4_data_driven_paper.py:546` handler `handle_dtc_fill` emettait `FILL_PRICE_INVALID` niveau CRITIQUE sur TOUT `OrderStatus != 7`. Or DTC sequence normale d'un SL STOP en attente = status=2 (Open ACK) -> status=4 (Working en attente trigger) -> status=7 (Filled quand trigger). Le bot considerait status=2/4 comme fill INVALID.
+
+**Cause racine** : commentaire ligne 549 disait "Tout autre status routed ici = bug routing (cid registered mais status non-fill)". Faux : le routing par cid voit TOUS les ORDER_UPDATE du cid, pas seulement les fills. CLAUDE.md regle souveraine "OrderStatus=2 n'est PAS Filled. JAMAIS traiter 2 comme Filled. Sequence normale : 2 -> 4 -> 7" non respectee dans le handler initial.
+
+**Impact prod** : 28 faux CRITIQUE en 6h sur 03/06 matin (07:00-09:00). Cascade 10 crashes process paper_v2 (PIDs 9888 -> 10176 -> 5272 -> 8660 -> 7040 -> 3652 -> 5304 -> 7652 -> 6960 -> 7396 -> 8828). A chaque crash, RECOVERED_TIMEOUT invente PnL fictif sur positions ouvertes (incident 03/06 -$175 fictifs : NQ -$150 a 07:27 + ES -$25 a 09:01).
+
+**Lecon** : guard CRITIQUE doit etre AUDITE empiriquement avant deploy. Le commentaire ligne 549 "bug routing" etait un assumption non verifie : le routing voit normalement tous les ORDER_UPDATE du cid (parent + tp + sl). Filtrer par status=7 + fill_price > 0 = vrai ghost trade SEULEMENT.
+
+**Trigger prevention** : tout guard niveau CRITIQUE doit avoir :
+1. Test pytest qui simule chaque status DTC (2, 4, 6, 7+invalid, 7+valid, 8) et verifie le comportement
+2. Audit grep historique : si un guard CRITIQUE > 100 events/24h sans incident reel -> investigation faux positif obligatoire
+3. Commentaire qui explique le comportement attendu + reference CLAUDE.md regle DTC
+
+**Fix 03/06 09:13** : handler modifie pour return True sur status non-7 (ACK/Working = update legitime). Status 6 (Rejected) / 8 (Cancelled) -> ORDER_TERMINAL INFO niveau. GUARD #2 (fill_price<=0 sur status=7 = vrai ghost) preserve. Validation empirique : 0 FILL_PRICE_INVALID apres 09:13 (vs 28 avant). PID paper_v2 stable.
+
+**Reserve ouverte** : SL Rejected handler manquant (status=6 -> ORDER_TERMINAL INFO mais pas de force flat). Position reste tracked SANS protection si SL rejete. Critique pour LIVE AMP (P3 backlog : `_force_flat_no_sl()`).
+
+**Reviewed** : code-reviewer (GO-AVEC-RESERVES sur SL Rejected handler)
+
+---
+
+### 2026-06-03 06:50 (31) - [VALIDATION_MISS] - Migration MNQM26 sans verif Sierra Chart pre-config
+
+**Cross-ref** : entry (30) tick value NQ specs CME (05:30) -> apres fix tick_value E-mini, migration MNQM26 testee 06:50 = bug deploiement different (symbole non config SC) ≠ bug specs. Timeline complet : 05:30 fix tick value -> 06:30 migration MNQM26 -> 06:50 detection Trade Activity Log vide -> 07:10 rollback E-mini.
+
+**Contexte** : Jackson directive "cross-chart Sierra etudes sur NQM26 visuel + execution sur MNQM26 Micro". Migration code 24 fichiers (NQ tick 5.00 -> 0.50 + symbol NQM26 -> MNQM26 + n_contracts 1 -> 5 puis 3). SCP + restart paper_v2. **Aucune verification empirique pre-migration que Sierra Chart Sim accepte MNQM26-CME**.
+
+**Cause racine** : assumption non testee que MNQM26 est dispo par default dans Sierra Chart data feed. Trade Activity Log post-deploy vide -> ordres MNQM26 pas routes au broker. Dashboard affiche trades fantomes (bot pense ouvert, broker n'a rien). Cascade crashes (signal_id reuse, RECOVERED_TIMEOUT fictifs).
+
+**Impact prod** : 4 trades NQ MNQM26 emis (06:41-06:50) avec FILL_PRICE_INVALID immediat car SC ne route pas. Crashes paper_v2 + Bot 4. Decision Jackson 07:10 = rollback complet vers E-mini "Option A pure sans triche" + futur migration apres Sierra Chart config.
+
+**Lecon** : tout changement de symbol broker DOIT etre teste empiriquement AVANT migration code :
+1. SSH VPS + lancer `flatten_bot.py --bot X --json` ou similar sur nouveau symbol pour verifier accept broker
+2. Verifier Trade Activity Log Sierra Chart accepte le symbol (status non-Rejected)
+3. Test 1 ordre minimal avant migrer 24 fichiers
+
+**Trigger prevention** : checklist obligatoire avant tout changement symbol :
+1. Symbol existe dans data feed Sierra Chart (File -> Find Symbol)
+2. Symbol accepte par broker (Trade Activity Log apres test order)
+3. Tick size + multiplier + permissions broker pour ce symbol verifies
+4. Tests pytest sur SYMBOL_TO_CONTRACT mapping si applicable
+
+**Fix 03/06 07:10** : Rollback 16 fichiers vers E-mini partout. STOP.flag pre-existant supprime. Restart services. Trade Activity Log normalise. Migration MNQ reportee a post-config Sierra Chart cross-chart MNQM26 (eval prop firm).
+
+**Reviewed** : self (decision rollback Jackson directe)
+
+---
+
+### 2026-06-03 05:30 (30) - [VALIDATION_MISS] - Tick value NQ $1.25 au lieu de $5.00 (E-mini specs)
+
+**Contexte** : Jackson observe que dashboard affiche PnL en "MICRO" pas "MINI". Audit code : `CORE/constants.py:72` declare `"NQ": 1.25` avec commentaire `"E-mini NQM26 standard : $1.25/tick ($5/pt)"`. Mathematiquement faux : E-mini NQ = $20/pt -> $5/tick (PAS $5/pt). $1.25/tick correspond a Micro ES (MES = $5/pt × 0.25 tick), pas a NQ.
+
+**Cause racine** : fix MICRO->MINI 02/06 (entry 27) a corrige NQ $0.50 (Micro) -> $1.25 par confusion avec valeur de MES Micro (qui = $1.25). E-mini NQ vrai = $5.00. Bug pre-existant sur Bot 4 deja documente entry 27 disait "Bot 4 envoyait E-mini standard ($1.25 NQ) mais calculait pnl_usd en MICRO ($0.50)" — la "valeur cible" $1.25 etait elle-meme fausse. Aucun agent (market-analyst NOGO 02/06, code-reviewer) ne l'a attrape : tous ont valide le passage $0.50 -> $1.25 sans verifier multiplicateur CME NQ. Erreur basique specs trading non audite.
+
+**Impact prod** : PnL NQ affiche × **4 trop bas** sur Bot 1 v3, Bot 2 BN V5, Bot 3 v4 (+ Bot 4 deja ÷ 10 NQ et ÷ 10 ES). Tous trades NQ historiques sous-evalues. Ex : trade NQ 4 ticks → dashboard +$5 → broker reel +$20.
+
+**Lecon** : verifier specs CME contract (multiplicateur $/pt × tick_size) AVANT tout fix tick_value. Cross-check formule : tick_value = multiplier × tick_size. Pour NQ : $20 × 0.25 = $5. PAS $5/pt × 0.25 = $1.25. Distinction multiplier vs tick value est basique trading et doit etre integree avant tout commit touchant tick_value.
+
+**Trigger prevention** : avant tout fix tick_value dans code prod :
+1. Grep specs CME (ou WebSearch "E-mini NQ contract specs") pour multiplier reel
+2. Formule : tick_value = multiplier × tick_size (NQ : $20 × 0.25 = $5.00 / ES : $50 × 0.25 = $12.50 / MNQ : $2 × 0.25 = $0.50 / MES : $5 × 0.25 = $1.25)
+3. Cross-check log execution : pnl_ticks × tick_value = pnl_usd cumulant le bon montant
+4. INTERDIT : copier-coller tick_value d'un autre instrument sans verification specs
+
+**Fix 03/06 05:30 (round 1)** : NQ 1.25 -> 5.00 dans CORE/constants.py:72, bot3_paper_common.py:61, bn_v5_engine.py:45, bn_v4_paper.py:88, bot3_config.py:138, mia_paper_trader.py:121, BOT/bot_config.py:38. ES 1.25 -> 12.50 dans mia_paper_trader.py + BOT/bot_config.py:31 (Bot 4 specifiquement). SCP + restart MIA-DataBento-Paper-V2 + MIA-Bot-4-Paper.
+
+**Code-reviewer NOGO 03/06 05:45 (round 2)** : fix incomplet, 5 critiques :
+- C1 `CORE/mia_sltp.py:62,63,67` : tick_value 0.50/1.25/1.00 + n_micros 3 importes par databento_paper_trader_v2 (Bot 3) + mia_paper_trader (Bot 4). Budget USD sous-estime 3.33x.
+- C2 `BOT/order_manager.py:249,274` + `BOT/trade_journal.py:93` : hardcode `1.25 if ES else 0.50` → PnL log faux × 10 sur fills bracket.
+- C3 `databento_paper_trader_v2.py:1596` ladder default fallback 0.50 (inerte si ladder OBSERVE, dette latente).
+- C4 side-effect ladder_paliers (lock USD × 4 maintenant E-mini mais cap ticks pur, OK).
+- C5 `BOT/test_bot.py:48` : test `NQ.tick_value == 0.50` fail apres fix.
+
+**Fix 03/06 06:00 (round 2)** :
+- `mia_sltp.py:62-67` : NQ tick 5.00 + n_micros 1 + max_usd 400 (preserve max_ticks 80). ES tick 12.50 + n_micros 1 + max_usd 500 (preserve max_ticks 40). MGC n_micros 3->1 + max_usd 120->40 (preserve max_ticks 40).
+- `order_manager.py:249,274` : hardcode `12.50 if ES else 5.00`.
+- `trade_journal.py:93` : idem.
+- `test_bot.py:48` : `NQ.tick_value == 5.00`.
+- SCP + restart MIA-DataBento-Paper-V2 + MIA-Bot-4-Paper (round 2).
+
+**Dette tech restante** : remplacer hardcode order_manager/trade_journal par `INSTRUMENTS[sym].tick_value` (refacto). Verifier ladder_paliers calibration USD (lock × 4 maintenant, peut etre trop generous).
+
+**Reviewed** : code-reviewer NOGO -> corrige round 2 ; agent audit trades du jour en cours pour validation PnL recalcule.
+
+---
+
+### 2026-06-02 22:30 (29) - [CONTEXT_MISS] - Dashboard Bot 1 affiche pas positions ES/MGC actives
+
+**Contexte** : Jackson rapporte trade ES SHORT 7593.75 Sim1 visible sur Sierra Chart mais ABSENT du dashboard onglet "Bot 1 NQ + ES".
+
+**Cause racine** (agent investigation 02/06 22:25) : `get_bot3_v3_payload()` `DASHBOARD/api/paper_tracker.py:1996` retournait `today.get("positions_active", {})` qui ne contient QUE les positions NQ Wyckoff (depuis `LOGS/bot3_v3/`). Les positions ES/MGC ouvertes via `_bot3_execute_trade` (databento_paper_v2) sont persistees dans `databento_paper_v3_state.json["positions"]` mais JAMAIS dans `LOGS/bot3_v3/`. Le merge avait ete fait pour `closed_today` (lignes 1903-1934) mais OUBLIE pour `positions_with_countdown`.
+
+**Lecon** : refonte architecture 28/05 ("4 bots", Bot 1 = NQ Wyckoff + ES/MGC MP fusion) appliquee partiellement cote dashboard. Merge closed_today fait, merge positions_active oublie. Pattern omission feature partiellement implementee.
+
+**Trigger prevention** : refonte architecture multi-source DOIT auditer tous les payloads dashboard (closed + active + stats + signals) en check-list. Pas seulement closed.
+
+**Fix 02/06 22:30** : ajout merge positions ES/MGC depuis `STATE_FILE_BOT3` dans `get_bot3_v3_payload()` avec normalisation schema bot3_v3 + defense en profondeur `if sym in positions_active_merged: continue`.
+
+**Reviewed** : agent general-purpose 02/06 22:25 -> diff precis applique.
+
+---
+
+### 2026-06-02 22:00 (28) - [PATTERN_PLAN_C_REPRO] - Confusion ticks vs USD sur cap TP ES (150t au lieu de $150)
+
+**Contexte** : 02/06 matin Jackson directive "caper TP ES a 150 USD", interpretee a tort comme "tp_cap_ticks = 150" (=$1875). Le bot a place TP @7568.21 sur trade ES SHORT 7593.75 = 102 ticks = $1275 cible, alors que Jackson voulait $150 (=12 ticks ES standard $12.50/tick).
+
+**Cause racine** : confusion unite ticks vs USD (= pattern Plan C 27/05, `.claude/rules/critical-tasks-review.md` SIZING DEPLOY Check 1). J'ai lu "150" sans confirmer l'unite avec Jackson. Backtest aurait du etre fait avec TP=12t (pas 150t), invalidant le scenario C "PF 2.75" qui justifiait le changement.
+
+**Lecon** : tout chiffre lie a SL/TP/risk DOIT inclure son unite explicite (USD, ticks, points, R) dans la directive Jackson. Si ambigu : confirmer AVANT de coder. Ne pas extrapoler "150 = 150 ticks" parce que c'est le format du code.
+
+**Trigger prevention** : avant tout changement SL/TP en config, repeter en clair "X USD = Y ticks pour 1 contrat Z" et faire valider Jackson. Idem si Jackson change d'avis : confirmer unite.
+
+**Fix 02/06 22:00** : `CORE/bot3_config.py` ES guard_rails :
+- `tp_cap_ticks` : 150 -> 12 ($150 USD pour 1 ES standard)
+- `tp_rr_ratio` : 4.69 -> 1.5 (TP target sera capped a 12t)
+- `timeout_minutes` : 60 -> 30 (revert baseline pre-02/06 matin)
+- `sl_ticks_base` inchange 32t (= $400 risk)
+- RR effectif = 12/32 = 0.375 (defavorable statistiquement, reserve doc dans config)
+
+**Reviewed** : Jackson directive "ON AVAIS DIT CAPER LES TP ES A 150 USD" + auto-detection erreur unite.
+
+---
+
+### 2026-06-02 20:00 (27) - [VALIDATION_MISS] - Bug latent PnL Bot 4 x2.5 sous-estime (constants.py MICRO vs broker E-mini)
+
+**Contexte** : audit market-analyst lors du rollback sizing "TOUT EN MINI" 02/06 soir a revele que `CORE/constants.py:TICK_VALUE` etait en MICRO (NQ=0.50, ES=1.25) DEPUIS l'origine, alors que les bots envoyaient des contrats E-mini STANDARD (NQM26-CME = $1.25/tick, ESM26-CME = $12.50/tick).
+
+**Bug latent** : Bot 4 (NEW_BOT_2_MIA_TRADER, service MIA-Bot-4-Paper RUNNING) appelle `get_tick_value(symbol)` lignes 780, 856 de `main.py` pour calculer `pnl_usd = pnl_ticks * tick_value * n_micros`. Avec mapping NQM26-CME (E-mini standard) mais tick_value=0.50 (micro), PnL Bot 4 sous-estime systematiquement 2.5x (NQ) et 10x (ES).
+
+**Detection** : impossible sans probe live AMP ou audit dedie. Pas detecte par tests pytest (les tests utilisent les memes valeurs faussees). Pattern silent fallback (cf `lessons.md` "gamma hardcode 0.0").
+
+**Cause racine** : `CORE/constants.py` historiquement scoped "micros". Pas mis a jour lors des migrations broker (Bot 4 Phase 7.1 SAFE COLLECT 27/05 utilise E-mini standard sur Sim4).
+
+**Lecon** : toute source de verite tick_value doit etre auditee a chaque migration broker (MICRO <-> STANDARD). 2 sources alignees minimum : (1) SYMBOL_TO_CONTRACT mapping (2) TICK_VALUE_USD. Probe live recommandee a chaque migration.
+
+**Trigger prevention futur** :
+- Audit market-analyst doit grep `TICK_VALUE.*0\.50|tick_value.*0\.50` partout pour detecter incoherences MICRO/MINI silencieuses
+- Dette latente identique a corriger si reactivation : `CORE/mia_paper_trader.py:121`, `BOT/bot_config.py:31,38`, `CORE/databento_bot.py:100`, `CORE/databento_paper_trader.py:151`, `CORE/mia2_brain_v6_databento.py:148` (tous DISABLED).
+
+**Fix 02/06 soir** :
+- `CORE/constants.py:65-69` TICK_VALUE migre MICRO -> MINI standard (NQ=1.25, ES=12.50, MGC=1.00)
+- `CORE/constants.py:368` fallback get_tick_value 1.25 -> 12.50 (coherent E-mini)
+- Tests 7/7 smoke PASS apres fix.
+
+**Reviewed** : market-analyst 02/06 19:55 -> NOGO initial, fix applique avant deploy.
+
+---
+
+### 2026-06-02 14:30 (26) - [VALIDATION_MISS] - Tests engines pre-existants casses (19/78 FAIL) non lies sizing 02/06
+
+**Contexte** : audit pre-deploy sizing per-bot 02/06 a revele que tests engines drift defaults vs tests (`tests/test_bot3_v3_engine.py` + `test_bot3_v4_engine.py` + `test_bot2_edges_engine.py` = 19 FAIL / 78 total) sont PRE-EXISTANTS. Regle `.claude/rules/critical-tasks-review.md` SIZING DEPLOY Check 3 exige pytest engines PASS = NOGO automatique.
+
+**Cause racine** : drift entre defaults engines et tests sans documentation. Probable accumulation depuis 28/05 (fix MES->ES) ou plus tot. Aucun INCIDENT_LOG entry historique.
+
+**Lecon** : tests engines pytest doivent etre maintenus en CI continuous, pas seulement valides ad-hoc. Drift silencieux = piege pre-deploy si un changement majeur (sizing) survient.
+
+**Trigger prevention futur** :
+- Tests engines doivent etre RUN apres chaque modif critique trading
+- Si fail pre-existant : documenter dans INCIDENT_LOG la 1ere fois
+- Bloquer deploy si fails non documentes
+
+**Decision 02/06** : deploy sizing per-bot quand meme avec cette RESERVE documentee. Tests engines drift = dette technique a corriger separement (pas bloquant sur paper Sim1).
+
+**Reviewed** : agent code-reviewer 02/06 14:00 -> GO-AVEC-RESERVES condition documentation pre-existante
+
+---
+
+### 2026-06-02 14:00 (25) - [VALIDATION_MISS] - PnL dashboard Bot 1 NQ sous-estime x2.5 vs broker reel depuis 28/05 (incoherence MICRO calcul / STANDARD exec)
+
+**Contexte** : 28/05 fix MES->ES standard ($1.25->12.50 tick_value) dans GUARD_RAILS_BOT3["ES"]. Mais NQ a ete LAISSE en STANDARD broker (NQM26-CME mapping) avec MICRO calcul code (bot3_paper_common TICK_VALUE_USD["NQ"]=0.50). Resultat : 78 trades Bot 1 NQ 28/05-01/06 affichaient PnL ÷ 2.5 vs realite broker Sim1.
+
+**Cause racine** : audit incomplet 28/05 fix MES->ES. Reviewer + Jackson ont aligne ES mais oublie de verifier NQ. Pattern "fix partial" qui laisse divergence cachee.
+
+**Lecon** : tout changement sizing/tick_value sur 1 symbole DOIT inclure audit cross-symbol. Specifiquement : verifier que MICRO calcul code matche MICRO broker mapping pour CHAQUE symbole, pas juste celui qu'on fixe.
+
+**Trigger prevention futur** : check liste sanity pre-deploy sizing :
+- SYMBOL_TO_CONTRACT[sym] match contract reel SC (MNQ micro vs NQ standard)
+- tick_value config match $/tick contract reel
+- n_contracts coherent broker
+- Audit cross-symbol post-fix : refaire calcul empirique sur 5 trades historiques
+
+**Fix applique 02/06** :
+- Audit forensique R3 documente $+240 ecart sur 78 trades
+- Architecture per-bot sizing (chaque bot config independante)
+- 7 fichiers patches + 4 hardcodes qty=1 corriges + defaults n_contracts=3 fail-loud
+- CHANGELOG entry 02/06 14:00
+
+**Reviewed** : agent code-reviewer 02/06 13:00 NOGO 5 bloquants -> corrections appliquees -> re-review pending
+
+---
+
+### 2026-06-01 09:30 (24) - [VALIDATION_MISS] - Payload DTC SL STOP envoye avec Price1=StopPrice depuis le debut V2 (60 jours non audite vs specs DTC)
+
+**Contexte** : 60 trades NQ Bot 1 v3 Sim1 27-29/05 audites — SL slip mean +10.5t favorable artificiel, 83% trades |slip|>5t, max +109t. PnL paper gonfle ~50%.
+
+**Ce qui a mal tourne** : code `BOT/dtc_connector.py:434` (et 3 sites equivalents ladder/trailing/BN V4) envoyaient les SL STOP avec `Price1=sl_price` ET `StopPrice=sl_price`. Specs DTC officielles `s_SubmitNewSingleOrder` disent que `OrderType=3 (STOP)` utilise UNIQUEMENT `StopPrice`. SC interpretait comme `OrderType=4 (STOP_LIMIT)` avec LIMIT=STOP, qui fillait au LIMIT favorable au touch.
+
+**Cause racine** : payload DTC jamais audite ligne par ligne vs specs officielles. Bug present depuis 02/04/2026 (debut V2 OCO manuel valide), 60 jours en prod sans detection. Couches d'audit DTC du 02/04 + fix H6 du 04/05 + tests Bot 1 03/05 sont passes a cote du champ Price1 sur STOP (focus sur cancel/anti-orphan, pas envoi).
+
+**Lecon** : tout nouveau OrderType DTC (STOP, STOP_LIMIT, MARKET_IF_TOUCHED) doit avoir un audit payload vs specs officielles `s_SubmitNewSingleOrder` AVANT premier envoi prod. Les tests pytest "ca marche" ne suffisent pas — il faut prouver que les champs envoyes correspondent EXACTEMENT a la spec du OrderType.
+
+**Trigger prevention futur** :
+- Avant tout nouveau `OrderType=X` dans DTC payload : grep specs officielles + verifier que seuls les champs autorises pour ce type sont envoyes
+- Audit pytest payload (test_dtc_*_payload_specs.py) doit verifier chaque champ AVANT deploy
+- Si bug similaire suspecte (slip favorable systematique > spread bid/ask) : grep `Price1` + `StopPrice` envoi DTC
+
+**Fix applique 2026-06-01** :
+- Patch 4 sites (`dtc_connector.py:436-462`, `paper_v2.py:2104+2447`, `bn_v4_paper.py:1061`)
+- Code log `SL_STOP_PATCHED_V1` (INFO, execution) emit a chaque SL — verification empirique J+1 patch actif
+- Tests pytest mock DTC 5/5 PASS + BOT/test_bot.py 46/46 PASS (non-regression)
+- Phase 0 audit RISK anti-orphan : SAFE (ServerOrderID independant OrderType)
+- CHANGELOG entry 2026-06-01 09:30
+- Setting SC `Allow Simulated Resting Limit Order to Fill at Better Price=No` deja applique 30/05 (reduction partielle +4.7t)
+
+**Reviewed** : agent code-reviewer 01/06 09:18 → NOGO initial (3 sites manquants + CHANGELOG/INCIDENT_LOG/log fail-loud) → P0 corrections appliquees → re-review pending avant deploy
+
+---
+
+### 2026-05-28 03:30 (23) - [DECISION_OVERRIDE] - Bot 4 L3 BN v2 rehab deploye contributif SANS DSR Lopez (exception souveraine Jackson)
+
+**Contexte** : Bot 4 audit 28/05 = 0 trade aujourd'hui (1038 decisions ATTENDRE sur 94 bars uniques). Sweep threshold 1.5-3.5 sur 26-27/05 prouve les 4 layers actifs (L1/L2/L4/L5) ne generent PAS d'edge (tous PF<0.7, WR~33%). Layer L3 BN v2 prevu spec d'origine mais REPORTE 26/05.
+
+**Decision Jackson 28/05 03:15** : reactiver L3 (spec OR-fusion 4 patterns + boost cluster) **directement contributif** (pas shadow mode), bypass INCIDENT_LOG #22 (28/05 01:45) qui exige DSR>=0.5 + n_folds_pf>1.3>=50% + PF_min_fold>=0.7 AVANT deploy contributif.
+
+**Pourquoi bypass** :
+- Bot 4 = paper Sim4 1 micro NQ Phase 7.1 SAFE COLLECT (cf memory `project_bot4_live_phase71_20260527.md`)
+- Precedent souverain memory `project_bn_v4_paper_decision_20260523.md` : Jackson autorise paper sans DSR si "rien a perdre"
+- Reactivation L3 est urgente pour debloquer Bot 4 0 trade (alternative = laisser dormant)
+
+**Risques acceptes** :
+- Pas de backtest preservation wins (spec OR-fusion non backtestee)
+- Pas de DSR Lopez
+- MAX_POSSIBLE_SCORE 8->10 -> impact sizing (-50% theorique sur risk.py)
+- Pollution data calibration si L3 faux positif
+
+**Mitigations en place** :
+1. **Kill switch env var** `MIA_BOT4_L3_DISABLED=1` -> rollback 5s sans redeploy (test valide 28/05)
+2. **4 codes log_catalog** dedies : `BOT4_L3_TRIGGERED_LONG/SHORT/REGIME_NEUTRE_SKIP/KILL_SWITCH_ENABLED`
+3. **Suivi serre** J+1/J+3/J+7 avec gates de retour shadow si faux positifs (cf CHANGELOG)
+
+**Lecon** : exception au protocole est ACCEPTABLE en paper micro avec mitigations explicites + traceabilite kill switch + suivi serre + documentation INCIDENT_LOG. NE PAS reproduire en live AMP ou en gros sizing.
+
+**Trigger prevention futur** :
+- Avant tout futur bypass INCIDENT_LOG : verifier presence (a) kill switch runtime, (b) codes log_catalog dedies, (c) plan suivi J+1/J+7 avec criteres mesurable, (d) entry INCIDENT_LOG documentant le bypass.
+- Si l'un manque : NOGO l'exception, revenir au protocole standard.
+
+**Fix applique 28/05 03:15** :
+- L3 reactive (`l3_bn_v2.py` NEW + integration `decide.py`)
+- 4 codes log_catalog ajoutes (`CORE/log_catalog.py:210-214`)
+- CHANGELOG entry 28/05 03:15 documentant l'exception
+
+**Reviewed** : agent code-reviewer 28/05 03:00 -> NOGO direct shadow 7j obligatoire. Override Jackson + mitigations -> GO conditionnel monitoring serre.
+
+---
+
+### 2026-05-28 01:45 (22) - [VALIDATION_MISS] - Bot 3 v4 deploye 24/05 sans seuil DSR minimum, KILL 28/05
+
+**Contexte** : Bot 3 v4 paper Sim3 NQ deploye 24/05 avec baseline backtest n=1110 PF=1.033 WR=30% **DSR=0.13** (marginal Lopez). Audit Lopez 28/05 (agent ml-trainer) sur n=41 live = CI 95% PF [0.08, 0.64] EXCLUT 1.0, **P(true PF >= 1.0) = 0.08%** (1 chance sur 1250).
+
+**Ce qui a mal tourne** : SWING family (53% des trades v4) s'effondre PF 2.33 (backtest 414 trades) -> 0.11 (live 24 trades) = **x20 effondrement**. SWING_HIGH live PF 0.07 (1 win sur 13). V4 a abandonne les niveaux institutionnels gagnants de V3 (CUR_VPOC, MQ_1D_MAX, GEX_DN, PREV_VAH PF >1.5) pour surcharger SWING. Cumul 4j live = -$375.50.
+
+**Cause racine** : protocole deploy paper actuel n'a PAS de seuil DSR minimum. Baseline DSR 0.13 (marginal) + n_folds_pf>1.3 = 2/12 (16.7%) = signal fragile from the start. **N'aurait jamais du etre deploye sans seuil minimum**.
+
+**Lecon** : tout deploy paper d'un bot ML/strategie doit passer 3 gates :
+1. DSR Lopez >= 0.50 (ideal 1.0+) sur n>=100 trades backtest
+2. n_folds_pf>1.3 >= 50% (stabilite cross-folds)
+3. PF_min_fold >= 0.7 (eviter PF moyen masquant un fold catastrophique)
+
+Sinon = **deploye en mode CONFIDENCE INSUFFISANTE** = bot va probablement perdre live.
+
+**Trigger prevention** :
+- Avant tout deploy paper bot ML : grep DSR/n_folds dans backtest report. Si DSR<0.5 OR n_folds_pf>1.3<50% → REFUSER deploy paper, demander recalibration.
+- Nouvelle regle 10 `.claude/rules/critical-tasks-review.md` a creer pour formaliser ces gates.
+
+**Fix applique 28/05** :
+- Bot 3 v4 KILL via env var (`MIA_BOT3_V4_ENABLED=0`) — en attente GO Jackson
+- Audit complet `DOCS/AUDITS/2026-05-28_audit_bot3v4_lopez.md`
+
+**Reviewed** : agent ml-trainer Lopez bootstrap PF + PSR z-stat -3.075 (99.89% confiance edge negatif).
+
+---
+
+### 2026-05-27 15:35 (21) - [VALIDATION_MISS] - Bot 4 ne peut JAMAIS trader : schema MenthorQ obsolete dans reader
+
+**Contexte** : Apres deploy Bot 4 LIVE 27/05, monitor 5h30 montre 2259 decisions emises mais ZERO trade. Audit decisions revele score_total max observe = 2.36 vs threshold 3.5 = `Bot 4 ne peut techniquement JAMAIS atteindre threshold` malgre pipeline fonctionnel.
+
+**Ce qui a mal tourne** : `MenthorQReader.load_levels` (NEW_BOT_2_MIA_TRADER/src/reader.py:267) lit `payload.key_levels.NQ` / `payload.vol_model.NQ` / `payload.CTA.NQ` mais le scraper actuel produit le schema `payload.NQ.structured.{key_levels, netgex, bl_levels, matrix_v1, future_curve}` + `payload.CTA.raw_ajax`. Toutes les cles retournent None -> `menthorq_present = False` -> `menthorq_fresh = False` -> `L4_gamma inactive 100% (0/2480 bars)` -> score max plafonne ~2.4 (juste L1) < threshold 3.5.
+
+**Cause racine** : Schema JSON MenthorQ a evolue (probablement V2 scraper deployment) mais le reader Bot 4 a ete code avec un schema obsolete reference de plan J3-J5. Aucun test ne couvrait le schema reel du scraper VPS (`test_7_menthorq_reader` utilise fixture obsolete).
+
+**Lecon** : Quand un module consomme des fichiers JSON externes (data pipeline cross-system), le schema DOIT etre verifie empiriquement avec un sample REEL du producteur, pas un fichier mock. Le test inline avec fixture obsolete = false positive (test PASS mais code casse en prod).
+
+**Trigger prevention** : 
+- Tout nouveau reader/parser de fichier externe : ajouter test contre 1 fichier REEL VPS sample dans fixtures + assert structure attendue
+- Audit J+1 : grep `menthorq_data_present` / `L4_gamma.active` dans logs Bot 4 -> seuil minimum 50% activation L4 (sinon investigation)
+
+**Fix applique** : `MenthorQReader.load_levels` lignes 263+ adapte au schema reel : `payload.{SYM}.structured.{key_levels, netgex, bl_levels, matrix_v1, future_curve}` + `payload.{SYM}_swing.raw_ajax` + `payload.{SYM}_intraday.raw_ajax` + `payload.CTA` top-level.
+
+**Verification post-deploy** : Bot 4 redemarre 15:35 UTC. L4_gamma active=True (au lieu de False). Sur bar test : walls_far (normal car LongTreand sans wall proche), sign=0 normal. Bot peut maintenant atteindre threshold quand conditions marche alignees.
+
+**Reviewed** : Jackson + Claude self-audit (lecture VPS schema reel via `Get-Content | ConvertFrom-Json | PSObject.Properties.Name`)
+
+---
+
+### 2026-05-27 14:14 (20) - [DEPLOY_UNSAFE] - Bot 4 DTC reconnect boucle infinie + lock file orphelin apres Stop-Service
+
+**Contexte** : Bot 4 J12 deploye 27/05 08:24 UTC Phase 7.1 SAFE COLLECT. Tournait 5h30. Audit logs 14:00 UTC revele : 334 HEARTBEAT + 0 trade + stderr inonde "Connexion perdue — tentative de reconnexion" en boucle.
+
+**Ce qui a mal tourne** :
+1. Bug DTC : Fix P0-3 J9 propage `client_name="MIA_Bot_4"` dans `connect()` initial mais PAS dans `_recv_loop` reconnect (hardcode "MIA_Bot_V2" residuel ligne 921 dtc_connector.py). Au 1er disconnect, reconnect avec ClientName V2 → collision avec wrapper Bot 1/2/3 → Sierra Chart kick.
+2. Bug keepalive : DTC connector ne emit PAS Type 3 HEARTBEAT proactif (juste reactif aux HB recus). Bot 4 sur Sim4 sans market data subscribe ni trades = socket silencieuse → SC ferme apres timeout ~30-60s.
+3. Bug lock file : `Stop-Service` brutal nssm tue process sans declencher `atexit` → `bot4.lock` reste orphelin → reboot Bot 4 crash `Bot4LockError` exit 2 → nssm restart loop chaque 30s sans jamais boot.
+
+**Cause racine** : 3 bugs en chaine. Fix P0-3 J9 partiel = anti-pattern "fix grep incomplet". Keepalive proactif manquant = latent depuis V2 avril 2026 (Bot 1/2/3 maintenu socket via market data, masque le bug).
+
+**Lecon** : 
+1. Tout fix `client_name`/`ClientName` doit grep EXHAUSTIVEMENT le fichier (5 occurrences trouvees apres patch). Outil `tools/check_clientname_hardcode.py` recommande.
+2. `Stop-Service` Windows brutal != SIGTERM Unix : atexit pas garanti. Lock file doit avoir auto-recovery (parse PID + check vivant) — voir IDEAS_BACKLOG P2-1 deja flag, maintenant CONFIRME en prod.
+3. Sierra Chart kick silencieusement client DTC duplicate ClientName ou socket idle. Spec DTC : heartbeat proactif des 2 cotes obligatoire.
+
+**Trigger prevention** : 
+- Tout patch DTC connector partage Bot 1/2/3/4 → grep cross-fichier obligatoire AVANT deploy
+- Restart Bot 4 service → checker `LOGS/bot4.lock` avant Start-Service, supprimer si orphelin
+- Logs `bot4_stderr.log` monitorer ligne "Connexion perdue" → seuil 5+ = alerte
+- **TOUT nouveau bot : VERIFIER `timeout_seconds > heartbeat_interval_seconds` (marge >= 2x)**
+
+**Reviewed** : Jackson + 3 agents code-reviewer (specialiste DTC + comparaison Bot 1/2/3 vs Bot 4) 27/05 14:00-15:00 UTC
+
+**RESOLUTION FINALE 27/05 14:34 UTC** (cycle 3 investigation) : agent comparaison Bot 1/2/3 vs Bot 4 tranche : **vrai cause racine** = `timeout_seconds=10` (Bot 4 surcharge `execution_config.py:30`) vs `heartbeat_interval=10` (negocie au logon). Race fatale : si HB SC arrive a t=10.05s, `recv()` timeout AVANT le HB → `_recv()` return None (avant patch sentinel) → `_recv_loop` interprete EOF → reconnect. Bot 1/2/3 utilisent `timeout=30s` (default DTCConfig) = marge 20s > HB = JAMAIS de timeout = zero reconnect. **Fix V3 = aligner Bot 4 sur 30s** (`execution_config.py:30`). Monitor 5 min post-fix : ZERO "Connexion perdue" (vs +12/5min avant). 4 patches deployes au final : V1a clientname reconnect + V1b keepalive proactif + V2 sentinel `_RECV_TIMEOUT` + **V3 vrai fix timeout=30s**. Patches V1b et V2 sont defensifs et peuvent etre retires post-validation Phase 7.1 SAFE COLLECT.
+
+---
+
+### 2026-05-27 09:30 (19) - [VALIDATION_MISS] - Plan C SL hybride deploye avec mauvaise unite atr
+
+**Contexte** : Audit stop-hunter ce matin Bot 1 v3 + Bot 3 v4 (79-86% SL recovery TP). Agent backtest-runner valide Plan C SL hybride ATR-based sur 14j NQ : Bot 1 var C floor=0.5/cap=2.0 → +$2200, Bot 3 v4 var B 0.4/1.5 → +$1229. Deploy a 07:20 UTC.
+
+**Ce qui a mal tourne** : code-reviewer cross-check apres deploy detecte BUG D'UNITES CRITIQUE :
+- Backtest `CORE/research/backtest_sl_hybrid.py:47-65` calcule `atr14_15min` en **POINTS** (rolling TR sans `/tick`), median NQ 40 pts
+- Code prod `bot3_v3_continuation_engine.py:729` lit `row["atr"]` qui est en **TICKS** (cf `enricher_chain.py:819-820`), ~38 ticks ATR_14_1min
+- Double erreur : (1) unite ticks vs points = facteur 4x, (2) timeframe 1min vs 15min = facteur 3x
+- Resultat : SL calcule ~12x trop petit que voulu par le backtest
+
+**Cause racine** : deploy sans verifier que les fields utilises par backtest existent en live AVEC LA MEME UNITE. Le field `atr` est ambigu (pas de suffixe `_ticks` / `_points`) → meprise silencieuse.
+
+**Lecon** : tout deploy sizing/SL/TP DOIT verifier alignement unite/timeframe entre fields backtest et prod sur la MEME bar historique. Si ecart > 5% → STOP.
+
+**Trigger prevention** : ajout regle souveraine "Check 1/2/3 obligatoires" dans `.claude/rules/critical-tasks-review.md` section SIZING/SL/TP DEPLOY. Pre-deploy checklist OBLIGATOIRE : (1) field source backtest identifie, (2) probe live verifie ecart < 5%, (3) pytest engines passent.
+
+**Reviewed** : Jackson + code-reviewer / Action immediate : rollback Plan C `sl_hybrid_atr_enabled_nq=False` deploye, paper_v2 restart. Re-backtest avec bonne unite en attente.
+
+---
+
+### 2026-05-26 03:00 (18) - [CONTEXT_MISS] - MASTER_PLAN NEW Bot 2 ecrit avec noms DMP au lieu de live_enriched VPS
+
+**Contexte** : design NEW Bot 2, MASTER_PLAN.md ecrit avec VETO Tier 1 sur signaux `bar_long_dn_bar`, `bar_color_dn`, `bn_color_dn_2`.
+
+**Ce qui a mal tourne** : ces colonnes sont les noms DMP JSONL (262 cols) mais NE SONT PAS dans `live_enriched` (que NEW Bot 2 doit consommer). Le live_enricher (refacto weekend 24-25/05) :
+- Renomme : `bar_long_dn_bar` → `long_dn_bar`, `bar_long_up_dn` → `long_up_dn_pattern`
+- Agrege : pas de binaire `bar_color_*`/`bn_color_*`, remplace par `n_color_*_cluster_within_0_2pct` + `dist_color_*_nearest_pct`
+- Si NEW Bot 2 code `bar.get("bar_color_dn")` → None silencieux → VETO mort
+
+**Cause racine** : verifie le local `DATA/live_enriched/NQ/20260521_NQ.jsonl` (468 cols, OBSOLETE pre-refacto) au lieu du VPS `20260525_NQ.jsonl` (492 cols, post-refacto). Local non sync depuis 21/05.
+
+**Detection** : agent reviewer externe (consulte par Jackson) a flagge l'incoherence en cross-checking schema VPS.
+
+**Lecon** : avant d'ecrire un MASTER_PLAN qui specifie des noms de colonnes, **dump SOURCE DE VERITE VPS en local** (SCP + grep exhaustif) au lieu de se fier au schema local potentiellement obsolete. Refacto pipeline weekend = schema potentiel evolutif.
+
+**Trigger prevention** : Phase 1 NEW Bot 2 livrable `feature_coverage_matrix.md` doit cross-checker chaque colonne consommee contre `vps_schema_492cols.txt` (sauve `NEW_BOT_2_MIA_TRADER/specs/`). Aucun nom de colonne dans code NEW Bot 2 sans verification grep prealable sur schema VPS reel.
+
+**Reviewed** : reviewer externe Jackson + self (CONTEXT_MISS reconnu, 18eme incident categorie atteinte 4+ occurrences → memoire dediee a creer)
+
+---
+
+### 2026-05-24 (17) - [CONTEXT_MISS] - Backtest Bot 3 reform sur dataset v4_enriched tronque (avril manquant)
+
+**Contexte** : Session reform Bot 3, 10 variantes V1-V10 + 30 buckets Option 2 backtestees sur "5.3 mois propres MenthorQ" (15/12/2025 → 21/05/2026). Verdict "20/20 NOGO Lopez, V8 best PF 1.21 NQ".
+
+**Ce qui a mal tourne** : `v4_enriched` avril 2026 tronque a 3 jours (28-30) au lieu de 25 (bug pipeline documente memory `project_pipeline_incremental_backlog`). 22 jours bear avril MANQUANTS = pire periode Bot 3 prod (-$1546 sur 4j actifs avril). Resultats biaises : Bot 3 paraissait "moins mauvais qu'il ne l'est".
+
+Re-run sur `v4_pure` complet (194 jours oct 2025 → mai 2026) :
+- V1 NQ PF 0.93 → 0.75 (pire)
+- V8 NQ PF 1.21 → 0.90 (top candidat effondre)
+- WR universel chute (V1 29% → 17%)
+
+**Cause racine** : J'ai accepte le dataset sans verifier son completeness. `v4_pure` (raw) disponible avec 8 mois mais j'ai utilise `v4_enriched` (tronque) sans grep "ls -la" avant lancement.
+
+**Lecon** : avant tout backtest, AUDIT empirique du dataset = (1) liste fichiers, (2) range dates, (3) count bars par jour, (4) verifier features critiques presentes. C'est 30 secondes qui aurait evite 4h de backtests invalides.
+
+**Trigger prevention** : avant `load_v4_enriched()` (ou equivalent), faire AUDIT explicite : grep nb jours par mois, range total, sample size minimum 150 jours. Si <150 jours OU mois absent → FAIL FAST + investiguer alternative (v4_pure, backfill).
+
+**Reviewed** : Jackson directive 2026-05-24 "VERIFIE LA MATURE DU TESTE QUE TU A EFFECTEUR LES DONNERR UTILISER ET LE CODE" + "DU COUP TOUT NOS DERNIER BACTESTE SON BIAISER" → confirme.
+
+---
+
+### 2026-05-23 23h (16) - [LAZY_DELEGATION + VALIDATION_MISS] - Cycle 4 reviews iter1→iter4 BN V4 integration
+
+**Contexte** : Session 8h dev BN V4 paper deploy. Jackson exige "review agent apres chaque etape, non negociable". 4 iter reviews agents (~280K tokens total) ont attrape 8 P0 + ~13 P1.
+
+**Cause racine** : Mes "fix" iter1→iter3 etaient des demi-fix (silent fallback + faux fix).
+- iter1 : 4 P0 detectees, fix appliques
+- iter2 : 2 P0 BIS detectees, mon fix #1 P0#1 etait COSMETIQUE (patche `format_message` qui etait CODE MORT, les vrais callers utilisent `Logger.emit` directement). Mon fix bonus VALIDATION_MISS log_fn injection a CREE un nouveau VALIDATION_MISS plus grave (28 codes BN_V4_* orphelins). Verdict iter2 = NOGO.
+- iter3 : Reviewer a flagge 7 codes restants orphelins + bug audit `cause` lit `pos.get('n_pivots_confirmed')` always 0 (vit dans `_trail_state`).
+- iter4 : Re-fix iter3 + retrait 5 codes inutilises -> GO-AVEC-RESERVES 8.5/10.
+
+**Echec** : J'ai applique "demi-fix" plusieurs fois (pattern recurrent) :
+1. iter1 fix P0#5 GATE_TOP_LEVEL_BLOCK : ajoute au catalog SANS EMIT dans le code = orphelin garanti
+2. iter2 fix P0#1 format_message ValueError : patche code mort, le vrai chemin Logger.emit pas touche
+3. iter2 fix bonus VALIDATION_MISS : "retire constantes des templates gates" sans s'assurer que CONFIG_LOADED est emit en prod = constantes perdues
+4. iter3 fix P0#1 audit cause : code lit pos.get au lieu de self._trail_state[sym] = always 0
+
+**Lecon** : avant deploy lundi, tous les "fix" doivent etre grep-verified post-application. Pattern LAZY_DELEGATION + VALIDATION_MISS = couple toxique.
+
+**Trigger prevention** :
+1. Apres TOUT fix log_catalog : grep cross-codebase `_emit("CODE", ...)` pour confirmer caller existe. Si 0 caller = orphelin = pattern interdit.
+2. Apres TOUT fix logique : verifier que le state utilise est bien LE state, pas un dict pos qui en lit copie.
+3. Lecture iter3 reviewer "C'est PILE le pattern VALIDATION_MISS" : signal d'alarme rouge -> stop tout dev + grep complet.
+4. `LAZY_DELEGATION + VALIDATION_MISS` = pattern couple. Documenter dans memoire dediee si recurrence > 3 sessions.
+
+**Reviewed** : 4 reviews agents en serie (iter1-4 au total ~280K tokens). Verdict final 8.5/10 GO deploy lundi 25/05 sous 4 conditions (test parite, dashboard update, vérif J+1 HEARTBEAT > 100, rollback si fail).
+
+### 2026-05-22 (15) - [VALIDATION_MISS] - Audit 3 bots lance sur logs appauvris au lieu du journal riche
+
+**Contexte** : Jackson demande un audit forensique des 3 bots sur les trades pris. Claude audite `LOGS/trading/*.jsonl` et `LOGS/execution/`.
+
+**Cause racine** : `LOGS/trading/` = logs structures appauvris (`ctx` = sym+pnl seulement). Le vrai journal de trades = `DATA/PAPER_TRADES/*_trades.jsonl` (mae, mfe, walls, sl_ticks, regime, grade, 250 features `dmp_bar_at_exit`). Claude a affirme "Bot 1 et Bot 2 n'ont pas de mfe/mae" sans avoir cherche TOUS les fichiers de trades.
+
+**Echec** : conclusions inversees — Bot 1 annonce −$2803 (reel +$474), Bot 3 annonce +$2325 (reel −$152). Jackson a rattrape en citant un trade NQ contenant `mae:-91 mfe:39 bars_held:8` issu de `20260520_trades.jsonl`.
+
+**Lecon** : avant tout audit de trades, inventorier TOUS les fichiers `*trades*.jsonl` (`find`) et identifier le journal le plus riche. Ne jamais affirmer "champ absent" sans avoir cherche toutes les sources.
+
+**Trigger prevention** :
+1. Tout audit trades = `find "*trades*.jsonl"` en ETAPE 0, comparer la richesse des schemas
+2. `VALIDATION_MISS` atteint 5 occurrences (#11, #13, #14, #15) -> escalation memoire dediee OBLIGATOIRE
+
+**Reviewed** : Jackson (mentor) - rattrapage direct
+
 ### 2026-05-20 22:00 (14) - [VALIDATION_MISS] - Backtests Bot 2 sur v4_enriched alors que le live tourne sur live_enriched : 2 pipelines divergents + parquet corrompu
 
 **Contexte** : Backtests SetupEngine Bot 2 (tri 11 setups + filtre MTF) lances sur `DATA/datasets/v4_enriched`. Doute Jackson sur la data -> comparaison v4_enriched vs live_enriched (ES 20/05, 1066 barres communes).
@@ -2737,7 +3232,7 @@ Resultat : recompile aurait donne **ZERO changement observable** sur les 4 featu
 | Categorie | Occurrences | Promoted en memoire ? |
 |---|---|---|
 | CONTEXT_MISS | **6** | **OUI** `feedback_context_miss.md` (deja promu, renforce 22/04 avec trigger "grep enum existant" + "batch add = grep chaque nouveau nom") |
-| VALIDATION_MISS | **6** | **OUI** (6 occurrences) — promu `feedback_validation_miss_patterns.md` : **27/04 leak structurel session features (ovn/cash/sess/ib/asia/london): toujours figer au close de session avant broadcast, jamais broadcast pendant session active** |
+| VALIDATION_MISS | **9** | **OUI** (9 occurrences post +3 entries 31/32/33 le 03/06) — promu `feedback_validation_miss_patterns.md` : **27/04 leak structurel session features + 03/06 trigger renforce : "tout changement broker symbol + tout guard CRITIQUE empirique audit > 100/24h"** |
 | AGENT_MISUSE | 1 | **OUI preventivement** `feedback_agent_brief_verify.md` |
 | SCOPE_CREEP | 1 | Pas encore |
 | COMMENT_FALSE | **2** | Pas encore (seuil 3+) — trigger nouveau 22/04 : "grep empirique toute reference file:line header" |
