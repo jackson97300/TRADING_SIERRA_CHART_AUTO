@@ -119,8 +119,66 @@ LOG_CODES = {
     "HEARTBEAT_V2CLEAN_ZOMBIE": (LogLevel.CRITIQUE, "events", "V2CLEAN ZOMBIE : process alive mais muet {min}min"),
     "BOT_SHUTDOWN":            (LogLevel.INFO,     "events", "Bot arret propre : {reason}"),
     "BOT_CRASH":               (LogLevel.CRITIQUE, "events", "Bot crash : {exc_type} {exc_msg}"),
-    "BOT_KILL_SWITCH_ACTIVATED": (LogLevel.MAJEUR, "events", "STOP.flag detecte : flatten + pause (positions closed: {n_closed})"),
+    "BOT_KILL_SWITCH_ACTIVATED": (LogLevel.MAJEUR, "events", "STOP.flag detecte : flatten + pause (positions closed: {n_closed}, bot2_open={n_bot2_open}, bot3_open={n_bot3_open})"),
     "BOT_KILL_SWITCH_RELEASED": (LogLevel.INFO,    "events", "STOP.flag supprime : reprise trading"),
+    # FIX 19/05 (incident #10) : kill_switch flatten Bot 3 via _bot3_check_timeout(force=True)
+    "BOT_KILL_SWITCH_FLATTEN_DONE": (LogLevel.MAJEUR, "events", "Kill switch flatten complet : total={n_closed_total} (bot2={bot2_closed}, bot3={bot3_closed}) residual_bot3={bot3_remaining}"),
+    "BOT3_KILL_SWITCH_FLATTEN_EXCEPTION": (LogLevel.CRITIQUE, "events", "Kill switch Bot 3 exception : {exc_type} {exc_msg}"),
+    "BOT_KILL_SWITCH_BOT3_RESIDUAL_ORPHAN_RISK": (LogLevel.CRITIQUE, "events", "Kill switch : {remaining} positions Bot 3 toujours ouvertes ({remaining_syms}) - ORPHELIN_RISK"),
+    # FIX 19/05 (incident #10) : 5 fixes ladder long terme
+    "BOT3_LADDER_NEW_SL_NOT_WORKING": (LogLevel.CRITIQUE, "events", "Ladder SL fantome detecte : new_sl_cid={new_sl_cid} absent Type 300 post-send {sym} palier={palier}. Position SANS SL broker - {msg}"),
+    "BOT3_LADDER_VERIFY_TYPE300_EXCEPTION": (LogLevel.ALERTE, "events", "Ladder verify Type 300 exception : {sym} palier={palier} new_sl_cid={new_sl_cid} {exc} {msg}"),
+    "BOT3_LADDER_TICK_TOO_YOUNG": (LogLevel.INFO, "events", "Ladder tick refuse : trade age {age_sec}s < min_age {min_age}s (race protection) sym={sym} mfe={mfe}"),
+    # FIX 19/05 PM (review agent R3+Q2 + Q3) : 5 nouveaux codes ladder Phase 2
+    "BOT3_LADDER_NEW_SL_VERIFY_TIMEOUT": (LogLevel.ALERTE, "events", "Verify Type 300 timeout (lock OR DTC slow) : sym={sym} palier={palier} new_sl_cid={new_sl_cid} - retry optimiste pos[sl_cid] preserve - {msg}"),
+    "BOT3_FORCE_CLOSE_DTC_DOWN": (LogLevel.CRITIQUE, "events", "Force close DTC down : sym={sym} reason={reason} - {msg}"),
+    "BOT3_FORCE_CLOSE_CONTRACT_LOOKUP_FAIL": (LogLevel.CRITIQUE, "events", "Force close contract lookup fail : sym={sym} reason={reason}"),
+    "BOT3_FORCE_CLOSE_POS_QUERY_FAIL": (LogLevel.ALERTE, "events", "Force close position query fail : sym={sym} reason={reason} {exc} {msg}"),
+    "BOT3_FORCE_CLOSE_POS_TIMEOUT": (LogLevel.ALERTE, "events", "Force close position query timeout : sym={sym} reason={reason} - {msg}"),
+    "BOT3_FORCE_CLOSE_SENT": (LogLevel.MAJEUR, "events", "Force close envoye : sym={sym} reason={reason} close_cid={close_cid} qty={qty}"),
+    "BOT3_FORCE_CLOSE_FAIL": (LogLevel.CRITIQUE, "events", "Force close send FAIL : sym={sym} reason={reason} {err}"),
+    "BOT3_FORCE_FLUSH_FAIL": (LogLevel.ALERTE, "events", "Force flush Type 209 fail : sym={sym} reason={reason} {err}"),
+    "BOT3_LADDER_FORCE_CLOSE_EXCEPTION": (LogLevel.CRITIQUE, "events", "Ladder force close exception : sym={sym} palier={palier} {exc_type} {exc_msg}"),
+    # FIX 19/05 PM (review agent R1) : worker thread async modify_sl
+    "BOT3_LADDER_JOB_ENQUEUED": (LogLevel.INFO, "events", "Ladder job enqueue : sym={sym} palier={palier} level={level} new_sl_price={new_sl_price} lock_usd={lock_usd} queue_size={queue_size}"),
+    "BOT3_LADDER_ENQUEUE_FAIL": (LogLevel.ALERTE, "events", "Ladder enqueue FAIL (queue full?) : sym={sym} palier={palier} {exc_type} - {msg}"),
+    "BOT3_LADDER_WORKER_JOB_START": (LogLevel.INFO, "events", "Ladder worker job start : sym={sym} palier={palier} new_sl_price={new_sl_price}"),
+    "BOT3_LADDER_WORKER_POS_GONE": (LogLevel.INFO, "events", "Ladder worker pos gone : sym={sym} palier={palier} - {msg}"),
+    "BOT3_LADDER_WORKER_EXCEPTION": (LogLevel.CRITIQUE, "events", "Ladder worker exception : sym={sym} palier={palier} {exc_type} {exc_msg}"),
+    # FIX 19/05 PM (review agent patch 1 + 2) : watchdog 30s + split flush logs
+    "BOT3_FORCE_FLUSH_NO_POS_QUERY": (LogLevel.INFO, "events", "Force flush Type 209 sans pos query : sym={sym} reason={reason} flush_cid={flush_cid} - {msg}"),
+    "BOT3_FORCE_FLUSH_AFTER_CLOSE": (LogLevel.INFO, "events", "Force flush Type 209 apres MARKET CLOSE : sym={sym} reason={reason} flush_cid={flush_cid}"),
+    "BOT3_LADDER_WATCHDOG_SCHEDULE_FAIL": (LogLevel.ALERTE, "events", "Watchdog T+30s schedule fail : sym={sym} palier={palier} new_sl_cid={new_sl_cid} {exc_type} {msg}"),
+    "BOT3_LADDER_WATCHDOG_DTC_DOWN": (LogLevel.CRITIQUE, "events", "Watchdog T+30s DTC down : sym={sym} palier={palier} new_sl_cid={new_sl_cid}"),
+    "BOT3_LADDER_WATCHDOG_POS_QUERY_FAIL": (LogLevel.ALERTE, "events", "Watchdog pos query fail : sym={sym} palier={palier} new_sl_cid={new_sl_cid} {exc} {msg}"),
+    "BOT3_LADDER_WATCHDOG_POS_FLAT": (LogLevel.INFO, "events", "Watchdog T+30s pos flat : sym={sym} palier={palier} new_sl_cid={new_sl_cid} - {msg}"),
+    "BOT3_LADDER_WATCHDOG_TYPE300_FAIL": (LogLevel.ALERTE, "events", "Watchdog Type 300 fail : sym={sym} palier={palier} new_sl_cid={new_sl_cid} {exc} {msg}"),
+    "BOT3_LADDER_WATCHDOG_SL_WORKING_CONFIRMED": (LogLevel.INFO, "events", "Watchdog T+30s SL working confirme : sym={sym} palier={palier} new_sl_cid={new_sl_cid} expected_sl_price={expected_sl_price} - {msg}"),
+    "BOT3_LADDER_WATCHDOG_SL_ORPHAN_DETECTED": (LogLevel.CRITIQUE, "events", "Watchdog T+30s SL ORPHAN detecte : sym={sym} palier={palier} new_sl_cid={new_sl_cid} open_orders_none={open_orders_none} open_orders_count={open_orders_count} - {msg}"),
+    "BOT3_LADDER_WATCHDOG_POS_GONE": (LogLevel.INFO, "events", "Watchdog T+30s pos gone : sym={sym} palier={palier} new_sl_cid={new_sl_cid} - {msg}"),
+    "BOT3_LADDER_WATCHDOG_FORCE_CLOSE_EXCEPTION": (LogLevel.CRITIQUE, "events", "Watchdog force close exception : sym={sym} palier={palier} new_sl_cid={new_sl_cid} {exc_type} {exc_msg}"),
+    # FIX 19/05 PM (Jackson bouton FLATTEN) : exit reason FLATTEN_MANUAL distinct.
+    # NB : BOT2_* est emis par service paper_v2 (process MIA-DataBento-Paper-V2,
+    # tracking self.positions = Bot 2 V2 SetupEngine). BOT2V6_* est emis par service
+    # MIA-Brain-V6 (Bot 2 V6 reel qui trade en prod). FIX 19/05 nuit : ajoute Brain-V6
+    # qui ne lisait pas le flag (cause "FLATTEN MANUEL A PAS FONCTOINNER SUR LE BOT 2").
+    "BOT2_FLATTEN_MANUAL_EXECUTED": (LogLevel.MAJEUR, "events", "Bot 2 V2 FLATTEN_MANUAL execute (paper_v2 SetupEngine) : sym={sym} price={price}"),
+    "BOT2_FLATTEN_MANUAL_EXCEPTION": (LogLevel.CRITIQUE, "events", "Bot 2 V2 FLATTEN_MANUAL exception (paper_v2) : sym={sym} {exc_type} {exc_msg}"),
+    "BOT2_FLATTEN_MANUAL_FLAG_STALE": (LogLevel.ALERTE, "events", "Bot 2 FLATTEN_MANUAL flag stale GC (paper_v2) : sym={sym} age_sec={age_sec}"),
+    "BOT2V6_FLATTEN_MANUAL_EXECUTED": (LogLevel.MAJEUR, "events", "Bot 2 V6 FLATTEN_MANUAL execute (Brain-V6 prod) : sym={sym} price={price}"),
+    "BOT2V6_FLATTEN_MANUAL_EXCEPTION": (LogLevel.CRITIQUE, "events", "Bot 2 V6 FLATTEN_MANUAL exception (Brain-V6) : sym={sym} {exc_type} {exc_msg}"),
+    "BOT2V6_FLATTEN_MANUAL_FLAG_STALE": (LogLevel.ALERTE, "events", "Bot 2 V6 FLATTEN_MANUAL flag stale GC (Brain-V6) : sym={sym} age_sec={age_sec}"),
+    "BOT3_FLATTEN_MANUAL_EXECUTED": (LogLevel.MAJEUR, "events", "Bot 3 MP FLATTEN_MANUAL execute : sym={sym} level={level} signal_id={signal_id}"),
+    "BOT3_FLATTEN_MANUAL_EXCEPTION": (LogLevel.CRITIQUE, "events", "Bot 3 MP FLATTEN_MANUAL exception : sym={sym} {exc_type} {exc_msg}"),
+    # 03/06 ajout fix FLATTEN mapping P1 (alignement archi 28/05) + P1.review (bugs critique reviewer)
+    "BOT3_V3_FLATTEN_MANUAL_EXECUTED":  (LogLevel.MAJEUR,   "events", "Bot 3 v3 FLATTEN_MANUAL execute : sym={sym} level={level} signal_id={signal_id}"),
+    "BOT3_V3_FLATTEN_MANUAL_EXCEPTION": (LogLevel.CRITIQUE, "events", "Bot 3 v3 FLATTEN_MANUAL exception : sym={sym} {exc_type} {exc_msg}"),
+    "BOT3_V4_FLATTEN_MANUAL_EXECUTED":  (LogLevel.MAJEUR,   "events", "Bot 3 v4 FLATTEN_MANUAL execute : sym={sym} level={level} signal_id={signal_id}"),
+    "BOT3_V4_FLATTEN_MANUAL_EXCEPTION": (LogLevel.CRITIQUE, "events", "Bot 3 v4 FLATTEN_MANUAL exception : sym={sym} {exc_type} {exc_msg}"),
+    "BOT1_FLATTEN_FLAG_NO_POS":         (LogLevel.INFO,     "events", "Bot 1 FLATTEN_MANUAL flag consume mais aucune position : sym={sym} msg={msg}"),
+    "BOT3_V4_FLATTEN_FLAG_NO_POS":      (LogLevel.INFO,     "events", "Bot 3 v4 FLATTEN_MANUAL flag consume mais aucune position : sym={sym} msg={msg}"),
+    "BOT1_FLATTEN_MANUAL_FLAG_STALE":   (LogLevel.ALERTE,   "events", "Bot 1 FLATTEN_MANUAL flag stale (TTL expire) : sym={sym} age_sec={age_sec}"),
+    "BOT3_V4_FLATTEN_MANUAL_FLAG_STALE":(LogLevel.ALERTE,   "events", "Bot 3 v4 FLATTEN_MANUAL flag stale (TTL expire) : sym={sym} age_sec={age_sec}"),
     "GATE_MTF_BULL_DESERT":     (LogLevel.INFO,    "decisions", "SHORT reject : mtf_bulls<=1 ({mtf_bulls}/4) edge negatif prouve"),
     # --- Paper trader gates funnel (enrichissement log V2 - 25/04) ---
     "GATE_CONSEIL_ATTENDRE":    (LogLevel.INFO,    "decisions", "Conseil ATTENDRE : {sym} bull={bull_pts} bear={bear_pts} bias={bias} mtf={mtf_bulls}/{mtf_bears} rangepos={range_pos}%"),
@@ -155,6 +213,33 @@ LOG_CODES = {
     "GATE_PAYOFF_TOO_LOW":      (LogLevel.INFO,    "decisions", "Payoff insuffisant : {sym} expected=${expected_payoff_usd} < min=${min_required}"),
     "DLL_RELOAD":              (LogLevel.ALERTE,   "events", "DLL Sierra Chart reloadee"),
     "CONFIG_RELOAD":           (LogLevel.INFO,     "events", "Config reloadee depuis disque"),
+
+    # databento_live_stream_v2 (refactor reconnect natif SDK 28/05/2026)
+    "STREAM_RECONNECTED":              (LogLevel.MAJEUR,   "events", "Databento stream reconnect SDK natif #{count} gap_sec={gap_sec} (mapping purged: {mapping_purged})"),
+    "STREAM_RECONNECT_EXCEPTION":      (LogLevel.ALERTE,   "events", "Exception dans reconnect callback Databento : {exc}"),
+    "STREAM_SESSION_CLOSED_UNEXPECTEDLY": (LogLevel.CRITIQUE, "events", "Databento session closed inattendu (timeout 10min epuise) — sys.exit(3) pour nssm restart : bars={bars_received} trades={trades_received} reconnects={reconnect_count}"),
+    # 29/05 FIX V2 racine (block_for_close timeout=None) : nouveau code distinct
+    # de UNEXPECTEDLY pour tracer le vrai cas "gateway disconnect permanent".
+    # Garde UNEXPECTEDLY dormant pour back-compat audits historiques.
+    "STREAM_SESSION_CLOSED_PERMANENT":  (LogLevel.CRITIQUE, "events", "Databento session closed PERMANENT (SDK reconnect 10min exhausted OR gateway disconnect) — sys.exit(3) pour nssm restart : bars={bars_received} trades={trades_received} reconnects={reconnect_count}"),
+
+    # 01/06 FIX DTC STOP order : retirer Price1 (interprete STOP_LIMIT par SC).
+    # Emit a chaque SL STOP envoye (pas d'idempotence, volume ~50 INFO/jour).
+    # Permet tracer empiriquement J+1 que le patch est actif (vs ancien backup) +
+    # detecter regressions sur tous trades, pas seulement le premier.
+    # Format kind = "sl_initial" / "sl_ladder" / "sl_trailing" / "sl_bn_v4_modify".
+    "SL_STOP_PATCHED_V1":              (LogLevel.INFO,     "execution", "SL STOP patched v1 (Price1 removed, specs DTC OrderType=3) : kind={kind} sl_cid={sl_cid} sl_price={sl_price} ta={trade_account}"),
+    # 02/06 NOTE : Voie B (STOP_LIMIT offset 0 + watchdog 30s) ETUDIEE et REVERT
+    # apres review code-reviewer NOGO 7 bloquants (poll 30s = exposition 60s vs claim 30s,
+    # LIMIT=STOP non valide empiriquement Sim1, couverture incomplete bots, etc).
+    # Solution durable = migration prop firm mi-juin (vrais fills broker).
+    # En attendant : SL_STOP_PATCHED_V1 v1 reste actif, slip Sim1 +4.2t accepte (biais connu).
+
+    # Bot 4 L3 BN v2 rehabilitation 28/05/2026 (decision souveraine Jackson bypass INCIDENT_LOG #22)
+    "BOT4_L3_TRIGGERED_LONG":          (LogLevel.INFO,     "decisions", "Bot4 L3 BN spring LONG trigger : PIR={pir} cluster={has_cluster} weight={weight} (trigger={trigger})"),
+    "BOT4_L3_TRIGGERED_SHORT":         (LogLevel.INFO,     "decisions", "Bot4 L3 BN upthrust SHORT trigger : PIR={pir} cluster={has_cluster} weight={weight} (trigger={trigger})"),
+    "BOT4_L3_REGIME_NEUTRE_SKIP":      (LogLevel.INFO,     "decisions", "Bot4 L3 skip car regime_favor={regime_favor} != LONG/SHORT"),
+    "BOT4_L3_KILL_SWITCH_ENABLED":     (LogLevel.ALERTE,   "decisions", "Bot4 L3 kill switch active (MIA_BOT4_L3_DISABLED=1) -> rollback runtime"),
 
     "WATCHDOG_START":          (LogLevel.INFO,     "events", "Watchdog demarre : auto_restart={auto_restart} interval={interval}s"),
     "WATCHDOG_RESTART":        (LogLevel.MAJEUR,   "events", "Restart bot dans {delay}s : raison={reason}"),
@@ -445,6 +530,250 @@ LOG_CODES = {
     "BN_V3_RECHARGE":                    (LogLevel.MAJEUR,   "decisions", "BN V3 recharge : sym={sym} dir={direction} entry={entry_price} n_recharges={n_recharges}/{max_recharges} dry_run={dry_run}"),
     "BN_V3_SCALE_OUT_50":                (LogLevel.INFO,     "execution", "BN V3 scale out 50% : sym={sym} dir={direction} tp_price={tp_price} qty_close={qty_close} new_sl_be={new_sl} dry_run={dry_run}"),
     "BN_V3_FLATTEN":                     (LogLevel.INFO,     "execution", "BN V3 flatten : sym={sym} reason={reason} dir={direction} dry_run={dry_run}"),
+    # ════════════════════════════════════════════════════════════════════════
+    # BN V4 paper Bot 2 Sim2 (23/05/2026 Jackson directive remplacement Bot 2 V2)
+    # Setup zone confluence + density A++ + edge_buy + footprint (5 signaux, seuil >=1).
+    # Source data JSONL live_enriched (lag 60s, source unique de verite).
+    # Mode dual : A++ trade reel / A observation log only.
+    # ════════════════════════════════════════════════════════════════════════
+    # Lifecycle / events
+    "BN_V4_BOOT_START":                  (LogLevel.INFO,     "events",    "BN V4 paper boot start : sym={sym} dry_run={dry_run} trade_account={trade_account} mode={mode}"),
+    "BN_V4_CONFIG_LOADED":               (LogLevel.INFO,     "events",    "BN V4 config loaded : grade_min={grade_min} observation_grade_min={observation_grade_min} require_open={require_open} require_trend_align={require_trend_align} footprint_min={footprint_min} n_levels_min={n_levels_min} vol_ratio_min={vol_ratio_min} max_risk_ticks={max_risk_ticks} min_risk_ticks={min_risk_ticks}"),
+    "BN_V4_BOOT_READY":                  (LogLevel.INFO,     "events",    "BN V4 paper boot ready : sym={sym} dtc_state={dtc_state} reader_state={reader_state}"),
+    "BN_V4_SHUTDOWN":                    (LogLevel.MAJEUR,   "events",    "BN V4 paper shutdown : reason={reason} positions_open={positions_open}"),
+    "BN_V4_LOOP_ERROR":                  (LogLevel.CRITIQUE, "events",    "BN V4 paper loop error : sym={sym} err={err}"),
+    "BN_V4_BAR_STALE":                   (LogLevel.ALERTE,   "events",    "BN V4 bar stale (skip cycle) : sym={sym} age_sec={age_sec} threshold_sec={threshold_sec}"),
+    "BN_V4_FEATURE_DEGRADED":            (LogLevel.MAJEUR,   "events",    "BN V4 feature degraded (NaN 3 bars consec) : sym={sym} feature={feature} bars_nan={bars_nan}"),
+    # Fix P0#2 reviewer iter3 23/05 : BN_V4_DTC_LOST_DURING_OPEN RETIRE.
+    # Pas de detection DTC down/reconnect implementee actuellement.
+    # A re-ajouter si on code reco DTC dedie (cf IDEAS_BACKLOG).
+    # Decisions (gates + setups + observation)
+    # Fix P0 BIS code-reviewer iter2 23/05 : BN_V4_BAR_PROCESSED RETIRE du
+    # catalog general. Volume 1440/jour ne convient ni a INFO (spam decisions/)
+    # ni a ALERTE (corrompt semantique). Solution : tracage des bars deja
+    # gere par BNV4Logger.log_bar_processed() qui ecrit dans LOGS/bn_v4/
+    # daily JSONL dedie. Plus de double-comptabilite.
+    # Fix P0 templates : retire constantes config (move vers CONFIG_LOADED).
+    # Templates simplifies : valeurs courantes uniquement, pas de constantes.
+    "BN_V4_GATE_TREND_BLOCK":            (LogLevel.MAJEUR,   "decisions", "BN V4 gate TREND block : sym={sym} dir={direction} slope_mean={slope_mean} threshold={threshold}"),
+    "BN_V4_GATE_OPEN_WINDOW_BLOCK":      (LogLevel.INFO,     "decisions", "BN V4 gate OPEN_WINDOW block (hors fenetre) : sym={sym} ts_et={ts_et} mins_et={mins_et}"),
+    "BN_V4_GATE_TREND_LONG_ALIGN_BLOCK": (LogLevel.MAJEUR,   "decisions", "BN V4 gate TREND_LONG_ALIGN block (SHORT only) : sym={sym} dir={direction} slope_240={slope_240}"),
+    "BN_V4_GATE_LEVELS_BLOCK":           (LogLevel.MAJEUR,   "decisions", "BN V4 gate LEVELS block : sym={sym} dir={direction} n_levels={n_levels}"),
+    "BN_V4_GATE_DENSITY_BLOCK":          (LogLevel.MAJEUR,   "decisions", "BN V4 gate DENSITY block : sym={sym} dir={direction} density={density} grade={grade}"),
+    "BN_V4_GATE_EDGE_BLOCK":             (LogLevel.MAJEUR,   "decisions", "BN V4 gate EDGE block : sym={sym} dir={direction} feature={feature}"),
+    "BN_V4_GATE_VOLUME_BLOCK":           (LogLevel.MAJEUR,   "decisions", "BN V4 gate VOLUME block : sym={sym} dir={direction} current_vol={current_vol} baseline={baseline} ratio={ratio}"),
+    "BN_V4_GATE_FOOTPRINT_BLOCK":        (LogLevel.MAJEUR,   "decisions", "BN V4 gate FOOTPRINT block : sym={sym} dir={direction} n_signals={n_signals}"),
+    # 29/05 FIX BETA Jackson : anti stop-hunt momentum slope 60bars (backtest +$40 save sur 28/05)
+    "BN_V4_GATE_MOMENTUM_SLOPE_60_BLOCK": (LogLevel.MAJEUR,   "decisions", "BN V4 gate MOMENTUM_SLOPE_60 block : sym={sym} dir={direction} slope_mean_60={slope_mean_60} threshold={threshold}"),
+    "BN_V4_PARAM_OVERRIDE_ENV":          (LogLevel.MAJEUR,   "events", "BN V4 param override depuis env var : param={param} override_value={override_value} source={source}"),
+    "BN_V4_PARAM_OVERRIDE_ENV_FAIL":     (LogLevel.ALERTE,   "events", "BN V4 param override env var FAIL parse : param={param} raw_value={raw_value} err={err}"),
+    # ═══ BN V5 (Battle Navale V5 — paradigme swing + trailing V/W) ═══
+    "BN_V5_BOOT_START":                  (LogLevel.INFO,     "events",    "BN V5 paper boot start : sym={sym} dry_run={dry_run} trade_account={trade_account}"),
+    "BN_V5_BOOT_READY":                  (LogLevel.INFO,     "events",    "BN V5 paper boot ready : sym={sym} dtc_state={dtc_state}"),
+    "BN_V5_SHUTDOWN":                    (LogLevel.MAJEUR,   "events",    "BN V5 paper shutdown : sym={sym} n_trades_executed={n_trades_executed} pnl_session_usd={pnl_session_usd}"),
+    "BN_V5_HEARTBEAT":                   (LogLevel.INFO,     "events",    "BN V5 heartbeat : sym={sym} uptime_min={uptime_min} bars={n_bars} setups={n_setups} trades={n_trades} pnl_usd={pnl_usd}"),
+    "BN_V5_SETUP_DETECTED":              (LogLevel.MAJEUR,   "decisions", "BN V5 setup detected : sym={sym} pattern={pattern} side={side} entry={entry_price} sl={sl_price} pivot={pivot_price} neckline={neckline} conf_level={conf_level} conf_dist_pct={conf_dist_pct}"),
+    # 03/06 fix pollution autopsie BN V5 : 99K events MAJEUR/jour pour des
+    # decisions NORMALES du gate (pas des vraies erreurs). Reclassifie INFO.
+    # Le bug calibration range_drift_min_pct=0.20% est traite separement
+    # via backtest empirique + recalibration. Cf rapport autopsie 03/06.
+    "BN_V5_GATE_RANGE_BLOCK":            (LogLevel.INFO,     "decisions", "BN V5 gate RANGE block (consolidation) : sym={sym} pattern={pattern} drift_pct={drift_pct} threshold={threshold}"),
+    "BN_V5_GATE_BAR_REVERSAL_BLOCK":     (LogLevel.INFO,     "decisions", "BN V5 gate BAR_REVERSAL block : sym={sym} pattern={pattern} reason={reason}"),
+    "BN_V5_TRADE_OPEN":                  (LogLevel.MAJEUR,   "execution", "BN V5 trade ouvert : sym={sym} pattern={pattern} side={side} entry={entry_price} sl={sl_price} risk_ticks={risk_ticks} qty={qty}"),
+    "BN_V5_BRACKET_PLACED":              (LogLevel.INFO,     "execution", "BN V5 bracket OCO place : sym={sym} parent_cid={parent_cid} sl_cid={sl_cid} tp_cid={tp_cid}"),
+    "BN_V5_TRAIL_SL_UPDATE":             (LogLevel.INFO,     "execution", "BN V5 trailing SL update : sym={sym} side={side} old_sl={old_sl} new_sl={new_sl} pullback_extreme={pullback_extreme}"),
+    "BN_V5_TRADE_CLOSE_SL":              (LogLevel.INFO,     "execution", "BN V5 trade close SL : sym={sym} side={side} exit={exit_price} pnl_usd={pnl_usd} duration_bars={duration_bars} pattern={pattern}"),
+    "BN_V5_TRADE_CLOSE_TIMEOUT":         (LogLevel.MAJEUR,   "execution", "BN V5 trade close timeout : sym={sym} side={side} exit={exit_price} pnl_usd={pnl_usd} duration_bars={duration_bars} pattern={pattern}"),
+    "BN_V5_LOOP_ERROR":                  (LogLevel.CRITIQUE, "events",    "BN V5 loop error (exception captured) : sym={sym} err={err}"),
+    "BN_V5_BAR_STALE":                   (LogLevel.ALERTE,   "events",    "BN V5 bar stale (skip cycle) : sym={sym} age_sec={age_sec} threshold_sec={threshold_sec}"),
+    # Traçabilité fine (Jackson 02/06 SOIR : "on doit tout tracker pour debug")
+    "BN_V5_CYCLE_SUMMARY":               (LogLevel.INFO,     "decisions", "BN V5 cycle : sym={sym} bars={n_bars_in_window} n_pl={n_pivot_lows} n_ph={n_pivot_highs} cand_v={n_cand_v} cand_w={n_cand_w} cand_inv_v={n_cand_inv_v} cand_m={n_cand_m} filtered_conf={n_filt_conf} filtered_range={n_filt_range} filtered_bar={n_filt_bar} setups_emitted={n_setups}"),
+    "BN_V5_CONFLUENCE_NEAR":             (LogLevel.INFO,     "decisions", "BN V5 confluence proche : sym={sym} pivot_idx={pivot_idx} side={side} level={level} dist_pct={dist_pct}"),
+    "BN_V5_PATTERN_CANDIDATE":           (LogLevel.INFO,     "decisions", "BN V5 pattern candidate : sym={sym} pattern={pattern} side={side} pivot1={pivot1} pivot2={pivot2} neckline={neckline}"),
+    "BN_V5_PATTERN_REJECTED":            (LogLevel.INFO,     "decisions", "BN V5 pattern rejected : sym={sym} pattern={pattern} side={side} reason={reason} detail={detail}"),
+    "BN_V5_POSITION_UPDATE":             (LogLevel.INFO,     "execution", "BN V5 position update : sym={sym} side={side} bars_held={bars_held} sl_current={sl_current} mfe_ticks={mfe_ticks} mae_ticks={mae_ticks} close={close}"),
+    "BN_V5_TRAIL_PULLBACK_CONFIRMED":    (LogLevel.INFO,     "execution", "BN V5 pullback confirme : sym={sym} side={side} pullback_extreme={pullback_extreme} running_extreme={running_extreme} bars_since={bars_since}"),
+    "BN_V5_DTC_CANCEL_FAIL":             (LogLevel.ALERTE,   "execution", "BN V5 DTC cancel FAIL : sym={sym} cid={cid} kind={kind} err={err}"),
+    "BN_V5_DTC_FILL_RECEIVED":           (LogLevel.INFO,     "execution", "BN V5 DTC fill received : sym={sym} cid={cid} kind={kind} fill_price={fill_price} signal_id={signal_id}"),
+    "BN_V5_KILL_SWITCH":                 (LogLevel.CRITIQUE, "events",    "BN V5 kill switch active : sym={sym} reason={reason} pnl_session_usd={pnl_session_usd}"),
+    # Fix P0#5 code-reviewer 23/05 : ajout gate TOP_LEVEL_BLOCK manquant.
+    # find_top_level_price=None rejetait sans trace - maintenant traceable.
+    "BN_V4_GATE_TOP_LEVEL_BLOCK":        (LogLevel.MAJEUR,   "decisions", "BN V4 gate TOP_LEVEL block (aucun niveau institutionnel proche) : sym={sym} dir={direction} close={close} max_dist_pct={max_dist_pct}"),
+    "BN_V4_SETUP_DETECTED":              (LogLevel.MAJEUR,   "decisions", "BN V4 setup detected : sym={sym} dir={direction} grade={grade} density={density} n_levels={n_levels} mode={mode} entry={entry_price}"),
+    "BN_V4_OBSERVATION_LOG":             (LogLevel.INFO,     "decisions", "BN V4 observation log (grade A non-trade) : sym={sym} dir={direction} density={density} entry_simul={entry_price} pnl_simul_R={pnl_simul_R}"),
+    # Execution (orders, fills, trail)
+    # BN_V4_DTC_CONNECTED RETIRE (doublon avec DTC_CONNECT generique).
+    "BN_V4_TRADE_OPEN":                  (LogLevel.MAJEUR,   "execution", "BN V4 trade ouvert : sym={sym} dir={direction} grade={grade} entry={entry_price} sl={sl} risk_ticks={risk_ticks} qty={qty}"),
+    "BN_V4_BRACKET_PLACED":              (LogLevel.INFO,     "execution", "BN V4 bracket OCO place : sym={sym} parent_cid={parent_cid} sl_cid={sl_cid} tp_cid={tp_cid}"),
+    "BN_V4_TRAIL_SL_UPDATED":            (LogLevel.INFO,     "execution", "BN V4 trailing SL update : sym={sym} dir={direction} old_sl={old_sl} new_sl={new_sl} n_pivots={n_pivots}"),
+    "BN_V4_TRAIL_SL_CANCEL_REPLACE":     (LogLevel.MAJEUR,   "execution", "BN V4 trailing SL cancel+replace DTC : sym={sym} old_sl_cid={old_sl_cid} new_sl_cid={new_sl_cid} new_sl_price={new_sl_price}"),
+    "BN_V4_TRADE_CLOSE_SL":              (LogLevel.INFO,     "execution", "BN V4 trade close SL : sym={sym} dir={direction} exit={exit_price} pnl_R={pnl_R:.3f} duration_bars={duration_bars}"),
+    "BN_V4_TRADE_CLOSE_TIMEOUT":         (LogLevel.MAJEUR,   "execution", "BN V4 trade close timeout 90 bars : sym={sym} dir={direction} exit={exit_price} pnl_R={pnl_R:.3f}"),
+    "BN_V4_TRADE_CLOSE_MANUAL":          (LogLevel.MAJEUR,   "execution", "BN V4 trade close manuel (flatten kill) : sym={sym} dir={direction} exit={exit_price} pnl_R={pnl_R:.3f} reason={reason}"),
+    "BN_V4_ORPHAN_DETECTED":             (LogLevel.CRITIQUE, "execution", "BN V4 ordre orphelin detecte : sym={sym} order_cid={order_cid} type={order_type} action=cancel_force"),
+    # Risk / kill switches
+    "BN_V4_RISK_MAX_DD_HIT":             (LogLevel.CRITIQUE, "execution", "BN V4 RISK max DD hit : pnl_session={pnl_session} threshold={threshold} kill_switch=ON"),
+    "BN_V4_RISK_3_SL_CONSEC":            (LogLevel.MAJEUR,   "execution", "BN V4 RISK 3 SL consecutifs : sym={sym} dir={direction} cooldown_min={cooldown_min}"),
+    "BN_V4_KILL_SWITCH_ACTIVATED":       (LogLevel.CRITIQUE, "events",    "BN V4 KILL SWITCH active : reason={reason} positions_flat={positions_flat} orders_canceled={orders_canceled}"),
+    # BN_V4_RISK_KILL_GLOBAL RETIRE (doublon avec BN_V4_KILL_SWITCH_ACTIVATED).
+    # Ajout 23/05 Jackson directive "TOUT TRAKER" - enrichissement logs traceability
+    "BN_V4_SKIP_COOLDOWN":               (LogLevel.MAJEUR,   "decisions", "BN V4 trade SKIP cooldown actif (3 SL consec) : sym={sym} dir={direction} cooldown_remaining_min={remaining_min}"),
+    "BN_V4_SKIP_KILL_SWITCH":            (LogLevel.MAJEUR,   "decisions", "BN V4 trade SKIP kill switch actif : sym={sym} dir={direction} reason={reason}"),
+    "BN_V4_SKIP_POSITION_ACTIVE":        (LogLevel.INFO,     "decisions", "BN V4 setup SKIP : position deja ouverte sym={sym} dir_new={direction} dir_pos={direction_pos}"),
+    "BN_V4_OUTSIDE_WINDOW_CANDIDATE":    (LogLevel.INFO,     "decisions", "BN V4 candidate setup HORS open_window (WINDOW_OBSERVE mode) : sym={sym} ts_et={ts_et}"),
+    "BN_V4_OUTSIDE_WINDOW_LOG":          (LogLevel.INFO,     "decisions", "BN V4 setup A++ HORS window logge dans JSONL dedie : sym={sym} dir={direction} grade={grade} density={density} entry={entry_price} signal_id={signal_id}"),
+    "BN_V4_OUTSIDE_WINDOW_LOG_FAIL":     (LogLevel.MAJEUR,   "events",    "BN V4 _log_outside_window_setup CRASH (defensif, bot continue) : sym={sym} err={err}"),
+    "BN_V4_SKIP_DRY_RUN":                (LogLevel.INFO,     "decisions", "BN V4 trade SKIP dry_run : sym={sym} dir={direction} entry={entry_price}"),
+    "BN_V4_SKIP_ECO_BLOCK":              (LogLevel.MAJEUR,   "decisions", "BN V4 trade SKIP eco_calendar block : sym={sym} dir={direction} grade={grade} reason={reason}"),
+    "BN_V4_WARMUP_IN_PROGRESS":          (LogLevel.INFO,     "events",    "BN V4 warmup en cours : sym={sym} bars={bars}/{target} ({pct}%) - edge engine pas encore actif"),
+    "BN_V4_FILL_PRICE_INVALID":          (LogLevel.CRITIQUE, "execution", "BN V4 DTC fill INVALID (status!=7 ou fill_price<=0) : sym={sym} cid={cid} kind={kind} signal_id={signal_id} status={msg_status} type={order_type} qty={qty_filled} last={last_fill_price} avg={avg_fill_price} keys={msg_keys} - close ABORT (anti ghost trade)"),
+    "BOT3_V3_FILL_PRICE_INVALID":        (LogLevel.CRITIQUE, "execution", "Bot3v3 DTC fill INVALID (status!=7 ou fill_price<=0) : sym={sym} cid={cid} kind={kind} signal_id={signal_id} status={msg_status} type={order_type} qty={qty_filled} last={last_fill_price} avg={avg_fill_price} keys={msg_keys} - close ABORT (anti ghost trade)"),
+    "BOT3_V3_ENTRY_SLIP_ANOMALY":        (LogLevel.MAJEUR,   "execution", "Bot3v3 entry slip ANORMAL (>2t) : sym={sym} signal_id={signal_id} direction={direction} entry_planned={entry_planned} entry_filled={entry_filled} slip_ticks={slip_ticks}"),
+    "BOT3_V3_FILL_SLIPPAGE_REPORT":      (LogLevel.INFO,     "execution", "Bot3v3 fill slippage report (Phase 1 28/05) : sym={sym} signal_id={signal_id} direction={direction} kind={kind} entry_planned={entry_planned} entry_filled={entry_filled} entry_slip_t={entry_slip_t} exit_planned={exit_planned} exit_filled={exit_filled} sl_slip_t={sl_slip_t} tp_slip_t={tp_slip_t} pnl_R_planned={pnl_R_planned} pnl_R_real={pnl_R_real} pnl_R_slip_delta={pnl_R_slip_delta}"),
+    "BOT3_V4_FILL_PRICE_INVALID":        (LogLevel.CRITIQUE, "execution", "Bot3v4 DTC fill INVALID (status!=7 ou fill_price<=0) : sym={sym} cid={cid} kind={kind} signal_id={signal_id} status={msg_status} type={order_type} qty={qty_filled} last={last_fill_price} avg={avg_fill_price} keys={msg_keys} - close ABORT (anti ghost trade)"),
+    # 03/06 ajout fix DTC FILL_INVALID : status 6=Rejected / 8=Cancelled = etat terminal a tracer pour audit OCO cancel + rejects (level INFO, pas CRITIQUE)
+    "BOT3_V3_ORDER_TERMINAL":            (LogLevel.INFO,     "execution", "Bot3v3 ordre terminal status={msg_status} : sym={sym} cid={cid} kind={kind} signal_id={signal_id} (6=Rejected, 8=Cancelled)"),
+    "BOT3_V4_ORDER_TERMINAL":            (LogLevel.INFO,     "execution", "Bot3v4 ordre terminal status={msg_status} : sym={sym} cid={cid} kind={kind} signal_id={signal_id} (6=Rejected, 8=Cancelled)"),
+    "BN_V4_SKIP_POST_TRADE_COOLDOWN":    (LogLevel.MAJEUR,   "decisions", "BN V4 trade SKIP post-trade cooldown : sym={sym} dir={direction} grade={grade} reason={reason} remaining={remaining_sec}s"),
+    "BOT3_V3_ENTRY_VETO_POST_TRADE_COOLDOWN": (LogLevel.MAJEUR, "decisions", "Bot3v3 entry VETO post-trade cooldown : sym={sym} level={level} side={side} reason={reason} remaining={remaining_sec}s"),
+    "BOT3_V4_ENTRY_VETO_POST_TRADE_COOLDOWN": (LogLevel.MAJEUR, "decisions", "Bot3v4 entry VETO post-trade cooldown : sym={sym} level={level} side={side} reason={reason} remaining={remaining_sec}s"),
+    "BOT3_V4_TOUCH_FILTERED_TREND":      (LogLevel.MAJEUR,   "decisions", "Bot3v4 touch FILTERED trend : sym={sym} level={level} side={side} vwap_slope={vwap_slope} thr={threshold} session_id={session_id}"),
+    "BOT3_V4_SL_OVERRIDE_RECENT_EXTREME":(LogLevel.MAJEUR,   "decisions", "Bot3v4 SL OVERRIDE recent extreme : sym={sym} level={level} side={side} sl_old={sl_old} sl_new={sl_new} new_sl_ticks={new_sl_ticks} session_id={session_id}"),
+    "BOT3_V4_TOUCH_FILTERED_FOOTPRINT":  (LogLevel.MAJEUR,   "decisions", "Bot3v4 touch FILTERED footprint confirmation : sym={sym} level={level} side={side} n_cluster={n_cluster_dn}{n_cluster_up} long_bar={long_dn_bar}{long_up_bar} min={min_cluster} session_id={session_id}"),
+    "BOT3_V4_TOUCH_FILTERED_TREND_MISALIGN": (LogLevel.MAJEUR, "decisions", "Bot3v4 touch FILTERED trend misalign : sym={sym} level={level} side={side} vwap_slope={vwap_slope} (SHORT exige slope<0, LONG exige slope>0) session_id={session_id}"),
+    # 29/05 FIX Jackson : TOUCH != TRADE (F1 buffer=15t) + aggressor opposite (F2 thr=0.30). Backtest +$117 delta sur 9 trades.
+    "BOT3_V4_TOUCH_FILTERED_CLOSE_UNFAVORABLE": (LogLevel.MAJEUR, "decisions", "Bot3v4 touch FILTERED close unfavorable (TOUCH!=TRADE) : sym={sym} level={level} side={side} close={close} level_price={level_price} buffer_ticks={buffer_ticks} session_id={session_id}"),
+    "BOT3_V4_TOUCH_FILTERED_AGGRESSOR_OPPOSITE": (LogLevel.MAJEUR, "decisions", "Bot3v4 touch FILTERED aggressor opposite : sym={sym} level={level} side={side} aggressor_imbalance={aggressor_imbalance} threshold={threshold} session_id={session_id}"),
+    "BOT3_V4_TOUCH_F1_BYPASSED_NO_LEVEL_PRICE": (LogLevel.ALERTE, "decisions", "Bot3v4 F1 BYPASS no level_price : sym={sym} level={level} side={side} level_col={level_col} (anti VALIDATION_MISS) session_id={session_id}"),
+    "BOT3_V4_TOUCH_F2_BYPASSED_NO_AGGRESSOR": (LogLevel.ALERTE, "decisions", "Bot3v4 F2 BYPASS no aggressor_imbalance : sym={sym} level={level} side={side} (anti VALIDATION_MISS) session_id={session_id}"),
+    # 29/05 FIX F3 Jackson : state machine confirmation post-TOUCH (require_confirmation_next_bar)
+    "BOT3_V4_TOUCH_PENDING_CONFIRMATION": (LogLevel.INFO, "decisions", "Bot3v4 TOUCH PENDING confirmation : sym={sym} level={level} side={side} close={close} level_price={level_price} bar_idx={bar_idx} session_id={session_id}"),
+    "BOT3_V4_TOUCH_CONFIRMED_ENTRY":     (LogLevel.MAJEUR, "decisions", "Bot3v4 TOUCH CONFIRMED entry : sym={sym} level={level} side={side} close={close} level_price={level_price} age_bars={age_bars} session_id={session_id}"),
+    "BOT3_V4_TOUCH_CONFIRMATION_INVALIDATED": (LogLevel.MAJEUR, "decisions", "Bot3v4 TOUCH confirmation INVALIDATED : sym={sym} level={level} side={side} close={close} level_price={level_price} buffer_ticks={buffer_ticks} session_id={session_id}"),
+    # 03/06/2026 Jackson : combo filter pre-entry (anti falling knife / rallye persistent)
+    "BOT3_V4_VETO_COMBO_PRE_PRICE":        (LogLevel.MAJEUR, "decisions", "Bot3v4 VETO combo pre_price (falling knife/rallye) : sym={sym} level={level} side={side} pre_price_chg_t={pre_price_chg_t} threshold={threshold}"),
+    "BOT3_V4_VETO_COMBO_SLOPE":            (LogLevel.MAJEUR, "decisions", "Bot3v4 VETO combo slope (trend violent contraire) : sym={sym} level={level} side={side} slope={slope} threshold={threshold}"),
+    "BOT3_V4_VETO_COMBO_AGGRESSOR":        (LogLevel.MAJEUR, "decisions", "Bot3v4 VETO combo aggressor LONG (vendeurs forts) : sym={sym} level={level} side={side} aggressor={aggressor} threshold={threshold}"),
+    "BOT3_V4_VETO_COMBO_DELTA_SHORT":      (LogLevel.MAJEUR, "decisions", "Bot3v4 VETO combo delta SHORT (acheteurs forts) : sym={sym} level={level} side={side} delta_bar={delta_bar} threshold={threshold}"),
+    "BOT3_V4_TOUCH_CONFIRMATION_TIMEOUT": (LogLevel.ALERTE, "decisions", "Bot3v4 TOUCH confirmation TIMEOUT : sym={sym} level={level} side={side} age_bars={age_bars} max_age={max_age} session_id={session_id}"),
+    # 29/05 FIX Jackson : SLOPE ALIGNMENT GATE Bot 1 (V3 + MP via paper_v2)
+    "BOT1_SLOPE_GATE_VETO_LONG_AGAINST_DOWNTREND": (LogLevel.MAJEUR, "decisions", "Bot1 SLOPE GATE veto LONG contre downtrend : sym={sym} level={level} side={side} vslp={vslp} signal_id={signal_id}"),
+    "BOT1_SLOPE_GATE_VETO_SHORT_AGAINST_UPTREND": (LogLevel.MAJEUR, "decisions", "Bot1 SLOPE GATE veto SHORT contre uptrend : sym={sym} level={level} side={side} vslp={vslp} signal_id={signal_id}"),
+    "BOT1_SLOPE_GATE_BYPASS_NO_DATA":    (LogLevel.ALERTE,   "decisions", "Bot1 SLOPE GATE BYPASS no vwap_slope_10 (anti VALIDATION_MISS) : sym={sym} level={level} side={side} signal_id={signal_id}"),
+    "BOT3_V4_PARAM_OVERRIDE_ENV":        (LogLevel.MAJEUR,   "events", "Bot3v4 param override env var : param={param} override_value={override_value} source={source}"),
+    "BOT3_V4_PARAM_OVERRIDE_ENV_FAIL":   (LogLevel.ALERTE,   "events", "Bot3v4 param override env var FAIL parse : param={param} raw_value={raw_value} err={err}"),
+    "BOT3_V3_RETEST_FILTERED_TREND_MISALIGN": (LogLevel.MAJEUR, "decisions", "Bot3v3 retest FILTERED trend : sym={sym} level={level} side={side} vwap_slope={vwap_slope} veto_reason={veto_reason} min_slope_abs={min_slope_abs} session_id={session_id}"),
+    "BOT3_V3_SL_FIXED_MODE":             (LogLevel.INFO,     "decisions", "Bot3v3 SL/TP FIXE mode actif : sym={sym} side={side} sl_ticks={sl_ticks} tp_ticks={tp_ticks} RR={rr}"),
+    "BOT3_V3_VETO_NO_SLOPE_DATA":        (LogLevel.MAJEUR,   "decisions", "Bot3v3 retest VETO no slope data : sym={sym} level={level} side={side} (vwap_slope_10 absent en mode trend_alignment_required, fail-closed par securite)"),
+    "BN_V4_GATE_SL_RISK_BLOCK":          (LogLevel.MAJEUR,   "decisions", "BN V4 gate SL_RISK block : sym={sym} dir={direction} entry={entry} err={err} (setup skip propre, pas crash)"),
+    "BOT3_V3_SL_FALLBACK_REASON":        (LogLevel.INFO,     "decisions", "Bot3v3 SL fallback reason : sym={sym} side={side} reason={reason} sl_ticks={sl_ticks} swing_raw={swing_raw_ticks} sl_max={sl_max} sl_fallback={sl_fallback} atr_pts={atr_pts}"),
+    "BOT3_V4_SL_FALLBACK_REASON":        (LogLevel.INFO,     "decisions", "Bot3v4 SL fallback reason : sym={sym} side={side} reason={reason} sl_ticks={sl_ticks} swing_raw={swing_raw_ticks} sl_max={sl_max} sl_fallback={sl_fallback} atr_pts={atr_pts}"),
+    "BOT3_V3_TOUCH_FILTERED_FOOTPRINT":  (LogLevel.MAJEUR,   "decisions", "Bot3v3 retest FILTERED footprint confirmation : sym={sym} level={level} side={side} n_cluster={n_cluster} long_bar={long_bar} session_id={session_id}"),
+    "ECO_CALENDAR_FAIL_FAILCLOSED":      (LogLevel.CRITIQUE, "events",    "eco_calendar module FAIL (import/runtime) : sym={sym} bot={bot} err={err} -> fail-closed (refuse trade par securite)"),
+    "BN_V4_RISK_COOLDOWN_ACTIVATED":     (LogLevel.MAJEUR,   "execution", "BN V4 RISK cooldown ACTIVATED : sym={sym} consec_sl={consec_sl} cooldown_min={cooldown_min} expires={expires_iso}"),
+    "BN_V4_RISK_COOLDOWN_EXPIRED":       (LogLevel.INFO,     "events",    "BN V4 RISK cooldown EXPIRED : sym={sym} trades reprises"),
+    "BN_V4_DTC_DOWN":                    (LogLevel.CRITIQUE, "events",    "BN V4 DTC down (connexion broken) : sym={sym} action=skip_cycle_until_reconnect"),
+    # BN_V4_DTC_RECONNECT RETIRE (pas de detection auto reconnect implementee).
+    "BN_V4_SETUP_DTC_ABORT":             (LogLevel.MAJEUR,   "execution", "BN V4 setup detected mais bracket DTC abort : sym={sym} dir={direction} reason={reason}"),
+    "BN_V4_HEARTBEAT":                   (LogLevel.INFO,     "events",    "BN V4 heartbeat : sym={sym} uptime_min={uptime_min} bars={n_bars} setups={n_setups} trades={n_trades} pnl_usd={pnl_usd}"),
+    "BN_V4_DATA_STATS":                  (LogLevel.INFO,     "events",    "BN V4 data stats periodic : sym={sym} bars_buffer={bars_buffer} last_close={last_close} last_bar_age_sec={age_sec}"),
+    # BN_V4_GATE_OBSERVE_LIMIT RETIRE (couvert par check_zone return None
+    # quand grade_value < observe_threshold, pas besoin de code distinct).
+    # ════════════════════════════════════════════════════════════════════════
+    # BOT 3 v3 CONTINUATION (Sim1 NQ — paper deploy 24/05/2026)
+    # Backtest baseline : n=1611 WR43% PF1.045 DSR0.21 PF_min_fold=0.75 sur 130j.
+    # State machine 4 etats : WAITING_TOUCH → ARMED → BREAKOUT → WAITING_RETEST → CONFIRMATION → ENTRY
+    # 22 niveaux V1_LONG + V4_SHORT, SL swing-based, TP 1.5R, news veto fail-closed.
+    # Source data unique : JSONL live_enriched (lag 60s).
+    # ════════════════════════════════════════════════════════════════════════
+    # Lifecycle (Bot 3 v3)
+    "BOT3_V3_BOOT_START":                (LogLevel.INFO,     "events",    "Bot3v3 boot start : sym={sym} dry_run={dry_run} trade_account={trade_account} mode={mode}"),
+    "BOT3_V3_CONFIG_LOADED":             (LogLevel.INFO,     "events",    "Bot3v3 config loaded : touch_buf={touch_buf} breakout_buf={breakout_buf} retest_buf={retest_buf} w_touch_brk={w1} w_brk_retest={w2} w_retest_conf={w3} target_R={target_R} sl_fallback_t={sl_fallback} max_risk_t={max_risk_t}"),
+    "BOT3_V3_BOOT_READY":                (LogLevel.INFO,     "events",    "Bot3v3 boot ready : sym={sym} dtc_state={dtc_state} reader_state={reader_state} levels_loaded={n_levels}"),
+    "BOT3_V3_SHUTDOWN":                  (LogLevel.MAJEUR,   "events",    "Bot3v3 shutdown : reason={reason} positions_open={positions_open}"),
+    "BOT3_V3_LOOP_ERROR":                (LogLevel.CRITIQUE, "events",    "Bot3v3 loop error : sym={sym} err={err}"),
+    "BOT3_V3_HEARTBEAT":                 (LogLevel.INFO,     "events",    "Bot3v3 heartbeat : sym={sym} uptime_min={uptime_min} bars={n_bars} touches={n_touches} entries={n_entries} trades={n_trades} pnl_usd={pnl_usd}"),
+    "BOT3_V3_BAR_STALE":                 (LogLevel.ALERTE,   "events",    "Bot3v3 bar stale skip cycle : sym={sym} age_sec={age_sec} threshold_sec={threshold_sec}"),
+    # State machine transitions
+    "BOT3_V3_TOUCH_DETECTED":            (LogLevel.INFO,     "decisions", "Bot3v3 TOUCH detected : sym={sym} level={level} side={side} dist_pct={dist_pct} touch_idx={touch_idx}"),
+    "BOT3_V3_STATE_ARMED":               (LogLevel.INFO,     "decisions", "Bot3v3 state ARMED (post-touch) : sym={sym} level={level} side={side} level_price={level_price}"),
+    "BOT3_V3_BREAKOUT_CONFIRMED":        (LogLevel.INFO,     "decisions", "Bot3v3 BREAKOUT confirmed : sym={sym} level={level} side={side} close={close} threshold={threshold} bars_since_touch={bars_since_touch}"),
+    "BOT3_V3_RETEST_DETECTED":           (LogLevel.INFO,     "decisions", "Bot3v3 RETEST detected : sym={sym} level={level} side={side} close={close} bars_since_breakout={bars_since_breakout}"),
+    "BOT3_V3_CONFIRMATION_OK":           (LogLevel.MAJEUR,   "decisions", "Bot3v3 CONFIRMATION OK (entry signal) : sym={sym} level={level} side={side} confirm_bar={confirm_bar} entry_close={entry_close}"),
+    "BOT3_V3_STATE_TIMEOUT":             (LogLevel.INFO,     "decisions", "Bot3v3 state TIMEOUT (reset) : sym={sym} level={level} state={state} bars_in_state={bars}"),
+    # Entry / DTC / Trade lifecycle
+    "BOT3_V3_ENTRY_VETO_NEWS":           (LogLevel.MAJEUR,   "decisions", "Bot3v3 entry VETO news : sym={sym} level={level} side={side} mins_since={mins_since} mins_to_next={mins_to_next}"),
+    "BOT3_V3_ENTRY_VETO_ECO_BLOCK":      (LogLevel.MAJEUR,   "decisions", "Bot3v3 entry VETO eco_calendar : sym={sym} level={level} side={side} reason={reason}"),
+    "BOT3_V3_ENTRY_VETO_POSITION":       (LogLevel.INFO,     "decisions", "Bot3v3 entry VETO position active : sym={sym} level={level} side_new={side} side_pos={side_pos}"),
+    "BOT3_V3_ENTRY_VETO_KILL_SWITCH":    (LogLevel.MAJEUR,   "decisions", "Bot3v3 entry VETO kill switch : sym={sym} level={level} side={side} reason={reason}"),
+    "BOT3_V3_ENTRY_VETO_DRY_RUN":        (LogLevel.INFO,     "decisions", "Bot3v3 entry SKIP dry_run : sym={sym} level={level} side={side} entry_close={entry_close} sl={sl} tp={tp}"),
+    "BOT3_V3_TRADE_OPEN":                (LogLevel.MAJEUR,   "execution", "Bot3v3 trade ouvert : sym={sym} level={level} side={side} entry={entry_price} sl={sl_price} tp={tp_price} sl_ticks={sl_ticks} qty={qty}"),
+    "BOT3_V3_BRACKET_PLACED":            (LogLevel.INFO,     "execution", "Bot3v3 bracket OCO place : sym={sym} parent_cid={parent_cid} tp_cid={tp_cid} sl_cid={sl_cid} trade_account={trade_account}"),
+    "BOT3_V3_SETUP_DTC_ABORT":           (LogLevel.MAJEUR,   "execution", "Bot3v3 setup detected mais bracket DTC abort : sym={sym} level={level} side={side} reason={reason}"),
+    "BOT3_V3_TRADE_CLOSE_TP":            (LogLevel.INFO,     "execution", "Bot3v3 trade close TP : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R} pnl_usd={pnl_usd} duration_bars={duration_bars}"),
+    "BOT3_V3_TRADE_CLOSE_SL":            (LogLevel.INFO,     "execution", "Bot3v3 trade close SL : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R} pnl_usd={pnl_usd} duration_bars={duration_bars}"),
+    "BOT3_V3_TRADE_CLOSE_TIMEOUT":       (LogLevel.MAJEUR,   "execution", "Bot3v3 trade close timeout {timeout_bars}b : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R}"),
+    "BOT3_V3_TRADE_CLOSE_EOD":           (LogLevel.INFO,     "execution", "Bot3v3 trade close EOD : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R}"),
+    "BOT3_V3_TRADE_CLOSE_MANUAL":        (LogLevel.MAJEUR,   "execution", "Bot3v3 trade close manuel (kill flatten) : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R} reason={reason}"),
+    # DTC / anti-orphan (sequence 9 etapes cf orphan-prevention.md)
+    "BOT3_V3_DTC_DOWN":                  (LogLevel.CRITIQUE, "events",    "Bot3v3 DTC down (connexion broken) : sym={sym} action=skip_cycle_until_reconnect"),
+    "BOT3_V3_ORPHAN_DETECTED":           (LogLevel.CRITIQUE, "execution", "Bot3v3 ordre orphelin detecte : sym={sym} order_cid={order_cid} type={order_type} action=cancel_force"),
+    "BOT3_V3_ORPHAN_CLEANUP_OK":         (LogLevel.MAJEUR,   "execution", "Bot3v3 orphan cleanup OK : sym={sym} canceled_cids={canceled_cids} qty_final={qty_final}"),
+    "BOT3_V3_ORPHAN_CLEANUP_FAIL":       (LogLevel.CRITIQUE, "execution", "Bot3v3 orphan cleanup FAIL : sym={sym} failed_cids={failed_cids} qty_residual={qty_residual} action=manual_intervention"),
+    "BOT3_V3_POSITION_FANTOME":          (LogLevel.CRITIQUE, "execution", "Bot3v3 position fantome detectee (no tracking) : sym={sym} qty_broker={qty_broker} action=force_flatten"),
+    # Risk / kill switches
+    "BOT3_V3_KILL_DD_DAILY":             (LogLevel.CRITIQUE, "execution", "Bot3v3 KILL daily DD hit : pnl_session={pnl_session} threshold={threshold} kill_switch=ON"),
+    "BOT3_V3_KILL_DD_CUMULATIVE":        (LogLevel.CRITIQUE, "execution", "Bot3v3 KILL cumulative DD hit (paper) : pnl_cumulative_R={pnl_cumulative_R} threshold_R={threshold_R}"),
+    "BOT3_V3_KILL_MANUAL":               (LogLevel.MAJEUR,   "events",    "Bot3v3 KILL manual : reason={reason} positions_flat={positions_flat} orders_canceled={orders_canceled}"),
+
+    # ════════════════════════════════════════════════════════════════════════
+    # BOT 3 v4 DATA-DRIVEN (Sim3 NQ — paper deploy 24/05/2026)
+    # Backtest baseline : n=1110 WR30% PF1.033 DSR0.13 PF_min_fold=0.51 sur 130j.
+    # 6 triggers asymetriques empiriques (analyse 54K bounces) :
+    #   LONG : SWING_LOW (81%), VWAP_D_SD2D (72%), CUR_VAL (61%)
+    #   SHORT : SWING_HIGH (76%), VWAP_D_SD2U (72%), CUR_VAH (63%)
+    # TP CUR_VPOC magnet (CRITIQUE : R1.5 fixe detruit signal, PF 0.74 vs 1.03).
+    # ════════════════════════════════════════════════════════════════════════
+    # Lifecycle (Bot 3 v4)
+    "BOT3_V4_BOOT_START":                (LogLevel.INFO,     "events",    "Bot3v4 boot start : sym={sym} dry_run={dry_run} trade_account={trade_account} mode={mode}"),
+    "BOT3_V4_CONFIG_LOADED":             (LogLevel.INFO,     "events",    "Bot3v4 config loaded : touch_buf={touch_buf} cooldown_bars={cooldown_bars} max_per_day={max_per_day} sl_fallback_t={sl_fallback} tp_mode={tp_mode} timeout_bars={timeout_bars}"),
+    "BOT3_V4_BOOT_READY":                (LogLevel.INFO,     "events",    "Bot3v4 boot ready : sym={sym} dtc_state={dtc_state} reader_state={reader_state} triggers_long={n_triggers_long} triggers_short={n_triggers_short}"),
+    "BOT3_V4_SHUTDOWN":                  (LogLevel.MAJEUR,   "events",    "Bot3v4 shutdown : reason={reason} positions_open={positions_open}"),
+    "BOT3_V4_LOOP_ERROR":                (LogLevel.CRITIQUE, "events",    "Bot3v4 loop error : sym={sym} err={err}"),
+    "BOT3_V4_HEARTBEAT":                 (LogLevel.INFO,     "events",    "Bot3v4 heartbeat : sym={sym} uptime_min={uptime_min} bars={n_bars} touches={n_touches} entries={n_entries} trades={n_trades} pnl_usd={pnl_usd}"),
+    "BOT3_V4_BAR_STALE":                 (LogLevel.ALERTE,   "events",    "Bot3v4 bar stale skip cycle : sym={sym} age_sec={age_sec} threshold_sec={threshold_sec}"),
+    # Touch detection
+    "BOT3_V4_TOUCH_DETECTED":            (LogLevel.INFO,     "decisions", "Bot3v4 TOUCH first-time detected : sym={sym} level={level} side={side} dist_pct={dist_pct} asym_prob={asym_prob}"),
+    "BOT3_V4_TOUCH_FILTERED_COOLDOWN":   (LogLevel.INFO,     "decisions", "Bot3v4 touch filtered cooldown : sym={sym} level={level} bars_since_last={bars_since_last} cooldown={cooldown}"),
+    "BOT3_V4_TOUCH_FILTERED_DAILY_CAP":  (LogLevel.INFO,     "decisions", "Bot3v4 touch filtered daily cap : sym={sym} level={level} count_today={count_today} cap={cap}"),
+    # TP magnet logic
+    "BOT3_V4_TP_VPOC_MAGNET":            (LogLevel.INFO,     "decisions", "Bot3v4 TP cur_vpoc magnet used : sym={sym} side={side} entry={entry} vpoc={vpoc} tp={tp_price}"),
+    "BOT3_V4_TP_FALLBACK_R15":           (LogLevel.INFO,     "decisions", "Bot3v4 TP fallback R1.5 (vpoc too close/far) : sym={sym} side={side} entry={entry} vpoc={vpoc} tp_r15={tp_r15} reason={reason}"),
+    # Entry / DTC / Trade
+    "BOT3_V4_ENTRY_VETO_NEWS":           (LogLevel.MAJEUR,   "decisions", "Bot3v4 entry VETO news : sym={sym} level={level} side={side} mins_since={mins_since} mins_to_next={mins_to_next}"),
+    "BOT3_V4_ENTRY_VETO_ECO_BLOCK":      (LogLevel.MAJEUR,   "decisions", "Bot3v4 entry VETO eco_calendar : sym={sym} level={level} side={side} reason={reason}"),
+    "BOT3_V4_ENTRY_VETO_POSITION":       (LogLevel.INFO,     "decisions", "Bot3v4 entry VETO position active : sym={sym} level={level} side_new={side} side_pos={side_pos}"),
+    "BOT3_V4_ENTRY_VETO_KILL_SWITCH":    (LogLevel.MAJEUR,   "decisions", "Bot3v4 entry VETO kill switch : sym={sym} level={level} side={side} reason={reason}"),
+    "BOT3_V4_ENTRY_VETO_DRY_RUN":        (LogLevel.INFO,     "decisions", "Bot3v4 entry SKIP dry_run : sym={sym} level={level} side={side} entry_close={entry_close} sl={sl} tp={tp}"),
+    "BOT3_V4_TRADE_OPEN":                (LogLevel.MAJEUR,   "execution", "Bot3v4 trade ouvert : sym={sym} level={level} side={side} entry={entry_price} sl={sl_price} tp={tp_price} sl_ticks={sl_ticks} qty={qty}"),
+    "BOT3_V4_BRACKET_PLACED":            (LogLevel.INFO,     "execution", "Bot3v4 bracket OCO place : sym={sym} parent_cid={parent_cid} tp_cid={tp_cid} sl_cid={sl_cid} trade_account={trade_account}"),
+    "BOT3_V4_SETUP_DTC_ABORT":           (LogLevel.MAJEUR,   "execution", "Bot3v4 setup detected mais bracket DTC abort : sym={sym} level={level} side={side} reason={reason}"),
+    "BOT3_V4_TRADE_CLOSE_TP":            (LogLevel.INFO,     "execution", "Bot3v4 trade close TP : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R} pnl_usd={pnl_usd} duration_bars={duration_bars}"),
+    "BOT3_V4_TRADE_CLOSE_SL":            (LogLevel.INFO,     "execution", "Bot3v4 trade close SL : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R} pnl_usd={pnl_usd} duration_bars={duration_bars}"),
+    "BOT3_V4_TRADE_CLOSE_TIMEOUT":       (LogLevel.MAJEUR,   "execution", "Bot3v4 trade close timeout {timeout_bars}b : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R}"),
+    "BOT3_V4_TRADE_CLOSE_EOD":           (LogLevel.INFO,     "execution", "Bot3v4 trade close EOD : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R}"),
+    "BOT3_V4_TRADE_CLOSE_MANUAL":        (LogLevel.MAJEUR,   "execution", "Bot3v4 trade close manuel (kill flatten) : sym={sym} level={level} side={side} exit={exit_price} pnl_R={pnl_R} reason={reason}"),
+    # DTC / anti-orphan
+    "BOT3_V4_DTC_DOWN":                  (LogLevel.CRITIQUE, "events",    "Bot3v4 DTC down (connexion broken) : sym={sym} action=skip_cycle_until_reconnect"),
+    "BOT3_V4_ORPHAN_DETECTED":           (LogLevel.CRITIQUE, "execution", "Bot3v4 ordre orphelin detecte : sym={sym} order_cid={order_cid} type={order_type} action=cancel_force"),
+    "BOT3_V4_ORPHAN_CLEANUP_OK":         (LogLevel.MAJEUR,   "execution", "Bot3v4 orphan cleanup OK : sym={sym} canceled_cids={canceled_cids} qty_final={qty_final}"),
+    "BOT3_V4_ORPHAN_CLEANUP_FAIL":       (LogLevel.CRITIQUE, "execution", "Bot3v4 orphan cleanup FAIL : sym={sym} failed_cids={failed_cids} qty_residual={qty_residual} action=manual_intervention"),
+    "BOT3_V4_POSITION_FANTOME":          (LogLevel.CRITIQUE, "execution", "Bot3v4 position fantome detectee (no tracking) : sym={sym} qty_broker={qty_broker} action=force_flatten"),
+    # Risk / kill switches
+    "BOT3_V4_KILL_DD_DAILY":             (LogLevel.CRITIQUE, "execution", "Bot3v4 KILL daily DD hit : pnl_session={pnl_session} threshold={threshold} kill_switch=ON"),
+    "BOT3_V4_KILL_DD_CUMULATIVE":        (LogLevel.CRITIQUE, "execution", "Bot3v4 KILL cumulative DD hit (paper) : pnl_cumulative_R={pnl_cumulative_R} threshold_R={threshold_R}"),
+    "BOT3_V4_KILL_MANUAL":               (LogLevel.MAJEUR,   "events",    "Bot3v4 KILL manual : reason={reason} positions_flat={positions_flat} orders_canceled={orders_canceled}"),
+
     # P1.1 (06/05) : shutdown pre-emptive cancel
     "BOT3_SHUTDOWN_PREEMPTIVE_CANCEL":   (LogLevel.MAJEUR,   "execution", "Bot 3 shutdown pre-emptive cancel : {sym} label={label} cid={cid}"),
     "BOT3_SHUTDOWN_CANCEL_FAIL":         (LogLevel.ALERTE,   "execution", "Bot 3 shutdown cancel fail : {sym} label={label} err={err}"),
@@ -497,6 +826,7 @@ LOG_CODES = {
     #   Logique : si vraiment grave (ES stuck heures), DMP_JSONL_STALE deja CRITIQUE alerte.
     "DOWNLOAD_EMPTY_RESPONSE":   (LogLevel.CRITIQUE, "data", "Databento API empty response (0 records) : {schema} {symbol} {day} end={end} - DBN preserve (pas overwrite vide)"),
     "DOWNLOAD_NON_RETRY_EXC":    (LogLevel.CRITIQUE, "data", "Databento download exception non-retry : {schema} {symbol} {day} type={exc_type} msg={exc_msg}"),
+    "DOWNLOAD_TOO_EARLY":        (LogLevel.INFO,     "data", "Databento download trop tot (fenetre vide debut de journee) : {schema} {symbol} {day} start={start} end={end} - skip, rien a telecharger"),
     "DOWNLOAD_STALE_POST_FETCH": (LogLevel.MAJEUR,   "data", "Post-DL : fichier non refresh apres call API : {schema} {symbol} reason={reason}"),
 
     # Anomalies generiques python (paper_trader)
@@ -607,9 +937,14 @@ LOG_CODES = {
     # ============================================================
     # V6 brain Sim2 (05/05) — Bot V6 enrichi Databento V4
     # ============================================================
-    "BRAIN_V6_ACTIVE":           (LogLevel.INFO,    "events",    "Bot V6 brain actif : {sym} regime_mode={regime_mode} favor={regime_favor} bias_v6_score={bias_v6_score} dir={bias_v6_dir}"),
-    "V6_V4_BAR_STALE":           (LogLevel.MAJEUR,  "events",    "V6 bar V4 STALE : {sym} age={age_sec}s > {threshold}s (pipeline V4 retard) -> fallback DMP"),
-    "V6_V4_FALLBACK_DMP":        (LogLevel.ALERTE,  "events",    "V6 fallback DMP : {sym} V4 indisponible source={fallback_source} reason={reason}"),
+    # FIX 19/05 PM (audit Bot 2 V6 agent) : reclassif categorie events -> decisions
+    # car critique edge V6 perdu silencieusement quand V4 fallback DMP.
+    # Avant : noyé dans events INFO (9080 BRAIN_V6_ACTIVE par jour, signal manqué).
+    # Apres : decisions/ avec niveaux explicites (MAJEUR pour fallback, CRITIQUE
+    # pour stale > seuil critique). Permet audit J+1 via grep `decisions/*paper_v6*`.
+    "BRAIN_V6_ACTIVE":           (LogLevel.INFO,    "decisions", "Bot V6 brain actif : {sym} regime_mode={regime_mode} favor={regime_favor} bias_v6_score={bias_v6_score} dir={bias_v6_dir}"),
+    "V6_V4_BAR_STALE":           (LogLevel.CRITIQUE, "decisions", "V6 bar V4 STALE : {sym} age={age_sec}s > {threshold}s (pipeline V4 retard) -> fallback DMP - edge V6 votes 11-16/blocs 7-16 INDISPONIBLE"),
+    "V6_V4_FALLBACK_DMP":        (LogLevel.MAJEUR,  "decisions", "V6 fallback DMP : {sym} V4 indisponible source={fallback_source} reason={reason} - regime degrade (V4 features manquantes)"),
     "V6_CHASE_SKIPPED":          (LogLevel.INFO,    "decisions", "V6 CHASE skipped (R8 raffinement) : {sym} {direction} reason={reason}"),
     "V6_VOLUME_Z_TOO_LOW":       (LogLevel.MAJEUR,  "decisions", "V6 reject : {sym} {direction} volume_z={volume_z} < {threshold} (faux-breakout pepite #2)"),
 
@@ -706,6 +1041,9 @@ LOG_CODES = {
 
     # DirectionResolver Phase 3 - 6 codes
     "BOT3_RESOLVER_DIRECTION_RESOLVED":     (LogLevel.MAJEUR,  "decisions", "Bot3 RESOLVER direction : {sym} side={side} conf={confidence:.2f} scenario={scenario_id} state={state}"),
+    # FIX 19/05 PM (investigation V2 SHADOW ZERO) : diagnostic init state V2
+    "BOT3_ENGINE_INIT_V2_STATE":            (LogLevel.MAJEUR,  "events", "Bot3Engine init V2 narrative : nsm_set={nsm_set} resolver_set={resolver_set} use_narrative={use_narrative} v2_available={v2_available} tracking_only={tracking_only}"),
+    "BOT3_NSM_STATE_CHANGE":                (LogLevel.INFO,    "decisions", "NSM state change : {sym} {prev_state} -> {cur_state} (transition_count={count})"),
     "BOT3_RESOLVER_NO_TRADE":               (LogLevel.INFO,    "decisions", "Bot3 RESOLVER no_trade : {sym} reason={reason} state={state}"),
     "BOT3_RESOLVER_PENDING_ENTRY":          (LogLevel.INFO,    "decisions", "Bot3 RESOLVER pending entry : {sym} scenario={scenario_id} pattern={pattern} bars_to_wait={bars_to_wait}"),
     "BOT3_RESOLVER_CONFIRMATION_OK":        (LogLevel.MAJEUR,  "decisions", "Bot3 RESOLVER confirmation OK : {sym} scenario={scenario_id} side={side} bars_waited={bars_waited}"),
@@ -714,6 +1052,93 @@ LOG_CODES = {
 
     # ShadowMode Phase 3 - 1 code
     "BOT3_SHADOW_DIVERGENCE":               (LogLevel.MAJEUR,  "decisions", "Bot3 SHADOW divergence v1 vs v2 : {sym} legacy={legacy_side} narrative={narrative_side} scenario={scenario_id}"),
+
+    # ════════════════════════════════════════════════════════════════════════
+    # BOT 4 MIA Trader (Sim4 paper deploy 27/05/2026)
+    # Phase 7.1 SAFE COLLECT 1 micro -> 7.2 PAPER AGGRESSIVE 3 micros.
+    # Architecture M1->M2->M4->M3->M5->M3.5 (cf MASTER_PLAN J10/J11).
+    # 50 codes V2 (apres review : doublons telemetry M6 Pydantic supprimes).
+    # ════════════════════════════════════════════════════════════════════════
+
+    # Lifecycle Bot 4 (10 codes)
+    "BOT4_BOOT_START":              (LogLevel.INFO,     "events", "Bot4 boot start : symbols={symbols} dry_run={dry_run} trade_account={trade_account}"),
+    "BOT4_BOOT_READY":              (LogLevel.INFO,     "events", "Bot4 boot ready : dtc_state={dtc_state} reader_state={reader_state} risk_mode={risk_mode} phase={phase}"),
+    "BOT4_BOOT_FAIL":               (LogLevel.CRITIQUE, "events", "Bot4 boot FAIL : reason={reason} dtc_connected={dtc_connected}"),
+    "BOT4_BOOT_LOCK_RECOVERY":      (LogLevel.ALERTE,   "events", "Bot4 lock file stale parse + replace : path={lock_path} stale_pid={stale_pid}"),
+    "BOT4_CONFIG_LOADED":           (LogLevel.INFO,     "events", "Bot4 config loaded : risk_mode={risk_mode} sizing={sizing_mode} tr40={tr40_enabled} mfe_tp={mfe_tp_enabled} dry_run={dry_run}"),
+    "BOT4_LOCK_FAIL":               (LogLevel.CRITIQUE, "events", "Bot4 lock file present, double-instance bloquee : path={lock_path} content={content}"),
+    "BOT4_SHUTDOWN":                (LogLevel.MAJEUR,   "events", "Bot4 shutdown : reason={reason} positions_open={positions_open}"),
+    "BOT4_HEARTBEAT":               (LogLevel.INFO,     "events", "Bot4 heartbeat : uptime_min={uptime_min} bars_processed={bars_processed} trades_today={trades_today} positions={positions}"),
+    "BOT4_LOOP_EXCEPTION":          (LogLevel.CRITIQUE, "events", "Bot4 loop exception : symbol={symbol} exc_type={exc_type} exc_msg={exc_msg}"),
+    "BOT4_KILL_SWITCH_DETECTED":    (LogLevel.MAJEUR,   "events", "Bot4 kill switch detected STOP.flag : path={kill_switch_path}"),
+
+    # Reader M1 (6 codes - degraded modes only, ReaderEvent Pydantic capture le reste)
+    "BOT4_READER_NO_BAR":           (LogLevel.ALERTE,   "events", "Bot4 reader no bar : sym={sym} live_root={live_root} reason={reason}"),
+    "BOT4_READER_MENTHORQ_STALE":   (LogLevel.ALERTE,   "events", "Bot4 reader MenthorQ stale : sym={sym} staleness_h={staleness_h} threshold_h=48"),
+    "BOT4_READER_MENTHORQ_ABSENT":  (LogLevel.ALERTE,   "events", "Bot4 reader MenthorQ absent : sym={sym} root={menthorq_root}"),
+    "BOT4_READER_MENTHORQ_SCHEMA_MISMATCH": (LogLevel.CRITIQUE, "events", "Bot4 reader MenthorQ schema mismatch reason={reason} : sym={sym} path={path} payload_top_keys={top_keys} symbol_present={sym_present} structured_present={structured_present} key_levels_extracted={kl_extracted}"),
+    "BOT4_READER_TS_FALLBACK":      (LogLevel.ALERTE,   "events", "Bot4 reader ts_event_ns fallback walltime : sym={sym} ts_raw={ts_raw}"),
+    "BOT4_READER_DEGRADED":         (LogLevel.ALERTE,   "events", "Bot4 reader data degraded : sym={sym} reasons={reasons} menthorq_fresh={menthorq_fresh}"),
+    "BOT4_REGIME_INSUFFICIENT_FEATURES": (LogLevel.ALERTE, "events", "Bot4 L1 regime_v2 votes insuffisants : sym={sym} votes_total={votes_total} (threshold=4) -> regime conf peu fiable (typique hors-RTH features MP NaN)"),
+
+    # Risk M4 (3 codes - transitions only, RiskEvent Pydantic capture blocking_gate)
+    "BOT4_RISK_TRADE_OPEN":         (LogLevel.INFO,     "risk", "Bot4 risk trade_open : sym={sym} side={side} signal_id={signal_id} entry={entry_price} sl={sl_price} tp={tp_price} sl_ticks={sl_ticks} qty={qty} positions_open_after={positions_open}"),
+    "BOT4_RISK_TRADE_CLOSE":        (LogLevel.INFO,     "risk", "Bot4 risk trade_close : sym={sym} signal_id={signal_id} pnl_usd={pnl_usd} exit_reason={exit_reason} consec_sl={consec_sl}"),
+    "BOT4_RISK_DAILY_RESET":        (LogLevel.INFO,     "risk", "Bot4 risk daily reset : sym={sym} new_session={new_session_date} pnl_prev={pnl_prev}"),
+
+    # SLTP M3 (1 code - exception only, SLTPEvent Pydantic capture reject_reason)
+    "BOT4_SLTP_ADAPTER_ERROR":      (LogLevel.CRITIQUE, "events", "Bot4 SLTP adapter ERROR : sym={sym} dir={direction} err={err}"),
+
+    # Execution M5 (14 codes - IO transitions DTC)
+    "BOT4_EXEC_BRACKET_SENT":       (LogLevel.INFO,     "execution", "Bot4 exec bracket sent : sym={sym} side={side} qty={qty} parent={parent_id} tp_cid={tp_cid} sl_cid={sl_cid} signal_ref={signal_ref_price}"),
+    "BOT4_EXEC_BRACKET_FAIL":       (LogLevel.MAJEUR,   "execution", "Bot4 exec bracket FAIL : sym={sym} side={side} qty={qty} reject_reason={reject_reason}"),
+    "BOT4_EXEC_FILL_PARENT":        (LogLevel.INFO,     "execution", "Bot4 exec FILL parent : sym={sym} cid={cid} fill_price={fill_price} signal_ref={signal_ref_price} slip_ticks={slip_ticks}"),
+    "BOT4_EXEC_FILL_TP":            (LogLevel.INFO,     "execution", "Bot4 exec FILL TP : sym={sym} cid={cid} fill_price={fill_price} pnl_ticks={pnl_ticks}"),
+    "BOT4_EXEC_FILL_SL":            (LogLevel.INFO,     "execution", "Bot4 exec FILL SL : sym={sym} cid={cid} fill_price={fill_price} pnl_ticks={pnl_ticks}"),
+    "BOT4_EXEC_FILL_INVALID":       (LogLevel.CRITIQUE, "execution", "Bot4 exec FILL INVALID (ghost trade) : sym={sym} cid={cid} status={order_status} fill_price={fill_price} qty={filled_qty}"),
+    "BOT4_FILL_UNKNOWN_CID":        (LogLevel.INFO,     "execution", "Bot4 fill CID inconnu (recovery post-restart, autre bot, ou re-livraison) : cid={cid} fill_price={fill_price} is_tp={is_tp} is_sl={is_sl}"),
+
+    # State persistance open_positions (fix BUG#1 28/05 restart-safe)
+    "BOT4_OPEN_POSITIONS_RELOADED": (LogLevel.MAJEUR,   "events", "Bot4 open_positions reloaded au boot : n_loaded={n_loaded} age_sec={age_sec}"),
+    "BOT4_RELOAD_SKIP_STALE":       (LogLevel.ALERTE,   "events", "Bot4 open_positions reload skip (fichier > 24h) : age_sec={age_sec} path={path}"),
+    "BOT4_RELOAD_ITEM_FAIL":        (LogLevel.ALERTE,   "events", "Bot4 open_positions reload item fail : sid={sid} err={err}"),
+    "BOT4_RELOAD_FAIL":             (LogLevel.CRITIQUE, "events", "Bot4 open_positions reload FAIL : path={path} err={err}"),
+    "BOT4_PERSIST_FAIL":            (LogLevel.ALERTE,   "events", "Bot4 open_positions persist FAIL : err={err} n_positions={n_positions}"),
+    "BOT4_OPEN_POSITIONS_PERSISTED": (LogLevel.INFO,    "events", "Bot4 open_positions persisted : n_positions={n_positions} path={path}"),
+    # Lock + preflight env vars (fix BUG#7 28/05 boot 58% echec)
+    "BOT4_LOCK_ORPHAN_CLEANED":     (LogLevel.ALERTE,   "events", "Bot4 lock orphan auto-cleaned : pid={orphan_pid} dead, path={lock_path}"),
+    "BOT4_BOOT_FAIL_PREFLIGHT_ENV": (LogLevel.CRITIQUE, "events", "Bot4 boot preflight env vars manquantes : missing={missing}"),
+    "BOT4_BOOT_FAIL_PREFLIGHT_DATA_ROOT": (LogLevel.CRITIQUE, "events", "Bot4 boot preflight data_root absent : path={data_root}"),
+    "BOT4_BOOT_FAIL_PREFLIGHT_LOG_DIR": (LogLevel.CRITIQUE, "events", "Bot4 boot preflight log_dir parent absent : parent={log_dir_parent}"),
+    "BOT4_EXEC_REPRICE_DONE":       (LogLevel.MAJEUR,   "execution", "Bot4 exec REPRICE : sym={sym} parent={parent_id} slip={slip_ticks} signal_ref={signal_ref} fill={fill_price}"),
+    "BOT4_EXEC_OCO_REGISTERED":     (LogLevel.INFO,     "execution", "Bot4 exec OCO registered : sym={sym} tp_cid={tp_cid} sl_cid={sl_cid}"),
+    "BOT4_EXEC_CANCEL_SENT":        (LogLevel.INFO,     "execution", "Bot4 exec cancel sent : sym={sym} cid={cid} ta={trade_account}"),
+    "BOT4_EXEC_CANCEL_FAIL":        (LogLevel.ALERTE,   "execution", "Bot4 exec cancel FAIL : sym={sym} cid={cid} reason={reason}"),
+    "BOT4_EXEC_PRICE_UNAVAILABLE":  (LogLevel.ALERTE,   "execution", "Bot4 exec price unavailable : sym={sym} contract={contract} consec={consec_failures} exc={exc}"),
+    "BOT4_EXEC_MARKET_DATA_DOWN":   (LogLevel.CRITIQUE, "events", "Bot4 exec market data DOWN : symbol={contract} consec={consec_failures} threshold={threshold} positions_unmonitored={positions_unmonitored}"),
+    "BOT4_EXEC_DTC_DISCONNECT":     (LogLevel.MAJEUR,   "events", "Bot4 exec DTC disconnect : positions_open={positions_open} action=skip_until_reconnect"),
+    "BOT4_EXEC_DTC_RECONNECT":      (LogLevel.MAJEUR,   "events", "Bot4 exec DTC reconnect : attempts={attempts} positions_open={positions_open}"),
+
+    # Flatten anti-orphelin 9 etapes (10 codes)
+    "BOT4_FLATTEN_START":           (LogLevel.INFO,     "execution", "Bot4 flatten start : sym={sym} dir={direction} signal_id={signal_id} qty={n_contracts} tp_cid={tp_cid} sl_cid={sl_cid}"),
+    "BOT4_FLATTEN_STEP_OK":         (LogLevel.INFO,     "execution", "Bot4 flatten step OK : sym={sym} step={step_id} duration_ms={duration_ms}"),
+    "BOT4_FLATTEN_STEP_FAIL_CLEANUP":(LogLevel.ALERTE,  "execution", "Bot4 flatten step FAIL cleanup tolerable : sym={sym} step={step_id} error={error}"),
+    "BOT4_FLATTEN_STEP_FAIL_CRITICAL":(LogLevel.MAJEUR, "execution", "Bot4 flatten step FAIL CRITICAL : sym={sym} step={step_id} error={error}"),
+    "BOT4_FLATTEN_MARKET_CLOSE_SENT":(LogLevel.MAJEUR,  "execution", "Bot4 flatten MARKET CLOSE sent : sym={sym} side={close_side} qty={close_qty} cid={close_cid}"),
+    "BOT4_FLATTEN_VERIFY_CLEAN":    (LogLevel.INFO,     "execution", "Bot4 flatten verified clean : sym={sym} signal_id={signal_id}"),
+    "BOT4_FLATTEN_ORPHAN_DETECTED": (LogLevel.CRITIQUE, "execution", "Bot4 flatten ORPHAN detected post-cleanup : sym={sym} signal_id={signal_id} qty_residual={qty_residual} working_orders={working_orders}"),
+    "BOT4_FLATTEN_DTC_FREEZE":      (LogLevel.CRITIQUE, "execution", "Bot4 flatten DTC freeze get_position_qty : sym={sym} signal_id={signal_id} ta={trade_account}"),
+    "BOT4_FLATTEN_COMPLETE":        (LogLevel.MAJEUR,   "execution", "Bot4 flatten complete : sym={sym} signal_id={signal_id} duration_total_ms={duration_total_ms} critical_failed={critical_failed} cleanup_failed={cleanup_failed}"),
+    "BOT4_FLATTEN_INCOMPLETE":      (LogLevel.CRITIQUE, "execution", "Bot4 flatten INCOMPLETE : sym={sym} signal_id={signal_id} final_qty_broker={final_qty_broker} VERIFIER MANUELLEMENT BROKER"),
+
+    # PositionMonitor M3.5 (7 codes)
+    "BOT4_MONITOR_TR40_ARMED":      (LogLevel.INFO,     "execution", "Bot4 monitor TR40 armed : sym={sym} signal_id={signal_id} mfe={mfe} arming_thr={arming_thr} sl_init={sl_init}"),
+    "BOT4_MONITOR_TR40_UPDATED":    (LogLevel.INFO,     "execution", "Bot4 monitor TR40 SL update : sym={sym} signal_id={signal_id} old_sl={old_sl} new_sl={new_sl} mfe={mfe} count={count}"),
+    "BOT4_MONITOR_TR40_NOT_ALIGNED":(LogLevel.MAJEUR,   "execution", "Bot4 monitor TR40 tick misalign : sym={sym} signal_id={signal_id} sl_raw={sl_raw} sl_aligned={sl_aligned} delta_ticks={delta_ticks}"),
+    "BOT4_MONITOR_TRAILING_TP_ARMED":(LogLevel.INFO,    "execution", "Bot4 monitor trailing TP armed : sym={sym} signal_id={signal_id} mfe={mfe} threshold={threshold}"),
+    "BOT4_MONITOR_TRAILING_TP_TRIGGERED":(LogLevel.MAJEUR,"execution", "Bot4 monitor trailing TP TRIGGERED : sym={sym} signal_id={signal_id} mfe_peak={mfe} excursion={excursion} drawback={drawback} captured_pct={captured_pct}"),
+    "BOT4_MONITOR_OCO_ORPHAN_DETECTED":(LogLevel.CRITIQUE,"execution", "Bot4 monitor OCO orphan detected : sym={sym} signal_id={signal_id} dir={direction} sequence_completed={completed} orphan_post={orphan_post} VERIFIER BROKER"),
+    "BOT4_MONITOR_POSITION_EXPIRED":(LogLevel.ALERTE,   "execution", "Bot4 monitor position expired (no TP/SL within max_hold) : sym={sym} signal_id={signal_id} bars_held={bars_held}"),
 }
 
 
@@ -726,12 +1151,26 @@ def resolve(code: str):
 
 
 def format_message(code: str, **ctx) -> str:
-    """Formate le message fr a partir du code + contexte."""
+    """Formate le message fr a partir du code + contexte.
+
+    Fix P0#1 code-reviewer 23/05 : catch ValueError + TypeError du format spec.
+    Sans ce fix, template `{x:.5f}` avec ctx x=None crashait l'emission de log
+    (templates BN_V4_GATE_TREND/VOLUME/TRADE_CLOSE concernes).
+    Maintenant : fallback gracieux avec marqueur explicite [FMT_ERR].
+    """
     _, _, template = resolve(code)
     try:
         return template.format(**ctx)
     except KeyError as e:
         return f"{template} [MISSING_CTX: {e}]"
+    except (ValueError, TypeError) as e:
+        # Format spec error (e.g. {x:.5f} avec x=None) -> fallback safe.
+        # Re-essai en remplacant None par 'None' string (degraded).
+        safe_ctx = {k: ("None" if v is None else v) for k, v in ctx.items()}
+        try:
+            return template.format(**safe_ctx) + f" [FMT_DEGRADED]"
+        except Exception:
+            return f"{template} [FMT_ERR: {e} ctx={list(ctx.keys())}]"
 
 
 def get_action(level: LogLevel) -> dict:

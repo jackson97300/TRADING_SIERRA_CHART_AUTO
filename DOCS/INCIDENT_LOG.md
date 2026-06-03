@@ -31,6 +31,65 @@
 
 ---
 
+### 2026-06-03 12:45 (34) - [PATTERN_11] - BN V5 cascade F5+F6 ajoutee 02/06 SOIR sans rebacktest (3eme occurrence cycle BN V4->V5)
+
+**Categorie** : PATTERN_11 (3eme occurrence cycle Battle Navale V4->V5)
+**Sub-categorie** : DECISION_OVERRIDE (Jackson override 2 reviewers GO-AVEC-RESERVES)
+
+**Contexte** : BN V5 deploy 23/05/2026 paper Sim2. Validation visuelle Jackson + memory `project_bn_v5_engine_20260507` annonce "20/20 tests PASS pre-deploy" mais ces tests etaient unitaires sur fonctions individuelles, pas backtest end-to-end. Le 02/06 SOIR, Jackson ajoute 2 bonus dans `BNV5Params` :
+- `require_aggressor_confirm: True` (aggressor_imbalance >= 0.30)
+- `require_long_bar_confirm: True` (long_up_bar = 1)
+Sans rebacktest 30j post-modification. Resultat empirique 03/06 : 0 trade en 13 jours consecutifs.
+
+**Cause racine** : Pattern 11 V1 reproduit pour la 3eme fois sur cycle BN V4->V5 :
+- Empilage filtres cascade (4 hard filters + 2 bonus)
+- F5 aggressor >= 0.30 sur bar d'entry V/W = exiger conviction AVANT que retournement se materialise
+- F6 long_up_bar = 1 sur bar reversal = idem contradictoire
+- Wyckoff Spring se confirme N+1, pas N (cf memory `feedback_range_confirmation_breakout.md`)
+
+Audit cascade empirique (95975 candidats 03/06) :
+- F5 aggressor : NQ 125 -> 0 (100% rejection), ES 60 -> 2 (96.67%)
+- F6 long_up_bar : idem
+- Combine F5+F6 : ZERO setup peut passer mathematiquement
+
+**Impact prod** :
+- 0 trade BN V5 en 13 jours consecutifs (20/05 -> 03/06)
+- 99K events GATE_*_BLOCK / jour pollution logs MAJEUR
+- Vs BN V4 (predecesseur) : 8 trades 26/05-02/06 (~1 trade/jour)
+- Coute opportunite : ~13 trades manques sur fenetre exploitable
+
+**Lecon** :
+1. Toute modification params cascade DOIT etre testee empiriquement (backtest 30j minimum) AVANT deploy. Memory `feedback_pattern11_repetition_avoided.md` deja escalee 3 occurrences.
+2. Ajout bonus en cascade = high-risk Pattern 11. Preferer scoring composite (cf `feedback_lightgbm_no_composite_indicators.md`).
+3. Le "20/20 tests PASS pre-deploy" non documente = NON suffisant. Tests unitaires != validation end-to-end.
+
+**Trigger prevention** : avant toute modification `BNV5Params` ou cascade filtres :
+1. Backtest 30j live_enriched sur params actuels (baseline)
+2. Backtest 30j avec params propose
+3. Comparer N trades + PF + WR
+4. Si N=0 ou PF degrade > 30% : NOGO automatique
+5. ml-trainer 5 controles obligatoire si PATTERN_11 risk (cf `.claude/rules/critical-tasks-review.md` critere 9)
+
+**Fix 03/06 12:45** :
+- `bn_v5_engine.py:83` : range_drift_min_pct 0.20 -> 0.10 (compromis NQ P75 + ES P85)
+- `bn_v5_engine.py:95,99` : require_aggressor_confirm + require_long_bar_confirm True -> False
+- `log_catalog.py:576-577` : BN_V5_GATE_*_BLOCK MAJEUR -> INFO
+- SCP + restart paper_v2 OK
+
+**Decision_override** : Jackson override 2 reviewers GO-AVEC-RESERVES qui exigeaient SHADOW MODE 7j avant ACTION live. Justification souveraine : "ON DEPLOY TRADING PAPER DIRECT PAS DE SHADOW" (Sim2 = paper donc pas capital reel, status quo 0 trade = bot mort).
+
+**Risques documentes** :
+1. Data mining (1 fenetre 13j seulement, DSR Lopez non calculable)
+2. Regime adverse (juin VIX 14 vs mai 22, M_SHORT pourrait chuter)
+3. Range filter conceptuellement faux pour V/W (Wyckoff)
+4. 0 tests pytest BN V5 = regression future indetectable
+
+**Plan monitoring strict** : J+1 / J+7 / J+30 quantitatif + kill switch DD > 200t NQ / 80t ES.
+
+**Reviewed** : code-reviewer GO-AVEC-RESERVES + market-analyst GO-AVEC-RESERVES (Jackson override)
+
+---
+
 ### 2026-06-03 10:10 (33) - [VALIDATION_MISS] - Mapping Bot ID dashboard vs flatten_bot.py refacto archi 28/05 incomplet
 
 **Contexte** : Refacto architecture bots 28/05 reordonne Sim accounts (Bot 1=Sim1, Bot 2=Sim2, Bot 3=Sim3, Bot 4=Sim4 nouveau) MAIS :
@@ -3237,6 +3296,7 @@ Resultat : recompile aurait donne **ZERO changement observable** sur les 4 featu
 | SCOPE_CREEP | 1 | Pas encore |
 | COMMENT_FALSE | **2** | Pas encore (seuil 3+) — trigger nouveau 22/04 : "grep empirique toute reference file:line header" |
 | **LAZY_DELEGATION** | **1** | **OUI preventivement** `.claude/rules/module-review-protocol.md` (6 STEPS) |
+| **PATTERN_11** | **3** | **OUI** (3 occurrences cycle BN V4->V5 le 03/06) — promu `feedback_pattern11_repetition_avoided.md` : **escalation : avant toute modif cascade BN V*, backtest 30j AVANT deploy + ml-trainer 5 controles si rate-of-fire chute > 30%** |
 | **OVER_ENGINEERING** | **1** | Pas encore (seuil 3+) — trigger 27/04 : "test local 1 fold avant pipeline complet" si modif threshold/calibration ML |
 
 **Escalation auto** : quand categorie = 3+ → creer memoire dediee auto-chargee.

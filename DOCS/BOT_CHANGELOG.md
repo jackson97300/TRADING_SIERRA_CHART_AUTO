@@ -62,6 +62,99 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-03 12:45 — BN V5 recalibration cascade (Jackson override 2 reviewers GO-AVEC-RESERVES)
+
+**Categorie** : CONFIG decision engine (Trading critere 1)
+**Impact prod** : PAPER Sim2 (Bot 2 BN V5)
+**Fichier(s)** :
+- `CORE/bn_v5_engine.py:83` (range_drift_min_pct 0.20 -> 0.10)
+- `CORE/bn_v5_engine.py:95,99` (require_aggressor_confirm True -> False, require_long_bar_confirm True -> False)
+- `CORE/log_catalog.py:576-577` (BN_V5_GATE_*_BLOCK niveau MAJEUR -> INFO, anti-pollution 99K events/jour)
+**Reviewer(s) agent** : code-reviewer GO-AVEC-RESERVES + market-analyst GO-AVEC-RESERVES (shadow 7j requis) -> **Jackson override** decision souveraine
+
+### Quoi
+Recalibration cascade BN V5 apres autopsie 03/06 (0 trade en 13 jours depuis deploy 23/05).
+- range_drift_min_pct : 0.20% -> 0.10% (P75 NQ=0.138%, P75 ES=0.098% = compromis)
+- require_aggressor_confirm : True -> False (F5 KILLER 100% rejection sur NQ)
+- require_long_bar_confirm : True -> False (F6 KILLER idem)
+- Reclassification log_catalog : 99K events/jour MAJEUR -> INFO
+
+### Pourquoi
+Audit empirique 03/06 (95975 candidats analyses) :
+- F5 aggressor_imbalance >= 0.30 : NQ 125 -> 0 bars (100% rejection), ES 60 -> 2 (96.67%)
+- F6 long_up_bar : idem killer
+- max drift_pct observe = 0.199% (sous seuil 0.20%) -> mais cause RACINE = cascade F5+F6 ajoute 02/06 SOIR sans rebacktest (Pattern 11 V1)
+- Backtest 30j live_enriched mai (1 fenetre exploitable, W1 avril donnees manquantes) :
+  - Config A FULL defaults : NQ N=0 / ES N=0
+  - Config D sans aggressor 0.10% : NQ N=18 PF 1.31, ES N=21 PF 1.66
+- Comparaison BN V4 (8 trades 26/05-02/06) vs BN V5 (0 trade depuis deploy)
+
+### Impact attendu
+- ~2 trades/jour total (NQ 1.21 + ES 0.72) sur backtest mai
+- PF ES juin probabilite < 40% selon market-analyst (regime change VIX 22->14)
+- Stop pollution logs 99K events/jour
+
+### Validation pre-deploy
+- [x] Backtest 30j live_enriched mai (1 fenetre, W1 avril invalide)
+- [x] Code-reviewer Sonnet : GO-AVEC-RESERVES (shadow obligatoire)
+- [x] Market-analyst Opus : GO-AVEC-RESERVES (Wyckoff Spring N+1 + regime adverse + DSR Lopez non calculable)
+- [ ] Tests pytest : 0 tests BN V5 existants (dette technique critique)
+- [ ] Walk-forward valide : NON (1 fenetre 13j, sous-seuil Lopez n>=100)
+- [ ] ml-trainer GO/NOGO Lopez 5 controles : NON realise (override)
+- [ ] Shadow mode 7j : NON realise (Jackson "ON DEPLOY TRADING PAPER DIRECT PAS DE SHADOW")
+
+### Jackson override (decision souveraine)
+Les 2 reviewers convergent sur SHADOW MODE 7j obligatoire avant ACTION live. Jackson
+override "ON DEPLOY TRADING PAPER DIRECT PAS DE SHADOW". Raisons exprimees :
+- BN V5 deja en paper Sim2 (pas capital reel)
+- Status quo (0 trade 13j) = bot mort, rien a perdre
+- BN V4 tradait 1/jour, BN V5 doit faire pareil minimum
+
+Risques residuels documentes :
+1. Data mining : 1 fenetre 13j seulement, DSR Lopez non calculable
+2. Regime adverse : juin VIX ~14 vs mai ~22, M_SHORT pourrait chuter
+3. Range filter conceptuellement faux pour V/W (Wyckoff accumulation)
+4. Aggressor + long_up_bar = exigence conviction AVANT retournement (contradictoire V/W)
+5. 0 tests pytest = regression future indetectable
+
+### Revert plan
+```python
+# Restore params si J+7 NOGO :
+range_drift_min_pct: float = 0.20
+require_aggressor_confirm: bool = True
+require_long_bar_confirm: bool = True
+```
++ rollback log_catalog niveau MAJEUR si besoin.
+
+### Deployed at 2026-06-03 12:45
+
+### Suivi post-deploy (criteres market-analyst quantifies)
+
+**Kill switch automatique** :
+- DD cumule > 200 ticks NQ OU 80 ticks ES = STOP + audit
+
+**J+1 (04/06)** :
+- Cible : >= 1 BN_V5_SETUP_DETECTED + >= 1 BN_V5_TRADE_OPEN
+- Si 0 setup : revoir fix car cascade encore active
+
+**J+7 (10/06)** :
+- Cible : PF >= 1.2 cumule, min 3 trades NQ + 5 trades ES
+- Si < 2 cumul total : **NOGO definitif** -> retour design avec NIV3 sur bar N+1 (Wyckoff Spring)
+
+**J+30 (03/07)** :
+- Cible : PF >= 1.3 + Sharpe > 0.8, min 12 trades NQ + 18 trades ES
+- Si PF < 1.0 : stop. Si entre 1.0-1.3 : audit regime.
+
+### Liens
+- INCIDENT_LOG entry 34 : DECISION_OVERRIDE + PATTERN_11 3eme occurrence cycle BN V4->V5
+- Memory `feedback_pattern11_repetition_avoided.md` : reproduction confirmee
+- Memory `feedback_data_mining_trap.md` : risque flagge
+- Memory `feedback_range_confirmation_breakout.md` : Wyckoff Spring contradiction
+- Reports backtest : DATA/BN_V5_RANGE_CALIBRATION.json + BN_V5_THRESHOLD_BACKTEST.json + BN_V5_FILTER_ISOLATION.json
+- Scripts research : CORE/research/bn_v5_range_calibration.py + bn_v5_threshold_backtest.py + bn_v5_filter_isolation.py + bn_v5_walkforward.py + bn_v5_recent_vs_30d.py
+
+---
+
 ## 2026-06-03 10:25 — P4.1 Trailing ladder ACTION mode active (Bot 1 MP)
 
 **Categorie** : CONFIG decision engine (Trading critere 1)
