@@ -70,3 +70,15 @@ def day_pnl_short(bars: list[dict[str, Any]]) -> float:
     Returns -day_pnl_long(bars).
     """
     return -day_pnl_long(bars)
+
+
+def list_enriched_days(directory: Path, symbol: str) -> list[Path]:
+    """Return sorted list of JSONL files matching `YYYYMMDD_<symbol>.jsonl`.
+
+    Files are sorted chronologically by filename.
+    """
+    if not directory.exists():
+        return []
+    suffix = f"_{symbol}.jsonl"
+    files = [p for p in directory.iterdir() if p.is_file() and p.name.endswith(suffix)]
+    return sorted(files, key=lambda p: p.name)

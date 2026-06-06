@@ -100,3 +100,39 @@ def test_day_pnl_long_zero_when_single_bar():
 def test_day_pnl_short_is_inverse_of_long():
     bars = [make_bar(close=30000.0), make_bar(close=30050.0)]
     assert day_pnl_short(bars) == -day_pnl_long(bars)
+
+
+from SIM4.research.backtest_helpers import list_enriched_days
+
+
+def test_list_enriched_days_returns_sorted_paths(tmp_path: Path):
+    (tmp_path / "20260103_NQ.jsonl").touch()
+    (tmp_path / "20260101_NQ.jsonl").touch()
+    (tmp_path / "20260102_NQ.jsonl").touch()
+    (tmp_path / "irrelevant.txt").touch()
+
+    days = list_enriched_days(tmp_path, symbol="NQ")
+
+    assert len(days) == 3
+    assert [p.name for p in days] == [
+        "20260101_NQ.jsonl",
+        "20260102_NQ.jsonl",
+        "20260103_NQ.jsonl",
+    ]
+
+
+def test_list_enriched_days_filters_by_symbol(tmp_path: Path):
+    (tmp_path / "20260101_NQ.jsonl").touch()
+    (tmp_path / "20260101_ES.jsonl").touch()
+
+    nq_days = list_enriched_days(tmp_path, symbol="NQ")
+    es_days = list_enriched_days(tmp_path, symbol="ES")
+
+    assert len(nq_days) == 1
+    assert nq_days[0].name == "20260101_NQ.jsonl"
+    assert len(es_days) == 1
+    assert es_days[0].name == "20260101_ES.jsonl"
+
+
+def test_list_enriched_days_empty_dir(tmp_path: Path):
+    assert list_enriched_days(tmp_path, symbol="NQ") == []
