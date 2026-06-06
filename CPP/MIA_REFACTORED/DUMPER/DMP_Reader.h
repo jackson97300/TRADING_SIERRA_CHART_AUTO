@@ -154,6 +154,15 @@ namespace DMP_Studies {
         // 🆕 BUG #10 — Volume Up/Down + Edge Zones Footprint (05/03/2026)
         constexpr static int VOLUME_UP    =  35;  // [AV] VOLUME UP (NQ uniquement)
         constexpr static int VOLUME_DN    =  36;  // [AV] VOLUME DOWN (NQ uniquement)
+        // TENTATIVE FIX 23/04/2026 ROLLBACK — swap NQ_FP inoperant
+        //    Swap tente : 55<->4 (BUY) et 56<->2 (SELL) pour pointer vers natives 1000%.
+        //    Probleme detecte post-review agent :
+        //      - DMP_Transform.h:1257 fait OR(fp_edge_buy, fp_edge_buy_2) = OR(native, overlay)
+        //        → fp_edge_buy reste contamine a 74% via l'overlay saturant.
+        //      - bar_edge_buy/sell lisent NQ_BARRES (chart 23 ID 40/16), pas NQ_FP.
+        //        → mon swap ne les affecte pas du tout.
+        //    Decision : ROLLBACK aux IDs d'origine en attendant vrai diagnostic
+        //    chart 23 ID 40/16 Percentage + refactor OR dans Transform (a faire demain).
         constexpr static int EDGE_BUY     =  55;  // EDGE ZONES IMB BUY rev8 0DIAG
         constexpr static int EDGE_SELL    =  56;  // EDGE ZONES IMB SELL rev8 0DIAG
         constexpr static int EDGE_BUY_2   =   4;  // EDGE ZONES IMB BUY 0DIAG (2ème variante)
@@ -385,6 +394,18 @@ struct DMP_RawData {
     float fpbs_low_bid_pct;              // sg44 — Low Bid Volume %
     float fpbs_high_ask_pct;             // sg45 — High Ask Volume %
 
+    // 🆕 Schema 3.7.15 — T&S aggregates depuis VAP (4 features) — 06/06/2026
+    // Sierra Chart ne dump pas les trades individuels (vs Databento) mais
+    // s_VolumeAtPriceV2 fournit les aggrégats par price level (AskVolume,
+    // BidVolume, NumberOfTrades). On extrait des proxys T&S depuis ces
+    // aggrégats dans la boucle scan VAP existante de DMP_ReadFPBS.
+    float fpbs_max_ask_vol_in_bar;       // max(v->AskVolume) sur tous price levels
+    float fpbs_max_bid_vol_in_bar;       // max(v->BidVolume) sur tous price levels
+    float fpbs_p99_trade_size_proxy;     // proxy p99 lognormal : avg + 2.33*stddev
+                                         //   fallback: max(ask,bid)/trades du level max
+    float fpbs_large_trader_max_size;    // max((ask|bid)/NumberOfTrades) par level
+                                         //   = avg trade size du level le plus chaud
+
     // ─────────────────────────────────────────────────────────────────────────
     // B. ROTATION & CLUSTER
     // Source : Chart 1/2 Study ROTATION, ROTATION_UP/DN
@@ -506,6 +527,12 @@ struct DMP_RawData {
     float atr_daily;                     // ATR daily (dénominateur normalisation)
     float ma_fast;                       // MA rapide (trend court terme)
     float ma_slow;                       // MA lente (trend long terme)
+
+    // 🆕 FIX 24/04 (schema 3.7.14) : ATR-14 intraday pour detection spike et
+    //   bornes SL adaptatives. Calcule en C++ rolling sur les 14 dernieres
+    //   barres 1-min du chart BARRES (chart 23/25). Evite le bug de
+    //   VolatilitySpikeGate qui utilisait atr_daily (ratio toujours <0.1).
+    float atr_14m;                       // ATR 14-barres 1-min (True Range rolling, ticks)
 
     // ─────────────────────────────────────────────────────────────────────────
     // G. MENTHORQ GAMMA & BLIND SPOTS
@@ -935,6 +962,11 @@ inline void DMP_ReadFPBS(SCStudyInterfaceRef sc, DMP_RawData& d) {
     d.fpbs_high_ask_pct   = 0.0f;
     d.fpbs_avg_bid_size   = 0.0f;
     d.fpbs_avg_ask_size   = 0.0f;
+    // 🆕 Schema 3.7.15 — T&S aggregates : INVALID par defaut (fail-loud si scan rate)
+    d.fpbs_max_ask_vol_in_bar    = DMP_INVALID;
+    d.fpbs_max_bid_vol_in_bar    = DMP_INVALID;
+    d.fpbs_p99_trade_size_proxy  = DMP_INVALID;
+    d.fpbs_large_trader_max_size = DMP_INVALID;
 
     if (sc.VolumeAtPriceForBars) {
         const int bar = sc.Index;
@@ -948,6 +980,17 @@ inline void DMP_ReadFPBS(SCStudyInterfaceRef sc, DMP_RawData& d) {
             int poc_tick = 0;
             int close_tick = INT_MIN;  // dernier niveau = plus récent
             int ask_levels = 0, bid_levels = 0;
+            // 🆕 Schema 3.7.15 — T&S aggregates accumulateurs (scan in-place)
+            //   max_ask/bid : max brut par level (taille agreg du level le plus chaud)
+            //   sum/sum_sq des avg_size_per_level : stats pour p99 lognormal
+            //   max_avg_size_per_level : taille moyenne du level le plus chaud
+            unsigned int max_ask_vol = 0, max_bid_vol = 0;
+            double sum_avg_size = 0.0;          // somme des avg_size par level
+            double sum_avg_size_sq = 0.0;       // somme des avg_size^2 (pour stddev)
+            int    n_levels_traded = 0;          // levels avec NumberOfTrades > 0
+            float  max_avg_size_per_level = 0.0f;
+            // Pour fallback p99 : on garde aussi le level max(ask|bid) et son n_trades
+            float  max_level_avg = 0.0f;         // avg du level avec max ask/bid
 
             // Buffer pour diagonal (max 500 niveaux, trié par prix)
             struct VapLevel { int tick; int ask; int bid; };
@@ -990,6 +1033,33 @@ inline void DMP_ReadFPBS(SCStudyInterfaceRef sc, DMP_RawData& d) {
                 // Buffer diagonal (trié après)
                 if (lvl_count < 500) {
                     levels[lvl_count++] = {tick, (int)ask, (int)bid};
+                }
+
+                // 🆕 Schema 3.7.15 — T&S aggregates accumulation in-place
+                //   1. Max raw ask/bid volume sur tous les levels
+                if (ask > max_ask_vol) max_ask_vol = ask;
+                if (bid > max_bid_vol) max_bid_vol = bid;
+
+                //   2. Stats trade_size (avg par level) pour p99 lognormal
+                //   Sierra Chart ne donne pas la taille de chaque trade individuel
+                //   mais (AskVolume+BidVolume) / NumberOfTrades approxime la taille
+                //   moyenne PAR trade sur ce price level. Distribution lognormal :
+                //   p99 ~ mean + 2.33 * stddev (z-score 99e percentile normal-log).
+                if (trades > 0) {
+                    float level_total_vol = (float)(ask + bid);
+                    float avg_size_this_level = level_total_vol / (float)trades;
+                    sum_avg_size    += (double)avg_size_this_level;
+                    sum_avg_size_sq += (double)avg_size_this_level * (double)avg_size_this_level;
+                    n_levels_traded++;
+                    if (avg_size_this_level > max_avg_size_per_level)
+                        max_avg_size_per_level = avg_size_this_level;
+
+                    //   3. Tracking pour fallback p99 : avg du level qui contient
+                    //      le max ask ou bid (level le plus "hot")
+                    unsigned int max_side = (ask > bid) ? ask : bid;
+                    if (max_side >= max_ask_vol || max_side >= max_bid_vol) {
+                        max_level_avg = avg_size_this_level;
+                    }
                 }
             }
 
@@ -1094,6 +1164,47 @@ inline void DMP_ReadFPBS(SCStudyInterfaceRef sc, DMP_RawData& d) {
                 }
                 d.fpbs_diag_pos_delta = diag_pos;
                 d.fpbs_diag_neg_delta = diag_neg;
+
+                // 🆕 Schema 3.7.15 — T&S aggregates : finalisation
+                //   Comble le "trou T&S" : Sierra ne dump pas trades individuels
+                //   (vs Databento) mais s_VolumeAtPriceV2 fournit les aggrégats.
+                //   Ces 4 features eliminent la dependance Databento (bug delta_bar
+                //   inverse) et restent calculables 100% en C++ depuis VAP.
+
+                //   F1 : max ask volume sur tous les price levels (taille agreg
+                //        du level acheteur le plus charge — proxy mur acheteur)
+                d.fpbs_max_ask_vol_in_bar = (float)max_ask_vol;
+
+                //   F2 : max bid volume sur tous les price levels (proxy mur vendeur)
+                d.fpbs_max_bid_vol_in_bar = (float)max_bid_vol;
+
+                //   F3 : p99 trade size proxy via approximation lognormal
+                //        p99 ~ mean(avg_size) + 2.33 * stddev(avg_size)
+                //        Si stddev non calculable (< 2 levels traded), fallback
+                //        sur le level "hot" : avg_size du level max(ask|bid).
+                if (n_levels_traded >= 2) {
+                    double mean = sum_avg_size / (double)n_levels_traded;
+                    double variance = (sum_avg_size_sq / (double)n_levels_traded) - (mean * mean);
+                    if (variance < 0.0) variance = 0.0;  // garde contre erreur arrondi
+                    double stddev = std::sqrt(variance);
+                    d.fpbs_p99_trade_size_proxy = (float)(mean + 2.33 * stddev);
+                } else if (n_levels_traded == 1) {
+                    // 1 seul level avec trades : utiliser max_level_avg comme proxy
+                    d.fpbs_p99_trade_size_proxy = max_level_avg;
+                } else {
+                    // Aucun level avec trades > 0 : INVALID (fail-loud)
+                    d.fpbs_p99_trade_size_proxy = DMP_INVALID;
+                }
+
+                //   F4 : large_trader_max_size = max des avg_size par level
+                //        = taille moyenne du trade au level le plus actif
+                //        Proxy de la taille des plus gros trades (limited par AVG
+                //        car SC n'expose pas les tailles individuelles).
+                if (n_levels_traded > 0) {
+                    d.fpbs_large_trader_max_size = max_avg_size_per_level;
+                } else {
+                    d.fpbs_large_trader_max_size = DMP_INVALID;
+                }
             }
         }
     }
@@ -1529,11 +1640,14 @@ inline float DMP_ReadExtensionLineCount(SCStudyInterfaceRef sc, int chart, int s
 //     = NE PAS utiliser pour detection evenementielle
 //
 // Compatible toutes etudes "Color Bar Based On Alert Condition" :
-//   [AV] COLOR UP / DN (ID:26/25 NQ, ID:24/25 ES)
-//   [AV] COLOR UP 2 / DN 2 (double stackees)
+//   [AV] COLOR UP / DN (ID:26/27 NQ, ID:24/25 ES) - formule avec [1]
+//   [AV] COLOR UP 2 / DN 2 (double stackees) - formule avec [1]
 //   [AV] ROTATION UP / DN (ID:21/22 NQ, ID:19/20 ES) - pas d'Ext Lines mais SG0 OK
-//   [AV] DOUBLE ASK / BID (ID:41/42 ES FP)
-//   [AV] TRIPLE ASK / BID (ID:37/38 NQ FP)
+//   [AV] DOUBLE ASK / BID (ID:41/42 ES FP) - formule avec [1]
+//   [AV] TRIPLE ASK / BID (ID:37/38 NQ FP) - formule avec [1]
+//   [AV] LONG DN_UP / UP_DN ROND JAUNE (ID:23/24 NQ, ID:38/39 ES) — fix 24/04/2026
+//     formule: AND(O<C[-1], H[-1]>L+9t, O[1]>C, H[1]>L+9t, H[1]>H[-1])
+//     utilise [1] → identique COLOR : Event (sz-2) obligatoire.
 //
 // Difference avec DMP_ReadBN_Trigger :
 //   Trigger renvoie la valeur raw (= prix LOW/HIGH selon Input Data) pour
@@ -1552,11 +1666,29 @@ inline float DMP_ReadBN_Event(SCStudyInterfaceRef sc, int chart, int study) {
 
 // Retourne le prix de l'Extension Line la plus proche du prix courant.
 // Utile pour calculer la distance à la zone COLOR UP/DN la plus proche.
-// Retourne DMP_INVALID si aucune extension line active.
-inline float DMP_ReadNearestExtensionLine(SCStudyInterfaceRef sc, int chart, int study, float price) {
-    if (study < 0 || !DMP_IsPriceValid(price)) return DMP_INVALID;
+// Retourne DMP_INVALID si aucune extension line active OU si toutes sont
+// au-dela de DMP_MAX_EXT_LINE_DIST_TICKS (filtrees comme stale).
+//
+// 🆕 FIX 24/04/2026 : ajout filtre max_dist pour eviter les lignes stale
+//   Probleme : Extension Lines dupliquees a chaque Full Recalculation
+//   (gotcha officiel SC : https://www.sierrachart.com/SupportBoard.php?ThreadID=57101
+//   "The function does not check whether a lineuntilfuture has already been
+//    created on the given index in the past. Each recalculation duplicates
+//    the lineuntilfuture.")
+//   Symptome empirique NQ COLOR EL : median -4531 ticks (-1133 points) sur
+//   1034 barres — ligne historique jamais intersectee, accumulee stale.
+//   Fix : skip lignes > DMP_MAX_EXT_LINE_DIST_TICKS * tick_size du prix.
+//   Constante centralisee dans DMP_Config.h (pas de magic number ici).
+//
+// Note : tick_size PAS de default volontaire (review 24/04 : silent fallback
+// 0.25 risque si un caller oublie → erreur compile plutot que bug silencieux).
+inline float DMP_ReadNearestExtensionLine(SCStudyInterfaceRef sc, int chart, int study, float price, float tick_size) {
+    if (study < 0 || !DMP_IsPriceValid(price) || tick_size <= 0.0f) return DMP_INVALID;
     int n = sc.GetNumLinesUntilFutureIntersection(chart, study);
     if (n <= 0) return DMP_INVALID;
+
+    // Filtre stale : distance max autorisee en prix (= DMP_MAX_EXT_LINE_DIST_TICKS * tick_size)
+    const float max_dist_px = DMP_MAX_EXT_LINE_DIST_TICKS * tick_size;
 
     float nearest = DMP_INVALID;
     float min_dist = 1e30f;
@@ -1569,6 +1701,7 @@ inline float DMP_ReadNearestExtensionLine(SCStudyInterfaceRef sc, int chart, int
             continue;
         if (!std::isfinite(lineValue) || lineValue < 100.0f) continue;
         float d = std::fabs(lineValue - price);
+        if (d > max_dist_px) continue;  // 🆕 skip stale outliers (fix 24/04)
         if (d < min_dist) {
             min_dist = d;
             nearest = lineValue;
@@ -1616,6 +1749,12 @@ inline void DMP_ReadBNSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
     //   Note : d.bn_absorb_ask/bid sont aussi écrits par DMP_ReadFPBS (formule VAP
     //   cassée du 01/04). L'override ci-dessous ÉCRASE ces valeurs — le calcul
     //   VAP custom reste pour les autres champs fpbs_* mais n'affecte plus bn_absorb.
+    // ROLLBACK 25/04/2026 - tentative ExtensionLineCount donnait :
+    //   ES : 100% saturation (lignes accumulent en trending market)
+    //   NQ : 0% (Extension Lines pas active sur Chart 2 ABSORB)
+    //   PRE_FIX original : ES 3.31% + NQ 0.73% (rare mais present)
+    // Diagnostic memoire feedback_lessons.md confirmé empiriquement.
+    // Need : approche differente (delta count + delta gate ?). Backlog.
     d.bn_absorb_ask = DMP_ReadBN_Trigger(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_FP::ABSORB_ASK : DMP_Studies::ES_FP::ABSORB_ASK);
     d.bn_absorb_bid = DMP_ReadBN_Trigger(sc, chart,
@@ -1716,9 +1855,27 @@ inline void DMP_ReadBNSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
         }
 
         // ⭐ SCHEMA 3.7.3 (13/04/2026) — Cluster Volume via VAP direct
-        // Seuil total volume ES=500 / NQ=50 (config SC "Volume At Price Threshold
-        // Alert V2" Comparison Method = Total Volume). Utilise pour stop/target.
-        const float cluster_threshold = d.is_nq ? 50.0f : 500.0f;
+        //   Seuil total volume lu dynamiquement depuis l'etude SC CLUSTER VOLUME
+        //   (In:2 "Volume Threshold") → auto-sync avec config visuelle Jackson.
+        // 🆕 FIX 24/04/2026 (schema 3.7.13) : chemin 2 ACSIL dynamique.
+        //   AVANT : seuil hardcoded ES=500 / NQ=50 → incoherent avec SC (ES=250/NQ=20)
+        //     → bot voyait 2.2% clusters_up ES car seuil 2x trop strict.
+        //   APRES : sc.GetChartStudyInputInt() lit le vrai seuil config SC.
+        //   Fallback : valeurs Jackson 24/04 (ES=250/NQ=20) si lecture API fail.
+        const int cluster_study = d.is_nq ? DMP_Studies::NQ_FP::CLUSTER
+                                          : DMP_Studies::ES_FP::CLUSTER;
+        int threshold_int = 0;
+        // In:2 = Volume Threshold (index 1 en base 0). Return code 1 = OK.
+        // Check rigoureux du return code (review 24/04 R1 : defensive programming).
+        const int api_ret = sc.GetChartStudyInputInt(chart, cluster_study, 1, threshold_int);
+        float cluster_threshold;
+        if (api_ret == 1 && threshold_int > 0) {
+            cluster_threshold = (float)threshold_int;
+        } else {
+            // Fallback valeurs SC connues au 24/04/2026 (Jackson confirme)
+            // Triggers si : etude absente, API fail, ou threshold=0 configure
+            cluster_threshold = d.is_nq ? 20.0f : 250.0f;
+        }
         DMP_ReadVolumeClustersFromVAP(sc,
             cluster_threshold, LOOKBACK_BARS, min_price, ts, ref_price,
             d.cluster_prices);
@@ -1753,9 +1910,18 @@ inline void DMP_ReadBarSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
                         d.is_nq ? DMP_Studies::NQ_BARRES::LONG_UP_BAR : DMP_Studies::ES_BARRES::LONG_UP_BAR);
     d.bar_long_dn_bar = DMP_ReadBN_Trigger(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_BARRES::LONG_DN_BAR : DMP_Studies::ES_BARRES::LONG_DN_BAR);
-    d.bar_long_dn_up  = DMP_ReadBN_Trigger(sc, chart,
+    // 🆕 FIX 24/04/2026 (schema 3.7.12) : F2 LONG DN_UP / UP_DN (reversal) via
+    //   DMP_ReadBN_Event (sz-2) au lieu de DMP_ReadBN_Trigger (sz-1).
+    //   Formule etude utilise [1] (barre future) :
+    //     AND(O<C[-1], H[-1]>L+9t, O[1]>C, H[1]>L+9t, H[1]>H[-1])
+    //   Sur barre live (sz-1), [1] n'existe pas encore → formule retourne 0 →
+    //   sg0 = 0 → DMP voit toujours 0. Bug identique a COLOR UP/DN (fix 09/03).
+    //   Validation empirique : ES 0% fire sur 1210 barres 23/04 (feature morte
+    //   alors que visuel SC fire). Fix Event lit sz-2 (derniere barre FERMEE,
+    //   ou [1] = la barre maintenant live, existe → formule evaluable).
+    d.bar_long_dn_up  = DMP_ReadBN_Event(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_BARRES::LONG_DN_UP  : DMP_Studies::ES_BARRES::LONG_DN_UP);
-    d.bar_long_up_dn  = DMP_ReadBN_Trigger(sc, chart,
+    d.bar_long_up_dn  = DMP_ReadBN_Event(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_BARRES::LONG_UP_DN  : DMP_Studies::ES_BARRES::LONG_UP_DN);
     d.bar_edge_buy    = DMP_ReadBN_Trigger(sc, chart,
                         d.is_nq ? DMP_Studies::NQ_BARRES::EDGE_BUY    : DMP_Studies::ES_BARRES::EDGE_BUY);
@@ -1775,18 +1941,20 @@ inline void DMP_ReadBarSignals(SCStudyInterfaceRef sc, DMP_RawData& d) {
     // 🆕 FIX 09/03/2026 : Les Extension Lines ne sont PAS dans sg1.
     //   Elles sont un rendu séparé de SC, accessible uniquement via ACSIL API.
     //   DMP_ReadNearestExtensionLine() retourne le prix de la zone la plus proche.
+    // 🆕 FIX 24/04/2026 : parametre tick_size explicite pour activer filtre max_dist
+    //   dans DMP_ReadNearestExtensionLine (cf commentaire de la fonction).
     d.ext_color_up_px  = DMP_ReadNearestExtensionLine(sc, chart,
-                         d.is_nq ? DMP_Studies::NQ_BARRES::COLOR_UP    : DMP_Studies::ES_BARRES::COLOR_UP,    d.price_close);
+                         d.is_nq ? DMP_Studies::NQ_BARRES::COLOR_UP    : DMP_Studies::ES_BARRES::COLOR_UP,    d.price_close, d.tick_size);
     d.ext_color_dn_px  = DMP_ReadNearestExtensionLine(sc, chart,
-                         d.is_nq ? DMP_Studies::NQ_BARRES::COLOR_DN    : DMP_Studies::ES_BARRES::COLOR_DN,    d.price_close);
+                         d.is_nq ? DMP_Studies::NQ_BARRES::COLOR_DN    : DMP_Studies::ES_BARRES::COLOR_DN,    d.price_close, d.tick_size);
     d.ext_long_up_px   = DMP_ReadNearestExtensionLine(sc, chart,
-                         d.is_nq ? DMP_Studies::NQ_BARRES::LONG_UP_BAR : DMP_Studies::ES_BARRES::LONG_UP_BAR, d.price_close);
+                         d.is_nq ? DMP_Studies::NQ_BARRES::LONG_UP_BAR : DMP_Studies::ES_BARRES::LONG_UP_BAR, d.price_close, d.tick_size);
     d.ext_long_dn_px   = DMP_ReadNearestExtensionLine(sc, chart,
-                         d.is_nq ? DMP_Studies::NQ_BARRES::LONG_DN_BAR : DMP_Studies::ES_BARRES::LONG_DN_BAR, d.price_close);
+                         d.is_nq ? DMP_Studies::NQ_BARRES::LONG_DN_BAR : DMP_Studies::ES_BARRES::LONG_DN_BAR, d.price_close, d.tick_size);
     d.ext_edge_buy_px  = DMP_ReadNearestExtensionLine(sc, chart,
-                         d.is_nq ? DMP_Studies::NQ_BARRES::EDGE_BUY    : DMP_Studies::ES_BARRES::EDGE_BUY,    d.price_close);
+                         d.is_nq ? DMP_Studies::NQ_BARRES::EDGE_BUY    : DMP_Studies::ES_BARRES::EDGE_BUY,    d.price_close, d.tick_size);
     d.ext_edge_sell_px = DMP_ReadNearestExtensionLine(sc, chart,
-                         d.is_nq ? DMP_Studies::NQ_BARRES::EDGE_SELL   : DMP_Studies::ES_BARRES::EDGE_SELL,   d.price_close);
+                         d.is_nq ? DMP_Studies::NQ_BARRES::EDGE_SELL   : DMP_Studies::ES_BARRES::EDGE_SELL,   d.price_close, d.tick_size);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1848,12 +2016,55 @@ inline void DMP_ReadVWAPDay(SCStudyInterfaceRef sc, DMP_RawData& d) {
 // VWAP WEEKLY & MONTHLY + ATR + MA (Daily Charts)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 🆕 FIX 24/04 (schema 3.7.14) : calcule ATR 14-barres 1-min sur le chart BARRES.
+//   True Range par barre = Max(H-L, |H-C_prev|, |L-C_prev|). Rolling moyenne 14.
+//   Retourne ATR en TICKS (pas en prix). Si < 14 barres dispo → 0.
+// SMA(14) de True Range, pas Wilder. Wilder aurait un smoothing recursif, SMA
+// est plus simple. Ecart attendu 3-5% sur detection spike (ratio x3+). Acceptable.
+inline float DMP_Calc_ATR_14m(SCStudyInterfaceRef sc, int chart_barres, float tick_size) {
+    SCFloatArray high_arr, low_arr, close_arr;
+    // 🔧 FIX review 24/04 : ChartNumber doit etre positif (entier), pas signe.
+    sc.GetChartArray(chart_barres, SC_HIGH, high_arr);
+    sc.GetChartArray(chart_barres, SC_LOW, low_arr);
+    sc.GetChartArray(chart_barres, SC_LAST, close_arr);
+    const int sz = (int)high_arr.GetArraySize();
+    if (sz < 15 || tick_size <= 0.0f) return 0.0f;  // Besoin >=15 barres (14 TR + 1 ref close)
+
+    constexpr int N = 14;
+    float tr_sum = 0.0f;
+    int n_valid = 0;
+    // Les 14 dernieres barres (sz-14 a sz-1). Close_prev = sz-15 pour la premiere TR.
+    for (int i = sz - N; i < sz; i++) {
+        if (i <= 0) continue;
+        const float h = high_arr[i];
+        const float l = low_arr[i];
+        const float c_prev = close_arr[i - 1];
+        if (!std::isfinite(h) || !std::isfinite(l) || !std::isfinite(c_prev)) continue;
+        // 🔧 FIX compile : scstructures.h definit `max(a,b)` comme macro qui
+        //   rentre en conflit avec std::max({initializer_list}). Utilisation
+        //   de fmaxf nested pour eviter cette macro (solution standard SC).
+        const float tr1 = h - l;
+        const float tr2 = std::fabs(h - c_prev);
+        const float tr3 = std::fabs(l - c_prev);
+        const float tr = std::fmax(std::fmax(tr1, tr2), tr3);
+        tr_sum += tr;
+        n_valid++;
+    }
+    if (n_valid == 0) return 0.0f;
+    const float atr_price = tr_sum / (float)n_valid;
+    return atr_price / tick_size;  // retour en TICKS
+}
+
 inline void DMP_ReadDaily(SCStudyInterfaceRef sc, DMP_RawData& d) {
     const int chart = d.is_nq ? DMP_Charts::NQ_DAILY : DMP_Charts::ES_DAILY;
 
     // ATR — chart daily, "reference line" → SafeReadLast
     d.atr_daily = DMP_SafeReadLast(sc, chart,
                     d.is_nq ? DMP_Studies::NQ_DAILY::ATR : DMP_Studies::ES_DAILY::ATR, 0);
+
+    // 🆕 FIX 24/04 : ATR 14-barres 1-min calcule depuis chart BARRES (23/25).
+    const int chart_barres = d.is_nq ? DMP_Charts::NQ_BARRES : DMP_Charts::ES_BARRES;
+    d.atr_14m = DMP_Calc_ATR_14m(sc, chart_barres, d.tick_size);
 
     // Moving Averages — chart daily → SafeReadLast
     const int ma_id = d.is_nq ? DMP_Studies::NQ_DAILY::MA : DMP_Studies::ES_DAILY::MA;
@@ -2308,6 +2519,7 @@ inline void DMP_ReadAll(SCStudyInterfaceRef sc, DMP_RawData& d, bool is_nq) {
 
     // Floats prix et mesures → DMP_INVALID (valeur sentinelle)
     d.atr_daily = d.ma_fast = d.ma_slow = DMP_INVALID;
+    d.atr_14m = 0.0f;  // 🆕 3.7.14 : 0 si calcul impossible (< 14 barres)
     d.vwap_day = d.vwap_day_sd1u = d.vwap_day_sd1d = DMP_INVALID;
     d.vwap_day_sd2u = d.vwap_day_sd2d = DMP_INVALID;
     d.vwap_day_sd3u = d.vwap_day_sd3d = DMP_INVALID;

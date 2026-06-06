@@ -31,6 +31,146 @@
 
 ---
 
+### 2026-06-06 23:30 (37) - [PATTERN_11 + VALIDATION_MISS] - Convention Side Databento INVERSEE dans 8 modules CORE/ — bug delta_bar pollue Bot 1/2/3 depuis demarrage pipeline
+
+**Categorie** : PATTERN_11 (mapping convention hardcoded contre la realite) + VALIDATION_MISS (jamais teste empiriquement avant deploy)
+**Sub-categorie** : ORDERFLOW_CONVENTION_INVERTED
+
+**Contexte** : Sa 06/06 nuit, Jackson observe Bot 1 NQ qui ACHETE pendant chute -1407 pts (05/06 baissier massif). Investigation revele bug critique.
+
+**Bug** : Notre Python interprete `Side.ASK ('A')` comme BUYER aggressor (`delta_bar += size`). Verite officielle (NautilusTrader Rust decoder canonical) :
+```rust
+'A' => AggressorSide::Seller,   // Side.ASK = SELLER aggressor
+'B' => AggressorSide::Buyer,    // Side.BID = BUYER aggressor
+```
+
+Convention SAINE (Sierra Chart) : `delta_bar = AskVolume - BidVolume` (ask vol = aggressive BUY).
+Convention OPPOSEE (Databento expose Side dans le sens BOOK SIDE aggressee).
+
+**Empirique 5 jours baissiers NQ** (20260519, 27, 0603, 0604, 0605) :
+- Sierra `delta_bar` sum : NEGATIF (coherent marche baissier)
+- Databento `delta_bar` sum : POSITIF (inverse)
+- Ranges miroirs ([-799..641] vs [-641..799])
+
+**Impact** :
+- Bot 1 V3 NQ + Bot 2 BN V5 + Bot 3 V4 = decisions LIVE inversees depuis demarrage pipeline (plusieurs mois)
+- Bot 2 BN V5 +$887/jour recent = gain pur du bug ou strategy reelle ? Strategy-inversion test obligatoire Phase 5.4
+- Tous datasets parquet v4 (`build_dataset_v4_dmp_databento.py:619-627`) = `buy_vol`/`sell_vol`/`delta_bar` INVERSES → modeles LightGBM polluees
+- Tous backtests bot 1/2/3 = thresholds calibres sur features inversees
+
+**Sites du bug (8 modules)** :
+- `databento_dumper.py:115,118`
+- `enricher_chain.py:321,323`
+- `footprint_builder.py:127,129`
+- `footprint_builder_streaming.py:74,76`
+- `phase_b_plus_plus_trades_streaming.py:219`
+- `live_enricher_v_pre_refactor.py:494,496`
+- `build_dataset_v4_dmp_databento.py:619-627` (SQL)
+- `research/calibrate_mgc_thresholds_batch.py:48,50`
+
+**Cause racine** : commentaire faux dans `databento_dumper.py:76` ("side='A' (ASK) → buy") replique par copier-coller dans 7 autres modules sans verification empirique de la convention Databento officielle.
+
+**Lecon** :
+1. **Toute convention orderflow doit etre verifiee EMPIRIQUEMENT sur N jours directionnels** (5 jours baissiers + 5 haussiers, convergence > 60%) AVANT deploy
+2. **Cross-check avec source canonique** (NautilusTrader decoder, docs vendor officielles) PAS un commentaire "evident"
+3. **Sanity check signe sur jours connus** : marche baissier ⇒ delta_day attendu negatif. Sinon = bug mapping
+4. **PATTERN_11 detecte** : 8 modules avec meme bug par copier-coller du commentaire faux source
+
+**Trigger prevention** :
+- AVANT tout deploy d'une convention orderflow (delta, imbalance, aggressor) : lancer `tools/check_feature_sign.py` (Phase 5 design migration Sierra)
+- AVANT commit d'un module qui consume `side`, `aggressor`, `orderflow_direction` : grep tous les sites + test empirique 5 jours directionnels
+- AVANT confiance dans un dataset ML : sanity check delta_day sign sur 5 jours baissiers connus
+
+**Resolution** : migration full Sierra Chart (eliminer pipeline Databento entierement). Sierra = convention saine (AskVolume = aggressive BUY natif). Code Databento devient mort et est archive Phase 7.2. Design doc complet `DOCS/superpowers/specs/2026-06-06-sierra-full-migration-design.md`. Plan agent verdict RESERVES MAJEURES 5/10, corrections appliquees dans todo (85 items).
+
+**Reviewed** : Plan agent (RESERVES MAJEURES), code-reviewer (pending Phase 1.5), schema-auditor (pending Phase 0.7bis)
+
+---
+
+### 2026-06-04 09:30 (36) - [CONTEXT_MISS] - ENV BN V5 propage seulement sur paper_v2 — Dashboard service oublie cause Bot 2 BN V4 affiche en boucle
+
+**Categorie** : CONTEXT_MISS (deuxieme cas deprecation BN V4->V5 en 24h)
+**Sub-categorie** : DEPLOY_INCOMPLETE_MULTI_SERVICE
+
+**Contexte** : Hier 03/06 22:00 deploy dashboard Bot 2 BN V5 :
+- `DASHBOARD/api/paper_tracker.py` : ajout `get_bn_v5_payload()` + routage `MIA_BN_V5_ENABLED=1`
+- `DASHBOARD/static/js/dashboard.js` : detection bot_label "Bot 2 BN V5"
+- `DASHBOARD/static/index.html` : cache bust v153
+- SCP + restart MIA-Dashboard fait
+- Test local fonction OK
+
+Mais ENV `MIA_BN_V5_ENABLED=1` propagee SEULEMENT sur service `MIA-DataBento-Paper-V2`. **Service `MIA-Dashboard` NSSM AppEnvironmentExtra avait encore `MIA_BN_V4_ENABLED=1` (ancien) ET PAS `MIA_BN_V5_ENABLED`**.
+
+Resultat 04/06 09:24 UTC Jackson voit le dashboard :
+- "Bot 2 BN V4 — Bataille Navale (Sim2)" (au lieu de BN V5)
+- "STATE FROZEN age=?min (paper_trader freeze)"
+- "Aucun setup BN V4 collecte"
+
+Branche code `elif MIA_BN_V4_ENABLED=1 → get_bn_v4_payload()` activee → lit `LOGS/bn_v4/` (vide depuis 02/06) → available=False, alive=False → frozen.
+
+**Cause racine** : pas de checklist explicite "deprecation bot X→Y exige propagation ENV sur N services" dans CLAUDE.md ou critical-tasks-review.md. C'est la 2e occurrence en 24h du meme pattern (cf incident #35 BN V4 watchdog non purge → 66 reboots/jour).
+
+**Lecon** : la deprecation d'un bot X via ENV `MIA_<X>_ENABLED=0` doit etre EXHAUSTIVE :
+1. Service principal (paper_v2 / paper trader)
+2. Service Dashboard (separe, propre ENV)
+3. Service Watchdog (separe, code check obsolete)
+4. Tous les autres services qui referent X (grep cross-codebase)
+
+**Trigger prevention** : ajouter dans `.claude/rules/critical-tasks-review.md` section deploy :
+```bash
+# Avant deploy fix deprecation ENV :
+ssh VPS "Get-Service MIA-* | ForEach-Object { Write-Host $_.Name; nssm get $_.Name AppEnvironmentExtra }" \
+  | grep -E "MIA_<X>_ENABLED|MIA_<Y>_ENABLED"
+# Verifier que TOUS les services concernes ont le bon ENV.
+```
+
+**Fix applique** (04/06 09:30 UTC) : `nssm set MIA-Dashboard AppEnvironmentExtra ... MIA_BN_V4_ENABLED=0 MIA_BN_V5_ENABLED=1 ...` + `Restart-Service MIA-Dashboard`. PID neuf, ENV correcte. Apres refresh hard browser (Ctrl+Shift+R) Jackson devrait voir Bot 2 BN V5.
+
+**Reviewed** : agent investigation 04/06 (rendu), self.
+
+---
+
+### 2026-06-03 15:23 (35) - [CONTEXT_MISS] - Watchdog Bot2_BN_V4 check obsolete cause 66 reboots/jour paper_v2 + 4 orphelins Bot 3
+
+**Categorie** : CONTEXT_MISS (deprecation BN V4 -> BN V5 23/05 sans purge watchdog)
+**Sub-categorie** : INFRA_MONITORING_DRIFT
+
+**Contexte** : BN V4 (`bn_v4_paper`) remplace par BN V5 (`bn_v5_engine`) le 23/05/2026 dans paper_v2 (cf memory `project_bn_v5_engine_20260507`). ENV `MIA_BN_V4_ENABLED=0` mis sur paper_v2 hier soir 02/06 fin RTH. Le fichier de log `LOGS/bn_v4/bn_v4_v1_*.jsonl` n'est plus ecrit depuis 02/06 16:00 UTC.
+
+`BOT/mia_watchdog.py:142-154` contenait un check `Bot2_BN_V4` avec :
+- `path_glob: LOGS/bn_v4/bn_v4_v1_*.jsonl`
+- `crit_age_s: 1800` (30 min)
+- `service: MIA-DataBento-Paper-V2`
+
+Ce check n'a JAMAIS ete mis a jour pour pointer vers BN V5 (ni renomme ni supprime). Resultat 03/06 :
+- Age constate `WATCHDOG_SOURCE_CRIT Bot2_BN_V4` = 64-68k secondes
+- Watchdog declanche `Restart-Service MIA-DataBento-Paper-V2` toutes les 15-16 min (cap 3/h)
+- 66 BOOT_STARTS paper_v2 dans la journee
+- 4 positions Bot 3 v4 orphelines (Jackson flatten manuel 11:38:49)
+- Process instable cascade BN V5 + Bot 3 V3 + Bot 3 v4
+
+**Cause racine** : checklist post-deprecation manquante. Quand un bot X est remplace par bot Y (23/05 BN V4 -> BN V5), il faut grep tous les composants infra qui referent X :
+- `mia_watchdog.py` (check + CME_DATA_DEPENDENT_SOURCES)
+- `dashboard` references
+- `log_catalog.py` codes log X-specific
+- `BOT_CHANGELOG.md` annotations
+
+**Lecon** : la deprecation d'un module ne se limite PAS au code metier. **Le monitoring qui suit le module mort PROVOQUE le bug**, car il restart un service pour ressusciter un fantome.
+
+**Trigger prevention** :
+- A chaque deprecation bot (ENV X=0, code remplace), executer mandatoirement :
+  ```bash
+  grep -rn "<old_bot_name>" BOT/mia_watchdog.py DASHBOARD/ CORE/log_catalog.py
+  ```
+- Ajouter cette regle dans `.claude/rules/critical-tasks-review.md` section "DEPLOY criteres" : "deprecation = purge infra + monitoring obligatoire"
+- Outil futur : `tools/watchdog_dryrun.py` qui valide chaque path_glob produit au moins 1 fichier mtime < crit_age_s quand service tourne. Sinon erreur de config.
+
+**Fix applique** : `BOT/mia_watchdog.py` ligne 141-154 (bloc Bot2_BN_V4 supprime + commentaire 12 lignes explicatif) + ligne 246 ("Bot2_BN_V4" retire de `CME_DATA_DEPENDENT_SOURCES`). Deploy + restart MIA-Watchdog 15:23 UTC. 24 min observation : 0 CRIT / 0 RESTART.
+
+**Reviewed** : agent 3 (diagnostic 128 reboots), code-reviewer (en attente verdict), self (smoke test inline OK).
+
+---
+
 ### 2026-06-03 12:45 (34) - [PATTERN_11] - BN V5 cascade F5+F6 ajoutee 02/06 SOIR sans rebacktest (3eme occurrence cycle BN V4->V5)
 
 **Categorie** : PATTERN_11 (3eme occurrence cycle Battle Navale V4->V5)

@@ -25,6 +25,21 @@
 constexpr float DMP_TICK_ES = 0.25f;   // 1 tick ES = 0.25 point
 constexpr float DMP_TICK_NQ = 0.25f;   // 1 tick NQ = 0.25 point
 
+// ── Filtre Extension Lines stale (fix 24/04/2026) ─────────────────────────────
+// Distance MAX autorisee (en ticks) entre prix courant et une Extension Line
+// pour que la ligne soit consideree VALIDE dans DMP_ReadNearestExtensionLine.
+// Au-dela, la ligne est consideree stale (duplicate apres Full Recalculation SC,
+// cf https://www.sierrachart.com/SupportBoard.php?ThreadID=57101) et filtree.
+//
+// 500t = 125 points (ES & NQ, tick 0.25). Justification empirique sur 1034 barres
+// NQ 23/04 :
+//   - F1 LONG p99 = 403-419 ticks    (legitime, < 500)
+//   - F3 EDGE NQ p99 AVANT fix = 1285 ticks (outliers stale, > 500)
+//   - F4 COLOR NQ median AVANT fix = -4531 ticks (aberrant stale)
+//   - F3 EDGE ES p99 = 117 ticks     (legitime, << 500)
+// Filtre coupe les aberrations sans casser les zones legitimes.
+constexpr float DMP_MAX_EXT_LINE_DIST_TICKS = 500.0f;
+
 // ── Heures RTH (Eastern Time, en minutes depuis minuit) ───────────────────────
 constexpr int DMP_RTH_START  = 9  * 60 + 30;  // 09h30 ET
 constexpr int DMP_RTH_END    = 16 * 60;        // 16h00 ET
@@ -42,7 +57,20 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 // ── Version du schéma JSONL ───────────────────────────────────────────────────
 // Incrémenté à chaque ajout/suppression de colonne pour détecter les incompatibilités
 // entre fichiers .jsonl collectés à des périodes différentes.
-#define DMP_SCHEMA_VERSION "3.7.8"   // Fix ib_position_pct guard ib_complete — 266 colonnes
+#define DMP_SCHEMA_VERSION "3.7.15"  // +4 features T&S aggregates depuis VAP — 06/06/2026
+// 3.7.15: +4 features T&S aggregates depuis VAP — 2026-06-06
+//         max_ask_vol_in_bar, max_bid_vol_in_bar, p99_trade_size_proxy,
+//         large_trader_max_size. Comble le "trou T&S" Sierra (pas de trades
+//         individuels comme Databento). Lecture depuis s_VolumeAtPriceV2
+//         dans DMP_ReadFPBS() boucle scan VAP existante (pas de nouveau scan,
+//         accumulation in-place).
+//         Migration full Sierra elimine dependance Databento (bug delta_bar
+//         inverse). Schema 268 → 272 colonnes.
+//         Fichiers : DMP_Reader.h (+4 fields fpbs_* + accumulation boucle VAP),
+//         DMP_Transform.h (+4 fields G6C + mapping + CSV header),
+//         DMP_Writer.h (+serialisation JSONL + meta n_columns 272).
+// 3.7.14: +atr_14m ATR 14-barres 1-min intraday — 24/04/2026 (rollback aussi
+//         d'une tentative ExtensionLineCount qui saturait ES 100% / NQ 0%)
 // 3.3.0: BN sg2→sg0 (color/absorb/long per-bar) + 6 colonnes big order cluster
 // 3.4.0: +8 colonnes range trading (range_pos, momentum, touches, bars_in_va)
 // 3.5.0: Big Orders par seuil (n_big_ask/bid → n_big_ask/bid_t1..t4) +6 cols
@@ -80,6 +108,88 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 //        le ML. Fix DMP_Transform.h:531 PosInRange + 5 callers inside_*_va.
 //        Pipeline Python synchronise (rule_engine, dmp_validator, ib_recalc).
 //        Fix ATR x4: lignes de code corrigees dans la meme nuit (3 deploys C++).
+//
+// 3.7.14: +atr_14m ATR 14-barres 1-min intraday — 24/04/2026
+//        Contexte : audit ATR revele que `atr` dans le JSONL est en fait `atr_daily`
+//          (lu depuis chart DAILY). Nom ambigu. VolatilitySpikeGate dans BOT/bot_main.py
+//          calcule `bar_range/atr` avec ratio toujours < 0.1 → gate jamais declenchee
+//          (bug safety net critique quand bot ira live).
+//        Fix : nouveau champ `atr_14m` calcule en C++ (True Range rolling 14 barres
+//          1-min depuis chart BARRES 23/25). En ticks. Permet :
+//            1. VolatilitySpikeGate de detecter spike intraday (bar_range/atr_14m)
+//            2. SLTPEngine bornes ATR-based dynamiques (backlog P2 reporte)
+//            3. ML features avec ATR intraday (vs atr daily)
+//        `atr` (daily) conserve pour retrocompat features `dist_X_atr` (normalisation
+//          a echelle journaliere, intentionnel).
+//        Schema 267 → 268 colonnes (ajout 1 feature).
+//        Fichiers : DMP_Reader.h (+helper DMP_Calc_ATR_14m + field), DMP_Transform.h
+//          (+field f.atr_14m), DMP_Writer.h (+serialisation + meta n_columns 268).
+//
+// 3.7.13: Fix cluster threshold dynamique via GetChartStudyInputInt — 24/04/2026
+//        Bug empirique : `dist_cluster_nearest_up` ES fire 2.2% (91% null) sur
+//        1210 barres 23/04. NQ cluster 34% fire. Cause racine : seuils C++
+//        hardcoded (ES=500/NQ=50) desynchronises des seuils reels de l'etude SC
+//        CLUSTER VOLUME (ES=250/NQ=20 - confirmé Jackson 24/04).
+//        Fix : sc.GetChartStudyInputInt(chart, CLUSTER, 1, threshold) lit
+//        dynamiquement In:2 "Volume Threshold" de l'etude SC ID:10 (ES) / ID:12 (NQ).
+//        Chemin 2 propre (auto-sync avec SC) validé par Jackson.
+//        Fallback : valeurs connues ES=250/NQ=20 si lecture API echoue.
+//        Impact attendu : fire rate ES `n_clusters_20t` 10% → ~40-50%.
+//        Aucun changement colonnes (267). File : DMP_Reader.h:1749-1770.
+//
+// 3.7.12: Fix F2 LONG DN_UP / UP_DN reversal via DMP_ReadBN_Event — 24/04/2026
+//        Bug empirique ES 0% fire sur 1210 barres 23/04 (feature morte).
+//        NQ fire 1.8-2.7% par chance de timing SC (instable).
+//        Cause racine : formule etude utilise [1] (barre future) :
+//          AND(O<C[-1], H[-1]>L+9t, O[1]>C, H[1]>L+9t, H[1]>H[-1])
+//        Sur sz-1 (live), [1] n'existe pas → formule=FALSE → sg0=0 permanent.
+//        Fix : lire sz-2 (derniere barre FERMEE) via DMP_ReadBN_Event. A cet
+//        index, [1] = sz-1 (barre maintenant live) existe → formule evaluable.
+//        Bug identique a celui documente pour COLOR UP/DN (fix 09/03/2026).
+//        Fichier : DMP_Reader.h:1784-1787. Aucun changement colonne (267).
+//
+// 3.7.11: bool_near_level renforce (filtre confluence bar_edge) — 24/04/2026
+//        Contexte : bar_edge_buy/sell NQ saturent 84% (vs ES 12%). Jackson tradingue
+//        manuellement seulement les signaux EDGE proches d'un niveau majeur. Permet
+//        filtre `bar_edge_* AND bool_near_level` cote bot → saturation 84% → ~20%.
+//        Modifs DMP_Transform.h :
+//          (1) DMP_PROXIMITY_ES : 20 → 10 ticks (2.5 pts, 0.5 ATR ES)
+//          (2) DMP_PROXIMITY_NQ : 30 → 10 ticks (2.5 pts, 0.7 ATR NQ)
+//          (3) CalcBooleans : 12 → 23 niveaux majeurs checkes
+//              +cur_vah, +cur_val, +vwap_d, +vwap_w, +vwap_m, +ib_high, +ib_low,
+//              +sess_high, +sess_low, +swing_high, +swing_low (11 nouveaux niveaux)
+//        Justification empirique 10 barres NQ 24/04 17:13-17:22 :
+//          - 2 signaux vraiment pertinents a -4t et -5t du CUR_VPOC (retest precis)
+//          - 30t capturait 50% des barres (3/5 bruit a VPOC +/-12/+23/-29t)
+//          - 10t cible = 20% fire effectif (aligne ES naturel)
+//        Aucun changement schema colonnes (267 inchanges). Comportemental.
+//
+// 3.7.10: Fix DMP_ReadNearestExtensionLine max_dist filtre — 24/04/2026
+//        Bug detecte empiriquement sur 1034 barres NQ live 23/04 :
+//          dist_ext_color_up/dn NQ = -4531/-4554 ticks (MEDIAN sur 100% des barres)
+//          dist_ext_edge_buy/sell NQ p99 = 1285/1470 ticks (outliers extremes)
+//        Cause racine : SC duplique les Extension Lines a chaque Full Recalculation
+//          (gotcha officiel : ThreadID=57101 "each recalculation duplicates the
+//          lineuntilfuture"). DMP_ReadNearestExtensionLine retournait la ligne la
+//          plus proche SANS filtre de distance max → lignes historiques stale (ex:
+//          COLOR UP jamais retestee a -1133 points du prix) retournees en permanence.
+//        Fix : constante MAX_EXTENSION_LINE_DIST_TICKS=500 (=125 points ES/NQ)
+//          skip lignes > max_dist dans la boucle scan. Legitimite preservee :
+//          F1 LONG p99=420t < 500, F3 EDGE ES p99=117t < 500, COLOR ES med=-303t < 500.
+//        Aucun changement schema (comportemental). Impact : features stale passent
+//          a null (DMP_INVALID → "nan" JSONL) au lieu de valeurs aberrantes.
+//
+// 3.7.9: +dist_mq_hvl_0dte (distance HVL 0DTE en ticks) — 24/04/2026
+//        Bug detecte par Jackson empiriquement : HVL 0DTE visible chart (~26925)
+//        est AVEUGLE pour le bot car DMP ne dump PAS dist_mq_hvl_0dte dans JSONL.
+//        Le DMP Reader lit deja mq_hvl_0dte (sg7 MQ_GAMMA) depuis 31/03 mais
+//        Transform.h expose uniquement call/put 0DTE. Le HVL 0DTE est utilise
+//        UNIQUEMENT comme FALLBACK pour call/put 0DTE quand superposes (fix 31/03).
+//        Cas observe 23/04 : 3 niveaux 0DTE DISTINCTS (Call=27150, HVL=26925, Put=26700)
+//        → fallback ne se declenche pas → HVL 0DTE invisible bot.
+//        Fix : +1 feature dist_mq_hvl_0dte (266 → 267 cols), 3 modifs C++ minimales.
+//        Impact edge Jackson : HVL 0DTE = niveau cle pour confluence zones BN.
+//        Reviewed by code-reviewer (audit avant deploy).
 //
 // 3.7.8: Fix ib_position_pct guard ib_complete — 20/04/2026
 //        Bug detecte par schema-auditor : pendant formation IB (9:30-10:30 ET),

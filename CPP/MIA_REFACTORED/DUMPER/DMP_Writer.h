@@ -571,11 +571,11 @@ static inline void DMP_WR_WriteMeta(
     // Les features dist_*_atr, ib_range_atr, sess_range_atr sont calculees en
     // ratio ticks/ticks. Cf. fix DMP_Transform.h + DMP_OpenType.h du 15/04/2026.
     meta << "  \"atr_convention\": \"ticks\",\n";
-    meta << "  \"n_columns\": " << 266               << ",\n";
+    meta << "  \"n_columns\": " << 272               << ",\n";   // 🆕 3.7.15 +4 T&S aggregates
     meta << "  \"format\": \"jsonl\",\n";
     meta << "  \"invalid_sentinel\": null,\n";
     meta << "  \"columns\": [\n";
-    meta << "    \"ts\",\"sym\",\"contract\",\"price\",\"atr\",\"session\",\"session_id\",\n";
+    meta << "    \"ts\",\"sym\",\"contract\",\"price\",\"atr\",\"atr_14m\",\"session\",\"session_id\",\n";
     meta << "    \"dist_vwap_d\",\"dist_vwap_d_atr\",\"dist_vwap_d_sd1u\",\"dist_vwap_d_sd1d\",\n";
     meta << "    \"dist_vwap_d_sd2u\",\"dist_vwap_d_sd2d\","
          << "\"dist_vwap_d_sd3u\",\"dist_vwap_d_sd3d\","
@@ -589,7 +589,7 @@ static inline void DMP_WR_WriteMeta(
     meta << "    \"inside_prev_va\",\"open_in_prev_va\",\n";
     meta << "    \"dist_1d_min_ticks\",\"dist_1d_max_ticks\",\n";
     meta << "    \"next_wall_dist_ticks\",\"next_wall_is_call\",\n";
-    meta << "    \"dist_mq_call\",\"dist_mq_put\",\"dist_mq_hvl\",\"dist_mq_call_0dte\",\"dist_mq_put_0dte\",\n";
+    meta << "    \"dist_mq_call\",\"dist_mq_put\",\"dist_mq_hvl\",\"dist_mq_call_0dte\",\"dist_mq_put_0dte\",\"dist_mq_hvl_0dte\",\n";
     meta << "    \"dist_gex_nearest_up\",\"dist_gex_nearest_dn\",\"gex_cluster_count\",\n";
     meta << "    \"dist_blind_nearest_up\",\"dist_blind_nearest_dn\",\n";
     meta << "    \"vix_level\",\"dist_vix_hvl\",\"vix_regime\",\"vix_above_hvl\",\n";
@@ -617,6 +617,9 @@ static inline void DMP_WR_WriteMeta(
     meta << "    \"high_pullback_delta\",\"low_pullback_delta\",\n";
     meta << "    \"diag_pos_delta\",\"diag_neg_delta\",\"diag_imbalance\",\n";
     meta << "    \"low_bid_vol_pct\",\"high_ask_vol_pct\",\n";
+    // 🆕 G6C T&S Aggregates — Schema 3.7.15 (06/06/2026)
+    meta << "    \"max_ask_vol_in_bar\",\"max_bid_vol_in_bar\",\n";
+    meta << "    \"p99_trade_size_proxy\",\"large_trader_max_size\",\n";
     meta << "    \"bn_color_up\",\"bn_color_dn\",\"bn_color_up_2\",\"bn_color_dn_2\",\"bn_absorb_ask\",\"bn_absorb_bid\",\n";
     meta << "    \"bn_long_up\",\"bn_long_dn\",\"bn_pressure_ask\",\"bn_pressure_bid\",\n";
     meta << "    \"bn_score_raw\",\"bn_score_bull\",\"bn_score_bear\",\n";
@@ -795,6 +798,8 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
     }
     DMP_WR_KV2(buf, pos, "price", f.price);   DMP_WR_COMMA(buf, pos);
     DMP_WR_KV2(buf, pos, "atr",   f.atr);     DMP_WR_COMMA(buf, pos);
+    // 🆕 3.7.14 (24/04) : ATR intraday 14 barres 1-min (bug fix VolatilitySpikeGate)
+    DMP_WR_KV2(buf, pos, "atr_14m", f.atr_14m); DMP_WR_COMMA(buf, pos);
     DMP_WR_KVE(buf, pos, "session", f.session); DMP_WR_COMMA(buf, pos);
 
     // session_id string (comme ancien dumper : "Asia"/"London"/"US")
@@ -858,6 +863,7 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
     DMP_WR_KV(buf, pos, "dist_mq_hvl",           f.dist_mq_hvl);          DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "dist_mq_call_0dte",     f.dist_mq_call_0dte);    DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "dist_mq_put_0dte",      f.dist_mq_put_0dte);     DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf, pos, "dist_mq_hvl_0dte",      f.dist_mq_hvl_0dte);     DMP_WR_COMMA(buf, pos);  // 🆕 3.7.9 (24/04)
     DMP_WR_KV(buf, pos, "dist_gex_nearest_up",   f.dist_gex_nearest_up);  DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "dist_gex_nearest_dn",   f.dist_gex_nearest_dn);  DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "gex_cluster_count",      f.gex_cluster_count);    DMP_WR_COMMA(buf, pos);
@@ -955,6 +961,12 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
     DMP_WR_KV(buf, pos, "diag_imbalance",      f.diag_imbalance);      DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "low_bid_vol_pct",     f.low_bid_vol_pct);     DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "high_ask_vol_pct",    f.high_ask_vol_pct);    DMP_WR_COMMA(buf, pos);
+
+    // ── G6C T&S Aggregates (4 champs — Schema 3.7.15 06/06/2026) ───────────
+    DMP_WR_KV(buf, pos, "max_ask_vol_in_bar",    f.max_ask_vol_in_bar);    DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf, pos, "max_bid_vol_in_bar",    f.max_bid_vol_in_bar);    DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf, pos, "p99_trade_size_proxy",  f.p99_trade_size_proxy);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf, pos, "large_trader_max_size", f.large_trader_max_size); DMP_WR_COMMA(buf, pos);
 
     // ── G7 BN (15 champs) ────────────────────────────────────────────────────
     DMP_WR_KVB(buf, pos, "bn_color_up",            f.bn_color_up);            DMP_WR_COMMA(buf, pos);

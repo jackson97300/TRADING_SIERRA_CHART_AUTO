@@ -592,7 +592,8 @@ DMP_UpdateOpenType(sc, r, f);
 
 if (quality_min > 0) {
     // Fix audit 09/04 : 262 cols dans schema 3.7.2, puis 266 cols en 3.7.3 (+4 cluster volume)
-    const int total_fields  = 266;
+    // 06/06/2026 schema 3.7.15 : 272 cols (+4 T&S aggregates depuis VAP)
+    const int total_fields  = 272;
     const int valid_pct = (f.n_valid_fields * 100) / total_fields;
     if (valid_pct < quality_min) {
         if (debug_mode) {

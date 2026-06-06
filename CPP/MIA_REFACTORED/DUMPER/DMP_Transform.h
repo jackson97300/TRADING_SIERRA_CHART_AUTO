@@ -37,8 +37,16 @@
 constexpr float DMP_ATR_CLIP        = 5.0f;
 
 // Distance max en ticks pour déclarer un niveau "proche"
-constexpr float DMP_PROXIMITY_ES    = 20.0f;   // 5 points ES
-constexpr float DMP_PROXIMITY_NQ    = 30.0f;   // 7.5 points NQ
+// 🆕 FIX 24/04/2026 : resserrement 20→10 ES / 30→10 NQ (schema 3.7.11)
+//   Justification empirique (10 barres NQ 24/04 17:13-17:22) :
+//     - Avec 30t NQ : bool_near_level capte 50% des barres dont 3/5 au VPOC +/-23t
+//       (approches "molles" non-testables, ~0.8 ATR) → bruit
+//     - Avec 10t NQ : capte uniquement les vrais retests (-4/-5t du VPOC) = ~0.5 ATR
+//     - ATR NQ 1-min ~15t → 10t = 0.67 ATR = zone de retest precise (pas approche)
+//   Combine avec bar_edge_buy/sell permet filtre confluence : signal EDGE valide
+//   uniquement si prix teste un niveau majeur (23 niveaux, cf CalcBooleans).
+constexpr float DMP_PROXIMITY_ES    = 10.0f;   // 2.5 points ES (ex 20t = 5pts trop laxe)
+constexpr float DMP_PROXIMITY_NQ    = 10.0f;   // 2.5 points NQ (ex 30t = 7.5pts trop laxe)
 
 // Seuils IB (ratio range/ATR)
 constexpr float DMP_IB_NARROW_RATIO = 0.40f;   // IB étroite < 40% ATR
@@ -62,6 +70,7 @@ struct DMP_MLFeatures {
     char        contract[32];          // Contrat complet (ex: "ESH26-CME") — traçabilité rollover
     float       price;                 // Prix de clôture (référence)
     float       atr;                   // ATR journalier (dénominateur)
+    float       atr_14m;               // 🆕 3.7.14 ATR 14-barres 1-min (intraday, ticks)
     float       session;               // Session : 0=Asia, 1=London, 2=US
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -143,6 +152,7 @@ struct DMP_MLFeatures {
     float dist_mq_hvl;                // Distance au HVL (ticks)
     float dist_mq_call_0dte;          // Distance au Call 0DTE (ticks)
     float dist_mq_put_0dte;           // Distance au Put 0DTE (ticks)
+    float dist_mq_hvl_0dte;           // Distance au HVL 0DTE (ticks) — ajout 3.7.9 (cas niveaux distincts)
 
     // GEX — nearest above/below
     float dist_gex_nearest_up;        // GEX le plus proche au-dessus (ticks)
@@ -267,6 +277,15 @@ struct DMP_MLFeatures {
     float diag_imbalance;             // (diag+ - diag-) / (diag+ + diag-) → [-1,+1]
     float low_bid_vol_pct;            // % Bid au LOW — absorption
     float high_ask_vol_pct;           // % Ask au HIGH — absorption
+
+    // 🆕 GROUPE 6C — T&S AGGREGATES (4 champs — Schema 3.7.15 06/06/2026)
+    // Comble le trou Time & Sales : Sierra Chart ne dump pas trades individuels
+    // (vs Databento) mais s_VolumeAtPriceV2 fournit aggregats par price level.
+    // Eliminer dependance Databento (bug delta_bar inverse).
+    float max_ask_vol_in_bar;         // max(AskVolume) sur tous price levels (mur acheteur)
+    float max_bid_vol_in_bar;         // max(BidVolume) sur tous price levels (mur vendeur)
+    float p99_trade_size_proxy;       // proxy p99 lognormal : mean + 2.33*stddev
+    float large_trader_max_size;      // max(avg_trade_size) par level (whale proxy)
 
     // ─────────────────────────────────────────────────────────────────────────
     // GROUPE 7 — BATAILLE NAVALE SIGNAUX (13 champs)
@@ -672,6 +691,7 @@ static inline void CalcMenthorQ(const DMP_RawData& r, DMP_MLFeatures& f) {
     f.dist_mq_hvl       = CalcDistTicks(r.mq_hvl,       p, ts);
     f.dist_mq_call_0dte = CalcDistTicks(r.mq_call_0dte, p, ts);
     f.dist_mq_put_0dte  = CalcDistTicks(r.mq_put_0dte,  p, ts);
+    f.dist_mq_hvl_0dte  = CalcDistTicks(r.mq_hvl_0dte,  p, ts);  // 🆕 3.7.9 (24/04) cas niveaux distincts
 
     // 🆕 FIX 31/03/2026 : Fallback niveaux MQ 0DTE superposés
     //   Quand Call 0DTE = HVL = Gamma Wall, MenthorQ fusionne les niveaux
@@ -1044,6 +1064,19 @@ static inline void CalcOrderFlow(const DMP_RawData& r, DMP_MLFeatures& f) {
     // Pression volume aux extrêmes
     f.low_bid_vol_pct  = DMP_IsValid(r.fpbs_low_bid_pct)  ? r.fpbs_low_bid_pct  : 0.0f;
     f.high_ask_vol_pct = DMP_IsValid(r.fpbs_high_ask_pct) ? r.fpbs_high_ask_pct : 0.0f;
+
+    // ── G6C — T&S AGGREGATES (4 features — Schema 3.7.15) ──────────────────
+    // Pattern fail-loud : DMP_INVALID si le scan VAP a echoue (consistance
+    // avec poc_bar_dist ligne 994). Ces features sont OPTIONNELLES pour
+    // certaines barres (Asia low-vol) — INVALID est legitime.
+    f.max_ask_vol_in_bar    = DMP_IsValid(r.fpbs_max_ask_vol_in_bar)
+                              ? r.fpbs_max_ask_vol_in_bar    : DMP_INVALID;
+    f.max_bid_vol_in_bar    = DMP_IsValid(r.fpbs_max_bid_vol_in_bar)
+                              ? r.fpbs_max_bid_vol_in_bar    : DMP_INVALID;
+    f.p99_trade_size_proxy  = DMP_IsValid(r.fpbs_p99_trade_size_proxy)
+                              ? r.fpbs_p99_trade_size_proxy  : DMP_INVALID;
+    f.large_trader_max_size = DMP_IsValid(r.fpbs_large_trader_max_size)
+                              ? r.fpbs_large_trader_max_size : DMP_INVALID;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1352,15 +1385,33 @@ static inline void CalcBooleans(const DMP_RawData& r, DMP_MLFeatures& f) {
     f.bool_above_mq_call   = (DMP_IsPriceValid(r.mq_call) && p > r.mq_call) ? 1.0f : 0.0f;
 
     // Near level : distance < seuil de proximité
+    // 🆕 FIX 24/04/2026 (schema 3.7.11) : extension de 12 → 23 niveaux majeurs
+    //   Ajout : cur_vah, cur_val, vwap d/w/m, ib high/low, sess high/low, swing high/low
+    //   Permet filtre confluence `bar_edge_* AND bool_near_level` (reduction
+    //   saturation NQ 84% → ~15-25% effectif, aligne avec ES fire rate naturel).
     const float prox = r.is_nq ? DMP_PROXIMITY_NQ : DMP_PROXIMITY_ES;
     float min_dist = 9999.0f;
     auto check = [&](float dist) {
         if (DMP_IsValid(dist) && std::fabs(dist) < min_dist)
             min_dist = std::fabs(dist);
     };
+    // MenthorQ Gamma (6 niveaux)
     check(f.dist_mq_call); check(f.dist_mq_put); check(f.dist_mq_hvl);
+    check(f.dist_mq_call_0dte); check(f.dist_mq_put_0dte); check(f.dist_mq_hvl_0dte);
+    // Volume Profile current (3 niveaux) — 🆕 cur_vah, cur_val ajoutes 24/04
+    check(f.dist_cur_vpoc); check(f.dist_cur_vah); check(f.dist_cur_val);
+    // Volume Profile previous (3 niveaux)
     check(f.dist_prev_vpoc); check(f.dist_prev_vah); check(f.dist_prev_val);
-    check(f.dist_cur_vpoc);  check(f.dist_gex_nearest_up); check(f.dist_gex_nearest_dn);
+    // VWAP D/W/M (3 niveaux) — 🆕 ajoutes 24/04
+    check(f.dist_vwap_d); check(f.dist_vwap_w); check(f.dist_vwap_m);
+    // GEX (2 niveaux)
+    check(f.dist_gex_nearest_up); check(f.dist_gex_nearest_dn);
+    // IB high/low (2 niveaux) — 🆕 ajoutes 24/04
+    check(f.dist_ib_high); check(f.dist_ib_low);
+    // Session high/low (2 niveaux) — 🆕 ajoutes 24/04
+    check(f.dist_sess_high); check(f.dist_sess_low);
+    // Swing high/low (2 niveaux) — 🆕 ajoutes 24/04
+    check(f.dist_swing_high); check(f.dist_swing_low);
     f.bool_near_level = (min_dist <= prox) ? 1.0f : 0.0f;
 
     // Dans IB ?
@@ -1493,6 +1544,7 @@ inline void DMP_Transform(
     f.sym[2] = '\0';
     f.price  = r.price_close;
     f.atr    = r.atr_daily;
+    f.atr_14m = r.atr_14m;   // 🆕 3.7.14 ATR intraday 1-min
     f.session = (float)r.session;  // 0=Asia, 1=London, 2=US
 
     // Copier contrat pour traçabilité rollover
@@ -1602,7 +1654,7 @@ inline void DMP_WriteCSVHeader(std::ofstream& file) {
         "dist_prev_vwap,dist_prev_vwap_sd1u,dist_prev_vwap_sd1d,"
         "inside_prev_va,open_in_prev_va,"
         // G3 MQ (14 + 2 daily range + 2 next_wall = 18)
-        "dist_mq_call,dist_mq_put,dist_mq_hvl,dist_mq_call_0dte,dist_mq_put_0dte,"
+        "dist_mq_call,dist_mq_put,dist_mq_hvl,dist_mq_call_0dte,dist_mq_put_0dte,dist_mq_hvl_0dte,"
         "dist_1d_min_ticks,dist_1d_max_ticks,"
         "dist_gex_nearest_up,dist_gex_nearest_dn,gex_cluster_count,"
         "next_wall_dist_ticks,next_wall_is_call,"
@@ -1633,6 +1685,9 @@ inline void DMP_WriteCSVHeader(std::ofstream& file) {
         "high_pullback_delta,low_pullback_delta,"
         "diag_pos_delta,diag_neg_delta,diag_imbalance,"
         "low_bid_vol_pct,high_ask_vol_pct,"
+        // G6C T&S Aggregates (4 champs — Schema 3.7.15 06/06/2026)
+        "max_ask_vol_in_bar,max_bid_vol_in_bar,"
+        "p99_trade_size_proxy,large_trader_max_size,"
         // G7 BN (11 + 4 directionnels = 15, corrigé Bug #9)
         "bn_color_up,bn_color_dn,bn_color_up_2,bn_color_dn_2,bn_absorb_ask,bn_absorb_bid,"
         "bn_long_up,bn_long_dn,bn_pressure_ask,bn_pressure_bid,"
