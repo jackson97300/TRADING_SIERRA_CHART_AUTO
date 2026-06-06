@@ -163,6 +163,11 @@ EXPECTED_COLS_3715 = 272          # +4 G6C T&S aggregates (06/06/2026 migration 
 EXPECTED_COLS_3716 = 272          # Phase 2.1bis day_type DMP_INVALID hors RTH (06/06/2026)
                                   # Pas de changement colonnes. Comportemental :
                                   # 76% bars Asia/London passent de "2.0" a "null" JSONL.
+EXPECTED_COLS_3717 = 272          # CLAMP ATR 5.0 -> 20.0 align Python (2026-06-07).
+                                  # Comportemental, pas de changement colonnes.
+EXPECTED_COLS_3718 = 309          # 🆕 Batch B1 (2026-06-07) +37 F3 Distances _pct.
+                                  # Groupes A-F (VWAP/VP/Session/MQ/1D/Zones).
+                                  # Pendant Python : phase_b_helpers.py:1063-1093.
 EXPECTED_COLS = EXPECTED_COLS_370 # rétrocompatibilité (remplacé dynamiquement)
 
 # ─── NETTOYAGE 2026-04-12 ────────────────────────────────────────────────
@@ -310,10 +315,14 @@ def validate(path):
     has_hvl_0dte = "dist_mq_hvl_0dte" in lines[0]  # 3.7.9 (24/04)
     has_atr_14m = "atr_14m" in lines[0]            # 3.7.14 (24/04 soir)
     has_ts_aggregates = "max_ask_vol_in_bar" in lines[0]  # 3.7.15 (06/06 migration Sierra)
+    has_f3_pct = "dist_vwap_d_pct" in lines[0]            # 🆕 3.7.18 Batch B1 (07/06)
     # 3.7.16 (06/06 Phase 2.1bis) : pas de nouvelle colonne, mais detection
     # via bars Asia/London avec day_type null (vs 2.0 hardcode pre-fix).
     # Si schema_version meta JSON disponible, on l'utilise prioritairement.
-    if ncols == EXPECTED_COLS_3716 and has_ts_aggregates:
+    if ncols == EXPECTED_COLS_3718 and has_f3_pct:
+        detected_schema = "3.7.18"    # 🆕 Batch B1 F3 Distances _pct (309 cols)
+        expected = EXPECTED_COLS_3718
+    elif ncols == EXPECTED_COLS_3716 and has_ts_aggregates:
         detected_schema = "3.7.16"    # default vers nouvelle version si T&S aggregates present
         expected = EXPECTED_COLS_3716
     elif ncols == EXPECTED_COLS_3715 and has_bar_hl and has_vwap_sd3 and has_cluster_vol and has_hvl_0dte and has_atr_14m and has_ts_aggregates:
@@ -343,8 +352,9 @@ def validate(path):
 
     if ncols not in (EXPECTED_COLS_370, EXPECTED_COLS_371, EXPECTED_COLS_372,
                      EXPECTED_COLS_373, EXPECTED_COLS_379, EXPECTED_COLS_3714,
-                     EXPECTED_COLS_3715, EXPECTED_COLS_3716):
-        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260, 262, 266, 267, 268 ou 272)")
+                     EXPECTED_COLS_3715, EXPECTED_COLS_3716, EXPECTED_COLS_3717,
+                     EXPECTED_COLS_3718):
+        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260, 262, 266, 267, 268, 272 ou 309)")
     else:
         ok += 1
     print(f"  Schema detecte : {detected_schema}  ({ncols} colonnes)")

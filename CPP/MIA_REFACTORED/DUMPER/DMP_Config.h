@@ -57,7 +57,29 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 // ── Version du schéma JSONL ───────────────────────────────────────────────────
 // Incrémenté à chaque ajout/suppression de colonne pour détecter les incompatibilités
 // entre fichiers .jsonl collectés à des périodes différentes.
-#define DMP_SCHEMA_VERSION "3.7.17"  // J1 Option A Phase pivot Sierra-source — 07/06/2026
+#define DMP_SCHEMA_VERSION "3.7.18"  // Batch B1 F3 Distances normalisees _pct — 2026-06-07
+// 3.7.18: +37 features F3 Distances normalisees _pct (Batch B1) — 2026-06-07
+//        Port C++ Sierra des features dist_*_pct Python live_enriched.
+//        Formule : pct = (level - close) / close * 100 (signed, sans clamp).
+//        Pendant : CORE/phase_b_helpers.py:1063-1093 _dist().
+//
+//        Groupes ajoutes :
+//          A. VWAP _pct (13)  : daily SD0/1/2/3 + weekly SD0/1 + monthly SD0/1
+//          B. VP _pct (6)     : VPOC/VAH/VAL courant + J-1
+//          C. Session _pct (2): sess_high/low
+//          D. MenthorQ _pct (6): call/put/hvl x {normal, 0DTE}
+//          E. 1D Extremes _pct (2): mq_1d_max/min
+//          F. Zones nearest _pct (8) : long_up/dn, color_up/dn, edge_buy/sell,
+//             gex_nearest_up/dn (methode Extension Lines, divergence Python)
+//
+//        Schema 272 -> 309 colonnes (+37).
+//        Fichiers : DMP_F3_DistNormalisees.h (NEW), DMP_Transform.h (+37 fields
+//          struct + appel + CSV header), DMP_Writer.h (+37 serialisation +
+//          meta + n_columns 309).
+//        Pendant Python live_enriched conserve pour fallback transition.
+//        Test parite : tools/test_parity_B1.py (29 features groupes A-E
+//          parite bit-for-bit attendue ; 8 features groupe F divergence
+//          methode documentee — semantique preservee).
 // 3.7.17: CLAMP ATR 5.0 -> 20.0 align Python tolerance — 2026-06-07
 //        J1 plan Option A solution long terme (post ml-trainer NOGO 4/10).
 //        Decouverte critique audit V3 : DMP_ATR_CLIP=5.0f saturait 70% des

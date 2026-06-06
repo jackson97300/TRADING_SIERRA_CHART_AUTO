@@ -28,6 +28,9 @@
 #include <algorithm>   // std::min, std::max
 #include <cmath>       // std::fabs, std::isfinite
 #include <fstream>     // std::ofstream (pour DMP_WriteCSVHeader)
+// 🆕 B1 (Schema 3.7.18) — F3 Distances normalisees _pct
+// Inclu APRES la definition de DMP_MLFeatures (declaration ci-dessous) via
+// #include en fin de fichier, pour eviter cycle (helper depend de la struct).
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — CONSTANTES DE NORMALISATION
@@ -503,6 +506,68 @@ struct DMP_MLFeatures {
     float bar_low;                 // Low de la barre (prix brut)
 
     // ─────────────────────────────────────────────────────────────────────────
+    // 🆕 B1 — F3 DISTANCES NORMALISEES _pct (37 champs) — 2026-06-07 Schema 3.7.18
+    //
+    // Port batch B1 : pendant Sierra-rich des features Python live_enriched.
+    // Formule : pct = (level - close) / close * 100
+    //   Signed, sans clamp. Positif = niveau au-dessus du prix.
+    //
+    // Source Python equivalente : CORE/phase_b_helpers.py:1063-1093 _dist()
+    // Calcule par DMP_F3_DistNormalisees.h (helper DMP_CalcDistPct).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Groupe A — VWAP _pct (13 champs : daily SD0/1/2/3, weekly SD0/1, monthly SD0/1)
+    float dist_vwap_d_pct;
+    float dist_vwap_d_sd1u_pct;
+    float dist_vwap_d_sd1d_pct;
+    float dist_vwap_d_sd2u_pct;
+    float dist_vwap_d_sd2d_pct;
+    float dist_vwap_d_sd3u_pct;
+    float dist_vwap_d_sd3d_pct;
+    float dist_vwap_w_pct;
+    float dist_vwap_w_sd1u_pct;
+    float dist_vwap_w_sd1d_pct;
+    float dist_vwap_m_pct;
+    float dist_vwap_m_sd1u_pct;
+    float dist_vwap_m_sd1d_pct;
+
+    // Groupe B — Volume Profile _pct (6 champs : VPOC/VAH/VAL courant + J-1)
+    float dist_cur_vpoc_pct;
+    float dist_cur_vah_pct;
+    float dist_cur_val_pct;
+    float dist_prev_vpoc_pct;
+    float dist_prev_vah_pct;
+    float dist_prev_val_pct;
+
+    // Groupe C — Session _pct (2 champs)
+    float dist_sess_high_pct;
+    float dist_sess_low_pct;
+
+    // Groupe D — MenthorQ Options-driven _pct (6 champs : call/put/hvl x {normal,0DTE})
+    float dist_mq_call_pct;
+    float dist_mq_put_pct;
+    float dist_mq_hvl_pct;
+    float dist_mq_call_0dte_pct;
+    float dist_mq_put_0dte_pct;
+    float dist_mq_hvl_0dte_pct;
+
+    // Groupe E — 1D Extremes _pct (2 champs : MQ daily range max/min)
+    float dist_1d_max_ticks_pct;
+    float dist_1d_min_ticks_pct;
+
+    // Groupe F — Zones nearest _pct (8 champs)
+    // NOTE : Sierra (Extension Lines) DIVERGENT methode vs Python (streams zones).
+    // Valeurs differentes mais meme semantique (distance niveau nearest).
+    float dist_long_up_nearest_pct;
+    float dist_long_dn_nearest_pct;
+    float dist_color_up_nearest_pct;
+    float dist_color_dn_nearest_pct;
+    float dist_edge_buy_nearest_pct;
+    float dist_edge_sell_nearest_pct;
+    float dist_gex_nearest_up_pct;
+    float dist_gex_nearest_dn_pct;
+
+    // ─────────────────────────────────────────────────────────────────────────
     // DIAGNOSTICS (non-features ML — pour debug uniquement)
     // ─────────────────────────────────────────────────────────────────────────
     int     n_valid_fields;           // Nombre de champs valides (surveillance qualité)
@@ -510,6 +575,11 @@ struct DMP_MLFeatures {
     bool    data_quality_ok;          // false si trop de données manquantes (>30%)
 
 };
+
+// 🆕 B1 — Helper F3 Distances normalisees _pct (Schema 3.7.18, 2026-06-07)
+// Inclu ici pour avoir DMP_MLFeatures defini (declarations forward des fields)
+// AVANT la declaration de DMP_ComputeF3_DistNormalisees(f, r) qui les remplit.
+#include "DMP_F3_DistNormalisees.h"
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — HELPERS MATHÉMATIQUES INTERNES
@@ -1621,6 +1691,10 @@ inline void DMP_Transform(
     CalcContextMarket(r, f);     // G9
     CalcBooleans(r, f);          // G10 — doit être avant G11
 
+    // 🆕 B1 — F3 Distances normalisees _pct (37 champs, Schema 3.7.18)
+    // Doit etre apres CalcMenthorQ() (pour dist_gex_nearest_up/dn deja calcules).
+    DMP_ComputeF3_DistNormalisees(f, r);
+
     // G11 — HVN/LVN session (Section C)
     if (hvn_lvn) {
         CalcHVN_LVN(*hvn_lvn, f, tp_target, direction, r.tick_size);
@@ -1754,7 +1828,29 @@ inline void DMP_WriteCSVHeader(std::ofstream& file) {
         "rvol,rvol_zscore,rvol_buy,rvol_sell,"
         "rvol_absorb_buy,rvol_absorb_sell,"
         // G15 BAR OHLC (2 champs) — 27/03/2026 Schema 3.7.1
-        "bar_high,bar_low"
+        "bar_high,bar_low,"
+        // 🆕 B1 (Schema 3.7.18) — F3 Distances normalisees _pct (37 champs)
+        // Groupe A — VWAP _pct (13)
+        "dist_vwap_d_pct,dist_vwap_d_sd1u_pct,dist_vwap_d_sd1d_pct,"
+        "dist_vwap_d_sd2u_pct,dist_vwap_d_sd2d_pct,"
+        "dist_vwap_d_sd3u_pct,dist_vwap_d_sd3d_pct,"
+        "dist_vwap_w_pct,dist_vwap_w_sd1u_pct,dist_vwap_w_sd1d_pct,"
+        "dist_vwap_m_pct,dist_vwap_m_sd1u_pct,dist_vwap_m_sd1d_pct,"
+        // Groupe B — VP _pct (6)
+        "dist_cur_vpoc_pct,dist_cur_vah_pct,dist_cur_val_pct,"
+        "dist_prev_vpoc_pct,dist_prev_vah_pct,dist_prev_val_pct,"
+        // Groupe C — Session _pct (2)
+        "dist_sess_high_pct,dist_sess_low_pct,"
+        // Groupe D — MenthorQ _pct (6)
+        "dist_mq_call_pct,dist_mq_put_pct,dist_mq_hvl_pct,"
+        "dist_mq_call_0dte_pct,dist_mq_put_0dte_pct,dist_mq_hvl_0dte_pct,"
+        // Groupe E — 1D Extremes _pct (2)
+        "dist_1d_max_ticks_pct,dist_1d_min_ticks_pct,"
+        // Groupe F — Zones nearest _pct (8) — methode Extension Lines
+        "dist_long_up_nearest_pct,dist_long_dn_nearest_pct,"
+        "dist_color_up_nearest_pct,dist_color_dn_nearest_pct,"
+        "dist_edge_buy_nearest_pct,dist_edge_sell_nearest_pct,"
+        "dist_gex_nearest_up_pct,dist_gex_nearest_dn_pct"
         "\n";
 }
 

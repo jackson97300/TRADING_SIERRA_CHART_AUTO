@@ -62,6 +62,50 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-07 04:30 — Batch B1 port C++ Sierra : F3 Distances Normalisees _pct (schema 3.7.18)
+
+**Categorie** : ARCHITECTURE PIVOT (criteres critiques 2+3 — ML/C++)
+**Impact prod** : TOUS bots Sim1/Sim2/Sim3 si feature consommee — convention features change.
+
+**Contexte** : Pivot ULTRATHINK Sierra-rich (Jackson decision 06/06 nuit) — port progressif des features Python live_enriched vers C++ Sierra DMP. B1 = batch pilote 37 features distances normalisees _pct.
+
+**Decision Jackson 07/06** : Sierra prime sur 3 familles (Group A VWAP daily, B Volume Profile, C Session H/L). Cause : trading prop firms = AUCUNE position overnight, donc convention RTH-only (09:30-16:00 ET) = standard metier.
+
+**Changements** :
+- NEW `CPP/MIA_REFACTORED/DUMPER/DMP_F3_DistNormalisees.h` (~250 LOC) :
+  - Helper `DMP_CalcDistPct(close, level)` fail-loud
+  - 37 features `_pct` calculees depuis niveaux Sierra natifs
+- MOD `DMP_Transform.h` : +37 fields struct + appel + CSV header
+- MOD `DMP_Writer.h` : +37 serialisation + meta JSON + flag `divergence_method` (group F) + `sierra_exclusive_pct` (sd3 + 0DTE)
+- MOD `DMP_Config.h` : schema 3.7.17 → 3.7.18 (n_columns 272 → 309)
+- MOD `CORE/dmp_validator.py` : EXPECTED_COLS_3718=309 + detection auto
+- MOD `CORE/sierra_live_io.py` : ACCEPTED_SCHEMAS += "3.7.17", "3.7.18"
+- NEW `tools/test_parity_B1.py` : test parite Python vs C++
+
+**Verdicts reviews** :
+- Review #1 code-reviewer : GO-AVEC-RESERVES 7.5/10 (architecture propre, n_columns coherent)
+- Review #2 quality-validator : NOGO 4/10 initial → revise GO post-decision Jackson Sierra-prime
+- Audit causes racines 10 NOGO : 0 BUG, 10 divergences methodologiques structurelles (anchor / algo / fenetre differents) — DOCS/AUDIT_10_NOGO_CAUSES_RACINES.md
+
+**Validation pre-deploy** :
+- Fix R1 dmp_validator message d'erreur (309 ajoute)
+- Fix R3 meta JSON flags divergence_method + sierra_exclusive_pct
+- Header DMP_F3 update : decision Sierra-prime documentee + raison prop firms
+- Tests parite local : 14 PASS bit-for-bit (groupes D MQ, E 1d extremes) + 8 FAIL methode attendu (groupe A VWAP daily) + 4 MISSING (sd3 + mq_0dte = bonus Sierra)
+
+**Backtest preservation wins** : N/A (port infrastructure, pas changement scoring/gates).
+
+**Revert plan** : `git revert <commit>` → revient schema 3.7.17. JSONL post-deploy avec schema 3.7.18 = 309 cols garde 37 nouveaux _pct = no-op pour bots qui ne les consument pas encore.
+
+**Suivi post-deploy** :
+- J+1 : verifier JSONL contient 37 nouveaux fields _pct + meta JSON divergence_method/sierra_exclusive_pct
+- J+3 : paper test A/B Bot 2/3 paper (si features consommees) — recalibrer seuils regles si necessaire
+- J+7 : decision GO/NOGO B2 (F4 VWAP Bands absolus + F2 Prev Levels + F23 VP)
+
+**Reviewed** : code-reviewer 7.5/10, quality-validator 4/10→GO post-decision, audit causes racines (0 bug), Jackson souverain (Sierra-prime 3 familles, raison prop firms)
+
+---
+
 ## 2026-06-06 23:30 — Migration full Sierra Chart (bug delta_bar inverse Databento confirme)
 
 **Categorie** : MIGRATION ARCHITECTURE (criteres critiques 1+2+3 — Trading/ML/C++)

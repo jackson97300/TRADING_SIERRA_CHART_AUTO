@@ -571,9 +571,25 @@ static inline void DMP_WR_WriteMeta(
     // Les features dist_*_atr, ib_range_atr, sess_range_atr sont calculees en
     // ratio ticks/ticks. Cf. fix DMP_Transform.h + DMP_OpenType.h du 15/04/2026.
     meta << "  \"atr_convention\": \"ticks\",\n";
-    meta << "  \"n_columns\": " << 272               << ",\n";   // 🆕 3.7.15 +4 T&S aggregates
+    meta << "  \"n_columns\": " << 309               << ",\n";   // 🆕 3.7.18 +37 F3 dist_*_pct (Batch B1)
     meta << "  \"format\": \"jsonl\",\n";
     meta << "  \"invalid_sentinel\": null,\n";
+    // FIX R3 code-reviewer Batch B1 (2026-06-07) : flag features avec divergence
+    // methode connue (Sierra Extension Lines vs Python streams zones). Discipline
+    // ML : downstream sait distinguer ces features (NE PAS combiner Sierra _pct
+    // avec Python _pct meme nom sans le savoir).
+    meta << "  \"divergence_method\": [\n";
+    meta << "    \"dist_long_up_nearest_pct\",\"dist_long_dn_nearest_pct\",\n";
+    meta << "    \"dist_color_up_nearest_pct\",\"dist_color_dn_nearest_pct\",\n";
+    meta << "    \"dist_edge_buy_nearest_pct\",\"dist_edge_sell_nearest_pct\",\n";
+    meta << "    \"dist_gex_nearest_up_pct\",\"dist_gex_nearest_dn_pct\"\n";
+    meta << "  ],\n";
+    // Sierra-exclusive (Python ne calcule pas, valeur ajoutee port C++) :
+    meta << "  \"sierra_exclusive_pct\": [\n";
+    meta << "    \"dist_vwap_d_sd3u_pct\",\"dist_vwap_d_sd3d_pct\",\n";
+    meta << "    \"dist_mq_call_0dte_pct\",\"dist_mq_put_0dte_pct\",\n";
+    meta << "    \"dist_mq_hvl_0dte_pct\"\n";
+    meta << "  ],\n";
     meta << "  \"columns\": [\n";
     meta << "    \"ts\",\"sym\",\"contract\",\"price\",\"atr\",\"atr_14m\",\"session\",\"session_id\",\n";
     meta << "    \"dist_vwap_d\",\"dist_vwap_d_atr\",\"dist_vwap_d_sd1u\",\"dist_vwap_d_sd1d\",\n";
@@ -668,7 +684,29 @@ static inline void DMP_WR_WriteMeta(
     meta << "    \"bars_since_retest_high\",\"bars_since_retest_low\",\n";
     meta << "    \"rvol\",\"rvol_zscore\",\"rvol_buy\",\"rvol_sell\",\n";
     meta << "    \"rvol_absorb_buy\",\"rvol_absorb_sell\",\n";
-    meta << "    \"bar_high\",\"bar_low\"\n";
+    meta << "    \"bar_high\",\"bar_low\",\n";
+    // 🆕 B1 (Schema 3.7.18) — F3 Distances normalisees _pct (37 champs)
+    // Groupe A — VWAP _pct (13)
+    meta << "    \"dist_vwap_d_pct\",\"dist_vwap_d_sd1u_pct\",\"dist_vwap_d_sd1d_pct\",\n";
+    meta << "    \"dist_vwap_d_sd2u_pct\",\"dist_vwap_d_sd2d_pct\",\n";
+    meta << "    \"dist_vwap_d_sd3u_pct\",\"dist_vwap_d_sd3d_pct\",\n";
+    meta << "    \"dist_vwap_w_pct\",\"dist_vwap_w_sd1u_pct\",\"dist_vwap_w_sd1d_pct\",\n";
+    meta << "    \"dist_vwap_m_pct\",\"dist_vwap_m_sd1u_pct\",\"dist_vwap_m_sd1d_pct\",\n";
+    // Groupe B — VP _pct (6)
+    meta << "    \"dist_cur_vpoc_pct\",\"dist_cur_vah_pct\",\"dist_cur_val_pct\",\n";
+    meta << "    \"dist_prev_vpoc_pct\",\"dist_prev_vah_pct\",\"dist_prev_val_pct\",\n";
+    // Groupe C — Session _pct (2)
+    meta << "    \"dist_sess_high_pct\",\"dist_sess_low_pct\",\n";
+    // Groupe D — MenthorQ _pct (6)
+    meta << "    \"dist_mq_call_pct\",\"dist_mq_put_pct\",\"dist_mq_hvl_pct\",\n";
+    meta << "    \"dist_mq_call_0dte_pct\",\"dist_mq_put_0dte_pct\",\"dist_mq_hvl_0dte_pct\",\n";
+    // Groupe E — 1D Extremes _pct (2)
+    meta << "    \"dist_1d_max_ticks_pct\",\"dist_1d_min_ticks_pct\",\n";
+    // Groupe F — Zones nearest _pct via Extension Lines (8)
+    meta << "    \"dist_long_up_nearest_pct\",\"dist_long_dn_nearest_pct\",\n";
+    meta << "    \"dist_color_up_nearest_pct\",\"dist_color_dn_nearest_pct\",\n";
+    meta << "    \"dist_edge_buy_nearest_pct\",\"dist_edge_sell_nearest_pct\",\n";
+    meta << "    \"dist_gex_nearest_up_pct\",\"dist_gex_nearest_dn_pct\"\n";
     meta << "  ]\n";
     meta << "}\n";
     meta.close();
@@ -1115,8 +1153,65 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
     // 🆕 Schema 3.7.1 — bar_high/bar_low (27/03/2026)
     DMP_WR_KVB(buf, pos, "rvol_absorb_sell",  f.rvol_absorb_sell); DMP_WR_COMMA(buf, pos);
     DMP_WR_KV2(buf, pos, "bar_high",          f.bar_high);         DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "bar_low",           f.bar_low);          DMP_WR_COMMA(buf, pos);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🆕 B1 — F3 Distances normalisees _pct (37 champs) — Schema 3.7.18 (2026-06-07)
+    //
+    // Pendant C++ des features Python live_enriched (phase_b_helpers.py:1063-1093).
+    // Formule : pct = (level - close) / close * 100 (signed, sans clamp).
+    // DMP_WR_KV2 = serialisation float 2 decimales (assez pour pct).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Groupe A — VWAP _pct (13 champs : daily SD0/1/2/3, weekly SD0/1, monthly SD0/1)
+    DMP_WR_KV2(buf, pos, "dist_vwap_d_pct",       f.dist_vwap_d_pct);       DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_d_sd1u_pct",  f.dist_vwap_d_sd1u_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_d_sd1d_pct",  f.dist_vwap_d_sd1d_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_d_sd2u_pct",  f.dist_vwap_d_sd2u_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_d_sd2d_pct",  f.dist_vwap_d_sd2d_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_d_sd3u_pct",  f.dist_vwap_d_sd3u_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_d_sd3d_pct",  f.dist_vwap_d_sd3d_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_w_pct",       f.dist_vwap_w_pct);       DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_w_sd1u_pct",  f.dist_vwap_w_sd1u_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_w_sd1d_pct",  f.dist_vwap_w_sd1d_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_m_pct",       f.dist_vwap_m_pct);       DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_m_sd1u_pct",  f.dist_vwap_m_sd1u_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_vwap_m_sd1d_pct",  f.dist_vwap_m_sd1d_pct);  DMP_WR_COMMA(buf, pos);
+
+    // Groupe B — Volume Profile _pct (6 champs)
+    DMP_WR_KV2(buf, pos, "dist_cur_vpoc_pct",   f.dist_cur_vpoc_pct);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_cur_vah_pct",    f.dist_cur_vah_pct);    DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_cur_val_pct",    f.dist_cur_val_pct);    DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_prev_vpoc_pct",  f.dist_prev_vpoc_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_prev_vah_pct",   f.dist_prev_vah_pct);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_prev_val_pct",   f.dist_prev_val_pct);   DMP_WR_COMMA(buf, pos);
+
+    // Groupe C — Session _pct (2 champs)
+    DMP_WR_KV2(buf, pos, "dist_sess_high_pct",  f.dist_sess_high_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_sess_low_pct",   f.dist_sess_low_pct);   DMP_WR_COMMA(buf, pos);
+
+    // Groupe D — MenthorQ _pct (6 champs)
+    DMP_WR_KV2(buf, pos, "dist_mq_call_pct",       f.dist_mq_call_pct);       DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_mq_put_pct",        f.dist_mq_put_pct);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_mq_hvl_pct",        f.dist_mq_hvl_pct);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_mq_call_0dte_pct",  f.dist_mq_call_0dte_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_mq_put_0dte_pct",   f.dist_mq_put_0dte_pct);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_mq_hvl_0dte_pct",   f.dist_mq_hvl_0dte_pct);   DMP_WR_COMMA(buf, pos);
+
+    // Groupe E — 1D Extremes _pct (2 champs)
+    DMP_WR_KV2(buf, pos, "dist_1d_max_ticks_pct", f.dist_1d_max_ticks_pct); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_1d_min_ticks_pct", f.dist_1d_min_ticks_pct); DMP_WR_COMMA(buf, pos);
+
+    // Groupe F — Zones nearest _pct via Extension Lines (8 champs)
+    DMP_WR_KV2(buf, pos, "dist_long_up_nearest_pct",   f.dist_long_up_nearest_pct);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_long_dn_nearest_pct",   f.dist_long_dn_nearest_pct);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_color_up_nearest_pct",  f.dist_color_up_nearest_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_color_dn_nearest_pct",  f.dist_color_dn_nearest_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_edge_buy_nearest_pct",  f.dist_edge_buy_nearest_pct);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_edge_sell_nearest_pct", f.dist_edge_sell_nearest_pct); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "dist_gex_nearest_up_pct",    f.dist_gex_nearest_up_pct);    DMP_WR_COMMA(buf, pos);
     // Dernier champ — PAS de virgule finale
-    DMP_WR_KV2(buf, pos, "bar_low",           f.bar_low);
+    DMP_WR_KV2(buf, pos, "dist_gex_nearest_dn_pct",    f.dist_gex_nearest_dn_pct);
 
     // Fermer l'objet JSON + newline
     buf[pos++] = '}';
