@@ -63,3 +63,40 @@ def test_sharpe_ratio_negative_returns():
     returns = [-0.01, -0.02, -0.015, -0.018]
     s = sharpe_ratio(returns)
     assert s < 0
+
+
+from SIM4.research.backtest_helpers import day_pnl_long, day_pnl_short
+from tests.sim4.fixtures import make_bar
+
+
+def test_day_pnl_long_positive_when_close_rises():
+    bars = [
+        make_bar(close=30000.0),
+        make_bar(close=30005.0),
+        make_bar(close=30050.0),
+    ]
+    pnl = day_pnl_long(bars)
+    assert pnl == 50.0  # close[-1] - close[0]
+
+
+def test_day_pnl_long_negative_when_close_falls():
+    bars = [
+        make_bar(close=30100.0),
+        make_bar(close=30050.0),
+        make_bar(close=30000.0),
+    ]
+    pnl = day_pnl_long(bars)
+    assert pnl == -100.0
+
+
+def test_day_pnl_long_zero_when_empty():
+    assert day_pnl_long([]) == 0.0
+
+
+def test_day_pnl_long_zero_when_single_bar():
+    assert day_pnl_long([make_bar(close=30000.0)]) == 0.0
+
+
+def test_day_pnl_short_is_inverse_of_long():
+    bars = [make_bar(close=30000.0), make_bar(close=30050.0)]
+    assert day_pnl_short(bars) == -day_pnl_long(bars)

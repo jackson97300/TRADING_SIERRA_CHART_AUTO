@@ -47,3 +47,26 @@ def sharpe_ratio(returns: list[float]) -> float:
     if std == 0.0:
         return 0.0
     return (mean / std) * math.sqrt(TRADING_DAYS_PER_YEAR)
+
+
+def day_pnl_long(bars: list[dict[str, Any]]) -> float:
+    """Theoretical PnL of buying close[0] and selling close[-1].
+
+    Returns 0.0 for empty list or single bar.
+    Points (not USD).
+    """
+    if len(bars) < 2:
+        return 0.0
+    first = bars[0].get("close")
+    last = bars[-1].get("close")
+    if first is None or last is None:
+        return 0.0
+    return float(last) - float(first)
+
+
+def day_pnl_short(bars: list[dict[str, Any]]) -> float:
+    """Theoretical PnL of shorting close[0] and covering close[-1].
+
+    Returns -day_pnl_long(bars).
+    """
+    return -day_pnl_long(bars)
