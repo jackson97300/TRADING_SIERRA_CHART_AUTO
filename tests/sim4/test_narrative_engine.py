@@ -178,3 +178,55 @@ def test_fbr_handles_missing_pdh():
 def test_fbr_proximity_constant_is_in_ticks():
     # Sanity: this is a number > 0
     assert FBR_PDH_PDL_PROXIMITY_TICKS > 0
+
+
+from SIM4.research.narrative_engine_v1 import classify_day_first_hour
+
+
+def test_classify_day_first_hour_returns_trend_when_all_bars_say_trend():
+    bars = [
+        make_bar(open_type=1, profile_shape=1, cvd_session=300.0),
+        make_bar(open_type=1, profile_shape=1, cvd_session=400.0),
+        make_bar(open_type=1, profile_shape=1, cvd_session=500.0),
+    ]
+    label, confidence = classify_day_first_hour(bars)
+    assert label == "TREND_DAY_UP"
+    assert 0.0 < confidence <= 1.0
+
+
+def test_classify_day_first_hour_returns_majority():
+    bars = [
+        make_bar(open_type=1, profile_shape=1, cvd_session=300.0),
+        make_bar(open_type=1, profile_shape=1, cvd_session=300.0),
+        make_bar(open_type=0, profile_shape=0, cvd_session=0.0),  # NONE
+    ]
+    label, _ = classify_day_first_hour(bars)
+    assert label == "TREND_DAY_UP"
+
+
+def test_classify_day_first_hour_returns_none_when_no_bars():
+    label, confidence = classify_day_first_hour([])
+    assert label == NARRATIVE_NONE
+    assert confidence == 0.0
+
+
+def test_classify_day_first_hour_returns_none_when_all_bars_none():
+    # inside_value_area=0 prevents RANGE_REJECTION from triggering on the
+    # default fixture (which has inside_value_area=1, day_type=0)
+    bars = [
+        make_bar(open_type=0, profile_shape=0, cvd_session=0.0, inside_value_area=0)
+    ] * 3
+    label, _ = classify_day_first_hour(bars)
+    assert label == NARRATIVE_NONE
+
+
+def test_classify_day_first_hour_takes_first_n_bars():
+    # 60 mixed bars: first 30 say TREND_UP, next 30 say RANGE
+    trend_bars = [make_bar(open_type=1, profile_shape=1, cvd_session=300.0)] * 30
+    range_bars = [
+        make_bar(profile_shape=0, inside_value_area=1, day_type=0, cvd_session=50.0)
+    ] * 30
+    bars = trend_bars + range_bars
+    # Only look at first 30 -> TREND
+    label, _ = classify_day_first_hour(bars, max_bars=30)
+    assert label == "TREND_DAY_UP"

@@ -159,3 +159,43 @@ def classify_failed_breakout_reversal(bar: dict[str, Any]) -> tuple[str, float]:
         return NARRATIVE_FBR_LONG, FBR_INITIAL_CONFIDENCE
 
     return NARRATIVE_NONE, 0.0
+
+
+from collections import Counter
+
+
+# Number of bars to inspect for day classification (60 1-min bars = first hour)
+DEFAULT_FIRST_HOUR_BARS = 60
+
+
+def classify_day_first_hour(
+    bars: list[dict[str, Any]],
+    max_bars: int = DEFAULT_FIRST_HOUR_BARS,
+) -> tuple[str, float]:
+    """Classify the day by running all 3 classifiers on first `max_bars` bars
+    and returning the majority narrative.
+
+    confidence = count_winning / count_classified (ignoring NONE).
+    Returns (NARRATIVE_NONE, 0.0) if no bars or all NONE.
+    """
+    if not bars:
+        return NARRATIVE_NONE, 0.0
+
+    labels: list[str] = []
+    for bar in bars[:max_bars]:
+        for classifier in (
+            classify_trend_day,
+            classify_range_rejection,
+            classify_failed_breakout_reversal,
+        ):
+            label, _ = classifier(bar)
+            if label != NARRATIVE_NONE:
+                labels.append(label)
+
+    if not labels:
+        return NARRATIVE_NONE, 0.0
+
+    counter = Counter(labels)
+    winning_label, winning_count = counter.most_common(1)[0]
+    confidence = winning_count / len(labels)
+    return winning_label, confidence
