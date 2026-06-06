@@ -82,3 +82,21 @@ def list_enriched_days(directory: Path, symbol: str) -> list[Path]:
     suffix = f"_{symbol}.jsonl"
     files = [p for p in directory.iterdir() if p.is_file() and p.name.endswith(suffix)]
     return sorted(files, key=lambda p: p.name)
+
+
+from SIM4.research.narrative_engine_v1 import classify_day_first_hour
+
+
+def backtest_one_day(path: Path) -> tuple[str, float, float]:
+    """For one day file, return (narrative_label, pnl_long, pnl_short).
+
+    PnL is in price points (not USD). Long = buy first close, sell last close.
+    Short = inverse.
+    """
+    bars = load_day_bars(path)
+    if not bars:
+        return ("NONE", 0.0, 0.0)
+    label, _ = classify_day_first_hour(bars)
+    pnl_long = day_pnl_long(bars)
+    pnl_short = day_pnl_short(bars)
+    return (label, pnl_long, pnl_short)

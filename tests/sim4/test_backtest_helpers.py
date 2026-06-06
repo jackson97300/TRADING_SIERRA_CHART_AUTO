@@ -136,3 +136,48 @@ def test_list_enriched_days_filters_by_symbol(tmp_path: Path):
 
 def test_list_enriched_days_empty_dir(tmp_path: Path):
     assert list_enriched_days(tmp_path, symbol="NQ") == []
+
+
+from SIM4.research.backtest_helpers import backtest_one_day
+
+
+def test_backtest_one_day_returns_label_and_pnls(tmp_path: Path):
+    fp = tmp_path / "20260115_NQ.jsonl"
+    # 60 bars of TREND_DAY_UP triggers, then 60 bars of price rising
+    bars = []
+    for i in range(60):
+        bars.append({
+            "ts": i * 60000,
+            "open": 30000.0,
+            "high": 30010.0,
+            "low": 29995.0,
+            "close": 30000.0 + i * 0.5,
+            "open_type": 1,
+            "profile_shape": 1,
+            "cvd_session": 300.0 + i * 10,
+        })
+    fp.write_text("\n".join(json.dumps(b) for b in bars), encoding="utf-8")
+
+    label, pnl_long, pnl_short = backtest_one_day(fp)
+
+    assert label == "TREND_DAY_UP"
+    assert pnl_long > 0
+    assert pnl_short == -pnl_long
+
+
+def test_backtest_one_day_handles_empty_file(tmp_path: Path):
+    fp = tmp_path / "20260115_NQ.jsonl"
+    fp.write_text("", encoding="utf-8")
+
+    label, pnl_long, pnl_short = backtest_one_day(fp)
+
+    assert label == "NONE"
+    assert pnl_long == 0.0
+    assert pnl_short == 0.0
+
+
+def test_backtest_one_day_handles_missing_file(tmp_path: Path):
+    label, pnl_long, pnl_short = backtest_one_day(tmp_path / "missing.jsonl")
+    assert label == "NONE"
+    assert pnl_long == 0.0
+    assert pnl_short == 0.0
