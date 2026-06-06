@@ -91,3 +91,25 @@ def format_verdict(result: PhaseA0Result) -> str:
         )
 
     return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Phase A.0 Narrative Engine backtest")
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("D:/TRADING_SIERRA_CHART_AUTO/DATA/live_enriched"),
+        help="Root of live_enriched/ (contains NQ/, ES/, MGC/)",
+    )
+    parser.add_argument(
+        "--symbol", type=str, default="NQ", help="Symbol to backtest (NQ, ES, MGC)"
+    )
+    args = parser.parse_args()
+
+    symbol_dir = args.data_dir / args.symbol
+    print(f"Running Phase A.0 on {symbol_dir} ...")
+    result = run_phase_a0(symbol_dir, args.symbol)
+    print()
+    print(format_verdict(result))

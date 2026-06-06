@@ -1,0 +1,10 @@
+Running Phase A.0 on D:\TRADING_SIERRA_CHART_AUTO\DATA\live_enriched\ES ...
+
+=== PHASE A.0 VERDICT — ES ===
+Total days        : 129
+Classified days   : 1
+Sharpe threshold  : > 1.0
+
+Narrative                               N     PnL_long  Sharpe_long Verdict 
+--------------------------------------------------------------------------------
+FAILED_BREAKOUT_REVERSAL_SHORT          1       -21.25        0.000 NOGO    
