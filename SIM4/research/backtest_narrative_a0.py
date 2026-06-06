@@ -64,3 +64,30 @@ def run_phase_a0(directory: Path, symbol: str) -> PhaseA0Result:
         stats.sharpe_short = sharpe_ratio(stats.returns_short)
 
     return result
+
+
+# Critere GO Phase A.0 from design doc section 2sexies
+SHARPE_GO_THRESHOLD = 1.0
+
+
+def format_verdict(result: PhaseA0Result) -> str:
+    """Return a human-readable verdict report comparing Sharpe to threshold."""
+    lines: list[str] = []
+    lines.append(f"=== PHASE A.0 VERDICT — {result.symbol} ===")
+    lines.append(f"Total days        : {result.n_days_total}")
+    lines.append(f"Classified days   : {result.n_days_classified}")
+    lines.append(f"Sharpe threshold  : > {SHARPE_GO_THRESHOLD:.1f}")
+    lines.append("")
+    lines.append(f"{'Narrative':<35} {'N':>5} {'PnL_long':>12} {'Sharpe_long':>12} {'Verdict':<8}")
+    lines.append("-" * 80)
+
+    for label in sorted(result.per_narrative_stats.keys()):
+        stats = result.per_narrative_stats[label]
+        best_sharpe = max(stats.sharpe_long, stats.sharpe_short)
+        verdict = "GO" if best_sharpe > SHARPE_GO_THRESHOLD else "NOGO"
+        lines.append(
+            f"{label:<35} {stats.n_days:>5} {stats.pnl_long_total:>12.2f} "
+            f"{best_sharpe:>12.3f} {verdict:<8}"
+        )
+
+    return "\n".join(lines)
