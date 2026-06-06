@@ -26,3 +26,24 @@ def load_day_bars(path: Path) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
     return bars
+
+
+# Annualization assumes daily returns. For backtests on N days,
+# we want a comparable Sharpe across narratives, so use a common factor.
+TRADING_DAYS_PER_YEAR = 252
+
+
+def sharpe_ratio(returns: list[float]) -> float:
+    """Annualized Sharpe ratio assuming daily returns and zero risk-free rate.
+
+    Returns 0.0 for empty, single-value, or zero-variance input.
+    Annualization factor: sqrt(252).
+    """
+    if len(returns) < 2:
+        return 0.0
+    mean = sum(returns) / len(returns)
+    variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    std = math.sqrt(variance)
+    if std == 0.0:
+        return 0.0
+    return (mean / std) * math.sqrt(TRADING_DAYS_PER_YEAR)

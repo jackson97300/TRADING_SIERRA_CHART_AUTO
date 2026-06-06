@@ -35,3 +35,31 @@ def test_load_day_bars_skips_invalid_lines(tmp_path: Path):
 def test_load_day_bars_returns_empty_when_file_missing(tmp_path: Path):
     fp = tmp_path / "does_not_exist.jsonl"
     assert load_day_bars(fp) == []
+
+
+from SIM4.research.backtest_helpers import sharpe_ratio
+
+
+def test_sharpe_ratio_positive_returns():
+    returns = [0.01, 0.02, 0.015, 0.018, 0.012]
+    s = sharpe_ratio(returns)
+    assert s > 0
+    assert isinstance(s, float)
+
+
+def test_sharpe_ratio_zero_returns_returns_zero():
+    assert sharpe_ratio([0.0, 0.0, 0.0]) == 0.0
+
+
+def test_sharpe_ratio_empty_returns_zero():
+    assert sharpe_ratio([]) == 0.0
+
+
+def test_sharpe_ratio_single_value_returns_zero():
+    assert sharpe_ratio([0.05]) == 0.0
+
+
+def test_sharpe_ratio_negative_returns():
+    returns = [-0.01, -0.02, -0.015, -0.018]
+    s = sharpe_ratio(returns)
+    assert s < 0
