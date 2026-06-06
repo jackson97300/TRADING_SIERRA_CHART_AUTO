@@ -31,6 +31,73 @@
 
 ---
 
+### 2026-06-07 01:50 (39) - [DATA_MINING_TRAP] - Lookahead batch game_changers.py .iloc[-1] -> Train/test skew ML day_type feature SHAP top-4
+
+**Categorie** : DATA_MINING_TRAP + COMMENT_FALSE (divergence documentee mais non corrigee)
+
+**Contexte** : Audit profond chaine day_type/open_type (06/06 nuit, agent general-purpose) revele 4 critiques + 3 hauts. La pire (#4) :
+
+`game_changers_streaming.py:13-19` documente explicitement :
+> "DIVERGENCE BATCH/STREAM DOCUMENTEE : day_type batch utilise sess_high/low/close FINAUX (.iloc[-1]) = LOOKAHEAD FUTUR."
+
+Le batch `game_changers.classify_day_type` (utilise par `build_dataset_v4_*.py`) entraine le ML sur features calculees avec `sess_high/low/close FINAUX du jour`. Le live ne peut pas le reproduire (close pas encore connu en intraday).
+
+**Consequence** : tous les modeles LightGBM v4 entraines sur datasets contenant `day_type` ont un TRAIN/TEST SKEW SYSTEMIQUE sur feature SHAP TOP-4. PF backtest gonfle vs live degenere = bug Lopez classique d'information leakage.
+
+**Lecon** : 
+1. Documenter un bug NE LE CORRIGE PAS
+2. Avant build dataset ML, audit anti-lookahead OBLIGATOIRE sur TOUTES features (Lopez AFML ch.4 + memoire feedback_data_mining_trap.md)
+3. La regle souveraine "ml-trainer DSR > 0.5 strict" est INSUFFISANTE si la feature elle-meme est polluee de lookahead
+
+**Trigger prevention** : 
+- Avant ajout/modif feature dans `add_*_streaming`, verifier que le batch equivalent (`add_*` batch) N'UTILISE PAS `.iloc[-1]` ou `groupby().last()` ou tout autre acces au futur
+- Avant build dataset ML, lancer `grep -n '\.iloc\[-1\]\|\.last()' CORE/*.py` audit anti-lookahead
+- Avant trust un PF backtest, dispatch ml-trainer pour anti-lookahead audit
+
+**Reviewed** : agent audit profond general-purpose 06/06 nuit (rapport memoire context : 4 critiques + 3 hauts)
+
+---
+
+### 2026-06-07 01:45 (38) - [PATTERN_11 + LAZY_DELEGATION] - Mon fix Phase 2.1 (commit b0a9662) AGGRAVE le bug day_type au lieu de le corriger
+
+**Categorie** : PATTERN_11 (fix sans verifier source de verite) + LAZY_DELEGATION (delegue audit aux agents sans cross-check semantique)
+
+**Contexte** : 06/06 ce soir, j'ai code Phase 2.1 `fix(enricher_chain): add_ib_atr_streaming jamais appele -> day_type fige` (commit `b0a9662`).
+
+Le fix : importer `add_ib_atr_streaming` + l'appeler dans `enricher_chain.py:570-595` entre `apply_rolling_inputs_streaming` et `add_game_changers_streaming`.
+
+**Ce qui a mal tourne** : audit profond ulterieur revele DIVERGENCE SEMANTIQUE `ib_atr` C++ vs Python :
+- **C++** `DMP_OpenType.h:635` : `ib_atr = DMP_CalcIBRangeATR(ib_high, ib_low, atr_daily, tick_size)` = `ib_range_ticks / atr_daily_ticks` (ratio normalise ATR daily long-terme)
+- **Python `add_ib_atr_streaming`** : `ib_atr_val = mean(ib_range)` sur 14 jours precedents (`phase_b_helpers.py:1409-1479`)
+- **Python `classify_day_type`** : seuils `DT_NONTREND=0.15`, `DT_NORMAL=0.80`, `DT_TREND_MULT=2.0` ont semantique C++ (ratio ATR), pas Python (ratio mean IB)
+
+Avant mon fix : `ib_atr Python = NaN` -> 100% fallback NormVar (vu empirique).
+Apres mon fix : `ib_atr Python = mean(ib_range_14d)` = grandeur DIFFERENTE -> day_type encore casse mais de facon DIFFERENTE.
+
+**Cause racine** :
+1. Pattern 11 V1 : j'ai fix base sur commentaire du code ("`add_ib_atr_streaming` doit etre appele") sans verifier que la formule Python = formule C++
+2. Lazy delegation : j'ai dispatcher Plan agent pour review mais pas demander cross-check semantique C++ vs Python
+3. Skip cross-source : pas verifier que `mean(ib_range_14d)` Python = `atr_daily_ticks` C++
+
+**Lecon** : 
+1. **AVANT tout fix qui touche une feature deja existante en C++ et Python, cross-check les FORMULES (pas juste les NOMS d'arguments)**
+2. Les commentaires du code peuvent etre VRAIS au moment de l'ecriture mais OBSOLETES (commit `824932d` 03/26 a cree `add_ib_atr_streaming` avec formule batch differente du C++)
+3. Le pipeline live + batch + C++ doivent SHARE la formule a un seul endroit (constants.py central ?)
+
+**Resolution** : 
+- Revert commit b0a9662 (commit `7327ab2`)
+- Decision Jackson : RE-CODER classifier from scratch (Phase 2.1.G design en cours, agent Plan)
+- Pas de patch sur l'existant : clean slate Python V2 + backtest 133 jours + port C++ apres validation
+
+**Trigger prevention** : 
+- Avant fix d'une feature qui existe a 2 endroits (C++ + Python), comparer les FORMULES ligne par ligne
+- Avant deploy un fix qui touche un calcul "trivial" (mean/median/ratio), lancer cross-check empirique : memes inputs -> memes outputs
+- Avant trust un commit qui "active" du code mort (`engine_streaming` jamais appele), checker que ce code mort etait COHERENT avec le pipeline actif
+
+**Reviewed** : agent general-purpose audit profond 06/06 nuit + decision Jackson "ON DOIT LES REECODER CHAQUE ET BACKTESTER SUR DONNEES REELLES"
+
+---
+
 ### 2026-06-06 23:30 (37) - [PATTERN_11 + VALIDATION_MISS] - Convention Side Databento INVERSEE dans 8 modules CORE/ — bug delta_bar pollue Bot 1/2/3 depuis demarrage pipeline
 
 **Categorie** : PATTERN_11 (mapping convention hardcoded contre la realite) + VALIDATION_MISS (jamais teste empiriquement avant deploy)
