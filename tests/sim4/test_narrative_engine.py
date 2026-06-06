@@ -92,3 +92,89 @@ def test_range_rejection_handles_missing_fields():
     del bar["inside_value_area"]
     label, _ = classify_range_rejection(bar)
     assert label == NARRATIVE_NONE
+
+
+from SIM4.research.narrative_engine_v1 import (
+    classify_failed_breakout_reversal,
+    NARRATIVE_FAILED_BREAKOUT_REVERSAL,
+    FBR_PDH_PDL_PROXIMITY_TICKS,
+)
+
+
+def test_fbr_reversal_short_after_failed_break_pdh():
+    # close just above cur_pdh, failed_auction, delta_div_sell_clean
+    bar = make_bar(
+        close=30100.5,
+        cur_pdh=30100.0,
+        cur_pdl=29900.0,
+        ctx_failed_auction=1,
+        delta_div_sell_clean=1,
+        delta_div_buy_clean=0,
+    )
+    label, confidence = classify_failed_breakout_reversal(bar)
+    assert label == "FAILED_BREAKOUT_REVERSAL_SHORT"
+    assert confidence >= 0.6
+
+
+def test_fbr_reversal_long_after_failed_break_pdl():
+    bar = make_bar(
+        close=29899.5,
+        cur_pdh=30100.0,
+        cur_pdl=29900.0,
+        ctx_failed_auction=1,
+        delta_div_buy_clean=1,
+        delta_div_sell_clean=0,
+    )
+    label, confidence = classify_failed_breakout_reversal(bar)
+    assert label == "FAILED_BREAKOUT_REVERSAL_LONG"
+    assert confidence >= 0.6
+
+
+def test_fbr_none_when_no_failed_auction():
+    bar = make_bar(
+        close=30100.5,
+        cur_pdh=30100.0,
+        cur_pdl=29900.0,
+        ctx_failed_auction=0,  # not failed
+        delta_div_sell_clean=1,
+    )
+    label, _ = classify_failed_breakout_reversal(bar)
+    assert label == NARRATIVE_NONE
+
+
+def test_fbr_none_when_no_proximity_to_levels():
+    # close well in the middle
+    bar = make_bar(
+        close=30000.0,
+        cur_pdh=30100.0,
+        cur_pdl=29900.0,
+        ctx_failed_auction=1,
+        delta_div_sell_clean=1,
+    )
+    label, _ = classify_failed_breakout_reversal(bar)
+    assert label == NARRATIVE_NONE
+
+
+def test_fbr_none_when_no_divergence():
+    bar = make_bar(
+        close=30100.5,
+        cur_pdh=30100.0,
+        cur_pdl=29900.0,
+        ctx_failed_auction=1,
+        delta_div_sell_clean=0,
+        delta_div_buy_clean=0,
+    )
+    label, _ = classify_failed_breakout_reversal(bar)
+    assert label == NARRATIVE_NONE
+
+
+def test_fbr_handles_missing_pdh():
+    bar = make_bar(close=30100.5, ctx_failed_auction=1, delta_div_sell_clean=1)
+    del bar["cur_pdh"]
+    label, _ = classify_failed_breakout_reversal(bar)
+    assert label == NARRATIVE_NONE
+
+
+def test_fbr_proximity_constant_is_in_ticks():
+    # Sanity: this is a number > 0
+    assert FBR_PDH_PDL_PROXIMITY_TICKS > 0

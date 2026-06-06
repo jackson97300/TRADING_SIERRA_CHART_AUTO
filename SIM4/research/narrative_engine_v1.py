@@ -105,3 +105,57 @@ def classify_range_rejection(bar: dict[str, Any]) -> tuple[str, float]:
         return NARRATIVE_NONE, 0.0
 
     return NARRATIVE_RANGE_REJECTION, RANGE_REJECTION_INITIAL_CONFIDENCE
+
+
+NARRATIVE_FBR_LONG = "FAILED_BREAKOUT_REVERSAL_LONG"
+NARRATIVE_FBR_SHORT = "FAILED_BREAKOUT_REVERSAL_SHORT"
+
+# Proximity to PDH/PDL to consider as a "poke" / failed break (in price points)
+# NQ tick = 0.25, so 8 ticks = 2 points
+FBR_PDH_PDL_PROXIMITY_TICKS = 8.0
+NQ_TICK_SIZE = 0.25  # TODO use CORE.constants.get_tick_size(symbol) in V2
+FBR_PROXIMITY_PRICE = FBR_PDH_PDL_PROXIMITY_TICKS * NQ_TICK_SIZE
+
+FBR_INITIAL_CONFIDENCE = 0.65
+
+
+def classify_failed_breakout_reversal(bar: dict[str, Any]) -> tuple[str, float]:
+    """Classify a bar as FAILED_BREAKOUT_REVERSAL_{LONG,SHORT} / NONE.
+
+    Triggers :
+        ctx_failed_auction == 1
+        (proximity to PDH AND delta_div_sell_clean) OR (proximity to PDL AND delta_div_buy_clean)
+
+    Direction = INVERSE of break direction.
+    """
+    failed = bar.get("ctx_failed_auction")
+    if failed != 1:
+        return NARRATIVE_NONE, 0.0
+
+    close = bar.get("close")
+    pdh = bar.get("cur_pdh")
+    pdl = bar.get("cur_pdl")
+    if close is None or pdh is None or pdl is None:
+        return NARRATIVE_NONE, 0.0
+
+    try:
+        close_f = float(close)
+        pdh_f = float(pdh)
+        pdl_f = float(pdl)
+    except (TypeError, ValueError):
+        return NARRATIVE_NONE, 0.0
+
+    near_pdh = abs(close_f - pdh_f) <= FBR_PROXIMITY_PRICE
+    near_pdl = abs(close_f - pdl_f) <= FBR_PROXIMITY_PRICE
+    if not (near_pdh or near_pdl):
+        return NARRATIVE_NONE, 0.0
+
+    div_sell = bar.get("delta_div_sell_clean") == 1
+    div_buy = bar.get("delta_div_buy_clean") == 1
+
+    if near_pdh and div_sell:
+        return NARRATIVE_FBR_SHORT, FBR_INITIAL_CONFIDENCE
+    if near_pdl and div_buy:
+        return NARRATIVE_FBR_LONG, FBR_INITIAL_CONFIDENCE
+
+    return NARRATIVE_NONE, 0.0
