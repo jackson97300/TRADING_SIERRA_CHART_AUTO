@@ -57,7 +57,22 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 // ── Version du schéma JSONL ───────────────────────────────────────────────────
 // Incrémenté à chaque ajout/suppression de colonne pour détecter les incompatibilités
 // entre fichiers .jsonl collectés à des périodes différentes.
-#define DMP_SCHEMA_VERSION "3.7.15"  // +4 features T&S aggregates depuis VAP — 06/06/2026
+#define DMP_SCHEMA_VERSION "3.7.17"  // J1 Option A Phase pivot Sierra-source — 07/06/2026
+// 3.7.17: CLAMP ATR 5.0 -> 20.0 align Python tolerance — 2026-06-07
+//        J1 plan Option A solution long terme (post ml-trainer NOGO 4/10).
+//        Decouverte critique audit V3 : DMP_ATR_CLIP=5.0f saturait 70% des
+//        bars sur Python pipeline non-clampe -> representation hybride
+//        train-serve skew. Alignement obligatoire pour pivot Sierra-source +
+//        Python-formules. Cf DOCS/SIERRA_PYTHON_OVERLAPS_AUDIT_V2.md note
+//        gouvernance + DOCS/DIVERGENCES_METHODE_INVESTIGATION.md.
+//        Aucun changement de colonnes (272 inchangees). Comportemental.
+//        Re-entrainer LightGBM v4 obligatoire post-deploy (recommendation
+//        ml-trainer).
+// NOTE 06/06 nuit : Phase 2.1bis Niveau 1 (day_type null Asia/London) ANNULE
+//        par Jackson. Revert vers comportement 3.7.15. Voie retenue :
+//        re-calibrer seuils Dalton C++ sur dataset etendu 133 jours
+//        (live_enriched + Sierra) au lieu de masquer Asia/London.
+//        Reprise Phase 2.1.C : backtest-runner avec n=133 jours.
 // 3.7.15: +4 features T&S aggregates depuis VAP — 2026-06-06
 //         max_ask_vol_in_bar, max_bid_vol_in_bar, p99_trade_size_proxy,
 //         large_trader_max_size. Comble le "trou T&S" Sierra (pas de trades

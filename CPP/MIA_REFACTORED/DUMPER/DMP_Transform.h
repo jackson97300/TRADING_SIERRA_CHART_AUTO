@@ -33,8 +33,18 @@
 // SECTION 1 — CONSTANTES DE NORMALISATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Clip ATR normalisé : ±5 ATR max pour éviter les outliers
-constexpr float DMP_ATR_CLIP        = 5.0f;
+// Clip ATR normalisé : ±20 ATR max
+// FIX 2026-06-07 J1 Phase Option A : 5.0 -> 20.0
+// Cause : Python pipeline ne clampait PAS (commentaire enricher_chain.py:820-827
+//         "anti train-serve skew, 70% bars saturees observees"). Le clip C++ a
+//         5 ATR provoquait saturation massive des features dist_*_atr quand
+//         Sierra etait la source -> ML voyait queue de distribution tronquee
+//         et apprenait representation hybride non reproductible en live.
+// Decision : aligner C++ sur tolerance Python ~20 ATR (capture 99.5% des bars
+//            sans saturation, garde anti-outlier extreme > 20 ATR rare).
+// Reference : ml-trainer review DOCS/SIERRA_PYTHON_OVERLAPS_AUDIT_V2.md
+//             "CLAMP ATR : impact MAJEUR... Reentrainer apres alignement obligatoire."
+constexpr float DMP_ATR_CLIP        = 20.0f;
 
 // Distance max en ticks pour déclarer un niveau "proche"
 // 🆕 FIX 24/04/2026 : resserrement 20→10 ES / 30→10 NQ (schema 3.7.11)

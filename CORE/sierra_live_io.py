@@ -70,7 +70,9 @@ DMP_BASE = ROOT / "DATA"
 SUPPORTED_SYMBOLS = ("ES", "NQ")
 
 # Schemas Sierra DMP attendus (cf DMP_Config.h)
-ACCEPTED_SCHEMAS = ("3.7.14", "3.7.15")
+# NB : 3.7.16 reverte le 06/06 nuit (cf DMP_Config.h). On le garde dans la
+# whitelist au cas ou un JSONL pre-revert ait ete dumpe.
+ACCEPTED_SCHEMAS = ("3.7.14", "3.7.15", "3.7.16")
 
 # Fail-loud par defaut : raise si fichier absent (anti silent fallback).
 # Override avec strict=False pour tests offline.
