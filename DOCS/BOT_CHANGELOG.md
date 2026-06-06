@@ -62,6 +62,78 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-07 22:00 — Batch B2 port C++ Sierra : Niveaux ABSOLUS F4+F2+F23 (schema 3.7.19, n_cols 347)
+
+**Categorie** : ARCHITECTURE PIVOT (criteres critiques 2+3 — ML/C++)
+**Impact prod** : Schema JSONL +38 colonnes. Aucun bot ne consomme encore ces fields (downstream a brancher batch suivant).
+
+**Contexte** : Suite logique B1 (3.7.18 deploye 22:47 hier soir). B2 expose les NIVEAUX absolus Sierra (vwap_d, vwap_w, vwap_m, pdh, pdl, cur_vpoc_lvl, etc.) qui sont la SOURCE des features `_pct` portees en B1. Downstream peut maintenant reconstruire des distances normalisees contre n'importe quel referentiel (ATR alternative, vol modeling, mid-band lookups).
+
+**Decision Jackson 07/06 (rappel)** : Sierra prime sur 3 familles (VWAP/VP/Session). Prop firms = RTH-only.
+
+**Changements code C++ (B2 base 30 features)** :
+- NEW `DMP_F4_VWAPBands.h` : initialement 16 features VWAP → etendu a 24 (7D + 7W + 7M + 3 PVWAP). Helper `DMP_F4_SafeLevel` fail-loud.
+- NEW `DMP_F2_PrevLevels.h` : 8 features Prev Day H/L + Cash Session H/L + Open Cash + Open 830 + Overnight H/L. PersistVars 203/204 pour snapshot PDH/PDL au reset session.
+- NEW `DMP_F23_VPAbsolus.h` : 6 features VP Current + Previous.
+- MOD `DMP_Reader.h` : +14 fields struct + 12 SafeReadLast (4 SD1 + 8 SD2/SD3 sg3-sg6) + reset INVALID + snapshot PDH/PDL.
+- MOD `DMP_Transform.h` : +38 fields struct DMP_MLFeatures + 3 appels helpers + CSV header. Documentation convention `_lvl` suffix (R2 code-reviewer).
+- MOD `DMP_Writer.h` : +38 KV2 + meta JSON `sierra_prime_absolute.{vwap,vp,session}_family` + columns list + n_columns 309 → 347.
+- MOD `DMP_Config.h` : schema 3.7.18 → 3.7.19 (n_columns 309 → 347).
+
+**Reconfig Sierra Charts (Jackson 07/06 19:30 ET)** :
+- Days to Load Intraday : 30 → 90 jours sur charts 23 (NQ) + 25 (ES). Resout bug `vwap_w == vwap_m` strict detecte par quality-validator (chart history < 1 mois empechait reset Monthly correct).
+- Multiplicateurs Bands : 0.5/1/1.5/2 → 1/2/3/4 sur 4 studies (VWAP Weekly NQ ID:43, ES ID:23, VWAP Monthly NQ ID:41, ES ID:33). Aligne semantique sd1/sd2/sd3 standard industrie.
+- Subgraphs sg5/sg6 (Top/Bottom Band 3) : Ignore → Dash. Active calcul Sierra des +/-3σ.
+- PC local + VPS : meme reconfig sur les deux instances.
+
+**Extension B2 (+8 fields SD2/SD3 weekly+monthly)** suite reconfig Sierra :
+- `vwap_w_sd2u/d`, `vwap_w_sd3u/d`, `vwap_m_sd2u/d`, `vwap_m_sd3u/d` : lus depuis sg3-sg6 des studies VWAP_WEEKLY et VWAP_MONTHLY.
+- Code C++ ajoute 4 fields struct Reader + 4 SafeReadLast + 4 struct Transform + 4 assignment F4 + 4 KV2 + 4 CSV header + 4 meta JSON pour chaque (weekly et monthly).
+
+**Changements code Python** :
+- MOD `CORE/dmp_validator.py` : `EXPECTED_COLS_3719` 339 → 347, message erreur synchro.
+- MOD `CORE/sierra_live_io.py` : `ACCEPTED_SCHEMAS` inclut deja `3.7.19`.
+- MOD `tools/test_parity_B2.py` : +8 features dans B2_FEATURES + PYTHON_NAME_MAP + band ordering checks. Patch defensive `NO_SIERRA_COL` quand JSONL pre-deploy.
+
+**Reviews agents** :
+- code-reviewer (a836f12fd3b721e28) : GO-AVEC-RESERVES 8.5/10. Reserves R1-R6 dont R1 (4 commentaires `15→16`), R2 (doc convention `_lvl`), R3 (test_parity_B2 sanity). R1+R2+R3 appliques 2026-06-07 19:00.
+- quality-validator (a5802b9275d8cf1ee) : GO-AVEC-RESERVES 8/10. Code C++ B2 = impeccable 10/10. Bug pre-existant Sierra `vwap_w == vwap_m` flagge ; resolu par Days to Load 30→90 + reconfig multiplicateurs.
+
+**Verifications J+1 obligatoires post-deploy** :
+- `vwap_w != vwap_m` strict dans JSONL dump
+- `vwap_w_sd2u/d` et `vwap_w_sd3u/d` valides (non DMP_INVALID) si sg5/sg6 actives Sierra
+- `vwap_m_sd2u/d` et `vwap_m_sd3u/d` valides
+- `dist_vwap_w_atr` et `dist_vwap_m_atr` differents (pas clones)
+- Band ordering : `vwap_w_sd3d < vwap_w_sd2d < vwap_w_sd1d < vwap_w < vwap_w_sd1u < vwap_w_sd2u < vwap_w_sd3u`
+
+**Validation pre-deploy** :
+- [x] Coherence 38 features verifiee (struct ↔ Reader lectures ↔ F4 helper ↔ Writer KV2 ↔ CSV header ↔ meta JSON columns)
+- [x] R1+R2+R3 reviews appliques
+- [x] Reviews #1 + #2 = GO-AVEC-RESERVES
+- [ ] Test empirique J+1 post-deploy (chart open lundi 09:30 ET)
+
+**Revert plan** :
+```bash
+# Rollback B2 -> B1 (3.7.18) :
+git revert <commit-B2>
+# Recompile + reload SC sur PC + VPS
+# Cote SC : optionnel rollback Days to Load 90 → 30 + multiplicateurs 1/2/3/4 → 0.5/1/1.5/2
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+(en attente confirmation Jackson + reconfig Sierra VPS finalisee + verif visuelle vwap_w != vwap_m)
+
+### Suivi post-deploy
+- J+1 : verifier 38 features presentes, vwap_w != vwap_m, SD2/SD3 valides
+- J+7 : suivi distribution valeurs (range plausible)
+- J+30 : decider Phase B3 (F8 News + F9 Roll + F12 BarShape + F22 PositionRange)
+
+### Liens
+- Reviews : code-reviewer a836f12fd3b721e28 (8.5/10), quality-validator a5802b9275d8cf1ee (8/10)
+- Doc : `DOCS/SIERRA_PYTHON_OVERLAPS_AUDIT_V2.md`, `DOCS/QUALITY_VALIDATION_B2.md`
+
+---
+
 ## 2026-06-07 04:30 — Batch B1 port C++ Sierra : F3 Distances Normalisees _pct (schema 3.7.18)
 
 **Categorie** : ARCHITECTURE PIVOT (criteres critiques 2+3 — ML/C++)

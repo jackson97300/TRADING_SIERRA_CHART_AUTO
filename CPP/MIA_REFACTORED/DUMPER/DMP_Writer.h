@@ -571,7 +571,7 @@ static inline void DMP_WR_WriteMeta(
     // Les features dist_*_atr, ib_range_atr, sess_range_atr sont calculees en
     // ratio ticks/ticks. Cf. fix DMP_Transform.h + DMP_OpenType.h du 15/04/2026.
     meta << "  \"atr_convention\": \"ticks\",\n";
-    meta << "  \"n_columns\": " << 309               << ",\n";   // 🆕 3.7.18 +37 F3 dist_*_pct (Batch B1)
+    meta << "  \"n_columns\": " << 347               << ",\n";   // 🆕 3.7.19 +38 B2 niveaux absolus (24 VWAP + 8 prev/cash + 6 VP)
     meta << "  \"format\": \"jsonl\",\n";
     meta << "  \"invalid_sentinel\": null,\n";
     // FIX R3 code-reviewer Batch B1 (2026-06-07) : flag features avec divergence
@@ -590,6 +590,23 @@ static inline void DMP_WR_WriteMeta(
     meta << "    \"dist_mq_call_0dte_pct\",\"dist_mq_put_0dte_pct\",\n";
     meta << "    \"dist_mq_hvl_0dte_pct\"\n";
     meta << "  ],\n";
+    // 🆕 B2 (Schema 3.7.19) — Sierra prime sur ces familles (Jackson decision
+    // 2026-06-07, prop firms RTH-only). Downstream doit savoir distinguer
+    // ces niveaux ABSOLUS C++ Sierra vs niveaux Python (memes noms parfois,
+    // ex: vwap_d existe aussi cote Python avec ancrage different 00:00 ET).
+    meta << "  \"sierra_prime_absolute\": {\n";
+    meta << "    \"vwap_family\": [\"vwap_d\",\"vwap_d_sd1u\",\"vwap_d_sd1d\","
+            "\"vwap_d_sd2u\",\"vwap_d_sd2d\",\"vwap_d_sd3u\",\"vwap_d_sd3d\","
+            "\"vwap_w\",\"vwap_w_sd1u\",\"vwap_w_sd1d\","
+            "\"vwap_w_sd2u\",\"vwap_w_sd2d\",\"vwap_w_sd3u\",\"vwap_w_sd3d\","
+            "\"vwap_m\",\"vwap_m_sd1u\",\"vwap_m_sd1d\","
+            "\"vwap_m_sd2u\",\"vwap_m_sd2d\",\"vwap_m_sd3u\",\"vwap_m_sd3d\","
+            "\"pvwap\",\"pvwap_sd1u\",\"pvwap_sd1d\"],\n";
+    meta << "    \"vp_family\":  [\"cur_vpoc_lvl\",\"cur_vah_lvl\",\"cur_val_lvl\","
+            "\"prev_vpoc_lvl\",\"prev_vah_lvl\",\"prev_val_lvl\"],\n";
+    meta << "    \"session_family\": [\"cash_high\",\"cash_low\",\"pdh\",\"pdl\","
+            "\"open_cash_lvl\",\"open_830_lvl\",\"ovn_high_lvl\",\"ovn_low_lvl\"]\n";
+    meta << "  },\n";
     meta << "  \"columns\": [\n";
     meta << "    \"ts\",\"sym\",\"contract\",\"price\",\"atr\",\"atr_14m\",\"session\",\"session_id\",\n";
     meta << "    \"dist_vwap_d\",\"dist_vwap_d_atr\",\"dist_vwap_d_sd1u\",\"dist_vwap_d_sd1d\",\n";
@@ -706,7 +723,22 @@ static inline void DMP_WR_WriteMeta(
     meta << "    \"dist_long_up_nearest_pct\",\"dist_long_dn_nearest_pct\",\n";
     meta << "    \"dist_color_up_nearest_pct\",\"dist_color_dn_nearest_pct\",\n";
     meta << "    \"dist_edge_buy_nearest_pct\",\"dist_edge_sell_nearest_pct\",\n";
-    meta << "    \"dist_gex_nearest_up_pct\",\"dist_gex_nearest_dn_pct\"\n";
+    meta << "    \"dist_gex_nearest_up_pct\",\"dist_gex_nearest_dn_pct\",\n";
+    // 🆕 B2 (Schema 3.7.19) — Niveaux absolus Sierra (38 champs)
+    // F4 — VWAP absolus (24 = 7 Daily + 7 Weekly + 7 Monthly + 3 PVWAP)
+    meta << "    \"vwap_d\",\"vwap_d_sd1u\",\"vwap_d_sd1d\",\n";
+    meta << "    \"vwap_d_sd2u\",\"vwap_d_sd2d\",\"vwap_d_sd3u\",\"vwap_d_sd3d\",\n";
+    meta << "    \"vwap_w\",\"vwap_w_sd1u\",\"vwap_w_sd1d\",\n";
+    meta << "    \"vwap_w_sd2u\",\"vwap_w_sd2d\",\"vwap_w_sd3u\",\"vwap_w_sd3d\",\n";
+    meta << "    \"vwap_m\",\"vwap_m_sd1u\",\"vwap_m_sd1d\",\n";
+    meta << "    \"vwap_m_sd2u\",\"vwap_m_sd2d\",\"vwap_m_sd3u\",\"vwap_m_sd3d\",\n";
+    meta << "    \"pvwap\",\"pvwap_sd1u\",\"pvwap_sd1d\",\n";
+    // F2 — Previous + Cash + Open + OVN absolus (8)
+    meta << "    \"pdh\",\"pdl\",\"cash_high\",\"cash_low\",\n";
+    meta << "    \"open_cash_lvl\",\"open_830_lvl\",\"ovn_high_lvl\",\"ovn_low_lvl\",\n";
+    // F23 — VP absolus (6 — dernier de la liste, sans virgule a la fin)
+    meta << "    \"cur_vpoc_lvl\",\"cur_vah_lvl\",\"cur_val_lvl\",\n";
+    meta << "    \"prev_vpoc_lvl\",\"prev_vah_lvl\",\"prev_val_lvl\"\n";
     meta << "  ]\n";
     meta << "}\n";
     meta.close();
@@ -1210,8 +1242,65 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
     DMP_WR_KV2(buf, pos, "dist_edge_buy_nearest_pct",  f.dist_edge_buy_nearest_pct);  DMP_WR_COMMA(buf, pos);
     DMP_WR_KV2(buf, pos, "dist_edge_sell_nearest_pct", f.dist_edge_sell_nearest_pct); DMP_WR_COMMA(buf, pos);
     DMP_WR_KV2(buf, pos, "dist_gex_nearest_up_pct",    f.dist_gex_nearest_up_pct);    DMP_WR_COMMA(buf, pos);
-    // Dernier champ — PAS de virgule finale
-    DMP_WR_KV2(buf, pos, "dist_gex_nearest_dn_pct",    f.dist_gex_nearest_dn_pct);
+    DMP_WR_KV2(buf, pos, "dist_gex_nearest_dn_pct",    f.dist_gex_nearest_dn_pct);    DMP_WR_COMMA(buf, pos);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🆕 B2 — Niveaux absolus Sierra (30 champs) — Schema 3.7.19 (2026-06-07)
+    //
+    // Decision Jackson : Sierra prime sur VWAP / VP / Session (prop firms
+    // RTH-only). Exposes en POINTS absolus pour permettre reconstruction
+    // downstream + cross-source. DMP_WR_KV2 = float 2 decimales (suffisant
+    // pour prix futures, tick 0.25 -> precision 2 decimales).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // F4 — VWAP absolus (16 champs)
+    //   Group A : VWAP Daily (7)
+    DMP_WR_KV2(buf, pos, "vwap_d",      f.vwap_d);      DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_d_sd1u", f.vwap_d_sd1u); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_d_sd1d", f.vwap_d_sd1d); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_d_sd2u", f.vwap_d_sd2u); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_d_sd2d", f.vwap_d_sd2d); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_d_sd3u", f.vwap_d_sd3u); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_d_sd3d", f.vwap_d_sd3d); DMP_WR_COMMA(buf, pos);
+    //   Group B : VWAP Weekly (7 — SD1/SD2/SD3 std post-reconfig Sierra 2026-06-07)
+    DMP_WR_KV2(buf, pos, "vwap_w",      f.vwap_w);      DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_w_sd1u", f.vwap_w_sd1u); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_w_sd1d", f.vwap_w_sd1d); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_w_sd2u", f.vwap_w_sd2u); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_w_sd2d", f.vwap_w_sd2d); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_w_sd3u", f.vwap_w_sd3u); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_w_sd3d", f.vwap_w_sd3d); DMP_WR_COMMA(buf, pos);
+    //   Group C : VWAP Monthly (7 — idem)
+    DMP_WR_KV2(buf, pos, "vwap_m",      f.vwap_m);      DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_m_sd1u", f.vwap_m_sd1u); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_m_sd1d", f.vwap_m_sd1d); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_m_sd2u", f.vwap_m_sd2u); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_m_sd2d", f.vwap_m_sd2d); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_m_sd3u", f.vwap_m_sd3u); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "vwap_m_sd3d", f.vwap_m_sd3d); DMP_WR_COMMA(buf, pos);
+    //   Group D : Previous VWAP daily (3)
+    DMP_WR_KV2(buf, pos, "pvwap",       f.pvwap);       DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "pvwap_sd1u",  f.pvwap_sd1u);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "pvwap_sd1d",  f.pvwap_sd1d);  DMP_WR_COMMA(buf, pos);
+
+    // F2 — Previous + Cash + Open + OVN absolus (8 champs)
+    DMP_WR_KV2(buf, pos, "pdh",            f.pdh);            DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "pdl",            f.pdl);            DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "cash_high",      f.cash_high);      DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "cash_low",       f.cash_low);       DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "open_cash_lvl",  f.open_cash_lvl);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "open_830_lvl",   f.open_830_lvl);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "ovn_high_lvl",   f.ovn_high_lvl);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "ovn_low_lvl",    f.ovn_low_lvl);    DMP_WR_COMMA(buf, pos);
+
+    // F23 — VP absolus (6 champs)
+    DMP_WR_KV2(buf, pos, "cur_vpoc_lvl",  f.cur_vpoc_lvl);  DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "cur_vah_lvl",   f.cur_vah_lvl);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "cur_val_lvl",   f.cur_val_lvl);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "prev_vpoc_lvl", f.prev_vpoc_lvl); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "prev_vah_lvl",  f.prev_vah_lvl);  DMP_WR_COMMA(buf, pos);
+    // Dernier champ B2 — PAS de virgule finale
+    DMP_WR_KV2(buf, pos, "prev_val_lvl",  f.prev_val_lvl);
 
     // Fermer l'objet JSON + newline
     buf[pos++] = '}';

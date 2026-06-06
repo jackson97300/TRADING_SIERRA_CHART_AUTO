@@ -514,11 +514,23 @@ struct DMP_RawData {
     // ⚠️  À confirmer Lundi (Study IDs 4/5 à valider)
     // ─────────────────────────────────────────────────────────────────────────
     float vwap_weekly;                   // VWAP semaine glissante
-    float vwap_weekly_sd1u;              // VWAP Weekly +1σ
-    float vwap_weekly_sd1d;              // VWAP Weekly -1σ
+    float vwap_weekly_sd1u;              // VWAP Weekly +1σ  (sg1, Band 1 multi=1.0)
+    float vwap_weekly_sd1d;              // VWAP Weekly -1σ  (sg2, Band 1 multi=1.0)
+    // 🆕 B2 EXTENSION (Schema 3.7.19, 2026-06-07) — SD2/SD3 Weekly
+    // Necessite reconfig Sierra : Band 2 multi=2.0, Band 3 multi=3.0
+    // + Subgraphs sg3/sg4/sg5/sg6 Draw Style != Ignore.
+    float vwap_weekly_sd2u;              // VWAP Weekly +2σ  (sg3, Band 2)
+    float vwap_weekly_sd2d;              // VWAP Weekly -2σ  (sg4, Band 2)
+    float vwap_weekly_sd3u;              // VWAP Weekly +3σ  (sg5, Band 3)
+    float vwap_weekly_sd3d;              // VWAP Weekly -3σ  (sg6, Band 3)
     float vwap_monthly;                  // VWAP mensuel glissant
-    float vwap_monthly_sd1u;             // VWAP Monthly +1σ
-    float vwap_monthly_sd1d;             // VWAP Monthly -1σ
+    float vwap_monthly_sd1u;             // VWAP Monthly +1σ (sg1, Band 1 multi=1.0)
+    float vwap_monthly_sd1d;             // VWAP Monthly -1σ (sg2, Band 1 multi=1.0)
+    // 🆕 B2 EXTENSION — SD2/SD3 Monthly (idem reconfig requis cote Sierra)
+    float vwap_monthly_sd2u;             // VWAP Monthly +2σ (sg3, Band 2)
+    float vwap_monthly_sd2d;             // VWAP Monthly -2σ (sg4, Band 2)
+    float vwap_monthly_sd3u;             // VWAP Monthly +3σ (sg5, Band 3)
+    float vwap_monthly_sd3d;             // VWAP Monthly -3σ (sg6, Band 3)
 
     // ─────────────────────────────────────────────────────────────────────────
     // F. ATR & MOVING AVERAGES (Daily)
@@ -606,6 +618,27 @@ struct DMP_RawData {
     // ─────────────────────────────────────────────────────────────────────────
     float ovn_high;                      // High session 18h00-9h29 ET
     float ovn_low;                       // Low session 18h00-9h29 ET
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🆕 B2 (Schema 3.7.19) — PREVIOUS DAY HIGH/LOW
+    // Sierra prime (Jackson decision 2026-06-07 prop firms RTH-only).
+    //
+    // Source : accumulateur PersistVars dans DMP_ReadDeltaDivergenceClean.
+    //   Quand un reset de session est detecte (trading_day != last_day), on
+    //   archive le daily_high/low du jour SORTANT dans prev_daily_high/low
+    //   AVANT de re-initialiser les accumulateurs pour la nouvelle session.
+    //   Persiste tant que la prochaine reset de session n'a pas eu lieu.
+    //
+    //   Note : ce qui est archive = high/low OBSERVES sur la session CME
+    //   complete (18:00 ET J-1 -> 17:00 ET J), pas le RTH-only. C'est
+    //   coherent avec la formule SC "Daily OHLC" qui sert deja a
+    //   delta_divergence (cf section ci-dessous).
+    //
+    //   Indices PersistFloat : 203 (prev_high), 204 (prev_low). Cf
+    //   constants DMP_PERSIST_DIV_PREV_HIGH/LOW dans la section delta
+    //   divergence ci-dessous.
+    float prev_daily_high;               // PDH absolu = high session J-1
+    float prev_daily_low;                // PDL absolu = low  session J-1
 
     // ─────────────────────────────────────────────────────────────────────────
     // N. CVD & SWING HIGH/LOW
@@ -2091,12 +2124,22 @@ inline void DMP_ReadDaily(SCStudyInterfaceRef sc, DMP_RawData& d) {
     const int vm_id   = d.is_nq ? DMP_Studies::NQ_BARRES::VWAP_MONTHLY : DMP_Studies::ES_BARRES::VWAP_MONTHLY;
 
     d.vwap_weekly      = DMP_SafeReadLast(sc, chart_b, vw_id, 0);  // sg0 = VWAP
-    d.vwap_weekly_sd1u = DMP_SafeReadLast(sc, chart_b, vw_id, 1);  // sg1 = SD+1
-    d.vwap_weekly_sd1d = DMP_SafeReadLast(sc, chart_b, vw_id, 2);  // sg2 = SD-1
+    d.vwap_weekly_sd1u = DMP_SafeReadLast(sc, chart_b, vw_id, 1);  // sg1 = +1σ (Band 1=1.0)
+    d.vwap_weekly_sd1d = DMP_SafeReadLast(sc, chart_b, vw_id, 2);  // sg2 = -1σ (Band 1=1.0)
+    // 🆕 B2 EXTENSION (Schema 3.7.19, 2026-06-07) — SD2/SD3 Weekly
+    d.vwap_weekly_sd2u = DMP_SafeReadLast(sc, chart_b, vw_id, 3);  // sg3 = +2σ (Band 2=2.0)
+    d.vwap_weekly_sd2d = DMP_SafeReadLast(sc, chart_b, vw_id, 4);  // sg4 = -2σ (Band 2=2.0)
+    d.vwap_weekly_sd3u = DMP_SafeReadLast(sc, chart_b, vw_id, 5);  // sg5 = +3σ (Band 3=3.0)
+    d.vwap_weekly_sd3d = DMP_SafeReadLast(sc, chart_b, vw_id, 6);  // sg6 = -3σ (Band 3=3.0)
 
     d.vwap_monthly      = DMP_SafeReadLast(sc, chart_b, vm_id, 0);  // sg0 = VWAP
-    d.vwap_monthly_sd1u = DMP_SafeReadLast(sc, chart_b, vm_id, 1);  // sg1 = SD+1
-    d.vwap_monthly_sd1d = DMP_SafeReadLast(sc, chart_b, vm_id, 2);  // sg2 = SD-1
+    d.vwap_monthly_sd1u = DMP_SafeReadLast(sc, chart_b, vm_id, 1);  // sg1 = +1σ (Band 1=1.0)
+    d.vwap_monthly_sd1d = DMP_SafeReadLast(sc, chart_b, vm_id, 2);  // sg2 = -1σ (Band 1=1.0)
+    // 🆕 B2 EXTENSION — SD2/SD3 Monthly
+    d.vwap_monthly_sd2u = DMP_SafeReadLast(sc, chart_b, vm_id, 3);  // sg3 = +2σ (Band 2=2.0)
+    d.vwap_monthly_sd2d = DMP_SafeReadLast(sc, chart_b, vm_id, 4);  // sg4 = -2σ (Band 2=2.0)
+    d.vwap_monthly_sd3u = DMP_SafeReadLast(sc, chart_b, vm_id, 5);  // sg5 = +3σ (Band 3=3.0)
+    d.vwap_monthly_sd3d = DMP_SafeReadLast(sc, chart_b, vm_id, 6);  // sg6 = -3σ (Band 3=3.0)
 
     // ── Debug log (200 premières barres) — À SUPPRIMER après validation ──────
     {
@@ -2350,11 +2393,24 @@ inline void DMP_ReadOVN(SCStudyInterfaceRef sc, DMP_RawData& d) {
 constexpr int DMP_PERSIST_DIV_DAILY_HIGH  = 200;
 constexpr int DMP_PERSIST_DIV_DAILY_LOW   = 201;
 constexpr int DMP_PERSIST_DIV_SESSION_DAY = 202;
+// 🆕 B2 (Schema 3.7.19, 2026-06-07) — Snapshot PDH/PDL au reset session
+//   Archivent daily_high/low du jour SORTANT lors du switch trading_day pour
+//   exposer pdh/pdl absolus dans le JSONL (Feature B2 group F2).
+//   Scan exhaustif PersistVars (cf bloc commentaire ci-dessus) : indices
+//   203-204 libres.
+constexpr int DMP_PERSIST_DIV_PREV_HIGH   = 203;
+constexpr int DMP_PERSIST_DIV_PREV_LOW    = 204;
 
 inline void DMP_ReadDeltaDivergenceClean(SCStudyInterfaceRef sc, DMP_RawData& d) {
     float& daily_high = sc.GetPersistentFloat(DMP_PERSIST_DIV_DAILY_HIGH);
     float& daily_low  = sc.GetPersistentFloat(DMP_PERSIST_DIV_DAILY_LOW);
     int&   last_day   = sc.GetPersistentInt(DMP_PERSIST_DIV_SESSION_DAY);
+    // 🆕 B2 (Schema 3.7.19) — Snapshot PDH/PDL du jour PRECEDENT.
+    //   Mis a jour lors du reset session ci-dessous : on archive
+    //   daily_high/low du jour SORTANT avant de re-initialiser. Reste valide
+    //   tant que la prochaine reset n'a pas lieu. Initialise a DMP_INVALID.
+    float& prev_high_persist = sc.GetPersistentFloat(DMP_PERSIST_DIV_PREV_HIGH);
+    float& prev_low_persist  = sc.GetPersistentFloat(DMP_PERSIST_DIV_PREV_LOW);
 
     // Reset explicite au debut d'un Full Recalc pour eviter toute pollution
     // d'etat persistant entre reloads DLL ou entre sessions.
@@ -2362,6 +2418,13 @@ inline void DMP_ReadDeltaDivergenceClean(SCStudyInterfaceRef sc, DMP_RawData& d)
         daily_high = -1e30f;
         daily_low  = 1e30f;
         last_day   = 0;
+        // 🆕 B2 : invalider snapshot J-1 sur Full Recalc (sera repopule au
+        // premier reset session detecte > 1 jour de barres). Lors d'un
+        // backfill multi-jour, la premiere session sortante alimentera
+        // prev_high_persist correctement, donc seule la 1ere session est
+        // sans PDH/PDL (acceptable, c'est la 1ere du dataset).
+        prev_high_persist = DMP_INVALID;
+        prev_low_persist  = DMP_INVALID;
     }
 
     // Calcul trading date CME (YYYYMMDD) en reutilisant la conversion ET
@@ -2402,10 +2465,28 @@ inline void DMP_ReadDeltaDivergenceClean(SCStudyInterfaceRef sc, DMP_RawData& d)
 
     // Reset session ?
     if (trading_day != last_day) {
+        // 🆕 B2 (Schema 3.7.19) — Snapshot PDH/PDL du jour SORTANT.
+        //   Avant d'ecraser daily_high/low, on les archive si la session
+        //   precedente a vu au moins une barre valide (pas le sentinel
+        //   -1e30 / +1e30). Cas premiere session du backfill : skip
+        //   (sentinel) -> snapshot reste DMP_INVALID. Comportement
+        //   coherent : ces sessions n'ont PAS de J-1 connu.
+        if (daily_high > -1e29f && daily_low < 1e29f
+            && DMP_IsPriceValid(daily_high) && DMP_IsPriceValid(daily_low)
+            && daily_high >= daily_low) {
+            prev_high_persist = daily_high;
+            prev_low_persist  = daily_low;
+        }
         daily_high = -1e30f;
         daily_low  = 1e30f;
         last_day   = trading_day;
     }
+
+    // 🆕 B2 (Schema 3.7.19) — Exposer le snapshot J-1 dans DMP_RawData.
+    //   Lu chaque barre depuis les PersistVars (valeur stable durant toute
+    //   la session courante, change uniquement au prochain reset).
+    d.prev_daily_high = prev_high_persist;
+    d.prev_daily_low  = prev_low_persist;
 
     // Sauvegarder prev AVANT update
     const float prev_high = daily_high;
@@ -2525,7 +2606,11 @@ inline void DMP_ReadAll(SCStudyInterfaceRef sc, DMP_RawData& d, bool is_nq) {
     d.vwap_day_sd3u = d.vwap_day_sd3d = DMP_INVALID;
     d.vwap_slope_10 = d.vwap_slope_30 = DMP_INVALID;
     d.vwap_weekly = d.vwap_weekly_sd1u = d.vwap_weekly_sd1d = DMP_INVALID;
+    d.vwap_weekly_sd2u = d.vwap_weekly_sd2d = DMP_INVALID;
+    d.vwap_weekly_sd3u = d.vwap_weekly_sd3d = DMP_INVALID;
     d.vwap_monthly = d.vwap_monthly_sd1u = d.vwap_monthly_sd1d = DMP_INVALID;
+    d.vwap_monthly_sd2u = d.vwap_monthly_sd2d = DMP_INVALID;
+    d.vwap_monthly_sd3u = d.vwap_monthly_sd3d = DMP_INVALID;
     d.mq_call = d.mq_put = d.mq_hvl = DMP_INVALID;
     d.mq_1d_min = d.mq_1d_max = DMP_INVALID;
     d.mq_call_0dte = d.mq_put_0dte = d.mq_hvl_0dte = DMP_INVALID;
@@ -2538,6 +2623,11 @@ inline void DMP_ReadAll(SCStudyInterfaceRef sc, DMP_RawData& d, bool is_nq) {
     d.ib_high = d.ib_low = d.open_cash = DMP_INVALID;
     d.open_830 = d.sess_high = d.sess_low = DMP_INVALID;
     d.ovn_high = d.ovn_low = DMP_INVALID;
+    // 🆕 B2 (Schema 3.7.19) — Snapshot PDH/PDL via PersistVars.
+    // Repris depuis prev_high_persist/prev_low_persist dans
+    // DMP_ReadDeltaDivergenceClean. Reste DMP_INVALID si pas encore
+    // de session J-1 connue (1ere barre du backfill).
+    d.prev_daily_high = d.prev_daily_low = DMP_INVALID;
     d.cvd_close = d.cvd_ohlc_open = d.cvd_ohlc_high = d.cvd_ohlc_low = DMP_INVALID;
     d.swing_high = d.swing_low = d.vp_session_vpoc = DMP_INVALID;
     d.comp_20d_vpoc = d.comp_20d_vah = d.comp_20d_val = d.comp_20d_vwap = DMP_INVALID;

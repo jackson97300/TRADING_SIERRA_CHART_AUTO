@@ -568,6 +568,98 @@ struct DMP_MLFeatures {
     float dist_gex_nearest_dn_pct;
 
     // ─────────────────────────────────────────────────────────────────────────
+    // 🆕 B2 — NIVEAUX ABSOLUS Sierra (30 champs) — 2026-06-07 Schema 3.7.19
+    //
+    // Port batch B2 : pendant Sierra-rich des niveaux ABSOLUS Python
+    // live_enriched. Necessaire pour permettre downstream (bots, ML,
+    // dashboard) de reconstruire des distances normalisees contre
+    // n'importe quel referentiel sans dependre des dist C++ deja calcules.
+    //
+    // Decision Jackson 2026-06-07 — Sierra prime pour VWAP, VP, Session
+    // (3 familles, prop firms RTH-only). Cf DMP_F3_DistNormalisees.h
+    // pour le bloc decision complet.
+    //
+    // Calcule par 3 headers dedies :
+    //   - DMP_F4_VWAPBands.h    (24 features VWAP — 7 Daily + 7 Weekly + 7 Monthly + 3 PVWAP)
+    //   - DMP_F2_PrevLevels.h   ( 8 features Previous + Cash + OVN)
+    //   - DMP_F23_VPAbsolus.h   ( 6 features VP)
+    //
+    // Convention naming `_lvl` (R2 review #1 code-reviewer 2026-06-07) :
+    //   Suffixe `_lvl` ajoute UNIQUEMENT quand le nom natif risquerait une
+    //   collision avec une feature Python live_enriched existante exposant
+    //   semantique differente (ex: open_cash en Python = cash open RTH au
+    //   timestamp courant ; open_cash_lvl en Sierra = open exact 09:30 ET).
+    //   Sans suffixe quand le nom est libre cote Python (vwap_d, pdh, pvwap,
+    //   cash_high, etc.). Cette regle vaut pour B2 et reste valable B3-B8.
+    //   En cas de doute lors d'un ajout B3-B8 : prefere AJOUTER `_lvl` si
+    //   downstream join Python + Sierra pourrait creer ambiguite DataFrame.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // F4 — Groupe A : VWAP Daily absolu (7 features)
+    float vwap_d;          // VWAP daily (anchor 09:30 ET, Sierra prime)
+    float vwap_d_sd1u;     // VWAP +1σ
+    float vwap_d_sd1d;     // VWAP -1σ
+    float vwap_d_sd2u;     // VWAP +2σ
+    float vwap_d_sd2d;     // VWAP -2σ
+    float vwap_d_sd3u;     // VWAP +3σ
+    float vwap_d_sd3d;     // VWAP -3σ
+
+    // F4 — Groupe B : VWAP Weekly absolu (7 features)
+    float vwap_w;          // VWAP semaine glissante
+    float vwap_w_sd1u;     // VWAP Weekly +1σ
+    float vwap_w_sd1d;     // VWAP Weekly -1σ
+    float vwap_w_sd2u;     // VWAP Weekly +2σ
+    float vwap_w_sd2d;     // VWAP Weekly -2σ
+    float vwap_w_sd3u;     // VWAP Weekly +3σ
+    float vwap_w_sd3d;     // VWAP Weekly -3σ
+
+    // F4 — Groupe C : VWAP Monthly absolu (7 features)
+    float vwap_m;          // VWAP mensuel glissant
+    float vwap_m_sd1u;     // VWAP Monthly +1σ
+    float vwap_m_sd1d;     // VWAP Monthly -1σ
+    float vwap_m_sd2u;     // VWAP Monthly +2σ
+    float vwap_m_sd2d;     // VWAP Monthly -2σ
+    float vwap_m_sd3u;     // VWAP Monthly +3σ
+    float vwap_m_sd3d;     // VWAP Monthly -3σ
+
+    // F4 — Groupe D : Previous VWAP absolu (3 features)
+    float pvwap;           // Previous VWAP daily (alias prev_vwap)
+    float pvwap_sd1u;      // PVWAP +1σ
+    float pvwap_sd1d;      // PVWAP -1σ
+
+    // F2 — Groupe A : Previous Day H/L absolu (2 features)
+    // Snapshot CME daily high/low du jour SORTANT (PersistVars 203/204).
+    // DMP_INVALID pour la 1ere session du backfill (pas de J-1 connu).
+    float pdh;             // Previous Day High (snapshot session J-1)
+    float pdl;             // Previous Day Low  (snapshot session J-1)
+
+    // F2 — Groupe B : Cash Session H/L absolu (2 features)
+    // Alias semantique de sess_high/sess_low (Sierra RTH-only).
+    float cash_high;       // Cash session high RTH (alias sess_high)
+    float cash_low;        // Cash session low  RTH (alias sess_low)
+
+    // F2 — Groupe C : Open Cash + Open 8h30 absolu (2 features)
+    // Suffixe _lvl pour distinguer des dist_open_cash/dist_open_830 (ticks).
+    float open_cash_lvl;   // Open exact 09:30 ET (cash session)
+    float open_830_lvl;    // Open 08:30 ET (rapports macro pre-cash)
+
+    // F2 — Groupe D : Overnight H/L absolu (2 features)
+    // Suffixe _lvl pour distinguer des dist_ovn_high/low (ticks).
+    float ovn_high_lvl;    // Overnight high 18:00-09:29 ET
+    float ovn_low_lvl;     // Overnight low  18:00-09:29 ET
+
+    // F23 — Groupe A : VP Current absolu (3 features)
+    // Suffixe _lvl pour distinguer des dist_cur_vpoc/vah/val (ticks).
+    float cur_vpoc_lvl;    // VPOC session courante (point of control)
+    float cur_vah_lvl;     // VAH session courante (high de la VA)
+    float cur_val_lvl;     // VAL session courante (low de la VA)
+
+    // F23 — Groupe B : VP Previous absolu (3 features)
+    float prev_vpoc_lvl;   // PVPOC session J-1 (pivot central J-1)
+    float prev_vah_lvl;    // PVAH session J-1 (resistance VA J-1)
+    float prev_val_lvl;    // PVAL session J-1 (support VA J-1)
+
+    // ─────────────────────────────────────────────────────────────────────────
     // DIAGNOSTICS (non-features ML — pour debug uniquement)
     // ─────────────────────────────────────────────────────────────────────────
     int     n_valid_fields;           // Nombre de champs valides (surveillance qualité)
@@ -580,6 +672,14 @@ struct DMP_MLFeatures {
 // Inclu ici pour avoir DMP_MLFeatures defini (declarations forward des fields)
 // AVANT la declaration de DMP_ComputeF3_DistNormalisees(f, r) qui les remplit.
 #include "DMP_F3_DistNormalisees.h"
+
+// 🆕 B2 — Helpers niveaux absolus Sierra (Schema 3.7.19, 2026-06-07)
+// Inclus dans cet ordre pour avoir DMP_MLFeatures + tous les helpers
+// disponibles avant DMP_Transform(). Decision Jackson : Sierra prime sur
+// VWAP / VP / Session (prop firms RTH-only). Cf headers pour le detail.
+#include "DMP_F4_VWAPBands.h"     // 24 features VWAP absolus (7 D + 7 W + 7 M + 3 PVWAP)
+#include "DMP_F2_PrevLevels.h"    //  8 features Previous + Cash + OVN
+#include "DMP_F23_VPAbsolus.h"    //  6 features Volume Profile
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — HELPERS MATHÉMATIQUES INTERNES
@@ -1695,6 +1795,15 @@ inline void DMP_Transform(
     // Doit etre apres CalcMenthorQ() (pour dist_gex_nearest_up/dn deja calcules).
     DMP_ComputeF3_DistNormalisees(f, r);
 
+    // 🆕 B2 — Niveaux absolus Sierra (30 champs, Schema 3.7.19, 2026-06-07)
+    //   Decision Jackson : Sierra prime sur VWAP / VP / Session (prop firms
+    //   RTH-only). Helpers lisent directement r.* (deja rempli par
+    //   DMP_ReadAll en amont), aucune dependance vs les CalcXXX precedents.
+    //   Ordre interne sans importance — appel groupe en fin de Transform.
+    DMP_ComputeF4_VWAPBands(f, r);   // 16 features VWAP absolus
+    DMP_ComputeF2_PrevLevels(f, r);  //  8 features Previous + Cash + OVN
+    DMP_ComputeF23_VPAbsolus(f, r);  //  6 features Volume Profile
+
     // G11 — HVN/LVN session (Section C)
     if (hvn_lvn) {
         CalcHVN_LVN(*hvn_lvn, f, tp_target, direction, r.tick_size);
@@ -1850,7 +1959,19 @@ inline void DMP_WriteCSVHeader(std::ofstream& file) {
         "dist_long_up_nearest_pct,dist_long_dn_nearest_pct,"
         "dist_color_up_nearest_pct,dist_color_dn_nearest_pct,"
         "dist_edge_buy_nearest_pct,dist_edge_sell_nearest_pct,"
-        "dist_gex_nearest_up_pct,dist_gex_nearest_dn_pct"
+        "dist_gex_nearest_up_pct,dist_gex_nearest_dn_pct,"
+        // 🆕 B2 (Schema 3.7.19, 2026-06-07) — Niveaux absolus Sierra (38)
+        // F4 — VWAP absolus (24 = 7D + 7W + 7M + 3 PVWAP)
+        "vwap_d,vwap_d_sd1u,vwap_d_sd1d,vwap_d_sd2u,vwap_d_sd2d,vwap_d_sd3u,vwap_d_sd3d,"
+        "vwap_w,vwap_w_sd1u,vwap_w_sd1d,vwap_w_sd2u,vwap_w_sd2d,vwap_w_sd3u,vwap_w_sd3d,"
+        "vwap_m,vwap_m_sd1u,vwap_m_sd1d,vwap_m_sd2u,vwap_m_sd2d,vwap_m_sd3u,vwap_m_sd3d,"
+        "pvwap,pvwap_sd1u,pvwap_sd1d,"
+        // F2 — Previous Day + Cash + Open + OVN absolus (8)
+        "pdh,pdl,cash_high,cash_low,"
+        "open_cash_lvl,open_830_lvl,ovn_high_lvl,ovn_low_lvl,"
+        // F23 — VP absolus (6)
+        "cur_vpoc_lvl,cur_vah_lvl,cur_val_lvl,"
+        "prev_vpoc_lvl,prev_vah_lvl,prev_val_lvl"
         "\n";
 }
 

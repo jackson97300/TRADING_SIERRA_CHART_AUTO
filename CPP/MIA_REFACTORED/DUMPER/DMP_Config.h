@@ -57,7 +57,60 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 // ── Version du schéma JSONL ───────────────────────────────────────────────────
 // Incrémenté à chaque ajout/suppression de colonne pour détecter les incompatibilités
 // entre fichiers .jsonl collectés à des périodes différentes.
-#define DMP_SCHEMA_VERSION "3.7.18"  // Batch B1 F3 Distances normalisees _pct — 2026-06-07
+#define DMP_SCHEMA_VERSION "3.7.19"  // Batch B2 Niveaux ABSOLUS Sierra (F4+F2+F23) — 2026-06-07
+// 3.7.19: +38 features B2 Niveaux ABSOLUS Sierra (F4+F2+F23) — 2026-06-07
+//        Port C++ Sierra des niveaux ABSOLUS pour permettre downstream
+//        (bots, ML, dashboard) de reconstruire des distances normalisees
+//        contre nimporte quel referentiel. Decision Jackson : Sierra prime
+//        sur 3 familles (VWAP, VP, Session) car prop firms = RTH-only,
+//        aucun overnight. Cf DOCS/SIERRA_PYTHON_OVERLAPS_AUDIT_V2.md +
+//        DMP_F3_DistNormalisees.h pour le bloc decision complet.
+//
+//        Extension B2 (2026-06-07 19:30 ET) — SD2/SD3 Weekly+Monthly
+//          ajoutees apres reconfig Jackson des studies Sierra :
+//            * Days to Load 30 -> 90 (charts 23 + 25)
+//            * Multiplicateurs Band 1=1, 2=2, 3=3, 4=4 sur 4 etudes
+//              (VWAP_WEEKLY NQ ID:43 + ES ID:23, VWAP_MONTHLY NQ ID:41 +
+//               ES ID:33)
+//            * Subgraphs sg3-sg6 (Band 2 et Band 3) actifs pour exposer
+//              SD2 et SD3.
+//          Resoud le bug pre-existant `vwap_w == vwap_m strict` detecte
+//          par quality-validator (chart history < 1 mois empechait Sierra
+//          de reset Monthly correctement).
+//
+//        Groupes ajoutes :
+//          F4 — VWAP absolus (24) :
+//            - Daily : vwap_d, vwap_d_sd1u/d/2u/d/3u/d (7)
+//            - Weekly : vwap_w, vwap_w_sd1u/d/2u/d/3u/d (7)
+//            - Monthly : vwap_m, vwap_m_sd1u/d/2u/d/3u/d (7)
+//            - Previous : pvwap, pvwap_sd1u, pvwap_sd1d (3)
+//          F2 — Previous + Cash + Open + OVN (8) :
+//            - Previous Day H/L : pdh, pdl (snapshot session J-1 via
+//              accumulateur PersistVars DMP_PERSIST_DIV_PREV_HIGH/LOW
+//              dans DMP_ReadDeltaDivergenceClean au reset trading_day)
+//            - Cash session : cash_high, cash_low (alias sess_high/low,
+//              Sierra HH_SESSION/LL_SESSION RTH-only)
+//            - Open : open_cash_lvl (09:30 ET), open_830_lvl (08:30 ET)
+//            - Overnight : ovn_high_lvl, ovn_low_lvl (18:00-09:29 ET)
+//          F23 — VP absolus (6) :
+//            - Courant : cur_vpoc_lvl, cur_vah_lvl, cur_val_lvl
+//            - Precedent : prev_vpoc_lvl, prev_vah_lvl, prev_val_lvl
+//
+//        Schema 309 -> 347 colonnes (+38).
+//        Fichiers : DMP_F4_VWAPBands.h (NEW), DMP_F2_PrevLevels.h (NEW),
+//          DMP_F23_VPAbsolus.h (NEW), DMP_Reader.h (+ prev_daily_high/low
+//          + 8 fields SD2/SD3 weekly+monthly dans struct + PersistVars
+//          203/204 + snapshot au reset session + 8 lectures sg3-sg6),
+//          DMP_Transform.h (+38 fields struct + 3 appels helpers + CSV
+//          header), DMP_Writer.h (+38 serialisation + meta + sierra_prime
+//          + n_columns 347).
+//
+//        Tests : tools/test_parity_B2.py compare les niveaux Sierra vs
+//          Python live_enriched. DIVERGENCE ATTENDUE sur VWAP/VP/Session
+//          (3 familles ou Sierra prime, ancrages/algos differents). Test
+//          verifie : (1) valeurs Sierra dans plage realiste, (2) signe
+//          correct vs close. Pas de parite bit-for-bit attendue.
+//
 // 3.7.18: +37 features F3 Distances normalisees _pct (Batch B1) — 2026-06-07
 //        Port C++ Sierra des features dist_*_pct Python live_enriched.
 //        Formule : pct = (level - close) / close * 100 (signed, sans clamp).
