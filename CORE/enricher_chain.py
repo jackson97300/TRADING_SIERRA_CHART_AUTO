@@ -164,6 +164,41 @@ def compose_enriched_payload(
                 except (TypeError, ValueError):
                     pass
 
+        # 24/05/2026 PM Jackson : ajout dist_gex_nearest_up_pct / _dn_pct ET
+        # dist_blind_nearest_up_pct / _dn_pct. Ces 4 features sont calculees
+        # dans le pipeline BATCH (load_mq_levels.py + build_dataset_v4) mais
+        # JAMAIS dans le streaming live → niveaux GEX_UP/GEX_DN morts pour Bot 1.
+        # mq_gex et mq_blind sont des arrays de 10 strikes (cf MenthorQ schema).
+        # Source : reproduit la logique load_mq_levels.py:_nearest_above_below.
+        for arr_key, up_key, dn_key in (
+            ("mq_gex", "dist_gex_nearest_up_pct", "dist_gex_nearest_dn_pct"),
+            ("mq_blind", "dist_blind_nearest_up_pct", "dist_blind_nearest_dn_pct"),
+        ):
+            arr = payload.get(arr_key)
+            if isinstance(arr, (list, tuple)):
+                _above = None
+                _below = None
+                for _lvl in arr:
+                    if _lvl is None:
+                        continue
+                    try:
+                        _lf = float(_lvl)
+                    except (TypeError, ValueError):
+                        continue
+                    if _lf != _lf or _lf <= 0:  # NaN ou <=0
+                        continue
+                    _d = _lf - _close
+                    if _d >= 0:
+                        if _above is None or _d < _above:
+                            _above = _d
+                    else:
+                        if _below is None or _d > _below:
+                            _below = _d
+                if _above is not None:
+                    payload[up_key] = _above / _close * 100
+                if _below is not None:
+                    payload[dn_key] = _below / _close * 100
+
         # Pass 4b : next_wall_dist_ticks (P3 audit dette #6, 15/05)
         # Distance en TICKS vers le nearest wall MQ depuis close.
         # Inputs : 6 niveaux MQ (call/put/hvl regular + 0dte) + close + tick.
@@ -385,6 +420,7 @@ def compose_enriched_payload(
             add_session_high_low_streaming, SessionHighLowState,
             add_volume_profile_features_streaming, VolumeProfileState,
             add_open_cash_price1030_streaming, OpenCashPrice1030State,
+            add_ib_atr_streaming, IbAtrState,  # FIX P0 Phase 2.1 (06/06)
         )
         from rvol_streaming import add_rvol_engine_streaming, RvolEngineState
         from phase_b_plus_streaming import (
@@ -392,6 +428,12 @@ def compose_enriched_payload(
         )
         from phase_b_plus_long_streaming import (
             add_phase_b_plus_long_streaming, make_long_bar_state,
+        )
+        # Phase D PVWAP streaming (23/05) : Jackson "ON DOIS AVOIR TOUT LES
+        # NIVEAU". Port batch -> streaming pour avoir dist_pvwap_pct +
+        # dist_pvwap_sd1u/d_pct (niveaux veille requis par BN V4 setup).
+        from phase_d_pvwap_streaming import (
+            add_phase_d_pvwap_streaming, make_pvwap_stream_state,
         )
         from phase_b_rolling_inputs_streaming import (
             make_phase_b_rolling_inputs_state, apply_rolling_inputs_streaming,
@@ -506,12 +548,38 @@ def compose_enriched_payload(
                 if _k in _long_out:
                     payload[_k] = _long_out[_k]
 
+            # Phase D PVWAP streaming (23/05) : 6 features VWAP veille
+            # (pvwap, pvwap_sd1u, pvwap_sd1d + 3 distances pct). Requis par
+            # BN V4 setup A++ pour confluence niveaux institutionnels.
+            # Depends sur vwap_d, vwap_d_sd1u, vwap_d_sd1d deja calcules
+            # par phase_b_plus_streaming + session_date_trading (Pass 4c-prereq).
+            s_pvwap = state.get_engine_state(
+                "phase_d_pvwap", factory=make_pvwap_stream_state,
+            )
+            _pvwap_out = add_phase_d_pvwap_streaming(payload, s_pvwap)
+            for _k in ("pvwap", "pvwap_sd1u", "pvwap_sd1d",
+                       "dist_pvwap_pct", "dist_pvwap_sd1u_pct",
+                       "dist_pvwap_sd1d_pct"):
+                if _k in _pvwap_out:
+                    payload[_k] = _pvwap_out[_k]
+
             # Pass 4a : phase_b_rolling_inputs (6 sous-fonctions, 24 features)
             s_rolling_inputs_p0 = state.get_engine_state(
                 "phase_b_rolling_inputs",
                 factory=lambda: make_phase_b_rolling_inputs_state(symbol=symbol_pure),
             )
             payload = apply_rolling_inputs_streaming(payload, s_rolling_inputs_p0)
+
+            # FIX P0 Phase 2.1 (06/06) : add_ib_atr_streaming JAMAIS APPELE
+            # depuis migration vers enricher_chain (audit Plan agent 06/06).
+            # Consequence: ib_atr = NaN permanent -> day_type fige a 2
+            # (NORM_VAR default) -> regime_engine_v2:282-283 trend_votes
+            # toujours +1 -> Bot 2/3 decisions biaisees.
+            # Calcule ib_atr = mean(ib_range) rolling 14 jours precedents
+            # (shift batch). Requiert date_et + ib_range produits AVANT par
+            # add_session_metadata_streaming + add_ib_features_streaming.
+            s_ib_atr = state.get_engine_state("ib_atr", factory=IbAtrState)
+            payload = add_ib_atr_streaming(payload, s_ib_atr, lookback_days=14)
 
             # P1 : game_changers_streaming (5 features Market Profile)
             # Audit feature-engineer 15/05 dette #6 BUG #2 :
@@ -901,6 +969,12 @@ def compose_enriched_payload(
             # Recuperer last_swing_*.price via state sessions_swings_lag
             _last_h = s_sess_lag.last_swing_high.price if s_sess_lag.last_swing_high else None
             _last_l = s_sess_lag.last_swing_low.price if s_sess_lag.last_swing_low else None
+            # Expose payload pour Bot 3 v3 SL swing-based (fix 24/05 — auparavant
+            # uniquement utilise pour bars_since_retest_high/low calcul interne).
+            # Bot 3 v3 backtester utilise ces 2 features pour SL swing-based,
+            # fallback 15t NQ / 8t ES si None (cf bot3_v3_continuation_engine.py).
+            payload["_last_swing_high_price"] = _last_h
+            payload["_last_swing_low_price"] = _last_l
             _high_bar = payload.get("high")
             _low_bar = payload.get("low")
             _close_retest = payload.get("close")
