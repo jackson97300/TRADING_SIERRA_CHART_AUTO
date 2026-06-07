@@ -175,6 +175,11 @@ EXPECTED_COLS_3719 = 347          # 🆕 Batch B2 (2026-06-07) +38 niveaux ABSOL
                                   # (prop firms RTH-only, aucun overnight). Cf
                                   # DOCS/SIERRA_PYTHON_OVERLAPS_AUDIT_V2.md +
                                   # DMP_F3_DistNormalisees.h pour le bloc decision.
+EXPECTED_COLS_3722 = 380          # 🆕 Batch B4.5 (2026-06-08) — Expose `open` (Risque #4 audit Databento).
+                                  # BN engines lisent bar.get("open") qui retournait null.
+                                  # Avant cutover Databento, exposer `open` (deja calcule
+                                  # r.price_open via sc.Open). Schema 379 -> 380 cols.
+
 EXPECTED_COLS_3721 = 379          # 🆕 Batch B4 (2026-06-08) +7 features Python -> C++.
                                   # Phase 0 BLOQUANT FAIT : rename range_pos -> range_pos_va
                                   #   (collision Python qui ecrasait silencieusement C++).
@@ -375,7 +380,10 @@ def validate(path):
     # 3.7.16 (06/06 Phase 2.1bis) : pas de nouvelle colonne, mais detection
     # via bars Asia/London avec day_type null (vs 2.0 hardcode pre-fix).
     # Si schema_version meta JSON disponible, on l'utilise prioritairement.
-    if ncols == EXPECTED_COLS_3721 and has_b4_features and has_b3_features and has_b2_abs and has_f3_pct:
+    if ncols == EXPECTED_COLS_3722 and "open" in lines[0] and has_b4_features and has_b3_features and has_b2_abs and has_f3_pct:
+        detected_schema = "3.7.22"    # 🆕 Batch B4.5 expose open (380 cols)
+        expected = EXPECTED_COLS_3722
+    elif ncols == EXPECTED_COLS_3721 and has_b4_features and has_b3_features and has_b2_abs and has_f3_pct:
         detected_schema = "3.7.21"    # 🆕 Batch B4 fix range_pos + 7 features (379 cols)
         expected = EXPECTED_COLS_3721
     elif ncols == EXPECTED_COLS_3720 and has_b3_features and has_b2_abs and has_f3_pct:
@@ -419,8 +427,8 @@ def validate(path):
                      EXPECTED_COLS_373, EXPECTED_COLS_379, EXPECTED_COLS_3714,
                      EXPECTED_COLS_3715, EXPECTED_COLS_3716, EXPECTED_COLS_3717,
                      EXPECTED_COLS_3718, EXPECTED_COLS_3719, EXPECTED_COLS_3720,
-                     EXPECTED_COLS_3721):
-        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260, 262, 266, 267, 268, 272, 309, 347, 372 ou 379)")
+                     EXPECTED_COLS_3721, EXPECTED_COLS_3722):
+        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260, 262, 266, 267, 268, 272, 309, 347, 372, 379 ou 380)")
     else:
         ok += 1
     print(f"  Schema detecte : {detected_schema}  ({ncols} colonnes)")

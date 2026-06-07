@@ -82,6 +82,7 @@ struct DMP_MLFeatures {
     char        sym[4];                // "ES" ou "NQ"
     char        contract[32];          // Contrat complet (ex: "ESH26-CME") — traçabilité rollover
     float       price;                 // Prix de clôture (référence)
+    float       open;                  // 🆕 B4.5 (Schema 3.7.22, 2026-06-08) — Prix d'ouverture bar (BN engines require open)
     float       atr;                   // ATR journalier (dénominateur)
     float       atr_14m;               // 🆕 3.7.14 ATR 14-barres 1-min (intraday, ticks)
     float       session;               // Session : 0=Asia, 1=London, 2=US
@@ -1840,6 +1841,7 @@ inline void DMP_Transform(
     f.sym[1] = r.is_nq ? 'Q' : 'S';
     f.sym[2] = '\0';
     f.price  = r.price_close;
+    f.open   = r.price_open;   // 🆕 B4.5 (Schema 3.7.22) — BN engines require open (Risque #4 audit Databento interface)
     f.atr    = r.atr_daily;
     f.atr_14m = r.atr_14m;   // 🆕 3.7.14 ATR intraday 1-min
     f.session = (float)r.session;  // 0=Asia, 1=London, 2=US
@@ -1966,7 +1968,7 @@ inline void DMP_Transform(
 inline void DMP_WriteCSVHeader(std::ofstream& file) {
     file <<
         // Méta
-        "ts,sym,price,atr,"
+        "ts,sym,price,open,atr,"
         // G1 VWAP (13 → +2 slopes = 15)
         "dist_vwap_d,dist_vwap_d_atr,dist_vwap_d_sd1u,dist_vwap_d_sd1d,"
         "dist_vwap_d_sd2u,dist_vwap_d_sd2d,"

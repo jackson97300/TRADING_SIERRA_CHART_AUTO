@@ -571,7 +571,7 @@ static inline void DMP_WR_WriteMeta(
     // Les features dist_*_atr, ib_range_atr, sess_range_atr sont calculees en
     // ratio ticks/ticks. Cf. fix DMP_Transform.h + DMP_OpenType.h du 15/04/2026.
     meta << "  \"atr_convention\": \"ticks\",\n";
-    meta << "  \"n_columns\": " << 379               << ",\n";   // 🆕 3.7.21 +7 B4 fix range_pos collision + 5 trivial + 2 easy (mins_et + is_in_us_cash + dist_pdh/pdl_pct + atr_14m_pct + cvd_session + ctx_day_type_intensity)
+    meta << "  \"n_columns\": " << 380               << ",\n";   // 🆕 3.7.22 +1 B4.5 expose `open` (BN engines require open, Risque #4 audit Databento)
     meta << "  \"format\": \"jsonl\",\n";
     meta << "  \"invalid_sentinel\": null,\n";
     // FIX R3 code-reviewer Batch B1 (2026-06-07) : flag features avec divergence
@@ -641,7 +641,7 @@ static inline void DMP_WR_WriteMeta(
     meta << "    \"B4_phase2_easy\": [\"cvd_session\",\"ctx_day_type_intensity\"]\n";
     meta << "  },\n";
     meta << "  \"columns\": [\n";
-    meta << "    \"ts\",\"sym\",\"contract\",\"price\",\"atr\",\"atr_14m\",\"session\",\"session_id\",\n";
+    meta << "    \"ts\",\"sym\",\"contract\",\"price\",\"open\",\"atr\",\"atr_14m\",\"session\",\"session_id\",\n";
     meta << "    \"dist_vwap_d\",\"dist_vwap_d_atr\",\"dist_vwap_d_sd1u\",\"dist_vwap_d_sd1d\",\n";
     meta << "    \"dist_vwap_d_sd2u\",\"dist_vwap_d_sd2d\","
          << "\"dist_vwap_d_sd3u\",\"dist_vwap_d_sd3d\","
@@ -919,6 +919,7 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
             "\"contract\":\"%s\",", safe_contract);
     }
     DMP_WR_KV2(buf, pos, "price", f.price);   DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "open",  f.open);    DMP_WR_COMMA(buf, pos);   // 🆕 B4.5 (Schema 3.7.22) — BN engines require open
     DMP_WR_KV2(buf, pos, "atr",   f.atr);     DMP_WR_COMMA(buf, pos);
     // 🆕 3.7.14 (24/04) : ATR intraday 14 barres 1-min (bug fix VolatilitySpikeGate)
     DMP_WR_KV2(buf, pos, "atr_14m", f.atr_14m); DMP_WR_COMMA(buf, pos);

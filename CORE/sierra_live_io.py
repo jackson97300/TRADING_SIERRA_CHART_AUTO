@@ -73,7 +73,10 @@ SUPPORTED_SYMBOLS = ("ES", "NQ")
 # Schemas Sierra DMP attendus (cf DMP_Config.h)
 # NB : 3.7.16 reverte le 06/06 nuit (cf DMP_Config.h). On le garde dans la
 # whitelist au cas ou un JSONL pre-revert ait ete dumpe.
-ACCEPTED_SCHEMAS = ("3.7.14", "3.7.15", "3.7.16", "3.7.17", "3.7.18", "3.7.19", "3.7.20", "3.7.21")
+ACCEPTED_SCHEMAS = ("3.7.14", "3.7.15", "3.7.16", "3.7.17", "3.7.18", "3.7.19", "3.7.20", "3.7.21", "3.7.22")
+# 3.7.22 = Batch B4.5 expose `open` (380 cols = 379 + 1). Risque #4 audit Databento interface :
+#          BN engines (Bot 2 BN V5, mia_paper_trader) lisent bar.get("open") qui retournait null.
+#          Avant cutover Databento, exposer `open` (deja calcule r.price_open via sc.Open).
 # 3.7.21 = Batch B4 fix range_pos collision + 7 features Python -> C++ (379 cols = 372 + 7)
 #          Phase 0 BLOQUANT : rename range_pos -> range_pos_va (Python ecrasait C++)
 #          Phase 1 (5 trivial) : mins_et, is_in_us_cash, dist_pdh_pct, dist_pdl_pct, atr_14m_pct

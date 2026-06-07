@@ -57,7 +57,19 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 // ── Version du schéma JSONL ───────────────────────────────────────────────────
 // Incrémenté à chaque ajout/suppression de colonne pour détecter les incompatibilités
 // entre fichiers .jsonl collectés à des périodes différentes.
-#define DMP_SCHEMA_VERSION "3.7.21"  // Batch B4 fix range_pos collision + 7 features — 2026-06-08
+#define DMP_SCHEMA_VERSION "3.7.22"  // Batch B4.5 expose `open` (BN engines require) — 2026-06-08
+// 3.7.22: B4.5 (2026-06-08) — Expose `open` au JSONL (Risque #4 audit Databento interface)
+//        BN engines (Bot 2 BN V5, mia_paper_trader, etc.) lisent bar.get("open") qui
+//        retournait null/NaN car Sierra DMP dump price (=close), bar_high, bar_low mais
+//        PAS open. Avant cutover Databento, exposer `open` (depuis r.price_open deja
+//        calcule DMP_Reader.h:2674) pour eviter plantage Python downstream.
+//        Schema 379 -> 380 colonnes (+1).
+//        Fichiers : DMP_Transform.h (struct +open + assignment + CSV header +open,),
+//          DMP_Writer.h (KV2 +open + meta JSON columns +open + n_cols 380),
+//          DMP_Config.h (schema 3.7.22), CORE/dmp_validator.py (EXPECTED_COLS_3722=380),
+//          CORE/sierra_live_io.py (ACCEPTED_SCHEMAS += "3.7.22").
+//
+// 3.7.21: Batch B4 fix range_pos collision + 7 features — 2026-06-08
 // 3.7.21: B4 (2026-06-08) — Fix range_pos collision + 7 features Python -> C++
 //        Phase 0 BLOQUANT : rename C++ `range_pos` -> `range_pos_va`. Python
 //        `enricher_chain.py:739` ecrivait `range_pos = (close-bar_low)/(bar_high-bar_low)`
