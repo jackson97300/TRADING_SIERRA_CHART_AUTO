@@ -1798,7 +1798,11 @@ static inline void CalcHVN_LVN(const DMP_HVN_LVN_Result& h, DMP_MLFeatures& f,
 //   tp_target = prix cible du trade en cours (ou DMP_INVALID si pas de trade).
 //   direction = +1 (LONG) / -1 (SHORT) / 0 (pas de trade).
 
+// 🆕 B3.A 2026-06-08 : ajout `SCStudyInterfaceRef sc` en parametre pour
+// permettre a DMP_ComputeF9_Roll d'utiliser les PersistVars 207-210.
+// Appelants (DMP_Pipeline.h:182) doivent passer `sc` du contexte scsf_*.
 inline void DMP_Transform(
+    SCStudyInterfaceRef        sc,
     const DMP_RawData&         r,
     DMP_MLFeatures&            f,
     float                      prev_swing_high = DMP_INVALID,
@@ -1894,14 +1898,14 @@ inline void DMP_Transform(
     DMP_ComputeF2_PrevLevels(f, r);  //  8 features Previous + Cash + OVN
     DMP_ComputeF23_VPAbsolus(f, r);  //  6 features Volume Profile
 
-    // 🆕 B3.A — F22 + F12_safe + F8 + F9 (24 features, Schema 3.7.20, 2026-06-07)
+    // 🆕 B3.A — F22 + F12_safe + F8 + F9 (25 features, Schema 3.7.20, 2026-06-08)
     //   Sequencing audit B3 : F22 -> F12 -> F8 -> F9 (anti pattern 11,
-    //   1 famille a la fois). F12 et F9 ont besoin de PersistVars donc passent
-    //   sc en parametre (DMP_PERSIST_F12_PREV_LONG_UP=205-206 reservees mais
-    //   non utilisees B3.A car patterns DEFER B3.B ; DMP_PERSIST_F9_*=207-210).
-    //   F22 et F8 sont stateless (pas besoin de sc).
-    DMP_ComputeF22_PositionRange(f, r);  //  3 features Position session/MQ daily
-    DMP_ComputeF12_BarShape(sc, f, r);   // 10 features Body/Wick/Long/Patterns
+    //   1 famille a la fois). Seul F9 a besoin de PersistVars (207-210) donc
+    //   recoit `sc` en parametre. F12_safe est stateless (PersistVars 205-206
+    //   reservees mais non utilisees B3.A car patterns NON-PORTEES vers
+    //   Sierra natives existantes). F22 et F8 sont aussi stateless.
+    DMP_ComputeF22_PositionRange(f, r);  //  4 features Position session/MQ daily
+    DMP_ComputeF12_BarShape(f, r);       //  6 features Body/Wick/no_trade/range_size
     DMP_ComputeF8_News(f, r);            // 14 features News timing US macro
     DMP_ComputeF9_Roll(sc, f, r);        //  1 feature  Contract roll detection
 

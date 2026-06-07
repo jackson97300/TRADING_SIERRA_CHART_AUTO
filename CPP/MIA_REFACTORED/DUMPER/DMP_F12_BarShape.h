@@ -126,8 +126,11 @@ static inline float DMP_F12_LongBar(
 // IMPORTANT : sc passe par reference pour acceder aux PersistVars. Doit etre
 // appele 1 fois par bar (pour ne pas perturber l'etat shift-1).
 
+// Note : `sc` retire du parametre B3.A car les PersistVars 205-206 (long_up/dn
+// PrevLong patterns) ne sont plus utilisees. Les 4 features long_* sont
+// non-portees (mapping Sierra natives bar_long_*). Si refactor B3.B+, ajouter
+// `SCStudyInterfaceRef sc` en premier parametre + propager dans DMP_Transform.
 inline void DMP_ComputeF12_BarShape(
-    SCStudyInterfaceRef sc,
     DMP_MLFeatures& f,
     const DMP_RawData& r)
 {
@@ -189,7 +192,9 @@ inline void DMP_ComputeF12_BarShape(
         || !DMP_IsPriceValid(open_val) || !DMP_IsPriceValid(high)) {
         f.bar_upper_wick_pct = DMP_INVALID;
     } else {
-        float top_body = std::max(open_val, close);
+        // Fix collision macro Sierra Chart `max(a,b)` (scstructures.h:92) :
+        // utilise ternaire au lieu de std::max.
+        float top_body = (open_val > close) ? open_val : close;
         float wick = high - top_body;
         if (wick < 0.0f) wick = 0.0f;  // garde anti-flotant
         float pct = (wick / close) * 100.0f;
@@ -205,7 +210,9 @@ inline void DMP_ComputeF12_BarShape(
         || !DMP_IsPriceValid(open_val) || !DMP_IsPriceValid(low)) {
         f.bar_lower_wick_pct = DMP_INVALID;
     } else {
-        float bot_body = std::min(open_val, close);
+        // Fix collision macro Sierra Chart `min(a,b)` (scstructures.h:96) :
+        // utilise ternaire au lieu de std::min.
+        float bot_body = (open_val < close) ? open_val : close;
         float wick = bot_body - low;
         if (wick < 0.0f) wick = 0.0f;
         float pct = (wick / close) * 100.0f;

@@ -179,7 +179,10 @@ constexpr int DMP_PS_PREV_SWING_L = 116;
 float prev_sh = sc.GetPersistentFloat(DMP_PS_PREV_SWING_H);
 float prev_sl = sc.GetPersistentFloat(DMP_PS_PREV_SWING_L);
 
-DMP_Transform(r, f, prev_sh, prev_sl, &hvn_result, DMP_INVALID, 0);
+// 🆕 B3.A 2026-06-08 : DMP_Transform recoit `sc` en parametre pour permettre
+// a DMP_ComputeF9_Roll d'utiliser PersistVars 207-210 (last_contract_hash/
+// root, roll_day_flag, roll_day_date).
+DMP_Transform(sc, r, f, prev_sh, prev_sl, &hvn_result, DMP_INVALID, 0);
 
 // Sauvegarder swing actuel pour la prochaine barre
 if (DMP_IsPriceValid(r.swing_high))
