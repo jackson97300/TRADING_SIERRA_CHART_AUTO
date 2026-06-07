@@ -175,6 +175,23 @@ EXPECTED_COLS_3719 = 347          # 🆕 Batch B2 (2026-06-07) +38 niveaux ABSOL
                                   # (prop firms RTH-only, aucun overnight). Cf
                                   # DOCS/SIERRA_PYTHON_OVERLAPS_AUDIT_V2.md +
                                   # DMP_F3_DistNormalisees.h pour le bloc decision.
+EXPECTED_COLS_3720 = 372          # 🆕 Batch B3.A (2026-06-08) +25 F22+F12_safe+F8+F9.
+                                  # F22 PositionRange (4) + F12 BarShape SAFE (6) +
+                                  # F8 News (14) + F9 Roll (1). Cf DOCS/AUDIT_B3_F8_F9_F12_F22.md.
+                                  # 3 DROP : roll_phase leak ks=1.0, range_h_minus_lprev /
+                                  # range_hprev_minus_l leak vol ks_em>4.
+                                  # 1 DEFER : days_since_roll (cold-start probleme).
+                                  # 4 NON-PORTEES (Jackson decision 2026-06-08 00:30) : Sierra
+                                  # natives equivalentes deja dans JSONL :
+                                  #   long_up_bar      → bar_long_up_bar
+                                  #   long_dn_bar      → bar_long_dn_bar
+                                  #   long_dn_up_pattern → bar_long_dn_up (ronds jaunes)
+                                  #   long_up_dn_pattern → bar_long_up_dn
+                                  #   bonus           : dist_ext_long_up / dist_ext_long_dn
+                                  # Verif empirique fiabilite 5j NQ + 5j ES : 15.4% NQ fire-rate
+                                  # Sierra vs 57.6% Python (noise pure) → Sierra plus selectif.
+                                  # bar_no_trade REFACTORE isna() strict (100% match Python verifie).
+                                  # Jackson rectif 22:50 : discount_zone GARDE (FULL REGLES "Buy the dip").
 EXPECTED_COLS = EXPECTED_COLS_370 # rétrocompatibilité (remplacé dynamiquement)
 
 # ─── NETTOYAGE 2026-04-12 ────────────────────────────────────────────────
@@ -324,13 +341,25 @@ def validate(path):
     has_ts_aggregates = "max_ask_vol_in_bar" in lines[0]  # 3.7.15 (06/06 migration Sierra)
     has_f3_pct = "dist_vwap_d_pct" in lines[0]            # 🆕 3.7.18 Batch B1 (07/06)
     has_b2_abs = ("vwap_d" in lines[0]) and ("pdh" in lines[0]) and ("cur_vpoc_lvl" in lines[0])
+    # 🆕 3.7.20 Batch B3 (07/06) — F22 + F12 + F8 + F9. Detection quadruple :
+    # pct_in_range (F22), bar_body_pct (F12), is_news_730 (F8), is_roll_day (F9).
+    # NB : mins_et N'EST PAS expose au JSONL (decision audit B3 n_cols 347 -> 375 strict).
+    has_b3_features = (
+        "pct_in_range" in lines[0]
+        and "bar_body_pct" in lines[0]
+        and "is_news_730" in lines[0]
+        and "is_roll_day" in lines[0]
+    )
     # 🆕 3.7.19 Batch B2 (07/06) — niveaux absolus Sierra. Detection triple :
     # vwap_d (F4 absolu), pdh (F2 Previous), cur_vpoc_lvl (F23 VP). Le suffixe
     # _lvl evite collision avec dist_cur_vpoc (F1 ticks deja en 3.7.0).
     # 3.7.16 (06/06 Phase 2.1bis) : pas de nouvelle colonne, mais detection
     # via bars Asia/London avec day_type null (vs 2.0 hardcode pre-fix).
     # Si schema_version meta JSON disponible, on l'utilise prioritairement.
-    if ncols == EXPECTED_COLS_3719 and has_b2_abs and has_f3_pct:
+    if ncols == EXPECTED_COLS_3720 and has_b3_features and has_b2_abs and has_f3_pct:
+        detected_schema = "3.7.20"    # 🆕 Batch B3.A F22+F12_safe+F8+F9 (372 cols, +bar_no_trade isna strict)
+        expected = EXPECTED_COLS_3720
+    elif ncols == EXPECTED_COLS_3719 and has_b2_abs and has_f3_pct:
         detected_schema = "3.7.19"    # 🆕 Batch B2 Niveaux absolus Sierra (347 cols)
         expected = EXPECTED_COLS_3719
     elif ncols == EXPECTED_COLS_3718 and has_f3_pct:
@@ -367,8 +396,8 @@ def validate(path):
     if ncols not in (EXPECTED_COLS_370, EXPECTED_COLS_371, EXPECTED_COLS_372,
                      EXPECTED_COLS_373, EXPECTED_COLS_379, EXPECTED_COLS_3714,
                      EXPECTED_COLS_3715, EXPECTED_COLS_3716, EXPECTED_COLS_3717,
-                     EXPECTED_COLS_3718, EXPECTED_COLS_3719):
-        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260, 262, 266, 267, 268, 272, 309 ou 347)")
+                     EXPECTED_COLS_3718, EXPECTED_COLS_3719, EXPECTED_COLS_3720):
+        errors.append(f"SCHEMA: {ncols} colonnes (attendu 258, 260, 262, 266, 267, 268, 272, 309, 347 ou 372)")
     else:
         ok += 1
     print(f"  Schema detecte : {detected_schema}  ({ncols} colonnes)")

@@ -697,6 +697,19 @@ struct DMP_RawData {
     bool    poor_high;                   // true si excess_high_bars < 3
     bool    poor_low;                    // true si excess_low_bars < 3
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🆕 R. CONTEXTE TEMPOREL (Batch B3, Schema 3.7.20, 2026-06-07)
+    // Exposes pour les helpers F8 News et F9 Roll. Calcul deja effectue dans
+    // DMP_ReadAll (time_et + DST + trading_day) mais auparavant non publie
+    // dans la struct DMP_RawData -> recompute dupliquait la conversion DST.
+    // ─────────────────────────────────────────────────────────────────────────
+    int     mins_et;                     // Minutes depuis minuit ET (DST-aware), [0, 1440)
+                                         //   Source : reuse de DMP_ReadAll ligne 2727.
+                                         //   Utilise par DMP_ComputeF8_News (events HHMM).
+    int     trading_day;                 // Trading day (YYYYMMDD int CME), session 18:00-17:00 ET
+                                         //   Calcule dans DMP_ReadAll via le meme helper que
+                                         //   DMP_ReadDeltaDivergenceClean (shift +1 si h_et>=18).
+                                         //   Utilise par DMP_ComputeF9_Roll (reset flag jour).
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2725,6 +2738,28 @@ inline void DMP_ReadAll(SCStudyInterfaceRef sc, DMP_RawData& d, bool is_nq) {
         int h_et = (h_utc - utc_offset + 24) % 24;
         int m_et = m_utc;
         int time_et = h_et * 60 + m_et;
+
+        // 🆕 B3 (Schema 3.7.20, 2026-06-07) — Expose mins_et + trading_day
+        // dans struct DMP_RawData pour DMP_ComputeF8_News + DMP_ComputeF9_Roll.
+        // mins_et = time_et (alias semantique cote pipeline ML).
+        d.mins_et = time_et;
+        // Trading day CME : si h_et >= 18, la session de DEMAIN a demarre
+        // (CME ouverture 18:00 ET). Meme logique que DMP_ReadDeltaDivergenceClean.
+        {
+            time_t trading_sec = sec - (long)utc_offset * 3600L;  // local ET
+            if (h_et >= 18) trading_sec += 86400L;                 // shift +1 day
+#ifdef _WIN32
+            struct tm tr_val{};
+            gmtime_s(&tr_val, &trading_sec);
+            struct tm* tr = &tr_val;
+#else
+            struct tm tr_buf{};
+            struct tm* tr = gmtime_r(&trading_sec, &tr_buf);
+#endif
+            d.trading_day = (tr->tm_year + 1900) * 10000
+                          + (tr->tm_mon + 1) * 100
+                          +  tr->tm_mday;
+        }
 
         // RTH = 09:30–16:00 ET
         d.is_rth_session = (time_et >= 9 * 60 + 30) && (time_et < 16 * 60);

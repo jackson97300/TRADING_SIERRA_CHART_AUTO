@@ -73,12 +73,17 @@ SUPPORTED_SYMBOLS = ("ES", "NQ")
 # Schemas Sierra DMP attendus (cf DMP_Config.h)
 # NB : 3.7.16 reverte le 06/06 nuit (cf DMP_Config.h). On le garde dans la
 # whitelist au cas ou un JSONL pre-revert ait ete dumpe.
-ACCEPTED_SCHEMAS = ("3.7.14", "3.7.15", "3.7.16", "3.7.17", "3.7.18", "3.7.19")
+ACCEPTED_SCHEMAS = ("3.7.14", "3.7.15", "3.7.16", "3.7.17", "3.7.18", "3.7.19", "3.7.20")
 # 3.7.17 = CLAMP ATR aligne (2026-06-07, comportemental, 272 cols inchangees)
 # 3.7.18 = Batch B1 F3 Distances _pct (309 cols = 272 + 37)
-# 3.7.19 = Batch B2 Niveaux ABSOLUS Sierra (339 cols = 309 + 30 : 16 VWAP +
+# 3.7.19 = Batch B2 Niveaux ABSOLUS Sierra (347 cols = 309 + 38 : 24 VWAP +
 #          8 Prev/Cash/Open/OVN + 6 VP). Decision Jackson 2026-06-07 :
 #          Sierra prime sur 3 familles (VWAP/VP/Session) prop firms RTH-only.
+# 3.7.20 = Batch B3 F22 + F12 + F8 + F9 (375 cols = 347 + 28 : 3 PositionRange +
+#          10 BarShape + 14 News + 1 Roll). 4 DROP (roll_phase leak ks=1.0,
+#          range_h_minus_lprev / range_hprev_minus_l leak vol ks_em>4,
+#          discount_zone doublon premium_zone corr -0.989). 1 DEFER
+#          (days_since_roll cold-start probleme).
 
 # Fail-loud par defaut : raise si fichier absent (anti silent fallback).
 # Override avec strict=False pour tests offline.

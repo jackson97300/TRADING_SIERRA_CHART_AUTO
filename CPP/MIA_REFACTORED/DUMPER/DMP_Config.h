@@ -57,7 +57,93 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 // ── Version du schéma JSONL ───────────────────────────────────────────────────
 // Incrémenté à chaque ajout/suppression de colonne pour détecter les incompatibilités
 // entre fichiers .jsonl collectés à des périodes différentes.
-#define DMP_SCHEMA_VERSION "3.7.19"  // Batch B2 Niveaux ABSOLUS Sierra (F4+F2+F23) — 2026-06-07
+#define DMP_SCHEMA_VERSION "3.7.20"  // Batch B3.A F22+F12_safe+F8+F9 (25 features) — 2026-06-08
+// 3.7.20: +25 features B3.A F22 PositionRange (4) + F12 BarShape SAFE (6) + F8 News (14) + F9 Roll (1) — 2026-06-08
+// IMPORTANT : 4 features F12 (long_up_bar, long_dn_bar, long_dn_up_pattern,
+//             long_up_dn_pattern) NON PORTEES car les equivalents Sierra natives
+//             existent DEJA dans le JSONL (`bar_long_up_bar`, `bar_long_dn_bar`,
+//             `bar_long_dn_up`, `bar_long_up_dn` + bonus `dist_ext_long_up/dn`
+//             = Extension Lines distances). Decision Jackson 2026-06-08 00:30
+//             : pattern Sierra-prime (cf B2). Verif empirique fiabilite 5j NQ
+//             + 5j ES : Sierra natives 15.4% fire-rate NQ vs Python 57.6% noise
+//             pure → Sierra natives PLUS SELECTIVES et propres.
+// bar_no_trade : REFACTORE en formule alignee Python `delta_bar.isna()` strict
+//             (DMP_F12_IsInvalid only, sans `|delta|<0.5`). Verifie 100% match
+//             Python sur 9788 bars (5j NQ + 5j ES).
+//        Port C++ Sierra des features Python live_enriched manquantes (25 GO PORT
+//        B3.A + 4 NON-PORTEES = Sierra natives existantes JSONL + 1 DEFER
+//        days_since_roll + 3 DROP : roll_phase leak instrument ks=1.0,
+//        range_h_minus_lprev_ticks + range_hprev_minus_l_ticks leak vol ks_em>4).
+//        Jackson rectif 2026-06-07 22:50 : discount_zone GARDE (FULL REGLES
+//        "Buy the dip"). Decision 2026-06-08 00:30 : bar_no_trade REFACTORE
+//        formule isna() strict (100% fiable verifie empirique) + 4 features
+//        long_* utilisent les Sierra natives `bar_long_*` deja dans le JSONL.
+//
+//        Groupes ajoutes :
+//          F22 — Position Range (4) :
+//            * pct_in_range      = (close - sess_low) / (sess_high - sess_low) * 100
+//            * premium_zone      = 1 si pct_in_range > 50
+//            * discount_zone     = 1 si pct_in_range < 50 (Jackson rectif 22:50)
+//            * position_in_range = (close - mq_1d_min) / (mq_1d_max - mq_1d_min)
+//          F12 — Bar Shape SAFE (6/10 ; 4 NON-PORTEES = Sierra natives) :
+//            * bar_body_pct, bar_body_ticks  (formules OHLC pures)
+//            * bar_upper_wick_pct, bar_lower_wick_pct (clamp [0,3], demande Bot 4 SIM4)
+//            * bar_no_trade (refactore isna() strict, 100% match Python)
+//            * range_size (high - low en POINTS)
+//          F12 SIERRA-PRIME mapping (deja dans JSONL, downstream utilise direct) :
+//            * long_up_bar Python      → bar_long_up_bar Sierra
+//            * long_dn_bar Python      → bar_long_dn_bar Sierra
+//            * long_dn_up_pattern      → bar_long_dn_up Sierra (ronds jaunes)
+//            * long_up_dn_pattern      → bar_long_up_dn Sierra
+//            * bonus distances         : dist_ext_long_up, dist_ext_long_dn
+//          F12 — Bar Shape (10) :
+//            * bar_body_pct, bar_body_ticks (corps signed)
+//            * bar_upper_wick_pct, bar_lower_wick_pct (wicks clamp [0, 3])
+//            * bar_no_trade (boolean delta absent/0)
+//            * long_up_bar, long_dn_bar (body > 2*ATR_points + sens)
+//            * long_dn_up_pattern, long_up_dn_pattern (reversal shift-1)
+//            * range_size (high - low POINTS)
+//          F8 — News (14) :
+//            * mins_et (scalar [0, 1440) DST-aware)
+//            * is_news_HHMM (6 boolean event 7h15/7h30/8h30/8h45/9h00/9h30)
+//            * within_news_HHMM_5m (6 boolean fenetre [tgt, tgt+5))
+//            * mins_since_news, mins_to_next_news (DMP_INVALID si aucun event passe/futur)
+//          F9 — Roll (1) :
+//            * is_roll_day (1 toute la session si vrai roll detecte, exclus
+//              manual_switch via comparaison root 2-letter)
+//
+//        Schema 347 -> 372 colonnes (+25 B3.A ; 4 NON-PORTEES = Sierra natives existantes).
+//        Fichiers : DMP_F22_PositionRange.h (NEW), DMP_F12_BarShape.h (NEW),
+//          DMP_F8_News.h (NEW), DMP_F9_Roll.h (NEW), DMP_Reader.h (+mins_et
+//          + trading_day fields dans struct DMP_RawData), DMP_Transform.h
+//          (+28 fields struct + 4 includes B3 + 4 appels), DMP_Writer.h
+//          (n_cols 347 -> 375 + feature_families meta JSON + 28 KV serialisation
+//          + 28 columns meta JSON).
+//
+//        PersistVars utilisees :
+//          F12 : 205 (DMP_PERSIST_F12_PREV_LONG_UP)
+//                206 (DMP_PERSIST_F12_PREV_LONG_DN)
+//          F9  : 207 (DMP_PERSIST_F9_LAST_CONTRACT_HASH)
+//                208 (DMP_PERSIST_F9_LAST_CONTRACT_ROOT)
+//                209 (DMP_PERSIST_F9_ROLL_DAY_FLAG)
+//                210 (DMP_PERSIST_F9_ROLL_DAY_DATE)
+//          (Sans conflit : 200-202 deja delta_div, 203-204 deja B2 PDH/PDL.)
+//
+//        Tests : tools/test_parity_B3.py (parite Python live_enriched
+//          info-only pour familles divergentes — F12 reuse formule Python
+//          mais Sierra ATR peut diverger ; F22 / F8 / F9 doivent matcher
+//          bit-for-bit). Sanity range checks par feature.
+//
+//        Conventions naming respectees :
+//          _pct      : pourcentage [0, 100] ou [-100, 100]
+//          _ticks    : nombre de ticks (0.25 ES/NQ)
+//          is_*      : boolean event ponctuel (1 fois)
+//          within_*  : boolean fenetre (plusieurs bars)
+//          mins_*    : scalar minutes
+//          *_zone    : boolean zone
+//          *_pattern : boolean pattern shift-1
+//          *_bar     : boolean morphologie bar courante
+//
 // 3.7.19: +38 features B2 Niveaux ABSOLUS Sierra (F4+F2+F23) — 2026-06-07
 //        Port C++ Sierra des niveaux ABSOLUS pour permettre downstream
 //        (bots, ML, dashboard) de reconstruire des distances normalisees

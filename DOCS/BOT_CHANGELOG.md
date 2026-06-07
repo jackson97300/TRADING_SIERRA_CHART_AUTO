@@ -62,6 +62,103 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-08 00:45 — Batch B3.A port C++ Sierra : F22+F12_safe+F8+F9 (schema 3.7.20, n_cols 372)
+
+**Categorie** : ARCHITECTURE PIVOT (criteres critiques 2+3 — ML/C++)
+**Impact prod** : Schema JSONL +25 colonnes. Aucun bot ne consomme encore ces fields (Bot 4 non concerne, downstream a brancher batch suivant).
+
+**Update finale 2026-06-08 00:45** : ajout `bar_no_trade` REFACTORE selon Python `delta_bar.isna()` strict (100% match verifie empirique 9788 bars). Decision Jackson "ON A AUSSI LES EXTENSIONS" : 4 features F12 long_* NON-PORTEES car les Sierra natives equivalentes existent deja dans le JSONL (`bar_long_up_bar`, `bar_long_dn_bar`, `bar_long_dn_up`, `bar_long_up_dn` + bonus `dist_ext_long_up`, `dist_ext_long_dn` = Extension Lines distances). Pattern Sierra-prime applique comme B2.
+
+**Contexte** : Suite logique B1 (3.7.18) et B2 (3.7.19). B3.A porte les 4 dernieres familles Python live_enriched manquantes en C++ Sierra, avec **decomposition F12 SAFE/UNSAFE** suite reviews :
+- F22 PositionRange (4 features) : pct_in_range + premium_zone + discount_zone + position_in_range
+- F12 BarShape SAFE (5/10) : bar_body_pct + bar_body_ticks + bar_upper_wick_pct + bar_lower_wick_pct + range_size (formules OHLC pures)
+- F8 News (14 features) : 6 is_news_HHMM + 6 within_news_HHMM_5m + mins_since_news + mins_to_next_news (DMP_INVALID hors fenetre)
+- F9 Roll (1 feature) : is_roll_day avec protection manual_switch (root ticker 2-letter)
+
+**Decisions Jackson** :
+- 2026-06-07 22:50 : `discount_zone` GARDE malgre redondance arithmetique (FULL REGLES "Buy the dip" + dashboard 2 labels)
+- 2026-06-07 23:55 : 5 features F12 unsafe DEFER B3.B suite review NOGO quality-validator (4/10)
+- 2026-06-07 23:58 : B3.B = PAS un refactor Python mais MAPPING vers features Sierra NATIVES deja exposees (`bar_long_up_bar`, `bar_long_dn_bar`, `bar_long_dn_up`, `bar_long_up_dn`, `dist_ext_long_up`, `dist_ext_long_dn`). Pattern Sierra-prime applique comme B2.
+
+**Reviews agents** :
+- code-reviewer (a4f35f25f18308f49) : GO-AVEC-RESERVES 7.5/10. R1 bug hash float (cast uint32_t → float → uint32_t casse > 2^24 → is_roll_day faux positif permanent) **FIXED** via `GetPersistentInt`. R3 manual_switch faux positif jour roll **FIXED** via reset flag. R2 commentaires divergents 11+ purges.
+- quality-validator (a06cc99bdafd2f1f8) : NOGO 4/10. F22+F8+F9 GO (6147 bars sanity), F12 NOGO :
+  - long_up_bar/dn_bar : Python canonique fire-rate NQ = 57.6% empirique = noise pure (threshold 24t mal calibre)
+  - long_dn_up/up_dn_pattern : Python ES utilise lookahead [+1] = LEAK FUTURE en live (impossible reproduire)
+  - bar_no_trade : divergence semantique 1.4% vs Python `delta_bar.isna()` strict
+
+**Backtest empirique 5 jours NQ + 5 jours ES Python canonique** :
+- NQ : 2725 fires / 4727 bars = 57.6% (NOISE PURE)
+- ES : 224 fires / 5061 bars = 4.4% (OK)
+- Match recompute vs live_enriched : 99.9% (formule correctement transcrite)
+- Confirme : la formule Python canonique elle-meme est cassee pour NQ
+
+**Bugs critiques fixes (R1 + R3 F9)** :
+- `DMP_F9_Roll.h:115-118` : PersistVars passes de `GetPersistentFloat` → `GetPersistentInt` pour eviter perte de precision IEEE 754 au-dela de 2^24 (hash djb2 + trading_day YYYYMMDD)
+- `DMP_F9_Roll.h:178-186` : reset `roll_flag_persist = 0` lors de manual_switch (ES→NQ pendant roll day ES = faux positif jour roll NQ)
+
+**Changements code C++** :
+- NEW `DMP_F22_PositionRange.h` (4 features OHLC + niveaux Sierra)
+- NEW `DMP_F12_BarShape.h` (5 features SAFE exposes, 5 unsafe commentees pour B3.B)
+- NEW `DMP_F8_News.h` (14 features hardcode NEWS_MINS + DMP_INVALID gestion)
+- NEW `DMP_F9_Roll.h` (1 feature + R1+R3 fixes appliques)
+- MOD `DMP_Reader.h` (+`mins_et` + `trading_day` dans struct + calcul DMP_ReadAll)
+- MOD `DMP_Transform.h` (+24 fields struct + 4 includes B3.A + 4 appels + CSV header + doc convention)
+- MOD `DMP_Writer.h` (n_cols 347→371, +24 KV2, meta JSON `feature_families` + `feature_families_deferred_B3B`)
+- MOD `DMP_Config.h` (schema 3.7.20 + doc B3.A + plan B3.B Sierra-prime)
+- MOD `CORE/dmp_validator.py` (EXPECTED_COLS_3720 = 371, has_b3_features detection)
+- MOD `CORE/sierra_live_io.py` (ACCEPTED_SCHEMAS += `3.7.20`)
+- NEW `tools/test_parity_B3.py` (24 features sanity + Python live_enriched parity check)
+
+**Plan B3.B (session future)** :
+1. **NE PAS refactor Python** : utiliser mapping Sierra natives existantes
+   - `long_up_bar` Python → utiliser `bar_long_up_bar` Sierra (chart 23/25 ID:18/17)
+   - `long_dn_bar` Python → utiliser `bar_long_dn_bar` Sierra
+   - `long_dn_up_pattern` Python → utiliser `bar_long_dn_up` Sierra (ronds jaunes)
+   - `long_up_dn_pattern` Python → utiliser `bar_long_up_dn` Sierra
+   - Bonus : `dist_ext_long_up` / `dist_ext_long_dn` (Extension Lines distances)
+2. **Documenter mapping** dans dataset_builder + Bot 4 / dashboard pour usage downstream
+3. **bar_no_trade** (seule feature sans equivalent Sierra) : refactor formule alignee Python `delta_bar.isna()` strict OU DEFER long terme
+4. **Walk-forward DSR Lopez** verdict ml-trainer avant integration bots
+
+**Verifications J+1 obligatoires post-deploy** :
+- JSONL dump avec `schema_version = "3.7.20"` + `n_columns = 371`
+- 24 features B3.A presentes : pct_in_range, premium_zone, discount_zone, position_in_range, bar_body_pct, bar_body_ticks, bar_upper_wick_pct, bar_lower_wick_pct, range_size, 14 News, is_roll_day
+- 5 features F12 DEFER **ABSENTES** du JSONL : bar_no_trade, long_up_bar, long_dn_bar, long_dn_up_pattern, long_up_dn_pattern
+- F8 `mins_since_news` et `mins_to_next_news` = `null` (pas -1) 95%+ du temps hors 7h15-9h30 ET
+- F9 `is_roll_day` = 0 sur jour normal (4 events/an)
+- F22 `discount_zone = 1 - premium_zone` strict quand parent valide
+
+**Validation pre-deploy** :
+- [x] Coherence 24 features verifiee (struct + CSV + KV2 + meta JSON + Python imports)
+- [x] R1+R3 F9 fixes appliques (code-reviewer)
+- [x] F12 unsafe commentee (helper assignments + struct + Writer + test_parity)
+- [x] R2 purge 28→24/375→371/discount_zone doublon : 0 reste
+- [x] BOT_CHANGELOG entry
+- [ ] Test empirique J+1 post-deploy
+
+**Revert plan** :
+```bash
+# Rollback B3.A -> B2 (3.7.19) :
+git revert <commit-B3.A>
+# Recompile Sierra (Custom Studies DLL) + reload chart 23/25
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+(en attente confirmation Jackson + recompile SC + reload charts 23/25)
+
+### Suivi post-deploy
+- J+1 : verifier 24 features presentes, F8 News fonctionnel pendant fenetre RTH, is_roll_day = 0 normal
+- J+7 : suivi distribution valeurs (pct_in_range balanced, premium/discount mirror)
+- J+30 : decider B3.B (mapping Sierra natives) OU passage B4 (10 features Python)
+
+### Liens
+- Audit : `DOCS/AUDIT_B3_F8_F9_F12_F22.md`
+- Reviews : code-reviewer (`DOCS/CODE_REVIEW_B3.md`), quality-validator (`DOCS/QUALITY_VALIDATION_B3.md`)
+- Backtest : F12 NQ 57.6% noise empirique 5 jours
+
+---
+
 ## 2026-06-07 22:00 — Batch B2 port C++ Sierra : Niveaux ABSOLUS F4+F2+F23 (schema 3.7.19, n_cols 347)
 
 **Categorie** : ARCHITECTURE PIVOT (criteres critiques 2+3 — ML/C++)

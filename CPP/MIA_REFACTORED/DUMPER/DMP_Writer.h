@@ -571,7 +571,7 @@ static inline void DMP_WR_WriteMeta(
     // Les features dist_*_atr, ib_range_atr, sess_range_atr sont calculees en
     // ratio ticks/ticks. Cf. fix DMP_Transform.h + DMP_OpenType.h du 15/04/2026.
     meta << "  \"atr_convention\": \"ticks\",\n";
-    meta << "  \"n_columns\": " << 347               << ",\n";   // 🆕 3.7.19 +38 B2 niveaux absolus (24 VWAP + 8 prev/cash + 6 VP)
+    meta << "  \"n_columns\": " << 372               << ",\n";   // 🆕 3.7.20 +25 B3.A F22+F12_safe+F8+F9 (4+6+14+1, bar_no_trade refactore isna strict 100% fiable, 4 F12 NON-PORTEES = Sierra natives existantes JSONL)
     meta << "  \"format\": \"jsonl\",\n";
     meta << "  \"invalid_sentinel\": null,\n";
     // FIX R3 code-reviewer Batch B1 (2026-06-07) : flag features avec divergence
@@ -606,6 +606,35 @@ static inline void DMP_WR_WriteMeta(
             "\"prev_vpoc_lvl\",\"prev_vah_lvl\",\"prev_val_lvl\"],\n";
     meta << "    \"session_family\": [\"cash_high\",\"cash_low\",\"pdh\",\"pdl\","
             "\"open_cash_lvl\",\"open_830_lvl\",\"ovn_high_lvl\",\"ovn_low_lvl\"]\n";
+    meta << "  },\n";
+    // 🆕 B3.A (Schema 3.7.20, 2026-06-07) — Grouping par famille pour faciliter
+    // le downstream (audit, dataset_builder, parity tests). 24 features
+    // ajoutees en 4 familles : F22 PositionRange (4), F12 BarShape SAFE (5),
+    // F8 News (14), F9 Roll (1). Cf DOCS/AUDIT_B3_F8_F9_F12_F22.md.
+    // Jackson rectif 2026-06-07 22:50 : discount_zone GARDE (FULL REGLES).
+    // Decision Jackson 2026-06-07 23:55 : 5 features F12 unsafe DEFER B3.B
+    // (review NOGO quality-validator : long_up_bar threshold NQ mal calibre
+    // = noise pure 57.6% fire-rate, patterns ES lookahead = LEAK FUTURE,
+    // bar_no_trade divergence semantique). Refactor B3.B = recalibrage
+    // threshold per-symbole + ajout `open` JSONL + walk-forward DSR Lopez.
+    meta << "  \"feature_families\": {\n";
+    meta << "    \"F22_position_range\": [\"pct_in_range\",\"premium_zone\",\"discount_zone\",\"position_in_range\"],\n";
+    meta << "    \"F12_bar_shape\": [\"bar_body_pct\",\"bar_body_ticks\","
+            "\"bar_upper_wick_pct\",\"bar_lower_wick_pct\","
+            "\"bar_no_trade\",\"range_size\"],\n";
+    meta << "    \"F12_sierra_natives_mapping\": {"
+            "\"long_up_bar\":\"bar_long_up_bar\","
+            "\"long_dn_bar\":\"bar_long_dn_bar\","
+            "\"long_dn_up_pattern\":\"bar_long_dn_up\","
+            "\"long_up_dn_pattern\":\"bar_long_up_dn\","
+            "\"_bonus_ext\":[\"dist_ext_long_up\",\"dist_ext_long_dn\"]},\n";
+    meta << "    \"F8_news\": ["
+            "\"is_news_715\",\"is_news_730\",\"is_news_830\","
+            "\"is_news_845\",\"is_news_900\",\"is_news_930\","
+            "\"within_news_715_5m\",\"within_news_730_5m\",\"within_news_830_5m\","
+            "\"within_news_845_5m\",\"within_news_900_5m\",\"within_news_930_5m\","
+            "\"mins_since_news\",\"mins_to_next_news\"],\n";
+    meta << "    \"F9_roll\": [\"is_roll_day\"]\n";
     meta << "  },\n";
     meta << "  \"columns\": [\n";
     meta << "    \"ts\",\"sym\",\"contract\",\"price\",\"atr\",\"atr_14m\",\"session\",\"session_id\",\n";
@@ -736,9 +765,24 @@ static inline void DMP_WR_WriteMeta(
     // F2 — Previous + Cash + Open + OVN absolus (8)
     meta << "    \"pdh\",\"pdl\",\"cash_high\",\"cash_low\",\n";
     meta << "    \"open_cash_lvl\",\"open_830_lvl\",\"ovn_high_lvl\",\"ovn_low_lvl\",\n";
-    // F23 — VP absolus (6 — dernier de la liste, sans virgule a la fin)
+    // F23 — VP absolus (6)
     meta << "    \"cur_vpoc_lvl\",\"cur_vah_lvl\",\"cur_val_lvl\",\n";
-    meta << "    \"prev_vpoc_lvl\",\"prev_vah_lvl\",\"prev_val_lvl\"\n";
+    meta << "    \"prev_vpoc_lvl\",\"prev_vah_lvl\",\"prev_val_lvl\",\n";
+    // 🆕 B3.A (Schema 3.7.20) — F22 + F12_safe + F8 + F9 (24 features)
+    // F22 — Position Range (4)
+    meta << "    \"pct_in_range\",\"premium_zone\",\"discount_zone\",\"position_in_range\",\n";
+    // F12 — Bar Shape (10)
+    meta << "    \"bar_body_pct\",\"bar_body_ticks\",\n";
+    meta << "    \"bar_upper_wick_pct\",\"bar_lower_wick_pct\",\"bar_no_trade\",\n";
+    // NON-PORTEES (Sierra natives existantes JSONL) : long_up_bar -> bar_long_up_bar, etc.
+    meta << "    \"range_size\",\n";
+    // F8 — News (14 — mins_et utilise en interne, NON expose au JSONL)
+    meta << "    \"is_news_715\",\"is_news_730\",\"is_news_830\",\"is_news_845\",\"is_news_900\",\"is_news_930\",\n";
+    meta << "    \"within_news_715_5m\",\"within_news_730_5m\",\"within_news_830_5m\",\n";
+    meta << "    \"within_news_845_5m\",\"within_news_900_5m\",\"within_news_930_5m\",\n";
+    meta << "    \"mins_since_news\",\"mins_to_next_news\",\n";
+    // F9 — Roll (1 — dernier, sans virgule a la fin)
+    meta << "    \"is_roll_day\"\n";
     meta << "  ]\n";
     meta << "}\n";
     meta.close();
@@ -1299,8 +1343,52 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
     DMP_WR_KV2(buf, pos, "cur_val_lvl",   f.cur_val_lvl);   DMP_WR_COMMA(buf, pos);
     DMP_WR_KV2(buf, pos, "prev_vpoc_lvl", f.prev_vpoc_lvl); DMP_WR_COMMA(buf, pos);
     DMP_WR_KV2(buf, pos, "prev_vah_lvl",  f.prev_vah_lvl);  DMP_WR_COMMA(buf, pos);
-    // Dernier champ B2 — PAS de virgule finale
-    DMP_WR_KV2(buf, pos, "prev_val_lvl",  f.prev_val_lvl);
+    DMP_WR_KV2(buf, pos, "prev_val_lvl",  f.prev_val_lvl);  DMP_WR_COMMA(buf, pos);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🆕 B3.A — F22 + F12_safe + F8 + F9 (24 champs) — Schema 3.7.20 (2026-06-07)
+    //
+    // Sequencing B3.A : F22 (4) -> F12_safe (5) -> F8 (14) -> F9 (1) = 24 features.
+    // KVB = boolean 0/1, KV2 = float 2 decimales, KV = float 4 decimales.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // F22 — Position Range (4 champs)
+    //   pct_in_range : 2 decimales suffisent ([0, 100])
+    //   premium_zone / discount_zone : boolean (mirror, Jackson rectif 22:50)
+    //   position_in_range : 4 decimales (range [0, 1] besoin precision)
+    DMP_WR_KV2(buf, pos, "pct_in_range",      f.pct_in_range);      DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "premium_zone",      f.premium_zone);      DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "discount_zone",     f.discount_zone);     DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf,  pos, "position_in_range", f.position_in_range); DMP_WR_COMMA(buf, pos);
+
+    // F12 — Bar Shape (6 SAFE B3.A ; 4 NON-PORTEES = Sierra natives bar_long_* deja JSONL)
+    DMP_WR_KV2(buf, pos, "bar_body_pct",       f.bar_body_pct);       DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "bar_body_ticks",     f.bar_body_ticks);     DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf,  pos, "bar_upper_wick_pct", f.bar_upper_wick_pct); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf,  pos, "bar_lower_wick_pct", f.bar_lower_wick_pct); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "bar_no_trade",       f.bar_no_trade);       DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "range_size",         f.range_size);         DMP_WR_COMMA(buf, pos);
+
+    // F8 — News (14 champs — mins_et utilise en interne mais non expose au JSONL)
+    //   mins_since_news + mins_to_next_news = entiers en minutes (KVE=integer enum)
+    //   Peuvent etre DMP_INVALID -> KVE gere null. OK.
+    DMP_WR_KVB(buf, pos, "is_news_715",        f.is_news_715);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "is_news_730",        f.is_news_730);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "is_news_830",        f.is_news_830);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "is_news_845",        f.is_news_845);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "is_news_900",        f.is_news_900);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "is_news_930",        f.is_news_930);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "within_news_715_5m", f.within_news_715_5m); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "within_news_730_5m", f.within_news_730_5m); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "within_news_830_5m", f.within_news_830_5m); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "within_news_845_5m", f.within_news_845_5m); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "within_news_900_5m", f.within_news_900_5m); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "within_news_930_5m", f.within_news_930_5m); DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVE(buf, pos, "mins_since_news",    f.mins_since_news);    DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVE(buf, pos, "mins_to_next_news",  f.mins_to_next_news);  DMP_WR_COMMA(buf, pos);
+
+    // F9 — Roll (1 champ) — DERNIER de la liste, PAS de virgule finale
+    DMP_WR_KVB(buf, pos, "is_roll_day", f.is_roll_day);
 
     // Fermer l'objet JSON + newline
     buf[pos++] = '}';

@@ -660,6 +660,88 @@ struct DMP_MLFeatures {
     float prev_val_lvl;    // PVAL session J-1 (support VA J-1)
 
     // ─────────────────────────────────────────────────────────────────────────
+    // 🆕 B3.A — F22 + F12_safe + F8 + F9 (24 features) — 2026-06-07 Schema 3.7.20
+    //
+    // Port batch B3.A : 24 features Python live_enriched manquantes en C++.
+    // Audit B3 2026-06-07 + Jackson rectif 22:50 + decision 23:55 (review NOGO
+    // quality-validator) : 24 GO PORT B3.A, 5 DEFER B3.B (F12 unsafe), 1 DEFER
+    // days_since_roll cold-start, 3 DROP (roll_phase leak, range_h_minus_lprev /
+    // range_hprev_minus_l leak vol).
+    //
+    // B3.B (session future) NON refactor : Jackson 2026-06-07 23:58 :
+    // les features Sierra NATIVES equivalentes existent deja dans le JSONL :
+    //   * bar_long_up_bar / bar_long_dn_bar (chart 23/25 studies 17/18)
+    //   * bar_long_dn_up / bar_long_up_dn   (chart 23/25 studies 23/24/38/39)
+    //   * dist_ext_long_up / dist_ext_long_dn (Extension Lines distances)
+    // → B3.B = mapping documentation pour Bot 4 / dashboard, pas duplication
+    //   formule Python cassee. Pattern Sierra-prime applique (cf B2).
+    //
+    // Calcule par 4 headers dedies :
+    //   - DMP_F22_PositionRange.h ( 4 features Position session/MQ daily)
+    //   - DMP_F12_BarShape.h      ( 5 SAFE / 10 ; 5 DEFER B3.B mapping Sierra natives)
+    //   - DMP_F8_News.h           (14 features News timing US macro)
+    //   - DMP_F9_Roll.h           ( 1 feature  Contract roll detection)
+    //
+    // Conventions naming :
+    //   * _pct      : pourcentage [0, 100] ou [-100, 100]
+    //   * _ticks    : nombre de ticks (= 0.25 ES/NQ)
+    //   * is_*      : boolean event ponctuel (1 fois)
+    //   * within_*  : boolean fenetre (plusieurs bars)
+    //   * mins_*    : scalar minutes
+    //   * *_zone    : boolean zone
+    //   * *_pattern : boolean pattern shift-1
+    //   * *_bar     : boolean morphologie bar courante
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // F22 — Position Range (4 features ; Jackson rectif 2026-06-07 22:50 : garde discount_zone pour lisibilite regles FULL REGLES + dashboard 2 labels)
+    float pct_in_range;        // Position close dans session range [0, 100] (DMP_INVALID si premier tick)
+    float premium_zone;        // 1 si pct_in_range > 50, 0 sinon (boolean)
+    float discount_zone;       // 1 si pct_in_range < 50, 0 sinon (boolean, mirror premium)
+    float position_in_range;   // Position close dans MQ 1d_max/min [0, 1] (NATURALLY_DIFFERENT)
+
+    // F12 — Bar Shape (6 SAFE B3.A ; 4 NON-PORTEES → Sierra natives existantes
+    //       deja exposees dans le JSONL : bar_long_up_bar, bar_long_dn_bar,
+    //       bar_long_dn_up, bar_long_up_dn + dist_ext_long_up/dn = Extension Lines).
+    //       Decision Jackson 2026-06-08 00:30 : utiliser Sierra natives (pattern
+    //       Sierra-prime B2). Backtest empirique fiabilite confirme : 15.4% NQ
+    //       fire-rate vs 57.6% Python (noise pure).
+    float bar_body_pct;        // (close - open) / range * 100 (signed [-100, 100]) ✅ SAFE
+    float bar_body_ticks;      // (close - open) / tick_size (signed)                ✅ SAFE
+    float bar_upper_wick_pct;  // (high - max(o,c)) / close * 100 (clamp [0, 3])     ✅ SAFE (demande Bot 4 SIM4)
+    float bar_lower_wick_pct;  // (min(o,c) - low) / close * 100 (clamp [0, 3])      ✅ SAFE (demande Bot 4 SIM4)
+    float bar_no_trade;        // 1 si fpbs_delta == DMP_INVALID (formule isna strict 100% fiable verifiee)
+    float range_size;          // high - low en POINTS (scalar continu)              ✅ SAFE
+    // 🔗 SIERRA-PRIME B3.B mapping (deja dans JSONL, ne pas porter) :
+    //   long_up_bar Python      → bar_long_up_bar Sierra (chart 23/25 study 18/17)
+    //   long_dn_bar Python      → bar_long_dn_bar Sierra (chart 23/25 study 17/18)
+    //   long_dn_up_pattern Python → bar_long_dn_up Sierra (ronds jaunes reversal bull)
+    //   long_up_dn_pattern Python → bar_long_up_dn Sierra (ronds jaunes reversal bear)
+    //   bonus distances        : dist_ext_long_up, dist_ext_long_dn (Extension Lines)
+
+    // F8 — News (14 features)
+    // NB : `mins_et` n'est PAS expose au JSONL (utilise UNIQUEMENT en
+    // interne via r.mins_et pour calculer les 14 features ci-dessous).
+    // Decision audit B3.A : n_cols 347 -> 371 = +24 strict. Downstream peut
+    // recalculer mins_et depuis ts si besoin (cf DOCS/AUDIT_B3_F8_F9_F12_F22.md).
+    float is_news_715;         // mins_et == 7*60+15 (boolean event)
+    float is_news_730;         // mins_et == 7*60+30 (boolean event)
+    float is_news_830;         // mins_et == 8*60+30 (boolean event)
+    float is_news_845;         // mins_et == 8*60+45 (boolean event)
+    float is_news_900;         // mins_et == 9*60+0  (boolean event)
+    float is_news_930;         // mins_et == 9*60+30 (boolean event)
+    float within_news_715_5m;  // mins_et in [435, 440) (boolean fenetre)
+    float within_news_730_5m;  // mins_et in [450, 455)
+    float within_news_830_5m;  // mins_et in [510, 515)
+    float within_news_845_5m;  // mins_et in [525, 530)
+    float within_news_900_5m;  // mins_et in [540, 545)
+    float within_news_930_5m;  // mins_et in [570, 575)
+    float mins_since_news;     // min(mins_et - n) pour n <= mins_et, DMP_INVALID si aucun
+    float mins_to_next_news;   // min(n - mins_et) pour n > mins_et, DMP_INVALID si aucun
+
+    // F9 — Roll (1 feature)
+    float is_roll_day;         // 1 toute la session si contract a roll cette session (exclus manual_switch)
+
+    // ─────────────────────────────────────────────────────────────────────────
     // DIAGNOSTICS (non-features ML — pour debug uniquement)
     // ─────────────────────────────────────────────────────────────────────────
     int     n_valid_fields;           // Nombre de champs valides (surveillance qualité)
@@ -680,6 +762,14 @@ struct DMP_MLFeatures {
 #include "DMP_F4_VWAPBands.h"     // 24 features VWAP absolus (7 D + 7 W + 7 M + 3 PVWAP)
 #include "DMP_F2_PrevLevels.h"    //  8 features Previous + Cash + OVN
 #include "DMP_F23_VPAbsolus.h"    //  6 features Volume Profile
+
+// 🆕 B3 — Helpers F22 + F12 + F8 + F9 (Schema 3.7.20, 2026-06-07)
+// Inclus apres B2. Sequencing audit B3 : F22 -> F12 -> F8 -> F9 (anti pattern 11,
+// 1 famille a la fois). Detail : DOCS/AUDIT_B3_F8_F9_F12_F22.md.
+#include "DMP_F22_PositionRange.h"  //  3 features Position session/MQ daily
+#include "DMP_F12_BarShape.h"       // 10 features Body/Wick/Long/Patterns
+#include "DMP_F8_News.h"            // 14 features News timing US macro
+#include "DMP_F9_Roll.h"            //  1 feature  Contract roll detection
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — HELPERS MATHÉMATIQUES INTERNES
@@ -1804,6 +1894,17 @@ inline void DMP_Transform(
     DMP_ComputeF2_PrevLevels(f, r);  //  8 features Previous + Cash + OVN
     DMP_ComputeF23_VPAbsolus(f, r);  //  6 features Volume Profile
 
+    // 🆕 B3.A — F22 + F12_safe + F8 + F9 (24 features, Schema 3.7.20, 2026-06-07)
+    //   Sequencing audit B3 : F22 -> F12 -> F8 -> F9 (anti pattern 11,
+    //   1 famille a la fois). F12 et F9 ont besoin de PersistVars donc passent
+    //   sc en parametre (DMP_PERSIST_F12_PREV_LONG_UP=205-206 reservees mais
+    //   non utilisees B3.A car patterns DEFER B3.B ; DMP_PERSIST_F9_*=207-210).
+    //   F22 et F8 sont stateless (pas besoin de sc).
+    DMP_ComputeF22_PositionRange(f, r);  //  3 features Position session/MQ daily
+    DMP_ComputeF12_BarShape(sc, f, r);   // 10 features Body/Wick/Long/Patterns
+    DMP_ComputeF8_News(f, r);            // 14 features News timing US macro
+    DMP_ComputeF9_Roll(sc, f, r);        //  1 feature  Contract roll detection
+
     // G11 — HVN/LVN session (Section C)
     if (hvn_lvn) {
         CalcHVN_LVN(*hvn_lvn, f, tp_target, direction, r.tick_size);
@@ -1971,7 +2072,19 @@ inline void DMP_WriteCSVHeader(std::ofstream& file) {
         "open_cash_lvl,open_830_lvl,ovn_high_lvl,ovn_low_lvl,"
         // F23 — VP absolus (6)
         "cur_vpoc_lvl,cur_vah_lvl,cur_val_lvl,"
-        "prev_vpoc_lvl,prev_vah_lvl,prev_val_lvl"
+        "prev_vpoc_lvl,prev_vah_lvl,prev_val_lvl,"
+        // 🆕 B3.A (Schema 3.7.20, 2026-06-07) — F22 + F12_safe + F8 + F9 (24 features)
+        // F22 — Position Range (4)
+        "pct_in_range,premium_zone,discount_zone,position_in_range,"
+        // F12 — Bar Shape (6 SAFE B3.A ; 4 NON-PORTEES = Sierra natives bar_long_*)
+        "bar_body_pct,bar_body_ticks,bar_upper_wick_pct,bar_lower_wick_pct,bar_no_trade,range_size,"
+        // F8 — News (14 — mins_et utilise en interne mais non expose au JSONL)
+        "is_news_715,is_news_730,is_news_830,is_news_845,is_news_900,is_news_930,"
+        "within_news_715_5m,within_news_730_5m,within_news_830_5m,"
+        "within_news_845_5m,within_news_900_5m,within_news_930_5m,"
+        "mins_since_news,mins_to_next_news,"
+        // F9 — Roll (1) — dernier, sans virgule finale
+        "is_roll_day"
         "\n";
 }
 
