@@ -125,7 +125,7 @@ struct DMP_MLFeatures {
     float inside_cur_va;              // 1=dans la VA courante, 0=hors VA
 
     // 🆕 FIX 07/03/2026 — Range Trading features
-    float range_pos;                  // Position 0-100% dans la VA (clampé, jamais -1)
+    float range_pos_va;               // Position 0-100% dans la VA (clampé, jamais -1) — rename Phase 0 B4 2026-06-08 fix collision Python `range_pos` qui ecrasait silencieusement
     float range_size_ticks;           // Taille VA = VAH - VAL en ticks (petit=range, grand=trend)
     float momentum_3b;                // Prix - Prix(i-3) en points (court terme)
     float momentum_5b;                // Prix - Prix(i-5) en points
@@ -742,6 +742,24 @@ struct DMP_MLFeatures {
     float is_roll_day;         // 1 toute la session si contract a roll cette session (exclus manual_switch)
 
     // ─────────────────────────────────────────────────────────────────────────
+    // 🆕 B4 (Schema 3.7.21, 2026-06-08) — 7 features Python -> C++ port
+    // Phase 0 BLOQUANT (FAIT) : rename `range_pos` C++ -> `range_pos_va` (collision Python).
+    // Phase 1 (5 trivial) + Phase 2 (2 easy). Audit : DOCS/AUDIT_B4_10_FEATURES.md
+    // DROP : delta_persistence_20, big_spawn_rate_20 (rejetes walk-forward A3).
+    // DEFER : ctx_trend_day_score (depend ctx_vol_slope_5 absent).
+    // SEPARE : A3_v4_with_cvd_session (strategie de scoring Python + dashboard).
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 1 — 5 features trivial
+    float mins_et;             // Minutes depuis minuit ET, DST-aware, [0, 1440)
+    float is_in_us_cash;       // 1 si session=US AND mins_et in [570, 960) - RTH cash 09:30-16:00 ET
+    float dist_pdh_pct;        // (pdh - close) / close * 100, signed
+    float dist_pdl_pct;        // (pdl - close) / close * 100, signed
+    float atr_14m_pct;         // atr_14m_points / close * 100, positif
+    // Phase 2 — 2 features easy
+    float cvd_session;         // cvd_day - snapshot_at_open_RTH ; DMP_INVALID hors RTH
+    float ctx_day_type_intensity;  // signed [-1, +1] = ib_dir * |dist_vwap_d_atr| clip
+
+    // ─────────────────────────────────────────────────────────────────────────
     // DIAGNOSTICS (non-features ML — pour debug uniquement)
     // ─────────────────────────────────────────────────────────────────────────
     int     n_valid_fields;           // Nombre de champs valides (surveillance qualité)
@@ -770,6 +788,8 @@ struct DMP_MLFeatures {
 #include "DMP_F12_BarShape.h"       // 10 features Body/Wick/Long/Patterns
 #include "DMP_F8_News.h"            // 14 features News timing US macro
 #include "DMP_F9_Roll.h"            //  1 feature  Contract roll detection
+// 🆕 B4 (Schema 3.7.21, 2026-06-08) — 7 features Python -> C++
+#include "DMP_B4_Features.h"        //  7 features (Phase 1 trivial + Phase 2 easy)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — HELPERS MATHÉMATIQUES INTERNES
@@ -908,13 +928,16 @@ static inline void CalcVolumeProfile(const DMP_RawData& r, DMP_MLFeatures& f) {
     f.inside_cur_va   = DMP_IsValid(f.va_position_pct) ? 1.0f : 0.0f;
 
     // 🆕 FIX 07/03/2026 — Range features
-    // range_pos = 0-100% (clampé, pas -1 hors range comme va_position_pct)
+    // range_pos_va = 0-100% dans Value Area (clampé, pas -1 hors range comme va_position_pct)
+    // Renomme 2026-06-08 (B4 Phase 0) : ex-`range_pos` ecrase silencieusement par Python
+    //   `enricher_chain.py:739` qui ecrit `range_pos = (close-bar_low)/(bar_high-bar_low)`
+    //   (bar position 0-1). Maintenant C++ = `range_pos_va` (VA), Python = `range_pos` (bar).
     if (DMP_IsPriceValid(r.cur_vah) && DMP_IsPriceValid(r.cur_val) && r.cur_vah > r.cur_val) {
         float raw = (p - r.cur_val) / (r.cur_vah - r.cur_val);
-        f.range_pos = std::fmax(0.0f, std::fmin(1.0f, raw)) * 100.0f;  // 0-100%
+        f.range_pos_va = std::fmax(0.0f, std::fmin(1.0f, raw)) * 100.0f;  // 0-100%
         f.range_size_ticks = (r.cur_vah - r.cur_val) / ts;
     } else {
-        f.range_pos = DMP_INVALID;
+        f.range_pos_va = DMP_INVALID;
         f.range_size_ticks = DMP_INVALID;
     }
     // momentum_3b, momentum_5b, cvd_bar_delta, vah/val_touches, bars_in_va
@@ -1909,6 +1932,12 @@ inline void DMP_Transform(
     DMP_ComputeF8_News(f, r);            // 14 features News timing US macro
     DMP_ComputeF9_Roll(sc, f, r);        //  1 feature  Contract roll detection
 
+    // 🆕 B4 (Schema 3.7.21, 2026-06-08) — 7 features Python -> C++ port
+    //   `sc` requis pour cvd_session (PersistVars 211-212 snapshot RTH).
+    //   Doit etre apres DMP_ComputeF2_PrevLevels (besoin f.pdh, f.pdl) et
+    //   les autres B1/B2/B3.A (besoin f.dist_vwap_d_atr).
+    DMP_ComputeB4_Features(sc, f, r);    //  7 features (Phase 1 trivial + Phase 2 easy)
+
     // G11 — HVN/LVN session (Section C)
     if (hvn_lvn) {
         CalcHVN_LVN(*hvn_lvn, f, tp_target, direction, r.tick_size);
@@ -1946,7 +1975,7 @@ inline void DMP_WriteCSVHeader(std::ofstream& file) {
         "dist_vwap_m,dist_vwap_m_atr,vwap_d_side,vwap_w_side,vwap_m_side,"
         // G2 VP (14)
         "dist_cur_vpoc,dist_cur_vah,dist_cur_val,dist_cur_vwap_vp,va_position_pct,inside_cur_va,"
-        "range_pos,range_size_ticks,momentum_3b,momentum_5b,cvd_bar_delta,"
+        "range_pos_va,range_size_ticks,momentum_3b,momentum_5b,cvd_bar_delta,"
         "vah_touches_20b,val_touches_20b,bars_in_va,"
         "dist_prev_vpoc,dist_prev_vpoc_atr,dist_prev_vah,dist_prev_val,"
         "dist_prev_vwap,dist_prev_vwap_sd1u,dist_prev_vwap_sd1d,"
@@ -2087,8 +2116,12 @@ inline void DMP_WriteCSVHeader(std::ofstream& file) {
         "within_news_715_5m,within_news_730_5m,within_news_830_5m,"
         "within_news_845_5m,within_news_900_5m,within_news_930_5m,"
         "mins_since_news,mins_to_next_news,"
-        // F9 — Roll (1) — dernier, sans virgule finale
-        "is_roll_day"
+        // F9 — Roll (1)
+        "is_roll_day,"
+        // 🆕 B4 (Schema 3.7.21, 2026-06-08) — 7 features Python -> C++
+        // Phase 1 trivial (5) + Phase 2 easy (2). Cf DOCS/AUDIT_B4_10_FEATURES.md.
+        "mins_et,is_in_us_cash,dist_pdh_pct,dist_pdl_pct,atr_14m_pct,"
+        "cvd_session,ctx_day_type_intensity"
         "\n";
 }
 

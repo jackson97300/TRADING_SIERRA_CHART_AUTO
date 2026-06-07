@@ -62,6 +62,91 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-08 02:30 — Batch B4 fix range_pos collision + 7 features (schema 3.7.21, n_cols 379)
+
+**Categorie** : ARCHITECTURE PIVOT (criteres critiques 2+3 — ML/C++) + BUG FIX SILENCIEUX
+**Impact prod** : Schema JSONL +7 colonnes + rename `range_pos` → `range_pos_va`. Bug pre-existant resolu : Python ecrasait silencieusement C++ depuis ?
+
+**Contexte** : Audit B4 (10 features Python) + decisions Jackson. Decouverte BLOQUANTE : `range_pos` collision active entre C++ B2 (VA position 0-100) et Python `enricher_chain.py:739` (bar position 0-1). Python ecrasait silencieusement C++ depuis longtemps. Live JSONL 03/06 confirme : valeur 0.604167 = Python (bar) → C++ jamais expose downstream.
+
+**Decisions Jackson 2026-06-08** :
+- OPTION A : rename C++ `range_pos` → `range_pos_va` (Value Area). Python garde `range_pos` (bar position). Plus de collision.
+- DROP : `delta_persistence_20`, `big_spawn_rate_20` (rejetes par backtest A3 walk-forward : rho=0.144 noise, V3 non concluant, V4_with_cvd rho=0.199 BAT).
+- DEFER : `ctx_trend_day_score` (depend `ctx_vol_slope_5` absent).
+- SEPARE : `A3_v4_with_cvd_session` = STRATEGIE de scoring, code Python live + dashboard widget (PAS C++ DMP). Cousin pattern 11 = confusion strategie/feature.
+- Spearman alarme `+0.83` `ctx_day_type_intensity` du brief = **erreur transcription** (vrai rho documente = -0.156 NQ / -0.101 ES). Formule SAINE confirmee audit + grep (utilise `ib_broken_up/dn` + `dist_vwap_d_atr`, **PAS** `day_type` pollue par incident #39 06/06).
+
+**Phase 0 BLOQUANT (FAIT)** :
+- Rename struct DMP_MLFeatures (Transform.h:128) : `range_pos` → `range_pos_va`
+- Rename assignment Transform.h:914 : `f.range_pos = ...` → `f.range_pos_va = ...`
+- Rename CSV header Transform.h:1952 : `range_pos,` → `range_pos_va,`
+- Rename Writer.h KV2 + meta JSON columns
+- Doc update DMP_F22_PositionRange.h
+- Schema bump 3.7.20 → 3.7.21
+
+**Phase 1 (5 trivial)** :
+- `mins_et` : float [0, 1440) ; deja calcule C++ DMP_Reader.h:706 (B3.A interne, expose B4)
+- `is_in_us_cash` : boolean session==US AND mins_et in [570, 960) (RTH cash)
+- `dist_pdh_pct` : (pdh - close) / close * 100, signed (pdh deja en C++ B2)
+- `dist_pdl_pct` : (pdl - close) / close * 100, signed
+- `atr_14m_pct` : (atr_14m * tick_size) / close * 100 (atr en ticks → points)
+
+**Phase 2 (2 easy)** :
+- `cvd_session` : RTH-filter de cvd_day. Snapshot a l'open RTH (09:30 ET), puis cvd_day - snapshot. DMP_INVALID hors RTH. PersistVars 211-212.
+- `ctx_day_type_intensity` : formule canonique Python `rolling_features_streaming.py:719-734` :
+  ```
+  dir = +1 si ib_broken_up only, -1 si ib_broken_dn only, 0 sinon
+  mag = |dist_vwap_d_atr|
+  intensity = (dir * mag).clip(-1.0, +1.0)
+  ```
+  Sources toutes C++ (B1/B2/B3.A).
+
+**Fichiers** :
+- NEW : `DMP_B4_Features.h` (1 helper, 7 features assignments)
+- MOD : `DMP_Transform.h` (rename + struct +7 fields + include + appel B4 + CSV header +7)
+- MOD : `DMP_Writer.h` (KV2 +7 + meta JSON columns +7 + feature_families B4 sub-categories + n_cols 372 → 379)
+- MOD : `DMP_Config.h` (schema 3.7.21 + bloc commentaire B4 complet)
+- MOD : `CORE/dmp_validator.py` (EXPECTED_COLS_3721 = 379, has_b4_features detection)
+- MOD : `CORE/sierra_live_io.py` (ACCEPTED_SCHEMAS += "3.7.21")
+- DOC : `DOCS/AUDIT_B4_10_FEATURES.md` (audit prealable)
+
+**PersistVars B4** : 211 (cvd_session_base) + 212 (cvd_session_date). Cf bloc 200-210 deja utilises (delta_div 200-202, B2 PDH/PDL 203-204, F9 Roll 207-210).
+
+**Validation pre-deploy** :
+- [x] Coherence 7 features partout (struct +7, CSV +7, KV2 +7, meta JSON +7)
+- [x] Rename range_pos → range_pos_va sans reste (grep verif)
+- [x] EXPECTED_COLS_3721 = 379 Python import OK
+- [x] Plan A3 Python+dashboard documente separe (B4 Phase 3 future)
+- [ ] Test empirique J+1 post-deploy
+
+**Verifications J+1 obligatoires post-deploy** :
+- JSONL `schema_version = "3.7.21"` + `n_columns = 379`
+- `range_pos_va` present (C++ VA), `range_pos` peut etre present (Python bar) sans collision
+- 7 features B4 valides : mins_et, is_in_us_cash, dist_pdh_pct, dist_pdl_pct, atr_14m_pct, cvd_session, ctx_day_type_intensity
+- `mins_et` ∈ [0, 1440), `is_in_us_cash` boolean
+- `cvd_session = null` hors RTH (mins_et < 570 ou > 960), valeur cumulee RTH-only
+- `ctx_day_type_intensity` ∈ [-1, +1], distribution comparable Python live_enriched
+
+**Revert plan** :
+```bash
+git revert <commit-B4>
+# Recompile Sierra + reload chart 23/25
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+(en attente confirmation Jackson + recompile Sierra)
+
+### Suivi post-deploy
+- J+1 : verifier 379 cols + 7 features + range_pos_va sans collision
+- J+7 : suivi distribution ctx_day_type_intensity (rho vs forward target)
+- J+30 : decider B4 Phase 3 (A3 dashboard) + B5+ migration Sierra-rich
+
+### Liens
+- Audit B4 : DOCS/AUDIT_B4_10_FEATURES.md
+- Decisions : Jackson 2026-06-08 (OPTION A + 4 verifies)
+
+---
+
 ## 2026-06-08 00:45 — Batch B3.A port C++ Sierra : F22+F12_safe+F8+F9 (schema 3.7.20, n_cols 372)
 
 **Categorie** : ARCHITECTURE PIVOT (criteres critiques 2+3 — ML/C++)

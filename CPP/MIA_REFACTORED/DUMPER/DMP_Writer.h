@@ -571,7 +571,7 @@ static inline void DMP_WR_WriteMeta(
     // Les features dist_*_atr, ib_range_atr, sess_range_atr sont calculees en
     // ratio ticks/ticks. Cf. fix DMP_Transform.h + DMP_OpenType.h du 15/04/2026.
     meta << "  \"atr_convention\": \"ticks\",\n";
-    meta << "  \"n_columns\": " << 372               << ",\n";   // 🆕 3.7.20 +25 B3.A F22+F12_safe+F8+F9 (4+6+14+1, bar_no_trade refactore isna strict 100% fiable, 4 F12 NON-PORTEES = Sierra natives existantes JSONL)
+    meta << "  \"n_columns\": " << 379               << ",\n";   // 🆕 3.7.21 +7 B4 fix range_pos collision + 5 trivial + 2 easy (mins_et + is_in_us_cash + dist_pdh/pdl_pct + atr_14m_pct + cvd_session + ctx_day_type_intensity)
     meta << "  \"format\": \"jsonl\",\n";
     meta << "  \"invalid_sentinel\": null,\n";
     // FIX R3 code-reviewer Batch B1 (2026-06-07) : flag features avec divergence
@@ -634,7 +634,11 @@ static inline void DMP_WR_WriteMeta(
             "\"within_news_715_5m\",\"within_news_730_5m\",\"within_news_830_5m\","
             "\"within_news_845_5m\",\"within_news_900_5m\",\"within_news_930_5m\","
             "\"mins_since_news\",\"mins_to_next_news\"],\n";
-    meta << "    \"F9_roll\": [\"is_roll_day\"]\n";
+    meta << "    \"F9_roll\": [\"is_roll_day\"],\n";
+    // 🆕 B4 (Schema 3.7.21, 2026-06-08) — 7 features Python -> C++
+    meta << "    \"B4_phase1_trivial\": [\"mins_et\",\"is_in_us_cash\","
+            "\"dist_pdh_pct\",\"dist_pdl_pct\",\"atr_14m_pct\"],\n";
+    meta << "    \"B4_phase2_easy\": [\"cvd_session\",\"ctx_day_type_intensity\"]\n";
     meta << "  },\n";
     meta << "  \"columns\": [\n";
     meta << "    \"ts\",\"sym\",\"contract\",\"price\",\"atr\",\"atr_14m\",\"session\",\"session_id\",\n";
@@ -644,7 +648,7 @@ static inline void DMP_WR_WriteMeta(
          << "\"dist_vwap_w\",\"dist_vwap_w_atr\",\n";
     meta << "    \"dist_vwap_m\",\"dist_vwap_m_atr\",\"vwap_d_side\",\"vwap_w_side\",\"vwap_m_side\",\n";
     meta << "    \"dist_cur_vpoc\",\"dist_cur_vah\",\"dist_cur_val\",\"dist_cur_vwap_vp\",\"va_position_pct\",\"inside_cur_va\",\n";
-    meta << "    \"range_pos\",\"range_size_ticks\",\"momentum_3b\",\"momentum_5b\",\"cvd_bar_delta\",\n";
+    meta << "    \"range_pos_va\",\"range_size_ticks\",\"momentum_3b\",\"momentum_5b\",\"cvd_bar_delta\",\n";
     meta << "    \"vah_touches_20b\",\"val_touches_20b\",\"bars_in_va\",\n";
     meta << "    \"dist_prev_vpoc\",\"dist_prev_vpoc_atr\",\"dist_prev_vah\",\"dist_prev_val\",\n";
     meta << "    \"dist_prev_vwap\",\"dist_prev_vwap_sd1u\",\"dist_prev_vwap_sd1d\",\n";
@@ -781,8 +785,12 @@ static inline void DMP_WR_WriteMeta(
     meta << "    \"within_news_715_5m\",\"within_news_730_5m\",\"within_news_830_5m\",\n";
     meta << "    \"within_news_845_5m\",\"within_news_900_5m\",\"within_news_930_5m\",\n";
     meta << "    \"mins_since_news\",\"mins_to_next_news\",\n";
-    // F9 — Roll (1 — dernier, sans virgule a la fin)
-    meta << "    \"is_roll_day\"\n";
+    // F9 — Roll (1)
+    meta << "    \"is_roll_day\",\n";
+    // 🆕 B4 (Schema 3.7.21) — 7 features Python -> C++ (DERNIERES, pas de virgule fin)
+    meta << "    \"mins_et\",\"is_in_us_cash\",\n";
+    meta << "    \"dist_pdh_pct\",\"dist_pdl_pct\",\"atr_14m_pct\",\n";
+    meta << "    \"cvd_session\",\"ctx_day_type_intensity\"\n";
     meta << "  ]\n";
     meta << "}\n";
     meta.close();
@@ -949,7 +957,7 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
     DMP_WR_KV(buf, pos, "dist_cur_vwap_vp", f.dist_cur_vwap_vp); DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "va_position_pct",  f.va_position_pct);  DMP_WR_COMMA(buf, pos);
     DMP_WR_KVB(buf, pos, "inside_cur_va",   f.inside_cur_va);    DMP_WR_COMMA(buf, pos);
-    DMP_WR_KV(buf, pos, "range_pos",         f.range_pos);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf, pos, "range_pos_va",      f.range_pos_va);     DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "range_size_ticks",  f.range_size_ticks); DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "momentum_3b",       f.momentum_3b);      DMP_WR_COMMA(buf, pos);
     DMP_WR_KV(buf, pos, "momentum_5b",       f.momentum_5b);      DMP_WR_COMMA(buf, pos);
@@ -1387,8 +1395,19 @@ static inline int DMP_FormatJSONL(const DMP_MLFeatures& f, char* buf) {
     DMP_WR_KVE(buf, pos, "mins_since_news",    f.mins_since_news);    DMP_WR_COMMA(buf, pos);
     DMP_WR_KVE(buf, pos, "mins_to_next_news",  f.mins_to_next_news);  DMP_WR_COMMA(buf, pos);
 
-    // F9 — Roll (1 champ) — DERNIER de la liste, PAS de virgule finale
-    DMP_WR_KVB(buf, pos, "is_roll_day", f.is_roll_day);
+    // F9 — Roll (1 champ)
+    DMP_WR_KVB(buf, pos, "is_roll_day", f.is_roll_day); DMP_WR_COMMA(buf, pos);
+
+    // 🆕 B4 (Schema 3.7.21, 2026-06-08) — 7 features Python -> C++
+    //   Phase 1 trivial : mins_et + is_in_us_cash + dist_pdh/pdl_pct + atr_14m_pct
+    //   Phase 2 easy    : cvd_session (RTH-filter) + ctx_day_type_intensity (ib*vwap)
+    DMP_WR_KVE(buf, pos, "mins_et",              f.mins_et);              DMP_WR_COMMA(buf, pos);
+    DMP_WR_KVB(buf, pos, "is_in_us_cash",        f.is_in_us_cash);        DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf,  pos, "dist_pdh_pct",         f.dist_pdh_pct);         DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf,  pos, "dist_pdl_pct",         f.dist_pdl_pct);         DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf,  pos, "atr_14m_pct",          f.atr_14m_pct);          DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV2(buf, pos, "cvd_session",          f.cvd_session);          DMP_WR_COMMA(buf, pos);
+    DMP_WR_KV(buf,  pos, "ctx_day_type_intensity", f.ctx_day_type_intensity);  // DERNIER, PAS de virgule
 
     // Fermer l'objet JSON + newline
     buf[pos++] = '}';

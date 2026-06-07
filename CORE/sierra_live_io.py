@@ -73,7 +73,14 @@ SUPPORTED_SYMBOLS = ("ES", "NQ")
 # Schemas Sierra DMP attendus (cf DMP_Config.h)
 # NB : 3.7.16 reverte le 06/06 nuit (cf DMP_Config.h). On le garde dans la
 # whitelist au cas ou un JSONL pre-revert ait ete dumpe.
-ACCEPTED_SCHEMAS = ("3.7.14", "3.7.15", "3.7.16", "3.7.17", "3.7.18", "3.7.19", "3.7.20")
+ACCEPTED_SCHEMAS = ("3.7.14", "3.7.15", "3.7.16", "3.7.17", "3.7.18", "3.7.19", "3.7.20", "3.7.21")
+# 3.7.21 = Batch B4 fix range_pos collision + 7 features Python -> C++ (379 cols = 372 + 7)
+#          Phase 0 BLOQUANT : rename range_pos -> range_pos_va (Python ecrasait C++)
+#          Phase 1 (5 trivial) : mins_et, is_in_us_cash, dist_pdh_pct, dist_pdl_pct, atr_14m_pct
+#          Phase 2 (2 easy) : cvd_session (RTH-filter), ctx_day_type_intensity (ib*vwap)
+#          DROP : delta_persistence_20, big_spawn_rate_20 (walk-forward A3 rho=0.144)
+#          DEFER : ctx_trend_day_score (depend ctx_vol_slope_5)
+#          SEPARE : A3_v4_with_cvd_session = strategie Python+dashboard (PAS C++)
 # 3.7.17 = CLAMP ATR aligne (2026-06-07, comportemental, 272 cols inchangees)
 # 3.7.18 = Batch B1 F3 Distances _pct (309 cols = 272 + 37)
 # 3.7.19 = Batch B2 Niveaux ABSOLUS Sierra (347 cols = 309 + 38 : 24 VWAP +

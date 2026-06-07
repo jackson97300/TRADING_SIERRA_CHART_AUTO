@@ -5,7 +5,8 @@
 //
 //  Role : Exposer 3 features qui mesurent la position du close dans
 //         differents ranges (session, MQ daily). Distinctes du
-//         `range_pos` C++ existant qui mesure la position dans la Value
+//         `range_pos_va` C++ existant (ex-`range_pos` renomme B4 Phase 0
+//         2026-06-08 pour fix collision Python) qui mesure la position dans la Value
 //         Area courante (3 metriques semantiquement differentes).
 //
 //  Cas d'usage downstream :

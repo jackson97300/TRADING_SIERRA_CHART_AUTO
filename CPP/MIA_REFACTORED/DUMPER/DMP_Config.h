@@ -57,7 +57,25 @@ constexpr int DMP_OPEN_830   = 8  * 60 + 30;  // 08h30 ET (ouverture futures/rap
 // ── Version du schéma JSONL ───────────────────────────────────────────────────
 // Incrémenté à chaque ajout/suppression de colonne pour détecter les incompatibilités
 // entre fichiers .jsonl collectés à des périodes différentes.
-#define DMP_SCHEMA_VERSION "3.7.20"  // Batch B3.A F22+F12_safe+F8+F9 (25 features) — 2026-06-08
+#define DMP_SCHEMA_VERSION "3.7.21"  // Batch B4 fix range_pos collision + 7 features — 2026-06-08
+// 3.7.21: B4 (2026-06-08) — Fix range_pos collision + 7 features Python -> C++
+//        Phase 0 BLOQUANT : rename C++ `range_pos` -> `range_pos_va`. Python
+//        `enricher_chain.py:739` ecrivait `range_pos = (close-bar_low)/(bar_high-bar_low)`
+//        (bar position 0-1) qui ecrasait SILENCIEUSEMENT le C++ `range_pos`
+//        (VA position 0-100). Maintenant : C++ = `range_pos_va`, Python = `range_pos`.
+//        Pas de collision, pas de perte d'info.
+//        Phase 1 (5 trivial) : mins_et, is_in_us_cash, dist_pdh_pct,
+//          dist_pdl_pct, atr_14m_pct.
+//        Phase 2 (2 easy) : cvd_session (RTH-filter cvd_day), ctx_day_type_intensity
+//          (formule saine ib_broken_up/dn * |dist_vwap_d_atr|, PAS day_type pollue).
+//        DROP : delta_persistence_20, big_spawn_rate_20 (rejetes walk-forward A3 :
+//          rho=0.144 noise, V3 non concluant ; V4_with_cvd rho=0.199 BAT).
+//        DEFER : ctx_trend_day_score (depend ctx_vol_slope_5 absent).
+//        SEPARE (Python+dashboard, PAS C++ DMP) : A3_v4_with_cvd_session (strategie
+//          de scoring, pas feature).
+//        Schema 372 -> 379 colonnes (+7).
+//
+// 3.7.20: Batch B3.A F22+F12_safe+F8+F9 (25 features) — 2026-06-08
 // 3.7.20: +25 features B3.A F22 PositionRange (4) + F12 BarShape SAFE (6) + F8 News (14) + F9 Roll (1) — 2026-06-08
 // IMPORTANT : 4 features F12 (long_up_bar, long_dn_bar, long_dn_up_pattern,
 //             long_up_dn_pattern) NON PORTEES car les equivalents Sierra natives
