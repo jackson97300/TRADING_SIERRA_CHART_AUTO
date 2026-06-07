@@ -164,17 +164,21 @@ inline void DMP_ComputeB4_Features(
                         && (r.mins_et >= DMP_RTH_START)
                         && (r.mins_et < DMP_RTH_END);
 
+    // Fix compile B4 (2026-06-08) : cvd_day est dans struct DMP_MLFeatures (f)
+    // pas DMP_RawData (r). Idem ib_broken_up/down (cf feature 7 plus bas).
+    // L'ordre des helpers dans DMP_Transform garantit que f.cvd_day est rempli
+    // avant l'appel de DMP_ComputeB4_Features.
     if (!in_cash_session
-        || DMP_B4_IsInvalid((float)r.cvd_day)
+        || DMP_B4_IsInvalid(f.cvd_day)
         || r.trading_day <= 0) {
         f.cvd_session = DMP_INVALID;
     } else {
         // Premiere bar RTH du trading_day : snapshot cvd_day actuel
         if (cvd_snap_date != r.trading_day) {
-            cvd_snapshot = (int)r.cvd_day;
+            cvd_snapshot = (int)f.cvd_day;
             cvd_snap_date = r.trading_day;
         }
-        f.cvd_session = (float)(r.cvd_day - cvd_snapshot);
+        f.cvd_session = f.cvd_day - (float)cvd_snapshot;
     }
 
     // FEATURE 7 — ctx_day_type_intensity : signed [-1, +1]
@@ -189,9 +193,12 @@ inline void DMP_ComputeB4_Features(
     //     - Sources : ib_broken_up/dn + dist_vwap_d_atr, toutes deja en C++.
     //   Rho documente : -0.156 NQ / -0.101 ES (PAS +0.83 du brief Jackson).
     {
+        // Fix compile B4 : ib_broken_up/down sont dans struct DMP_MLFeatures
+        // (f), pas DMP_RawData (r). Note nom Sierra : `ib_broken_down`
+        // (Transform.h:207) PAS `ib_broken_dn`.
         float dir_val;
-        bool ib_up = (r.ib_broken_up == 1);
-        bool ib_dn = (r.ib_broken_dn == 1);
+        bool ib_up = (!DMP_B4_IsInvalid(f.ib_broken_up) && f.ib_broken_up > 0.5f);
+        bool ib_dn = (!DMP_B4_IsInvalid(f.ib_broken_down) && f.ib_broken_down > 0.5f);
         if (ib_up && !ib_dn) {
             dir_val = 1.0f;
         } else if (ib_dn && !ib_up) {
