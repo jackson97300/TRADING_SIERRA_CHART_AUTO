@@ -65,7 +65,15 @@ class SwingsV2Calculator:
                 close=bar["close"],
             )
 
-    Reset cross-day : appelle calc.reset() au boundary 00:00 UTC.
+    Reset cross-day : caller (enricher) doit appeler calc.reset() au boundary
+    00:00 UTC pour chaque symbol. Convention pipeline en attente decision
+    Jackson (cf IDEAS_BACKLOG DETTE SIERRA-3.2 cold-start).
+
+    ⚠️ CONVENTION COLD-START (review batch 10/06 RESERVE 1) :
+    Premiere bar avec `dist_swing_high == 0` apres reset/init est comptee
+    comme `new_swing_high`. C'est un artefact d'init (la bar Sierra signale
+    qu'elle EST un swing au moment du dump). Si statistiquement non-significatif
+    pour une session donnee, le caller doit drop la 1ere bar de chaque session.
     """
 
     def __init__(
@@ -166,7 +174,13 @@ class SwingsV2Calculator:
         self._prev_dist_high = float(dist_swing_high)
         self._prev_dist_low = float(dist_swing_low)
 
-        # Push buffer (pour detection sweep lookback)
+        # Push buffer (pour detection sweep lookback).
+        # INVARIANT (review batch 10/06 RESERVE 2) : `swing_high_at_time` /
+        # `swing_low_at_time` snapshote le swing actif a CETTE bar (apres
+        # update _last_swing_high_price si new_high). Quand on parcourt le
+        # buffer pour detecter sweep, chaque entry reflete son contexte
+        # historique, pas le swing actuel. Si refactor : preserver cet
+        # ordre (update _last_* PUIS append buffer).
         self._bars_buffer.append({
             "bar_high": float(bar_high),
             "bar_low": float(bar_low),

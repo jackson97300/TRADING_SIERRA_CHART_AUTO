@@ -113,6 +113,51 @@ def test_event_dans_2h_aucune_fenetre_active():
     assert f["is_news_60m"] is False
 
 
+def test_event_exactement_a_la_borne_5m():
+    """Event dans 300s EXACT (= boundary 5min) -> is_news_5m True (inclusif).
+
+    Boundary inclusive `0 <= in_sec <= window_sec` (nit 1 review batch 10/06).
+    """
+    from CORE import eco_news_features as enf
+
+    with patch.object(enf, "get_status", return_value=_mock_status()), \
+         patch.object(enf, "next_event_block", return_value=_mock_next_event(300)):
+        f = enf.compute_eco_news_features(datetime(2026, 6, 10, 15, 30, tzinfo=timezone.utc))
+
+    assert f["is_news_5m"] is True, "in_sec=300 (5min exact) doit etre inclusif"
+
+
+def test_event_a_zero_seconde_active_toutes_fenetres():
+    """Event maintenant (in_sec=0) -> toutes is_news_*m True."""
+    from CORE import eco_news_features as enf
+
+    with patch.object(enf, "get_status", return_value=_mock_status()), \
+         patch.object(enf, "next_event_block", return_value=_mock_next_event(0)):
+        f = enf.compute_eco_news_features(datetime(2026, 6, 10, 15, 30, tzinfo=timezone.utc))
+
+    assert f["is_news_5m"] is True
+    assert f["is_news_15m"] is True
+    assert f["is_news_60m"] is True
+    assert f["news_seconds_until"] == 0
+
+
+def test_event_negative_in_sec_pas_compte():
+    """in_sec < 0 (event passe juste apres parsing) -> aucune fenetre True.
+
+    Defensive : next_event_block filtre normalement les past events, mais
+    si race condition, in_sec < 0 doit retourner False (pas True comme bug
+    potentiel si `<= window_sec` checke sans borne basse).
+    """
+    from CORE import eco_news_features as enf
+
+    with patch.object(enf, "get_status", return_value=_mock_status()), \
+         patch.object(enf, "next_event_block", return_value=_mock_next_event(-30)):
+        f = enf.compute_eco_news_features(datetime(2026, 6, 10, 15, 30, tzinfo=timezone.utc))
+
+    assert f["is_news_5m"] is False
+    assert f["is_news_60m"] is False
+
+
 def test_aucun_event_upcoming_tout_false():
     """next_event=None -> toutes features False/NaN."""
     from CORE import eco_news_features as enf
