@@ -197,6 +197,28 @@ def test_extract_ts_from_ts_event_ns():
     assert "session_segment" in enriched
 
 
+def test_extract_ts_from_ts_milliseconds():
+    """ts en millisecondes (Sierra DMP convention) -> datetime UTC.
+
+    Sierra DMP utilise ts en ms (13 chiffres) dans les JSONL DMP_Writer.
+    Cf sierra_live_io.py:_read_new_lines (assertion ts en ms).
+    """
+    from CORE.sierra_pipeline import SierraPipelineOrchestrator
+
+    pipeline = SierraPipelineOrchestrator(symbol="NQ")
+    # 10 juin 2026 14:00 UTC en ms = secondes * 1000
+    ts_ms = int(_et_to_utc(2026, 6, 10, 10, 0).timestamp() * 1000)
+    bar = {
+        "ts": ts_ms,
+        "close": 100.0, "bar_high": 101.0, "bar_low": 99.0,
+        "delta_bar": 100.0, "total_vol": 1000.0, "atr": 2.0,
+        "dist_cur_vpoc": 5.0, "dist_swing_high": 3.0, "dist_swing_low": 8.0,
+    }
+    enriched = pipeline.enrich_bar(bar)
+    # Pas de crash, features ajoutees
+    assert "session_segment" in enriched
+
+
 def test_extract_ts_missing_raises():
     """Aucun timestamp -> ValueError FAIL LOUD."""
     from CORE.sierra_pipeline import SierraPipelineOrchestrator

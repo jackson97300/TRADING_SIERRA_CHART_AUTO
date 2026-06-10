@@ -284,9 +284,17 @@ class SierraPipelineOrchestrator:
                 # ISO format
                 return datetime.fromisoformat(v.replace("Z", "+00:00"))
             if isinstance(v, (int, float)):
-                # Nanoseconds (Databento) ou seconds
-                if key == "ts_event_ns" or v > 1e15:
+                # Heuristique multi-unite (Sierra DMP = ms, Databento = ns) :
+                #   v > 1e17 -> nanoseconds (Databento ts_event_ns)
+                #   v > 1e14 -> microseconds
+                #   v > 1e11 -> milliseconds (Sierra DMP "ts")
+                #   sinon   -> seconds
+                if key == "ts_event_ns" or v > 1e17:
                     return datetime.fromtimestamp(v / 1e9, tz=timezone.utc)
+                if v > 1e14:
+                    return datetime.fromtimestamp(v / 1e6, tz=timezone.utc)
+                if v > 1e11:
+                    return datetime.fromtimestamp(v / 1e3, tz=timezone.utc)
                 return datetime.fromtimestamp(v, tz=timezone.utc)
         raise ValueError(
             "SierraPipelineOrchestrator : impossible d'extraire timestamp UTC "
