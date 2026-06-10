@@ -113,6 +113,28 @@ class SierraPipelineOrchestrator:
         self._bars_skipped_nan: int = 0
         self._cross_day_resets: int = 0
 
+    @staticmethod
+    def _safe_update(enriched: dict, phase3_feats: dict) -> None:
+        """Update enriched avec phase3_feats SANS ecraser valeurs Sierra natif non-NaN.
+
+        Fix B6 audit ULTRATHINK 11/06 : Sierra DMP calcule deja certaines
+        features (pdh, pdl, ovn_high, asia_high, etc.). Phase 3 Calculator
+        re-calculent et retournent NaN/None pendant cold-start, ce qui ECRASE
+        les valeurs Sierra correctes.
+
+        Politique : si Phase 3 retourne None/NaN ET Sierra natif a une valeur,
+        garder Sierra. Sinon utiliser Phase 3 (incluant False/0 explicit).
+        """
+        import math
+        for k, phase3_v in phase3_feats.items():
+            existing = enriched.get(k)
+            # Phase 3 returns NaN/None -> garder Sierra si vivant
+            is_p3_nan = (phase3_v is None or
+                         (isinstance(phase3_v, float) and math.isnan(phase3_v)))
+            if is_p3_nan and existing is not None:
+                continue  # garde Sierra natif
+            enriched[k] = phase3_v
+
     def enrich_bar(
         self,
         sierra_bar: dict,
@@ -151,40 +173,62 @@ class SierraPipelineOrchestrator:
         enriched = dict(sierra_bar)
         self._bars_processed += 1
 
+        # FIX BUG #1 audit ULTRATHINK 11/06 : DMP utilise 'price' (pas 'close').
+        # Mapping pour Calculator + PERSIST dans enriched (sans persist :
+        # downstream Bot 1 V3 / train_lightgbm qui lit bar['close'] casse).
+        close = sierra_bar.get("close")
+        if close is None:
+            close = sierra_bar.get("price")
+        bar_high = sierra_bar.get("bar_high") or sierra_bar.get("high")
+        bar_low = sierra_bar.get("bar_low") or sierra_bar.get("low")
+        total_vol = sierra_bar.get("total_vol")
+        if total_vol is None:
+            total_vol = sierra_bar.get("volume")
+
+        # Persiste alias dans enriched (fix B1 review code-reviewer)
+        if close is not None:
+            enriched["close"] = close
+        if bar_high is not None:
+            enriched["bar_high"] = bar_high
+        if bar_low is not None:
+            enriched["bar_low"] = bar_low
+        if total_vol is not None:
+            enriched["total_vol"] = total_vol
+
         # ─── Module 3.1 : POC Migration (2 features) ───
         poc_feats = self._poc_migration.update(
             dist_cur_vpoc=sierra_bar.get("dist_cur_vpoc"),
         )
-        enriched.update(poc_feats)
+        self._safe_update(enriched,poc_feats)
 
         # ─── Module 3.2 : Swings V2 Wyckoff/ICT (6 features) ───
         swings_feats = self._swings_v2.update(
             dist_swing_high=sierra_bar.get("dist_swing_high"),
             dist_swing_low=sierra_bar.get("dist_swing_low"),
-            bar_high=sierra_bar.get("bar_high"),
-            bar_low=sierra_bar.get("bar_low"),
-            close=sierra_bar.get("close"),
+            bar_high=bar_high,
+            bar_low=bar_low,
+            close=close,
         )
-        enriched.update(swings_feats)
+        self._safe_update(enriched,swings_feats)
 
         # ─── Module 3.3 : Prev Levels (18 features) ───
         prev_feats = self._prev_levels.update(
             bar_ts_utc=bar_ts_utc,
-            bar_high=sierra_bar.get("bar_high"),
-            bar_low=sierra_bar.get("bar_low"),
-            close=sierra_bar.get("close"),
+            bar_high=bar_high,
+            bar_low=bar_low,
+            close=close,
             atr=sierra_bar.get("atr"),
         )
-        enriched.update(prev_feats)
+        self._safe_update(enriched,prev_feats)
 
         # ─── Module 3.4 : Sessions Fine (35 features) ───
         sessions_feats = self._sessions_fine.update(
             bar_ts_utc=bar_ts_utc,
-            bar_high=sierra_bar.get("bar_high"),
-            bar_low=sierra_bar.get("bar_low"),
-            close=sierra_bar.get("close"),
+            bar_high=bar_high,
+            bar_low=bar_low,
+            close=close,
         )
-        enriched.update(sessions_feats)
+        self._safe_update(enriched,sessions_feats)
 
         # ─── Module 3.6 : Roll Calendar (3 features, stateless) ───
         try:
@@ -192,10 +236,10 @@ class SierraPipelineOrchestrator:
                 bar_date=trading_date,
                 symbol=self.symbol,
             )
-            enriched.update(roll_feats)
+            self._safe_update(enriched,roll_feats)
         except ValueError:
             # Symbol non supporte (ex: MGC partial) -> NaN propre
-            enriched.update({
+            self._safe_update(enriched,{
                 "is_roll_day": False,
                 "days_since_roll": np.nan,
                 "roll_phase": 0,
@@ -204,37 +248,50 @@ class SierraPipelineOrchestrator:
         # ─── Module 3.7 : Eco News Features (10 features, stateless) ───
         try:
             eco_feats = compute_eco_news_features(now_utc=bar_ts_utc)
-            enriched.update(eco_feats)
+            self._safe_update(enriched,eco_feats)
         except (RuntimeError, ValueError):
             # Module eco_calendar indispo (ex: tests sans network)
-            enriched.update(self._empty_eco_features())
+            self._safe_update(enriched,self._empty_eco_features())
 
         # ─── Module 3.8 : Divergences V2 (14 features) ───
         div_feats = self._divergences_v2.update(
-            close=sierra_bar.get("close"),
+            close=close,
             delta_bar=sierra_bar.get("delta_bar"),
             atr=sierra_bar.get("atr"),
         )
-        enriched.update(div_feats)
+        self._safe_update(enriched,div_feats)
 
         # ─── Module 3.5 : Ctx Rolling CRITIQUE (25 features) ───
+        # Fix BUG #2 + #3 audit ULTRATHINK 11/06 :
+        # - Sierra DMP utilise `range_pos_va` (Value Area position), pas `range_pos`.
+        # - Sierra emit en SCALE [0, 100] (pourcentage). Le code ctx_rolling
+        #   utilise seuils RANGE_POS_EXTREME_HIGH=0.9 / LOW=0.1 (scale [0,1]).
+        # Sans normalisation /100 : seuil 0.9 declenche sur ~70% des bars
+        # (faux positifs climax). Verification empirique 11/06 NQ.
+        range_pos = sierra_bar.get("range_pos")
+        if range_pos is None:
+            range_pos = sierra_bar.get("range_pos_va")
+        # Auto-detect scale : si max observe > 1.5 = [0,100], normaliser /100
+        if range_pos is not None and range_pos > 1.5:
+            range_pos = range_pos / 100.0
+
         ctx_feats = self._ctx_rolling.update(
-            close=sierra_bar.get("close"),
-            bar_high=sierra_bar.get("bar_high"),
-            bar_low=sierra_bar.get("bar_low"),
+            close=close,
+            bar_high=bar_high,
+            bar_low=bar_low,
             delta_bar=sierra_bar.get("delta_bar"),
-            total_vol=sierra_bar.get("total_vol"),
+            total_vol=total_vol,
             atr=sierra_bar.get("atr"),
             buy_vol=sierra_bar.get("buy_vol"),
             sell_vol=sierra_bar.get("sell_vol"),
             vwap_d=sierra_bar.get("vwap_d"),
             finish_strength=sierra_bar.get("finish_strength"),
-            range_pos=sierra_bar.get("range_pos"),
+            range_pos=range_pos,
             va_position_pct=sierra_bar.get("va_position_pct"),
             bn_absorb_ask=sierra_bar.get("bn_absorb_ask", 0.0) or 0.0,
             bn_absorb_bid=sierra_bar.get("bn_absorb_bid", 0.0) or 0.0,
         )
-        enriched.update(ctx_feats)
+        self._safe_update(enriched,ctx_feats)
 
         # Meta orchestrateur
         enriched["_phase3_enriched"] = True
