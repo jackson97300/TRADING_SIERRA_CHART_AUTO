@@ -87,12 +87,21 @@ from bot3_config import (
     BOT3_ENABLE_TIER3,
     BOT3_TRADE_REJECTIONS,
     BOT3_TRADE_BREAKOUTS,
+    BOT3_MP_LEVEL_BLACKLIST_ENABLED,
 )
 from bot3_level_definitions import (
     get_active_levels,
     get_level_baseline_pf,
     get_level_baseline_rej,
 )
+
+# 08/06 — DailyLimitsGuard (Mark Douglas souverain kill switch quotidien).
+# Source : feedback_douglas_consistency_principles.md + INCIDENT_LOG 08/06.
+# 2 instances : Bot 3 MP (legacy) et Bot 3 v3 (Wyckoff continuation).
+try:
+    from CORE.daily_limits_guard import DailyLimitsGuard, load_config_from_env
+except ImportError:
+    from daily_limits_guard import DailyLimitsGuard, load_config_from_env  # type: ignore
 
 # ─── Bot 3 GOLD (MGC) — 12/05/2026 ─────────────────────────────────────
 # Import top-level + fail-loud (review code-reviewer R3) : eviter fallback
@@ -126,12 +135,14 @@ def _bot3_count_active_levels() -> int:
         enable_tier3=BOT3_ENABLE_TIER3,
         symbol="NQ",
         enable_tier2_neutral=enable_neutral,
+        enable_mp_blacklist=BOT3_MP_LEVEL_BLACKLIST_ENABLED,
     ))
     n_es = len(get_active_levels(
         enable_tier2=BOT3_ENABLE_TIER2,
         enable_tier3=BOT3_ENABLE_TIER3,
         symbol="ES",
         enable_tier2_neutral=enable_neutral,
+        enable_mp_blacklist=BOT3_MP_LEVEL_BLACKLIST_ENABLED,
     ))
     return (n_nq + n_es) // 2
 
@@ -178,6 +189,26 @@ STATE_FILE = ROOT / "DATA" / "PAPER_TRADES" / "databento_paper_v2_state.json"
 STATE_FILE_BOT3 = ROOT / "DATA" / "PAPER_TRADES" / "databento_paper_v3_state.json"
 STOP_FLAG_GLOBAL = ROOT / "DATA" / "BOT_CONTROL" / "STOP.flag"
 STOP_FLAG_LOCAL = ROOT / "DATA" / "BOT_CONTROL" / "STOP_DATABENTO_V2.flag"
+# FIX 19/05 PM (Jackson "bouton FLATTEN ne marche pas") : flag per-bot per-symbol
+# pour fermer le tracking INTERNE _bot3_positions / self.positions avec
+# exit_reason="FLATTEN_MANUAL" (distinct de TIMEOUT/TP/SL/KILL_SWITCH).
+# Endpoint /api/admin/bot/{id}/flatten/{sym} ecrit FLATTEN_{id}_{sym}.flag dans
+# DATA/BOT_CONTROL/. Bot consomme le flag au poll cycle + close interne + delete.
+FLATTEN_FLAG_DIR = ROOT / "DATA" / "BOT_CONTROL"
+# 03/06 FIX MAPPING archi 28/05 :
+# Avant : "1"->Sim3, "3"->Sim1 (legacy). FLATTEN_3_*.flag pointait vers Bot 3 MP
+# (Sim1 ancien Bot 3). Refacto archi 28/05 a inverse les Sim sans propager au
+# consume mechanism -> bouton FLATTEN dashboard cosmetique (5 admin OK aujourd'hui
+# = 5 flatten Sim3 inutile au lieu de Sim1 demande).
+# Apres : aligne sur convention flatten_bot.py BOT_TO_ACCOUNT corrigee.
+BOT1_FLATTEN_FLAG_PATTERN = "FLATTEN_1_{symbol}.flag"  # Bot 1 v3 + MP (Sim1)
+BOT2_FLATTEN_FLAG_PATTERN = "FLATTEN_2_{symbol}.flag"  # Bot 2 BN V5 + legacy V2 (Sim2)
+BOT3_FLATTEN_FLAG_PATTERN = "FLATTEN_3_{symbol}.flag"  # Bot 3 v4 (Sim3)
+# TTL flag (review code-reviewer 19/05 nuit) : evite flag orphelin sur "Flatten all"
+# qui cree FLATTEN_2_ES + FLATTEN_2_NQ + FLATTEN_2_MGC simultanement alors que
+# le bot n'a position que sur un seul symbole. Sans TTL, les flags non traites
+# flushent le prochain trade a l'open = bug futur garanti.
+FLATTEN_FLAG_TTL_SEC = 60
 
 POLL_INTERVAL_SEC = 30  # poll loop 30s
 
@@ -196,7 +227,13 @@ TRADE_ACCOUNT = os.environ.get("MIA_TRADE_ACCOUNT", "Sim2")
 # Bot 3 utilise SYMBOLS_BOT3 dans _bot3_poll_cycle (variable separee).
 SYMBOLS = ["NQ", "ES"]                                # Bot 2 V2 (positions trading)
 SYMBOLS_BOT3 = ["NQ", "ES", "MGC"]                    # Bot 3 (MP ES/NQ + Gold MGC)
-SYMBOL_TO_CONTRACT = {"NQ": "NQM26-CME", "ES": "ESM26-CME", "MGC": "MGCM26-CMECOMEX"}
+SYMBOL_TO_CONTRACT = {
+    # 02/06 Jackson directive finale "TOUT EN MINI PLUS SIMPLE" :
+    # SC reçoit MINI partout. Sizing per-bot via GUARD_RAILS_BOT3 n_contracts.
+    "NQ": "NQM26-CME",            # E-mini NQ $5.00/tick × 1 contrat (rollback 03/06)
+    "ES": "ESM26-CME",            # E-mini standard $12.50/tick
+    "MGC": "MGCM26-CMECOMEX",     # Gold micro $1.00/tick
+}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -216,6 +253,18 @@ def load_last_bar(symbol: str) -> Optional[pd.Series]:
     fallback `.c.0` pour ne pas casser Phase 1 OBSERVE-ONLY.
 
     Pour ES/NQ : ticker = "ES.c.0" / "NQ.c.0" = path original, IDENTIQUE.
+
+    NOTE 18/05/2026 : tentative de bascule sur live_enriched JSONL (lag <2s)
+    REVERTEE suite audit code-reviewer + verif empirique VPS. 19 features
+    critiques (VETO_ROLL_DAY, VETO_BAR_NO_TRADE, dist_color_up/dn_nearest_pct
+    pour BOOST Swing×Color Phase 1.7d, position_in_range pour TIER3, etc.)
+    sont ABSENTES du live_enriched VPS (le service ecrit 433 cols vs V4 467).
+    Live_enricher est encore Phase 3a/3b skeleton sans engines complets
+    (phase_b_helpers, phase_b_plus, edge_zones, value_area_running, etc.
+    NON integres dans enricher_chain.py).
+
+    Plan bascule live_enriched : completer engines manquants dans
+    enricher_chain.py PUIS shadow mode 1 semaine PUIS bascule progressive.
     """
     try:
         from CORE.constants import get_databento_ticker
@@ -446,6 +495,27 @@ class DatabentoPaperTraderV2:
         # Cooldown 15min post-close + circuit breaker 3 SL → 60min pause (par symbole).
         # Aligne Bot 1 (mia_paper_trader.py) + Bot 2 (databento_paper_trader.py:RiskManager).
         self._bot3_risk = Bot3RiskManager()
+        # 🆕 08/06 — DailyLimitsGuard Mark Douglas (souverain).
+        # Bot 3 MP (legacy ES/MGC dip + Bot 3 Gold) -> bot_id="bot3_mp".
+        # Persistance par jour : DATA/PAPER_TRADES/{date}_daily_state_bot3_mp.json.
+        # Reset au rollover via _bot3_reset_today_if_rollover.
+        # Active aussi pour Bot 3 v3 (instance dediee plus bas, init differee si MIA_BOT3_V3=1).
+        from CORE.constants import get_cme_trading_day as _get_cme_day  # type: ignore
+        _today_str = str(_get_cme_day())
+        self._bot3_mp_daily_guard = DailyLimitsGuard(
+            bot_id="bot3_mp",
+            config=load_config_from_env(prefix="MIA", bot_id="bot3_mp"),
+            state_dir=str(ROOT / "DATA" / "PAPER_TRADES"),
+            date_str=_today_str,
+        )
+        # Bot 3 v3 daily guard (instancie ici, partage avec self._bot3_v3_trader).
+        # Le wrapper expose check via methode self._bot3_v3_daily_check_allow(sym).
+        self._bot3_v3_daily_guard = DailyLimitsGuard(
+            bot_id="bot3_v3",
+            config=load_config_from_env(prefix="MIA", bot_id="bot3_v3"),
+            state_dir=str(ROOT / "DATA" / "PAPER_TRADES"),
+            date_str=_today_str,
+        )
         # DTC connector (DTCConfig accepte uniquement host/port/protocol/timeouts;
         # trade_account et username sont passes a chaque ordre via TRADE_ACCOUNT global)
         self.dtc: Optional[DTCConnector] = None
@@ -463,6 +533,211 @@ class DatabentoPaperTraderV2:
             signal.signal(signal.SIGTERM, lambda *_: self._stop.set())
         except (AttributeError, ValueError):
             pass
+
+        # FIX 19/05 (review agent R1) : worker thread daemon pour modify_sl ladder.
+        # Avant ce fix : `_bot3_modify_sl_via_dtc` bloquant ~4.8s (sleep 0.3 +
+        # verify position 2.0s + sleep 0.5 + verify Type 300 2.0s) dans hot path
+        # `_bot3_check_trailing_ladder` appele depuis `_bot3_update_mfe_mae`
+        # bar loop principal. En MODE=ACTION sur volatilite : MFE stale,
+        # autres paliers rate, kill switch retarde.
+        # Apres : hot path enqueue job dans queue + return immediat. Worker
+        # daemon consomme + execute modify_sl en background. Si return False
+        # (SL fantome detecte), worker fait force_close_market directement.
+        import queue as _queue
+        self._bot3_ladder_queue: _queue.Queue = _queue.Queue(maxsize=100)
+        self._bot3_ladder_worker_thread: Optional[threading.Thread] = None
+        # Lance worker uniquement si DTC connecte (paper Sim, pas dry_run)
+        if not self.dry_run and self.dtc is not None:
+            self._bot3_ladder_worker_thread = threading.Thread(
+                target=self._bot3_ladder_worker_loop,
+                name="bot3_ladder_worker",
+                daemon=True,
+            )
+            self._bot3_ladder_worker_thread.start()
+
+        # ────────────────────────────────────────────────────────────────
+        # PHASE G (23/05/2026 Jackson) : Wiring BN V4 paper trader (Bot 2 V3)
+        # Remplace ancien Bot 2 V2 SetupEngine (mort). Sim2 partagee.
+        # Activation via ENV MIA_BN_V4_ENABLED=1 (default off = back-compat
+        # totale, Bot 2 V2 SetupEngine et Bot 3 inchanges).
+        # ────────────────────────────────────────────────────────────────
+        self._bn_v4_trader = None
+        _bn_v4_enabled = os.environ.get("MIA_BN_V4_ENABLED", "0") == "1"
+        if _bn_v4_enabled:
+            try:
+                from CORE.bn_v4_paper import BNV4PaperTrader
+                from CORE.bn_v4_engine import BNV4Params
+            except ImportError:
+                from bn_v4_paper import BNV4PaperTrader
+                from bn_v4_engine import BNV4Params
+            _bn_v4_dry = os.environ.get("MIA_BN_V4_DRY_RUN", "1") == "1"
+            _bn_v4_symbols = os.environ.get("MIA_BN_V4_SYMBOLS", "NQ").split(",")
+            _bn_v4_account = os.environ.get("MIA_BN_V4_TRADE_ACCOUNT", "Sim2")
+            self._bn_v4_trader = BNV4PaperTrader(
+                dtc=self.dtc,    # partage le DTC connector deja init
+                symbols=_bn_v4_symbols,
+                dry_run=_bn_v4_dry,
+                trade_account=_bn_v4_account,
+                params=BNV4Params(
+                    grade_min="A++",
+                    observation_grade_min="A",    # mode dual
+                    require_open_window=True,
+                    require_long_trend_aligned=True,
+                    footprint_min_signals=1,
+                    # WINDOW_OBSERVE (27/05) : env var toggle.
+                    # OFF par defaut = comportement strictement identique a avant 27/05.
+                    # `MIA_BN_V4_OBSERVE_OUTSIDE_WINDOWS=1` active la collecte 30j
+                    # des setups A++ hors OPEN_WINDOWS (mode OBSERVE_WINDOW dedie).
+                    observe_outside_windows=os.environ.get(
+                        "MIA_BN_V4_OBSERVE_OUTSIDE_WINDOWS", "0") == "1",
+                ),
+            )
+            _emit("BN_V4_BOOT_START",
+                  sym=",".join(_bn_v4_symbols),
+                  dry_run=int(_bn_v4_dry),
+                  trade_account=_bn_v4_account,
+                  mode="paper_wired_via_paper_v2")
+
+        # ────────────────────────────────────────────────────────────────
+        # PHASE I (02/06/2026 SOIR Jackson) : Wiring BN V5 paper trader
+        # Bot 2 V5 = paradigme SWING (V/W LONG + ∧/M SHORT) + trailing Dow
+        # Remplace BN V4 (mal aligne avec vision Jackson "long scalps").
+        # Backtest validation : ES MAI-JUN V LONG filter 0.20% = PF 1.58
+        # Activation via ENV MIA_BN_V5_ENABLED=1 (default off = back-compat).
+        # Coexiste avec BN V4 (peuvent tourner en parallele si tous deux ON,
+        # Sim2 partagee — eviter de mettre les 2 ON simultanement).
+        # ────────────────────────────────────────────────────────────────
+        self._bn_v5_trader = None
+        _bn_v5_enabled = os.environ.get("MIA_BN_V5_ENABLED", "0") == "1"
+        if _bn_v5_enabled:
+            try:
+                from CORE.bn_v5_paper import BNV5PaperTrader
+                from CORE.bn_v5_engine import BNV5Params
+            except ImportError:
+                from bn_v5_paper import BNV5PaperTrader
+                from bn_v5_engine import BNV5Params
+            _bn_v5_dry = os.environ.get("MIA_BN_V5_DRY_RUN", "1") == "1"
+            _bn_v5_symbols = os.environ.get("MIA_BN_V5_SYMBOLS", "NQ,ES").split(",")
+            _bn_v5_account = os.environ.get("MIA_BN_V5_TRADE_ACCOUNT", "Sim2")
+            self._bn_v5_trader = BNV5PaperTrader(
+                dtc=self.dtc,
+                symbols=_bn_v5_symbols,
+                dry_run=_bn_v5_dry,
+                trade_account=_bn_v5_account,
+                params=BNV5Params(),  # defaults backtest valide
+            )
+            _emit("BN_V5_BOOT_START",
+                  sym=",".join(_bn_v5_symbols),
+                  dry_run=int(_bn_v5_dry),
+                  trade_account=_bn_v5_account)
+
+        # ────────────────────────────────────────────────────────────────
+        # PHASE H (24/05/2026 Jackson) : Wiring Bot 3 v3/v4 paper traders
+        # Bot 3 v3 = Continuation NQ Sim1 (backtest PF 1.045 n=1611)
+        # Bot 3 v4 = Data-driven NQ Sim3 (backtest PF 1.033 n=1110)
+        # Activation via ENV MIA_BOT3_V3_ENABLED / MIA_BOT3_V4_ENABLED
+        # Default off = back-compat totale (Bot 3 prod MP / BN V4 inchanges).
+        # ────────────────────────────────────────────────────────────────
+        self._bot3_v3_trader = None
+        self._bot3_v4_trader = None
+        try:
+            try:
+                from CORE.bot3_v3_continuation_paper import Bot3V3ContinuationPaper
+                from CORE.bot3_v4_data_driven_paper import Bot3V4DataDrivenPaper
+            except ImportError:
+                from bot3_v3_continuation_paper import Bot3V3ContinuationPaper
+                from bot3_v4_data_driven_paper import Bot3V4DataDrivenPaper
+
+            # Fix R1 market-analyst : gate cross-bot same-side max 2
+            # Callback agregge positions Bot 1 + BN V4 + v3 + v4 par side
+            def _count_same_side_cross_bot(side: str) -> int:
+                """Compte positions same-side ouvertes sur tous les bots NQ.
+
+                side : "LONG" / "long" / "BUY" -> compte LONG
+                       "SHORT" / "short" / "SELL" -> compte SHORT
+                """
+                s = side.upper()
+                side_long = s in ("LONG", "BUY")
+                n = 0
+                # Bot 3 prod (legacy MP) : direction stored as "long"/"short"
+                try:
+                    for sym, pos in (self._bot3_positions or {}).items():
+                        if pos is None:
+                            continue
+                        pos_dir = str(pos.get("direction", "")).upper()
+                        if side_long and pos_dir in ("LONG", "BUY"):
+                            n += 1
+                        elif not side_long and pos_dir in ("SHORT", "SELL"):
+                            n += 1
+                except (AttributeError, KeyError):
+                    pass
+                # BN V4
+                if self._bn_v4_trader is not None:
+                    try:
+                        for sym, pos in self._bn_v4_trader._position.items():
+                            if pos is None:
+                                continue
+                            pos_dir = str(pos.get("direction", "")).upper()
+                            if side_long and pos_dir in ("LONG", "BUY"):
+                                n += 1
+                            elif not side_long and pos_dir in ("SHORT", "SELL"):
+                                n += 1
+                    except (AttributeError, KeyError):
+                        pass
+                # Bot 3 v3 (will be set after init)
+                if self._bot3_v3_trader is not None:
+                    try:
+                        for sym, pos in self._bot3_v3_trader._position.items():
+                            if pos is None:
+                                continue
+                            pos_dir = str(pos.get("direction", "")).upper()
+                            if side_long and pos_dir == "LONG":
+                                n += 1
+                            elif not side_long and pos_dir == "SHORT":
+                                n += 1
+                    except (AttributeError, KeyError):
+                        pass
+                # Bot 3 v4
+                if self._bot3_v4_trader is not None:
+                    try:
+                        for sym, pos in self._bot3_v4_trader._position.items():
+                            if pos is None:
+                                continue
+                            pos_dir = str(pos.get("direction", "")).upper()
+                            if side_long and pos_dir == "LONG":
+                                n += 1
+                            elif not side_long and pos_dir == "SHORT":
+                                n += 1
+                    except (AttributeError, KeyError):
+                        pass
+                return n
+
+            # ENV factories avec callback inject
+            _v3_enabled = os.environ.get("MIA_BOT3_V3_ENABLED", "0").strip().lower() in ("1", "true", "yes")
+            _v4_enabled = os.environ.get("MIA_BOT3_V4_ENABLED", "0").strip().lower() in ("1", "true", "yes")
+            if _v3_enabled:
+                _dry = os.environ.get("MIA_BOT3_V3_DRY_RUN", "1").strip().lower() in ("1", "true", "yes")
+                _ta = os.environ.get("MIA_BOT3_V3_TRADE_ACCOUNT", "Sim1").strip()
+                _syms = [s.strip() for s in os.environ.get("MIA_BOT3_V3_SYMBOLS", "NQ").split(",") if s.strip()]
+                self._bot3_v3_trader = Bot3V3ContinuationPaper(
+                    dtc=self.dtc, symbols=_syms, dry_run=_dry,
+                    trade_account=_ta,
+                    count_same_side_callback=_count_same_side_cross_bot,
+                )
+                self._bot3_v3_trader.boot_ready()
+            if _v4_enabled:
+                _dry = os.environ.get("MIA_BOT3_V4_DRY_RUN", "1").strip().lower() in ("1", "true", "yes")
+                _ta = os.environ.get("MIA_BOT3_V4_TRADE_ACCOUNT", "Sim3").strip()
+                _syms = [s.strip() for s in os.environ.get("MIA_BOT3_V4_SYMBOLS", "NQ").split(",") if s.strip()]
+                self._bot3_v4_trader = Bot3V4DataDrivenPaper(
+                    dtc=self.dtc, symbols=_syms, dry_run=_dry,
+                    trade_account=_ta,
+                    count_same_side_callback=_count_same_side_cross_bot,
+                )
+                self._bot3_v4_trader.boot_ready()
+        except Exception as e:
+            _emit("BOT3_V3_LOOP_ERROR", sym="*",
+                  err=f"bot3_wire_exc: {type(e).__name__}: {str(e)[:200]}")
 
     def _bot3_emit_throttled(self, code: str, throttle_sec: float = 60.0, **kw) -> None:
         """Emit avec throttle par (sym, code) — anti spam log cycle 1s.
@@ -552,8 +827,9 @@ class DatabentoPaperTraderV2:
                         from bot3_config import GUARD_RAILS_BOT3 as GR
                     except ImportError:
                         from CORE.bot3_config import GUARD_RAILS_BOT3 as GR
+                    # 02/06 FIX C4 : default 3 -> GR config (fail-loud)
                     pnl_dollars = round(
-                        pnl_ticks * GR[sym]["tick_value"] * pos_snap.get("n_contracts", 3), 2)
+                        pnl_ticks * GR[sym]["tick_value"] * (pos_snap.get("n_contracts") or GR[sym]["n_contracts"]), 2)
                     duration_s = entry.get("duration_s", 0)
                     flatten_reason = entry.get("close_reason", "TIMEOUT_FLATTEN")
                     _emit("BOT3_FLATTEN_FILL_CAPTURED",
@@ -605,7 +881,8 @@ class DatabentoPaperTraderV2:
                         from bot3_config import GUARD_RAILS_BOT3 as GR
                     except ImportError:
                         from CORE.bot3_config import GUARD_RAILS_BOT3 as GR
-                    pnl_dollars = pnl_ticks * GR[sym]["tick_value"] * pos.get("n_contracts", 3)
+                    # 02/06 FIX C4 : default 3 -> GR config (fail-loud si pos sans n_contracts)
+                    pnl_dollars = pnl_ticks * GR[sym]["tick_value"] * (pos.get("n_contracts") or GR[sym]["n_contracts"])
                     duration_s = (datetime.now(timezone.utc) - datetime.fromisoformat(
                         pos["ts_open"].replace("Z", "+00:00"))).total_seconds() if pos.get("ts_open") else 0
                     _emit("BOT3_TRADE_CLOSE",
@@ -638,8 +915,17 @@ class DatabentoPaperTraderV2:
                   exc_type=type(e).__name__, exc_msg=str(e))
             return True
 
-    def _bot3_check_timeout(self) -> None:
+    def _bot3_check_timeout(self, force: bool = False) -> None:
         """FIX #1 (04/05) + REWRITE 06/05 (P0.3+P0.4) : timeout 60min anti-orphelin V2.
+
+        Args:
+            force: si True (par defaut False), bypass le check d'age et flatten
+                   toutes les positions Bot 3 ouvertes immediatement. Utilise par
+                   le kill_switch (FIX 19/05 incident #10 : kill_switch n_closed=0
+                   pour Bot 3 car la boucle iter `self.positions` mais pas
+                   `self._bot3_positions`). En mode force, close_reason devient
+                   "KILL_SWITCH" et la sequence anti-orphelin V2 complete est
+                   appliquee (steps 1-9 incluses).
 
         Sequence anti-orphelin V2 (06/05) :
           1. Cancel TP par CID (si trace) - le pos["tp_cid"] est parfois None pour
@@ -686,16 +972,21 @@ class DatabentoPaperTraderV2:
                 except Exception:
                     continue
                 timeout_min = GR[sym]["timeout_minutes"]
-                if age_min <= timeout_min:
+                if not force and age_min <= timeout_min:
                     continue
 
                 contract = SYMBOL_TO_CONTRACT[sym]
 
                 # FIX 06/05 soir : calcul close_reason en AMONT (deplace depuis ETAPE 8)
                 # car utilise dans ETAPE 7a pour tracker flush_cid (capture fill Type 209).
-                close_reason = ("RECOVERED_TIMEOUT"
-                                if pos.get("level") == "_RECOVERED_BOOT_"
-                                else "TIMEOUT")
+                # FIX 19/05 (force kill_switch) : close_reason = "KILL_SWITCH" pour
+                # tracking distinct des timeouts naturels.
+                if force:
+                    close_reason = "KILL_SWITCH"
+                else:
+                    close_reason = ("RECOVERED_TIMEOUT"
+                                    if pos.get("level") == "_RECOVERED_BOOT_"
+                                    else "TIMEOUT")
 
                 # R3 : DTC down -> ORPHAN_RISK + skip cleanup interne
                 if not self.dry_run and not self.dtc:
@@ -937,7 +1228,8 @@ class DatabentoPaperTraderV2:
                             entry = float(pos["entry_price"])
                             tick = GR[sym]["tick_size"]
                             tick_value = GR[sym]["tick_value"]
-                            n_contracts = pos.get("n_contracts", 3)
+                            # 02/06 FIX C4 : default 3 -> GR config (fail-loud)
+                            n_contracts = pos.get("n_contracts") or GR[sym]["n_contracts"]
                             pnl_ticks_approx = round(
                                 (bar_close_f - entry) / tick * dir_sign, 2)
                             pnl_usd_approx = round(
@@ -1207,6 +1499,18 @@ class DatabentoPaperTraderV2:
                 entry = pos.get("entry_price", 0)
                 if entry <= 0:
                     continue
+
+                # ROLLBACK 19/05 PM (Jackson "MFE/MAE NULES") : Fix 5 (skip bar
+                # pre-entry) cause MFE=0/MAE=0 user-facing pendant pipeline V4
+                # lag (~18 min). load_last_bar retourne bar avec ts_event < ts_open
+                # → skip systematique → MFE jamais update. Fix dans incident #10
+                # adressait le MFE retroactif (high bar pre-entry comptait), mais
+                # ladder en MODE=OBSERVE = aucun impact prod. Re-fix V2 propre :
+                # utiliser current_price live broker (DTC market data) au lieu
+                # de bar.high/low. TODO Phase 2 ladder MODE=ACTION reactivation.
+                # Pour l'instant : revert au comportement legacy (MFE peut etre
+                # retroactif mais visible user, prefere a MFE=0 silent).
+
                 dir_sign = 1 if pos["side"] == "LONG" else -1
                 if dir_sign == 1:
                     excursion = (high - entry) / tick_size
@@ -1342,9 +1646,36 @@ class DatabentoPaperTraderV2:
             if entry <= 0 or mfe <= 0:
                 return
 
+            # FIX 19/05 (incident #10 fix 4) : defense race condition T+1s. Refuser
+            # tout palier ladder tant que l'age trade < LADDER_MIN_AGE_SECONDS. Cas
+            # observe 19/05 : palier 1 declenche 1s apres fill bracket initial,
+            # ServerOrderID ancien SL pas encore propage → cancel Type 203 ignore
+            # silencieusement par SC. cancel_order(require_sid=True) refuse maintenant
+            # de toute facon, mais ce check evite meme l'attempt + log inutile.
+            try:
+                from bot3_config import LADDER_MIN_AGE_SECONDS
+            except ImportError:
+                from CORE.bot3_config import LADDER_MIN_AGE_SECONDS
+            ts_open_str = pos.get("ts_open")
+            if ts_open_str:
+                try:
+                    ts_open_dt = datetime.fromisoformat(ts_open_str.replace("Z", "+00:00"))
+                    age_sec = (datetime.now(timezone.utc) - ts_open_dt).total_seconds()
+                    if age_sec < LADDER_MIN_AGE_SECONDS:
+                        _emit("BOT3_LADDER_TICK_TOO_YOUNG",
+                              sym=sym, age_sec=round(age_sec, 1),
+                              min_age=LADDER_MIN_AGE_SECONDS,
+                              mfe=round(mfe, 1),
+                              ts_open=ts_open_str,
+                              signal_id=pos.get("signal_id"))
+                        return
+                except Exception:
+                    pass  # ts_open malforme → laisse passer (degraded mode)
+
             dir_sign = 1 if pos["side"] == "LONG" else -1
-            n_contracts = cfg.get("n_contracts", 3)
-            tick_value = cfg.get("tick_value", 0.50)
+            # 02/06 FIX C4 : default 3/0.50 -> KeyError fail-loud si cfg incomplet
+            n_contracts = cfg["n_contracts"]
+            tick_value = cfg["tick_value"]
 
             for palier_idx, (mfe_seuil, sl_lock_ticks) in enumerate(paliers):
                 if palier_idx in executed:
@@ -1372,31 +1703,56 @@ class DatabentoPaperTraderV2:
                     executed.add(palier_idx)  # idempotent : 1 log par palier par trade
                 elif mode == "ACTION":
                     # Phase 1b ACTION (11/05 17:00) — cancel SL + send new stop
-                    # avec 7 fixes anti-orphan (cf .claude/rules/orphan-prevention.md)
-                    #   1. ABORT si cancel echoue → alert CRITIQUE BOT3_LADDER_NO_SL
-                    #   2. _order_trade_accounts[new_sl_cid] = TRADE_ACCOUNT_BOT3 (fix H6)
-                    #   3. register_oco_pair AVANT send nouveau SL (pre-register)
-                    #   4. OrderType=3 STOP + StopPrice
-                    #   5. Idempotent : executed.add(palier_idx) AVANT modify (anti retry boucle)
-                    #   6. Modify HORS lock _bot3_pos_lock (cf _bot3_check_trailing_ladder
-                    #      est deja appele HORS lock depuis _bot3_update_mfe_mae, OK)
-                    #   7. Alert BOT3_LADDER_NO_SL_ALERT si position sans SL apres modify
-                    executed.add(palier_idx)  # Fix #5 : idempotent AVANT modify
-                    ok = self._bot3_modify_sl_via_dtc(
-                        sym=sym, pos=pos,
-                        new_sl_price=new_sl_price,
-                        palier_idx=palier_idx + 1,
-                        lock_usd=lock_usd,
-                    )
-                    if not ok:
-                        # Fix #1 + #7 : alert CRITIQUE position sans SL = ORPHAN RISK
-                        _emit("BOT3_LADDER_NO_SL_ALERT",
+                    # avec 7 fixes anti-orphan (cf .claude/rules/orphan-prevention.md).
+                    #
+                    # FIX 19/05 (review agent R1) : ENQUEUE dans worker thread
+                    # au lieu d'appel direct (4.8s bloquant hot path). Le worker
+                    # daemon `_bot3_ladder_worker_loop` consomme + execute
+                    # modify_sl + force_close si fail. Hot path return immediat.
+                    executed.add(palier_idx)  # Fix #5 : idempotent AVANT enqueue
+                    try:
+                        self._bot3_ladder_queue.put_nowait({
+                            "sym": sym,
+                            "new_sl_price": new_sl_price,
+                            "palier_idx": palier_idx + 1,
+                            "lock_usd": lock_usd,
+                        })
+                        _emit("BOT3_LADDER_JOB_ENQUEUED",
                               sym=sym, palier=palier_idx + 1,
                               level=pos.get("level", "?"),
-                              msg="ladder modify SL FAILED — position sans SL = ORPHAN RISK",
-                              old_sl_cid=pos.get("sl_cid"),
-                              entry=round(entry, 2),
-                              attempted_new_sl=round(new_sl_price, 2))
+                              new_sl_price=round(new_sl_price, 2),
+                              lock_usd=round(lock_usd, 2),
+                              queue_size=self._bot3_ladder_queue.qsize())
+                    except Exception as e_enq:
+                        # Queue full ou autre erreur enqueue -> fallback synchrone
+                        # (defense en profondeur, on prefere bloquer que perdre le palier)
+                        _emit("BOT3_LADDER_ENQUEUE_FAIL",
+                              sym=sym, palier=palier_idx + 1,
+                              exc_type=type(e_enq).__name__,
+                              msg=f"queue put fail : {str(e_enq)[:200]} - fallback sync")
+                        ok = self._bot3_modify_sl_via_dtc(
+                            sym=sym, pos=pos,
+                            new_sl_price=new_sl_price,
+                            palier_idx=palier_idx + 1,
+                            lock_usd=lock_usd,
+                        )
+                        if not ok:
+                            _emit("BOT3_LADDER_NO_SL_ALERT",
+                                  sym=sym, palier=palier_idx + 1,
+                                  level=pos.get("level", "?"),
+                                  msg="fallback sync ladder modify FAILED — ORPHAN RISK",
+                                  old_sl_cid=pos.get("sl_cid"),
+                                  entry=round(entry, 2),
+                                  attempted_new_sl=round(new_sl_price, 2))
+                            try:
+                                self._bot3_force_close_market(
+                                    sym=sym, pos=pos, reason="LADDER_NO_SL_FALLBACK",
+                                )
+                            except Exception as exc_fc:
+                                _emit("BOT3_LADDER_FORCE_CLOSE_EXCEPTION",
+                                      sym=sym, palier=palier_idx + 1,
+                                      exc_type=type(exc_fc).__name__,
+                                      exc_msg=str(exc_fc)[:200])
                 else:
                     _emit("BOT3_LADDER_INVALID_MODE",
                           sym=sym, mode=mode,
@@ -1406,6 +1762,299 @@ class DatabentoPaperTraderV2:
             _emit("PY_EXCEPTION_HOT_PATH",
                   sym=sym, fn_name="_bot3_check_trailing_ladder",
                   exc_type=type(e).__name__, exc_msg=str(e))
+
+    def _bot3_watchdog_verify_sl(self, sym: str, contract: str, new_sl_cid: str,
+                                    expected_sl_price: float, palier_idx: int) -> None:
+        """FIX 19/05 (review agent patch 1) — watchdog T+30s post-VERIFY_TIMEOUT.
+
+        Quand `_bot3_modify_sl_via_dtc` STEP C.5 retourne `open_orders is None`
+        (lock timeout ou DTC slow), strategie optimiste : on garde
+        pos["sl_cid"]=new_sl_cid SUPPOSANT que le SL est Working broker.
+
+        Mais si le SL est en realite ABSENT (rejet broker silent), la position
+        reste sans protection. Avant patch 1, cela pouvait passer 60 min avant
+        detection (next _bot3_check_timeout). Patch : T+30s, on force re-verify.
+
+        Sequence :
+          1. request_position_blocking : si qty=0, position deja flat (SL initial
+             ou opposite a fill entre temps) -> emit OK
+          2. request_open_orders_blocking : si new_sl_cid present avec status 2/4
+             -> SL effectivement Working, emit OK
+          3. Sinon : SL absent broker = ORPHAN -> _bot3_force_close_market
+
+        Lance via threading.Timer(30, ...) en thread separe. Pas de retry :
+        si watchdog lui-meme echoue (DTC down), emit CRITIQUE.
+        """
+        try:
+            from bot3_config import TRADE_ACCOUNT_BOT3
+        except ImportError:
+            from CORE.bot3_config import TRADE_ACCOUNT_BOT3
+
+        if self.dtc is None or not self.dtc.connected:
+            _emit("BOT3_LADDER_WATCHDOG_DTC_DOWN",
+                  sym=sym, new_sl_cid=new_sl_cid, palier=palier_idx)
+            return
+
+        # 1. Verify position (peut etre deja flat)
+        try:
+            qty = self.dtc.request_position_blocking(
+                contract, trade_account=TRADE_ACCOUNT_BOT3, timeout=2.0,
+            )
+        except Exception as e:
+            qty = None
+            _emit("BOT3_LADDER_WATCHDOG_POS_QUERY_FAIL",
+                  sym=sym, new_sl_cid=new_sl_cid, palier=palier_idx,
+                  exc=type(e).__name__, msg=str(e)[:200])
+
+        if qty == 0:
+            _emit("BOT3_LADDER_WATCHDOG_POS_FLAT",
+                  sym=sym, new_sl_cid=new_sl_cid, palier=palier_idx,
+                  msg="Position deja flat T+30s - SL initial/opposite a fill ou close manuel - OK")
+            return
+
+        # 2. Verify SL working
+        try:
+            open_orders = self.dtc.request_open_orders_blocking(
+                trade_account=TRADE_ACCOUNT_BOT3,
+                symbol_filter=contract,
+                timeout=3.0,  # plus large que STEP C.5 (2s)
+            )
+        except Exception as e:
+            open_orders = None
+            _emit("BOT3_LADDER_WATCHDOG_TYPE300_FAIL",
+                  sym=sym, new_sl_cid=new_sl_cid, palier=palier_idx,
+                  exc=type(e).__name__, msg=str(e)[:200])
+
+        sl_working = False
+        if open_orders is not None:
+            for o in open_orders:
+                if o.get("ClientOrderID") == new_sl_cid:
+                    status = int(o.get("OrderStatus", 0))
+                    if status in (2, 4):
+                        sl_working = True
+                    break
+
+        if sl_working:
+            _emit("BOT3_LADDER_WATCHDOG_SL_WORKING_CONFIRMED",
+                  sym=sym, new_sl_cid=new_sl_cid, palier=palier_idx,
+                  expected_sl_price=round(expected_sl_price, 2),
+                  msg="Watchdog T+30s confirme SL Working broker - strategie optimiste OK")
+            return
+
+        # 3. SL absent broker -> ORPHAN RISK -> force close
+        _emit("BOT3_LADDER_WATCHDOG_SL_ORPHAN_DETECTED",
+              sym=sym, new_sl_cid=new_sl_cid, palier=palier_idx,
+              open_orders_none=(open_orders is None),
+              open_orders_count=(len(open_orders) if open_orders else 0),
+              msg="CRITIQUE : T+30s SL ABSENT broker - rejet silencieux confirme. "
+                  "MARKET CLOSE force pour eviter risque illimite.")
+
+        with self._bot3_pos_lock:
+            pos = self._bot3_positions.get(sym)
+        if pos is None:
+            _emit("BOT3_LADDER_WATCHDOG_POS_GONE",
+                  sym=sym, new_sl_cid=new_sl_cid, palier=palier_idx,
+                  msg="Position closed entre VERIFY_TIMEOUT et watchdog T+30s - SL initial fill probable")
+            return
+
+        # Marquer pos sans SL + cleanup mappings
+        with self._bot3_pos_lock:
+            pos["sl_cid"] = None
+        self.dtc._order_trade_accounts.pop(new_sl_cid, None)
+        self.dtc._oco_pairs.pop(new_sl_cid, None)
+
+        try:
+            self._bot3_force_close_market(
+                sym=sym, pos=pos, reason="LADDER_WATCHDOG_ORPHAN",
+            )
+        except Exception as e_fc:
+            _emit("BOT3_LADDER_WATCHDOG_FORCE_CLOSE_EXCEPTION",
+                  sym=sym, new_sl_cid=new_sl_cid, palier=palier_idx,
+                  exc_type=type(e_fc).__name__, exc_msg=str(e_fc)[:200])
+
+    def _bot3_ladder_worker_loop(self) -> None:
+        """FIX 19/05 (review agent R1) — worker thread daemon ladder modify_sl.
+
+        Consomme jobs depuis `self._bot3_ladder_queue` et execute
+        `_bot3_modify_sl_via_dtc` HORS du hot path bar loop. Si modify return
+        False (SL fantome detecte = position sans SL broker), invoque
+        `_bot3_force_close_market` directement depuis le worker.
+
+        Thread daemon, termine au self._stop.is_set().
+        """
+        import queue as _queue
+        while not self._stop.is_set():
+            try:
+                job = self._bot3_ladder_queue.get(timeout=1.0)
+            except _queue.Empty:
+                continue
+            sym = job.get("sym", "?")
+            try:
+                _emit("BOT3_LADDER_WORKER_JOB_START",
+                      sym=sym, palier=job.get("palier_idx"),
+                      new_sl_price=job.get("new_sl_price"))
+                # Get latest pos (may have changed since enqueue, ex: SL touched)
+                with self._bot3_pos_lock:
+                    pos = self._bot3_positions.get(sym)
+                if pos is None:
+                    _emit("BOT3_LADDER_WORKER_POS_GONE",
+                          sym=sym, palier=job.get("palier_idx"),
+                          msg="pos closed entre enqueue et worker — skip modify")
+                    self._bot3_ladder_queue.task_done()
+                    continue
+                ok = self._bot3_modify_sl_via_dtc(
+                    sym=sym, pos=pos,
+                    new_sl_price=job["new_sl_price"],
+                    palier_idx=job["palier_idx"],
+                    lock_usd=job["lock_usd"],
+                )
+                if not ok:
+                    _emit("BOT3_LADDER_NO_SL_ALERT",
+                          sym=sym, palier=job["palier_idx"],
+                          level=pos.get("level", "?"),
+                          msg="worker : ladder modify SL FAILED — position sans SL = ORPHAN RISK",
+                          old_sl_cid=pos.get("sl_cid"),
+                          attempted_new_sl=round(job["new_sl_price"], 2))
+                    try:
+                        self._bot3_force_close_market(
+                            sym=sym, pos=pos, reason="LADDER_NO_SL_WORKER",
+                        )
+                    except Exception as exc_fc:
+                        _emit("BOT3_LADDER_FORCE_CLOSE_EXCEPTION",
+                              sym=sym, palier=job["palier_idx"],
+                              exc_type=type(exc_fc).__name__,
+                              exc_msg=str(exc_fc)[:200])
+            except Exception as e:
+                _emit("BOT3_LADDER_WORKER_EXCEPTION",
+                      sym=sym, palier=job.get("palier_idx"),
+                      exc_type=type(e).__name__, exc_msg=str(e)[:200])
+            finally:
+                self._bot3_ladder_queue.task_done()
+
+    def _bot3_force_close_market(self, sym: str, pos: dict, reason: str) -> bool:
+        """FIX 19/05 (review agent Q3) — MARKET CLOSE force pour position sans SL.
+
+        Utilise apres `BOT3_LADDER_NO_SL_ALERT` quand `_bot3_modify_sl_via_dtc`
+        return False (modify ladder a echoue) : position broker est sans SL =
+        risque perte illimite si marche traverse adverse.
+
+        Sequence :
+          1. Query position broker via request_position_blocking
+          2. Si qty != 0 : Type 208 MARKET CLOSE OpenCloseTrade=2 opposite side
+          3. Register close_cid dans _bot3_cid_index pour routage fill
+          4. Type 209 SUBMIT_FLATTEN defense en profondeur
+
+        Args:
+            sym: symbol (NQ/ES/MGC)
+            pos: dict position (lu sous lock par caller)
+            reason: motif close ("LADDER_NO_SL", etc.)
+
+        Returns:
+            True si flatten envoye, False si DTC down ou query position fail.
+        """
+        try:
+            from bot3_config import TRADE_ACCOUNT_BOT3
+        except ImportError:
+            from CORE.bot3_config import TRADE_ACCOUNT_BOT3
+        try:
+            from dtc_connector import BUY as DTC_BUY, SELL as DTC_SELL
+        except ImportError:
+            from BOT.dtc_connector import BUY as DTC_BUY, SELL as DTC_SELL
+
+        if self.dtc is None or not self.dtc.connected:
+            _emit("BOT3_FORCE_CLOSE_DTC_DOWN",
+                  sym=sym, reason=reason,
+                  msg="DTC not connected — cannot force close")
+            return False
+
+        try:
+            contract = BOT_INSTRUMENTS[sym].contract
+        except (KeyError, AttributeError):
+            _emit("BOT3_FORCE_CLOSE_CONTRACT_LOOKUP_FAIL",
+                  sym=sym, reason=reason)
+            return False
+
+        # 1. Query position broker (anti race condition : peut etre deja flat
+        # si SL initial bracket avait fill avant le modify)
+        try:
+            qty = self.dtc.request_position_blocking(
+                contract, trade_account=TRADE_ACCOUNT_BOT3, timeout=2.0,
+            )
+        except Exception as e:
+            _emit("BOT3_FORCE_CLOSE_POS_QUERY_FAIL",
+                  sym=sym, reason=reason,
+                  exc=type(e).__name__, msg=str(e)[:200])
+            qty = None
+
+        if qty is None:
+            _emit("BOT3_FORCE_CLOSE_POS_TIMEOUT",
+                  sym=sym, reason=reason,
+                  msg="request_position_blocking timeout — proceed with anyway flatten")
+            # On envoie Type 209 quand meme (defense en profondeur) sans 208 specifique
+            qty = 0  # signal pour skip Type 208 mais faire Type 209
+            flush_log_code_no_pos = True  # FIX 19/05 (review agent patch 2)
+        else:
+            flush_log_code_no_pos = False
+
+        if qty != 0:
+            # 2. Type 208 MARKET CLOSE
+            n_to_close = abs(qty)
+            side_close = DTC_SELL if qty > 0 else DTC_BUY
+            import uuid as _uuid
+            close_cid = f"BOT3_FORCE_CLOSE_{sym[:2]}_{_uuid.uuid4().hex[:8]}"
+            self._bot3_cid_index[close_cid] = {
+                "sym": sym,
+                "type": "flatten",
+                "signal_id": pos.get("signal_id"),
+                "pos_snapshot": dict(pos),
+                "close_reason": reason,
+                "ts_iso": datetime.now(timezone.utc).isoformat(),
+            }
+            try:
+                self.dtc._send({
+                    "Type": 208, "Symbol": contract,
+                    "ClientOrderID": close_cid, "OrderType": 1,
+                    "BuySell": side_close, "Quantity": n_to_close,
+                    "TradeAccount": TRADE_ACCOUNT_BOT3, "IsAutomatedOrder": 1,
+                    "OpenCloseTrade": 2, "TimeInForce": 0,
+                })
+                _emit("BOT3_FORCE_CLOSE_SENT",
+                      sym=sym, reason=reason, close_cid=close_cid,
+                      qty=n_to_close)
+            except Exception as e:
+                _emit("BOT3_FORCE_CLOSE_FAIL",
+                      sym=sym, reason=reason, err=str(e)[:200])
+                self._bot3_cid_index.pop(close_cid, None)
+                return False
+
+        # 3. Type 209 SUBMIT_FLATTEN defense en profondeur (avec ClientOrderID)
+        flush_cid = f"BOT3_FORCE_FLUSH_{sym[:2]}_{int(time.time()) % 100000}"
+        try:
+            self.dtc._send({
+                "Type": 209, "ClientOrderID": flush_cid,
+                "Symbol": contract, "TradeAccount": TRADE_ACCOUNT_BOT3,
+                "Exchange": "CME", "IsAutomatedOrder": 1,
+            })
+            # FIX 19/05 (review agent patch 2) : log distinct selon contexte
+            # - NO_POS_QUERY : Type 209 envoye sans confirmation position broker
+            #   (request_position_blocking timeout) -> peut etre bruit log si
+            #   position deja flat. A monitorer J+7 : count > 5%/jour = DTC pb.
+            # - AFTER_CLOSE : Type 209 envoye apres Type 208 MARKET CLOSE
+            #   (cas nominal qty != 0).
+            if flush_log_code_no_pos:
+                _emit("BOT3_FORCE_FLUSH_NO_POS_QUERY",
+                      sym=sym, reason=reason, flush_cid=flush_cid,
+                      msg="Type 209 envoye sans confirmation position broker - "
+                          "request_position_blocking avait timeout. Bruit log "
+                          "acceptable si rare (<5%/jour).")
+            else:
+                _emit("BOT3_FORCE_FLUSH_AFTER_CLOSE",
+                      sym=sym, reason=reason, flush_cid=flush_cid)
+        except Exception as e:
+            _emit("BOT3_FORCE_FLUSH_FAIL",
+                  sym=sym, reason=reason, err=str(e)[:200])
+
+        return True
 
     def _bot3_modify_sl_via_dtc(self, sym: str, pos: dict, new_sl_price: float,
                                   palier_idx: int, lock_usd: float) -> bool:
@@ -1456,8 +2105,14 @@ class DatabentoPaperTraderV2:
             return False
 
         # STEP A : Cancel old SL via Type 203 (avec ServerOrderID + TradeAccount = fix H6)
+        # FIX 19/05 (incident #10 fix 1) : require_sid=True force return False si pas
+        # de SID dans tracking → SC ignorerait silencieusement, autant abort tout de suite
+        # pour eviter le state desync (vieux SL toujours Working broker, on update pos
+        # avec new_sl_cid qui n'existera jamais).
         try:
-            cancel_ok = self.dtc.cancel_order(old_sl_cid, trade_account=TRADE_ACCOUNT_BOT3)
+            cancel_ok = self.dtc.cancel_order(
+                old_sl_cid, trade_account=TRADE_ACCOUNT_BOT3, require_sid=True
+            )
         except Exception as e:
             _emit("BOT3_LADDER_CANCEL_EXCEPTION",
                   sym=sym, palier=palier_idx,
@@ -1468,7 +2123,7 @@ class DatabentoPaperTraderV2:
             _emit("BOT3_LADDER_CANCEL_FAILED",
                   sym=sym, palier=palier_idx,
                   old_sl_cid=old_sl_cid,
-                  msg="dtc.cancel_order returned False — ABORT modify")
+                  msg="dtc.cancel_order returned False (no SID OR not connected) — ABORT modify")
             return False
 
         # Fix #3 (code-reviewer 11/05) : cleanup OCO mapping ancien (bidirectionnel)
@@ -1525,9 +2180,17 @@ class DatabentoPaperTraderV2:
             from BOT.dtc_connector import STOP, BUY as DTC_BUY, SELL as DTC_SELL, DTC_MARKET_ORDER
 
         side_int = DTC_SELL if new_sl_side == "SELL" else DTC_BUY
-        quantity = int(pos.get("n_contracts", 3))
+        # 02/06 FIX C4 : default 3 -> GR config (fail-loud si pos sans n_contracts)
+        try:
+            from bot3_config import GUARD_RAILS_BOT3 as _GR_LADDER
+        except ImportError:
+            from CORE.bot3_config import GUARD_RAILS_BOT3 as _GR_LADDER
+        quantity = int(pos.get("n_contracts") or _GR_LADDER[sym]["n_contracts"])
 
         try:
+            # 10/06/2026 REVERT FIX C2 (cf BOT_CHANGELOG entry 2026-06-10) :
+            # Spec officielle DTC s_SubmitNewSingleOrder : Price1 = stop trigger
+            # pour OrderType=STOP (3). Pattern V1 valide Nov 2024.
             self.dtc._send({
                 "Type": DTC_MARKET_ORDER,
                 "Symbol": contract,
@@ -1535,13 +2198,20 @@ class DatabentoPaperTraderV2:
                 "OrderType": STOP,
                 "BuySell": side_int,
                 "Quantity": quantity,
-                "Price1": float(new_sl_price),
-                "StopPrice": float(new_sl_price),
+                "Price1": float(new_sl_price),       # SPEC : trigger price STOP
+                "Price2": 0.0,                        # Default explicite (non STOP_LIMIT)
+                "StopPrice": float(new_sl_price),    # Defensif compat
                 "TimeInForce": 0,
                 "TradeAccount": TRADE_ACCOUNT_BOT3,
                 "IsAutomatedOrder": 1,
                 "OpenCloseTrade": 2,
             })
+            # 01/06 LOG TRACEABILITY patch SL STOP no Price1
+            _emit("SL_STOP_PATCHED_V1",
+                  kind="sl_ladder",
+                  sl_cid=new_sl_cid,
+                  sl_price=float(new_sl_price),
+                  trade_account=TRADE_ACCOUNT_BOT3)
         except Exception as e:
             _emit("BOT3_LADDER_SEND_NEW_SL_EXCEPTION",
                   sym=sym, palier=palier_idx,
@@ -1555,6 +2225,113 @@ class DatabentoPaperTraderV2:
             if tp_cid:
                 self.dtc._oco_pairs.pop(tp_cid, None)
             return False
+
+        # STEP C.5 (FIX 19/05 incident #10 fix 2 + 3 + review agent R3+Q2) :
+        # VERIFY Type 300 post-send + register new_sl_cid dans _bot3_cid_index.
+        #
+        # 3 cas a distinguer (review agent code-reviewer 19/05 PM, Q2) :
+        #   (a) open_orders is None  -> lock timeout OU DTC slow -> ALERTE retry
+        #                                (garder pos["sl_cid"]=new_sl_cid optimiste,
+        #                                re-verify J+30s par caller suivant)
+        #   (b) open_orders = []      -> SC confirme aucun working order match contract
+        #                                = rejet broker silent -> CRITIQUE cleanup + force close
+        #   (c) open_orders contient new_sl_cid avec status 2/4 -> SUCCESS
+        #   (d) exception thrown      -> ALERTE retry (idem (a))
+        #
+        # Avant ce fix : (a), (b), (d) tous traites comme rejet broker = false-positive
+        # garanti (BOT3_LADDER_NEW_SL_NOT_WORKING CRITIQUE Discord + pos sans SL
+        # alors que SL etait peut-etre Working broker).
+        time.sleep(0.5)
+        verify_failed_exception = False
+        try:
+            open_orders = self.dtc.request_open_orders_blocking(
+                trade_account=TRADE_ACCOUNT_BOT3,
+                symbol_filter=contract,
+                timeout=2.0,
+            )
+        except Exception as e:
+            _emit("BOT3_LADDER_VERIFY_TYPE300_EXCEPTION",
+                  sym=sym, palier=palier_idx, new_sl_cid=new_sl_cid,
+                  exc=type(e).__name__, msg=str(e)[:200])
+            open_orders = None
+            verify_failed_exception = True
+
+        # Cas (c) : new_sl_cid trouve avec status Working -> SUCCESS
+        new_sl_working = False
+        if open_orders is not None:
+            for o in open_orders:
+                if o.get("ClientOrderID") == new_sl_cid:
+                    status = int(o.get("OrderStatus", 0))
+                    if status in (2, 4):  # Open or Working
+                        new_sl_working = True
+                    break
+
+        # Cas (a) ou (d) : open_orders is None -> ALERTE retry optimiste
+        if not new_sl_working and (open_orders is None):
+            _emit("BOT3_LADDER_NEW_SL_VERIFY_TIMEOUT",
+                  sym=sym, palier=palier_idx,
+                  new_sl_cid=new_sl_cid, new_sl_price=float(new_sl_price),
+                  exception_thrown=verify_failed_exception,
+                  msg="ALERTE : verify Type 300 retourne None (lock timeout ou DTC slow). "
+                      "Pos[sl_cid] garde new_sl_cid OPTIMISTE, watchdog T+30s declenche "
+                      "pour force re-verify (cf review agent patch 1).")
+            # Optimiste : on assume que le SL est Working, on continue STEP D
+            new_sl_working = True
+            # FIX 19/05 (review agent patch 1) : watchdog T+30s pour force
+            # re-verify position broker. Avant ce patch : strategie optimiste
+            # comptait sur le cycle suivant `_bot3_check_timeout` (jusqu'a
+            # 60 min) ou modify palier suivant pour detecter SL absent.
+            # Risque : pendant ces 60 min, position SANS SL broker = perte
+            # illimite si marche traverse adverse. Patch : Timer 30s lance
+            # un `_bot3_watchdog_verify_sl(sym, contract, new_sl_cid)` qui :
+            #   - request_position_blocking + request_open_orders_blocking
+            #   - Si SL absent broker -> _bot3_force_close_market
+            try:
+                import threading as _threading
+                wd_timer = _threading.Timer(
+                    30.0,
+                    self._bot3_watchdog_verify_sl,
+                    args=(sym, contract, new_sl_cid, float(new_sl_price), palier_idx),
+                )
+                wd_timer.daemon = True
+                wd_timer.start()
+            except Exception as e_wd:
+                _emit("BOT3_LADDER_WATCHDOG_SCHEDULE_FAIL",
+                      sym=sym, palier=palier_idx, new_sl_cid=new_sl_cid,
+                      exc_type=type(e_wd).__name__, msg=str(e_wd)[:200])
+
+        # Cas (b) : open_orders=[] ou liste sans new_sl_cid -> CRITIQUE
+        if not new_sl_working:
+            _emit("BOT3_LADDER_NEW_SL_NOT_WORKING",
+                  sym=sym, palier=palier_idx,
+                  new_sl_cid=new_sl_cid, new_sl_price=float(new_sl_price),
+                  open_orders_count=(len(open_orders) if open_orders else 0),
+                  msg="CRITIQUE : new SL ABSENT Type 300 (open_orders confirme vide ou sans "
+                      "new_sl_cid). SC a rejete silencieusement le STOP. ABORT modify, position "
+                      "SANS SL broker. Caller MARKET CLOSE force via _bot3_force_close_market.")
+            # Cleanup mapping pour eviter orphan
+            self.dtc._order_trade_accounts.pop(new_sl_cid, None)
+            self.dtc._oco_pairs.pop(new_sl_cid, None)
+            if tp_cid:
+                self.dtc._oco_pairs.pop(tp_cid, None)
+            # Marquer pos sans SL pour que caller detecte (pos["sl_cid"]=None)
+            with self._bot3_pos_lock:
+                pos["sl_cid"] = None
+            return False
+
+        # FIX 19/05 (fix 3) : register new_sl_cid dans _bot3_cid_index pour que
+        # _bot3_handle_dtc_fill puisse router le fill quand SL touch. Pattern
+        # aligne sur close_cid Type 208 ligne 781+.
+        self._bot3_cid_index[new_sl_cid] = {
+            "sym": sym,
+            "type": "ladder_sl",
+            "signal_id": pos.get("signal_id"),
+            "pos_snapshot": dict(pos),
+            "palier": palier_idx,
+            "ts_iso": datetime.now(timezone.utc).isoformat(),
+        }
+        # Cleanup old_sl_cid index entry (replace mapping)
+        self._bot3_cid_index.pop(old_sl_cid, None)
 
         # STEP D : Update pos avec new SL info (fix #7 : pas None pour eviter ORPHAN ALERT)
         with self._bot3_pos_lock:  # mini-lock juste pour update pos dict (pas DTC ops)
@@ -1603,6 +2380,51 @@ class DatabentoPaperTraderV2:
             # (anti-corruption croisee Bot 2/Bot 3 — patterns Bot 1).
             if self._bot3_handle_dtc_fill(msg, cid):
                 return  # cid Bot 3 traite, pas Bot 2
+
+            # PHASE G (23/05) : routing BN V4 D'ABORD apres Bot 3.
+            # Pattern parallel : si cid match BN V4 index, traite + return.
+            if self._bn_v4_trader is not None:
+                if self._bn_v4_trader._handle_dtc_fill_bn_v4(msg, cid):
+                    return  # cid BN V4 traite, pas Bot 2 V2 legacy
+
+            # PHASE I (02/06 SOIR) : routing BN V5 apres BN V4.
+            if self._bn_v5_trader is not None:
+                if self._bn_v5_trader._handle_dtc_fill_bn_v5(msg, cid):
+                    return  # cid BN V5 traite
+
+            # PHASE H (24/05) : routing Bot 3 v3/v4 paper apres BN V4.
+            # cid prefix "BOT3_V3" / "BOT3_V4" distingue de Bot 3 prod ("BOT3_NQ"/"BOT3_ES").
+            if self._bot3_v3_trader is not None:
+                # 🆕 08/06 — Snapshot pnl_session AVANT pour deriver delta apres fill close.
+                _pnl_before = float(getattr(self._bot3_v3_trader, "_pnl_session_usd", 0.0) or 0.0)
+                _absorbed = self._bot3_v3_trader.handle_dtc_fill(msg, cid)
+                if _absorbed:
+                    # 🆕 Hook daily_guard : on detecte le type de fill via delta pnl_session.
+                    # Parent fill = pnl_session inchange (delta=0) -> on_trade_open() pour
+                    # incrementer trade_count a l'INTENT (09/06 fix Mark Douglas Phase 2 :
+                    # garantit max_trades respecte meme si flatten externe / OCO orphan
+                    # / crash sans close DTC propre).
+                    # TP/SL fill = delta != 0 -> on_trade_close(pnl_usd, increment_count=False)
+                    # pour update cumul UNIQUEMENT (count deja fait au open).
+                    try:
+                        _pnl_after = float(getattr(self._bot3_v3_trader, "_pnl_session_usd", 0.0) or 0.0)
+                        _delta = _pnl_after - _pnl_before
+                        if abs(_delta) > 1e-9:
+                            # CLOSE detected (TP/SL fill computed pnl_usd)
+                            self._bot3_v3_daily_guard.on_trade_close(
+                                pnl_usd=_delta, increment_count=False,
+                            )
+                        else:
+                            # OPEN detected (parent fill, pnl_session inchange)
+                            self._bot3_v3_daily_guard.on_trade_open()
+                    except Exception as _e:
+                        _emit("PY_EXCEPTION_HOT_PATH",
+                              sym="?", fn_name="bot3_v3_daily_guard.on_trade_open_close",
+                              exc_type=type(_e).__name__, exc_msg=str(_e))
+                    return
+            if self._bot3_v4_trader is not None:
+                if self._bot3_v4_trader.handle_dtc_fill(msg, cid):
+                    return
 
             status = int(msg.get("OrderStatus", 0))
             if status != 7:  # pas Filled
@@ -1749,6 +2571,9 @@ class DatabentoPaperTraderV2:
                         cfg = TRAILING_CONFIG[sym]
                         new_sl_cid = f"MIA_SL_TR_{int(time.time() * 1000) % 100000}"
                         try:
+                            # 10/06/2026 REVERT FIX C3 (cf BOT_CHANGELOG entry 2026-06-10) :
+                            # Spec officielle DTC : Price1 = stop trigger STOP (3).
+                            # Pattern V1 valide Nov 2024 - belt-and-suspenders.
                             self.dtc._send({
                                 "Type": 208,
                                 "Symbol": contract,
@@ -1756,13 +2581,20 @@ class DatabentoPaperTraderV2:
                                 "OrderType": 3,  # STOP
                                 "BuySell": side_int,
                                 "Quantity": cfg["n_contracts"],
-                                "Price1": float(pos.trailing_stop_price),
-                                "StopPrice": float(pos.trailing_stop_price),
+                                "Price1": float(pos.trailing_stop_price),  # SPEC : trigger price
+                                "Price2": 0.0,                              # Default explicite
+                                "StopPrice": float(pos.trailing_stop_price), # Defensif compat
                                 "TimeInForce": 0,
                                 "TradeAccount": TRADE_ACCOUNT,
                                 "IsAutomatedOrder": 1,
                                 "OpenCloseTrade": 2,
                             })
+                            # 01/06 LOG TRACEABILITY patch SL STOP no Price1
+                            _emit("SL_STOP_PATCHED_V1",
+                                  kind="sl_trailing",
+                                  sl_cid=new_sl_cid,
+                                  sl_price=float(pos.trailing_stop_price),
+                                  trade_account=TRADE_ACCOUNT)
                             # Re-register OCO avec le nouveau SL CID
                             tp_cid = bracket.get("tp_cid")
                             if tp_cid and hasattr(self.dtc, "register_oco_pair"):
@@ -2047,6 +2879,18 @@ class DatabentoPaperTraderV2:
                     "n_trades": {"NQ": 0, "ES": 0, "MGC": 0},
                     "n_losses": {"NQ": 0, "ES": 0, "MGC": 0},
                 }
+                # 🆕 08/06 — DailyLimitsGuard rollover (Mark Douglas souverain).
+                # Reset cumul_pnl + trade_count + triggers pour Bot 3 MP et Bot 3 v3.
+                try:
+                    self._bot3_mp_daily_guard.rollover_if_needed(cur_day)
+                except Exception as _e:
+                    _emit("GENERIC_MAJEUR",
+                          msg=f"bot3_mp_daily_guard rollover exception : {_e!r}")
+                try:
+                    self._bot3_v3_daily_guard.rollover_if_needed(cur_day)
+                except Exception as _e:
+                    _emit("GENERIC_MAJEUR",
+                          msg=f"bot3_v3_daily_guard rollover exception : {_e!r}")
             self.bot3_trading_day = cur_day
 
     def _compute_last_bar_age(self) -> float:
@@ -2136,8 +2980,9 @@ class DatabentoPaperTraderV2:
                 "direction": pos.get("side"),
                 "level": pos.get("level"),
                 "action": pos.get("action"),
-                "n_contracts": pos.get("n_contracts", 3),
-                "n_micros": pos.get("n_contracts", 3),  # alias compat Bot 2 V2
+                # 02/06 FIX C4 : default 3 -> 1 (journal/log : log la valeur reelle ou 1 fallback safe)
+                "n_contracts": pos.get("n_contracts") or 1,
+                "n_micros": pos.get("n_contracts") or 1,  # alias compat Bot 2 V2
                 "entry_price": pos.get("entry_price"),
                 "exit_price": float(exit_price) if exit_price is not None else None,
                 "outcome": reason,
@@ -2173,6 +3018,17 @@ class DatabentoPaperTraderV2:
             except Exception as e:
                 _emit("PY_EXCEPTION_HOT_PATH",
                       sym=sym, fn_name="_bot3_risk.on_trade_close",
+                      exc_type=type(e).__name__, exc_msg=str(e))
+
+            # 🆕 08/06 — DailyLimitsGuard update Bot 3 MP (Mark Douglas souverain).
+            # Update cumul_pnl + trade_count + persist. Cross seuil -> emit CRITIQUE.
+            try:
+                self._bot3_mp_daily_guard.on_trade_close(
+                    pnl_usd=None if pnl_dollars is None else float(pnl_dollars)
+                )
+            except Exception as e:
+                _emit("PY_EXCEPTION_HOT_PATH",
+                      sym=sym, fn_name="bot3_mp_daily_guard.on_trade_close",
                       exc_type=type(e).__name__, exc_msg=str(e))
         except Exception as e:
             _emit("PY_EXCEPTION_HOT_PATH",
@@ -2471,6 +3327,124 @@ class DatabentoPaperTraderV2:
             from CORE.bot3_config import TRADE_ACCOUNT_BOT3, GUARD_RAILS_BOT3
 
         sym = signal.symbol
+
+        # 🆕 08/06 — DailyLimitsGuard Bot 3 MP (Mark Douglas souverain).
+        # Premier filtre absolu : kill switch $200 / +$150 / 5 trades.
+        # Reversible via MIA_DAILY_LIMITS_ENABLED=0.
+        try:
+            allow_dl, reason_dl = self._bot3_mp_daily_guard.check_allow(sym)
+        except Exception as _e:
+            allow_dl, reason_dl = True, ""  # fail-OPEN safety
+            _emit("GENERIC_MAJEUR",
+                  msg=f"bot3_mp_daily_guard.check_allow exception : {_e!r}")
+        if not allow_dl:
+            _emit("BOT3_DAILY_LIMITS_BLOCK",
+                  sym=sym, side=signal.side,
+                  level=signal.level_name, reason=reason_dl,
+                  bot_id="bot3_mp")
+            return False
+
+        # 🆕 09/06 — FIX #54 Veto ATR Bot 1 Continuation (Jackson valide).
+        # Aligne avec mia_paper_trader.py STEP 2 VOL_VETO_HIGH_ATR.
+        # Incident 08/06 19:08 NQ ATR=580t > limit 400t -> -$500 + slippage 75t = -$875.
+        # Pattern systemique slippage 70-83t P95 sur ATR extreme (BUG #16 audit).
+        # Reversible via env vars : BOT3_VOL_VETO_ATR_ENABLED=0 ou per-sym BOT3_MAX_ATR_TICKS_NQ=999.
+        _bot3_vol_veto_enabled = os.environ.get("BOT3_VOL_VETO_ATR_ENABLED", "1") == "1"
+        if _bot3_vol_veto_enabled:
+            _max_atr_ticks_bot3 = {
+                "NQ": int(os.environ.get("BOT3_MAX_ATR_TICKS_NQ", "400")),
+                "ES": int(os.environ.get("BOT3_MAX_ATR_TICKS_ES", "100")),
+                "MGC": int(os.environ.get("BOT3_MAX_ATR_TICKS_MGC", "50")),
+            }
+            _atr_now = None
+            try:
+                _bar_vol = getattr(signal, "bar_at_touch", None) or {}
+                _atr_raw = _bar_vol.get("atr")
+                if _atr_raw is not None:
+                    _atr_now = float(_atr_raw)
+                    if _atr_now != _atr_now:  # NaN
+                        _atr_now = None
+            except (TypeError, ValueError):
+                _atr_now = None
+            if _atr_now is not None and _atr_now > 0:
+                _max_atr = _max_atr_ticks_bot3.get(sym, 0)
+                if _max_atr > 0 and _atr_now > _max_atr:
+                    _emit("BOT3_VOL_VETO_HIGH_ATR",
+                          sym=sym, side=signal.side,
+                          level=signal.level_name,
+                          atr_ticks=int(_atr_now), limit_ticks=_max_atr,
+                          signal_id=getattr(signal, "signal_id", None))
+                    return False
+
+        # 🆕 09/06 — FIX #55 SL Min ATR-aware Bot 1 Continuation (Jackson valide TOUS bots).
+        # Si sl_ticks calcule < sl_min_eff (max(SL_MIN, atr*0.10)) -> etendre + recalculer sl_price.
+        # Reversible via env var SLTP_SL_MIN_ATR_AWARE_ENABLED=0.
+        # Risque WYCKOFF : SL etendu peut traverser un autre niveau structurel.
+        # Mitigation : Couche 1 (veto ATR fix #54) bloque deja les cas ATR extreme.
+        try:
+            from CORE.mia_sltp import get_sl_min_atr_aware as _get_sl_min_atr_aware
+        except ImportError:
+            _get_sl_min_atr_aware = None
+        if (_get_sl_min_atr_aware is not None
+            and _atr_now is not None and _atr_now > 0
+            and hasattr(signal, "sl_ticks") and hasattr(signal, "sl_price")
+            and hasattr(signal, "entry_price")):
+            try:
+                _sl_ticks_orig = float(signal.sl_ticks or 0)
+                if _sl_ticks_orig > 0:
+                    _sl_min_eff = _get_sl_min_atr_aware(sym, _atr_now)
+                    if _sl_ticks_orig < _sl_min_eff:
+                        # Recalculer sl_price avec sl_eff (etendu derriere entry)
+                        _dir_sign = 1 if signal.side == "LONG" else -1
+                        try:
+                            from bot3_config import GUARD_RAILS_BOT3 as _GR_BOT3
+                        except ImportError:
+                            from CORE.bot3_config import GUARD_RAILS_BOT3 as _GR_BOT3
+                        _tick_size = float(_GR_BOT3.get(sym, {}).get("tick_size", 0.25))
+                        _new_sl_price = float(signal.entry_price) - _dir_sign * _sl_min_eff * _tick_size
+                        _emit("BOT3_SL_MIN_ATR_EXTENDED",
+                              sym=sym, side=signal.side,
+                              sl_orig_ticks=int(_sl_ticks_orig),
+                              sl_eff_ticks=int(_sl_min_eff),
+                              atr_ticks=int(_atr_now),
+                              signal_id=getattr(signal, "signal_id", None))
+                        signal.sl_ticks = int(_sl_min_eff)
+                        signal.sl_price = round(_new_sl_price, 4)
+            except Exception as _e:
+                _emit("GENERIC_MAJEUR",
+                      msg=f"sl_min_atr_aware exception : {_e!r}")
+
+        # 29/05/2026 FIX Jackson : SLOPE ALIGNMENT GATE (filter VSLP_10 directionnel).
+        # Backtest 62 trades 25-29/05 : 0 wins tues, 7 losses bloques, delta +$622.
+        # Sauve le pire trade backtest (-$296 ES SHORT 28/05 contre uptrend).
+        # Regle simple : LONG si vwap_slope_10 > 0, SHORT si < 0.
+        # Kill switch env var BOT1_SLOPE_FILTER_DISABLE=1 pour rollback runtime.
+        if os.environ.get("BOT1_SLOPE_FILTER_DISABLE", "0") != "1":
+            bar = getattr(signal, "bar_at_touch", None) or {}
+            vslp = bar.get("vwap_slope_10")
+            try:
+                vslp = float(vslp) if vslp is not None else None
+                if vslp is not None and (vslp != vslp):  # NaN check
+                    vslp = None
+            except (ValueError, TypeError):
+                vslp = None
+            if vslp is None:
+                _emit("BOT1_SLOPE_GATE_BYPASS_NO_DATA",
+                      sym=sym, side=signal.side, level=signal.level_name,
+                      signal_id=getattr(signal, "signal_id", None))
+            else:
+                if signal.side == "LONG" and vslp <= 0:
+                    _emit("BOT1_SLOPE_GATE_VETO_LONG_AGAINST_DOWNTREND",
+                          sym=sym, side=signal.side, level=signal.level_name,
+                          vslp=round(vslp, 4),
+                          signal_id=getattr(signal, "signal_id", None))
+                    return False
+                if signal.side == "SHORT" and vslp >= 0:
+                    _emit("BOT1_SLOPE_GATE_VETO_SHORT_AGAINST_UPTREND",
+                          sym=sym, side=signal.side, level=signal.level_name,
+                          vslp=round(vslp, 4),
+                          signal_id=getattr(signal, "signal_id", None))
+                    return False
 
         # 07/05 GATE COOLDOWN + CIRCUIT BREAKER (Jackson directive)
         # Aligne Bot 1 (mia_paper_trader.py:1260-1272) + Bot 2 (databento_paper_trader.py:442-456).
@@ -3018,6 +3992,16 @@ class DatabentoPaperTraderV2:
                 "n_go_today": self.bot3_counters_today["n_go"],
                 "n_skip_today": self.bot3_counters_today["n_skip"],
                 "n_veto_today": self.bot3_counters_today["n_veto"],
+                # 08/06 — DailyLimitsGuard snapshot Bot 3 MP + Bot 3 v3.
+                # Dashboard / api/admin/health peuvent lire cumul + triggers + seuils.
+                "daily_limits_mp": (
+                    self._bot3_mp_daily_guard.snapshot()
+                    if hasattr(self, "_bot3_mp_daily_guard") else None
+                ),
+                "daily_limits_v3": (
+                    self._bot3_v3_daily_guard.snapshot()
+                    if hasattr(self, "_bot3_v3_daily_guard") else None
+                ),
                 # NOTE 06/05 (refacto Plan agent GO) : closed_today retire du state.json.
                 # Lecture via journal append-only `{cme_day}_databento_v3_trades.jsonl`
                 # cote dashboard (pattern Bot 1/2). Source de verite unique = fichier.
@@ -3060,6 +4044,19 @@ class DatabentoPaperTraderV2:
               tier2=BOT3_ENABLE_TIER2,
               tier3=BOT3_ENABLE_TIER3,
               observe=BOT3_OBSERVE_ONLY)
+        # 04/06/2026 Jackson - Emit boot log blacklist MP (Q5 review code-reviewer).
+        # Tracability config J+1 : grep BOT3_MP_BLACKLIST_LOADED pour confirmer
+        # deploiement + voir levels retires. enabled=True default, rollback via
+        # bot3_config.BOT3_MP_LEVEL_BLACKLIST_ENABLED.
+        try:
+            from bot3_level_definitions import BACKTEST_BLACKLIST_MP
+        except ImportError:
+            from CORE.bot3_level_definitions import BACKTEST_BLACKLIST_MP
+        _emit("BOT3_MP_BLACKLIST_LOADED",
+              enabled=BOT3_MP_LEVEL_BLACKLIST_ENABLED,
+              levels=list(BACKTEST_BLACKLIST_MP.keys()),
+              n_levels=len(BACKTEST_BLACKLIST_MP),
+              pnl_evite_usd=10285)
 
         # 11/05 J3 FIX BUG COOLDOWN : restore _bot3_risk state depuis JSON.
         # Sans ce fix, restart Bot 3 -> last_close_time={} -> cooldown 15min
@@ -3091,12 +4088,210 @@ class DatabentoPaperTraderV2:
         last_persist = 0
         last_heartbeat = 0
         while not self._stop.is_set():
+            # FIX 19/05 PM (Jackson "bouton FLATTEN") : check flatten flags per-bot per-symbol
+            # AVANT _check_stop_flags pour pouvoir flatten 1 trade specifique sans
+            # stopper le bot entier. Format : FLATTEN_{2|3}_{NQ|ES|MGC}.flag JSON.
+            for sym_flag in ("NQ", "ES", "MGC"):
+                # Bot 2 = self.positions (Bot 2 V2 SetupEngine tracked ici).
+                # FIX 19/05 nuit (Jackson "FLATTEN MANUEL A PAS FONCTOINNER SUR LE BOT 2") :
+                # le service MIA-Brain-V6 (mia2_brain_v6_databento.py) lit aussi ce flag
+                # pour son Bot 2 V6 tracking. Convention partagee : process avec
+                # self.positions[sym]!=None traite + delete, sinon LAISSE pour l'autre.
+                # TTL FLATTEN_FLAG_TTL_SEC = cleanup defensif si aucun process ne
+                # traite (cas "Flatten all" qui cree NQ/MGC flags inutiles).
+                # Avant ce fix : paper_v2 ramassait le flag en premier (boucle 30s plus
+                # rapide que Brain-V6), voyait self.positions[sym]=None car Bot 2 V2 n'a
+                # pas la position, supprimait le flag → Brain-V6 ne le voyait jamais.
+                if sym_flag in SYMBOLS:
+                    bot2_flag_path = FLATTEN_FLAG_DIR / BOT2_FLATTEN_FLAG_PATTERN.format(symbol=sym_flag)
+                    if bot2_flag_path.exists():
+                        # TTL check : flag expire (>FLATTEN_FLAG_TTL_SEC) = stale, delete defensif
+                        flag_age_sec = -1.0
+                        flag_stale = False
+                        try:
+                            with open(bot2_flag_path, "r", encoding="utf-8") as f:
+                                flag_data = json.load(f)
+                            flag_ts_str = flag_data.get("timestamp", "")
+                            flag_ts = datetime.fromisoformat(flag_ts_str.replace("Z", "+00:00"))
+                            flag_age_sec = (datetime.now(timezone.utc) - flag_ts).total_seconds()
+                            if flag_age_sec > FLATTEN_FLAG_TTL_SEC:
+                                flag_stale = True
+                        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+                            flag_stale = True  # corrompu = delete defensif
+                        if flag_stale:
+                            try:
+                                bot2_flag_path.unlink()
+                            except OSError:
+                                pass
+                            _emit("BOT2_FLATTEN_MANUAL_FLAG_STALE",
+                                  sym=sym_flag, age_sec=round(flag_age_sec, 1))
+                        else:
+                            try:
+                                if self.positions.get(sym_flag) is not None:
+                                    bar = load_last_bar(sym_flag)
+                                    if bar is not None:
+                                        flatten_price = float(bar["close"])
+                                        self._close_position(sym_flag, flatten_price,
+                                                              "FLATTEN_MANUAL",
+                                                              datetime.now(timezone.utc).isoformat())
+                                        _emit("BOT2_FLATTEN_MANUAL_EXECUTED",
+                                              sym=sym_flag, price=flatten_price)
+                                        try:
+                                            bot2_flag_path.unlink()
+                                        except OSError:
+                                            pass
+                                # else: pas de position trackee paper_v2 (= Bot 2 V2
+                                # SetupEngine vide) → LAISSE le flag pour service
+                                # MIA-Brain-V6 (Bot 2 V6). NE PAS unlink ici
+                                # (regression 19/05 PM corrigee 19/05 nuit).
+                                # Si Brain-V6 ne traite pas non plus, le TTL le GC-era.
+                            except Exception as exc_b2:
+                                _emit("BOT2_FLATTEN_MANUAL_EXCEPTION",
+                                      sym=sym_flag, exc_type=type(exc_b2).__name__,
+                                      exc_msg=str(exc_b2)[:200])
+
+                # FLATTEN_1_*.flag : Bot 1 = Sim1 (Bot 1 v3 NQ Wyckoff + Bot 1 MP ES/MGC dip)
+                # 03/06 FIX P1.review : TTL check + emit defensif (pattern Bot 2 ligne 3917+)
+                if sym_flag in SYMBOLS_BOT3:
+                    bot1_flag_path = FLATTEN_FLAG_DIR / BOT1_FLATTEN_FLAG_PATTERN.format(symbol=sym_flag)
+                    if bot1_flag_path.exists():
+                        # TTL check : flag expire (>FLATTEN_FLAG_TTL_SEC) = stale, delete defensif
+                        flag_age_sec = -1.0
+                        flag_stale = False
+                        try:
+                            with open(bot1_flag_path, "r", encoding="utf-8") as f:
+                                flag_data = json.load(f)
+                            flag_ts_str = flag_data.get("timestamp", "")
+                            flag_ts = datetime.fromisoformat(flag_ts_str.replace("Z", "+00:00"))
+                            flag_age_sec = (datetime.now(timezone.utc) - flag_ts).total_seconds()
+                            if flag_age_sec > FLATTEN_FLAG_TTL_SEC:
+                                flag_stale = True
+                        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+                            flag_stale = True  # corrompu = delete defensif
+                        if flag_stale:
+                            try:
+                                bot1_flag_path.unlink()
+                            except OSError:
+                                pass
+                            _emit("BOT1_FLATTEN_MANUAL_FLAG_STALE",
+                                  sym=sym_flag, age_sec=round(flag_age_sec, 1))
+                        else:
+                            flag_consumed = False
+                            # 1. Bot 1 MP (ES/MGC/NQ dip via self._bot3_positions)
+                            try:
+                                with self._bot3_pos_lock:
+                                    pos_mp = self._bot3_positions.get(sym_flag)
+                                if pos_mp is not None:
+                                    try:
+                                        self._bot3_force_close_market(
+                                            sym=sym_flag, pos=pos_mp, reason="FLATTEN_MANUAL",
+                                        )
+                                        _emit("BOT3_FLATTEN_MANUAL_EXECUTED",
+                                              sym=sym_flag, level=pos_mp.get("level", "?"),
+                                              signal_id=pos_mp.get("signal_id"))
+                                        flag_consumed = True
+                                    except Exception as exc_b1mp:
+                                        _emit("BOT3_FLATTEN_MANUAL_EXCEPTION",
+                                              sym=sym_flag, exc_type=type(exc_b1mp).__name__,
+                                              exc_msg=str(exc_b1mp)[:200])
+                            except Exception as exc_lock:
+                                # FIX P1.review BUG #5 : remplace silent fallback "except: pass"
+                                _emit("BOT3_FLATTEN_MANUAL_EXCEPTION",
+                                      sym=sym_flag, exc_type=type(exc_lock).__name__,
+                                      exc_msg=f"lock_acquire_failed: {str(exc_lock)[:200]}")
+                            # 2. Bot 1 v3 (NQ Wyckoff via self._bot3_v3_trader._position)
+                            if self._bot3_v3_trader is not None and sym_flag == "NQ":
+                                try:
+                                    pos_v3 = self._bot3_v3_trader._position.get(sym_flag)
+                                    if pos_v3 is not None:
+                                        self._bot3_v3_trader._force_close_position(
+                                            sym=sym_flag, pos=pos_v3, reason="FLATTEN_MANUAL",
+                                        )
+                                        # FIX P1.review BUG #8 : emit EXECUTED (manquait)
+                                        _emit("BOT3_V3_FLATTEN_MANUAL_EXECUTED",
+                                              sym=sym_flag, level=pos_v3.get("level_name", "?"),
+                                              signal_id=pos_v3.get("signal_id"))
+                                        flag_consumed = True
+                                except Exception as exc_b1v3:
+                                    _emit("BOT3_V3_FLATTEN_MANUAL_EXCEPTION",
+                                          sym=sym_flag, exc_type=type(exc_b1v3).__name__,
+                                          exc_msg=str(exc_b1v3)[:200])
+                            # Cleanup flag dans tous les cas
+                            try:
+                                bot1_flag_path.unlink()
+                            except OSError:
+                                pass
+                            if not flag_consumed:
+                                _emit("BOT1_FLATTEN_FLAG_NO_POS",
+                                      sym=sym_flag, msg="Aucune position MP ou v3 a fermer")
+
+                # FLATTEN_3_*.flag : Bot 3 v4 = Sim3 (NQ data-driven)
+                # 03/06 FIX P1.review : TTL check + emit defensif (pattern Bot 2)
+                if sym_flag in SYMBOLS_BOT3:
+                    bot3v4_flag_path = FLATTEN_FLAG_DIR / BOT3_FLATTEN_FLAG_PATTERN.format(symbol=sym_flag)
+                    if bot3v4_flag_path.exists():
+                        # TTL check (pattern Bot 2)
+                        flag_age_sec_v4 = -1.0
+                        flag_stale_v4 = False
+                        try:
+                            with open(bot3v4_flag_path, "r", encoding="utf-8") as f:
+                                flag_data_v4 = json.load(f)
+                            flag_ts_str_v4 = flag_data_v4.get("timestamp", "")
+                            flag_ts_v4 = datetime.fromisoformat(flag_ts_str_v4.replace("Z", "+00:00"))
+                            flag_age_sec_v4 = (datetime.now(timezone.utc) - flag_ts_v4).total_seconds()
+                            if flag_age_sec_v4 > FLATTEN_FLAG_TTL_SEC:
+                                flag_stale_v4 = True
+                        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+                            flag_stale_v4 = True
+                        if flag_stale_v4:
+                            try:
+                                bot3v4_flag_path.unlink()
+                            except OSError:
+                                pass
+                            _emit("BOT3_V4_FLATTEN_MANUAL_FLAG_STALE",
+                                  sym=sym_flag, age_sec=round(flag_age_sec_v4, 1))
+                        else:
+                            flag_consumed_v4 = False
+                            if self._bot3_v4_trader is not None and sym_flag == "NQ":
+                                try:
+                                    pos_v4 = self._bot3_v4_trader._position.get(sym_flag)
+                                    if pos_v4 is not None:
+                                        self._bot3_v4_trader._force_close_position(
+                                            sym=sym_flag, pos=pos_v4, reason="FLATTEN_MANUAL",
+                                        )
+                                        _emit("BOT3_V4_FLATTEN_MANUAL_EXECUTED",
+                                              sym=sym_flag, level=pos_v4.get("level_name", "?"),
+                                              signal_id=pos_v4.get("signal_id"))
+                                        flag_consumed_v4 = True
+                                except Exception as exc_b3v4:
+                                    _emit("BOT3_V4_FLATTEN_MANUAL_EXCEPTION",
+                                          sym=sym_flag, exc_type=type(exc_b3v4).__name__,
+                                          exc_msg=str(exc_b3v4)[:200])
+                            try:
+                                bot3v4_flag_path.unlink()
+                            except OSError:
+                                pass
+                            if not flag_consumed_v4:
+                                _emit("BOT3_V4_FLATTEN_FLAG_NO_POS",
+                                      sym=sym_flag, msg="Aucune position Bot 3 v4 a fermer")
+
             # Check STOP flags
             stop_reason = self._check_stop_flags()
             if stop_reason:
-                _emit("BOT_KILL_SWITCH_ACTIVATED", n_closed=0)
-                print(f"[KILL] {stop_reason}")
-                # Flatten positions ouvertes
+                # FIX 19/05 (incident #10) : compter les positions Bot 2 V6 ET Bot 3 MP
+                # AVANT flatten pour log n_closed exact. Avant ce fix, n_closed=0
+                # systematiquement car la boucle iter self.positions (Bot 2) mais
+                # ignorait self._bot3_positions (Bot 3) -> orphelins potentiels.
+                n_bot2 = sum(1 for sym in SYMBOLS if self.positions[sym] is not None)
+                n_bot3 = sum(1 for sym in SYMBOLS_BOT3
+                             if self._bot3_positions.get(sym) is not None)
+                _emit("BOT_KILL_SWITCH_ACTIVATED",
+                      n_closed=0,  # actualise post-flatten ci-dessous
+                      n_bot2_open=n_bot2, n_bot3_open=n_bot3)
+                print(f"[KILL] {stop_reason} | bot2_open={n_bot2} bot3_open={n_bot3}")
+
+                # Flatten positions Bot 2 V6 (self.positions, ancien comportement)
+                bot2_closed = 0
                 for sym in SYMBOLS:
                     if self.positions[sym] is not None:
                         bar = load_last_bar(sym)
@@ -3104,9 +4299,103 @@ class DatabentoPaperTraderV2:
                             self._close_position(sym, float(bar["close"]),
                                                   "KILL_SWITCH",
                                                   datetime.now(timezone.utc).isoformat())
+                            bot2_closed += 1
+
+                # FIX 19/05 (incident #10) : Flatten positions Bot 3 MP via
+                # _bot3_check_timeout(force=True) qui applique la sequence
+                # anti-orphelin V2 complete (steps 1-9 cf orphan-prevention.md) :
+                # cancel TP/SL + verify position + MARKET CLOSE + Type 209/210 +
+                # verify post-cleanup. Reutilise la logique existante au lieu de
+                # dupliquer (DRY + safer).
+                bot3_open_before = n_bot3
+                try:
+                    self._bot3_check_timeout(force=True)
+                except Exception as e:
+                    _emit("BOT3_KILL_SWITCH_FLATTEN_EXCEPTION",
+                          exc_type=type(e).__name__, exc_msg=str(e)[:200])
+                bot3_open_after = sum(1 for sym in SYMBOLS_BOT3
+                                       if self._bot3_positions.get(sym) is not None)
+                bot3_closed = bot3_open_before - bot3_open_after
+
+                _emit("BOT_KILL_SWITCH_FLATTEN_DONE",
+                      n_closed_total=bot2_closed + bot3_closed,
+                      bot2_closed=bot2_closed, bot3_closed=bot3_closed,
+                      bot3_remaining=bot3_open_after)
+                if bot3_open_after > 0:
+                    _emit("BOT_KILL_SWITCH_BOT3_RESIDUAL_ORPHAN_RISK",
+                          remaining=bot3_open_after,
+                          remaining_syms=[s for s in SYMBOLS_BOT3
+                                          if self._bot3_positions.get(s) is not None])
                 break
 
             self.poll_cycle()
+
+            # PHASE G (23/05) : poll BN V4 paper trader (Bot 2 V3) si actif.
+            # Tourne en parallele de Bot 2 V2 SetupEngine (legacy, sera retire
+            # quand BN V4 valide) et Bot 3 MP. Fail-soft : si exception, log
+            # mais ne tue pas le bot.
+            if self._bn_v4_trader is not None:
+                try:
+                    self._bn_v4_trader.poll_cycle()
+                except Exception as e:
+                    _emit("BN_V4_LOOP_ERROR",
+                          sym="?",
+                          err=f"poll_cycle_outer_exc: {type(e).__name__}: {str(e)[:300]}")
+
+            # PHASE I (02/06 SOIR) : poll BN V5 paper trader si actif.
+            # BN V5 = paradigme swing V/W + trailing Dow (remplace V4 mal aligne).
+            if self._bn_v5_trader is not None:
+                try:
+                    self._bn_v5_trader.poll_cycle()
+                except Exception as e:
+                    _emit("BN_V5_LOOP_ERROR",
+                          sym="?",
+                          err=f"poll_cycle_outer_exc: {type(e).__name__}: {str(e)[:300]}")
+
+            # PHASE H (24/05) : poll Bot 3 v3/v4 paper traders si actifs.
+            # Tournent en parallele de Bot 3 MP prod (legacy a freeze) et BN V4.
+            # Fail-soft : crash sur l'un ne tue pas les autres.
+            if self._bot3_v3_trader is not None:
+                # 🆕 08/06 — Synchronise daily_guard -> _kill_switch_active.
+                # On NE veut PAS modifier le module Bot3V3ContinuationPaper (fragile,
+                # touche par plusieurs streams) -> on injecte le veto via le
+                # kill_switch_active interne, qu'il check deja en debut de poll_cycle.
+                # Cf bot3_v3_continuation_paper.py:240 (if self._kill_switch_active: return).
+                try:
+                    _allow_v3, _reason_v3 = self._bot3_v3_daily_guard.check_allow("NQ")
+                    if not _allow_v3:
+                        # Active le kill switch interne du Bot3V3 (idempotent : si deja
+                        # active pour autre raison, on overwrite reason avec daily_limits).
+                        prev_ks = getattr(self._bot3_v3_trader, "_kill_switch_active", False)
+                        self._bot3_v3_trader._kill_switch_active = True
+                        self._bot3_v3_trader._kill_switch_reason = f"daily_limits:{_reason_v3}"
+                        if not prev_ks:
+                            _emit("BOT3_V3_DAILY_LIMITS_BLOCK",
+                                  sym="*", side="*", level="*",
+                                  reason=_reason_v3)
+                    else:
+                        # Daily limits OK : si kill switch etait active POUR daily_limits,
+                        # on le release (rollover ou trigger flip = repassage day +
+                        # cumul). On NE touche PAS au kill switch si raison autre
+                        # (max_dd_session_exceeded, manual stop, etc).
+                        ks_reason = getattr(self._bot3_v3_trader, "_kill_switch_reason", "")
+                        if (ks_reason or "").startswith("daily_limits:"):
+                            self._bot3_v3_trader._kill_switch_active = False
+                            self._bot3_v3_trader._kill_switch_reason = None
+                except Exception as e:
+                    _emit("BOT3_V3_LOOP_ERROR", sym="*",
+                          err=f"daily_guard_sync_exc: {type(e).__name__}: {str(e)[:200]}")
+                try:
+                    self._bot3_v3_trader.poll_cycle()
+                except Exception as e:
+                    _emit("BOT3_V3_LOOP_ERROR", sym="?",
+                          err=f"poll_cycle_outer_exc: {type(e).__name__}: {str(e)[:300]}")
+            if self._bot3_v4_trader is not None:
+                try:
+                    self._bot3_v4_trader.poll_cycle()
+                except Exception as e:
+                    _emit("BOT3_V4_LOOP_ERROR", sym="?",
+                          err=f"poll_cycle_outer_exc: {type(e).__name__}: {str(e)[:300]}")
 
             # Persist state.json toutes les 30s (Bot 2 V2 + Bot 3 MP)
             now = time.time()
@@ -3179,6 +4468,37 @@ class DatabentoPaperTraderV2:
             _emit("PY_EXCEPTION_HOT_PATH",
                   sym="bot3", fn_name="shutdown_close_log",
                   exc_type=type(e).__name__, exc_msg=str(e))
+
+        # PHASE G (23/05) : shutdown BN V4 trader avant disconnect DTC pour
+        # benefice de la sequence anti-orphelin V2 (cancel + flatten + verify).
+        if self._bn_v4_trader is not None:
+            try:
+                self._bn_v4_trader.shutdown(reason="paper_v2_stop_signal")
+            except Exception as e:
+                _emit("BN_V4_LOOP_ERROR",
+                      sym="?",
+                      err=f"shutdown_exc: {type(e).__name__}: {str(e)[:200]}")
+        if self._bn_v5_trader is not None:
+            try:
+                self._bn_v5_trader.shutdown(reason="paper_v2_stop_signal")
+            except Exception as e:
+                _emit("BN_V5_LOOP_ERROR",
+                      sym="?",
+                      err=f"shutdown_exc: {type(e).__name__}: {str(e)[:200]}")
+
+        # PHASE H (24/05) : shutdown Bot 3 v3/v4 idem (anti-orphan V2 sequence).
+        if self._bot3_v3_trader is not None:
+            try:
+                self._bot3_v3_trader.shutdown(reason="paper_v2_stop_signal")
+            except Exception as e:
+                _emit("BOT3_V3_LOOP_ERROR", sym="?",
+                      err=f"shutdown_exc: {type(e).__name__}: {str(e)[:200]}")
+        if self._bot3_v4_trader is not None:
+            try:
+                self._bot3_v4_trader.shutdown(reason="paper_v2_stop_signal")
+            except Exception as e:
+                _emit("BOT3_V4_LOOP_ERROR", sym="?",
+                      err=f"shutdown_exc: {type(e).__name__}: {str(e)[:200]}")
 
         _emit("BOT_SHUTDOWN", reason="stop_signal")
         if self.dtc and not self.dry_run:

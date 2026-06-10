@@ -62,6 +62,467 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-10 07:30 — REVERT Price1 SL STOP (5 sites) — patch 01/06 etait base sur fausse affirmation spec DTC
+
+**Categorie** : FIX + ROLLBACK (patch 01/06)
+**Impact prod** : PAPER (TOUS bots actifs : Bot 1 PAPER + Bot 3 v3/v4/MP + Bot 4 + BN V4 + BN V5)
+**Fichier(s)** :
+- `BOT/dtc_connector.py:461-483` — SL STOP initial bracket + STOP_LIMIT mode ON corrige (C1+C5)
+- `CORE/databento_paper_trader_v2.py:2195-2208` — Bot 3 v3 ladder promotion BE (C2)
+- `CORE/databento_paper_trader_v2.py:2577-2590` — Bot 4 MIA Trader trailing (C3)
+- `CORE/bn_v4_paper.py:1076-1089` — BN V4 recharge SL (C4)
+- `tests/test_dtc_stop_no_price1.py` SUPPRIME → remplace par `tests/test_dtc_stop_with_price1.py` (asserts inverses)
+
+**Reviewer(s) agent** : code-reviewer (40 min audit 5 sites + spec officielle Sierra Chart) + market-analyst (bars Databento validation)
+
+### Quoi
+Re-introduction de `Price1=sl_price` + `Price2=0` (defensif explicite non STOP_LIMIT) + `StopPrice=sl_price` (defensif compat V1 Nov 2024 pattern belt-and-suspenders) dans les 4 sites SL STOP payload + 1 site STOP_LIMIT corrige (Price1=stop_trigger + Price2=limit_price, inverse du patch 01/06).
+
+### Pourquoi
+Patch 01/06 (INCIDENT_LOG #24) avait retire Price1 du SL STOP en affirmant "Spec DTC OrderType=3 utilise UNIQUEMENT StopPrice". Affirmation **inventee**, jamais verifiee contre spec officielle Sierra Chart. Resultat : 5 trades casses en 48h sur Bot 3 v3, Bot 3 v4, BN V5 :
+- Bot 3 v4 NQ SHORT 09/06 23:56:47 : TRADE_CLOSE_SL +$16.50 en 1 sec (SL @ 29065.50 jamais touche)
+- Bot 3 v4 NQ SHORT 10/06 04:05:37 : TRADE_CLOSE_SL +$18 en 1 sec (SL @ 28985.50 jamais touche)
+- Bot 3 v3 NQ LONG 10/06 06:30:22 : TP slip favorable +46t (TP @ 28983.25 fillé @ 28994.75 = $69 fantome)
+- BN V5 NQ LONG 10/06 03:49 : TIMEOUT -$511.50 apres 90 bars (SL @ 28975 jamais arme, prix descendu a 28909 sans trigger)
+- Bot 3 v3 NQ LONG 10/06 06:53:40 : cascade rejection TP+SL @ 07:05:50 suite ladder promotion sans Price1
+
+**Preuve empirique** : Sierra Chart Trade Activity Log colonne Price VIDE pour TOUS les STOP orders envoyes (visible sur 4 trades historiques 10/06 04:01-04:05).
+
+**Spec officielle Sierra Chart** `s_SubmitNewSingleOrder` :
+- Price1 = stop trigger price pour OrderType=STOP (3)
+- Price2 = limit price pour OrderType=STOP_LIMIT (4)
+- StopPrice = N'EXISTE PAS dans la spec officielle (SC accepte en alias)
+
+Pattern V1 valide Nov 2024 (`V1_ARCHIVE/EXECUTION/sierra_dtc_connector.py:1646,1652`) = belt-and-suspenders Price1 + Price2=0 + StopPrice.
+
+### Impact attendu
+- Stop loss reellement arme cote SC pour tous les bots (etait casse depuis 01/06 patch)
+- Disparition pattern TRADE_CLOSE_SL avec PnL positif (= SL fill instantane)
+- Disparition pattern BN V5 TIMEOUT massif (= SL non arme = pertes amplifiees)
+- PnL paper aligne avec PnL live AMP futur (-$424 economise sur BN V5 trade 03/06 si SL avait ete arme)
+- Estimation : +$200-400/jour/bot d'ecart paper vs live elimine
+
+### Validation pre-deploy
+- [X] Tests unitaires `tests/test_dtc_stop_with_price1.py` : 7/7 PASS (asserts inverses du test supprime)
+- [X] Tests `BOT/test_bot.py` : 42/46 PASS (4 errors pre-existants migration micro, pas notre fix)
+- [X] Review agent code-reviewer : verdict NOGO patch 01/06 + diff exact 5 sites + spec officielle citee
+- [X] Test empirique isolation Sim1 NQ qty=1 : SC retourne Price1=28930.25 sur STOP order (avant fix = vide)
+- [X] Trade Activity Log SC officiel (Jackson) : `Internal Order ID 23818 Stop Price=28930.25` → colonne Price PEUPLEE
+- [X] Audit cross-bots : tous bots actifs (Bot 1, Bot 3 v3, v4, MP, Bot 4, BN V4, BN V5) utilisent `dtc.send_market_order` patche en cascade
+
+### Revert plan
+```bash
+# Rollback vers patch 01/06 (NON RECOMMANDE - reintroduit le bug SL non arme)
+cp BOT/dtc_connector.py.bak_20260610 BOT/dtc_connector.py
+cp CORE/databento_paper_trader_v2.py.bak_20260610 CORE/databento_paper_trader_v2.py
+cp CORE/bn_v4_paper.py.bak_20260610 CORE/bn_v4_paper.py
+# Restaurer test inverse :
+git checkout HEAD tests/test_dtc_stop_no_price1.py
+rm tests/test_dtc_stop_with_price1.py
+# Re-deploy VPS + restart services
+```
+
+### Deployed at 2026-06-10 07:11 UTC
+SCP 4 fichiers vers VPS, hashes SHA-256 identiques verifies. Services MIA-DataBento-Paper-V2 + MIA-Paper restart 07:27 UTC, status=Running.
+
+### Note V2CLEAN non patche
+`V2CLEAN/execution/dtc_connector.py:325` a aussi `StopPrice` sans Price1 mais service `MIA-V2CLEAN-Bot` est desactive volontairement par Jackson depuis 04/06 (cf memoire `project_v2clean_desactive_20260604.md`). A patcher si reactivation V2CLEAN.
+
+### Suivi post-deploy
+- J+1 : grep `SL_STOP_PATCHED_V1` + `BRACKET_SLIP_METRIC` sur 10+ trades reels paper_v2.jsonl
+- J+1 : verifier 0 occurrence `TRADE_CLOSE_SL` avec `pnl_usd > 0`
+- J+1 : verifier slip distribution SL realistic (±2-5t mean, pas +10.5t artificiel)
+- J+7 : audit cross-bot Bot 3 v3 + v4 + BN V5 PF "fair" vs PF historique pre-revert
+
+### Lien
+- INCIDENT_LOG entry 2026-06-10 07:30 (24-PARTIAL-ROLLBACK)
+- Agent code-reviewer verdict (40 min, ~143K tokens)
+- Agent market-analyst verdict (~180K tokens, bars Databento + 75 trades historique)
+
+---
+
+## 2026-06-09 23:30 — Sprint Stabilite Bot 3 v3 Phase 1 (5 etapes deployees + propagation BUG #5 Bot 3 v4)
+
+**Categorie** : FIX + REFACTO (infra persistance cross-bot) + GATE (reconcile DTC) + FIX (dashboard sync) + FEATURE (audit orphan)
+**Impact prod** : PAPER (Bot 3 v3 Sim1 + Bot 3 v4 Sim3 + BN V5 Sim2) + DASHBOARD (paper_tracker)
+**Fichier(s)** :
+- `CORE/bot_persistance.py` (NEW ~720 LOC) — helper centralise BotStateFile + PositionPersistance + ReconcileReport
+- `CORE/bn_v5_paper.py` (~220 LOC ajoutes) — persistance daily_stop_triggered + pnl_session_usd + n_trades cross-restart
+- `CORE/bot3_v3v4_logger.py` (~80 LOC ajoutes) — Bot3Logger persistance _signal_counter via injection
+- `CORE/bot3_v3_continuation_paper.py` (~250 LOC ajoutes) — integration PositionPersistance + reconcile 5 cas + halt_reason pattern + cooldown persist + pnl_uncertain ack + flag file force_flat
+- `CORE/bot3_v4_data_driven_paper.py` (1 site, +8 LOC) — propagation BUG #5 fix tick_value_override
+- `CORE/bot3_paper_common.py` (compute_pnl_R_usd, +12 LOC) — param tick_value_override pour bypass TICK_VALUE_USD legacy
+- `CORE/flatten_bot.py` (+130 LOC) — auto-append TRADE_CLOSE dans Bot3V3 JSONL apres flatten DTC OK (BUG #4 dashboard sync)
+- `CORE/log_catalog.py` (+23 codes : 14 etape 1 BOT_STATE_*/RECONCILE_* + 9 etape 2 BOT3_V3_HALT/PNL_UNCERTAIN/POLL_SKIP_*)
+- `tools/stress_bot3_v3_persistance.py` (NEW ~370 LOC) — stress test taskkill /F kill mid-write + verifier
+- `tools/audit_orphan_bot3_v3.py` (NEW ~270 LOC) — audit post-mortem JSONL match TRADE_OPEN/CLOSE par signal_id
+- `tests/test_bot_persistance.py` (NEW 42 tests) + `tests/test_bn_v5_persistance.py` (NEW 12 tests) + `tests/test_bot3_v3_integration.py` (NEW 22 tests) + `tests/test_flatten_bot_sync.py` (NEW 7 tests) + `tests/test_pnl_micros_calc.py` (NEW 8 tests) + `tests/test_audit_orphan_bot3_v3.py` (NEW 13 tests) + `tests/helpers/fake_dtc.py` (NEW harness)
+
+**Schema/version** : `bn_v5_session_state.json` v1.0 (NEW), `bot3_v3_state.json` v1.0 (NEW)
+**Reviewer(s) agent** : code-reviewer (5 verdicts GO/GO-AVEC-RESERVES : etape 1 helper 8/8 VALIDE, etape 2 integration 7 reserves integrees, etape 4 dashboard 91/91 + 2 reserves backlog, etape 3 stress test, propagation Bot 3 v4) + market-analyst (etape 2 cas c/e force_flat + cooldown persistance) + Plan agent (etape 1 design decisions D1-D8)
+
+### Quoi
+Sprint phase 1 stabilite ciblant le **Bot 3 v3 NQ Wyckoff Continuation** comme candidat 1 (mature, PF 1.045 backtest n=1611). 5 etapes successives :
+1. Helper centralise `CORE/bot_persistance.py` (BotStateFile atomic FAIL-CLOSED + PositionPersistance + ReconcileReport 5 cas a/b/c/d/e)
+2. Integration Bot 3 v3 : restore positions + rebuild _cid_index + restore signal_counter + restore cooldown + halt_reason pattern + flag file force_flat consume-and-delete + pnl_uncertain ack via env var
+3. Stress test taskkill /F kill mid-write : 50/50 nominal + 100/100 INTENSIVE = 155 iter cumules 100% PASS = critere B1 validated
+4. Dashboard sync : BUG #4 (`flatten_bot.py` auto-append TRADE_CLOSE Bot 3 v3 JSONL apres flatten DTC OK) + BUG #5 (`compute_pnl_R_usd` param tick_value_override -> Bot 3 v3 utilise GUARD_RAILS_BOT3[sym]["tick_value"]=0.50 micro au lieu de TICK_VALUE_USD legacy $5.00 E-mini = fix surestimation x10 dashboard)
+5. Audit orphan : `tools/audit_orphan_bot3_v3.py` post-mortem match TRADE_OPEN/CLOSE par signal_id (Type A : open sans close > 24h, Type B : close sans open). Run empirique 7j reels Bot 3 v3 = 34 trades / 34 closes / 0 orphan.
+
+Propagation BUG #5 Bot 3 v4 : meme pattern compute_pnl_R_usd + tick_value_override depuis GUARD_RAILS_BOT3. Bot 3 v4 calcule maintenant pnl_usd correct en micros au lieu de surestimer x10.
+
+### Pourquoi
+Session 09/06 ~$1700 paper perdu par cascade re-trades restart-induced (cf INCIDENT_LOG 2026-06-09 23:30 VALIDATION_MISS) :
+- BN V5 daily_stop reset par restart : 3 trigger NQ meme journee
+- Bot 3 v3 positions non persistees : 2 SHORT NQ meme niveau CUR_VAH en 3 min = -$1100
+- Bot3Logger signal_counter non persiste : collision signal_id meme jour
+- BUG #5 PnL micros : Bot 3 v3+v4 trade 3 MNQ Cross Chart mais pnl calcule en E-mini = dashboard ment ×10
+
+Decision Jackson 09/06 soir : "prendre bot par bot, tester une approche a fond, pas les 4 en meme temps. 1 bot stable -> passer a une autre approche en laissant le 1er trader". Bot 3 v3 selectionne comme candidat 1.
+
+### Impact attendu
+- **Stabilite** : Bot 3 v3 + BN V5 + Bot 3 v4 (partiel) survivent au kill -9 sans corrompre etat. 0 re-trade restart-induced.
+- **Dashboard** : flatten via dashboard auto-sync TRADE_CLOSE event Bot 3 v3 (0 intervention manuelle), pnl_usd Bot 3 v3 + v4 correct en micros (fin de la surestimation x10).
+- **Audit** : `audit_orphan_bot3_v3.py --days 14` validera critere B2 quand 14j de logs accumules.
+- **Effet de bord** : aucun en backward compat (param `tick_value_override=None` defaut = legacy). BN V5 + Bot 1 PAPER pas impactes par propagation BUG #5 (code path different `get_tick_value()` via constants.py — backlog R2).
+
+### Validation pre-deploy
+- [x] Tests unitaires : 104/104 PASS local (42 helper + 12 BN V5 + 22 Bot 3 v3 integration + 7 flatten sync + 8 pnl micros + 13 audit orphan) + 50/50 VPS
+- [x] Stress test : **155/155 iter** PASS (50 nominal + 100 INTENSIVE)
+- [x] Review agent : 5 verdicts code-reviewer (3 GO, 2 GO-AVEC-RESERVES corriges) + 1 market-analyst + 1 Plan agent
+- [x] Test empirique : `BOT_STATE_NEW reason=FILE_ABSENT` + `RECONCILE_OK_FLAT` + `BOT3_V3_BOOT_READY dtc_state=CONNECTED` valides empiriquement aux 2 restarts (pid12688 20:02:50 + pid11728 21:13:44)
+
+### Revert plan
+```bash
+# Tous les fichiers nouveaux sont additifs. Pour revert :
+# 1. Stop-Service MIA-DataBento-Paper-V2
+# 2. Restaurer les versions precedentes des 4 fichiers integration :
+git checkout HEAD~10 -- CORE/bot3_v3_continuation_paper.py CORE/bot3_v3v4_logger.py CORE/bot3_v4_data_driven_paper.py CORE/bot3_paper_common.py CORE/flatten_bot.py CORE/log_catalog.py CORE/bn_v5_paper.py
+# 3. Supprimer state files (les bots vont reinit en NEW_SESSION normalement) :
+Remove-Item C:\TRADING_SIERRA_CHART_AUTO\DATA\PAPER_TRADES\bn_v5_session_state.json
+Remove-Item C:\TRADING_SIERRA_CHART_AUTO\DATA\PAPER_TRADES\bot3_v3_state.json
+# 4. Start-Service MIA-DataBento-Paper-V2 + verif boot logs
+```
+
+### Deployed at 2026-06-09 21:13 UTC
+- pid11728 (MIA-DataBento-Paper-V2) post-propagation Bot 3 v4
+- 5 deploys cumules : 19:00 (etape 2 Bot 3 v3), 20:02 (etape 4 BUG #4+#5 Bot 3 v3), 21:13 (propagation Bot 3 v4)
+
+### Suivi post-deploy
+- J+1 (10/06) : grep `BOT_STATE_RESTORED` au prochain restart Bot 3 v3 (1er restart avec position open) + verif dashboard pnl_usd Bot 3 v4 au prochain TRADE_CLOSE = pas ×10 surestime
+- J+7 (16/06) : run `audit_orphan_bot3_v3.py --days 7` -> attendu 0 orphan
+- J+14 (23/06) : run `audit_orphan_bot3_v3.py --days 14` -> validation critere B2 sprint (= phase 1 stabilite finale)
+- J+30 (09/07) : run stress test 500 iter en CI nightly (critere phase 1 stable definitive prod)
+
+### Backlog issu de cette session
+- R1 (etape 4) : codes log_catalog FLATTEN_SYNC_APPENDED/SKIPPED pour tracabilite dashboard sync (post-deploy J+1)
+- R2 (propagation BUG #5) : Bot 1 PAPER `mia_paper_trader.py` utilise `get_tick_value()` constants.py (code path different) — fix similar a etudier
+- R2bis (propagation BUG #5) : BN V5 qty=1 E-mini (rollback 03/06) — pas besoin fix actuellement mais reverification si Jackson change sizing futur
+
+### Liens
+- INCIDENT_LOG : `2026-06-09 23:30 (41) - [VALIDATION_MISS] - Sprint stabilite Bot 3 v3 : 4 bugs persistance latents`
+- Memory : `project_4bots_persistance_chantier.md` (chantier infra), `feedback_douglas_consistency_principles.md` (philosophie kill switch quotidien)
+- Reviews agents : 5 code-reviewer (etapes 1, 2, 4, 3, propagation v4) + 1 market-analyst (etape 2) + 1 Plan agent (etape 1 design)
+- Reports stress : `tools/stress_results_20260609_191044.json` (50/50 nominal) + `tools/stress_results_20260609_193003.json` (100/100 INTENSIVE)
+- Audit orphan : ran via `python -X utf8 tools/audit_orphan_bot3_v3.py --days 7` sur VPS = 34/34 closes 0 orphan
+
+---
+
+## 2026-06-08 — DailyLimitsGuard universel (Mark Douglas kill switch -$200/+$150/5 trades)
+
+**Categorie** : FEATURE + GATE (kill switch quotidien)
+**Impact prod** : PAPER (Bot 1 SIM1 + Bot 3 v3 + Bot 3 MP) — DASHBOARD (snapshot expose state.json)
+**Fichier(s)** :
+- `CORE/daily_limits_guard.py` (NEW, ~430 LOC) — module pur autonome
+- `CORE/mia_paper_trader.py:38-40` (import) + `:251-260` (ENTRY_RULES config) + `:316-321` (FUNNEL_STEPS STEP 0bis) + `:330-332` (REJECT_LOG_STEPS) + `:387-390` (REJECT_TO_V2_CODE) + `:579-589` (init guard) + `:713-728` (rebuild from trades) + `:1517-1538` (STEP 0bis check_entry) + `:3573-3585` (on_trade_close hook) + `:957-963` (rollover) + `:3700-3702` (state.json snapshot)
+- `CORE/databento_paper_trader_v2.py:101-107` (import) + `:496-516` (init 2 guards Bot 3 MP + v3) + `:2405-2425` (Bot 3 v3 on_trade_close hook via handle_dtc_fill) + `:3262-3275` (Bot 3 MP execute_trade gate) + `:3000-3009` (Bot 3 MP on_trade_close hook) + `:2840-2851` (rollover) + `:4264-4291` (Bot 3 v3 sync kill_switch pre-poll) + `:3925-3934` (state.json snapshot)
+- `CORE/log_catalog.py:259-272` (6 codes log neufs : GATE_DAILY_STOP_LOSS_TRIGGERED/STOP_WIN/MAX_TRADES + DAILY_LIMITS_RESET + DAILY_PNL_UPDATE + DAILY_LIMITS_REBUILT + 2 wrappers BOT3_DAILY_LIMITS_BLOCK / BOT3_V3_DAILY_LIMITS_BLOCK)
+- `CORE/tests/test_daily_limits.py` (NEW, 28 tests pytest — 100% green)
+**Schema/version** : N/A (module additif, pas de migration data)
+**Reviewer(s) agent** : code-reviewer (pending — critere 1 Trading/Risk + critere 7 Irreversible/PAPER)
+
+### Quoi
+Implementation d'un kill switch quotidien universel (DailyLimitsGuard) qui bloque les nouvelles entries sur 3 conditions independantes :
+- `cumul_pnl <= daily_stop_loss_usd` (default -200, CRITIQUE)
+- `cumul_pnl >= daily_stop_win_usd` (default +150, ALERTE, lock-in profits)
+- `trade_count >= daily_max_trades` (default 5, ALERTE, anti overtrading)
+
+Module pur (stdlib + logging_v2 uniquement) injecte dans Bot 1 (`mia_paper_trader`), Bot 3 v3 (`Bot3V3ContinuationPaper` via wrapper kill_switch_active sync), Bot 3 MP (legacy `_bot3_execute_trade`). State persiste par jour (`{date}_daily_state_{bot_id}.json`), reset auto au rollover CME, rebuild from trades file en boot fallback (resilience crash).
+
+Reversibilite : `MIA_DAILY_LIMITS_ENABLED=0` master kill switch ; toggles individuels `MIA_DAILY_STOP_WIN_ENABLED` / `MIA_DAILY_MAX_TRADES_ENABLED` ; override seuils via env vars `MIA_DAILY_STOP_LOSS` / `MIA_DAILY_STOP_WIN` / `MIA_DAILY_MAX_TRADES`.
+
+### Pourquoi
+Cause racine 08/06 : Bot 1 SIM1 -$2010 sur 7 trades 100% LONG drift NQ. Si daily_stop_loss strict -$200 avait ete actif :
+- Apres trade #2 NQ -$480 (cumul -$343), kill switch active -> bot bloque pour la journee
+- Pertes evitees : -$1667 (trades #3 a #7)
+
+Grille souveraine `feedback_douglas_consistency_principles.md` (04/06) :
+> "Consistency beats intensity — every single time."
+> daily_stop_win $150 / daily_stop_loss -$200 / max_trades 5.
+
+Preuve 04/06 (memoire) : Bot 1 a +$612 a 14:54, fini -$27 a 18:57 (3 SL PREV_VAL). Ecart $639 si stop_win active.
+
+Pattern aligne Bot 1 (mia_paper_trader STEP 0bis avant STEP 0 regime) + Bot 3 (via daily_guard injecte dans risk gates ou pre-poll).
+
+### Impact attendu
+- Pertes max journalieres cappees a ~-$200 par bot (vs -$2010 incident 08/06)
+- Gains verrouilles a partir de +$150 par bot
+- Max 5 trades/jour par bot (collecte data conservee paper, mais discipline imposee)
+- Effet de bord : aucun changement scoring/regime, aucun trade existant n'est invalide
+- Trades historiques wins -> RESTENT WINS (gate posterieur a la fermeture)
+- Possible reduction volume data ML (5 trades/jour cap) mais compense par qualite
+
+### Validation pre-deploy
+- [x] Tests unitaires : 28/28 pytest PASS (test_daily_limits.py — couvre stop_loss/win/max_trades/rollover/persistence/recovery/env_vars/master_kill/thread_safety/scenario_incident_08june)
+- [x] Smoke test E2E : cumul -$250 -> check_allow=False reason=daily_stop_loss (verifie commande inline)
+- [x] Syntax check : mia_paper_trader.py + databento_paper_trader_v2.py + log_catalog.py + daily_limits_guard.py PASS
+- [x] Backtest preservation : N/A (gate posterieur close, ne change PAS scoring/regime — aucun trade historique n'est invalide)
+- [ ] Review agent code-reviewer : a faire avant deploy VPS
+- [ ] Test empirique J+1 grep `GATE_DAILY_*_TRIGGERED` dans `LOGS/decisions/*_paper.jsonl`
+
+### Revert plan
+```bash
+# Option 1 : env var (instant, sans redeploy code)
+$env:MIA_DAILY_LIMITS_ENABLED = "0"
+# Restart services Windows nssm :
+nssm restart MIA-Paper
+nssm restart MIA-DataBento-Paper-V2
+
+# Option 2 : git revert
+git revert <commit_hash>
+scp CORE/daily_limits_guard.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+# ... + restart services
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+(a remplir apres deploy VPS + restart MIA-Paper + MIA-DataBento-Paper-V2)
+
+### Suivi post-deploy
+- **J+1** : grep `GATE_DAILY_*_TRIGGERED` events_*paper*.jsonl. Si trigger -> verifier que bot reste bloque jusqu'au rollover CME. Si 0 trigger sur 5 sessions paper actives -> kill switch inactif silencieusement (instrumentation ratee -> INCIDENT_LOG VALIDATION_MISS).
+- **J+7** : compter occurrences stop_loss vs stop_win vs max_trades. Calibrer seuils si pattern degenere (ex: stop_win trop bas bloque wins importants).
+- **J+30** : analyse comparative PnL bots avec/sans (rollback temporaire kill switch sur 1 bot pour A/B).
+
+### Nouveaux logs
+- `GATE_DAILY_STOP_LOSS_TRIGGERED` (CRITIQUE, decisions) — kill switch active, Discord auto
+- `GATE_DAILY_STOP_WIN_TRIGGERED` (ALERTE, decisions) — lock-in profits
+- `GATE_DAILY_MAX_TRADES_TRIGGERED` (ALERTE, decisions)
+- `DAILY_LIMITS_RESET` (INFO, events) — rollover quotidien
+- `DAILY_PNL_UPDATE` (INFO, events) — apres chaque close
+- `DAILY_LIMITS_REBUILT` (INFO, events) — boot fallback rebuild from trades
+- `BOT3_DAILY_LIMITS_BLOCK` / `BOT3_V3_DAILY_LIMITS_BLOCK` (ALERTE, decisions) — wrappers Bot 3
+
+### Cross-ref
+- Memoire souveraine : `feedback_douglas_consistency_principles.md`
+- Incident souche : Bot 1 SIM1 -$2010 sur 7 trades 100% LONG 08/06/2026
+- Hierarchie kill switches existants : `BOT/risk_manager.py` (Bot 2 V6 only) ; `Bot3RiskManager` (cooldown + circuit breaker uniquement). DailyLimitsGuard est COMPLEMENTAIRE, ne remplace pas.
+
+---
+
+## 2026-06-08 — Plan A1 BLOC 5 bias_calculator (CVD pondere + divergence flag + vwap_m veto)
+
+**Categorie** : FIX (refactor logique pondration)
+**Impact prod** : PAPER + DASHBOARD (Bot 1 STEP 6bis bias + builders build_regime + cross_instrument)
+**Fichier(s)** :
+- `CORE/bias_calculator.py:57-72` (PTS_CVD 0.10 → 0.25)
+- `CORE/bias_calculator.py:107-110` (BiasResult flags delta_cvd_divergence + vwap_m_veto_applied)
+- `CORE/bias_calculator.py:357-396` (BLOC 5 refactor : pondration egale + detection conflit)
+- `CORE/bias_calculator.py:498-528` (veto vwap_m_side post-direction)
+- `CORE/bias_calculator.py:153-159` (to_dashboard_dict expose flags)
+- `CORE/log_catalog.py:231-235` (BIAS_DELTA_CVD_DIVERGENCE INFO + BIAS_VWAP_M_VETO ALERTE)
+- `CORE/tests/test_a1_bias_calculator.py` (9 tests pytest neufs)
+**Schema/version** : 3.7.9 -> 3.7.10
+**Reviewer(s) agent** : code-reviewer (pending) - protocole critical-tasks-review critere #1 Trading/Risk + #4 Concept
+
+### Quoi
+Refactor BLOC 5 (CVD direction) du bias_calculator pour aligner pondration CVD avec
+delta (PTS_CVD 0.10 → 0.25). Ajout detection conflit delta_day_dir vs cvd_day_dir
+(flag observable) et veto vers NEUTRAL si la direction calculee contredit
+`vwap_m_side` (ancrage long-terme).
+
+### Pourquoi
+Bot 1 SIM1 a perdu -$2010 le 08/06 sur 7 trades 100% LONG drift NQ. Snapshot
+trade #3 NQ : `bias=BULLISH bias_score=0.75` MALGRE `CVD: DISTRIBUTION`
+(cvd_day_dir=-1, -17k cumule session). Cause racine :
+- BLOC 2 delta : PTS_OF_STRONG = 0.25
+- BLOC 5 cvd   : PTS_CVD       = 0.10 (2.5x trop faible)
+
+Cas casseur delta+1 + cvd-1 = signal de retournement classique en orderflow
+analysis (achats agressifs intra-bar VS distribution cumulative). Mais score
++0.25 - 0.10 = +0.15 → label BULLISH avec drift LONG persistant. Aucune
+calibration empirique : justification = symetrie pure orderflow (les deux
+mesurent la direction du flux, intra-bar vs cumulative).
+
+### Impact attendu
+- Distribution bias 980 bars NQ 20260603 :
+  - AVANT : BULLISH 19.9% / BEARISH 23.0% / NEUTRAL 57.1%
+  - APRES : BULLISH  7.2% / BEARISH  0.6% / NEUTRAL 92.1%
+- 0 flips 180 (aucun BULL → BEAR direct), shift coherent vers NEUTRAL
+- `delta_cvd_divergence` detecte sur 65% des bars (cas casseur tres present)
+- `vwap_m_veto` applique sur 37.7% des bars (ancrage long-terme contraire fort)
+- Effet attendu : -X% trades LONG drift NQ avec CVD distribution opposite
+
+### Validation pre-deploy
+- [x] Tests unitaires nouveaux : 11/11 PASS (CORE/tests/test_a1_bias_calculator.py)
+- [x] Tests existants non-regression : 37/37 PASS (tests/test_bias_calculator.py)
+- [x] Regression sample 980 bars Sierra : 0 flips 180, shift coherent
+- [ ] Review agent code-reviewer (a faire) — categorie Trading/Risk critique
+- [ ] Backtest preservation Bot 1 J+7 : confirmer baisse drift LONG
+
+### Revert plan
+```bash
+git diff HEAD CORE/bias_calculator.py CORE/log_catalog.py CORE/tests/test_a1_bias_calculator.py
+git checkout HEAD -- CORE/bias_calculator.py CORE/log_catalog.py
+rm CORE/tests/test_a1_bias_calculator.py
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+(a remplir apres deploy VPS + restart MIA-Dashboard + MIA-V2CLEAN-Bot)
+
+### Suivi post-deploy
+- J+1 : grep `BIAS_DELTA_CVD_DIVERGENCE` + `BIAS_VWAP_M_VETO` dans LOGS/decisions
+  (verifier emission effective — eviter VALIDATION_MISS code defini non emis)
+- J+7 : distribution direction Bot 1 LONG vs SHORT (eviter drift 100% LONG)
+- J+30 : impact PnL net (vs -$2010 du 08/06 sur 7 trades LONG)
+
+### Nouveaux logs
+- `BIAS_DELTA_CVD_DIVERGENCE` (INFO, decisions) — frequent (~65% bars cas casseur)
+- `BIAS_VWAP_M_VETO` (ALERTE, decisions) — critique pour audit (veto fort)
+
+### Liens
+- INCIDENT_LOG : 2026-06-08 — Bot 1 SIM1 -$2010 7 trades LONG drift
+- Rules : `.claude/rules/critical-tasks-review.md` (critere #1 + #4)
+- Memory : `feedback_data_mining_trap.md` (interdiction calibration N<30)
+- Memory : `feedback_pattern11_repetition_avoided.md` (justification logique pure)
+
+---
+
+## 2026-06-08 — 4 bugs structurels regime/bias/MTF/conseil (Bot 1+2+3 SIM1/2/3)
+
+**Categorie** : FIX (4 bugs logiques)
+**Impact prod** : PAPER (Bot 1 SIM1, Bot 2 SIM2, Bot 3 SIM1/SIM3 via regime_engine + stabilizers + builders)
+**Fichier(s)** :
+- `DASHBOARD/api/stabilizers.py:55-149, 264-275, 313-323` (BUG #1)
+- `CORE/regime_engine.py:93-176, 337` (BUG #2 + #3)
+- `CORE/regime_engine_v6.py:94-160, 404` (BUG #2 + #3 jumeau)
+- `DASHBOARD/api/builders.py:1232-1265` (BUG #4)
+- `CORE/log_catalog.py:227-232` (3 nouveaux codes log)
+- `CORE/tests/test_bug3_delta_cvd.py` (10 tests new)
+- `DASHBOARD/tests/test_bug4_mtf_double_counting.py` (5 tests new)
+**Reviewer(s) agent** : code-reviewer (4 reviews independantes, IDs : a7a1a8b98472f08f1, ab59d4834d31355cd, ac988048c9c6bff6b, a908f1d1090400924)
+
+### Quoi
+4 bugs structurels identifies en cascade dans le pipeline de decision :
+- **BUG #1** : `_enrich_regime_with_mtf` + `_stabilize_favor` forcaient `bias=BULLISH`/`favor=LONG` quand MTF 4/4, meme si bias_score amont etait -0.40 BEARISH. Bypass total du regime_engine.
+- **BUG #2** : `_compute_bias_proxy` appliquait mean reversion `range_pos>70 → bear` SANS condition de mode. En TREND DAY UP, range_pos extreme est NATUREL mais le proxy decrettait BEAR a tort → cascade override coherence (3 bear factors) → favor=NEUTRE → STEP 0 reject.
+- **BUG #3** : `of_dir = delta_dir or cvd_dir` (OR booleen short-circuit) masquait silencieusement les divergences delta vs cvd (78% des bars NQ V4 selon mesure empirique).
+- **BUG #4** : `build_conseil_global` comptait MTF 4/4 a la fois via `bias` (deja influence par MTF boost) ET directement (`mtf_w=2`). Double-comptage → ACHAT PRUDENT (bull>=4) declenchait sur MTF 4/4 SEUL.
+
+### Pourquoi
+Audit Gate 0 (06-08/06) sur drift NQ LONG SIM1 (-$1600 / 82 trades / WR 35% sur 60j) a revele que la decision de regime LONG etait corrompue en cascade. Patterns convergents :
+- Bot 1 entrait LONG NQ en marche baissier sur dead cat bounces : 4 timeframes courtes alignees BULL → MTF 4/4 → override bias → ACHAT PRUDENT garanti.
+- TREND DOWN with range_pos<30 (bas du range, normal) → proxy decretait BULL bias artificiel → bias_calculator NEUTRAL en aval → STEP 0 `regime_bias_neutral` reject (faux negatif).
+- Divergence delta+1 cvd-1 (signal retournement classique) masquee → faux signaux bullish.
+
+### Calibration & retrocompat
+- BUG #1 : MTF 4/4 = boost score +0.25 seulement (pas force bias/favor). Fallback preserve bias amont en zone neutre [-0.25, 0.25].
+- BUG #2 : `mode` obligatoire (fail-loud), skip range_pos en TREND, mean reversion preservee en RANGE/NORMAL.
+- BUG #3 : delta poids 0.20 si cvd present (split), 0.25 si cvd absent (Databento pipeline = compat pre-fix). cvd modulation pure (pas vote structurel).
+- BUG #4 : MTF direct poids max 1 (au lieu de 1-2). MTF 4/4 + bias BULLISH seul = 3 pts → ATTENDRE (avant 4 pts ACHAT PRUDENT).
+
+### Impact attendu
+- Reduction LONG NQ artificiels sur dead cat bounces (cible : drift NQ LONG -$1600 elimine)
+- Plus de TREND DAY UP/DOWN legitimes passent STEP 0 (moins de faux `regime_bias_neutral`/`regime_neutre`)
+- Detection divergences delta/cvd (signal retournement)
+- Verdict ACHAT/VENTE requiert au moins 2 signaux independants (bias + 1 autre), pas MTF seul
+
+### Effet de bord mesure (BUG #3 R2 reviewer)
+Script regression labels `TMP_ANALYSIS/bug3_label_regression.py` sur sample (Databento 2581 bars NQ/ES 20/05 + Sierra 980 bars NQ 03/06) :
+- 5.56% flips global, TOUS unidirectionnels `BULLISH → NEUTRE` (jamais l'inverse, jamais BEARISH↔BULLISH)
+- Databento : 0% flips (compat cvd absent OK)
+- Sierra : 20.20% flips BULLISH→NEUTRE sur cas divergence delta/cvd = **semantiquement correct** (couper les faux BULLISH avec divergence cachee = but du fix)
+
+### Validation pre-deploy
+- [x] Syntaxe Python valide : ast.parse() OK sur 4 fichiers modifies
+- [x] Tests pytest BUG #3 : 10/10 (5 cas × 2 fixtures v1/v6)
+- [x] Tests pytest BUG #4 : 5/5
+- [x] Tests inline pipeline complet (BUG #1) : 3/3 (regression pipeline `_enrich_regime_with_mtf` → `_stabilize_favor` + consensus 3 votes preserve)
+- [x] Tests inline regime_engine (BUG #2) : 5/5 (TREND UP/DOWN skip range_pos, RANGE/NORMAL mean reversion preservee, fail-loud mode obligatoire)
+- [x] Code reviewer x4 : GO-AVEC-RESERVES bloquantes traitees pour chaque bug
+- [ ] Backtest counterfactual sur sample joined : **REPORTE** (trades Databento mai 2026 manquants pour replay live_enricher complet). Decision Jackson : "ne peut pas etre pire que casse" + validation cumule J+1/J+7 via codes log.
+
+### Codes log enregistres (regle souveraine 01/05 LOGS TRACABILITE)
+- `BIAS_NEUTRAL_ZONE_FALLBACK` (BUG #1) : emit quand MTF boost ne suffit pas a basculer bias amont
+- `CONSEIL_MTF_PERFECT_DOWNWEIGHT` (BUG #4) : emit quand MTF 4/4 actif (audit attenuation 2→1 pt)
+- `GATE_REGIME_*` (Plan C precedent) : couvre STEP 0 regime gate aval
+
+### Deploy
+- [ ] scp 4 fichiers + log_catalog.py + 2 tests → VPS
+- [ ] Restart `MIA-Paper` + `MIA-DataBento-Paper-V2` (nssm)
+- [ ] J+1 grep : `BIAS_NEUTRAL_ZONE_FALLBACK`, `CONSEIL_MTF_PERFECT_DOWNWEIGHT`, `GATE_REGIME_*` doivent etre emis
+
+### Revert plan
+- BUG #1 : `git checkout HEAD~1 DASHBOARD/api/stabilizers.py`
+- BUG #2 : `git checkout HEAD~1 CORE/regime_engine.py CORE/regime_engine_v6.py`
+- BUG #3 : meme commit que BUG #2 (revert simultane)
+- BUG #4 : `git checkout HEAD~1 DASHBOARD/api/builders.py`
+- Logs : `git checkout HEAD~1 CORE/log_catalog.py`
+- Restart services + verify trades reprennent
+
+### Suivi post-deploy
+- **J+1** : grep codes log nouveau (3 codes). Si zero emit → INCIDENT_LOG `VALIDATION_MISS`.
+- **J+7** : distribution `action` (ACHAT/VENTE/ATTENDRE) pre vs post 4 fixes. Compare with `LOGS/rejections/` `0_regime` rejects counts.
+- **J+30** : cumul PnL NQ LONG SIM1 vs baseline -$1600 (cible : > -$500 = amelioration > 70%). Si KO → re-audit + rollback selectif.
+
+### References
+- Audit BUG #1-4 : conversation session 08/06 (synthese audit logique upstream avant deploy)
+- Reviewer 1 BUG #1 : a7a1a8b98472f08f1
+- Reviewer 2 BUG #2 : ab59d4834d31355cd
+- Reviewer 3 BUG #3 : ac988048c9c6bff6b
+- Reviewer 4 BUG #4 : a908f1d1090400924
+- Memory `feedback_validation_miss_patterns.md` (pattern grep cross-codebase apres review/migration)
+- Memory `feedback_pattern11_repetition_avoided.md` (N<30 rollback < 30j = STOP)
+
+---
+
+## 2026-06-08 — Plan C : instrumentation logs Gate 0 Regime Engine (4 codes GATE_REGIME_*)
+
+**Categorie** : FEATURE (instrumentation, pas de changement de logique)
+**Impact prod** : PAPER (Bot 1 SIM1 — mia_paper_trader.py)
+**Fichier(s)** : `CORE/log_catalog.py:220-224`, `CORE/mia_paper_trader.py:315-316`, `CORE/mia_paper_trader.py:336-340`, `CORE/mia_paper_trader.py:1495-1501`
+**Schema/version** : —
+**Reviewer(s) agent** : self-validation syntaxe + format templates (pas de change logique decisionnelle → review optionnel)
+
+### Quoi
+Ajout 4 codes log `GATE_REGIME_NOT_ACTIONABLE`, `GATE_REGIME_NEUTRE`, `GATE_REGIME_BIAS_NEUTRAL`, `GATE_REGIME_CONTRAIRE_SIGNAL` dans catalog + mapping reason→code + extension `REJECT_LOG_STEPS` pour inclure step `"0_regime"`. `_funnel_reject` emet maintenant ces events dans `LOGS/decisions/` (rate limit 60s par sym+reason existant).
+
+### Pourquoi
+Audit Gate 0 (06-08/06) a identifie le Regime Engine comme cause racine du drift NQ LONG (-$1600 / 82 trades / WR 35% sur 60j) MAIS aucune instrumentation log permettant d'identifier quel sous-rejet de STEP 0 bloque le plus de signaux. Sans instrumentation, impossible de valider quantitativement Plan A1 (refactor `bias_calculator` BLOC 5) et Plan A2 (skip Asia LONG NQ). Prerequis observabilite avant tout deploy.
+
+### Impact attendu
+- Metriques : +N events GATE_REGIME_* par jour dans `LOGS/decisions/decisions_YYYYMMDD_paper.jsonl` (sub-step counts)
+- Effet de bord : aucun (uniquement logging, decision logic STEP 0 inchangee)
+
+### Validation pre-deploy
+- [x] Syntaxe Python valide : `ast.parse(mia_paper_trader.py)` OK
+- [x] Templates instancient avec `market_ctx` reel : 4/4 OK (regime_mode/favor/vol/trend_votes + conseil_action_pre)
+- [x] Pas de modification de la logique decisionnelle (zero risque trading)
+- [x] Rate limit 60s/sym+reason existant → pas de spam
+
+### Deploy
+- [ ] scp `CORE/log_catalog.py` + `CORE/mia_paper_trader.py` → VPS
+- [ ] Restart `MIA-Paper` (nssm)
+- [ ] J+1 grep : `wc -l LOGS/decisions/decisions_*_paper.jsonl | grep GATE_REGIME_*` > 0
+
+### Revert plan
+Si emit casse Bot 1 (improbable, fail-safe `except Exception: pass` ligne 1301-1302) : revert via `git checkout HEAD~1 CORE/log_catalog.py CORE/mia_paper_trader.py` + scp + restart.
+
+### Suivi post-deploy
+- J+1 : verifier emission `GATE_REGIME_*` dans logs decisions (count > 0)
+- J+7 : distribution sous-rejets STEP 0 par direction (LONG vs SHORT) sur 7j → input Plan A1
+- J+30 : N>=30 instances → re-audit Gate 0 statistiquement (matrice regime_mode x conseil_action_pre)
+
+---
+
 ## 2026-06-08 02:30 — Batch B4 fix range_pos collision + 7 features (schema 3.7.21, n_cols 379)
 
 **Categorie** : ARCHITECTURE PIVOT (criteres critiques 2+3 — ML/C++) + BUG FIX SILENCIEUX

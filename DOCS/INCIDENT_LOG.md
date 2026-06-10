@@ -31,6 +31,26 @@
 
 ---
 
+### 2026-06-09 23:30 (41) - [VALIDATION_MISS] - Sprint stabilite Bot 3 v3 : 4 bugs persistance latents revelees session 09/06
+
+**Categorie** : VALIDATION_MISS (persistance positions/state non testee avant deploy) + COMMENT_FALSE (architecture annoncee "bots robustes" mais aucun ne survivait a un restart sans corrompre etat)
+
+**Contexte** : Session 09/06 ~$1700 paper perdu par cascade re-trades restart-induced :
+- BN V5 daily_stop NQ trigger 00:31 (-$665) -> restart silencieux -> 07:23 re-trade NQ -$475 -> 07:25 re-trigger daily_stop. Restart 03:59 (mon fix Couche 4) -> 08:26 nouveau trade NQ +$470 flatten Jackson. Critere "daily_stop respecte" mathematiquement viole 3x.
+- Bot 3 v3 NQ SHORT 07:58 (Sim1, 3 micros CUR_VAH) -> restart 07:59 (paper_v2_pid5720 -> pid15108) -> Python `_position` re-init vide -> 08:01 ouvre 2eme SHORT meme niveau CUR_VAH. Cumul 6 contrats SHORT NQ pendant que NQ TREND UP +93 points = -$1100 perdu.
+- Bot3Logger `_signal_counter` non persiste -> 2 trades distincts meme signal_id `BOT3_V3_NQ_20260609_0001` = collision logs/dashboard.
+- BUG #5 PnL micros : Bot 3 v3+v4 trade 3 MNQ micros Cross Chart Sierra (real $0.50/tick) mais `compute_pnl_R_usd` legacy utilise `TICK_VALUE_USD["NQ"]=$5.00` (E-mini) -> pnl_usd dashboard surestime ×10 (ex: vrai +$81 affiche +$810).
+
+**Cause racine** : architecture BOT3_V3/V5/BN V5 livree sans persistance positions/counters/cooldown sur disque + tests stress restart absents. Comment_false : 4 bots tradaient depuis 2 mois "stables" sans qu'aucun ne resiste a un kill -9 sans corruption silencieuse de l'etat decisionnel.
+
+**Lecon** : tester restart resilience = exigence non-negociable phase 1 avant declarer "stable". Pas seulement fonctionnel mais survie aux pannes (kill -9, crash silencieux, mise en pause nssm, taskkill /F). Helper `CORE/bot_persistance.py` (livre etape 1) + integration Bot 3 v3 (etape 2) + stress test 155/155 iter (etape 3) = couverture B1 sprint. Bot 1 PAPER/BN V5/Bot 3 v4 restent partiellement vulnerables (positions non persistees pour BN V5 et Bot 1, propagation backlog R2).
+
+**Trigger prevention** : tout nouveau bot ou refactor moteur de decision DOIT inclure (a) state file persistant via `CORE/bot_persistance.PositionPersistance`, (b) reconcile DTC au boot 5 cas a/b/c/d/e, (c) test stress kill -9 mid-write >=50 iter, (d) audit orphan daily via `tools/audit_orphan_*.py`. Sinon SCOPE_CREEP = pseudo-stabilite.
+
+**Reviewed** : Jackson 09/06 soir (sprint dirige) + code-reviewer (3 verdicts GO/RESERVES sur etapes 1,2,4) + market-analyst (1 verdict sur BN V5 persistance ratio sizing/stop). Trace : `tools/stress_results_20260609_193003.json` (100/100 INTENSIVE) + `LOGS/events/events_20260609_paper_v2.jsonl` (BOT3_V3_BOOT_READY pid12688 20:02:50 + pid11728 21:13:44).
+
+---
+
 ### 2026-06-07 01:50 (39) - [DATA_MINING_TRAP] - Lookahead batch game_changers.py .iloc[-1] -> Train/test skew ML day_type feature SHAP top-4
 
 **Categorie** : DATA_MINING_TRAP + COMMENT_FALSE (divergence documentee mais non corrigee)
@@ -547,7 +567,36 @@ TOUS DOIVENT etre coherents AVANT merge refacto, sinon bouton dashboard ment pen
 
 ---
 
-### 2026-06-01 09:30 (24) - [VALIDATION_MISS] - Payload DTC SL STOP envoye avec Price1=StopPrice depuis le debut V2 (60 jours non audite vs specs DTC)
+### 2026-06-10 07:30 (24-PARTIAL-ROLLBACK) - [VALIDATION_MISS] - Patch 01/06 etait BASE SUR FAUSSE AFFIRMATION SPEC DTC, REVERT 10/06 ajoute Price1
+
+**REVERT APPLIQUE 10/06** : Le patch original 01/06 (retrait Price1 du SL STOP payload) etait base sur affirmation jamais verifiee contre spec officielle DTC. Preuve empirique 10/06 : 5 trades casses en 48h (Bot 3 v3, Bot 3 v4, BN V5) + Trade Activity Log SC montre colonne Price VIDE pour STOP orders + BN V5 NQ LONG -$511.50 TIMEOUT car SL non arme.
+
+**Diagnostic 10/06 (2 agents independants convergents)** :
+- code-reviewer : "Spec officielle Sierra Chart DTC `s_SubmitNewSingleOrder` dit `Price1 = stop trigger pour OrderType=STOP (3)` et `Price2 = limit price pour STOP_LIMIT (4)`. Le champ `StopPrice` N'EXISTE PAS dans la spec officielle. Affirmation 01/06 'STOP n'utilise pas Price1' = inventee."
+- market-analyst : "Bars Databento prouve SL @ 29065.50 jamais touche (high max 29064.75) mais bot logue TRADE_CLOSE_SL @ 29053.75 en 1 sec. SC fill au mid bid/ask sans Price1 = aleatoire."
+- Pattern V1 valide Nov 2024 (V1_ARCHIVE/EXECUTION/sierra_dtc_connector.py:1646,1652) = belt-and-suspenders **Price1 + Price2=0 + StopPrice**.
+
+**Validation empirique 10/06 07:28** : Test isolation Sim1 NQ qty=1 avec code patche → Trade Activity Log SC montre `Internal Order ID 23818 Stop Price=28930.25` (colonne Price PEUPLEE, non vide). Jackson confirme visuellement.
+
+**5 sites patches 10/06** :
+- C1 `BOT/dtc_connector.py:461-483` - SL initial bracket
+- C2 `CORE/databento_paper_trader_v2.py:2195-2208` - Bot 3 v3 ladder promotion BE
+- C3 `CORE/databento_paper_trader_v2.py:2577-2590` - Bot 4 MIA Trader trailing
+- C4 `CORE/bn_v4_paper.py:1076-1089` - BN V4 recharge SL
+- C5 `BOT/dtc_connector.py:473-477` - STOP_LIMIT mode ON corrige Price1=stop_trigger + Price2=limit_price (etait inverse)
+
+**Test inverse** : `tests/test_dtc_stop_no_price1.py` SUPPRIME + remplace par `tests/test_dtc_stop_with_price1.py` (7/7 PASS). Le test inverse cementait le bug en CI.
+
+**Cause patch 01/06 incorrect** : "Pattern 11 V1 confirme - slip favorable +10.5t observe 27-29/05 → assume code faux → patch sans verifier spec officielle". La VRAIE cause du slip etait le setting SC `Allow Simulated Resting Limit Order to Fill at Better Price=Yes` (change a `No` le 30/05 reduisant slip de 55%). Le 4.7t restant etait realistic Sim1 bias, pas un bug a patcher.
+
+**Trigger prevention POST-revert** :
+- TOUTE modification payload DTC OBLIGATOIRE : citer le lien spec officielle https://www.sierrachart.com/index.php?page=doc%2FDTCMessages_OrderEntryModificationMessages.php section `s_SubmitNewSingleOrder` AVANT commit
+- Tests pytest OBLIGATOIRES : assert que chaque champ critique (Price1/Price2/StopPrice) est dans le payload selon OrderType
+- Si test "cement un bug" via assert "Price1 not in msg" → SUPPRIMER le test, ne pas le patcher
+
+---
+
+### 2026-06-01 09:30 (24-ORIGINAL) - [VALIDATION_MISS] - Payload DTC SL STOP envoye avec Price1=StopPrice depuis le debut V2 (60 jours non audite vs specs DTC)
 
 **Contexte** : 60 trades NQ Bot 1 v3 Sim1 27-29/05 audites — SL slip mean +10.5t favorable artificiel, 83% trades |slip|>5t, max +109t. PnL paper gonfle ~50%.
 

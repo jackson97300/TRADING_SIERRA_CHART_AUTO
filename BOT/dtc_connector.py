@@ -14,6 +14,7 @@ Date   : 2026-04-01
 
 import json
 import logging
+import os
 import socket
 import struct
 import time
@@ -35,6 +36,15 @@ try:
     _v2log = _get_v2_logger("dtc_connector", process="bot_legacy")
 except Exception:
     _v2log = None
+
+
+# Sentinel pour distinguer socket.timeout (rien recu, retry OK) vs EOF (socket fermee).
+# Fix 27/05 cycle 2 : avant ce sentinel, socket.timeout = None = trigger reconnect inutile.
+class _RecvTimeoutSentinel:
+    """Sentinel sigleton retourne par _recv() sur socket.timeout (pas EOF)."""
+    pass
+
+_RECV_TIMEOUT = _RecvTimeoutSentinel()
 
 
 # DTC Message Types
@@ -60,6 +70,24 @@ SELL = 2
 MARKET = 1
 LIMIT = 2
 STOP = 3
+STOP_LIMIT = 4  # 09/06 — Couche 4 anti-slippage (Jackson valide). OrderType=4 utilise Price1=limit_price.
+
+# 09/06 — FIX #56 Couche 4 STOP_LIMIT (Jackson valide).
+# Mode configurable via env var :
+#   OFF (default)  = STOP MARKET actuel (comportement preserve)
+#   SHADOW         = STOP MARKET + log ce qu'aurait ete STOP_LIMIT (audit J+7 sans risque)
+#   ON             = STOP_LIMIT actif (limit_price = stop_price ± offset_ticks)
+# Offset configurable via MIA_DTC_SL_LIMIT_OFFSET_TICKS (default 10t).
+# Risque mode ON : SL peut ne pas fill si marche plunge sous limit_price (perte plus large).
+# Mitigation : monitoring logs Discord + manual override.
+SL_LIMIT_MODE = os.environ.get("MIA_DTC_SL_LIMIT_MODE", "OFF").upper()  # OFF | SHADOW | ON
+SL_LIMIT_OFFSET_TICKS = int(os.environ.get("MIA_DTC_SL_LIMIT_OFFSET_TICKS", "10"))
+# Tick sizes par symbole (cf CORE/constants.py policy + bot3_config.py)
+SL_LIMIT_TICK_SIZES = {
+    "NQM26-CME": 0.25, "MNQM26-CME": 0.25,
+    "ESM26-CME": 0.25, "MESM26-CME": 0.25,
+    "MGCM26-CMECOMEX": 0.10, "GCM26-CMECOMEX": 0.10,
+}
 STOP_LIMIT = 4
 
 
@@ -84,9 +112,16 @@ class DTCConnector:
         self.connected = False
         self.lock = threading.Lock()
         self._recv_thread: Optional[threading.Thread] = None
+        # FIX 27/05 : thread keepalive proactif (Bot 4 reconnect loop investigation).
+        # La spec DTC exige que les 2 cotes emettent un Type 3 HEARTBEAT toutes les
+        # HeartbeatIntervalInSeconds. Sans ce thread, le connector ne repond qu'aux
+        # heartbeats RECUS de SC (l. ~931) -> si SC est silencieux N sec, Bot ne send
+        # rien -> SC ferme la socket apres timeout interne -> reconnect loop.
+        self._keepalive_thread: Optional[threading.Thread] = None
         self._running = False
         self._recv_buffer = b""
         self._last_heartbeat = 0.0
+        self._last_heartbeat_sent = 0.0
 
         # OCO manuel (comme V1 — Sierra Chart OCOGroup pas fiable)
         self._oco_pairs: dict = {}       # {tp_cid: sl_cid, sl_cid: tp_cid}
@@ -146,14 +181,16 @@ class DTCConnector:
             self.sock.settimeout(self.cfg.timeout_seconds)
             self.sock.connect((self.cfg.host, self.cfg.port))
 
-            # Logon
+            # Logon — Fix P0-3 review J9 NEW Bot 4 (27/05) : ClientName configurable
+            # via DTCConfig.client_name pour coexistence multi-bot. Default "MIA_Bot_V2"
+            # = retro-compat Bot 1/2/3. Bot 4 utilise "MIA_Bot_4".
             logon = {
                 "Type": DTC_LOGON_REQUEST,
                 "ProtocolVersion": 8,
                 "Username": "",
                 "Password": "",
                 "HeartbeatIntervalInSeconds": self.cfg.heartbeat_interval_seconds,
-                "ClientName": "MIA_Bot_V2",
+                "ClientName": getattr(self.cfg, "client_name", "MIA_Bot_V2"),
             }
             self._send(logon)
 
@@ -177,6 +214,11 @@ class DTCConnector:
                         self._recv_thread = threading.Thread(
                             target=self._recv_loop, daemon=False, name="DTC_recv_loop")
                         self._recv_thread.start()
+                    # FIX 27/05 : keepalive thread proactif (anti SC silent kick)
+                    if self._keepalive_thread is None or not self._keepalive_thread.is_alive():
+                        self._keepalive_thread = threading.Thread(
+                            target=self._keepalive_loop, daemon=True, name="DTC_keepalive")
+                        self._keepalive_thread.start()
                     return True
 
             return False
@@ -400,21 +442,84 @@ class DTCConnector:
 
             time.sleep(0.2)
 
-            # SL STOP
-            self._send({
+            # SL STOP / STOP_LIMIT (Couche 4 FIX #56 09/06 — Jackson valide).
+            # Mode configurable via MIA_DTC_SL_LIMIT_MODE :
+            #   OFF (default)  = STOP MARKET (comportement preserve depuis 01/06 patch)
+            #   SHADOW         = STOP MARKET + log limit_price calcule (audit J+7)
+            #   ON             = STOP_LIMIT actif avec Price1=limit_price (anti-slippage)
+            # Calcul limit_price = stop_price ± offset_ticks (defavorable, pour LONG SL
+            # = stop - offset, pour SHORT SL = stop + offset).
+            # NOTE : si mode ON, SL peut ne pas fill (marche plunge sous limit) -> perte plus
+            # large. Couches 1-3 (veto ATR + sl_min ATR-aware) limitent ce risque.
+            _sl_tick_size = SL_LIMIT_TICK_SIZES.get(symbol, 0.25)
+            # child_side : 2=SELL (couvre LONG, SL en dessous) / 1=BUY (couvre SHORT, SL au-dessus)
+            if child_side == 2:  # SELL = SL pour LONG : limit en dessous stop
+                _sl_limit_price = float(sl_price) - (SL_LIMIT_OFFSET_TICKS * _sl_tick_size)
+            else:  # BUY = SL pour SHORT : limit au-dessus stop
+                _sl_limit_price = float(sl_price) + (SL_LIMIT_OFFSET_TICKS * _sl_tick_size)
+
+            # 10/06/2026 REVERT FIX (cf BOT_CHANGELOG entry 2026-06-10) :
+            # Spec officielle DTC s_SubmitNewSingleOrder :
+            #   Price1 = stop trigger price pour OrderType=STOP (3)
+            #   Price2 = limit price pour OrderType=STOP_LIMIT (4)
+            # Le patch 01/06 (INCIDENT_LOG #24) avait retire Price1 en croyant
+            # que "OrderType=3 utilise UNIQUEMENT StopPrice" - affirmation jamais
+            # verifiee contre la spec. Preuve empirique 10/06 :
+            # - SL STOP envoye sans Price1 = NON arme cote SC (chart ne matérialise pas)
+            # - Comportements aleatoires : fill instantane @ mid bid/ask OU jamais trigger
+            # - 5+ trades casses en 48h (Bot 3 v3, Bot 3 v4, BN V5)
+            # Pattern V1 valide Nov 2024 (sierra_dtc_connector.py:1646,1652) :
+            # belt-and-suspenders Price1 + Price2=0 + StopPrice
+            _sl_payload = {
                 "Type": DTC_MARKET_ORDER,
                 "Symbol": symbol,
                 "ClientOrderID": sl_cid,
-                "OrderType": STOP,
                 "BuySell": child_side,
                 "Quantity": quantity,
-                "Price1": float(sl_price),
-                "StopPrice": float(sl_price),
+                "Price1": float(sl_price),       # SPEC : trigger price STOP
+                "Price2": 0.0,                    # Default explicite (non STOP_LIMIT)
+                "StopPrice": float(sl_price),    # Defensif compat (pattern V1)
                 "TimeInForce": 0,
                 "TradeAccount": trade_account,
                 "IsAutomatedOrder": 1,
                 "OpenCloseTrade": 2,
-            })
+            }
+            if SL_LIMIT_MODE == "ON":
+                # 10/06 FIX C5 : Spec STOP_LIMIT inverse Price1/Price2
+                # Price1 = stop_trigger (idem STOP), Price2 = limit_price
+                _sl_payload["OrderType"] = STOP_LIMIT
+                _sl_payload["Price1"] = float(sl_price)              # stop trigger
+                _sl_payload["Price2"] = round(_sl_limit_price, 4)    # limit price
+                _sl_mode_emit = "STOP_LIMIT_ACTIVE"
+            else:
+                # OFF + SHADOW = STOP MARKET (Price1=stop_price deja set ci-dessus)
+                _sl_payload["OrderType"] = STOP
+                _sl_mode_emit = "STOP_MARKET_DEFAULT" if SL_LIMIT_MODE == "OFF" else "STOP_MARKET_SHADOW"
+
+            self._send(_sl_payload)
+
+            # 01/06 LOG TRACEABILITY + 09/06 Couche 4 audit shadow/active
+            if _v2log:
+                try:
+                    _v2log.emit("SL_STOP_PATCHED_V1",
+                                kind="sl_initial",
+                                sl_cid=sl_cid,
+                                sl_price=float(sl_price),
+                                trade_account=trade_account,
+                                sl_limit_mode=SL_LIMIT_MODE,
+                                sl_limit_price=round(_sl_limit_price, 4),
+                                sl_limit_offset_ticks=SL_LIMIT_OFFSET_TICKS,
+                                order_type_emit=_sl_mode_emit)
+                    # Emit code specifique pour audit J+7 STOP_LIMIT
+                    if SL_LIMIT_MODE in ("SHADOW", "ON"):
+                        _v2log.emit("DTC_SL_LIMIT_CALC",
+                                    sym=symbol, sl_cid=sl_cid,
+                                    stop_price=float(sl_price),
+                                    limit_price=round(_sl_limit_price, 4),
+                                    offset_ticks=SL_LIMIT_OFFSET_TICKS,
+                                    mode=SL_LIMIT_MODE)
+                except Exception:
+                    pass
 
             logger.info(f"Bracket sent: parent={parent_id} "
                         f"TP={tp_cid}@{tp_price} SL={sl_cid}@{sl_price}")
@@ -673,7 +778,8 @@ class DTCConnector:
         logger.info(f"Close market sent: cid={close_id} side={side} qty={quantity} {symbol}")
         return close_id
 
-    def cancel_order(self, order_id: str, trade_account: str = "Sim3") -> bool:
+    def cancel_order(self, order_id: str, trade_account: str = "Sim3",
+                     require_sid: bool = False) -> bool:
         """
         Annule un ordre par ClientOrderID + ServerOrderID.
 
@@ -693,11 +799,39 @@ class DTCConnector:
         Double envoi par securite (le 2e est ignore si le 1er a marche),
         avec re-check SID entre les deux envois pour capter un
         ORDER_UPDATE qui arriverait dans la fenetre 0.3s SANS bloquer.
+
+        FIX 19/05 (incident #10 ladder SL fantome) : param `require_sid=False`
+        ajoute. Quand True (utilise par ladder/modify SL), retourne IMMEDIATEMENT
+        False si pas de SID dans tracking, SANS envoyer le cancel (puisqu'il
+        serait ignore silencieusement par SC). Permet au caller de detecter
+        l'echec et restaurer l'ancien SL au lieu d'updater le state interne
+        avec un new_sl_cid qui n'existera jamais broker-side.
+        Comportement legacy preserve par defaut (require_sid=False : envoi
+        meme sans SID avec warning, return True).
+
+        Args:
+            order_id: ClientOrderID de l'ordre a canceler
+            trade_account: Sim1/Sim2/Sim3 (default Sim3 historique Bot 1)
+            require_sid: si True, refuse l'envoi si pas de SID (return False)
+
+        Returns:
+            bool: True si le cancel a ete envoye (mais aucune garantie que SC
+                  l'a accepte — utiliser verify Type 300 post-cancel pour cela).
+                  False si :
+                    - pas connecte au DTC
+                    - require_sid=True et pas de SID dans tracking
         """
         if not self.connected:
             return False
 
         server_id = self._server_order_ids.get(order_id, "")
+        if not server_id and require_sid:
+            logger.error(
+                f"Cancel REFUSED (require_sid=True, no SID for {order_id}): "
+                f"SC ignorerait silencieusement, caller doit detecter echec."
+            )
+            return False
+
         # 04/05 H5 : RequestID requis pour SC Sim (projet 1 confirme le faisait).
         rid = self._request_id_counter
         self._request_id_counter += 1
@@ -786,7 +920,20 @@ class DTCConnector:
                 self.connected = False
 
     def _recv(self) -> Optional[dict]:
-        """Recoit UN message DTC JSON (buffer persistant, readuntil \\x00)."""
+        """Recoit UN message DTC JSON (buffer persistant, readuntil \\x00).
+
+        FIX 27/05 (Bot 4 reconnect loop investigation cycle 2) :
+        Distingue EOF (socket fermee, return None -> trigger reconnect) vs
+        timeout (rien recu pendant N sec, return _RECV_TIMEOUT sentinel ->
+        caller retry sans reconnect). Avant fix : socket.timeout = None =
+        reconnect inutile toutes les 10s sur Sim4 (SC silencieux car pas de
+        market data subscribe).
+
+        Returns:
+            dict : message JSON valide recu
+            None : EOF (socket fermee distant) OU erreur JSON/exception
+            _RECV_TIMEOUT : timeout socket (rien recu, mais socket toujours OK)
+        """
         try:
             while True:
                 # Verifier si un message complet est deja dans le buffer
@@ -803,14 +950,16 @@ class DTCConnector:
                 # Lire plus de donnees
                 chunk = self.sock.recv(8192)
                 if not chunk:
-                    return None
+                    return None  # EOF = socket fermee
                 self._recv_buffer += chunk
 
         except json.JSONDecodeError as e:
             logger.warning(f"DTC JSON invalide: {e}")
             return None
         except socket.timeout:
-            return None
+            # FIX 27/05 : NE PAS retourner None (= reconnect inutile).
+            # Le timeout signifie juste "rien recu pendant N sec", socket OK.
+            return _RECV_TIMEOUT
         except Exception as e:
             logger.error(f"DTC recv error: {e}")
             with self.lock:
@@ -828,6 +977,11 @@ class DTCConnector:
                 with self.lock:
                     self.connected = False
                 time.sleep(self.cfg.reconnect_delay_seconds)
+                continue
+
+            # FIX 27/05 cycle 2 : socket.timeout != EOF. Si _RECV_TIMEOUT,
+            # juste continue loop (socket OK, SC silencieux mais alive via keepalive).
+            if msg is _RECV_TIMEOUT:
                 continue
 
             if msg is None:
@@ -861,6 +1015,11 @@ class DTCConnector:
                     time.sleep(delay)
 
                     # Reconnect (sans recreer le thread)
+                    # FIX 27/05 (Bot 4 reconnect loop) : utiliser self.cfg.client_name
+                    # au lieu de hardcode "MIA_Bot_V2". Sans ce fix, Bot 4 (qui passe
+                    # client_name="MIA_Bot_4" au boot via DTCSettings) logon comme
+                    # MIA_Bot_V2 au reconnect -> collision avec wrapper Bot 1/2/3 ->
+                    # Sierra Chart kick le doublon -> boucle infinie reconnect.
                     try:
                         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         self.sock.settimeout(self.cfg.timeout_seconds)
@@ -870,7 +1029,7 @@ class DTCConnector:
                             "ProtocolVersion": 8,
                             "Username": "", "Password": "",
                             "HeartbeatIntervalInSeconds": self.cfg.heartbeat_interval_seconds,
-                            "ClientName": "MIA_Bot_V2",
+                            "ClientName": getattr(self.cfg, "client_name", "MIA_Bot_V2"),
                         }
                         self._send(logon)
                         response = self._recv()
@@ -878,11 +1037,24 @@ class DTCConnector:
                             with self.lock:
                                 self.connected = True
                             self._last_heartbeat = time.time()
-                            # V2 log : reconnect succes
+                            # V2 log : reconnect succes (avec client_name pour audit)
                             if _v2log:
-                                _v2log.emit("DTC_RECONNECT", attempts=reconnect_attempts)
+                                _v2log.emit("DTC_RECONNECT",
+                                            attempts=reconnect_attempts,
+                                            client_name=getattr(self.cfg, "client_name", "MIA_Bot_V2"))
                             reconnect_attempts = 0
-                            logger.info("[DTC] Reconnecte avec succes")
+                            logger.info(f"[DTC] Reconnecte avec succes (client={getattr(self.cfg, 'client_name', 'MIA_Bot_V2')})")
+                        else:
+                            # Logon refuse explicitement par SC : log + ne pas marquer connected.
+                            # Le prochain tour du loop verra socket mort/lecture vide et retentera.
+                            result_code = response.get("Result") if response else "no_response"
+                            reject_text = response.get("ResultText", "") if response else ""
+                            logger.error(f"[DTC] Reconnect logon REJECTED: result={result_code} text={reject_text}")
+                            if _v2log:
+                                _v2log.emit("DTC_RECONNECT_LOGON_REJECT",
+                                            result=str(result_code),
+                                            text=str(reject_text)[:200],
+                                            client_name=getattr(self.cfg, "client_name", "MIA_Bot_V2"))
                     except Exception as e:
                         logger.error(f"[DTC] Reconnect echec: {e}")
                 else:
@@ -900,6 +1072,7 @@ class DTCConnector:
             if msg_type == DTC_HEARTBEAT:
                 self._last_heartbeat = time.time()
                 self._send({"Type": DTC_HEARTBEAT})
+                self._last_heartbeat_sent = self._last_heartbeat
 
             elif msg_type == DTC_ORDER_UPDATE:
                 self._handle_order_update(msg)
@@ -1172,6 +1345,33 @@ class DTCConnector:
     def send_heartbeat(self):
         """Envoie un heartbeat manuellement."""
         self._send({"Type": DTC_HEARTBEAT})
+        self._last_heartbeat_sent = time.time()
+
+    def _keepalive_loop(self):
+        """Thread keepalive : emit Type 3 HEARTBEAT proactif toutes les
+        heartbeat_interval_seconds secondes.
+
+        FIX 27/05 (Bot 4 reconnect loop) : sans ce thread, le connector
+        ne repond qu'aux heartbeats RECUS de SC. Si SC silencieux (cas
+        observe en Sim ou faible activite), socket cote SC ferme apres
+        timeout interne (~30-60s) -> "Connexion perdue" -> reconnect loop.
+        La spec DTC exige emission proactive des 2 cotes.
+        """
+        interval = max(self.cfg.heartbeat_interval_seconds, 1)
+        # Granularite 1s pour reagir vite a disconnect (sleep long bloque drain)
+        while self._running:
+            try:
+                if self.connected:
+                    now = time.time()
+                    if now - self._last_heartbeat_sent >= interval:
+                        try:
+                            self._send({"Type": DTC_HEARTBEAT})
+                            self._last_heartbeat_sent = now
+                        except Exception as e:
+                            logger.warning(f"[DTC] keepalive send failed: {e}")
+            except Exception as e:
+                logger.error(f"[DTC] keepalive loop error: {e}")
+            time.sleep(1.0)
 
     @property
     def is_alive(self) -> bool:
