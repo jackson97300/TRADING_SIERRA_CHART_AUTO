@@ -61,11 +61,20 @@ TICK_SIZE: dict[str, float] = {
 }
 
 # Valeur d'un tick en USD (pour P&L)
-# MGC : 1 tick = $1.00 (Micro Gold = 10 onces troy * $0.10)
+# 03/06/2026 06:55 : ROLLBACK migration MNQM26 → retour E-mini partout (1 NQ + 1 ES).
+# Cause : MNQM26 pas configure dans Sierra Chart, ordres pas routes, Trade Activity Log
+# vide, dashboard affichait positions fantomes que SC ne voyait pas.
+# Decision Jackson : "Solution A pragmatique = tout en MINI, on triche dashboard apres
+# (NQ affiche comme 3 Micros virtuels). Je corrigerai en prop firm eval."
+#
+# Cohérence config :
+#   - ES traded as ESM26 E-mini (1 contrat) -> tick_value = $12.50
+#   - NQ traded as NQM26 E-mini (1 contrat) -> tick_value = $5.00 (specs CME : $20/pt × 0.25)
+#   - MGC traded as MGCM26 Micro Gold (1 ctr) -> tick_value = $1.00
 TICK_VALUE: dict[str, float] = {
-    "ES": 1.25,   # Micro ES : $1.25/tick
-    "NQ": 0.50,   # Micro NQ : $0.50/tick
-    "MGC": 1.00,  # Micro Gold : $1.00/tick (10oz troy * 0.10)
+    "ES": 12.50,  # E-mini ESM26 standard (1 contrat) : $12.50/tick ($50/pt)
+    "NQ": 5.00,   # E-mini NQM26 standard (1 contrat) : $5.00/tick ($20/pt)
+    "MGC": 1.00,  # Micro Gold MGCM26 (1 contrat) : $1.00/tick (10oz × $0.10)
 }
 
 # Default tick size pour code generique (ES + NQ ont le meme)
@@ -356,11 +365,11 @@ def get_tick_value(symbol: str, strict: bool = False) -> float:
                 f"Ajouter une entree TICK_VALUE['{sym}'] dans constants.py."
             )
         _logger.warning(
-            "get_tick_value: symbole inconnu '%s' — fallback ES (1.25) USD. "
+            "get_tick_value: symbole inconnu '%s' — fallback ES E-mini (12.50) USD. "
             "Ajouter une entree TICK_VALUE['%s'] dans constants.py.",
             symbol, sym,
         )
-        return 1.25
+        return 12.50
     return TICK_VALUE[sym]
 
 

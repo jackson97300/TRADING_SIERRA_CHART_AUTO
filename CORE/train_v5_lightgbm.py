@@ -51,17 +51,44 @@ META_COLS = {
     "bn_color_up_fwd1", "bn_color_dn_fwd1",
     "bn_color_up_2_fwd1", "bn_color_dn_2_fwd1",
     "mins_to_next_news",  # lookahead news event → leak temporel (bar courante voit news future)
+    # === LEAK SWING ARCHITECTURAL (audit ml-trainer 02/05) ===
+    # sessions_swings_engine.py:274-286 utilise fenetre [i-10, i+10] = lookahead 10 bars
+    # Preuve empirique : bars_since_last_swing_high=0 → P(SELL)=95% (vs baseline 51%)
+    # Top 4/8 features ML = swing-based = 50% du modele leak
+    "bars_since_last_swing_high", "bars_since_last_swing_low",
+    "dist_last_swing_high_pct", "dist_last_swing_low_pct",
+    "swing_high_active_lag10", "swing_low_active_lag10",
+    "last_swing_high_session", "last_swing_low_session",
 }
 
 
+def _is_swing_or_x_leak(col: str) -> bool:
+    """LEAK swing-based ou artefact merge `_x`/`_y` (col duplicate ambig).
+
+    Audit ml-trainer 02/05 :
+    - 10 cols swing-based fixe dans META_COLS (versions 1m natives)
+    - Mais aussi versions TF : `dist_last_swing_*_pct_5m/_15m/_1h` etc.
+    - Et `_x`/`_y` artefact merge_asof si col duplicate dans 2 sources
+    """
+    if "_x" == col[-2:] or "_y" == col[-2:]:
+        return True
+    swing_keywords = ["bars_since_last_swing", "dist_last_swing",
+                       "swing_high_active", "swing_low_active",
+                       "last_swing_high_session", "last_swing_low_session"]
+    return any(k in col for k in swing_keywords)
+
+
 def get_feature_cols(df: pd.DataFrame) -> list:
-    """Retourne cols utilisables pour ML (exclut META + non-numeric)."""
+    """Retourne cols utilisables pour ML (exclut META + non-numeric + leak swing/_x)."""
     cols = []
     for c in df.columns:
         if c in META_COLS:
             continue
         # Skip cols categorielles non-encodees (object, datetime)
         if df[c].dtype == "object" or pd.api.types.is_datetime64_any_dtype(df[c]):
+            continue
+        # FIX leak swing-based + _x/_y artefact merge (audit ml-trainer 02/05)
+        if _is_swing_or_x_leak(c):
             continue
         cols.append(c)
     return cols

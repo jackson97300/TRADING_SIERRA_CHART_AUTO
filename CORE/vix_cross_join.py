@@ -67,7 +67,7 @@ def load_vix_from_es_jsonl(start: date, end: date, dmp_es_dir: Path | None = Non
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    df["ts_event"] = pd.to_datetime(df["ts"], unit="ms", utc=True).dt.tz_localize(None).dt.floor("min")
+    df["ts_event"] = pd.to_datetime(df["ts"], unit="ms", utc=True).dt.tz_localize(None).dt.floor("min").astype("datetime64[ns]")
     df = df.drop(columns=["ts"])
     # De-dup par minute (DMP peut ecrire 2 lignes/min)
     df = df.groupby("ts_event").last().reset_index()
@@ -112,10 +112,12 @@ def add_vix_cross_join(df_mgc: pd.DataFrame, dmp_es_dir: Path | None = None) -> 
     df_mgc = df_mgc.sort_values("ts_event").reset_index(drop=True)
     df_vix = df_vix.sort_values("ts_event").reset_index(drop=True)
 
-    # Ensure datetime64 (drop tz if present)
+    # Ensure datetime64[ns] UTC-naive (pandas 2.x strict sur dtype merge keys)
     df_mgc["ts_event"] = pd.to_datetime(df_mgc["ts_event"]).dt.tz_localize(None) \
         if pd.api.types.is_datetime64tz_dtype(df_mgc["ts_event"]) \
         else pd.to_datetime(df_mgc["ts_event"])
+    df_mgc["ts_event"] = df_mgc["ts_event"].astype("datetime64[ns]")
+    df_vix["ts_event"] = df_vix["ts_event"].astype("datetime64[ns]")
 
     merged = pd.merge_asof(
         df_mgc,

@@ -104,6 +104,27 @@ MENTHORQ_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DATA", 
 STOP_FLAG_FILE = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "DATA", "BOT_CONTROL", "STOP.flag"
 )
+# FIX 19/05 nuit (Jackson "FLATTEN MANUEL A PAS FONCTOINNER SUR LE BOT 2") :
+# le fix 19/05 PM avait ajoute le check FLATTEN_2_*.flag dans paper_v2
+# (databento_paper_trader_v2.py:3624-3645) MAIS Bot 2 V6 (ce module) tourne
+# dans le service MIA-Brain-V6 distinct. Bot 2 V6 ne lisait JAMAIS le flag,
+# la position restait en tracking interne meme apres click FLATTEN dashboard.
+# Confirme empirique 19/05 23:00 : ES SHORT entry 7375.25 ouvert 22:16:00,
+# state_v6.json bars_held=183, aucun TRADE_CLOSE log, broker Sim2 flat
+# (flatten_bot.py --bot 2 avait flatten broker, mais tracking V6 reste actif).
+# Endpoint /api/admin/bot/2/flatten/{sym} ecrit FLATTEN_2_{sym}.flag dans
+# DATA/BOT_CONTROL/. paper_v2 et Brain-V6 lisent tous deux le meme flag :
+# le premier qui a la position trackee le traite + delete. L'autre voit le
+# flag mais self.positions[sym] is None → LAISSE le flag (ne supprime PAS).
+FLATTEN_FLAG_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "DATA", "BOT_CONTROL"
+)
+BOT2_FLATTEN_FLAG_PATTERN = "FLATTEN_2_{symbol}.flag"
+# TTL flag (review code-reviewer 19/05 nuit) : evite flag orphelin sur "Flatten all"
+# qui cree FLATTEN_2_ES + FLATTEN_2_NQ + FLATTEN_2_MGC alors que Bot 2 V6 n'a
+# position que sur ES. Sans TTL, les flags NQ/MGC restent a vie et flush le
+# prochain trade NQ a l'open = bug futur garanti.
+FLATTEN_FLAG_TTL_SEC = 60
 # 🆕 LEVIER A Trailing TP MFE-based (04/05 soir Jackson — Option 2 sweet spot)
 # Audit 28 TIMEOUT : 13 trades MFE>=20t mais final capture 30-50% seulement.
 # Activation : si MFE atteint le seuil par symbol -> trailing s'arme.
@@ -3759,6 +3780,78 @@ class PaperTrader:
                     print(f"  [{now}] [KILL_SWITCH] STOP.flag supprime -> reprise trading")
                     if _v2log:
                         _v2log.emit("BOT_KILL_SWITCH_RELEASED")
+                # ==============================================================================
+
+                # ==================== FLATTEN_MANUAL Bot 2 V6 (19/05 nuit fix) ================
+                # Endpoint /api/admin/bot/2/flatten/{sym} ecrit FLATTEN_2_{sym}.flag.
+                # paper_v2 (service MIA-DataBento-Paper-V2) le voit aussi via le code
+                # symetrique databento_paper_trader_v2.py:3624. Convention partagee :
+                #   - process qui A self.positions[sym] != None traite + delete flag
+                #   - process qui n'a PAS la position LAISSE le flag (ne supprime pas)
+                #   - flag avec timestamp JSON > FLATTEN_FLAG_TTL_SEC = STALE -> delete
+                # TTL critique (review code-reviewer 19/05 nuit) : sans TTL, un
+                # "Flatten all" cree FLATTEN_2_NQ.flag + FLATTEN_2_MGC.flag qui
+                # restent a vie si Bot 2 V6 n'a position que sur ES → prochain trade
+                # NQ flushe immediatement a l'open = bug futur garanti.
+                for sym_flag in ("ES", "NQ"):
+                    flag_path = os.path.join(
+                        FLATTEN_FLAG_DIR, BOT2_FLATTEN_FLAG_PATTERN.format(symbol=sym_flag),
+                    )
+                    if not os.path.exists(flag_path):
+                        continue
+                    # TTL check : flag expire (>FLATTEN_FLAG_TTL_SEC) = stale, cleanup defensif
+                    flag_age_sec = -1.0
+                    flag_stale = False
+                    try:
+                        with open(flag_path, "r", encoding="utf-8") as f:
+                            flag_data = json.load(f)
+                        flag_ts_str = flag_data.get("timestamp", "")
+                        flag_ts = datetime.fromisoformat(flag_ts_str.replace("Z", "+00:00"))
+                        flag_age_sec = (datetime.now(timezone.utc) - flag_ts).total_seconds()
+                        if flag_age_sec > FLATTEN_FLAG_TTL_SEC:
+                            flag_stale = True
+                    except (OSError, json.JSONDecodeError, KeyError, ValueError):
+                        # Flag corrompu ou timestamp invalide : delete defensif
+                        flag_stale = True
+                    if flag_stale:
+                        try:
+                            os.remove(flag_path)
+                        except OSError:
+                            pass
+                        if _v2log:
+                            _v2log.emit("BOT2V6_FLATTEN_MANUAL_FLAG_STALE",
+                                        sym=sym_flag, age_sec=round(flag_age_sec, 1))
+                        continue
+                    with self._pos_lock:
+                        has_pos = sym_flag in self.positions
+                    if not has_pos:
+                        # Pas de position en tracking V6 : laisse le flag pour paper_v2.
+                        # Sera GC'd par TTL si paper_v2 ne le traite pas non plus.
+                        continue
+                    banner = data.get("banner", {}).get(sym_flag.lower(), {})
+                    flatten_price = banner.get("price", 0)
+                    if flatten_price <= 0:
+                        # Banner indispo : retry au prochain tick (ne supprime PAS le flag)
+                        # Si banner price=0 persiste > TTL, le flag sera GC'd au tick suivant.
+                        print(f"  [{now}] [FLATTEN_MANUAL] {sym_flag} : banner price=0, retry next tick")
+                        continue
+                    try:
+                        self._close_trade(sym_flag, flatten_price, "FLATTEN_MANUAL")
+                        print(f"  [{now}] [FLATTEN_MANUAL] {sym_flag} @ {flatten_price} (user dashboard)")
+                        if _v2log:
+                            _v2log.emit("BOT2V6_FLATTEN_MANUAL_EXECUTED",
+                                        sym=sym_flag, price=flatten_price)
+                    except Exception as exc_flat:
+                        print(f"  [{now}] [FLATTEN_MANUAL] {sym_flag} fail: {exc_flat}")
+                        if _v2log:
+                            _v2log.emit("BOT2V6_FLATTEN_MANUAL_EXCEPTION",
+                                        sym=sym_flag, exc_type=type(exc_flat).__name__,
+                                        exc_msg=str(exc_flat)[:200])
+                    # Delete flag dans tous les cas (close OK OR exception : ne pas reboucler).
+                    try:
+                        os.remove(flag_path)
+                    except OSError:
+                        pass
                 # ==============================================================================
 
                 for symbol in ("ES", "NQ"):

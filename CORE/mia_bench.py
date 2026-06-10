@@ -992,9 +992,11 @@ def test_wall_tracker(data: dict, out: list):
                 dt_db = [r for r in day_results if r['dts'] > 0 or r['dbs'] > 0]
 
                 if worked:
-                    out.append(f"    ✅ FONCTIONNÉ: {', '.join(r['name'] + f'({r['br']:.0f}%)' for r in worked[:6])}")
+                    worked_str = ', '.join(f"{r['name']}({r['br']:.0f}%)" for r in worked[:6])
+                    out.append(f"    ✅ FONCTIONNÉ: {worked_str}")
                 if failed:
-                    out.append(f"    ❌ CASSÉ:      {', '.join(r['name'] + f'(pen {r['pen']:.0f}p)' for r in failed[:4])}")
+                    failed_str = ', '.join(f"{r['name']}(pen {r['pen']:.0f}p)" for r in failed[:4])
+                    out.append(f"    ❌ CASSÉ:      {failed_str}")
                 if dt_db:
                     parts = []
                     for r in dt_db:

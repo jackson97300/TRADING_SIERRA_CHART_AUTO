@@ -85,6 +85,27 @@ class Logger:
             msg_fr = template.format(**ctx)
         except KeyError as err:
             msg_fr = f"{template} [MISSING_CTX: {err}]"
+        except (ValueError, TypeError) as err:
+            # Fix P0 BIS#1 code-reviewer 23/05 iter2 : protection contre
+            # format spec ValueError (e.g. `{x:.3f}` avec x=None) ou TypeError
+            # (autre type incompatible). Sans ce fix, Logger.emit crash et
+            # remonte l'exception dans le bot -> boucle plantee -> trade
+            # fantome. Fallback : re-essai avec None remplace + spec strippes.
+            import re as _re
+            safe_ctx = {k: ("None" if v is None else v) for k, v in ctx.items()}
+            try:
+                msg_fr = template.format(**safe_ctx) + " [FMT_DEGRADED_NONE]"
+            except (ValueError, TypeError):
+                # 2e fallback : strip TOUS les format specs `:xxx` du template
+                # (regex `\{(\w+):[^}]+\}` -> `{\1}`) pour retomber sur
+                # interpolation simple sans conversion numerique.
+                stripped = _re.sub(r"\{(\w+):[^}]+\}", r"{\1}", template)
+                try:
+                    msg_fr = stripped.format(**safe_ctx) + " [FMT_DEGRADED_STRIP]"
+                except Exception:
+                    # 3e fallback : abandon, fournir le code + ctx keys pour
+                    # traçabilite minimale.
+                    msg_fr = f"{template} [FMT_ERR: {err} ctx_keys={list(ctx.keys())}]"
 
         entry: dict[str, Any] = {
             "ts": _now_iso(),

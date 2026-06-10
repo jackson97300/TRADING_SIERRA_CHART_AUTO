@@ -90,15 +90,20 @@ def _get_int_field(d: dict, key: str, default: int = 0) -> int:
 # Bias proxy (sans dependance compute_bias pour eviter cycle import)
 # ===========================================================================
 
-def _compute_bias_proxy(bar: dict) -> tuple[float, str, int, int]:
+def _compute_bias_proxy(bar: dict, mode: str) -> tuple[float, str, int, int]:
     """Calcul bias proxy (vs CORE/bias_calculator.py compute_bias).
 
     Logique simplifiee (60% du compute_bias V1) :
       - VWAP slope (pente directionnelle)
       - delta_day_dir / cvd_day_dir (orderflow direction)
-      - range_pos (haut = bear bias, bas = bull bias)
+      - range_pos (haut = bear bias, bas = bull bias) — SKIP en mode TREND (BUG #2 fix)
       - vwap_d_side (above/below VWAP)
       - delta_divergence (binaire)
+
+    Args:
+        bar: dict ligne DMP/parquet
+        mode: regime mode deja calcule par compute_regime ("TREND"|"RANGE"|"NORMAL")
+              OBLIGATOIRE (fail-loud, anti silent fallback — R2 code-reviewer 08/06)
 
     Returns:
         (bias_score [-1,1], bias_label, bear_factors_count, bull_factors_count)
@@ -115,23 +120,51 @@ def _compute_bias_proxy(bar: dict) -> tuple[float, str, int, int]:
         score -= 0.25
         bear_factors += 1
 
+    # FIX BUG #3 (08/06/2026) — separer delta (priorite) + cvd (modulation).
+    # AVANT : `of_dir = delta_dir or cvd_dir` (OR booleen short-circuit). Si
+    # delta=+1, cvd=-1 (divergence orderflow = signal retournement classique),
+    # delta prioritaire ecrasait silencieusement le cvd oppose.
+    #
+    # APRES : delta + cvd separes, calibration ADAPTATIVE selon presence cvd
+    # (R1 code-reviewer ac988048c9c6bff6b — pipeline Databento absent de cvd_day_dir).
+    # - cvd PRESENT (source Sierra DMP) : delta=0.20 vote + cvd=0.05 modulation.
+    #   Max aligne 0.25. Conflit delta=+1 cvd=-1 → 0.15 (delta wins attenue).
+    # - cvd ABSENT (source Databento live_enriched) : delta=0.25 vote (compat pre-fix).
+    #   Eviter regression -20% signal sur 50% des consommateurs.
+    # bear/bull_factors comptent UNIQUEMENT delta (cvd = modulation, pas vote).
     delta_dir = _get_int_field(bar, "delta_day_dir", 0)
-    cvd_dir = _get_int_field(bar, "cvd_day_dir", 0)
-    of_dir = delta_dir or cvd_dir
-    if of_dir > 0:
-        score += 0.25
+    cvd_present = ("cvd_day_dir" in bar) and (bar.get("cvd_day_dir") is not None)
+    cvd_dir = _get_int_field(bar, "cvd_day_dir", 0) if cvd_present else 0
+    # Calibration delta adaptee : 0.20 si cvd present (split), 0.25 si cvd absent (compat).
+    delta_weight = 0.20 if cvd_present else 0.25
+    if delta_dir > 0:
+        score += delta_weight
         bull_factors += 1
-    elif of_dir < 0:
-        score -= 0.25
+    elif delta_dir < 0:
+        score -= delta_weight
         bear_factors += 1
+    # CVD modulation +/- 0.05 (uniquement si present, pas de vote structurel)
+    if cvd_present:
+        if cvd_dir > 0:
+            score += 0.05
+        elif cvd_dir < 0:
+            score -= 0.05
 
-    pos = _get_field(bar, "range_pos", 50.0)
-    if pos > 70:
-        score -= 0.20
-        bear_factors += 1
-    elif pos < 30:
-        score += 0.20
-        bull_factors += 1
+    # FIX BUG #2 (08/06/2026) — range_pos = logique mean-reversion.
+    # AVANT : applique uniformement → en TREND DAY UP, range_pos > 70 est NATUREL
+    # mais le proxy decrete BEAR a tort, declenchant override coherence (3 bear
+    # factors) qui forcait favor = NEUTRE → STEP 0 reject 'regime_bias_neutral'
+    # alors que le regime etait legitimement TREND favor=LONG.
+    # APRES : range_pos n'est evalue que hors mode TREND (RANGE ou NORMAL).
+    # En TREND, le prix aux extremes est attendu, pas un signal contraire.
+    if mode != "TREND":
+        pos = _get_field(bar, "range_pos", 50.0)
+        if pos > 70:
+            score -= 0.20
+            bear_factors += 1
+        elif pos < 30:
+            score += 0.20
+            bull_factors += 1
 
     vwap_d = _get_int_field(bar, "vwap_d_side", 0)
     if vwap_d > 0:
@@ -320,7 +353,9 @@ def compute_regime(bar: dict) -> RegimeAnalysis:
         mode = "NORMAL"
 
     # ===== Bias proxy (pour favor en mode TREND/NORMAL) =====
-    bias_score, bias_label, bear_factors, bull_factors = _compute_bias_proxy(bar)
+    # BUG #2 fix : passer `mode` au proxy pour qu'il skip range_pos en TREND
+    # (mean reversion incoherente quand le prix est attendu aux extremes).
+    bias_score, bias_label, bear_factors, bull_factors = _compute_bias_proxy(bar, mode)
     range_pos = _get_field(bar, "range_pos", 50.0)
 
     # ===== Direction (favor) =====

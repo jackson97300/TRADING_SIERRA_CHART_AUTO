@@ -36,6 +36,9 @@ except ImportError:
     from constants import get_cme_trading_day, TRAILING_TR40_NQ_ENABLED, get_tick_value
 from CORE.bias_calculator import compute_bias  # 3.7.9 (24/04) gate directionnel
 from CORE.cross_instrument import compute_cross_bonus  # 24/04 mode OBSERVATION (log-only)
+# 08/06 — DailyLimitsGuard (Mark Douglas kill switch universal $200/-$150/5 trades).
+# Cf feedback_douglas_consistency_principles.md (souverain) + INCIDENT_LOG 08/06.
+from CORE.daily_limits_guard import DailyLimitsGuard, load_config_from_env
 
 # Systeme logs V2 (22/04 session)
 try:
@@ -73,6 +76,32 @@ MENTHORQ_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DATA", 
 STOP_FLAG_FILE = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "DATA", "BOT_CONTROL", "STOP.flag"
 )
+# FIX 19/05 PM (Jackson "bouton FLATTEN ne marche pas") : flag per-bot per-symbol
+# pour fermer le tracking INTERNE du bot avec exit_reason="FLATTEN_MANUAL".
+# Endpoint /api/admin/bot/1/flatten/ES ecrit FLATTEN_1_ES.flag, ce code le lit
+# au poll cycle + appelle _close_trade(sym, price, "FLATTEN_MANUAL") + supprime flag.
+FLATTEN_FLAG_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "DATA", "BOT_CONTROL"
+)
+# 03/06 FIX RACE FLATTEN (code-reviewer P1.1-P1.3 BUG #1) :
+# Avant : ce process consumait FLATTEN_1_*.flag (legacy naming "Bot 1 DMP" pre-refacto 28/05).
+# Apres refacto archi 28/05 : ce process = Bot 4 (Sim4). FLATTEN_1_*.flag est consumed par
+# Bot 1 v3/MP dans paper_v2 -> RACE FATALE si rien renomme.
+# Solution : rename a BOT4_FLATTEN_FLAG_PATTERN = FLATTEN_4_*.flag.
+# admin_routes.py cree FLATTEN_{bot_id}_{sym}.flag, donc bot_id="4" cree FLATTEN_4 cible Bot 4.
+BOT4_FLATTEN_FLAG_PATTERN = "FLATTEN_4_{symbol}.flag"
+
+# FIX 19/05 PM (Jackson "trade fantome perdu apres restart") : persistence
+# `self.positions` brut + recovery au boot. Avant ce fix : restart MIA-Paper en
+# milieu de trade -> position perdue en memoire + pas de TRADE_CLOSE log +
+# trade absent de closed_today. Apres : ecriture atomique dans
+# `bot1_runtime_positions.json` toutes les 30s + recovery au boot avec
+# validation broker DTC (orphan detection).
+RECOVERY_POSITIONS_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "DATA", "PAPER_TRADES", "bot1_runtime_positions.json"
+)
+RECOVERY_MAX_AGE_SEC = 3600  # 1h max — au-dela on assume stale
 # 🆕 LEVIER A Trailing TP MFE-based (04/05 soir Jackson — Option 2 sweet spot)
 # Audit 28 TIMEOUT : 13 trades MFE>=20t mais final capture 30-50% seulement.
 # Activation : si MFE atteint le seuil par symbol -> trailing s'arme.
@@ -83,7 +112,12 @@ STOP_FLAG_FILE = os.path.join(
 #   Option 2 (ACTIVE)       : ES=30 NQ=50 db=20 -> 6 triggers, +$437, PF 1.06->1.15
 #   Note : ES seuil 40 jamais atteint (MFE max ES TIMEOUT = 39t).
 TRAILING_TP_MFE_THRESHOLD_TICKS = {"ES": 30, "NQ": 50}   # Option 2 sweet spot
-TRAILING_TP_DRAWBACK_TICKS = 20                           # drawback peak MFE
+# FIX 20/05 : drawback 20 -> 12. Backtest replay trajectoire bar-par-bar sur
+# 128 trades reels (tools/backtest_trailing_trajectory.py) : db20=+1935$,
+# db12~+2250$ (+315$). Le seuil d'armement (30/50) n'a aucun impact (verifie
+# empirique : 30/50/8 == 12/50/8). Le drawback EST le levier. db<10 ecarte :
+# artefact backtest 1-min (ne modelise pas bruit intra-barre + slippage).
+TRAILING_TP_DRAWBACK_TICKS = 12                           # drawback peak MFE (etait 20)
 
 # 🆕 OBSERVATION parallele : Option 1 conservatrice (40/60/25) loggee sans action
 # pour comparer empiriquement les 2 calibrations sur data live a J+7.
@@ -92,8 +126,11 @@ TRAILING_TP_OBS_DRAWBACK_TICKS = 25
 
 TICK_SIZE = 0.25
 
-# Ticks values par instrument
-TICK_VALUE = {"ES": 1.25, "NQ": 0.50}
+# Ticks values par instrument — ROLLBACK 03/06 06:55 Jackson Option A pure
+# Directive : "1 ES E-mini + 1 NQ E-mini partout, broker = dashboard (pas de triche)".
+# Cause rollback : MNQM26 pas configure Sierra Chart, ordres pas routes au broker.
+# Bot 4 envoie NQM26-CME (NQ) + ESM26-CME (ES) cf BOT/bot_config.py.
+TICK_VALUE = {"ES": 12.50, "NQ": 5.00}
 
 # Regles v2 (22/04) — consolidees apres audits agents
 ENTRY_RULES = {
@@ -108,7 +145,13 @@ ENTRY_RULES = {
     #   cause (SLTP temps reel, bias borderline), ou si bot restart mi-signal.
     "freshness_required": ("NEW", "PERSISTENT"),
     "max_positions_per_symbol": 1,
-    "n_micros": 3,                          # 3 micros (realistic bot live futur)
+    # 10/06 SOIR DATA_COLLECTION mode (Jackson) : 1 E-mini -> 3 micros Cross Chart.
+    # Sizing 3 MNQM/MESM via Cross Chart Sierra Chart (chart NQM/ESM E-mini ->
+    # broker trade MNQM/MESM micros). DTC envoie qty=3 NQM26-CME, SC route MNQM.
+    # NOTE : tick_value passe de $5.00 (NQ E-mini) a $0.50 (NQ micro) via override
+    # ENTRY_RULES["tick_value_override"] consomme par sites pnl_usd (3000, 3414).
+    "n_micros": 3,                          # 3 micros Cross Chart (10/06 DATA_COLLECTION)
+    "tick_value_override": {"NQ": 0.50, "ES": 1.25, "MGC": 1.00},  # micro values
     "min_expected_payoff_usd": 2.0,         # filtre audit ES vs NQ (22/04)
     # 22/04 soir Jackson : PAS de limite trades/jour en paper (collecte max
     # de donnees).
@@ -117,10 +160,52 @@ ENTRY_RULES = {
     # 04/05 soir LEVIER #2 (backtest 110 trades) : 10 streaks >=3 SL → DD $1003
     # Reactivation circuit breaker : 3 SL consecutifs → pause 60 min. Impact
     # estime DD -50% selon backtest (Jackson valide).
-    "max_trades_per_day": 9999,             # PAS de limite trades
-    "cooldown_post_close_sec": 900,         # 15 min anti re-entry contre-sens
-    "circuit_breaker_losses": 3,            # LEVIER #2 (04/05) : 3 SL consec → pause
-    "circuit_breaker_pause_sec": 3600,      # LEVIER #2 : 60 min pause
+    "max_trades_per_day": 9999,             # PAS de limite trades (paper collecte data)
+    # 🆕 FIX Gate 2 (08/06 ULTRATHINK) - Cooldown 15min → 60min (Option C).
+    # Backtest 14j (99 trades successifs) revele : fenetre [0-60min) PnL net +$467
+    # (WR 55%, OK) MAIS bloque deja la zone revenge precoce. Fenetre [60-120min)
+    # = -$1062 sur 37 trades (WR 35%) catastrophe non couverte. Option C compromis :
+    # 60 min couvre revenge immediat (preserve fenetre 30-60 +$451 wins) tout en
+    # gagnant +$252 evite sur fenetre [0-60min). Option B (120min) trop dur (bloque
+    # 50% data collecte). Reference cooldown 15min etait derive de fix 22/04.
+    "cooldown_post_close_sec": 3600,        # 60 min Option C (anti revenge + collecte)
+    # 🆕 FIX 08/06/2026 Jackson "3 BUY consec WR 0% -$1210 ce matin" :
+    #   3 fixes anti-revenge / circuit_breaker dur / veto high vol.
+    #   Cause : 2 SL gigantesques (-$480 + -$705) sur NQ ATR 548 = volatil enorme.
+    #   Cooldown 15 min insuffisant pour eviter revenge re-entry meme contexte.
+    # ============================================================
+    # Fix #1 — Anti-revenge cooldown (Jackson : "SL MAX a ete regle")
+    # Seuil DYNAMIQUE base sur SL_BUDGET[sym]['max_ticks'] (mia_sltp.py).
+    # NQ : 80t max -> seuil 60% = 48t. ES : 40t max -> seuil 60% = 24t.
+    # Si SL touch >= seuil, marche hot context -> cooldown 60 min au lieu de 15.
+    # Note : si SL reel > max_ticks (bug SL_BUDGET non applique), seuil sera
+    # depasse a fortiori -> anti-revenge declenche systematiquement.
+    # 🆕 FIX Gate 2 REVISE 08/06 PM (correction methodologique - agent backtest-runner
+    # a corrige : mes stats etaient sur 322 trades cross-bot aggregation, pas Bot 1 SIM1
+    # specifiquement). Re-backtest Bot 1 SIM1 ONLY (96 trades, PnL -$1208) :
+    #   60% : N=7 bloque, +$220 evite (mean -$31)
+    #   80% : N=5 bloque, +$127 evite (mean -$25)
+    #  100% : N=3 bloque, -$144 destructeur (mean +$48 = bloque wins !)
+    # N=3-7 = pas statistiquement significatif. Cooldown 60 min general fait deja
+    # le job (couvre fenetres 0-60 perdantes). Anti-revenge devient duplicata
+    # observable au seuil 1.0 = ne declenche que sur SL exact max_ticks (tres rare).
+    "anti_revenge_sl_threshold_pct_of_max": 1.0,  # 100% (quasi-desactive, log distinctif)
+    # 🆕 FIX Gate 2 REVISE 08/06 PM - 120 → 60 min (revert).
+    # Erreur methodologique : stat 14j [60-120min) = -$1062 venait de 322 trades
+    # cross-bot. Sur Bot 1 SIM1 ONLY (96 trades), cette fenetre = +$590 GAGNE
+    # (16 trades WR 62% mean +$37). Anti-revenge 120 min BLOQUAIT les wins.
+    # Revert a 60 min : si declenche (seuil 100% rare), anti-revenge = duplicata
+    # log distinctif au cooldown global, sans bloquer la fenetre gagnante 60-120.
+    "anti_revenge_cooldown_sec": 3600,      # 60 min cooldown anti-revenge (revert)
+    # Fix #2 — Circuit breaker (REVISE 08/06 PM Jackson : "4h trop strict en paper,
+    # but = collecter data pour analyse"). Retour valeurs originales :
+    # 3 SL successifs → pause 1h. Anti-revenge cooldown reste actif sur gros SL.
+    "circuit_breaker_losses": 3,            # 3 SL successifs (paper data collecte)
+    "circuit_breaker_pause_sec": 3600,      # 1h pause (paper data collecte)
+    # Fix #3 — Veto regime high vol (NQ ATR 548t observe 08/06)
+    "max_atr_ticks_nq": 600,                # 09/06 Jackson Option B : 400→600 (collecte data marche volatil + Couches 2/3/4 protegent)
+    "max_atr_ticks_es": 150,                # 09/06 Jackson Option B : 100→150 (proportionnel)
+    "max_atr_veto_enabled": True,           # toggle desactivable
     # ============================================================
     # WR DYNAMIQUE — RESET 04/05 SOIR (Jackson)
     # ============================================================
@@ -172,6 +257,16 @@ ENTRY_RULES = {
     # Filtre golden empirique : skip si momentum_5b ET cvd_bar_delta both contra.
     "entry_quality_gate_enabled": True,     # toggle desactivable
     "entry_quality_gate_strict": False,     # False = BOTH_CONTRA, True = AT_LEAST_1
+    # 🆕 08/06 — DailyLimitsGuard Mark Douglas (souverain).
+    # Defaults pris a l'init via load_config_from_env() (env vars override).
+    # MIA_DAILY_LIMITS_ENABLED=1 master switch (default ON).
+    # MIA_DAILY_STOP_LOSS=-200 (USD, negatif).
+    # MIA_DAILY_STOP_WIN=150 (USD, positif, MIA_DAILY_STOP_WIN_ENABLED=1).
+    # MIA_DAILY_MAX_TRADES=5 (MIA_DAILY_MAX_TRADES_ENABLED=1).
+    # Visibilite a titre informatif — la verite vient de load_config_from_env().
+    "daily_stop_loss_usd": -200.0,
+    "daily_stop_win_usd": 150.0,
+    "daily_max_trades": 5,
 }
 
 # Config DTC (valide Phase 1 paper uniquement, pas de compte LIVE)
@@ -185,6 +280,12 @@ _SIM_WHITELIST_PREFIX = ("SIM", "Sim", "sim")
 #
 # STEP 7 split (23/04 soir) : 4 sous-raisons pour savoir si mur absent, R:R faible, ou budget dep.
 FUNNEL_STEPS = [
+    # 🆕 08/06 (Mark Douglas souverain) — STEP -1 DailyLimitsGuard.
+    # Premier filtre absolu : si daily_stop_loss/win/max_trades atteint -> SKIP.
+    # Reversibilite via MIA_DAILY_LIMITS_ENABLED=0 (env var, master kill switch).
+    # Source : feedback_douglas_consistency_principles.md + INCIDENT_LOG 08/06.
+    ("0bis_daily_limits", "Daily Limits Guard (Mark Douglas)",
+     ["daily_stop_loss", "daily_stop_win", "daily_max_trades"]),
     # 🆕 03/05 (Plan B Action 3 — Jackson "FILTRE LE PLUS HAUT NIVEAU") :
     # STEP 0 regime gate STRICT : skip si pas regime actionable (pas TREND/RANGE clair
     # OU favor NEUTRE OU vol EXTREME OU confidence < 0.10). Bot 1 = beaucoup faux
@@ -236,11 +337,14 @@ FUNNEL_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "LOGS"
 # STEP 1-3 = bruit (cooldown/ATTENDRE), pas de log detaille, juste counter funnel.
 # STEP 4-8 = logs JSONL avec contexte metier. Rate limit 60s par (symbol, reason) anti-spam.
 REJECTIONS_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "LOGS", "rejections")
-REJECT_LOG_STEPS = {"3_conseil", "4_freshness", "5_dedup", "6_conf_mtf", "6bis_bias",
+REJECT_LOG_STEPS = {"0bis_daily_limits", "0_regime", "1_position_day", "2_cooldown_cb", "3_conseil", "4_freshness",
+                     "5_dedup", "6_conf_mtf", "6bis_bias", "6ter_range", "6quart_regime",
                      "6cinq_entry_quality", "6six_chase_top", "7_sltp", "8_payoff"}
 
 # Mapping reason -> code catalog V2 pour emission unified LOGS/decisions/
 # (cf DOCS/BOT_CHANGELOG.md 25/04 - enrichissement log systeme V2)
+# Audit tracabilite complete 08/06 (Jackson "tous les blocages a tous les niveaux") :
+# 11 reasons additionnels mappes pour couvrir 100% des _funnel_reject Bot 1.
 REJECT_TO_V2_CODE = {
     "conseil_attendre":      "GATE_CONSEIL_ATTENDRE",
     "conseil_conflit":       "GATE_CONSEIL_CONFLIT",
@@ -256,8 +360,52 @@ REJECT_TO_V2_CODE = {
     "sltp_budget_exceeded":  "GATE_SLTP_REJECT",
     "sltp_rr_low":           "GATE_SLTP_REJECT",
     "payoff_too_low":        "GATE_PAYOFF_TOO_LOW",
+    "expected_payoff_low":   "GATE_PAYOFF_TOO_LOW",
     "chase_top_long_range_high": "GATE_CHASE_TOP_LONG_BLOCK",
+    # Plan C 08/06 : instrumentation Gate 0 Regime Engine (audit NQ LONG drift).
+    "regime_not_actionable":  "GATE_REGIME_NOT_ACTIONABLE",
+    "regime_neutre":          "GATE_REGIME_NEUTRE",
+    "regime_bias_neutral":    "GATE_REGIME_BIAS_NEUTRAL",
+    "regime_contraire_signal":"GATE_REGIME_CONTRAIRE_SIGNAL",
+    # Audit tracabilite 08/06 — STEPS 1, 2, 6ter, 6quart, 6cinq
+    "already_position":               "GATE_POSITION_ALREADY",
+    "max_trades_day":                 "GATE_MAX_TRADES_DAY",
+    "cooldown_active":                "GATE_COOLDOWN_ACTIVE",
+    "circuit_breaker":                "GATE_CIRCUIT_BREAKER",
+    "range_extreme":                  "GATE_RANGE_EXTREME",
+    "regime_loser_profile_shape":     "GATE_REGIME_LOSER_PROFILE_SHAPE",
+    "regime_loser_day_type":          "GATE_REGIME_LOSER_DAY_TYPE",
+    "entry_quality_both_contra":      "GATE_ENTRY_QUALITY_BOTH_CONTRA",
+    # 08/06 DailyLimitsGuard (Mark Douglas souverain)
+    "daily_stop_loss":                "GATE_DAILY_STOP_LOSS_TRIGGERED",
+    "daily_stop_win":                 "GATE_DAILY_STOP_WIN_TRIGGERED",
+    "daily_max_trades":               "GATE_DAILY_MAX_TRADES_TRIGGERED",
 }
+
+# Audit tracabilite 08/06 — Mapping PREFIX pour reasons dynamiques (anti_revenge:60min,
+# vol_veto_atr:200t>limit:150t, eco_block:FOMC). Le helper `_resolve_v2_code` essaie
+# d'abord lookup exact puis prefix avant ':' si pas trouve.
+REJECT_PREFIX_TO_V2_CODE = {
+    "anti_revenge":  "GATE_ANTI_REVENGE_ACTIVE",
+    "vol_veto_atr":  "GATE_VOL_VETO_ATR",
+    "eco_block":     "GATE_ECO_BLOCK",
+}
+
+
+def _resolve_v2_code(reason: str) -> str | None:
+    """Resolution code log V2 avec fallback prefix pour reasons dynamiques.
+
+    1. Lookup exact dans REJECT_TO_V2_CODE
+    2. Sinon split sur ':' et lookup prefix dans REJECT_PREFIX_TO_V2_CODE
+    3. Sinon None (pas de code log → pas d'emit)
+    """
+    code = REJECT_TO_V2_CODE.get(reason)
+    if code:
+        return code
+    if ":" in reason:
+        prefix = reason.split(":")[0]
+        return REJECT_PREFIX_TO_V2_CODE.get(prefix)
+    return None
 REJECT_LOG_RATE_LIMIT_SEC = 60
 
 
@@ -416,6 +564,8 @@ class PaperTrader:
         self._last_close_ts = {}                # sym -> timestamp
         self._consec_losses = {"ES": 0, "NQ": 0}
         self._circuit_pause_until = {}          # sym -> timestamp fin pause
+        # 🆕 Fix #1 (08/06/2026) : anti-revenge cooldown apres gros SL
+        self._anti_revenge_until = {}           # sym -> timestamp fin cooldown anti-revenge
 
         # v2 (22/04) : tracker signal_ids deja consommes (dedup cross-restart VPS)
         # Persiste sur disque (review R3 : sinon restart = re-entry meme signal_id)
@@ -438,6 +588,18 @@ class PaperTrader:
                 os.remove(tmp_state)
             except OSError:
                 pass
+
+        # 🆕 08/06 — DailyLimitsGuard Mark Douglas (souverain).
+        # Init AVANT funnel (le funnel logue mais le guard est consulte STEP 0bis).
+        # Config via env vars MIA_DAILY_* (cf daily_limits_guard.load_config_from_env).
+        # Persistance par jour : DATA/PAPER_TRADES/{date}_daily_state_bot1.json.
+        # Reset au rollover via _check_date_rollover.
+        self._daily_guard = DailyLimitsGuard(
+            bot_id="bot1",
+            config=load_config_from_env(prefix="MIA"),
+            state_dir=DATA_DIR,
+            date_str=self.date_str,
+        )
 
         # Funnel check_entry (23/04) : diagnostic "pourquoi 0 trade"
         os.makedirs(FUNNEL_LOG_DIR, exist_ok=True)
@@ -576,6 +738,21 @@ class PaperTrader:
                             pass
             self.trade_count = len(self.today_trades)
 
+        # 🆕 08/06 — DailyLimitsGuard rebuild from trades.
+        # Defense en profondeur : si _state_file absent ou corrompu, on agrege
+        # les pnl_usd des trades du jour deja loggues (resilience crash).
+        # Si _state_file present, _DailyState charge en init prime. On REBUILD
+        # seulement si cumul_pnl_usd persiste = 0 mais trades existent (mismatch
+        # =, signal state perdu ou bot redemarre cold sur jour pre-existant).
+        try:
+            snap = self._daily_guard.snapshot()
+            if snap["trade_count"] == 0 and self.today_trades:
+                self._daily_guard.rebuild_from_trades(
+                    t.get("pnl_usd") for t in self.today_trades
+                )
+        except Exception as _e:
+            print(f"  !!! daily_guard rebuild_from_trades failed : {_e}")
+
         # v2 (review R3) : reload signal_ids deja trades (cross-restart VPS)
         if os.path.exists(self._traded_signals_file):
             try:
@@ -586,6 +763,172 @@ class PaperTrader:
                             self._traded_signal_ids.add(sid)
             except OSError:
                 pass
+
+        # FIX 19/05 PM (Jackson "trade fantome perdu apres restart") : recovery
+        # positions runtime au boot. Cf RECOVERY_POSITIONS_FILE en haut du module.
+        self._recover_runtime_positions()
+
+    def _recover_runtime_positions(self) -> None:
+        """Recovery `self.positions` depuis bot1_runtime_positions.json au boot.
+
+        Cas d'usage : si MIA-Paper restart en milieu de trade actif, sans ce
+        recovery la position en memoire etait perdue silencieusement et le
+        trade n'apparaissait pas dans `closed_today`.
+
+        Sequence :
+          1. Lire RECOVERY_POSITIONS_FILE si existe
+          2. Skip si age > RECOVERY_MAX_AGE_SEC (stale = redemarrage > 1h)
+          3. Pour chaque position trouvee :
+             - Si DTC enabled : query broker position - confirmer existe
+             - Si DTC down OU broker pas de position : log warning + ne pas restore
+               + ajouter trade ORPHAN_BOOT_RESTART a closed_today pour audit
+             - Si broker confirme : restore pos + _order_to_symbol
+        """
+        if not os.path.exists(RECOVERY_POSITIONS_FILE):
+            return
+        try:
+            with open(RECOVERY_POSITIONS_FILE, "r", encoding="utf-8") as f:
+                runtime = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"  [RECOVERY] FAIL read {RECOVERY_POSITIONS_FILE}: {e}")
+            return
+
+        age = time.time() - runtime.get("ts", 0)
+        if age > RECOVERY_MAX_AGE_SEC:
+            print(f"  [RECOVERY] SKIP : runtime file age {age:.0f}s > {RECOVERY_MAX_AGE_SEC}s (stale)")
+            # Cleanup pour eviter futurs restart d'utiliser stale state
+            try:
+                os.remove(RECOVERY_POSITIONS_FILE)
+            except OSError:
+                pass
+            return
+
+        positions = runtime.get("positions", {})
+        if not positions:
+            return
+
+        print(f"  [RECOVERY] {len(positions)} position(s) detectee(s) age={age:.0f}s")
+
+        for sym, pos in positions.items():
+            if not isinstance(pos, dict):
+                continue
+            # Validation broker DTC si dispo
+            broker_confirmed = False
+            if self.dtc is not None and DTC_ENABLED:
+                try:
+                    contract = pos.get("contract") or DTC_INSTRUMENTS.get(sym, {}).contract if hasattr(
+                        DTC_INSTRUMENTS.get(sym, None), "contract") else None
+                    if contract:
+                        # Query broker (timeout 2s)
+                        qty = self.dtc.request_position_blocking(
+                            contract, trade_account=self.trade_account, timeout=2.0
+                        )
+                        if qty is not None and qty != 0:
+                            broker_confirmed = True
+                        elif qty == 0:
+                            print(f"  [RECOVERY] {sym} : broker qty=0 (position closed pendant downtime) - ORPHAN")
+                        else:
+                            print(f"  [RECOVERY] {sym} : broker query timeout - ASSUME ORPHAN")
+                except Exception as e:
+                    print(f"  [RECOVERY] {sym} : exception query broker {type(e).__name__} - ASSUME ORPHAN")
+
+            if broker_confirmed:
+                # Restore position avec _order_to_symbol mapping
+                with self._pos_lock:
+                    self.positions[sym] = pos
+                    for cid_key in ("parent_id", "tp_cid", "sl_cid"):
+                        cid = pos.get(cid_key)
+                        if cid:
+                            self._order_to_symbol[cid] = sym
+                print(f"  [RECOVERY] {sym} : RESTORED (broker confirme) entry={pos.get('entry_price')} "
+                      f"direction={pos.get('direction')} sl={pos.get('sl_price')} tp={pos.get('tp_price')}")
+                if _v2log:
+                    try:
+                        _v2log.emit("GENERIC_INFO",
+                                    msg=f"Bot1 RECOVERY {sym} restored : entry={pos.get('entry_price')} "
+                                        f"dir={pos.get('direction')}")
+                    except Exception:
+                        pass
+            else:
+                # ORPHAN : ne pas restore, mais ajouter a closed_today pour audit
+                # avec exit_reason="ORPHAN_BOOT_RESTART" + last known prices
+                orphan_trade = {
+                    "schema_version": "trade_v2_ml_2026_04_22",
+                    "trade_id": pos.get("trade_id", f"orphan_{sym}_{int(time.time())}"),
+                    "symbol": sym,
+                    "direction": pos.get("direction", "?"),
+                    "entry_price": pos.get("entry_price", 0),
+                    "entry_time": pos.get("entry_time"),
+                    "exit_price": pos.get("current_price", pos.get("entry_price", 0)),
+                    "exit_time": datetime.now(timezone.utc).isoformat(),
+                    "outcome": "ORPHAN_BOOT_RESTART",
+                    "exit_reason": "ORPHAN_BOOT_RESTART",
+                    "pnl_ticks": pos.get("unrealized_pnl_ticks", 0),
+                    "pnl_usd": pos.get("unrealized_pnl_usd", 0),
+                    "mae": pos.get("mae", 0),
+                    "mfe": pos.get("mfe", 0),
+                    "bars_held": pos.get("bars_held", 0),
+                    "sl_price": pos.get("sl_price", 0),
+                    "tp_price": pos.get("tp_price", 0),
+                    "sl_ticks": pos.get("sl_ticks", 0),
+                    "tp_ticks": pos.get("tp_ticks", 0),
+                    "n_micros": pos.get("n_micros", 1),
+                    "signal_id": pos.get("signal_id"),
+                    "orphan_age_sec": int(age),
+                    "orphan_reason": "broker_position_absent" if (self.dtc and DTC_ENABLED) else "dtc_unavailable",
+                }
+                self.today_trades.append(orphan_trade)
+                # Append au log file pour persistence
+                try:
+                    with open(self.log_file, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(orphan_trade, ensure_ascii=False) + "\n")
+                except OSError:
+                    pass
+                print(f"  [RECOVERY] {sym} : ORPHAN_BOOT_RESTART logged (entry={pos.get('entry_price')} "
+                      f"mfe={pos.get('mfe', 0)} mae={pos.get('mae', 0)})")
+                if _v2log:
+                    try:
+                        _v2log.emit("GENERIC_MAJEUR",
+                                    msg=f"Bot1 ORPHAN_BOOT_RESTART {sym} : trade perdu suite restart, "
+                                        f"entry={pos.get('entry_price')} dir={pos.get('direction')} "
+                                        f"age={int(age)}s")
+                    except Exception:
+                        pass
+
+        # Cleanup file apres recovery (sera re-cree au prochain _write_state)
+        try:
+            os.remove(RECOVERY_POSITIONS_FILE)
+        except OSError:
+            pass
+
+    def _persist_runtime_positions(self) -> None:
+        """Ecriture atomique `self.positions` brut pour recovery cross-restart.
+
+        Appelee depuis `_write_state` toutes les ~5s. Fichier consomme au boot
+        par `_recover_runtime_positions` puis supprime.
+        """
+        try:
+            with self._pos_lock:
+                positions_copy = {
+                    sym: {k: v for k, v in pos.items()
+                          if not isinstance(v, (bytes, bytearray))}  # skip non-serializable
+                    for sym, pos in self.positions.items()
+                }
+            runtime_data = {
+                "ts": time.time(),
+                "iso": datetime.now(timezone.utc).isoformat(),
+                "trade_account": self.trade_account,
+                "positions": positions_copy,
+                "order_to_symbol": dict(self._order_to_symbol),
+                "trade_count": self.trade_count,
+            }
+            tmp_path = str(RECOVERY_POSITIONS_FILE) + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(runtime_data, f, default=str)
+            os.replace(tmp_path, RECOVERY_POSITIONS_FILE)
+        except Exception:
+            # Best-effort : ne crash pas le bot si fail persist
+            pass
 
     def _compute_last_bar_age_for_heartbeat(self, data) -> float:
         """FIX 06/05 + review code-reviewer : age (sec) derniere bar pour BOT_HEARTBEAT.
@@ -655,6 +998,13 @@ class PaperTrader:
         self._sell_dd_intraday_ticks = {"ES": 0.0, "NQ": 0.0}
         self._sell_disabled = {"ES": False, "NQ": False}
         self._sell_disable_reason = {"ES": None, "NQ": None}
+        # 🆕 08/06 — DailyLimitsGuard rollover (Mark Douglas).
+        # Reset cumul + trade_count + triggers + persist nouveau state file.
+        # Emit DAILY_LIMITS_RESET event.
+        try:
+            self._daily_guard.rollover_if_needed(current_date)
+        except Exception as _e:
+            print(f"  !!! daily_guard rollover failed : {_e}")
         # NE PAS toucher aux positions ouvertes (overnight possible) — on flatten eventuel EOD ailleurs
         if _v2log:
             try:
@@ -1050,7 +1400,9 @@ class PaperTrader:
         # 🆕 25/04 - Emit V2 vers LOGS/decisions/ pour tracage unified systeme V2
         # Rate limite deja applique ci-dessus (60s par sym+reason) -> pas de spam.
         # Cf DOCS/BOT_CHANGELOG.md 25/04 + .claude/rules/log-debug-protocol.md
-        v2_code = REJECT_TO_V2_CODE.get(reason)
+        # 08/06 audit tracabilite : _resolve_v2_code gere prefix dynamiques
+        # (anti_revenge:60min, vol_veto_atr:200t, eco_block:FOMC).
+        v2_code = _resolve_v2_code(reason)
         if v2_code and _v2log:
             try:
                 _v2log.emit(v2_code, sym=symbol, **ctx)
@@ -1213,6 +1565,30 @@ class PaperTrader:
         # infra (dashboard down, symbol off), pas des rejets de regle metier.
         self._funnel_new_poll()
 
+        # 🆕 STEP 0bis (08/06 Mark Douglas souverain) — DailyLimitsGuard.
+        # Premier filtre absolu : kill switch quotidien $-200 / $+150 / 5 trades.
+        # Cf feedback_douglas_consistency_principles.md + INCIDENT_LOG 08/06.
+        # Source incident : Bot 1 SIM1 -$2010 sur 7 trades 100% LONG car aucun
+        # kill switch quotidien actif (a continue de trader apres cumule -$1048).
+        # Reversible via env var MIA_DAILY_LIMITS_ENABLED=0.
+        try:
+            allow, reason = self._daily_guard.check_allow(symbol)
+        except Exception as _e:
+            # Fail-OPEN safety : si guard crash, on ne paralyse pas le bot.
+            # Le log V2 captera l'incident.
+            allow, reason = True, ""
+            if _v2log:
+                try:
+                    _v2log.emit("GENERIC_MAJEUR",
+                                msg=f"daily_guard check_allow exception : {_e!r}")
+                except Exception:
+                    pass
+        if not allow:
+            self._funnel_reject("0bis_daily_limits", reason,
+                                symbol=symbol, **market_ctx)
+            return None
+        self._funnel_pass("0bis_daily_limits")
+
         # 🆕 STEP 0 (03/05 Jackson "FILTRE LE PLUS HAUT NIVEAU") — REGIME GATE STRICT
         # Bot 1 dashboard-follower = beaucoup faux signaux. Filtre regime cap les
         # plus mauvais. Skip FULL si regime non-actionable (pas TREND/RANGE clair OU
@@ -1250,20 +1626,21 @@ class PaperTrader:
             conseil_action_pre = _conseil.get("executable_action", _conseil.get("action", "ATTENDRE"))
             if conseil_action_pre == "ACHAT" and regime_favor_local == "SHORT":
                 self._funnel_reject("0_regime", "regime_contraire_signal",
-                                    symbol=symbol, **market_ctx)
+                                    symbol=symbol, conseil_action_pre=conseil_action_pre, **market_ctx)
                 return None
             if conseil_action_pre == "VENTE" and regime_favor_local == "LONG":
                 self._funnel_reject("0_regime", "regime_contraire_signal",
-                                    symbol=symbol, **market_ctx)
+                                    symbol=symbol, conseil_action_pre=conseil_action_pre, **market_ctx)
                 return None
             self._funnel_pass("0_regime")
 
         # 1. Deja en position ? + max trades jour
+        # 08/06 audit tracabilite : ajout symbol pour activer emit V2 (REJECT_LOG_STEPS)
         if symbol in self.positions:
-            self._funnel_reject("1_position_day", "already_position")
+            self._funnel_reject("1_position_day", "already_position", symbol=symbol)
             return None
         if self.trade_count >= ENTRY_RULES["max_trades_per_day"]:
-            self._funnel_reject("1_position_day", "max_trades_day")
+            self._funnel_reject("1_position_day", "max_trades_day", symbol=symbol)
             return None
         self._funnel_pass("1_position_day")
 
@@ -1271,14 +1648,50 @@ class PaperTrader:
         now_ts = time.time()
         last_close = self._last_close_ts.get(symbol)
         if last_close and (now_ts - last_close) < ENTRY_RULES["cooldown_post_close_sec"]:
-            self._funnel_reject("2_cooldown_cb", "cooldown_active")
+            self._funnel_reject("2_cooldown_cb", "cooldown_active", symbol=symbol)
             return None
 
-        # 2bis. Circuit breaker (3 SL consec → pause 60min)
+        # 2bis. Circuit breaker (2 SL consec → pause 4h depuis fix 08/06)
         pause_until = self._circuit_pause_until.get(symbol)
         if pause_until and now_ts < pause_until:
-            self._funnel_reject("2_cooldown_cb", "circuit_breaker")
+            self._funnel_reject("2_cooldown_cb", "circuit_breaker", symbol=symbol)
             return None
+
+        # 2ter. 🆕 Fix #1 (08/06/2026) - Anti-revenge cooldown apres gros SL
+        # Si dernier trade SL > seuil ticks, on attend 60 min au lieu de 15.
+        # Evite re-entry hot context apres -$480/-$705 typiques 08/06 NQ.
+        anti_revenge_until = self._anti_revenge_until.get(symbol)
+        if anti_revenge_until and now_ts < anti_revenge_until:
+            remaining_min = int((anti_revenge_until - now_ts) / 60)
+            self._funnel_reject("2_cooldown_cb", f"anti_revenge:{remaining_min}min",
+                                symbol=symbol, remaining_min=remaining_min)
+            return None
+
+        # 2quart. 🆕 Fix #3 (08/06/2026) - Veto regime high vol
+        # Si ATR symbole > seuil, marche trop volatile pour Bot 1 dashboard
+        # follower (cf NQ ATR 548t observe 08/06 = piege range haut-bas).
+        if ENTRY_RULES.get("max_atr_veto_enabled", True):
+            try:
+                atr_ticks_now = float(reg.get("atr") or 0.0)
+            except (TypeError, ValueError):
+                atr_ticks_now = 0.0
+            max_atr_key = f"max_atr_ticks_{symbol.lower()}"
+            max_atr = ENTRY_RULES.get(max_atr_key)
+            if atr_ticks_now > 0 and max_atr and atr_ticks_now > max_atr:
+                self._funnel_reject(
+                    "2_cooldown_cb",
+                    f"vol_veto_atr:{int(atr_ticks_now)}t>limit:{max_atr}t",
+                    symbol=symbol, atr=int(atr_ticks_now), limit=max_atr,
+                )
+                if _v2log:
+                    _v2log.emit(
+                        "VOL_VETO_HIGH_ATR",
+                        sym=symbol,
+                        atr_ticks=int(atr_ticks_now),
+                        limit_ticks=max_atr,
+                    )
+                return None
+
         self._funnel_pass("2_cooldown_cb")
 
         # 2ter. ECO CALENDAR + SESSION gate (29/04 soir)
@@ -1292,7 +1705,8 @@ class PaperTrader:
             from CORE import eco_calendar as _eco
             _blocked, _reason, _until = _eco.is_blocked_combined()
             if _blocked:
-                self._funnel_reject("2_cooldown_cb", f"eco_block:{_reason or '?'}")
+                self._funnel_reject("2_cooldown_cb", f"eco_block:{_reason or '?'}",
+                                    symbol=symbol, eco_reason=_reason)
                 return None
         except Exception:
             pass  # fail-safe : si module plante, ne pas bloquer le bot
@@ -1917,6 +2331,13 @@ class PaperTrader:
             "conseil_action": action,
             "conseil_bull_pts": conseil.get("bull_points", 0),
             "conseil_bear_pts": conseil.get("bear_points", 0),
+            # 🆕 INSTRUMENTATION 08/06 (audit Gate 3) - capture freshness state machine
+            # + gamma gate au moment entry. Indispensable pour audit Gate 3 valable
+            # (sans ces fields, NEW vs PERSISTENT non distinguable, gamma block invisible).
+            "freshness_exec": conseil.get("freshness_exec"),
+            "age_bars": conseil.get("age_bars", 0),
+            "gamma_block_long": conseil.get("gamma_block_long", False),
+            "gamma_block_short": conseil.get("gamma_block_short", False),
         }
 
     def _load_recent_trades(self, days: int = 10, post_levier_only: bool = True) -> list:
@@ -2432,6 +2853,11 @@ class PaperTrader:
             "conseil_action": signal.get("conseil_action"),
             "conseil_bull_pts": signal.get("conseil_bull_pts"),
             "conseil_bear_pts": signal.get("conseil_bear_pts"),
+            # 🆕 INSTRUMENTATION 08/06 (audit Gate 3) - capture etat conseil_global complet
+            "freshness_exec_entry": signal.get("freshness_exec"),
+            "age_bars_entry": signal.get("age_bars", 0),
+            "gamma_block_long_entry": signal.get("gamma_block_long", False),
+            "gamma_block_short_entry": signal.get("gamma_block_short", False),
             # DTC tracking
             "parent_id": parent_id,
             "tp_cid": tp_cid,
@@ -2540,13 +2966,26 @@ class PaperTrader:
         # tick prioritaire (latence 500ms) sinon fallback banner JSONL DMP 1m
         # (lag 0-60s). Cf _read_live_trade_price docstring.
         price = self._read_live_trade_price(symbol)
+        banner = data.get("banner", {})
         if price is None:
-            banner = data.get("banner", {})
             price = banner.get(sym, {}).get("price", 0)
         if not price:
             return
 
-        pos["bars_held"] += 1
+        # FIX F3 (20/05) : bars_held compte les BARRES (changement de ts), PAS les polls.
+        # Avant : `pos["bars_held"] += 1` a chaque check_exit (= chaque poll 10s) ->
+        # 60 incremts = 10 min wall-clock, alors que le timeout est calibre pour
+        # 60 BARRES (= 60 min, cf backtest ligne 2921). Resultat : trades tenus
+        # ~166 "bars" en moyenne (audit code-reviewer 20/05). Fix : n'incrementer
+        # que lorsque le ts de la barre courante change. `.get()` avec fallback
+        # bar_ts_ms gere les positions RECOVERED au boot (pas de champ last_bar_ts).
+        # R1 review code-reviewer : `if _cur_bar_ts` (truthy) couvre ts=None,
+        # ts=0 (banner._instrument fait bar.get("ts",0)) ET cle absente.
+        _cur_bar_ts = banner.get(sym, {}).get("ts")
+        _last_bar_ts = pos.get("last_bar_ts", pos.get("bar_ts_ms"))
+        if _cur_bar_ts and _cur_bar_ts != _last_bar_ts:
+            pos["bars_held"] += 1
+            pos["last_bar_ts"] = _cur_bar_ts
 
         # Calculer MAE/MFE + PnL unrealized
         if pos["direction"] == "LONG":
@@ -2564,10 +3003,13 @@ class PaperTrader:
         # `TICK_VALUE.get(symbol, TICK_SIZE)` faisait fallback au TICK_SIZE
         # (=0.25) au lieu d'un tick_value -> bug semantique latent.
         # get_tick_value() utilise CORE/constants.py source unique.
-        tv = get_tick_value(symbol)
+        # 10/06 SOIR DATA_COLLECTION : override ENTRY_RULES["tick_value_override"]
+        # pour Cross Chart Micro (0.50 vs 5.00 E-mini = ratio x10 corrige).
+        _tv_override = ENTRY_RULES.get("tick_value_override", {}).get(symbol)
+        tv = float(_tv_override) if (_tv_override is not None and _tv_override > 0) else get_tick_value(symbol)
         pos["current_price"] = price
         pos["unrealized_pnl_ticks"] = round(excursion, 1)
-        pos["unrealized_pnl_usd"] = round(excursion * tv * pos.get("n_micros", 3), 2)
+        pos["unrealized_pnl_usd"] = round(excursion * tv * pos.get("n_micros", 1), 2)
 
         # ─── TRAILING STOP TR40_20 (FIX 30/04 audit market-analyst) ─────────
         # Pilot NQ only (audit : ES marginal F2 fold PF 0.88 < 1.0).
@@ -2745,7 +3187,16 @@ class PaperTrader:
             _is_asia = _eco.current_session_label() == "Asia"
         except Exception:
             _is_asia = False  # fail-safe : timeout 60 bars actif si import casse
-        timeout = (not _is_asia) and pos["bars_held"] >= 60
+        # R2 review code-reviewer (20/05) : garde-fou timeout wall-clock.
+        # Le fix F3 lie `bars_held` a la fraicheur du flux DMP (changement de ts).
+        # Si le flux est gele (DMP stale sans declencher le watchdog), bars_held
+        # n'avance plus -> le timeout 60 barres n'est jamais atteint -> le trade
+        # pourrit jusqu'a toucher le SL. Hard cap 90 min sur entry_ts : preserve
+        # la securite du comportement pre-fix (timeout avancait sur wall-clock),
+        # avec marge (90 min > 60 barres nominal, barres parfois sautees).
+        _held_sec = time.time() - pos.get("entry_ts", time.time())
+        _timeout_walltime = _held_sec >= 90 * 60
+        timeout = (not _is_asia) and (pos["bars_held"] >= 60 or _timeout_walltime)
 
         if hit_tp or hit_sl or timeout:
             self._close_trade(symbol, price, "TP" if hit_tp else "SL" if hit_sl else "TIMEOUT")
@@ -2791,7 +3242,7 @@ class PaperTrader:
             try:
                 contract = DTC_INSTRUMENTS[symbol].contract
                 close_side = DTC_SELL if pos["direction"] == "LONG" else DTC_BUY
-                bot_qty = pos.get("n_micros", 3)
+                bot_qty = pos.get("n_micros", 1)
 
                 # Etape 1 : poll broker pour position réelle (anti FLIP)
                 broker_qty = None
@@ -2969,8 +3420,11 @@ class PaperTrader:
         # FIX 10/05 (audit code-reviewer Phase 0.3.a) : ancien
         # `TICK_VALUE.get(symbol, TICK_SIZE)` faisait fallback au TICK_SIZE
         # (=0.25) au lieu d'un tick_value -> bug semantique latent sur PnL final.
-        tv = get_tick_value(symbol)
-        n_mic = pos.get("n_micros", 3)
+        # 10/06 SOIR DATA_COLLECTION : override ENTRY_RULES["tick_value_override"]
+        # pour Cross Chart Micro (0.50 vs 5.00 E-mini = ratio x10 corrige).
+        _tv_override = ENTRY_RULES.get("tick_value_override", {}).get(symbol)
+        tv = float(_tv_override) if (_tv_override is not None and _tv_override > 0) else get_tick_value(symbol)
+        n_mic = pos.get("n_micros", 1)
         pnl_usd = round(pnl_ticks * tv * n_mic, 2)
 
         entry_ts_val = pos.get("entry_ts", 0) or now.timestamp()
@@ -3057,6 +3511,15 @@ class PaperTrader:
             "rr_ratio": pos.get("rr_ratio", 0.0),
             "n_micros": n_mic,
             "signal_id": pos.get("signal_id"),
+            # 🆕 INSTRUMENTATION 08/06 (audit Gate 3) - capture etat conseil_global au moment ENTRY
+            # Indispensable pour audit Gate 3 valable (NEW vs PERSISTENT, age_bars, gamma).
+            "conseil_action_entry": pos.get("conseil_action"),
+            "conseil_bull_pts_entry": pos.get("conseil_bull_pts"),
+            "conseil_bear_pts_entry": pos.get("conseil_bear_pts"),
+            "freshness_exec_entry": pos.get("freshness_exec_entry"),
+            "age_bars_entry": pos.get("age_bars_entry", 0),
+            "gamma_block_long_entry": pos.get("gamma_block_long_entry", False),
+            "gamma_block_short_entry": pos.get("gamma_block_short_entry", False),
             # Snapshot V2 ML-ready : slippage + DTC link + expected vs realized
             # FIX 29/04 : slip_exit_ticks calcule depuis pnl vs sl/tp_ticks
             "slip_entry_ticks": pos.get("slip_entry_ticks", 0.0),
@@ -3173,19 +3636,56 @@ class PaperTrader:
             _v2log.emit(code, **kwargs)
 
         # Cooldown post-close (anti re-entry contre-sens)
-        self._last_close_ts[symbol] = time.time()
+        now_close_ts = time.time()
+        self._last_close_ts[symbol] = now_close_ts
 
-        # Circuit breaker : 3 SL consec → pause 60 min
+        # 🆕 08/06 — DailyLimitsGuard on_trade_close (Mark Douglas souverain).
+        # Update cumul_pnl + trade_count APRES write fichier trades (state coherent).
+        # Si crossed seuil -> emit GATE_DAILY_*_TRIGGERED CRITIQUE (Discord auto).
+        try:
+            self._daily_guard.on_trade_close(pnl_usd=pnl_usd)
+        except Exception as _e:
+            print(f"  !!! daily_guard on_trade_close failed : {_e}")
+            if _v2log:
+                try:
+                    _v2log.emit("GENERIC_MAJEUR",
+                                msg=f"daily_guard on_trade_close exception : {_e!r}")
+                except Exception:
+                    pass
+
+        # Circuit breaker : 2 SL consec → pause 4h (fix 08/06/2026 - dur)
         if outcome == "SL":
             self._consec_losses[symbol] = self._consec_losses.get(symbol, 0) + 1
-            if self._consec_losses[symbol] >= ENTRY_RULES["circuit_breaker_losses"]:
-                self._circuit_pause_until[symbol] = time.time() + ENTRY_RULES["circuit_breaker_pause_sec"]
-                print(f"  !!! CIRCUIT BREAKER {symbol} : 3 SL consec → pause 60 min")
+            # 🆕 Fix #1 (08/06/2026) - Anti-revenge cooldown si gros SL
+            # Seuil DYNAMIQUE = SL_BUDGET[sym]['max_ticks'] * pct (default 60%).
+            # NQ : 80 * 0.6 = 48t. ES : 40 * 0.6 = 24t.
+            sl_budget_sym = SL_BUDGET.get(symbol, SL_BUDGET.get('NQ', {}))
+            max_sl_ticks_sym = sl_budget_sym.get('max_ticks', 80)
+            pct = ENTRY_RULES.get("anti_revenge_sl_threshold_pct_of_max", 0.6)
+            anti_rev_threshold = max_sl_ticks_sym * pct
+            if abs(pnl_ticks) >= anti_rev_threshold:
+                anti_rev_dur = ENTRY_RULES.get("anti_revenge_cooldown_sec", 3600)
+                self._anti_revenge_until[symbol] = now_close_ts + anti_rev_dur
+                print(f"  !!! ANTI-REVENGE {symbol} : SL {abs(pnl_ticks):.0f}t > "
+                      f"{anti_rev_threshold}t -> cooldown {anti_rev_dur // 60}min")
+                if _v2log:
+                    _v2log.emit("ANTI_REVENGE_COOLDOWN_SET",
+                                sym=symbol,
+                                sl_ticks=int(abs(pnl_ticks)),
+                                threshold_ticks=anti_rev_threshold,
+                                cooldown_min=anti_rev_dur // 60)
+            # Circuit breaker dur (Fix #2 08/06/2026) : 2 SL consec → pause 4h
+            cb_losses_max = ENTRY_RULES["circuit_breaker_losses"]
+            cb_pause_sec = ENTRY_RULES["circuit_breaker_pause_sec"]
+            if self._consec_losses[symbol] >= cb_losses_max:
+                self._circuit_pause_until[symbol] = now_close_ts + cb_pause_sec
+                print(f"  !!! CIRCUIT BREAKER {symbol} : {cb_losses_max} SL consec "
+                      f"→ pause {cb_pause_sec // 60}min")
                 if _v2log:
                     _v2log.emit("CIRCUIT_BREAKER_TRIP",
                                 sym=symbol,
-                                consec_losses=ENTRY_RULES["circuit_breaker_losses"],
-                                pause_min=ENTRY_RULES["circuit_breaker_pause_sec"] // 60)
+                                consec_losses=cb_losses_max,
+                                pause_min=cb_pause_sec // 60)
                 self._consec_losses[symbol] = 0  # reset
         else:
             self._consec_losses[symbol] = 0  # win = reset
@@ -3200,8 +3700,14 @@ class PaperTrader:
           - closed_today : trades fermes du jour (last 20)
           - stats_today : WR, PF, pnl total, count par instrument
           - cooldown_status : info cooldown post-close + circuit breaker
+
+        FIX 19/05 PM : appelle aussi `_persist_runtime_positions` pour recovery
+        cross-restart de `self.positions` brut.
         """
         now_ts = time.time()
+        # FIX recovery : persist positions runtime brut (independent de l'ecriture
+        # state.json dashboard qui ne contient qu'un subset de champs).
+        self._persist_runtime_positions()
 
         # Open positions avec PnL live
         open_by_symbol = {}
@@ -3221,7 +3727,7 @@ class PaperTrader:
                 "sl_tier": pos.get("sl_tier", 0),
                 "tp_wall": pos.get("tp_wall", ""),
                 "rr_ratio": pos.get("rr_ratio", 0),
-                "n_micros": pos.get("n_micros", 3),
+                "n_micros": pos.get("n_micros", 1),
                 "bars_held": pos["bars_held"],
                 "mae": pos["mae"],
                 "mfe": pos["mfe"],
@@ -3288,6 +3794,9 @@ class PaperTrader:
             "cooldown_status": cooldown_status,
             "trade_count_today": self.trade_count,
             "max_trades_per_day": ENTRY_RULES["max_trades_per_day"],
+            # 08/06 — DailyLimitsGuard snapshot (Mark Douglas).
+            # Expose cumul + triggers + seuils pour dashboard / api/admin/health.
+            "daily_limits": self._daily_guard.snapshot() if hasattr(self, "_daily_guard") else None,
             # Funnel check_entry (23/04 Jackson) — diagnostic "pourquoi 0 trade"
             "entry_funnel_today": self._funnel_snapshot(),
             # 24/04 observation cross-instrument (mode log-only, pre Option 2)
@@ -3432,10 +3941,65 @@ class PaperTrader:
                     # Transition PAUSE → ACTIF : flag supprime via /api/bot/start
                     self._stop_flag_active = False
                     self._stop_flag_activated_at = 0.0
-                    self._stop_flag_stale_alerted = False
-                    print(f"  [{now}] [KILL_SWITCH] STOP.flag supprime -> reprise trading")
+                    # FIX 20/05 (review code-reviewer pt4) : log release legitime.
+                    # Le code BOT_KILL_SWITCH_RELEASED etait emis a tort dans un
+                    # except cleanup (bug F6, retire). Sa vraie place = ici, la
+                    # transition PAUSE->ACTIF (tracabilite rule logs critical-tasks).
                     if _v2log:
-                        _v2log.emit("BOT_KILL_SWITCH_RELEASED")
+                        _v2log.emit("BOT_KILL_SWITCH_RELEASED",
+                                    n_positions=len(self.positions))
+                    print(f"  [{now}] [KILL_SWITCH] STOP.flag supprime -> reprise trading")
+
+                # FIX 19/05 PM (Jackson "bouton FLATTEN") : check flatten flags per-symbol
+                # ecrits par /api/admin/bot/1/flatten/{sym}. Format flag :
+                # `FLATTEN_1_{sym}.flag` JSON {timestamp, bot_id, symbol, ip, reason}.
+                # On consomme le flag → _close_trade(sym, price, "FLATTEN_MANUAL") + delete flag.
+                with self._pos_lock:
+                    symbols_open_flag = list(self.positions.keys())
+                for sym in symbols_open_flag:
+                    flag_path = os.path.join(FLATTEN_FLAG_DIR, BOT4_FLATTEN_FLAG_PATTERN.format(symbol=sym))
+                    if os.path.exists(flag_path):
+                        try:
+                            banner = data.get("banner", {}).get(sym.lower(), {})
+                            flatten_price = banner.get("price", 0)
+                            if flatten_price > 0:
+                                self._close_trade(sym, flatten_price, "FLATTEN_MANUAL")
+                                print(f"  [{now}] [FLATTEN_MANUAL] {sym} @ {flatten_price} (user dashboard)")
+                                if _v2log:
+                                    _v2log.emit("GENERIC_INFO",
+                                                msg=f"Bot1 FLATTEN_MANUAL {sym} @ {flatten_price} (user dashboard)")
+                                # Cleanup flag apres close OK
+                                try:
+                                    os.remove(flag_path)
+                                except OSError:
+                                    pass
+                            else:
+                                # banner price=0 : on attend prochain tick avec prix valide
+                                print(f"  [{now}] [FLATTEN_MANUAL] {sym} : banner price=0, retry next tick")
+                        except Exception as exc_fl:
+                            print(f"  [{now}] [FLATTEN_MANUAL] {sym} fail : {exc_fl}")
+                            if _v2log:
+                                _v2log.emit("GENERIC_MAJEUR",
+                                            msg=f"Bot1 FLATTEN_MANUAL {sym} exception : {exc_fl}")
+
+                # Cleanup orphan flags (sym fermé entre temps OU pas trade ouvert)
+                # → consomme + delete pour eviter accumulation
+                try:
+                    for sym in ["ES", "NQ", "MGC"]:
+                        if sym in symbols_open_flag:
+                            continue  # deja traite ci-dessus
+                        flag_path = os.path.join(FLATTEN_FLAG_DIR, BOT4_FLATTEN_FLAG_PATTERN.format(symbol=sym))
+                        if os.path.exists(flag_path):
+                            try:
+                                os.remove(flag_path)
+                                print(f"  [{now}] [FLATTEN_MANUAL] orphan flag cleanup {sym} (no open position)")
+                            except OSError:
+                                pass
+                except Exception as _e_cleanup:
+                    # FIX F6 (20/05) : retire 4 lignes kill-switch parasites mal indentees
+                    # apres `pass` — elles emettaient BOT_KILL_SWITCH_RELEASED a tort sur
+                    # toute exception du cleanup orphan flags. Cleanup = best-effort, log seul.
+                    print(f"  [{now}] [FLATTEN_MANUAL] orphan flag cleanup warn : {_e_cleanup}")
                 # ==============================================================================
 
                 for symbol in ("ES", "NQ"):

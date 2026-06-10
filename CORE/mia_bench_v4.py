@@ -38,6 +38,7 @@ NOTES ENRICHISSEMENTS BACKLOG :
 from __future__ import annotations
 
 import argparse
+import os
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -49,14 +50,26 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-V4_ROOT = ROOT / "DATA" / "datasets" / "v4_enriched"
+# FIX 19/05 PM (Jackson "lance bench v4_pure") : V4_ROOT overridable via env
+# var OR --source CLI pour bencher v4_pure (Option C regen 8 mois) vs
+# v4_enriched (legacy). Default = v4_enriched pour back-compat scripts existants.
+_SOURCE = os.environ.get("BENCH_SOURCE", "v4_enriched")
+V4_ROOT = ROOT / "DATA" / "datasets" / _SOURCE
 TICK = 0.25
 
 # Schema attendu (audit 05/05 post-fix features cassees)
 # P0.3 fix code-reviewer 06/05 : 420 trop bas (V4 reel = 446-456 cols).
 # Le test passait trivialement = du theatre. Bumpe a 450 (en-dessous = regression schema).
-EXPECTED_COLS_MIN = 450
-SCHEMA_VERSION_V4 = "v4_enriched_2026_05"
+#
+# FIX 19/05 PM (Jackson audit agent 37 tests vs v4_pure) : v4_pure 8 mois empirique
+# ES=479 cols / NQ=479 cols => bumper EXPECTED_COLS_MIN a 475 pour v4_pure + version
+# label conditionnel sur source (sinon FAIL schema en premier ligne du rapport).
+if _SOURCE == "v4_pure":
+    EXPECTED_COLS_MIN = 475
+    SCHEMA_VERSION_V4 = "v4_pure_2026_05_OPTION_C"
+else:
+    EXPECTED_COLS_MIN = 450
+    SCHEMA_VERSION_V4 = "v4_enriched_2026_05"
 
 # Features critiques V4 (presence obligatoire)
 CRITICAL_V4 = [
@@ -458,9 +471,15 @@ def test_ranking(data: dict, out: list, n_bootstrap: int = 500, seed: int = 42):
 # TEST 9 — GAME CHANGERS (open_type, day_type, profile_shape -> outcomes)
 # ═════════════════════════════════════════════════════════════════════
 
-OPEN_TYPE_NAMES = {0: "OO", 1: "ODup", 2: "ODdn", 3: "OTDup", 4: "OTDdn", 5: "ORRup", 6: "ORRdn"}
+# MAJ 19/05/2026 : aligne sur CORE/game_changers.py OpenType/DayType/ProfileShape IntEnum
+# (12 / 5 / 4 valeurs canoniques) — version pre-mai ne couvrait que 7 open_type.
+OPEN_TYPE_NAMES = {
+    0: "UNKNOWN", 1: "OD_UP", 2: "OD_DOWN", 3: "OTD_UP", 4: "OTD_DOWN",
+    5: "ORR_UP", 6: "ORR_DOWN", 7: "OAIR", 8: "OAOR_UP", 9: "OAOR_DOWN",
+    10: "ODF_UP", 11: "ODF_DOWN",
+}
 DAY_TYPE_NAMES = {0: "NonTrend", 1: "Normal", 2: "NormVar", 3: "Neutral", 4: "Trend"}
-PROFILE_SHAPE_NAMES = {0: "D-Range", 1: "P-Shape", 2: "b-Shape", 3: "DoubleDist"}
+PROFILE_SHAPE_NAMES = {-1: "PRE_RTH", 0: "D_SHAPE", 1: "P_SHAPE", 2: "B_LOWER", 3: "B_DOUBLE"}
 
 def test_game_changers(data: dict, out: list):
     out.append("=" * 70)
@@ -1284,9 +1303,15 @@ def test_profile_context(data: dict, out: list):
                 sub = df[df["bars_in_va"] >= thr]
                 _print_signal_outcome(out, f"bars_in_va >= {thr}%", sub)
         if "trend_day_probability" in df.columns:
-            for lo, hi in [(0, 0.3), (0.3, 0.5), (0.5, 0.7), (0.7, 1.01)]:
+            # v4_pure : trend_day_probability max empirique = 0.65 (Option C migration)
+            # v4_enriched legacy : max ~1.0 (bins anciens conserves pour compat)
+            if _SOURCE == "v4_pure":
+                _bins = [(0, 0.3), (0.3, 0.5), (0.5, 0.65)]
+            else:
+                _bins = [(0, 0.3), (0.3, 0.5), (0.5, 0.7), (0.7, 1.01)]
+            for lo, hi in _bins:
                 sub = df[(df["trend_day_probability"] >= lo) & (df["trend_day_probability"] < hi)]
-                _print_signal_outcome(out, f"trend_day_prob [{lo:.1f},{hi:.1f})", sub)
+                _print_signal_outcome(out, f"trend_day_prob [{lo:.2f},{hi:.2f})", sub)
     out.append("")
 
 

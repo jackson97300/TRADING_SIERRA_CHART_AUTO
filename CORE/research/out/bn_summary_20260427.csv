@@ -1,0 +1,34 @@
+feature,es_24,es_27,nq_24,nq_27,type,flag,es_24_mean,es_27_mean,nq_24_mean,nq_27_mean,es_24_std,es_27_std,nq_24_std,nq_27_std
+bn_color_up,0.0,10.0,0.0,63.0,binary,,,,,,,,,
+bn_color_dn,0.0,6.0,0.0,38.0,binary,,,,,,,,,
+bn_color_up_2,0.0,0.0,0.0,8.0,binary,,,,,,,,,
+bn_color_dn_2,0.0,0.0,0.0,2.0,binary,,,,,,,,,
+bn_absorb_ask,0.0,25.0,0.0,8.0,binary,,,,,,,,,
+bn_absorb_bid,0.0,33.0,0.0,10.0,binary,,,,,,,,,
+bn_long_up,0.0,1.0,0.0,139.0,binary,,,,,,,,,
+bn_long_dn,0.0,1.0,0.0,90.0,binary,,,,,,,,,
+bn_pressure_ask,0.0,1.0,0.0,34.0,binary,,,,,,,,,
+bn_pressure_bid,0.0,1.0,0.0,25.0,binary,,,,,,,,,
+bn_score_raw,0.0,0.0,0.0,0.0,binary,<-- ALWAYS DEAD,,,,,,,,
+bn_score_bull,0.0,0.0,0.0,0.0,binary,<-- ALWAYS DEAD,,,,,,,,
+bn_score_bear,0.0,0.0,0.0,0.0,binary,<-- ALWAYS DEAD,,,,,,,,
+bn_volume_up,0.0,54.0,0.0,134.0,binary,,,,,,,,,
+bn_volume_dn,0.0,56.0,0.0,87.0,binary,,,,,,,,,
+bar_color_up,0.0,3.0,0.0,38.0,binary,,,,,,,,,
+bar_color_dn,0.0,3.0,0.0,9.0,binary,,,,,,,,,
+bar_long_up_bar,0.0,5.0,0.0,65.0,binary,,,,,,,,,
+bar_long_dn_bar,0.0,3.0,0.0,23.0,binary,,,,,,,,,
+bar_long_dn_up,0.0,0.0,0.0,6.0,binary,,,,,,,,,
+bar_long_up_dn,0.0,0.0,0.0,12.0,binary,,,,,,,,,
+bar_edge_buy,0.0,94.0,0.0,211.0,binary,,,,,,,,,
+bar_edge_sell,0.0,98.0,0.0,195.0,binary,,,,,,,,,
+bar_pressure_ask,0.0,1.0,0.0,29.0,binary,,,,,,,,,
+bar_pressure_bid,0.0,1.0,0.0,29.0,binary,,,,,,,,,
+dist_ext_color_up,,,,,numeric,,0.0,-90.37948717948719,0.0,0.0,0.0,31.2044356108694,0.0,0.0
+dist_ext_color_dn,,,,,numeric,,0.0,-59.43076923076923,0.0,0.0,0.0,31.103097109329273,0.0,0.0
+dist_ext_long_up,,,,,numeric,,0.0,-17.141025641025642,0.0,5.102564102564102,0.0,19.933774905390482,0.0,20.34799418725262
+dist_ext_long_dn,,,,,numeric,,0.0,-8.133333333333333,0.0,40.07435897435897,0.0,10.058832932588356,0.0,63.387185854594414
+dist_ext_edge_buy,,,,,numeric,,0.0,-1.9282051282051282,0.0,-6.456410256410257,0.0,5.408978003527761,0.0,29.097909313423774
+dist_ext_edge_sell,,,,,numeric,,0.0,1.4756410256410257,0.0,-9.157692307692308,0.0,4.868058261080491,0.0,47.520325834441714
+fp_edge_buy,0.0,64.0,0.0,114.0,binary,,,,,,,,,
+fp_edge_sell,0.0,60.0,0.0,91.0,binary,,,,,,,,,

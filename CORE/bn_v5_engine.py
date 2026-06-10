@@ -74,7 +74,11 @@ class BNV5Params:
     pivot_window: int = 3                   # +/- N bars pour pivot
     w_tolerance_ticks: int = 30             # tolerance LOW1/LOW2 du W (ou H1/H2 du M)
     lookback_neckline: int = 20             # max bars entre LOW1 et cassure neckline
-    breakout_max_bars: int = 15             # max bars apres LOW2 pour chercher cassure
+    # 04/06 RECAL Jackson (sweet spot audit + R1 code-reviewer) :
+    # 15 -> 7. Avec fix break->continue, br=15 captait des cassures k=6-7 mediane
+    # (= entry tres apres pivot, "trades chers"). br=7 cap k <= 6 = cassures
+    # rapides + sweet spot PF backtest 35j (ES 1.25, NQ 2.00, cumul +$21,183).
+    breakout_max_bars: int = 7              # max bars apres LOW2 pour chercher cassure
 
     # Filtre confluence (proximite niveau institutionnel)
     confluence_max_dist_pct: float = 0.20   # pivot must be <= 0.20% d'un support/resistance
@@ -107,6 +111,17 @@ class BNV5Params:
     trail_pullback_bars: int = 3            # 3 bars sans new high = pullback confirme
     timeout_bars: int = 90                  # ~90 min swing
 
+    # 🆕 FIX #A8 (08/06/2026) — DAILY STOP Mark Douglas
+    # Source : memoire feedback_douglas_consistency_principles.md (04/06).
+    # "Consistency beats intensity" - freeze apres seuil session atteint.
+    # FIX B8.4 (code-reviewer 08/06) : threshold initial $150 win / $200 loss
+    # trop serres pour 1 NQ E-mini ($5/t, 1 win 60t = $300 = trigger immediat).
+    # Calibrage CONSERVATEUR : $300 win / $400 loss (= 1.3 SL typique avant freeze).
+    # A backtester sur 30-60j BN V5 pour calibrer (backlog).
+    daily_stop_win_usd: float = 300.0       # gain max session (1 win NQ typique)
+    daily_stop_loss_usd: float = 400.0      # perte max session (~1.3 SL typiques)
+    daily_stop_enabled: bool = True         # toggle desactivable
+
     # Activation patterns
     enable_v_long: bool = True
     enable_w_long: bool = True
@@ -115,6 +130,24 @@ class BNV5Params:
 
     # Min move size entry-pivot (anti-noise)
     min_entry_pivot_ticks: int = 5
+
+    # 04/06 Jackson souverain : VETO proximity_swing symetrique LONG/SHORT.
+    # LONG : refuser si dist(entry, last_swing_high) < threshold ET swing au-dessus.
+    # SHORT : refuser si dist(entry, last_swing_low) < threshold ET swing en-dessous.
+    # Source : feedback_swing_proximity_veto.md (11/05). Trade ES W LONG 04/06
+    # @7547.5 vs swing_high 7549.75 = 2.25t (< 12t veto) = trade "par chance".
+    # Defaults par symbole : ES 12t, NQ 30t, MGC 5t (calibrage tick spread).
+    # Disable via enable_proximity_swing_veto=False pour A/B test backtest.
+    enable_proximity_swing_veto: bool = True
+    proximity_swing_veto_ticks: Dict[str, int] = field(
+        default_factory=lambda: {"ES": 12, "NQ": 30, "MGC": 5}
+    )
+    # 04/06 R3 code-reviewer : lookback du veto pour limiter aux pivots
+    # recents/pertinents. Sans ca, find_pivots() session-wide retourne 30+
+    # pivots dont la majorite sont anciens et deja casses → micro-pic
+    # ancien (ex: 7547.75 idx 80) masque le vrai swing problematique
+    # (ex: 7549.75 idx 580). Limit aux N derniers bars = filtre temporel.
+    proximity_swing_veto_lookback_bars: int = 60
 
     def __post_init__(self) -> None:
         assert self.pivot_window >= 2, "pivot_window doit etre >= 2"
@@ -125,6 +158,8 @@ class BNV5Params:
         assert self.range_lookback_bars > 0
         assert self.trail_pullback_bars > 0
         assert self.timeout_bars > 0
+        assert all(v > 0 for v in self.proximity_swing_veto_ticks.values()), \
+            "proximity_swing_veto_ticks doit etre >0 par symbole"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -165,8 +200,10 @@ class TrailingStateV5:
     last_confirmed_pullback: Optional[float] = None     # dernier pullback confirme = candidat SL
 
     # Stats
-    mfe_ticks: float = 0.0
+    mfe_ticks: float = 0.0  # nom legacy : valeurs en POINTS (cf B1.1 review)
     mae_ticks: float = 0.0
+    # 🆕 FIX B1.2 (code-reviewer 08/06) - Tracking BE armed pour log audit
+    breakeven_armed: bool = False  # True quand SL = entry (Fix A1) declenche
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -340,6 +377,130 @@ def bar_reversal_long(df: pd.DataFrame, idx: int,
                    "long_up_bar": long_bar_val})
 
 
+def proximity_swing_check(df: pd.DataFrame, idx: int, side: str, sym: str,
+                          threshold_ticks: int,
+                          internal_pivots: Optional[List[Tuple[int, float]]] = None,
+                          pivot_window: int = 3,
+                          lookback_bars: int = 60,
+                          ) -> Tuple[bool, Dict[str, Any]]:
+    """Veto symetrique : refuse entry trop proche d'un swing oppose.
+
+    LONG : refuse si UN DES SWING HIGHS suivants est AU-DESSUS de entry et
+           dist(entry, swing_high) < threshold_ticks :
+             1. `_last_swing_high_price` enricher (session-level)
+             2. plus haut des pivot_highs INTERNES find_pivots BN V5 (court terme)
+    SHORT : miroir avec swing_lows.
+
+    Returns:
+        (passes, ctx_dict). passes=True si OK (pas de veto).
+
+    Le veto est STRICT : si UN seul swing recent est dans la zone, on REJETTE.
+    Couvre 2 plages temporelles complementaires :
+      - enricher = swings confirmes session (lent mais robuste)
+      - internal_pivots = pivots find_pivots window=3 (rapide mais bruite)
+
+    Cas decouvert 04/06 : trade ES 9:47 LONG @7547.5 alors qu'un pic 7549.75
+    se formait 1-2 bars avant. L'enricher ne l'avait pas encore reclassifie
+    comme `_last_swing_high_price` (toujours 7537.5 = swing precedent casse).
+    Les internal_pivots BN V5 le voient car window=3.
+
+    Fail-open : si le swing n'existe pas (None) ou est deja casse (sous entry
+    pour LONG / au-dessus pour SHORT), on PASSE pour ce swing.
+
+    Args:
+        df : DataFrame OHLC + `_last_swing_high_price` + `_last_swing_low_price`
+        idx : index bar entry
+        side : SIDE_LONG / SIDE_SHORT
+        sym : NQ / ES / MGC
+        threshold_ticks : distance min en ticks
+        internal_pivots : optionnel, pivots find_pivots BN V5 du window courant.
+                          Pour LONG passer ph, pour SHORT passer pl.
+
+    Source : Jackson 11/05 + 04/06 (multi-source).
+    """
+    tick = TICK_BY_SYMBOL.get(sym, 0.25)
+    if idx < 0 or idx >= len(df):
+        return (True, {"reason": "idx_out_of_bounds"})
+    row = df.iloc[idx]
+    entry = _safe_float(_row_get(row, "close"))
+    if entry is None:
+        return (True, {"reason": "entry_none"})
+
+    candidates: List[Tuple[str, float]] = []  # (source_label, price)
+    # 04/06 R2 code-reviewer : un pivot a pidx n'est confirme qu'a partir de
+    # `pidx + pivot_window + 1` (find_pivots scan bars apres). En live, un
+    # pivot a pidx=N-1 n'existe PAS encore pour le bot. Filtre anti look-ahead.
+    # 04/06 R3 : lookback temporel pour eviter micro-pics anciens deja casses.
+    min_idx_pivot_recent = max(0, idx - lookback_bars)
+
+    if side == SIDE_LONG:
+        # Source 1 : enricher
+        sh_enricher = _safe_float(_row_get(row, "_last_swing_high_price"))
+        if sh_enricher is not None and sh_enricher > entry:
+            candidates.append(("enricher", sh_enricher))
+        # Source 2 : internal pivots (ph) confirmes ET dans lookback recent,
+        # AU-DESSUS de entry.
+        if internal_pivots:
+            for pidx, pprice in internal_pivots:
+                # R2 : pivot pas confirmable si pas assez de bars apres
+                if pidx + pivot_window >= idx:
+                    continue
+                # R3 : pivot trop ancien, deja casse ou non-pertinent
+                if pidx < min_idx_pivot_recent:
+                    continue
+                if pprice > entry:
+                    candidates.append((f"internal_idx{pidx}", pprice))
+
+        if not candidates:
+            return (True, {"swing_price": None,
+                           "reason": "no_swing_high_above_entry"})
+        # Le swing le PLUS PROCHE en distance verticale est le plus contraignant
+        candidates.sort(key=lambda c: c[1] - entry)
+        src, sh = candidates[0]
+        dist_pts = sh - entry
+        dist_ticks = dist_pts / tick
+        ctx = {
+            "swing_price": round(sh, 4),
+            "swing_source": src,
+            "dist_ticks": round(dist_ticks, 2),
+            "threshold_ticks": threshold_ticks,
+            "n_candidates": len(candidates),
+        }
+        return (dist_ticks >= threshold_ticks, ctx)
+
+    # SHORT
+    sl_enricher = _safe_float(_row_get(row, "_last_swing_low_price"))
+    if sl_enricher is not None and sl_enricher < entry:
+        candidates.append(("enricher", sl_enricher))
+    if internal_pivots:
+        for pidx, pprice in internal_pivots:
+            # R2 anti look-ahead
+            if pidx + pivot_window >= idx:
+                continue
+            # R3 lookback temporel
+            if pidx < min_idx_pivot_recent:
+                continue
+            if pprice < entry:
+                candidates.append((f"internal_idx{pidx}", pprice))
+
+    if not candidates:
+        return (True, {"swing_price": None,
+                       "reason": "no_swing_low_below_entry"})
+    # Le swing le plus proche par dessous = entry - max(price)
+    candidates.sort(key=lambda c: entry - c[1])
+    src, sl_swing = candidates[0]
+    dist_pts = entry - sl_swing
+    dist_ticks = dist_pts / tick
+    ctx = {
+        "swing_price": round(sl_swing, 4),
+        "swing_source": src,
+        "dist_ticks": round(dist_ticks, 2),
+        "threshold_ticks": threshold_ticks,
+        "n_candidates": len(candidates),
+    }
+    return (dist_ticks >= threshold_ticks, ctx)
+
+
 def bar_reversal_short(df: pd.DataFrame, idx: int,
                         require_aggressor: bool = False, aggressor_min: float = 0.3,
                         require_long_bar: bool = False) -> Tuple[bool, Dict[str, Any]]:
@@ -405,6 +566,16 @@ def detect_v_long(
         # Filtre confluence
         is_near, lvl, dist = pivot_near_support(df, idx_low, params.confluence_max_dist_pct)
         if not is_near:
+            # 04/06 P1 R2 : emit CONFLUENCE_BLOCK pour tracabilite (avant: silent continue)
+            if log_fn is not None:
+                try:
+                    log_fn("BN_V5_GATE_CONFLUENCE_BLOCK",
+                           sym=sym, pattern="V_LONG",
+                           dist_pct=round(dist, 4) if dist is not None else None,
+                           threshold=params.confluence_max_dist_pct,
+                           nearest_level=lvl)
+                except Exception:
+                    pass
             continue
         # Chercher cassure
         for k in range(idx_low + 1, min(idx_low + params.breakout_max_bars, n)):
@@ -421,6 +592,10 @@ def detect_v_long(
                 if entry_price is None or (entry_price - low_val) < params.min_entry_pivot_ticks * tick:
                     break
                 # Filtre range
+                # 04/06 FIX (market-analyst review) : continue au lieu de break.
+                # Si cassure k bloquee par range_filter, tenter cassures k+1, k+2...
+                # Neckline grandit avec high cumule -> cassure ulterieure = plus
+                # forte. Backtest 35j : ES x2.7 trades, NQ x4.2 trades, PnL+.
                 rng_ok, drift = range_filter_pass(df, entry_idx, params.range_drift_min_pct, params.range_lookback_bars)
                 if not rng_ok:
                     if log_fn is not None:
@@ -430,7 +605,7 @@ def detect_v_long(
                                    drift_pct=round(drift, 3), threshold=params.range_drift_min_pct)
                         except Exception:
                             pass
-                    break
+                    continue
                 # Filtre bar reversal
                 if params.bar_reversal_required:
                     rev_ok, rev_ctx = bar_reversal_long(df, entry_idx, require_aggressor=params.require_aggressor_confirm, aggressor_min=params.aggressor_min_abs, require_long_bar=params.require_long_bar_confirm)
@@ -442,7 +617,7 @@ def detect_v_long(
                                        **{k: v for k, v in rev_ctx.items() if v is not None})
                             except Exception:
                                 pass
-                        break
+                        continue
                 setups.append(Setup(
                     pattern=PATTERN_V, side=SIDE_LONG,
                     entry_idx=entry_idx, entry_price=entry_price,
@@ -470,6 +645,15 @@ def detect_w_long(
         # Filtre confluence sur LOW1
         is_near, lvl, dist = pivot_near_support(df, idx1, params.confluence_max_dist_pct)
         if not is_near:
+            if log_fn is not None:
+                try:
+                    log_fn("BN_V5_GATE_CONFLUENCE_BLOCK",
+                           sym=sym, pattern="W_LONG",
+                           dist_pct=round(dist, 4) if dist is not None else None,
+                           threshold=params.confluence_max_dist_pct,
+                           nearest_level=lvl)
+                except Exception:
+                    pass
             continue
         for j in range(i + 1, len(pl)):
             idx2, low2 = pl[j]
@@ -489,6 +673,7 @@ def detect_w_long(
                     sl_pivot = min(low1, low2)
                     if entry_price is None or (entry_price - sl_pivot) < params.min_entry_pivot_ticks * tick:
                         break
+                    # 04/06 FIX (market-analyst review) : continue au lieu de break.
                     rng_ok, drift = range_filter_pass(df, entry_idx, params.range_drift_min_pct, params.range_lookback_bars)
                     if not rng_ok:
                         if log_fn is not None:
@@ -498,7 +683,7 @@ def detect_w_long(
                                        drift_pct=round(drift, 3), threshold=params.range_drift_min_pct)
                             except Exception:
                                 pass
-                        break
+                        continue
                     if params.bar_reversal_required:
                         rev_ok, rev_ctx = bar_reversal_long(df, entry_idx, require_aggressor=params.require_aggressor_confirm, aggressor_min=params.aggressor_min_abs, require_long_bar=params.require_long_bar_confirm)
                         if not rev_ok:
@@ -509,7 +694,7 @@ def detect_w_long(
                                            **{k: v for k, v in rev_ctx.items() if v is not None})
                                 except Exception:
                                     pass
-                            break
+                            continue
                     setups.append(Setup(
                         pattern=PATTERN_W, side=SIDE_LONG,
                         entry_idx=entry_idx, entry_price=entry_price,
@@ -538,6 +723,15 @@ def detect_inv_v_short(
             continue
         is_near, lvl, dist = pivot_near_resistance(df, idx_h, params.confluence_max_dist_pct)
         if not is_near:
+            if log_fn is not None:
+                try:
+                    log_fn("BN_V5_GATE_CONFLUENCE_BLOCK",
+                           sym=sym, pattern="INV_V_SHORT",
+                           dist_pct=round(dist, 4) if dist is not None else None,
+                           threshold=params.confluence_max_dist_pct,
+                           nearest_level=lvl)
+                except Exception:
+                    pass
             continue
         for k in range(idx_h + 1, min(idx_h + params.breakout_max_bars, n)):
             mid_slice = df.iloc[idx_h:k + 1]
@@ -552,6 +746,7 @@ def detect_inv_v_short(
                 entry_price = _safe_float(df["close"].iloc[entry_idx])
                 if entry_price is None or (h_val - entry_price) < params.min_entry_pivot_ticks * tick:
                     break
+                # 04/06 FIX (market-analyst review) : continue au lieu de break.
                 rng_ok, drift = range_filter_pass(df, entry_idx, params.range_drift_min_pct, params.range_lookback_bars)
                 if not rng_ok:
                     if log_fn is not None:
@@ -561,7 +756,7 @@ def detect_inv_v_short(
                                    drift_pct=round(drift, 3), threshold=params.range_drift_min_pct)
                         except Exception:
                             pass
-                    break
+                    continue
                 if params.bar_reversal_required:
                     rev_ok, rev_ctx = bar_reversal_short(df, entry_idx, require_aggressor=params.require_aggressor_confirm, aggressor_min=params.aggressor_min_abs, require_long_bar=params.require_long_bar_confirm)
                     if not rev_ok:
@@ -572,7 +767,7 @@ def detect_inv_v_short(
                                        **{k: v for k, v in rev_ctx.items() if v is not None})
                             except Exception:
                                 pass
-                        break
+                        continue
                 setups.append(Setup(
                     pattern=PATTERN_INV_V, side=SIDE_SHORT,
                     entry_idx=entry_idx, entry_price=entry_price,
@@ -599,6 +794,15 @@ def detect_m_short(
     for i, (idx1, h1) in enumerate(ph):
         is_near, lvl, dist = pivot_near_resistance(df, idx1, params.confluence_max_dist_pct)
         if not is_near:
+            if log_fn is not None:
+                try:
+                    log_fn("BN_V5_GATE_CONFLUENCE_BLOCK",
+                           sym=sym, pattern="M_SHORT",
+                           dist_pct=round(dist, 4) if dist is not None else None,
+                           threshold=params.confluence_max_dist_pct,
+                           nearest_level=lvl)
+                except Exception:
+                    pass
             continue
         for j in range(i + 1, len(ph)):
             idx2, h2 = ph[j]
@@ -618,6 +822,7 @@ def detect_m_short(
                     sl_pivot = max(h1, h2)
                     if entry_price is None or (sl_pivot - entry_price) < params.min_entry_pivot_ticks * tick:
                         break
+                    # 04/06 FIX (market-analyst review) : continue au lieu de break.
                     rng_ok, drift = range_filter_pass(df, entry_idx, params.range_drift_min_pct, params.range_lookback_bars)
                     if not rng_ok:
                         if log_fn is not None:
@@ -627,7 +832,7 @@ def detect_m_short(
                                        drift_pct=round(drift, 3), threshold=params.range_drift_min_pct)
                             except Exception:
                                 pass
-                        break
+                        continue
                     if params.bar_reversal_required:
                         rev_ok, rev_ctx = bar_reversal_short(df, entry_idx, require_aggressor=params.require_aggressor_confirm, aggressor_min=params.aggressor_min_abs, require_long_bar=params.require_long_bar_confirm)
                         if not rev_ok:
@@ -638,7 +843,7 @@ def detect_m_short(
                                            **{k: v for k, v in rev_ctx.items() if v is not None})
                                 except Exception:
                                     pass
-                            break
+                            continue
                     setups.append(Setup(
                         pattern=PATTERN_M, side=SIDE_SHORT,
                         entry_idx=entry_idx, entry_price=entry_price,
@@ -702,6 +907,25 @@ def update_trailing(state: TrailingStateV5, bar: Any, trail_pullback_bars: int =
             state.mfe_ticks = excursion_up
         if excursion_dn < state.mae_ticks:
             state.mae_ticks = excursion_dn
+
+    # 🆕 FIX #A1 (08/06/2026) — BREAKEVEN A +1R
+    # Audit BN V5 4 SL ce matin 08/06 : 100% avec MFE >= risk initial puis rendu.
+    # T1 MFE 58t / R 51t = 114%, T2 MFE 78t / R 42t = 186%, T3 MFE 67t / R 86t = 78%.
+    # Trail Dow pullback ne protege que sur new_high apres pullback confirme. Sur
+    # V-reversal post-MFE, le trail reste fige et rend tout.
+    # Fix : des que MFE >= risk_initial atteint (= +1R), locker SL = entry.
+    # Risque pattern 11 = FAIBLE (regle universelle pro).
+    # Note : mfe_ticks et risk_pts sont tous deux en POINTS (excursion = h - entry).
+    risk_pts = abs(state.entry_price - state.sl_initial)
+    if risk_pts > 0 and state.mfe_ticks >= risk_pts and not state.breakeven_armed:
+        if state.direction == SIDE_LONG and state.entry_price > state.sl_current:
+            state.sl_current = state.entry_price
+            state.breakeven_armed = True
+            return state.entry_price  # signal SL update vers BE
+        elif state.direction == SIDE_SHORT and state.entry_price < state.sl_current:
+            state.sl_current = state.entry_price
+            state.breakeven_armed = True
+            return state.entry_price
 
     if state.direction == SIDE_LONG:
         if h > state.running_high:
@@ -776,14 +1000,42 @@ class BNV5Engine:
         assert symbol in TICK_BY_SYMBOL, f"Symbol non supporte : {symbol}"
         self.symbol = symbol
         self.params = params or BNV5Params()
-        self.log_fn = log_fn
+        # FIX BUG CRITIQUE 04/06 : wrapper log_fn qui incremente _n_filtered_*
+        # AVANT : les counters etaient declares + reset mais JAMAIS incrementes.
+        # CYCLE_SUMMARY rapportait n_filt_range=0 alors que 39629 GATE_RANGE_BLOCK
+        # emit / 04/06. Le wrapper compte les emit BN_V5_GATE_*_BLOCK et alimente
+        # les counters utilises dans CYCLE_SUMMARY (qui devient maintenant honnete).
+        self._raw_log_fn = log_fn
 
-        # Stats
+        # Stats (incremente via _counting_log_fn wrapper)
         self._n_bars_processed = 0
         self._n_setups_detected = 0
         self._n_filtered_range = 0
         self._n_filtered_confluence = 0
         self._n_filtered_bar_reversal = 0
+        self._n_filtered_proximity_swing = 0  # 04/06 veto Jackson
+
+        # 04/06 R1 code-reviewer : TOUJOURS wrap (meme si log_fn=None) sinon
+        # les counters seraient muets et CYCLE_SUMMARY mentirait quand un caller
+        # (test, dev script) instancie sans log_fn externe. La compatibilite
+        # avec la prod est preservee (raw_log_fn peut etre None, _emit en prod).
+        def _counting_log_fn(code: str, **ctx) -> None:
+            if code == "BN_V5_GATE_RANGE_BLOCK":
+                self._n_filtered_range += 1
+            elif code == "BN_V5_GATE_BAR_REVERSAL_BLOCK":
+                self._n_filtered_bar_reversal += 1
+            elif code == "BN_V5_GATE_CONFLUENCE_BLOCK":
+                self._n_filtered_confluence += 1
+            elif code == "BN_V5_GATE_PROXIMITY_SWING_BLOCK":
+                self._n_filtered_proximity_swing += 1
+            # Forward au raw log_fn original (peut etre None)
+            if self._raw_log_fn is not None:
+                try:
+                    self._raw_log_fn(code, **ctx)
+                except Exception:
+                    pass
+
+        self.log_fn = _counting_log_fn  # R1 : toujours wrap (counters honnetes)
 
     def check_zone(self, df: pd.DataFrame, current_idx: int) -> Optional[Setup]:
         """Detecte si la bar courante (current_idx) declenche un setup BN V5.
@@ -798,6 +1050,30 @@ class BNV5Engine:
         self._n_bars_processed += 1
 
         pl, ph = find_pivots(df, window=self.params.pivot_window)
+
+        # 04/06 P1 — BAR_PROCESSED + PIVOT_DETECTED pour tracking granulaire.
+        # Permet a Jackson de tail decisions et voir drift_pct par bar (cassure
+        # potentielle) + pivots fraichement detectes.
+        if self.log_fn is not None:
+            try:
+                close_val = _safe_float(df["close"].iloc[current_idx]) if current_idx < len(df) else None
+                # drift_pct calcule pour le filtre range : (high-low)/close sur lookback
+                _, drift_curr = range_filter_pass(
+                    df, current_idx, 0.0, self.params.range_lookback_bars
+                )
+                atr_val = None
+                try:
+                    if "atr" in df.columns and current_idx < len(df):
+                        atr_val = _safe_float(df["atr"].iloc[current_idx])
+                except Exception:
+                    atr_val = None
+                self.log_fn("BN_V5_BAR_PROCESSED",
+                            sym=self.symbol, idx=current_idx,
+                            close=round(close_val, 4) if close_val is not None else None,
+                            drift_pct=round(drift_curr, 4) if drift_curr is not None else None,
+                            atr=round(atr_val, 2) if atr_val is not None else None)
+            except Exception:
+                pass
 
         all_setups: List[Setup] = []
         n_cand_v = n_cand_w = n_cand_inv_v = n_cand_m = 0
@@ -831,25 +1107,61 @@ class BNV5Engine:
                             n_filt_conf=self._n_filtered_confluence,
                             n_filt_range=self._n_filtered_range,
                             n_filt_bar=self._n_filtered_bar_reversal,
+                            n_filt_prox=self._n_filtered_proximity_swing,
                             n_setups=self._n_setups_detected)
             except Exception:
                 pass
 
         # Filtre : seulement setups avec entry_idx == current_idx (= cassure NOW)
         for s in all_setups:
-            if s.entry_idx == current_idx:
-                self._n_setups_detected += 1
-                if self.log_fn is not None:
-                    try:
-                        self.log_fn("BN_V5_SETUP_DETECTED",
-                                    sym=self.symbol, pattern=s.pattern, side=s.side,
-                                    entry_price=s.entry_price, sl_price=s.sl_price,
-                                    pivot_price=s.pivot_price, neckline=s.neckline,
-                                    conf_level=s.confluence_level,
-                                    conf_dist_pct=s.confluence_dist_pct)
-                    except Exception:
-                        pass
-                return s
+            if s.entry_idx != current_idx:
+                continue
+
+            # 04/06 VETO proximity_swing (Jackson souverain) — symetrique LONG/SHORT.
+            # LONG : refuse si swing_high recent < entry + threshold ticks.
+            # SHORT : refuse si swing_low recent > entry - threshold ticks.
+            # 2 sources verifiees : `_last_swing_high_price` enricher (lent)
+            # + internal pivots find_pivots() BN V5 (rapide window=3).
+            # Source : feedback_swing_proximity_veto.md (11/05) + trade ES 04/06.
+            if self.params.enable_proximity_swing_veto:
+                thr = self.params.proximity_swing_veto_ticks.get(self.symbol, 12)
+                # LONG check vs swing highs (ph), SHORT check vs swing lows (pl)
+                internal_for_check = ph if s.side == SIDE_LONG else pl
+                ok, ctx = proximity_swing_check(
+                    df, s.entry_idx, s.side, self.symbol, thr,
+                    internal_pivots=internal_for_check,
+                    pivot_window=self.params.pivot_window,
+                    lookback_bars=self.params.proximity_swing_veto_lookback_bars,
+                )
+                if not ok:
+                    if self.log_fn is not None:
+                        try:
+                            self.log_fn("BN_V5_GATE_PROXIMITY_SWING_BLOCK",
+                                        sym=self.symbol, pattern=s.pattern,
+                                        side=s.side, entry_price=s.entry_price,
+                                        **ctx)
+                        except Exception:
+                            pass
+                    # 04/06 R4 code-reviewer : `continue` cosmetique 99% des cas
+                    # (tous les setups d'une bar partagent entry_idx + entry_price
+                    # donc memes coordonnees pour le veto). Mais defendable :
+                    # une bar peut produire LONG (V/W) ET SHORT (INV_V/M)
+                    # simultanement -> le LONG vetoye laisse passer un SHORT
+                    # potentiel teste contre swing oppose.
+                    continue
+
+            self._n_setups_detected += 1
+            if self.log_fn is not None:
+                try:
+                    self.log_fn("BN_V5_SETUP_DETECTED",
+                                sym=self.symbol, pattern=s.pattern, side=s.side,
+                                entry_price=s.entry_price, sl_price=s.sl_price,
+                                pivot_price=s.pivot_price, neckline=s.neckline,
+                                conf_level=s.confluence_level,
+                                conf_dist_pct=s.confluence_dist_pct)
+                except Exception:
+                    pass
+            return s
         return None
 
     def get_stats(self) -> Dict[str, int]:
@@ -859,6 +1171,7 @@ class BNV5Engine:
             "n_filtered_range": self._n_filtered_range,
             "n_filtered_confluence": self._n_filtered_confluence,
             "n_filtered_bar_reversal": self._n_filtered_bar_reversal,
+            "n_filtered_proximity_swing": self._n_filtered_proximity_swing,
         }
 
 
@@ -869,4 +1182,5 @@ __all__ = [
     "TICK_BY_SYMBOL", "TICK_VAL_USD_BY_SYMBOL",
     "find_pivots", "init_trailing", "update_trailing", "is_sl_hit", "is_timeout",
     "detect_v_long", "detect_w_long", "detect_inv_v_short", "detect_m_short",
+    "proximity_swing_check",
 ]

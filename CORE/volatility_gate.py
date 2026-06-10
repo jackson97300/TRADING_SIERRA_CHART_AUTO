@@ -49,6 +49,7 @@ class VolatilitySpikeGate:
         # sym -> bar_count au moment du spike (pour cooldown)
         self._spike_bar: Dict[str, int] = {}
         self._last_ratio: Dict[str, float] = {}
+        self._fallback_logged: bool = False  # flag one-shot log fallback atr_daily
 
     def check(
         self,
@@ -93,7 +94,28 @@ class VolatilitySpikeGate:
         return True, "ok"
 
     def _get_atr(self, bar: dict) -> float:
-        """ATR en ticks depuis le bar JSONL."""
+        """ATR INTRADAY en ticks depuis le bar JSONL.
+
+        🆕 FIX 24/04/2026 (schema 3.7.14) : utilise `atr_14m` (ATR 14-barres 1-min)
+          au lieu de `atr` (qui est en fait `atr_daily`, causant ratio
+          bar_range/atr_daily ~0.03 → gate spike jamais declenchee).
+        Fallback sur `atr` si `atr_14m` absent (schema < 3.7.14) ou = 0
+        (debut session < 15 barres). Log WARN au fallback pour visibilite
+        du mode degrade (pattern log-debug-protocol 22/04).
+        """
+        atr_intraday = bar.get("atr_14m")
+        try:
+            if atr_intraday is not None and float(atr_intraday) > 0:
+                return float(atr_intraday)
+        except (TypeError, ValueError):
+            pass
+        # Fallback atr_daily : gate degradee
+        if not self._fallback_logged:
+            import logging
+            logging.getLogger(__name__).warning(
+                "volatility_gate: atr_14m unavailable → fallback atr_daily (gate spike en mode degrade)"
+            )
+            self._fallback_logged = True
         atr = bar.get("atr", 0.0)
         try:
             return float(atr) if atr is not None else 0.0

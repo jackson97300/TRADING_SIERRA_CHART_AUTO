@@ -27,6 +27,7 @@ try:
         BOT3_TRADE_BREAKOUTS,
         BOT3_USE_NARRATIVE_DIRECTION,
         BOT3_NARRATIVE_TRACKING_ONLY,
+        BOT3_MP_LEVEL_BLACKLIST_ENABLED,
         GUARD_RAILS_BOT3,
         TRADING_WINDOW_END_UTC,
         TRADING_WINDOW_START_UTC,
@@ -60,6 +61,7 @@ except ImportError:
         BOT3_TRADE_BREAKOUTS,
         BOT3_USE_NARRATIVE_DIRECTION,
         BOT3_NARRATIVE_TRACKING_ONLY,
+        BOT3_MP_LEVEL_BLACKLIST_ENABLED,
         GUARD_RAILS_BOT3,
         TRADING_WINDOW_END_UTC,
         TRADING_WINDOW_START_UTC,
@@ -263,6 +265,23 @@ class Bot3Engine:
         if BOT3_USE_NARRATIVE_DIRECTION and _V2_NARRATIVE_AVAILABLE:
             self._nsm = NarrativeStateMachine()
             self._resolver = DirectionResolver()
+
+        # FIX 19/05 PM (investigation V2 SHADOW ZERO 8230 decisions sans signal) :
+        # diagnostic one-shot au boot pour confirmer init state V2 narrative
+        # dans le contexte paper_v2 process. Si zero NSM_TRANSITION_OK en prod
+        # malgre code path present, il faut savoir si _nsm + _resolver sont set.
+        try:
+            from logging_v2 import get_logger as _get
+            _get("bot3_mp_engine", process="paper_v2").emit(
+                "BOT3_ENGINE_INIT_V2_STATE",
+                nsm_set=(self._nsm is not None),
+                resolver_set=(self._resolver is not None),
+                use_narrative=BOT3_USE_NARRATIVE_DIRECTION,
+                v2_available=_V2_NARRATIVE_AVAILABLE,
+                tracking_only=BOT3_NARRATIVE_TRACKING_ONLY,
+            )
+        except Exception:
+            pass
         # P0.2 fix (code-reviewer NOGO 18/05) : circuit breaker NSM transition.
         # Si NSM leve a chaque bar (bug deserialisation, atr=0, etc.), le bot
         # retomberait V1 silencieusement (fail-silent pattern interdit cf
@@ -274,6 +293,11 @@ class Bot3Engine:
         self._nsm_consec_exceptions: dict[str, int] = {"NQ": 0, "ES": 0, "MGC": 0}
         self._nsm_circuit_breaker_tripped: dict[str, bool] = {"NQ": False, "ES": False, "MGC": False}
         self._nsm_transition_ok_count: dict[str, int] = {"NQ": 0, "ES": 0, "MGC": 0}
+        # FIX 19/05 PM (investigation V2 SHADOW ZERO) : tracker last_state pour
+        # log uniquement les CHANGEMENTS d'etat (vs spam) cf code dans evaluate().
+        self._nsm_last_state_per_symbol: dict[str, Optional[str]] = {
+            "NQ": None, "ES": None, "MGC": None,
+        }
 
     def evaluate(
         self,
@@ -351,6 +375,7 @@ class Bot3Engine:
             enable_tier3=BOT3_ENABLE_TIER3,
             symbol=symbol,
             enable_tier2_neutral=enable_neutral,
+            enable_mp_blacklist=BOT3_MP_LEVEL_BLACKLIST_ENABLED,
         )
         if not active_levels:
             return None, decisions
@@ -431,6 +456,25 @@ class Bot3Engine:
                 self._nsm_transition_ok_count[symbol] = (
                     self._nsm_transition_ok_count.get(symbol, 0) + 1
                 )
+                # FIX 19/05 PM (investigation V2 SHADOW ZERO) : log temporaire
+                # CHANGEMENT d'etat NSM uniquement (vs spam toutes bars). Permet
+                # confirmer V2 narrative tourne en J+1 sans attendre 500 transitions.
+                # Compare snapshot state vs precedent symbol state.
+                prev_state = self._nsm_last_state_per_symbol.get(symbol)
+                cur_state = nsm_snapshot.state.value if nsm_snapshot is not None else None
+                if cur_state != prev_state:
+                    self._nsm_last_state_per_symbol[symbol] = cur_state
+                    try:
+                        from logging_v2 import get_logger as _get
+                        _get("bot3_mp_engine", process="paper_v2").emit(
+                            "BOT3_NSM_STATE_CHANGE",
+                            sym=symbol,
+                            prev_state=prev_state if prev_state else "?",
+                            cur_state=cur_state if cur_state else "?",
+                            count=self._nsm_transition_ok_count[symbol],
+                        )
+                    except Exception:
+                        pass
                 if self._nsm_transition_ok_count[symbol] % 500 == 0:
                     try:
                         from logging_v2 import get_logger as _get

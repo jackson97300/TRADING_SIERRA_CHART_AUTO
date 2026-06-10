@@ -769,9 +769,16 @@ def add_open_cash_price1030(df: pd.DataFrame, bounds: dict | None = None) -> pd.
     b = _resolve_bounds(bounds)
     us_start = b["us_start"]
     ib_close = us_start + 60  # fin IB = 1h apres us_start
-    # Open cash = close de la barre us_start
-    open_cash = df[df["mins_et"] == us_start].groupby("date_et")["close"].first().rename("open_cash")
+    # FIX PARITE GAME_CHANGERS 19/05/2026 (audit code-reviewer ROOT_CAUSE) :
+    # Open cash = OPEN de la barre us_start (= 1er tick exact 09:30:00 ET cote C++ DMP
+    # via DMP_SafeReadLast(sc, chart_v, ohlc_id, 0) = sg0 OHLC session study).
+    # AVANT (bug) : `["close"].first()` = close 09:30-09:31 (1 minute apres) -> bascule
+    # de famille OAOR/ORR vs OTD/OAIR -> 36-41% mismatch open_type vs DMP.
+    # APRES : `["open"].first()` = open exact bar 09:30 (= 1er tick = aligne C++).
+    open_cash = df[df["mins_et"] == us_start].groupby("date_et")["open"].first().rename("open_cash")
     # Price 10:30 (ou 09:30 MGC) = close de la barre us_start+60, premiere apres IB complete
+    # NOTE : price_1030 reste sur close (cote C++ aussi prend price_close de la 1ere bar
+    # post-ib_complete via DMP_OT_CapturePrice1030). Convention identique.
     price_1030 = df[df["mins_et"] == ib_close].groupby("date_et")["close"].first().rename("price_1030")
     df = df.merge(open_cash, on="date_et", how="left")
     df = df.merge(price_1030, on="date_et", how="left")
@@ -826,6 +833,9 @@ def add_open_cash_price1030_streaming(
     date_et = out.get("date_et")
     mins_et = out.get("mins_et")
     close = out.get("close")
+    # FIX PARITE GAME_CHANGERS 19/05/2026 : capture aussi 'open' pour open_cash
+    # (= 1er tick exact bar us_start, aligne avec C++ sg0 OHLC session study).
+    open_val = out.get("open")
 
     # Reset cache si nouveau jour
     if date_et != state.current_date_et:
@@ -833,15 +843,16 @@ def add_open_cash_price1030_streaming(
         state.cached_open_cash = None
         state.cached_price_1030 = None
 
-    # Capture close si on est SUR la bar us_start ou us_start+60
-    if mins_et is not None and close is not None:
+    # Capture open pour open_cash + close pour price_1030
+    if mins_et is not None:
         try:
             mins_int = int(mins_et)
-            close_f = float(close)
-            if mins_int == us_start and state.cached_open_cash is None:
-                state.cached_open_cash = close_f
-            elif mins_int == ib_close and state.cached_price_1030 is None:
-                state.cached_price_1030 = close_f
+            # FIX : open_cash = OPEN bar us_start (pas close, voir batch fix ligne 773)
+            if mins_int == us_start and state.cached_open_cash is None and open_val is not None:
+                state.cached_open_cash = float(open_val)
+            # price_1030 reste sur close (convention C++ DMP_OT_CapturePrice1030 = price_close)
+            elif mins_int == ib_close and state.cached_price_1030 is None and close is not None:
+                state.cached_price_1030 = float(close)
         except (TypeError, ValueError):
             pass
 

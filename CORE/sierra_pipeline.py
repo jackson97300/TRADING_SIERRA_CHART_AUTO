@@ -202,9 +202,23 @@ class SierraPipelineOrchestrator:
         self._safe_update(enriched,poc_feats)
 
         # ─── Module 3.2 : Swings V2 Wyckoff/ICT (6 features) ───
+        # Fix P2 audit market-analyst + quality-auditor 11/06 :
+        # Sierra DMP fournit `new_swing_high/low` natif (18 et 32 events sur 1926
+        # bars NQ). Code Phase 3 essayait de detecter via `dist_swing_high == 0`
+        # mais Sierra ne reset jamais dist a 0 sur la bar swing -> high DEAD.
+        # Bug asymetrique : low fonctionnait par chance (4 zeros aleatoires).
+        # Si Sierra fournit new_swing_high/low : substituer dist=0 force pour
+        # declencher detection Phase 3.
+        dsh = sierra_bar.get("dist_swing_high")
+        dsl = sierra_bar.get("dist_swing_low")
+        if sierra_bar.get("new_swing_high"):
+            dsh = 0.0  # force detection cote Phase 3
+        if sierra_bar.get("new_swing_low"):
+            dsl = 0.0
+
         swings_feats = self._swings_v2.update(
-            dist_swing_high=sierra_bar.get("dist_swing_high"),
-            dist_swing_low=sierra_bar.get("dist_swing_low"),
+            dist_swing_high=dsh,
+            dist_swing_low=dsl,
             bar_high=bar_high,
             bar_low=bar_low,
             close=close,

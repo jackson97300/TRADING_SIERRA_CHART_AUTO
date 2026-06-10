@@ -64,7 +64,12 @@ class TrainConfig:
     test_days: int = 7                # Jours par fold test (5->7)
 
     # --- Optuna ---
-    n_trials: int = 100               # Nombre de trials Optuna
+    # FIX 28/04 v2 (ml-trainer audit) : 100 → 30 trials.
+    # Avec single inner-val 80/20 + 167 features + 9 hyperparams continus,
+    # 100 trials = overfit Optuna garanti (Lopez ch.7 §7.4 "single split = leak info").
+    # 30 trials = compromis exploration/anti-overfit. Si CV 3-fold ajouté plus tard,
+    # remettre 50-100.
+    n_trials: int = 30                # Nombre de trials Optuna (anti-overfit)
     early_stopping_rounds: int = 50   # Patience early stopping
 
     # --- Seuils GO/NO-GO ---
@@ -85,6 +90,20 @@ class TrainConfig:
     # --- Purge / Embargo (Lopez de Prado Ch.7) ---
     purge_bars: int = 20              # = label horizon (barres dont le label chevauche)
     embargo_pct: float = 0.01         # 1% du dataset en gap supplementaire
+
+    # --- Meta-labeling dans walk-forward (Lopez AFML ch.3, ajout 19/04/2026) ---
+    # Si True : fit meta model PAR FOLD (sur train uniquement via cross_val_predict),
+    # predict sur test, et utilise score_combined = p_primary * p_meta pour le PF.
+    # Si False : fallback sur p_primary seul (comportement pre-19/04).
+    #
+    # DEFAUT : False. Raison (validation empirique 19/04/2026) : sur 70j de data,
+    # le meta n'a pas assez d'exemples de regime varies pour apprendre un filtre
+    # utile. Resultat : meta vide 6/8 folds walk-forward (0 trades) et PSR chute
+    # de 1.000 a 0.699. A reactiver post-purge v4 (~02/05) avec 6+ mois data.
+    #
+    # NOTE : le meta final (sur tout le dataset) est entraine dans tous les cas
+    # apres la boucle walk-forward pour l'inference live (sauvegarde comme asset).
+    enable_meta_wf: bool = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -219,36 +238,116 @@ def simulate_trades(
     config: TrainConfig,
 ) -> SimResult:
     """
-    Simule le trading sur un fold test.
+    Simule le trading sur un fold test (V2 27/04 - sans oracle leak).
+
+    FIX 27/04 (audit code-reviewer + ml-trainer) : ANCIEN code utilisait
+    `df["label"]` pour calculer PnL = ORACLE (label = sortie Triple Barrier
+    qui regarde 20 bars futures). Resultat : WR(model) = accuracy(model)
+    mecaniquement. WR=100% PF=inf si modele converge.
+
+    NOUVEAU : re-simule TP/SL sur PRIX REELS futurs (high/low/close[i+k]).
+    C'est l'unique endroit ou regarder le futur est legitime (simulation
+    d'execution reelle). Lopez AFML ch.3 sec 3.7 (separation labeling
+    offline / backtesting online).
 
     Pour chaque barre:
     - Si buy_score > threshold et sell_score < threshold → BUY
     - Si sell_score > threshold et buy_score < threshold → SELL
     - Sinon → HOLD
 
-    PnL calcule via le label reel:
-    - BUY sur label=+1 → win (TP_ticks - costs)
-    - BUY sur label=-1 → loss (-SL_ticks - costs)
-    - BUY sur label=0  → flat (-costs)
+    PnL calcule via SIMULATION OHLC :
+    - Entry = close[i] (ou open[i+1] pour fill realiste, pour MVP close[i])
+    - Pour chaque k in [1, horizon] :
+      * BUY : if low[i+k] <= sl_lvl -> SL hit (-sl_ticks - costs)
+              if high[i+k] >= tp_lvl -> TP hit (+tp_ticks - costs)
+      * SELL : symetrique
+    - Timeout : marked-to-market sur close[i+horizon]
     """
-    labels = df["label"].values
     dates = pd.to_datetime(df["ts"], unit="ms").dt.date.values
+    closes = df["close"].values
+    highs = df["high"].values
+    lows = df["low"].values
 
     # Detecter le symbole pour les couts
     is_nq = "NQ" in str(df.get("sym", pd.Series("ES")).iloc[0]) if "sym" in df.columns else False
     cost_per_trade = config.cost_ticks_nq if is_nq else config.cost_ticks_es
 
-    # SL/TP en ticks depuis ATR
+    # Tick size (ES + NQ identique 0.25)
+    TICK = 0.25
+
+    # SL/TP en ticks depuis ATR (FIX 27/04 v5 : aligner sur labeler v5 ATR-dynamique)
+    # ANCIEN : sl_ticks = max(atr * 0.08, 8.0) → ratio 0.08 INACTIF (ATR×0.08 < 8 toujours).
+    #         Resultat : SL=8t fixed dans simulator MAIS labeler v4 utilisait SL=5t fixed.
+    #         INCOHERENCE : modele entraine sur labels SL=5/TP=9, evalue sur SL=8/TP=16.
+    # NOUVEAU v5 : meme formule que label_v5_dataset.py (K_SL=1.5, K_TP_RATIO=2.0).
+    #         SL = K_SL * ATR_at_entry (ticks)
+    #         TP = K_TP_RATIO * SL
+    # Si dataset v5 utilise → cohérent labeler/simulator.
+    # Si v3/v4 (legacy) → fallback sur formule precedente pour ne pas casser.
     atr_col = df["atr"].values if "atr" in df.columns else np.full(len(df), 400.0)
-    sl_ticks = np.maximum(atr_col * config.sl_atr_ratio, 8.0)
-    tp_ticks = sl_ticks * config.tp_rr
+    use_v5_barrier = bool(getattr(config, "_v5_barrier", True))
+    if use_v5_barrier:
+        # FIX 28/04 (Jackson "laisser respirer trades, eviter stop hunters") :
+        # --sl-k X --tp-rr Y permet de tester avec SL plus large (default 1.5 trop serre ES).
+        K_SL_SIM = 1.5
+        K_TP_RATIO_SIM = 2.0
+        if "--sl-k" in sys.argv:
+            idx = sys.argv.index("--sl-k")
+            if idx + 1 < len(sys.argv):
+                try: K_SL_SIM = float(sys.argv[idx + 1])
+                except: pass
+        if "--tp-rr" in sys.argv:
+            idx = sys.argv.index("--tp-rr")
+            if idx + 1 < len(sys.argv):
+                try: K_TP_RATIO_SIM = float(sys.argv[idx + 1])
+                except: pass
+        sl_ticks = K_SL_SIM * atr_col
+        tp_ticks = K_TP_RATIO_SIM * sl_ticks
+    else:
+        sl_ticks = np.maximum(atr_col * config.sl_atr_ratio, 8.0)
+        tp_ticks = sl_ticks * config.tp_rr
+
+    # Horizon : aligne sur labeler v5 = 60 bars
+    horizon = 60 if use_v5_barrier else max(config.purge_bars, 20)
 
     trades = []
     last_trade_bar = -config.cooldown_bars - 1
     daily_trades: Dict[object, int] = {}
     unique_days = set(dates)
+    n = len(df)
 
-    for i in range(len(df)):
+    # FIX 28/04 (Jackson "approche causale") : --apply-edge-filter applique
+    # les TOP combos filters identifies par analyze_all_models_winning_patterns.py
+    # APRES la prediction du model. Filtre les bars qui ne matchent pas le pattern.
+    apply_edge = "--apply-edge-filter" in sys.argv
+    edge_buy_mask = None
+    edge_sell_mask = None
+    if apply_edge:
+        # ES BUY combo : long_dn_up_pattern=1 AND n_trapped_sellers_zones_active<=0
+        # ES SELL combo : bool_above_mq_call=1 AND ib_position_pct>=1.14
+        # NQ BUY combo : bool_above_mq_hvl=0 AND va_position_pct<=0.19
+        # NQ SELL combo : vwap_d_sd2_above=1 AND dist_vwap_d_atr>=7.03
+        is_nq_sym = "NQ" in str(df.get("sym", pd.Series("ES")).iloc[0]) if "sym" in df.columns else is_nq
+        if is_nq_sym:
+            # NQ BUY filter
+            if "bool_above_mq_hvl" in df.columns and "va_position_pct" in df.columns:
+                edge_buy_mask = ((df["bool_above_mq_hvl"].fillna(0).values == 0) &
+                                 (df["va_position_pct"].fillna(99).values <= 0.19))
+            # NQ SELL filter
+            if "vwap_d_sd2_above" in df.columns and "dist_vwap_d_atr" in df.columns:
+                edge_sell_mask = ((df["vwap_d_sd2_above"].fillna(0).values == 1) &
+                                  (df["dist_vwap_d_atr"].fillna(0).values >= 7.03))
+        else:  # ES
+            # ES BUY filter
+            if "long_dn_up_pattern" in df.columns and "n_trapped_sellers_zones_active" in df.columns:
+                edge_buy_mask = ((df["long_dn_up_pattern"].fillna(0).values == 1) &
+                                 (df["n_trapped_sellers_zones_active"].fillna(99).values <= 0))
+            # ES SELL filter
+            if "bool_above_mq_call" in df.columns and "ib_position_pct" in df.columns:
+                edge_sell_mask = ((df["bool_above_mq_call"].fillna(0).values == 1) &
+                                  (df["ib_position_pct"].fillna(0).values >= 1.14))
+
+    for i in range(n - horizon - 1):
         # Cooldown
         if i - last_trade_bar < config.cooldown_bars:
             continue
@@ -271,24 +370,52 @@ def simulate_trades(
         if direction == 0:
             continue
 
-        # PnL (NET = brut - couts de transaction)
-        label = labels[i]
-        if direction == 1:  # BUY
-            if label == 1:
-                pnl = tp_ticks[i] - cost_per_trade
-            elif label == -1:
-                pnl = -sl_ticks[i] - cost_per_trade
-            else:
-                pnl = -cost_per_trade  # HOLD = perte des couts
-        else:  # SELL
-            if label == -1:
-                pnl = tp_ticks[i] - cost_per_trade
-            elif label == 1:
-                pnl = -sl_ticks[i] - cost_per_trade
-            else:
-                pnl = -cost_per_trade
+        # FIX 28/04 : edge filter post-prediction
+        if apply_edge:
+            if direction == 1 and edge_buy_mask is not None and not edge_buy_mask[i]:
+                continue
+            if direction == -1 and edge_sell_mask is not None and not edge_sell_mask[i]:
+                continue
 
-        # Date ISO pour groupby daily Sharpe (2026-04-14 fix)
+        # SIMULATION OHLC sans oracle (27/04 fix)
+        entry = closes[i]
+        sl_pts = sl_ticks[i] * TICK
+        tp_pts = tp_ticks[i] * TICK
+        if direction == 1:  # BUY
+            tp_lvl = entry + tp_pts
+            sl_lvl = entry - sl_pts
+        else:  # SELL
+            tp_lvl = entry - tp_pts
+            sl_lvl = entry + sl_pts
+
+        pnl = -cost_per_trade  # default = timeout flat
+        for k in range(1, horizon + 1):
+            j = i + k
+            if j >= n:
+                break
+            h = highs[j]
+            l = lows[j]
+            if direction == 1:  # BUY
+                if l <= sl_lvl:
+                    pnl = -sl_ticks[i] - cost_per_trade
+                    break
+                if h >= tp_lvl:
+                    pnl = tp_ticks[i] - cost_per_trade
+                    break
+            else:  # SELL
+                if h >= sl_lvl:
+                    pnl = -sl_ticks[i] - cost_per_trade
+                    break
+                if l <= tp_lvl:
+                    pnl = tp_ticks[i] - cost_per_trade
+                    break
+        else:
+            # Timeout : marked-to-market sur close[i+horizon]
+            j = min(i + horizon, n - 1)
+            ret_pts = (closes[j] - entry) * direction
+            pnl = (ret_pts / TICK) - cost_per_trade
+
+        # Date ISO pour groupby daily Sharpe
         try:
             date_str = str(day) if hasattr(day, "isoformat") or isinstance(day, str) else None
         except Exception:
@@ -356,23 +483,61 @@ def walk_forward_splits(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SAMPLE WEIGHT NORMALIZATION (Lopez AFML ch.4 footnote eq 4.4)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _normalize_sample_weight(sw):
+    """Normalize sample_weight Lopez ch.4 : mean=1.0 + clip [0.1, 5.0].
+
+    FIX 28/04 (ml-trainer audit pre-Optuna) : sample_weight mean=0.092 sur H=60
+    (chevauchement labels 11x) est anormalement bas. LightGBM se comporte alors
+    comme s'il avait ~32K samples uniques au lieu de 351K, gradient quasi-nul
+    sur 70% samples = modeles sous-entraines.
+
+    Lopez ch.4 footnote eq 4.4 : normaliser sw / sw.mean() pour avoir mean=1.0.
+    Clip [0.1, 5.0] empeche outliers extremes (samples ultra-rares = bias).
+
+    Args:
+        sw: np.ndarray ou None
+
+    Returns:
+        np.ndarray normalize ou None si input None
+    """
+    if sw is None:
+        return None
+    import numpy as np
+    sw_arr = np.asarray(sw, dtype=np.float64)
+    if len(sw_arr) == 0 or sw_arr.mean() < 1e-9:
+        return sw_arr  # protection edge case
+    sw_norm = sw_arr / sw_arr.mean()
+    return np.clip(sw_norm, 0.1, 5.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # OPTUNA TUNING
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def tune_hyperparams(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
-    X_val: pd.DataFrame,
-    y_val: np.ndarray,
     n_trials: int = 100,
     early_stopping: int = 50,
     sample_weight_train: Optional[np.ndarray] = None,
-    sample_weight_val: Optional[np.ndarray] = None,
+    val_pct: float = 0.20,
 ) -> dict:
     """Optimise les hyperparametres LightGBM avec Optuna.
 
-    sample_weight_train/val : poids par echantillon (Lopez AFML ch.4 — uniqueness).
-    Si None, LightGBM traite tous les echantillons avec poids=1.0 (comportement par defaut).
+    FIX 27/04 (code-reviewer anti-cheat) : Optuna ne doit JAMAIS voir le test set.
+    L'API precedente acceptait (X_val, y_val) qui etait le test du fold[0] dans
+    train_model, ce qui leakait Optuna sur le fold[0] (selection bias = +0.5-1.0
+    PF artificiel). On split desormais X_train chronologiquement en 80/20 :
+      - inner_train = X_train[0:80%]
+      - inner_val   = X_train[80%:100%]
+
+    Le test set du walk-forward reste 100% intact pour l'evaluation finale.
+
+    sample_weight_train : poids par echantillon (Lopez AFML ch.4 — uniqueness).
+    Si None, LightGBM traite tous les echantillons avec poids=1.0.
     """
     try:
         import optuna
@@ -380,6 +545,20 @@ def tune_hyperparams(
     except ImportError:
         print("  [WARN] Optuna non installe — params par defaut")
         return _default_params()
+
+    # Split interne chronologique (PAS de shuffle, PAS de cv random)
+    n = len(X_train)
+    cut = int(n * (1.0 - val_pct))
+    if cut < 50 or (n - cut) < 20:
+        print(f"  [WARN] Train trop petit ({n} bars) pour split Optuna — params defaut")
+        return _default_params()
+
+    X_inner_tr = X_train.iloc[:cut]
+    y_inner_tr = y_train[:cut]
+    X_inner_vl = X_train.iloc[cut:]
+    y_inner_vl = y_train[cut:]
+    sw_inner_tr = sample_weight_train[:cut] if sample_weight_train is not None else None
+    sw_inner_vl = sample_weight_train[cut:] if sample_weight_train is not None else None
 
     def objective(trial):
         params = {
@@ -402,34 +581,52 @@ def tune_hyperparams(
 
         model = lgb.LGBMClassifier(**params)
         fit_kwargs = dict(
-            eval_set=[(X_val, y_val)],
+            eval_set=[(X_inner_vl, y_inner_vl)],
             callbacks=[
                 lgb.early_stopping(early_stopping, verbose=False),
                 lgb.log_evaluation(period=0),
             ],
         )
-        if sample_weight_train is not None:
-            fit_kwargs["sample_weight"] = sample_weight_train
-        if sample_weight_val is not None:
-            fit_kwargs["eval_sample_weight"] = [sample_weight_val]
-        model.fit(X_train, y_train, **fit_kwargs)
-        preds = model.predict_proba(X_val)[:, 1]
+        if sw_inner_tr is not None:
+            fit_kwargs["sample_weight"] = sw_inner_tr
+        # FIX 28/04 : retire eval_sample_weight Optuna car sw normalize+clip provoque
+        # early stopping premature LightGBM (val loss volatile) → fits trivials.
+        # 100 trials en 37s observe = symptome. Sans eval_sample_weight, fits normaux.
+        # Le sw n'est utilise QUE pour training, pas pour val (early stopping non-pondere).
+        model.fit(X_inner_tr, y_inner_tr, **fit_kwargs)
+        preds = model.predict_proba(X_inner_vl)[:, 1]
 
-        # Optimiser pour le profit factor, pas la logloss
-        # Note : si sample_weight_val est fourni, le PF proxy est PONDERE pour
-        # rester fidele a Lopez AFML ch.4 (uniqueness weights).
-        threshold = 0.5
+        # Optimiser pour le profit factor proxy sur INNER VAL (pas le test du fold)
+        # FIX 28/04 v2 (post ml-trainer audit) : threshold STRICTEMENT cohérent
+        # avec walk-forward ligne 803 : max(0.30, min(0.55, ratio_pos_train)).
+        # Sans le clip 0.55, mismatch sur folds déséquilibrés (mean(y) > 0.55).
+        # FIX 28/04 v3 : --threshold-floor X pour forcer floor (quick win NQ BUY WR).
+        floor = 0.30
+        if "--threshold-floor" in sys.argv:
+            idx = sys.argv.index("--threshold-floor")
+            if idx + 1 < len(sys.argv):
+                try: floor = float(sys.argv[idx + 1])
+                except: floor = 0.30
+        threshold = max(floor, min(0.55, float(y_inner_tr.mean())))
         pred_pos = preds > threshold
+
+        # FIX 28/04 v2 ml-trainer : diagnostic prints sur best trial pour
+        # detecter inner val trop courte ou pred_pos < 30 (= noise).
+        # Stocke metadata dans trial.user_attrs (visible dans study.trials_dataframe()).
+        trial.set_user_attr("n_inner_val", len(y_inner_vl))
+        trial.set_user_attr("n_pos_val", int((y_inner_vl == 1).sum()))
+        trial.set_user_attr("n_pred_pos", int(pred_pos.sum()))
+        trial.set_user_attr("threshold_used", float(threshold))
+
         if pred_pos.sum() == 0:
             return 0.0
 
-        if sample_weight_val is not None:
-            # Version ponderee : un label "unique" compte plus qu'un label chevauche
-            correct = float(((pred_pos) & (y_val == 1)) @ sample_weight_val)
-            wrong   = float(((pred_pos) & (y_val == 0)) @ sample_weight_val)
+        if sw_inner_vl is not None:
+            correct = float(((pred_pos) & (y_inner_vl == 1)) @ sw_inner_vl)
+            wrong   = float(((pred_pos) & (y_inner_vl == 0)) @ sw_inner_vl)
         else:
-            correct = float((pred_pos & (y_val == 1)).sum())
-            wrong   = float((pred_pos & (y_val == 0)).sum())
+            correct = float((pred_pos & (y_inner_vl == 1)).sum())
+            wrong   = float((pred_pos & (y_inner_vl == 0)).sum())
 
         if wrong == 0:
             return correct
@@ -448,6 +645,14 @@ def tune_hyperparams(
         "is_unbalance": True,
     })
     print(f"  Optuna best trial: #{study.best_trial.number} (PF proxy={study.best_value:.2f})")
+    # FIX 28/04 v2 ml-trainer : diagnostic detaille pour detecter overfit
+    bt = study.best_trial
+    print(f"    Diagnostic best trial : n_val={bt.user_attrs.get('n_inner_val','?')}, "
+          f"n_pos_val={bt.user_attrs.get('n_pos_val','?')}, "
+          f"n_pred_pos={bt.user_attrs.get('n_pred_pos','?')}, "
+          f"threshold={bt.user_attrs.get('threshold_used','?'):.3f}")
+    if bt.user_attrs.get('n_pred_pos', 0) < 30:
+        print(f"    [WARN] n_pred_pos < 30 = noise probable, PF proxy non fiable.")
     return best
 
 
@@ -549,24 +754,22 @@ class ModelTrainer:
 
         print(f"  Walk-forward: {len(folds)} folds")
 
-        # --- Hyperparameter tuning sur le premier fold ---
+        # --- Hyperparameter tuning sur le TRAIN du premier fold UNIQUEMENT ---
+        # FIX 27/04 (code-reviewer anti-cheat) : tune_hyperparams ne voit plus le
+        # test set du fold[0]. Split interne 80/20 dans le train (chronologique).
         if tune and len(folds) >= 1:
-            train_f, val_f = folds[0]
+            train_f, _val_f = folds[0]
             X_tr = train_f[features]
             y_tr = (train_f["label"] == target_label).astype(int).values
-            X_vl = val_f[features]
-            y_vl = (val_f["label"] == target_label).astype(int).values
-            # Sample weights Lopez AFML ch.4 (fallback None si colonne absente)
-            sw_tr_tune = train_f["sample_weight"].values if "sample_weight" in train_f.columns else None
-            sw_vl_tune = val_f["sample_weight"].values if "sample_weight" in val_f.columns else None
+            sw_tr_tune = _normalize_sample_weight(train_f["sample_weight"].values) if "sample_weight" in train_f.columns else None
 
-            print(f"  Tuning Optuna ({self.config.n_trials} trials)...")
+            print(f"  Tuning Optuna ({self.config.n_trials} trials, split 80/20 sur train)...")
             t0 = time.time()
             params = tune_hyperparams(
-                X_tr, y_tr, X_vl, y_vl,
-                self.config.n_trials, self.config.early_stopping_rounds,
+                X_tr, y_tr,
+                n_trials=self.config.n_trials,
+                early_stopping=self.config.early_stopping_rounds,
                 sample_weight_train=sw_tr_tune,
-                sample_weight_val=sw_vl_tune,
             )
             print(f"  Tuning termine en {time.time()-t0:.0f}s")
         else:
@@ -583,8 +786,8 @@ class ModelTrainer:
             X_te = test_df[features]
             y_te = (test_df["label"] == target_label).astype(int).values
             # Sample weights (Lopez AFML ch.4 — corrige biais labels concurrents)
-            sw_tr = train_df["sample_weight"].values if "sample_weight" in train_df.columns else None
-            sw_te = test_df["sample_weight"].values if "sample_weight" in test_df.columns else None
+            sw_tr = _normalize_sample_weight(train_df["sample_weight"].values) if "sample_weight" in train_df.columns else None
+            sw_te = _normalize_sample_weight(test_df["sample_weight"].values) if "sample_weight" in test_df.columns else None
 
             # Train
             model = lgb.LGBMClassifier(**params)
@@ -599,23 +802,98 @@ class ModelTrainer:
                 fit_kwargs["eval_sample_weight"] = [sw_te]
             model.fit(X_tr, y_tr, **fit_kwargs)
 
-            # Predict
+            # Predict primary
             proba = model.predict_proba(X_te)[:, 1]
 
-            # Optimize threshold on this fold
-            atr_vals = test_df["atr"].values if "atr" in test_df.columns else np.full(len(test_df), 400.0)
-            sl_t = np.maximum(atr_vals * self.config.sl_atr_ratio, 8.0)
-            tp_t = sl_t * self.config.tp_rr
-            threshold = optimize_threshold(y_te, proba, sl_t, tp_t)
+            # ═══════════════════════════════════════════════════════════════
+            # META-LABELING par fold (Lopez AFML ch.3) — ajout 19/04/2026
+            # Fit meta sur TRAIN du fold, apply sur TEST. Score final = p_primary * p_meta.
+            # Le meta reste entraine sur tout le dataset apres (pour inference), mais
+            # ici il faut un meta PAR FOLD pour un PF walk-forward realiste.
+            # Fallback : si meta fit echoue (insuffisance data, 1 classe), proba seul.
+            # ═══════════════════════════════════════════════════════════════
+            p_meta_test = None
+            use_meta_wf = getattr(self.config, "enable_meta_wf", True)
+            if use_meta_wf:
+                try:
+                    from meta_labeler import (
+                        MetaLabelConfig, MetaModel,
+                        build_meta_labels, build_meta_features,
+                    )
+                    from sklearn.model_selection import cross_val_predict, KFold
 
-            # Simulate trading
+                    # P_primary OOS sur TRAIN via KFold(3, shuffle=False).
+                    # FIX code-reviewer 19/04 v2 : TimeSeriesSplit ne fonctionne pas avec
+                    # cross_val_predict (pas une partition, certains samples non predits).
+                    # Compromise : KFold(3, shuffle=False) = partition chronologique simple
+                    # (blocs 1/2/3 du train, pas de mix aleatoire). Cross-fit propre.
+                    # NOTE : sample_weight non propage (sklearn 1.5+ deprecie fit_params).
+                    cv_params = {k: v for k, v in params.items() if not callable(v)}
+                    cv_params["verbosity"] = -1
+                    kf = KFold(n_splits=3, shuffle=False)
+                    p_train_oos = cross_val_predict(
+                        lgb.LGBMClassifier(**cv_params),
+                        X_tr, y_tr, cv=kf, method="predict_proba",
+                    )[:, 1]
+
+                    # Build meta labels + features sur TRAIN
+                    meta_cfg_fold = MetaLabelConfig()
+                    y_meta_train = build_meta_labels(
+                        labels=train_df["label"],
+                        primary_preds=p_train_oos,
+                        primary_threshold=meta_cfg_fold.primary_threshold,
+                        target_label=target_label,
+                    )
+                    X_meta_train = build_meta_features(train_df, p_train_oos)
+
+                    # Fit meta sur TRAIN uniquement
+                    sw_meta_tr = sw_tr if sw_tr is not None else None
+                    meta_fold = MetaModel(meta_cfg_fold)
+                    meta_fold.fit(X_meta_train, y_meta_train, sample_weight=sw_meta_tr)
+
+                    # Predict meta sur TEST (utilise proba = p_primary_test comme feature)
+                    X_meta_test = build_meta_features(test_df, proba)
+                    p_meta_test = meta_fold.predict_proba(X_meta_test)
+
+                except Exception as e:
+                    # FIX code-reviewer 19/04 : log visible (plus de silent swallow)
+                    print(f"    [META fold {fold_idx+1}] fallback primary-only : "
+                          f"{type(e).__name__}: {str(e)[:100]}")
+                    p_meta_test = None
+
+            # Score combined : p_primary * p_meta (clipped [0, 1])
+            # Si pas de meta ce fold (fallback), on reste sur proba seul
+            if p_meta_test is not None:
+                score_for_sim = proba * p_meta_test
+            else:
+                score_for_sim = proba
+
+            # Threshold = ratio classe positive du TRAIN (calibration is_unbalance)
+            # FIX 27/04 (Option A v2 — code-reviewer anti-cheat) :
+            #   v1 (threshold=0.5 fixe) → 1 fold sur 43 fait des trades, mirage stats.
+            #   Cause : LightGBM is_unbalance=True biaise les probas, pic ~ratio_pos
+            #   (~0.32 pour ES BUY) au lieu de 0.5. Threshold 0.5 = 99% bars filtrees.
+            # v2 : threshold = mean(y_train) clampe [0.30, 0.55]. Pas de leakage
+            # (y_train du fold seul). Coherent avec is_unbalance=True. Lopez AFML
+            # ch.3 sec 3.5 : primary "aggressive" + meta filter (post-purge v4).
+            ratio_pos_train = float(np.mean(y_tr))
+            # FIX 28/04 v3 : --threshold-floor X pour quick win WR (NQ BUY).
+            floor = 0.30
+            if "--threshold-floor" in sys.argv:
+                idx = sys.argv.index("--threshold-floor")
+                if idx + 1 < len(sys.argv):
+                    try: floor = float(sys.argv[idx + 1])
+                    except: floor = 0.30
+            threshold = max(floor, min(0.55, ratio_pos_train))
+
+            # Simulate trading avec score combined
             # Pour simuler, on cree des scores "autres" a 0 (on teste un seul cote)
             zero_scores = np.zeros(len(test_df))
             if side == "buy":
-                sim = simulate_trades(test_df, proba, zero_scores,
+                sim = simulate_trades(test_df, score_for_sim, zero_scores,
                                       threshold, 999.0, self.config)
             else:
-                sim = simulate_trades(test_df, zero_scores, proba,
+                sim = simulate_trades(test_df, zero_scores, score_for_sim,
                                       999.0, threshold, self.config)
 
             test_dates = pd.to_datetime(test_df["ts"], unit="ms").dt.date
@@ -666,7 +944,7 @@ class ModelTrainer:
 
         # --- Train final model on ALL data ---
         print(f"\n  Training final model sur {len(df)} barres...")
-        sw_all = df["sample_weight"].values if "sample_weight" in df.columns else None
+        sw_all = _normalize_sample_weight(df["sample_weight"].values) if "sample_weight" in df.columns else None
         final_model = lgb.LGBMClassifier(**params)
         if sw_all is not None:
             final_model.fit(X, y, sample_weight=sw_all)
@@ -681,11 +959,19 @@ class ModelTrainer:
 
         # MDA — Permutation Importance (Lopez de Prado Ch.4)
         # Non-biaisee contrairement a MDI
-        print(f"  MDA (Permutation Importance)...")
-        mda_scores = self._compute_mda(final_model, X, y, features)
-        importance["mda"] = importance["feature"].map(
-            dict(zip(mda_scores["feature"], mda_scores["mda_mean"]))
-        ).fillna(0.0)
+        # FIX 27/04 : --skip-mda flag pour bypass MDA lent (n_repeats=10 sur
+        # 165 features × 351K bars = ~30-60 min). Active par defaut sauf flag.
+        if "--skip-mda" in sys.argv:
+            print(f"  MDA SKIPPED (--skip-mda)")
+            importance["mda"] = 0.0
+        else:
+            # Reduit n_repeats pour acceleration (10 -> 3, ~3x plus rapide)
+            n_repeats_mda = 3 if "--fast-mda" in sys.argv else 10
+            print(f"  MDA (Permutation Importance, n_repeats={n_repeats_mda})...")
+            mda_scores = self._compute_mda(final_model, X, y, features, n_repeats=n_repeats_mda)
+            importance["mda"] = importance["feature"].map(
+                dict(zip(mda_scores["feature"], mda_scores["mda_mean"]))
+            ).fillna(0.0)
 
         # Trier par MDA (plus fiable que MDI)
         importance = importance.sort_values("mda", ascending=False)
@@ -724,8 +1010,32 @@ class ModelTrainer:
 
             print(f"\n  META-LABELING {symbol} {side} (Lopez AFML ch.3)")
 
-            # Predictions primary sur tout le dataset final
-            p_primary_full = final_model.predict_proba(X)[:, 1]
+            # FIX LEAKAGE 17/04/2026 : p_primary doit etre OUT-OF-SAMPLE pour
+            # entrainer le meta sans leakage. Avant ce fix, on utilisait
+            # final_model.predict_proba(X) qui est IN-SAMPLE (LightGBM memorise
+            # X pendant le training). Resultat : meta "apprend" la memorisation
+            # du primary, pas sa capacite predictive.
+            #
+            # Test empirique ES BUY avant fix : IS 89.9% -> OOS 36.9% (gap 53pts!)
+            # Solution : cross_val_predict 5-fold (Lopez AFML ch.3 cross-fit).
+            # Chaque prediction est faite par un modele qui N'A PAS vu ce point.
+            from sklearn.model_selection import cross_val_predict, KFold
+            print(f"    Cross-fit 5-fold p_primary (fix leakage)...")
+            cross_fit_params = {k: v for k, v in params.items() if not callable(v)}
+            cross_fit_params["verbosity"] = -1
+            # FIX 27/04 (code-reviewer) :
+            #   1. cv=5 default = StratifiedKFold sur classification → mix temporel
+            #      possible. KFold(shuffle=False) garantit splits chronologiques.
+            #   2. fit_params= deprecie en sklearn 1.7+. sample_weight n'est plus
+            #      propage via cross_val_predict (necessiterait metadata routing
+            #      enable_metadata_routing=True). On sacrifie la propagation pour
+            #      la compatibilite : impact mineur sur le primary OOS, le sample_weight
+            #      reste applique sur le final_model et le meta_model.
+            kf_meta = KFold(n_splits=5, shuffle=False)
+            p_primary_full = cross_val_predict(
+                lgb.LGBMClassifier(**cross_fit_params), X, y, cv=kf_meta,
+                method="predict_proba",
+            )[:, 1]
 
             # Build labels meta (y_meta = 1 si primary_correct, 0 si faux positif, NaN si inactif)
             meta_target = 1 if side == "buy" else -1
@@ -744,8 +1054,8 @@ class ModelTrainer:
             meta_config = MetaLabelConfig()
             meta = MetaModel(meta_config)
 
-            # sample_weight aligne sur meta mask
-            sw_meta = df["sample_weight"].values if "sample_weight" in df.columns else None
+            # sample_weight aligne sur meta mask (deja normalise via sw_all en amont)
+            sw_meta = _normalize_sample_weight(df["sample_weight"].values) if "sample_weight" in df.columns else None
 
             meta.fit(X_meta, y_meta, sample_weight=sw_meta)
             meta_model = meta
@@ -1599,6 +1909,12 @@ def get_features(df: pd.DataFrame) -> List[str]:
     - Exclure les colonnes string (sym, contract, session_id)
     - Exclure les colonnes 100% NaN (mq_dist_gamma_flip, mq_qscore_*, etc.)
     - Exclure les colonnes constantes
+
+    Extension 18/04/2026 Option B' (sparsity Lopez AFML) :
+    - Flag CLI `--features-file <path.csv>` : restreint aux features listees
+      dans le CSV (colonne 'feature' + 'status_proposed == "KEEP"' ou
+      'status_proposed == "KEEP_RETEST"'). Permet retrain top-N empirique
+      sans toucher au dataset.
     """
     meta = {
         "ts", "label", "partial_session", "is_nq",
@@ -1610,6 +1926,14 @@ def get_features(df: pd.DataFrame) -> List[str]:
         "atr",
     }
 
+    # 2026-04-27 : respecter ML_EXCLUDE_FEATURES (audit ULTRATHINK Option C+)
+    # Pour datasets v4 : import liste exhaustive 250+ features non-ML
+    try:
+        from build_dataset_v4_dmp_databento import ML_EXCLUDE_FEATURES
+        meta = meta | ML_EXCLUDE_FEATURES
+    except ImportError:
+        pass  # Fallback meta seul si import echoue
+
     candidates = [c for c in df.columns if c not in meta]
 
     # Retirer les colonnes non-numeriques (strings residuels)
@@ -1617,6 +1941,18 @@ def get_features(df: pd.DataFrame) -> List[str]:
 
     # Retirer les colonnes 100% NaN (souvent features MenthorQ vides)
     valid = [c for c in numeric if not df[c].isna().all()]
+
+    # Option B' (18/04/2026) : restriction via CSV de selection top-N
+    if "--features-file" in sys.argv:
+        idx = sys.argv.index("--features-file")
+        if idx + 1 < len(sys.argv):
+            fpath = sys.argv[idx + 1]
+            sel_df = pd.read_csv(fpath)
+            keep_status = {"KEEP", "KEEP_RETEST"}
+            selected = set(sel_df[sel_df["status_proposed"].isin(keep_status)]["feature"])
+            before = len(valid)
+            valid = [c for c in valid if c in selected]
+            print(f"  [--features-file {fpath}] restriction : {before} -> {len(valid)} features")
 
     return valid
 
@@ -1657,8 +1993,11 @@ def preflight_check(symbol: str, df: pd.DataFrame, features: List[str],
     # prix absolus non-normalises). Le training peut avancer, le quality_validator
     # restera un TODO pour quand on aura 180+ jours de live homogene.
     dataset_version = getattr(config, "dataset_version", "v2")
-    if dataset_version == "v3":
-        print(f"  [PREFLIGHT] Mode v3 backfill : quality_validator SKIP (historique heterogene)")
+    no_strict = "--no-strict" in sys.argv
+    if dataset_version in ("v3", "v4", "v5", "v5b", "v5c", "v5d", "v5e"):
+        print(f"  [PREFLIGHT] Mode {dataset_version} backfill : quality_validator SKIP (historique heterogene)")
+    elif no_strict:
+        print(f"  [PREFLIGHT] Mode --no-strict : quality_validator SKIP (POC training)")
     else:
         try:
             from quality_validator import QualityValidator, QualityViolation
@@ -1704,13 +2043,16 @@ def preflight_check(symbol: str, df: pd.DataFrame, features: List[str],
             errors.append("sum(sample_weight) ~ 0 (fit degenere)")
 
     # 4. NaN dans les features
+    # 2026-04-27 : V4 24m a NaN structurels (MQ collecte tardivement, sessions partielles).
+    # LightGBM gere les NaN natifs. On accepte jusqu'a 90% NaN par feature en V4.
+    nan_threshold = 0.90 if dataset_version in ("v4", "v5", "v5b", "v5c", "v5d", "v5e") else 0.01
     for feat in features:
         if feat not in df.columns:
             errors.append(f"feature '{feat}' absente du dataset")
             continue
         nan_pct = df[feat].isna().mean()
-        if nan_pct > 0.01:
-            errors.append(f"feature '{feat}' a {nan_pct:.1%} de NaN (>1%)")
+        if nan_pct > nan_threshold:
+            errors.append(f"feature '{feat}' a {nan_pct:.1%} de NaN (>{nan_threshold:.0%})")
 
     # 5. Features constantes
     for feat in features:
@@ -1871,9 +2213,28 @@ if __name__ == "__main__":
         if idx + 1 < len(sys.argv):
             symbols = [sys.argv[idx + 1].upper()]
 
-    # --- Version dataset : v2 (live 15j) par defaut, v3 (backfill 70j) via flag ---
+    # --- Version dataset : v2 (live 15j) par defaut, v3 (backfill 70j) ou v4 (24m Lopez) ---
     # 2026-04-14 : permet de basculer entre dataset live et dataset backfillé.
-    if "--v3" in sys.argv:
+    # 2026-04-27 : v4 = backfill 24m Databento + Phase B/C/D + Option C+ (175 ML features Lopez)
+    if "--v5e" in sys.argv:
+        setattr(config, "dataset_version", "v5e")
+        print(f"[DATASET] v5e (v5d re-labeled K_SL custom — Jackson regle d'or laisser respirer)")
+    elif "--v5d" in sys.argv:
+        setattr(config, "dataset_version", "v5d")
+        print(f"[DATASET] v5d (v5b + 12 rules tags V1+V2 pullback validees empiriquement)")
+    elif "--v5c" in sys.argv:
+        setattr(config, "dataset_version", "v5c")
+        print(f"[DATASET] v5c (v5b + 9 rules tags V1)")
+    elif "--v5b" in sys.argv:
+        setattr(config, "dataset_version", "v5b")
+        print(f"[DATASET] v5b (v5 + anti-leak fixes ovn/ib/open_830/open_930 — Triple Barrier ATR-dynamique)")
+    elif "--v5" in sys.argv:
+        setattr(config, "dataset_version", "v5")
+        print(f"[DATASET] v5 (Triple Barrier ATR-dynamique K_SL=1.5 K_TP=2.0 H=60, sortie du bruit)")
+    elif "--v4" in sys.argv:
+        setattr(config, "dataset_version", "v4")
+        print(f"[DATASET] v4 (backfill 24m Databento + Lopez compliant, 175 ML features)")
+    elif "--v3" in sys.argv:
         setattr(config, "dataset_version", "v3")
         print(f"[DATASET] v3 (backfill historique ~70 jours)")
     elif "--v2" in sys.argv:
@@ -1885,6 +2246,14 @@ if __name__ == "__main__":
     # Flag pour doubler les couts de transaction et voir si l'edge tient.
     # Un systeme robuste doit garder un PF >= 1.0 en stress-mode.
     # Le save_model utilise suffix _stress pour ne PAS ecraser les modeles normaux.
+    # --- Meta-labeling walk-forward toggle (19/04/2026 code-reviewer reco) ---
+    # Default : meta actif. --no-meta-wf pour debug rapide sans meta (benchmark primary-only).
+    if "--no-meta-wf" in sys.argv:
+        setattr(config, "enable_meta_wf", False)
+        print(f"[META-WF] DESACTIVE (--no-meta-wf) : primary seul dans walk-forward")
+    else:
+        print(f"[META-WF] ACTIVE : score_for_sim = p_primary * p_meta par fold")
+
     if "--stress-costs" in sys.argv:
         original_es = config.cost_ticks_es
         original_nq = config.cost_ticks_nq

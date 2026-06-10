@@ -77,7 +77,13 @@ def build_footprint_per_bar(
         df["ts_event"] = df["ts_event"].dt.tz_localize("UTC")
 
     # Bucketize prix au tick
-    df["price_bucket"] = (df["price"] / tick).round() * tick
+    # 11/05 J3 FIX BUG GOLD : floating point precision tick=0.10.
+    # Sans .round(4), les buckets peuvent etre 4700.30000001 au lieu de 4700.30.
+    # _detect_stacks_for_bar (edge_zones_engine.py:107) cherche
+    # `cells.get(round(p + tick, 4))` qui ne match pas la cle 4700.30000001.
+    # Resultat : 0% fire rate pour Gold avant ce fix (vs 99% in-memory test).
+    # ES/NQ tick=0.25 -> FP stable, fix sans effet (no regress).
+    df["price_bucket"] = ((df["price"] / tick).round() * tick).round(4)
 
     # Filter side='N' (auctions/halts/mid)
     df = df[df["side"].isin(["A", "B"])]

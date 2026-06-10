@@ -1,0 +1,790 @@
+"""bot3_v4_data_driven_paper.py — Paper trader Bot 3 v4 Data-driven NQ Sim3.
+
+Backtest baseline (130j MenthorQ propre) : n=1110 WR30% PF1.033 DSR0.13
+PF_min_fold=0.51. Pattern data-driven 6 triggers asymetriques empiriques
++ TP cur_VPOC magnet (CRITIQUE : R1.5 fixe seul detruit signal).
+
+Architecture identique a bot3_v3_continuation_paper.py mais :
+  - Engine = Bot3V4Engine (touch detection + VPOC magnet)
+  - Trade account = Sim3 (vs Sim1 pour v3)
+  - Timeout 120 bars (vs 360 pour v3, scalp plus court)
+  - tp_mode capture pour log (VPOC ou R15 fallback)
+
+Kill switches ENV :
+  MIA_BOT3_V4_ENABLED=0/1
+  MIA_BOT3_V4_DRY_RUN=0/1
+  MIA_BOT3_V4_TRADE_ACCOUNT=Sim3 (default)
+  MIA_BOT3_V4_SYMBOLS=NQ
+
+Auteur : MIA Trading V2 v1.0 (2026-05-24)
+"""
+from __future__ import annotations
+
+import os
+import sys
+import threading
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "CORE"))
+sys.path.insert(0, str(ROOT / "BOT"))
+
+from bot3_v4_data_driven_engine import (
+    Bot3V4Engine, Bot3V4Params, EntryDecisionV4,
+    build_default_triggers, TP_MODE_VPOC, TP_MODE_R15,
+)
+from bot3_v3v4_logger import Bot3V4Logger
+from bot3_paper_common import (
+    place_bracket_dtc, force_close_market,
+    check_risk_gates, should_emit_heartbeat, compute_pnl_R_usd,
+    check_post_trade_cooldown,
+    DEFAULT_RISK_MAX_SL_CONSEC, DEFAULT_RISK_COOLDOWN_MIN,
+    DEFAULT_RISK_MAX_DD_USD, DEFAULT_HEARTBEAT_INTERVAL_MIN,
+)
+from live_enriched_reader import LiveEnrichedReader
+
+try:
+    from logging_v2 import get_logger
+    _v2log = get_logger("bot3_v4_paper", process="paper_v2")
+except ImportError:
+    _v2log = None
+
+
+__version__ = "1.0.0"
+
+BOT_LABEL = "BOT3_V4"
+CID_PREFIX = "BOT3_V4"
+
+# Timeout position post-entry (120 bars = 2h, scalp court vs v3 360 bars)
+TIMEOUT_BARS_POSITION = 120
+
+
+def _emit(code: str, **ctx) -> None:
+    if _v2log is not None:
+        try:
+            _v2log.emit(code, **ctx)
+        except Exception as e:
+            print(f"[BOT3_V4_EMIT_FAIL] code={code} err={e}", file=sys.stderr)
+
+
+class Bot3V4DataDrivenPaper:
+    """Paper trader Bot 3 v4 Data-driven NQ Sim3."""
+
+    def __init__(
+        self,
+        dtc: Optional[Any] = None,
+        symbols: Optional[List[str]] = None,
+        dry_run: bool = True,
+        trade_account: str = "Sim3",
+        params: Optional[Bot3V4Params] = None,
+        count_same_side_callback: Optional[Any] = None,
+    ):
+        """count_same_side_callback : fix R1 market-analyst (cf v3 paper docstring)."""
+        symbols = symbols or ["NQ"]
+        _emit("BOT3_V4_BOOT_START",
+              sym=",".join(symbols), dry_run=int(dry_run),
+              trade_account=trade_account, mode="paper")
+
+        if params is None:
+            params = Bot3V4Params()
+
+        # 29/05/2026 FIX Jackson : kill switch env vars pour disable runtime
+        # sans redeploy (fix F1 TOUCH != TRADE + F2 aggressor opposite).
+        # BOT3_V4_F1_DISABLE=1 → desactive close_favorable_side
+        # BOT3_V4_F2_DISABLE=1 → desactive aggressor opposite
+        # BOT3_V4_F1_BUFFER=N → override buffer ticks (default 15)
+        # BOT3_V4_F2_THRESHOLD=X → override seuil aggressor (default 0.30)
+        if os.environ.get("BOT3_V4_F1_DISABLE", "0") == "1":
+            params.require_close_favorable_side = False
+            _emit("BOT3_V4_PARAM_OVERRIDE_ENV",
+                  param="require_close_favorable_side",
+                  override_value=False, source="env_BOT3_V4_F1_DISABLE")
+        f1_buf_env = os.environ.get("BOT3_V4_F1_BUFFER")
+        if f1_buf_env:
+            try:
+                params.close_favorable_buffer_ticks = int(f1_buf_env)
+                _emit("BOT3_V4_PARAM_OVERRIDE_ENV",
+                      param="close_favorable_buffer_ticks",
+                      override_value=params.close_favorable_buffer_ticks,
+                      source="env_BOT3_V4_F1_BUFFER")
+            except ValueError:
+                _emit("BOT3_V4_PARAM_OVERRIDE_ENV_FAIL",
+                      param="close_favorable_buffer_ticks",
+                      raw_value=f1_buf_env, err="not a valid int")
+        if os.environ.get("BOT3_V4_F2_DISABLE", "0") == "1":
+            params.aggressor_opposite_filter_enabled = False
+            _emit("BOT3_V4_PARAM_OVERRIDE_ENV",
+                  param="aggressor_opposite_filter_enabled",
+                  override_value=False, source="env_BOT3_V4_F2_DISABLE")
+        f2_thr_env = os.environ.get("BOT3_V4_F2_THRESHOLD")
+        if f2_thr_env:
+            try:
+                params.aggressor_opposite_threshold = float(f2_thr_env)
+                _emit("BOT3_V4_PARAM_OVERRIDE_ENV",
+                      param="aggressor_opposite_threshold",
+                      override_value=params.aggressor_opposite_threshold,
+                      source="env_BOT3_V4_F2_THRESHOLD")
+            except ValueError:
+                _emit("BOT3_V4_PARAM_OVERRIDE_ENV_FAIL",
+                      param="aggressor_opposite_threshold",
+                      raw_value=f2_thr_env, err="not a valid float")
+
+        # 29/05/2026 FIX F3 Jackson : kill switch env vars confirmation post-TOUCH.
+        # BOT3_V4_CONFIRMATION_DISABLE=1 → desactive require_confirmation_next_bar (back to instant entry)
+        # BOT3_V4_CONFIRMATION_BUFFER=N → override confirmation_buffer_ticks (default 0)
+        if os.environ.get("BOT3_V4_CONFIRMATION_DISABLE", "0") == "1":
+            params.require_confirmation_next_bar = False
+            _emit("BOT3_V4_PARAM_OVERRIDE_ENV",
+                  param="require_confirmation_next_bar",
+                  override_value=False, source="env_BOT3_V4_CONFIRMATION_DISABLE")
+        f3_buf_env = os.environ.get("BOT3_V4_CONFIRMATION_BUFFER")
+        if f3_buf_env:
+            try:
+                params.confirmation_buffer_ticks = int(f3_buf_env)
+                _emit("BOT3_V4_PARAM_OVERRIDE_ENV",
+                      param="confirmation_buffer_ticks",
+                      override_value=params.confirmation_buffer_ticks,
+                      source="env_BOT3_V4_CONFIRMATION_BUFFER")
+            except ValueError:
+                _emit("BOT3_V4_PARAM_OVERRIDE_ENV_FAIL",
+                      param="confirmation_buffer_ticks",
+                      raw_value=f3_buf_env, err="not a valid int")
+
+        self.params = params
+        self.symbols = symbols
+        self.dry_run = dry_run or (dtc is None)
+        self.trade_account = trade_account
+        self.dtc = dtc
+        self.count_same_side_callback = count_same_side_callback
+        self.MAX_SAME_SIDE_CROSS_BOT = 2
+
+        # Engine + reader + logger par sym
+        triggers = build_default_triggers()
+        self._engine_by_sym: Dict[str, Bot3V4Engine] = {}
+        self._reader_by_sym: Dict[str, LiveEnrichedReader] = {}
+        self._logger_by_sym: Dict[str, Bot3V4Logger] = {}
+        for sym in self.symbols:
+            self._engine_by_sym[sym] = Bot3V4Engine(
+                symbol=sym, triggers=triggers, params=self.params,
+                log_fn=_emit,  # tracability filters cooldown/daily_cap
+            )
+            self._reader_by_sym[sym] = LiveEnrichedReader(
+                symbol=sym, window_bars=240, warn_stale_sec=180,
+            )
+            self._logger_by_sym[sym] = Bot3V4Logger(symbol=sym)
+
+        # Etat positions
+        self._position: Dict[str, Optional[dict]] = {s: None for s in self.symbols}
+        self._current_signal_id: Dict[str, Optional[str]] = {s: None for s in self.symbols}
+        self._pos_lock = threading.Lock()
+        self._cid_index: Dict[str, dict] = {}
+
+        # Risk
+        self._n_sl_consec: Dict[str, int] = {s: 0 for s in self.symbols}
+        self._pnl_session_usd: float = 0.0
+        self._kill_switch_active: bool = False
+        self._kill_switch_reason: str = ""
+        self._cooldown_until: Dict[str, Optional[datetime]] = {s: None for s in self.symbols}
+        self.RISK_MAX_SL_CONSEC = DEFAULT_RISK_MAX_SL_CONSEC
+        self.RISK_COOLDOWN_MIN = DEFAULT_RISK_COOLDOWN_MIN
+        self.RISK_MAX_DD_USD = DEFAULT_RISK_MAX_DD_USD
+
+        # Cooldown global post-trade per-sym (24/05/2026 PM Jackson directive).
+        # 10min apres gain, 15min apres perte. Empeche back-to-back trades.
+        self._last_close_ts: Dict[str, Optional[datetime]] = {s: None for s in self.symbols}
+        self._last_close_pnl_R: Dict[str, Optional[float]] = {s: None for s in self.symbols}
+
+        # Heartbeat
+        self._last_heartbeat_ts: Optional[datetime] = None
+        self.HEARTBEAT_INTERVAL_MIN = DEFAULT_HEARTBEAT_INTERVAL_MIN
+
+        # Stats
+        self._n_bars_processed: int = 0
+        self._n_entries_emitted: int = 0
+        self._n_trades_executed: int = 0
+        self._boot_ts = datetime.now(timezone.utc)
+
+        _emit("BOT3_V4_CONFIG_LOADED",
+              touch_buf=self.params.touch_buffer_pct,
+              cooldown_bars=self.params.cooldown_bars,
+              max_per_day=self.params.max_per_level_per_day,
+              sl_fallback=(self.params.sl_fallback_ticks_nq if "NQ" in symbols
+                            else self.params.sl_fallback_ticks_es),
+              tp_mode=self.params.tp_mode,
+              timeout_bars=TIMEOUT_BARS_POSITION)
+
+    def boot_ready(self) -> None:
+        for sym in self.symbols:
+            triggers = self._engine_by_sym[sym].triggers
+            n_long = sum(1 for t in triggers if t.side == "LONG")
+            n_short = sum(1 for t in triggers if t.side == "SHORT")
+            _emit("BOT3_V4_BOOT_READY",
+                  sym=sym,
+                  dtc_state=("DRY_RUN" if self.dry_run else "CONNECTED"),
+                  reader_state="ready",
+                  n_triggers_long=n_long, n_triggers_short=n_short)
+
+    def poll_cycle(self) -> None:
+        self._heartbeat_check_emit()
+        if self._kill_switch_active:
+            return
+        for sym in self.symbols:
+            try:
+                self._poll_cycle_symbol(sym)
+            except Exception as e:
+                _emit("BOT3_V4_LOOP_ERROR",
+                      sym=sym, err=f"{type(e).__name__}: {str(e)[:300]}")
+
+    def _poll_cycle_symbol(self, sym: str) -> None:
+        reader = self._reader_by_sym[sym]
+        engine = self._engine_by_sym[sym]
+        logger = self._logger_by_sym[sym]
+
+        df = reader.load_rolling_window()
+        if df is None or len(df) < 5:
+            return
+
+        age_sec = reader.get_last_bar_age_seconds()
+        if age_sec > reader.warn_stale_sec:
+            _emit("BOT3_V4_BAR_STALE",
+                  sym=sym, age_sec=round(age_sec, 1),
+                  threshold_sec=reader.warn_stale_sec)
+            return
+
+        last_bar = df.iloc[-1]
+        bar_ts_iso = self._extract_ts_iso(last_bar)
+        bar_day = self._extract_day(last_bar)
+        if bar_day is None:
+            return
+
+        self._n_bars_processed += 1
+        ts_event_ns = int(last_bar.get("ts_event_ns", 0) or 0)
+        logger.log_bar_processed(
+            ts_event_ns=ts_event_ns,
+            close=float(last_bar.get("close", 0.0) or 0.0),
+            regime_mode=str(last_bar.get("regime_mode", "")),
+        )
+
+        # Position active : check timeout
+        pos = self._position.get(sym)
+        if pos is not None:
+            self._check_position_timeout(sym, pos, bar_ts_iso)
+            return
+
+        # Engine process_bar → Optional[EntryDecisionV4]
+        decision = engine.process_bar(last_bar, bar_ts_iso, bar_day)
+        if decision is None:
+            return
+
+        self._handle_entry_decision(sym, decision, last_bar)
+
+    def _handle_entry_decision(
+        self, sym: str, decision: EntryDecisionV4, last_bar: Any,
+    ) -> None:
+        self._n_entries_emitted += 1
+        logger = self._logger_by_sym[sym]
+        signal_id = logger.next_signal_id()
+
+        # Log touch (v4 specifique) - fix R4 review : utiliser dist_pct reel depuis row
+        # Extract dist_pct du trigger qui a fire (lookup dist_col du level dans triggers)
+        actual_dist_pct = 0.0
+        try:
+            for trig in self._engine_by_sym[sym].triggers:
+                if trig.name == decision.level_name:
+                    dist_raw = last_bar.get(trig.dist_col) if hasattr(last_bar, "get") else None
+                    if dist_raw is not None:
+                        actual_dist_pct = float(dist_raw)
+                    break
+        except (TypeError, ValueError, AttributeError):
+            actual_dist_pct = 0.0
+        logger.log_touch(
+            signal_id=signal_id, level=decision.level_name,
+            side=decision.side, dist_pct=actual_dist_pct,
+            asym_prob=decision.asym_prob,
+        )
+        _emit("BOT3_V4_TOUCH_DETECTED",
+              sym=sym, level=decision.level_name, side=decision.side,
+              dist_pct=round(actual_dist_pct, 4),
+              asym_prob=decision.asym_prob)
+
+        # Log TP mode utilise
+        if decision.tp_mode == TP_MODE_VPOC:
+            _emit("BOT3_V4_TP_VPOC_MAGNET",
+                  sym=sym, side=decision.side,
+                  entry=decision.entry_close,
+                  vpoc=decision.vpoc_value,
+                  tp_price=decision.tp_price)
+        else:
+            _emit("BOT3_V4_TP_FALLBACK_R15",
+                  sym=sym, side=decision.side,
+                  entry=decision.entry_close,
+                  vpoc=decision.vpoc_value,
+                  tp_r15=decision.tp_price,
+                  reason="vpoc_invalid_or_missing")
+
+        # News veto
+        mins_since = last_bar.get("mins_since_news", 999)
+        mins_to_next = last_bar.get("mins_to_next_news", 999)
+        try:
+            ms = float(mins_since) if mins_since is not None else 999
+            mt = float(mins_to_next) if mins_to_next is not None else 999
+        except (TypeError, ValueError):
+            ms, mt = 999, 999
+        if (mins_since is None or mins_to_next is None or
+                (0 <= ms <= 5) or (0 <= mt <= 5)):
+            _emit("BOT3_V4_ENTRY_VETO_NEWS",
+                  sym=sym, level=decision.level_name, side=decision.side,
+                  mins_since=ms, mins_to_next=mt)
+            logger.log_entry_signal(
+                signal_id=signal_id, level=decision.level_name,
+                side=decision.side, entry_price=decision.entry_close,
+                sl_price=decision.sl_price, tp_price=decision.tp_price,
+                sl_ticks=decision.sl_ticks, tp_mode=decision.tp_mode,
+                executed=False, veto_reason="news_window",
+            )
+            return
+
+        # Veto eco_calendar (24/05 Jackson : aligner sur Bot 1 legacy regle 15min RTH).
+        # is_blocked_combined() couvre : eco events (FOMC/NFP/CPI/PCE -15/+30min),
+        # Open US 09:15-09:45 ET, Post-MOC 15:30-18:15 ET (lun-jeu), weekend.
+        # R1 code-reviewer 24/05 : fail-CLOSED si module HS (mieux rater un trade
+        # que trader pendant FOMC). Diverge volontairement de Bot 1 legacy fail-open.
+        try:
+            from CORE import eco_calendar as _eco
+            _blocked, _reason, _until = _eco.is_blocked_combined()
+        except Exception as _e:
+            _emit("ECO_CALENDAR_FAIL_FAILCLOSED",
+                  sym=sym, bot="bot3_v4", err=str(_e)[:200])
+            _blocked, _reason = True, "eco_calendar_module_error"
+        if _blocked:
+            _emit("BOT3_V4_ENTRY_VETO_ECO_BLOCK",
+                  sym=sym, level=decision.level_name, side=decision.side,
+                  reason=_reason or "?")
+            logger.log_entry_signal(
+                signal_id=signal_id, level=decision.level_name,
+                side=decision.side, entry_price=decision.entry_close,
+                sl_price=decision.sl_price, tp_price=decision.tp_price,
+                sl_ticks=decision.sl_ticks, tp_mode=decision.tp_mode,
+                executed=False, veto_reason=f"eco_block:{_reason or '?'}",
+            )
+            return
+
+        # Veto cooldown post-trade global (24/05/2026 PM Jackson : 10min win, 15min loss).
+        _cd_blocked, _cd_rem, _cd_reason = check_post_trade_cooldown(
+            self._last_close_ts.get(sym),
+            self._last_close_pnl_R.get(sym),
+            datetime.now(timezone.utc),
+        )
+        if _cd_blocked:
+            _emit("BOT3_V4_ENTRY_VETO_POST_TRADE_COOLDOWN",
+                  sym=sym, level=decision.level_name, side=decision.side,
+                  reason=_cd_reason, remaining_sec=_cd_rem)
+            logger.log_entry_signal(
+                signal_id=signal_id, level=decision.level_name,
+                side=decision.side, entry_price=decision.entry_close,
+                sl_price=decision.sl_price, tp_price=decision.tp_price,
+                sl_ticks=decision.sl_ticks, tp_mode=decision.tp_mode,
+                executed=False,
+                veto_reason=f"post_trade_cooldown:{_cd_reason}:{_cd_rem}s",
+            )
+            return
+
+        # Risk gates
+        state = {
+            "kill_switch_active": self._kill_switch_active,
+            "kill_switch_reason": self._kill_switch_reason,
+            "cooldown_until": self._cooldown_until,
+            "pnl_session_usd": self._pnl_session_usd,
+            "n_sl_consec": self._n_sl_consec,
+            "RISK_MAX_DD_USD": self.RISK_MAX_DD_USD,
+        }
+        if not check_risk_gates(state, sym, decision.side, _emit, BOT_LABEL):
+            if self._pnl_session_usd <= self.RISK_MAX_DD_USD:
+                self.activate_kill_switch(reason="max_dd_session_exceeded")
+            return
+
+        # Position deja ouverte ?
+        if self._position.get(sym) is not None:
+            pos_dir = self._position[sym].get("direction", "?")
+            _emit("BOT3_V4_ENTRY_VETO_POSITION",
+                  sym=sym, level=decision.level_name,
+                  side=decision.side, side_pos=pos_dir)
+            return
+
+        # Fix R1 market-analyst : gate cross-bot same-side max 2
+        if self.count_same_side_callback is not None:
+            try:
+                n_same = int(self.count_same_side_callback(decision.side))
+            except Exception:
+                n_same = 0
+            if n_same >= self.MAX_SAME_SIDE_CROSS_BOT:
+                _emit("BOT3_V4_ENTRY_VETO_KILL_SWITCH",
+                      sym=sym, level=decision.level_name, side=decision.side,
+                      reason=f"cross_bot_same_side_{n_same}_ge_{self.MAX_SAME_SIDE_CROSS_BOT}")
+                logger.log_entry_signal(
+                    signal_id=signal_id, level=decision.level_name,
+                    side=decision.side, entry_price=decision.entry_close,
+                    sl_price=decision.sl_price, tp_price=decision.tp_price,
+                    sl_ticks=decision.sl_ticks, tp_mode=decision.tp_mode,
+                    executed=False, veto_reason=f"cross_bot_same_side_{n_same}",
+                )
+                return
+
+        # Execute
+        if self.dry_run or self.dtc is None:
+            _emit("BOT3_V4_ENTRY_VETO_DRY_RUN",
+                  sym=sym, level=decision.level_name, side=decision.side,
+                  entry_close=decision.entry_close,
+                  sl=decision.sl_price, tp=decision.tp_price)
+            logger.log_entry_signal(
+                signal_id=signal_id, level=decision.level_name,
+                side=decision.side, entry_price=decision.entry_close,
+                sl_price=decision.sl_price, tp_price=decision.tp_price,
+                sl_ticks=decision.sl_ticks, tp_mode=decision.tp_mode,
+                executed=False, veto_reason="dry_run",
+            )
+            self._n_trades_executed += 1
+            return
+
+        self._place_bracket_dtc(sym, decision, signal_id, last_bar)
+
+    def _place_bracket_dtc(
+        self, sym: str, decision: EntryDecisionV4, signal_id: str, last_bar: Any,
+    ) -> None:
+        try:
+            parent_id, tp_cid, sl_cid = place_bracket_dtc(
+                dtc=self.dtc, symbol=sym, side=decision.side,
+                entry_price=decision.entry_close, sl_price=decision.sl_price,
+                tp_price=decision.tp_price, sl_ticks=decision.sl_ticks,
+                tp_ticks=int(decision.sl_ticks * self.params.target_R),
+                trade_account=self.trade_account, qty=1,
+            )
+        except Exception as e:
+            _emit("BOT3_V4_LOOP_ERROR", sym=sym,
+                  err=f"dtc_send_market_exc: {type(e).__name__}: {str(e)[:200]}")
+            return
+
+        if not parent_id:
+            _emit("BOT3_V4_SETUP_DTC_ABORT",
+                  sym=sym, level=decision.level_name, side=decision.side,
+                  reason="parent_id_empty_fill_timeout_or_dtc_down")
+            return
+
+        ts_open_ns = int(last_bar.get("ts_event_ns", 0) or 0)
+        with self._pos_lock:
+            self._cid_index[parent_id] = {
+                "sym": sym, "kind": "parent", "signal_id": signal_id,
+            }
+            self._cid_index[tp_cid] = {
+                "sym": sym, "kind": "tp", "signal_id": signal_id,
+            }
+            self._cid_index[sl_cid] = {
+                "sym": sym, "kind": "sl", "signal_id": signal_id,
+            }
+            self._position[sym] = {
+                "parent_cid": parent_id, "tp_cid": tp_cid, "sl_cid": sl_cid,
+                "direction": decision.side,
+                "entry_price": decision.entry_close,
+                "sl_initial": decision.sl_price,
+                "sl_current": decision.sl_price,
+                "tp_price": decision.tp_price,
+                "tp_mode": decision.tp_mode,
+                "vpoc_value": decision.vpoc_value,
+                "sl_ticks": decision.sl_ticks,
+                "level_name": decision.level_name,
+                "level_family": decision.level_family,
+                "qty": 1,
+                "signal_id": signal_id,
+                "ts_open": datetime.now(timezone.utc).isoformat(),
+                "ts_open_ns": ts_open_ns,
+                "bar_idx_open": decision.bar_idx,
+            }
+            self._current_signal_id[sym] = signal_id
+            self._n_trades_executed += 1
+
+        _emit("BOT3_V4_BRACKET_PLACED",
+              sym=sym, parent_cid=parent_id[:20],
+              tp_cid=tp_cid[:20], sl_cid=sl_cid[:20],
+              trade_account=self.trade_account)
+        _emit("BOT3_V4_TRADE_OPEN",
+              sym=sym, level=decision.level_name, side=decision.side,
+              entry_price=decision.entry_close,
+              sl_price=decision.sl_price, tp_price=decision.tp_price,
+              sl_ticks=decision.sl_ticks, qty=1)
+
+        self._logger_by_sym[sym].log_trade_open(
+            signal_id=signal_id, level=decision.level_name,
+            side=decision.side, entry_price=decision.entry_close,
+            sl_price=decision.sl_price, tp_price=decision.tp_price,
+            sl_ticks=decision.sl_ticks, qty=1,
+            parent_cid=parent_id, tp_cid=tp_cid, sl_cid=sl_cid,
+            trade_account=self.trade_account,
+            ts_event_ns=ts_open_ns,
+            tp_mode=decision.tp_mode,
+            vpoc_value=decision.vpoc_value,
+        )
+
+    def handle_dtc_fill(self, msg: dict, cid: str) -> bool:
+        if cid not in self._cid_index:
+            return False
+        entry = self._cid_index[cid]
+        sym = entry["sym"]
+        kind = entry["kind"]
+        signal_id = entry["signal_id"]
+
+        # GUARD #1 (code-reviewer action #3) : filtrer status != 7 (Filled).
+        # DTC OrderStatus : 2=Open, 4=Working, 6=Rejected, 7=Filled, 8=Cancelled.
+        # Seul status=7 = vrai fill broker. Tout autre status routed ici = bug
+        # routing (cid registered mais status non-fill) → ne pas tenter calcul PnL.
+        try:
+            order_status = int(msg.get("OrderStatus", 0))
+        except (TypeError, ValueError):
+            order_status = 0
+        if order_status != 7:
+            _emit("BOT3_V4_FILL_PRICE_INVALID",
+                  sym=sym, cid=cid, kind=kind, signal_id=signal_id,
+                  msg_status=order_status,
+                  last_fill_price=msg.get("LastFillPrice"),
+                  avg_fill_price=msg.get("AverageFillPrice"),
+                  order_type=msg.get("OrderType"),
+                  qty_filled=msg.get("FilledQuantity"),
+                  msg_keys=list(msg.keys())[:15])
+            return True
+
+        try:
+            fill_price = float(msg.get("LastFillPrice", 0)) or float(msg.get("AverageFillPrice", 0))
+        except (TypeError, ValueError):
+            fill_price = 0.0
+
+        # GUARD #2 24/05/2026 PM (incident ghost trade $59542) : fill_price=0
+        # produit un PnL aberrant via compute_pnl_R_usd. Refuser close + emit
+        # fail-loud avec ctx complet pour debug J+1 (cf action #1 code-reviewer).
+        if fill_price <= 0:
+            _emit("BOT3_V4_FILL_PRICE_INVALID",
+                  sym=sym, cid=cid, kind=kind, signal_id=signal_id,
+                  msg_status=order_status,
+                  last_fill_price=msg.get("LastFillPrice"),
+                  avg_fill_price=msg.get("AverageFillPrice"),
+                  order_type=msg.get("OrderType"),
+                  qty_filled=msg.get("FilledQuantity"),
+                  msg_keys=list(msg.keys())[:15])
+            return True  # event consume mais aucune action close
+
+        with self._pos_lock:
+            pos = self._position.get(sym)
+            if pos is None:
+                return True
+            if kind == "parent":
+                return True
+
+            ts_close_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)
+            ts_open_ns = pos.get("ts_open_ns", 0)
+            duration_bars = max(1, int((ts_close_ns - ts_open_ns) / 60_000_000_000)) if ts_open_ns else 0
+
+            pnl_R, pnl_usd = compute_pnl_R_usd(
+                direction=pos["direction"], entry_price=pos["entry_price"],
+                sl_initial=pos["sl_initial"], exit_price=fill_price,
+                symbol=sym,
+            )
+            self._pnl_session_usd += pnl_usd
+
+            # Update cooldown state post-trade (24/05/2026 PM Jackson directive).
+            self._last_close_ts[sym] = datetime.now(timezone.utc)
+            self._last_close_pnl_R[sym] = pnl_R
+
+            if kind == "sl":
+                log_code = "BOT3_V4_TRADE_CLOSE_SL"
+                cause = "SL"
+                self._n_sl_consec[sym] = self._n_sl_consec.get(sym, 0) + 1
+            elif kind == "tp":
+                log_code = "BOT3_V4_TRADE_CLOSE_TP"
+                cause = "TP"
+                self._n_sl_consec[sym] = 0
+            else:
+                _emit("BOT3_V4_LOOP_ERROR", sym=sym,
+                      err=f"handle_fill_unknown_kind: {kind}")
+                return True
+
+            _emit(log_code, sym=sym, level=pos.get("level_name", "?"),
+                  side=pos["direction"], exit_price=round(fill_price, 4),
+                  pnl_R=round(pnl_R, 3), pnl_usd=round(pnl_usd, 2),
+                  duration_bars=duration_bars)
+
+            self._logger_by_sym[sym].log_trade_close(
+                signal_id=signal_id, level=pos.get("level_name", "?"),
+                side=pos["direction"], exit_price=fill_price,
+                exit_cause=cause, pnl_R=pnl_R, pnl_usd=pnl_usd,
+                duration_bars=duration_bars, ts_event_ns=ts_close_ns,
+            )
+
+            for c in (pos.get("parent_cid"), pos.get("tp_cid"), pos.get("sl_cid")):
+                if c:
+                    self._cid_index.pop(c, None)
+            self._position[sym] = None
+            self._current_signal_id[sym] = None
+
+        self._check_post_close_risk(sym, cause)
+        if self._pnl_session_usd <= self.RISK_MAX_DD_USD and not self._kill_switch_active:
+            _emit("BOT3_V4_KILL_DD_DAILY",
+                  pnl_session=round(self._pnl_session_usd, 2),
+                  threshold=self.RISK_MAX_DD_USD, kill_switch="ON")
+            self.activate_kill_switch(reason="max_dd_session_exceeded")
+
+        return True
+
+    def _check_position_timeout(self, sym: str, pos: dict, bar_ts_iso: str) -> None:
+        bar_idx_open = pos.get("bar_idx_open", -1)
+        if bar_idx_open < 0:
+            return
+        current_bar_idx = self._engine_by_sym[sym]._bar_idx
+        if current_bar_idx - bar_idx_open >= TIMEOUT_BARS_POSITION:
+            self._force_close_position(sym, pos, reason="timeout_120_bars")
+
+    def _force_close_position(self, sym: str, pos: dict, reason: str) -> None:
+        if self.dry_run or self.dtc is None:
+            ts_close_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)
+            _emit("BOT3_V4_TRADE_CLOSE_TIMEOUT",
+                  sym=sym, level=pos.get("level_name", "?"),
+                  side=pos["direction"], exit_price=pos["entry_price"],
+                  pnl_R=0.0, timeout_bars=TIMEOUT_BARS_POSITION)
+            self._logger_by_sym[sym].log_trade_close(
+                signal_id=pos.get("signal_id"), level=pos.get("level_name", "?"),
+                side=pos["direction"], exit_price=pos["entry_price"],
+                exit_cause="TIMEOUT", pnl_R=0.0, pnl_usd=0.0,
+                duration_bars=TIMEOUT_BARS_POSITION, ts_event_ns=ts_close_ns,
+            )
+            with self._pos_lock:
+                for c in (pos.get("parent_cid"), pos.get("tp_cid"), pos.get("sl_cid")):
+                    if c:
+                        self._cid_index.pop(c, None)
+                self._position[sym] = None
+                self._current_signal_id[sym] = None
+            return
+
+        force_close_market(
+            dtc=self.dtc, symbol=sym, pos=pos,
+            trade_account=self.trade_account, reason=reason,
+            bot_label=BOT_LABEL, emit_fn=_emit,
+            cid_prefix=CID_PREFIX, cid_index=self._cid_index,
+            cid_index_lock=self._pos_lock,
+        )
+
+    def _check_post_close_risk(self, sym: str, cause: str) -> None:
+        if cause != "SL":
+            return
+        if self._n_sl_consec.get(sym, 0) < self.RISK_MAX_SL_CONSEC:
+            return
+        cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=self.RISK_COOLDOWN_MIN)
+        self._cooldown_until[sym] = cooldown_until
+
+    def activate_kill_switch(self, reason: str) -> None:
+        if self._kill_switch_active:
+            return
+        self._kill_switch_active = True
+        self._kill_switch_reason = reason
+        positions_open = sum(1 for s in self.symbols if self._position.get(s) is not None)
+        orders_canceled = 0
+        for sym in self.symbols:
+            pos = self._position.get(sym)
+            if pos is not None:
+                self._force_close_position(sym, pos, reason=f"kill_switch_{reason}")
+                orders_canceled += 1
+        _emit("BOT3_V4_KILL_MANUAL",
+              reason=reason, positions_flat=positions_open,
+              orders_canceled=orders_canceled)
+
+    def _heartbeat_check_emit(self) -> None:
+        if not should_emit_heartbeat(self._last_heartbeat_ts, self.HEARTBEAT_INTERVAL_MIN):
+            return
+        now = datetime.now(timezone.utc)
+        uptime_min = (now - self._boot_ts).total_seconds() / 60
+        for sym in self.symbols:
+            engine_stats = self._engine_by_sym[sym].get_stats()
+            _emit("BOT3_V4_HEARTBEAT",
+                  sym=sym, uptime_min=round(uptime_min, 1),
+                  n_bars=engine_stats.get("n_bars_processed", 0),
+                  n_touches=engine_stats.get("n_touches_raw", 0),
+                  n_entries=self._n_entries_emitted,
+                  n_trades=self._n_trades_executed,
+                  pnl_usd=round(self._pnl_session_usd, 2))
+        self._last_heartbeat_ts = now
+
+    def shutdown(self, reason: str = "normal") -> None:
+        positions_open = sum(1 for s in self.symbols if self._position.get(s) is not None)
+        for sym in self.symbols:
+            pos = self._position.get(sym)
+            if pos is not None:
+                self._force_close_position(sym, pos, reason=f"shutdown_{reason}")
+        _emit("BOT3_V4_SHUTDOWN", reason=reason, positions_open=positions_open)
+
+    @staticmethod
+    def _extract_ts_iso(row: Any) -> str:
+        try:
+            ts = row.get("ts_event") if hasattr(row, "get") else row["ts_event"]
+            if ts is None:
+                return ""
+            if hasattr(ts, "isoformat"):
+                return ts.isoformat()
+            return str(ts)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _extract_day(row: Any) -> Optional[str]:
+        """Fix R2 review : validation stricte ^\\d{8}$ + plausibilite annee."""
+        import re as _re
+        _DAY_RE = _re.compile(r"^(\d{4})(\d{2})(\d{2})$")
+
+        def _validate(s: str) -> Optional[str]:
+            m = _DAY_RE.match(s)
+            if not m:
+                return None
+            yyyy, mm, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if not (2020 <= yyyy <= 2030):
+                return None
+            if not (1 <= mm <= 12):
+                return None
+            if not (1 <= dd <= 31):
+                return None
+            return s
+
+        try:
+            sdt = row.get("session_date_trading") if hasattr(row, "get") else None
+            if sdt:
+                s = str(sdt).replace("-", "").replace("/", "")
+                if len(s) >= 8:
+                    validated = _validate(s[:8])
+                    if validated:
+                        return validated
+            ts = row.get("ts_event") if hasattr(row, "get") else None
+            if ts is None:
+                return None
+            if hasattr(ts, "strftime"):
+                return ts.strftime("%Y%m%d")
+            s = str(ts).replace("-", "").replace("/", "")
+            if len(s) >= 8:
+                validated = _validate(s[:8])
+                if validated:
+                    return validated
+        except Exception:
+            pass
+        return None
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Factory ENV-gated
+# ════════════════════════════════════════════════════════════════════════
+
+def create_from_env(dtc: Optional[Any] = None) -> Optional[Bot3V4DataDrivenPaper]:
+    enabled = os.environ.get("MIA_BOT3_V4_ENABLED", "0").strip().lower() in ("1", "true", "yes")
+    if not enabled:
+        return None
+    dry_run = os.environ.get("MIA_BOT3_V4_DRY_RUN", "1").strip().lower() in ("1", "true", "yes")
+    trade_account = os.environ.get("MIA_BOT3_V4_TRADE_ACCOUNT", "Sim3").strip()
+    symbols_str = os.environ.get("MIA_BOT3_V4_SYMBOLS", "NQ").strip()
+    symbols = [s.strip() for s in symbols_str.split(",") if s.strip()]
+    return Bot3V4DataDrivenPaper(
+        dtc=dtc, symbols=symbols, dry_run=dry_run, trade_account=trade_account,
+    )

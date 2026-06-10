@@ -768,9 +768,12 @@ def main():
                 pass
             break
 
-        except db.common.error.BentoAuthenticationError as e:
-            logger.critical(f"AUTH ERROR : Live tier not active. {e}")
-            sys.exit(2)
+        except db.common.error.BentoClientError as e:
+            err_str = str(e).lower()
+            if "authentication" in err_str or "unauthorized" in err_str or "403" in err_str or "401" in err_str:
+                logger.critical(f"AUTH ERROR : Live tier not active. {e}")
+                sys.exit(2)
+            raise
 
         except Exception as e:
             logger.exception(f"Connection error: {e}")

@@ -52,31 +52,54 @@ def _load_existing_ts(fpath: Path) -> set:
 
     Au 1er write apres boot, lire le fichier (si existant) et extraire
     tous les ts_event_ns pour dedup futur.
+
+    FIX code-reviewer 16/05 reco #4 : skip lignes tronquees (crash mid-write).
+    - Lire fichier entier
+    - Si dernier char != '\\n' -> drop derniere ligne (potentiellement partielle)
+    - Pour chaque ligne : json.loads complet + extract ts_event_ns
+      (si JSONDecodeError -> skip silencieux, ne POLLUE PAS le dedup set
+       avec un ts orphelin qui empecherait re-write d'une bar correcte)
     """
     ts_set = set()
     if not fpath.exists():
         return ts_set
     try:
         with open(fpath, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                # Parse minimal pour extraire ts_event_ns (parse JSON complet evite)
-                # Pattern : `"ts_event_ns":1234567890`
-                idx = line.find('"ts_event_ns":')
-                if idx == -1:
-                    continue
-                start = idx + len('"ts_event_ns":')
-                end = start
-                while end < len(line) and (line[end].isdigit() or (end == start and line[end] == '-')):
-                    end += 1
-                try:
-                    ts_set.add(int(line[start:end]))
-                except ValueError:
-                    continue
+            raw = f.read()
     except OSError:
+        return ts_set
+
+    if not raw:
+        return ts_set
+
+    lines = raw.splitlines()
+    # FIX reco #4 : si fichier ne se termine pas par \n, derniere ligne possiblement
+    # tronquee (crash mid-write). Drop pour eviter pollution dedup set.
+    if lines and not raw.endswith("\n"):
+        lines = lines[:-1]
+
+    n_corrupt = 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Parse JSON complet (vs ancien find substring fragile).
+        # Une ligne tronquee = JSONDecodeError -> skip.
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            n_corrupt += 1
+            continue
+        ts = d.get("ts_event_ns")
+        if isinstance(ts, int):
+            ts_set.add(ts)
+
+    if n_corrupt > 0:
+        # Note : log volontairement absent ici (function utilitaire, pas
+        # acces au logger). Le caller voit le set return; mismatch nb bars
+        # observable via stats[sym]["n_bars"] vs JSONL line count.
         pass
+
     return ts_set
 
 

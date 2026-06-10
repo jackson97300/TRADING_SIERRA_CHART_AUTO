@@ -272,67 +272,91 @@ def apply_game_changers(df: pd.DataFrame, symbol: str = "ES") -> pd.DataFrame:
     out_open_direction = []
     out_open_bias_conf = []
 
-    # Group par session CME (CME 18:00 ET cutoff = trading session boundary).
-    # FIX 14/05/2026 v2 (audit code-reviewer NOGO sur v1) :
-    # v1 utilisait groupby("session_date_trading") + filter mins_et >= 630, mais
-    # le filter capturait en PREMIER la bar Asia 18:00 ET (mins_et=1080) qui
-    # passe le filtre. Cette bar a date_et = jour PRECEDENT -> helpers
-    # open_cash/ib_high/price_1030 mergees par date_et viennent de la veille.
-    # Resultat : open_type calcule sur les MAUVAISES donnees (shift J-1 silent).
-    # Anti-pattern 11 V1 detecte (fix-bug-introduce-another, plus dangereux).
-    # v2 : filter 3 conditions cumulees :
-    #   1. mins_et >= ib_close_min  (post IB window)
-    #   2. mins_et < bounds["asia_start"] (avant next Asia open)
-    #   3. date_et == session_date_trading (bar du JOUR CASH, pas Asia veille)
-    asia_start = bounds["asia_start"]
-    for date, grp in df.groupby("session_date_trading", sort=False):
-        # FIX 10/05 + 14/05 v2 : prendre row POST-IB du JOUR CASH (pas Asia veille)
-        post_ib = grp[
-            (grp["mins_et"] >= ib_close_min)
-            & (grp["mins_et"] < asia_start)
-            & (grp["date_et"] == date)
-        ]
-        if post_ib.empty:
-            # Pas de bar post-IB ce jour (weekend, holiday, partial) - fallback UNKNOWN
+    # FIX PARITE 19/05/2026 (Option C convention Python canonique) :
+    # Pre-calc sess_high/low RUNNING par session_date_trading pour day_type progressif.
+    # AVANT (bug) : sess_high = grp["sess_high"].iloc[-1] = final session high
+    #               -> day_type calcule UNE FOIS en POST-MORTEM puis broadcast sur toutes bars
+    #               -> Python detecte TREND/NORMAL retroactivement que C++ ne voit jamais en intra-bar
+    # APRES (Option C) : sess_high/low_running = cummax/cummin per session_date_trading
+    #                    -> day_type recalcule a CHAQUE bar avec sess_high/low jusqu'a cette bar
+    #                    -> Vue progressive intra-session (canonique cote bot live)
+    # IMPACT consumer (audit code-reviewer 19/05) : Bot 2 V6 RegimeGate (LOSER_DAY_TYPES={1})
+    # calibre sur day_type post-mortem broadcast -> recalibration obligatoire avec nouveau V4.
+    df["_sess_high_running"] = df.groupby("session_date_trading")["high"].cummax()
+    df["_sess_low_running"] = df.groupby("session_date_trading")["low"].cummin()
+
+    # Wrap try/finally pour garantir cleanup helpers _sess_*_running meme si exception
+    # dans la boucle (audit code-reviewer 19/05 R2.4).
+    try:
+        # Group par session CME (CME 18:00 ET cutoff = trading session boundary).
+        # FIX 14/05/2026 v2 (audit code-reviewer NOGO sur v1) :
+        # v1 utilisait groupby("session_date_trading") + filter mins_et >= 630, mais
+        # le filter capturait en PREMIER la bar Asia 18:00 ET (mins_et=1080) qui
+        # passe le filtre. Cette bar a date_et = jour PRECEDENT -> helpers
+        # open_cash/ib_high/price_1030 mergees par date_et viennent de la veille.
+        # Resultat : open_type calcule sur les MAUVAISES donnees (shift J-1 silent).
+        # Anti-pattern 11 V1 detecte (fix-bug-introduce-another, plus dangereux).
+        # v2 : filter 3 conditions cumulees :
+        #   1. mins_et >= ib_close_min  (post IB window)
+        #   2. mins_et < bounds["asia_start"] (avant next Asia open)
+        #   3. date_et == session_date_trading (bar du JOUR CASH, pas Asia veille)
+        asia_start = bounds["asia_start"]
+        for date, grp in df.groupby("session_date_trading", sort=False):
+            # FIX 10/05 + 14/05 v2 : prendre row POST-IB du JOUR CASH (pas Asia veille)
+            post_ib = grp[
+                (grp["mins_et"] >= ib_close_min)
+                & (grp["mins_et"] < asia_start)
+                & (grp["date_et"] == date)
+            ]
+            if post_ib.empty:
+                # Pas de bar post-IB ce jour (weekend, holiday, partial) - fallback UNKNOWN
+                n_bars = len(grp)
+                out_open_type.extend([0] * n_bars)
+                out_open_zone.extend([0] * n_bars)
+                out_day_type.extend([2] * n_bars)  # NORM_VAR default
+                out_open_direction.extend([0] * n_bars)
+                out_open_bias_conf.extend([0.0] * n_bars)
+                continue
+            first = post_ib.iloc[0]
+            open_cash = first["open_cash"]
+            prev_vah = first["prev_vah"]
+            prev_val = first["prev_val"]
+            prev_vpoc = first["prev_vpoc"]
+            pdh = first["pdh"]
+            pdl = first["pdl"]
+            ib_high = first["ib_high"]
+            ib_low = first["ib_low"]
+            ib_atr = first["ib_atr"]
+            price_1030 = first["price_1030"]
+
+            # OPEN_TYPE / OPEN_ZONE : statiques par jour (definis par open_cash a 09:30 et price_1030 a 10:30)
+            ot = gc.classify_open_type(open_cash, prev_vah, prev_val, ib_high, ib_low, price_1030)
+            oz = gc.classify_open_zone(open_cash, prev_vah, prev_val, prev_vpoc, pdh, pdl)
             n_bars = len(grp)
-            out_open_type.extend([0] * n_bars)
-            out_open_zone.extend([0] * n_bars)
-            out_day_type.extend([2] * n_bars)  # NORM_VAR default
-            out_open_direction.extend([0] * n_bars)
-            out_open_bias_conf.extend([0.0] * n_bars)
-            continue
-        first = post_ib.iloc[0]
-        open_cash = first["open_cash"]
-        prev_vah = first["prev_vah"]
-        prev_val = first["prev_val"]
-        prev_vpoc = first["prev_vpoc"]
-        pdh = first["pdh"]
-        pdl = first["pdl"]
-        ib_high = first["ib_high"]
-        ib_low = first["ib_low"]
-        ib_atr = first["ib_atr"]
-        price_1030 = first["price_1030"]
-        sess_high = grp["sess_high"].iloc[-1]  # final session high
-        sess_low = grp["sess_low"].iloc[-1]
-        close_eod = grp["close"].iloc[-1]
+            out_open_type.extend([int(ot)] * n_bars)
+            out_open_zone.extend([int(oz)] * n_bars)
+            out_open_direction.extend([int(gc.direction(ot))] * n_bars)
+            out_open_bias_conf.extend([float(gc.confidence(ot))] * n_bars)
 
-        # Classifications
-        ot = gc.classify_open_type(open_cash, prev_vah, prev_val, ib_high, ib_low, price_1030)
-        oz = gc.classify_open_zone(open_cash, prev_vah, prev_val, prev_vpoc, pdh, pdl)
-        dt = gc.classify_day_type(ib_atr, sess_high, sess_low, close_eod, ib_high, ib_low)
+            # DAY_TYPE : PROGRESSIF par bar (FIX 19/05/2026 Option C)
+            # Recalcule a chaque bar avec sess_high/low_running depuis session start.
+            # Convention canonique Python : vue intra-bar comme bot live, pas post-mortem.
+            for _, r in grp.iterrows():
+                dt_bar = gc.classify_day_type(
+                    ib_atr,
+                    r["_sess_high_running"], r["_sess_low_running"],
+                    r["close"], ib_high, ib_low
+                )
+                out_day_type.append(int(dt_bar))
 
-        n_bars = len(grp)
-        out_open_type.extend([int(ot)] * n_bars)
-        out_open_zone.extend([int(oz)] * n_bars)
-        out_day_type.extend([int(dt)] * n_bars)
-        out_open_direction.extend([int(gc.direction(ot))] * n_bars)
-        out_open_bias_conf.extend([float(gc.confidence(ot))] * n_bars)
-
-    df["open_type"] = pd.Series(out_open_type, dtype="int8", index=df.index)
-    df["open_zone"] = pd.Series(out_open_zone, dtype="int8", index=df.index)
-    df["day_type"] = pd.Series(out_day_type, dtype="int8", index=df.index)
-    df["open_direction"] = pd.Series(out_open_direction, dtype="int8", index=df.index)
-    df["open_bias_conf"] = pd.Series(out_open_bias_conf, dtype="float32", index=df.index)
+        df["open_type"] = pd.Series(out_open_type, dtype="int8", index=df.index)
+        df["open_zone"] = pd.Series(out_open_zone, dtype="int8", index=df.index)
+        df["day_type"] = pd.Series(out_day_type, dtype="int8", index=df.index)
+        df["open_direction"] = pd.Series(out_open_direction, dtype="int8", index=df.index)
+        df["open_bias_conf"] = pd.Series(out_open_bias_conf, dtype="float32", index=df.index)
+    finally:
+        # Cleanup helpers internes (prefix underscore convention V4 ML_EXCLUDE) — toujours execute
+        df = df.drop(columns=["_sess_high_running", "_sess_low_running"], errors="ignore")
     return df
 
 

@@ -347,6 +347,27 @@ PROHIBITED_FEATURES = {
     # interpretable : ce n'est pas un vrai signal bearish, c'est un reliquat de bugs.
     # Prefer composer un score derive post-fix depuis les events propres au besoin.
     "bn_score_bear", "bn_score_raw",
+
+    # ─────────────────────────────────────────────────────────────────
+    # AJOUT 11/06/2026 — Audit ULTRATHINK Sierra Migration Phase 4.2.5
+    # Bugs Sierra C++ DMP confirmes empiriquement sur 1926 bars NQ 10/06.
+    # Sources : code-reviewer + quality-auditor + market-analyst convergent.
+    # ─────────────────────────────────────────────────────────────────
+    # Features Sierra C++ DMP DEAD 0/1926 (bug emission) - 16 features :
+    "dist_ovn_high", "dist_ovn_low", "ovn_high_lvl", "ovn_low_lvl",
+    "ib_high", "ib_low",
+    "mq_gamma_condition", "mq_call_resistance", "mq_put_support",
+    "dist_blind_nearest_up", "dist_blind_nearest_dn",
+    "dist_ext_color_up", "dist_ext_color_dn",
+    "dist_color_up_nearest_pct", "dist_color_dn_nearest_pct",
+    "dist_delta_div_sell_nearest_atr",
+    # Features Sierra C++ avec unite buggee (ticks vs points) - 5 features :
+    # mean -85856 sur NQ 28800 = absurd. Stored en ticks au lieu de points.
+    "dist_comp_20d_vpoc", "dist_comp_20d_vah", "dist_comp_20d_val",
+    "dist_comp_20d_vwap", "dist_comp_20d_vpoc_atr",
+    # ovn_range_ticks = 0 constant alors que ovn_high - ovn_low > 0
+    "ovn_range_ticks",
+    # Note : dist_comp_50d_* deja PROHIBITED implicitement (DEAD)
 }
 
 

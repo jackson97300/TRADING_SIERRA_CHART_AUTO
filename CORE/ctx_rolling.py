@@ -382,11 +382,16 @@ class CtxRollingCalculator:
             dist_vwap_vel = np.nan
 
         # VWAP slope acceleration (2nd derivative)
+        # Fix P3 audit ULTRATHINK 11/06 : winsorize a [-3, 3] pour eviter outliers
+        # explosion (cas observe NQ : 87.93 et -93.31 vs p99=0.47 = ratio 185x).
+        # Outliers corrompent LightGBM tree splits.
         if len(self._vwap_buffer) >= self.window_short:
             vwap_vals = list(self._vwap_buffer)
             slope_recent = self._slope(vwap_vals[-3:])
             slope_prev = self._slope(vwap_vals[:-1][-3:]) if len(vwap_vals) >= 4 else slope_recent
-            vwap_slope_accel = slope_recent - slope_prev
+            raw_accel = slope_recent - slope_prev
+            # Clip [-3, +3] : > 3 = anomalie numerique (div par valeurs proches 0)
+            vwap_slope_accel = max(-3.0, min(3.0, raw_accel))
         else:
             vwap_slope_accel = np.nan
 

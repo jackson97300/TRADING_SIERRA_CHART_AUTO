@@ -228,6 +228,27 @@ BANNED_LEVELS: dict[str, str] = {
 }
 
 # ════════════════════════════════════════════════════════════════════════
+# 04/06/2026 — BLACKLIST validee par audit backtest 33j Bot 3 MP (Jackson).
+# ════════════════════════════════════════════════════════════════════════
+# Process : audit profondeur 5 pires jours MP (cumul -$12,778 = 80% pertes
+# 33j) -> denominateur commun = 2 levels totalement absents des 5 meilleurs
+# jours mais presents 12 fois dans les 5 pires. Backtest valide sur 127
+# trades MP reels (hors recovered) sur 33j :
+#   - MQ_HVL : 9 trades, WR 11.1%, PF 0.06, PnL -$4500.62
+#   - MQ_CALL_POC_FLAT : 5 trades, WR 0.0%, PF 0.00, PnL -$5784.38
+# Cumul blacklist : 14 trades (11% du total), WR 7.1%, PnL -$10,285.
+# Bot 3 MP baseline -$4,311 -> avec blacklist +$5,974 (Delta +$10,285).
+# Walk-forward : MAI +$7,618 / JUIN +$2,668 (les 2 mois positifs).
+# Edge concept : HVL = niveau de consolidation institutionnelle (mauvais
+# pour dip strategy), POC_FLAT = pas de structure (pas d'edge).
+# Activation controlee par BOT3_MP_LEVEL_BLACKLIST_ENABLED (bot3_config).
+# ════════════════════════════════════════════════════════════════════════
+BACKTEST_BLACKLIST_MP: dict[str, str] = {
+    "MQ_HVL":           "9t/WR 11%/-$4500 33j (Bot 3 MP)",
+    "MQ_CALL_POC_FLAT": "5t/WR 0%/-$5784 33j (Bot 3 MP)",
+}
+
+# ════════════════════════════════════════════════════════════════════════
 # TIER 2 NEUTRAL — Niveaux ex-bannis reintegres en mode NEUTRE (Jackson 03/05)
 # ════════════════════════════════════════════════════════════════════════
 # Philosophie : le prix arrive au niveau, on regarde l'orderflow + la structure
@@ -475,6 +496,28 @@ COMBOS_BOOSTED: dict[str, dict] = {
             "simultanées = résistance multi-couches BN forte."
         ),
     },
+    "COMBO_PVAH_x_COLOR_DN_ES": {
+        "side": "SHORT",
+        "applies_to": "ES",                     # ES uniquement (NQ pas testé)
+        "cols": ["dist_prev_vah_pct", "dist_color_dn_nearest_pct"],
+        "proximity_pct": 0.05,                  # large (Volume Profile + BN extension lines)
+        "filter_col": None,
+        "filter_op": None,
+        "filter_thr": None,
+        "tier": 1,
+        "bucket": "COMBO_BOOSTED",
+        "validation": (
+            "n=135, EV +2.96t (estimé via cluster_3plus signature), PF 1.33, "
+            "PSR 0.940, WF 10/12 (backtest 03/06 ES 2025-12 -> 2026-05-15 US RTH only, "
+            "TP/SL 10t/10t, costs 2t). CI95 rejection [60-73%]. Concentration top fold sain."
+        ),
+        "description": (
+            "Cluster SHORT ES : touche Previous VAH (Volume Profile veille) + "
+            "COLOR_DN zone BN proches simultanément. Setup résistance multi-couches : "
+            "support veille rejetté = vendeurs prennent la main + COLOR_DN confirme "
+            "orderflow bearish. Validé Lopez PSR 0.940. ES uniquement (NQ non testé)."
+        ),
+    },
 }
 
 
@@ -521,6 +564,7 @@ def get_active_levels(
     enable_sidak: bool = True,
     enable_combos_boosted: bool = True,
     enable_mirror_observe: bool = False,
+    enable_mp_blacklist: bool = True,
 ) -> dict[str, dict]:
     """Retourne dict des niveaux actifs selon les phase flags + symbole.
 
@@ -553,6 +597,11 @@ def get_active_levels(
     # Sans ce wire, BOT3_ENABLE_MIRROR_SHORT_OBSERVE est mort architecturalement.
     if enable_mirror_observe:
         candidates.update(MIRROR_SHORT_OBSERVE)
+    # 04/06/2026 — BACKTEST_BLACKLIST_MP (Jackson) : filtrer levels backtest
+    # invalides AVANT le filtre symbol pour assurer skip multi-symbol.
+    if enable_mp_blacklist:
+        for blk in BACKTEST_BLACKLIST_MP:
+            candidates.pop(blk, None)
     if symbol is None:
         return candidates
     return {

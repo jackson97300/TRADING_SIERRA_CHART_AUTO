@@ -119,7 +119,10 @@ TS_MS_MAX = 10**14  # ~5138-11-16 (sentinel paranoia)
 # (delta_bar, cvd_day, ATR, distances normalisees, signe direction).
 _NUMERIC_CRITICAL_COLS = (
     # OHLCV de base Sierra
-    "price", "bar_high", "bar_low",
+    # FIX 07/06/2026 Plan A Sem 1 : `open` ajoute (B4.5 deploye 07/06 matin,
+    # DMP_Writer.h schema 3.7.22 expose r.price_open). Necessaire pour
+    # game_changers Python (classify_open_type lit `open` cote payload).
+    "open", "price", "bar_high", "bar_low",
     # ATR (Sierra a deux : atr daily + atr_14m intraday)
     "atr", "atr_14m",
     # Delta / Aggressor (convention SAINE Sierra - critique migration)

@@ -37,6 +37,23 @@ ROOT = Path(__file__).resolve().parents[1]
 DBN_ROOT = ROOT / "DATA" / "databento" / "GLBX.MDP3"
 TRADES_ROOT = DBN_ROOT / "trades"
 
+# 11/05 Jackson "nos garde-fous" : brancher logging_v2 pour emit codes
+# DOWNLOAD_STALE_POST_FETCH visible dashboard widget "Erreurs recentes".
+sys.path.insert(0, str(ROOT))
+try:
+    from CORE.logging_v2 import get_logger
+    _v2log = get_logger("live_pipeline", process="pipeline")
+except Exception:
+    _v2log = None
+
+def _emit(code: str, **ctx):
+    if _v2log is None:
+        return
+    try:
+        _v2log.emit(code, **ctx)
+    except Exception:
+        pass
+
 DATABENTO_DELAY_MIN = 15  # 01/05 v3 : test DELAY=5 a montre Databento livre
                           # seulement jusqu'a end-30min (delay reel API ~30 min
                           # constate empiriquement). DELAY=15 = compromis safe.
@@ -112,8 +129,12 @@ def convert_trades_to_parquet(target_date: date, symbols: list[str]) -> bool:
 def main():
     ap = argparse.ArgumentParser(description="Live pipeline batch 5min : download + enrich")
     ap.add_argument("--date", default=None, help="YYYY-MM-DD (default: today UTC)")
-    ap.add_argument("--symbols", nargs="+", default=["ES.c.0", "NQ.c.0"])
-    ap.add_argument("--symbols-short", nargs="+", default=["ES", "NQ"],
+    # 12/05/2026 fix Bot 3 MGC : ajout MGC.v.0 aux symbols par defaut
+    # Avant ce fix : live_pipeline_loop tournait sans --symbols → defaut ES+NQ
+    # → V4 enriched MGC pas regenere depuis 23/04 → Bot 3 MGC BAR_STALE en boucle.
+    # Note : build_dataset_v4_dmp_databento.py supporte MGC depuis Chantier 5bis (10/05).
+    ap.add_argument("--symbols", nargs="+", default=["ES.c.0", "NQ.c.0", "MGC.v.0"])
+    ap.add_argument("--symbols-short", nargs="+", default=["ES", "NQ", "MGC"],
                     help="Format court pour pipeline V4 (sans .c.0)")
     ap.add_argument("--delay-min", type=int, default=DATABENTO_DELAY_MIN,
                     help=f"Delay Databento Historical API en minutes (default {DATABENTO_DELAY_MIN})")
@@ -157,11 +178,51 @@ def main():
             # bot tradait sur bar vieille de 2h+ (incident 28/04 17:17).
             # En mode partial (intra-day live), on doit forcer le refresh.
             cmd.extend(["--partial-end", partial_end_str, "--force"])
+        # FIX 11/05 code-reviewer R4 : snapshot mtime AVANT download pour
+        # detecter les fichiers qui n'ont PAS ete refresh (silent skip / EMPTY).
+        # Incident 11/05/2026 : ohlcv-1m ES.c.0 stuck 2h+ sans aucune erreur log.
+        from datetime import datetime as _dt2, timezone as _tz2
+        t_start_dl = _dt2.now(_tz2.utc).timestamp()
         ok = run_cmd(cmd, "DOWNLOAD")
         (success_steps if ok else failed_steps).append("DOWNLOAD")
         if not ok:
             print("\n[FATAL] Download failed — abort pipeline")
             sys.exit(1)
+        # Post-check : pour CHAQUE (symbol, schema), verifier que le DBN.zst
+        # a bien ete refresh (mtime > t_start_dl) si on est en partial mode.
+        if partial_end_str:
+            stale_files = []
+            # 12/05 FIX FAUX POSITIF : transition jour UTC (00:00-00:30) =
+            # DBN day=N pas encore telecharge par Databento (data dispo API ~00:15-00:30).
+            # Skip emit "missing" pendant cette fenetre = comportement NORMAL.
+            # Sans ce fix : 38+ emit DOWNLOAD_STALE_POST_FETCH CRITIQUE chaque midnight UTC.
+            _now_utc = _dt2.now(_tz2.utc)
+            _grace_window = (_now_utc.hour == 0 and _now_utc.minute < 30)
+            for sym in args.symbols:
+                for sch in ("ohlcv-1m", "trades"):
+                    fp = (DBN_ROOT / sch / f"symbol={sym}" /
+                          f"year={target.year}" / f"month={target.month}" /
+                          f"day={target.day}" / "data.dbn.zst")
+                    if not fp.exists():
+                        # Pendant grace transition jour UTC : SKIP emit (normal)
+                        if not _grace_window:
+                            stale_files.append((sch, sym, "missing"))
+                        continue
+                    age_since_dl = t_start_dl - fp.stat().st_mtime
+                    # Si DBN plus vieux que le start du download = pas refresh
+                    if age_since_dl > 60:  # tolerance 60s
+                        age_min = age_since_dl / 60
+                        stale_files.append((sch, sym, f"stale_{age_min:.1f}min"))
+            if stale_files:
+                print(f"\n[WARN] Post-DL : {len(stale_files)} fichier(s) NON refresh "
+                      f"(silent skip Databento) :")
+                for sch, sym, reason in stale_files:
+                    print(f"  - {sch:10s} {sym:8s} {reason}")
+                    # Emit pour visibilite dashboard "Erreurs recentes"
+                    _emit("DOWNLOAD_STALE_POST_FETCH",
+                          schema=sch, symbol=sym, reason=reason)
+                # Pas FATAL : on continue (build_v4 utilisera last bars dispo)
+                # mais signal visible dans log pour audit J+1.
 
     # 2. Convert trades dbn.zst -> parquet
     ok = convert_trades_to_parquet(target, args.symbols)

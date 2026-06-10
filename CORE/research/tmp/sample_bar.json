@@ -1,0 +1,9 @@
+Get-Content : Impossible de trouver le chemin d'accäs Æ
+D:\TRADING_SIERRA_CHART_AUTO\DATA\live_enriched\NQ\20260608_NQ.jsonlØ, car il n'existe pas.
+Au caractäre Ligne:1 : 1
++ Get-Content 'DATA\live_enriched\NQ\20260608_NQ.jsonl' -TotalCount 1
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (D:\TRADING_SIER...260608_NQ.jsonl:String) [Get-Content], ItemNotFoundEx 
+   ception
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetContentCommand
+ 

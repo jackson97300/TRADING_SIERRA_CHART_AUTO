@@ -60,10 +60,29 @@ TICK_SIZE = 0.25  # default ES/NQ. MGC=0.10 — caller passe tick explicitement
 # Volume Gold tres concentre (max_trade p99=31) : imbalance 600/300%
 # rare/jamais atteint. Reduit a 150% (3x au lieu de 6x ratio Ask/Bid).
 # Recalibrer empiriquement apres rebuild + backtest Phase 2.
+# 11/05 J3 Phase B recalibration MGC (mesure avril 2026, 22k bars Phase A) :
+# Audit precedent : EDGE_THRESHOLD_PCT["MGC"]=150 -> 0% fire rate (features mortes).
+# Audit Chantier 5bis2 (Jackson 10/05) : 600 et 300 testes = const=0.
+# Phase A.3 mesure : Gold p99 max_trade_size=30 lots, p50=6.
+# Theorie ratio Ask/Bid Gold max ~ 5x (30/6) = 500% mais rare.
+# Pour avoir fire rate 1-3% (cible ES baseline), seuil 100% raisonnable.
+# Si rebuild test montre <1% -> dichotomie 80/60/40. Si >5% -> 120/150.
 EDGE_THRESHOLD_PCT = {
     "ES":  600,
     "NQ":  1000,
-    "MGC": 150,
+    # 11/05 J3 RECALIBRATION FINALE apres fix bug tick=tick (footprint_builder).
+    # Bug : build_dataset_v4_phase_b.py:335 ne passait pas tick=0.10 pour Gold
+    # → footprint bucketisait à 0.25 → cellules vides → fire 0%.
+    # Post-fix iter 4 (EDGE=150) : fire 93% Gold a vrais imbalances.
+    # Batterie in-memory complete (22k bars MGC april) :
+    #   600  → 32.75% (trop bruyant)
+    #   1000 →  8.81%
+    #   1200 →  4.50%
+    #   1500 →  1.76% ✓ CIBLE 1-3% Jackson
+    #   2000 →  0.38% (trop rare)
+    # Gold imbalance plus elevee que NQ (1000) - distribution tick=0.10 spread
+    # genere ratios Ask/Bid extremes plus frequents que ES/NQ.
+    "MGC": 1500,
 }
 MIN_GROUP_SIZE = 2  # SC default Highlight Adjacent Alerts Minimum Group Size
 

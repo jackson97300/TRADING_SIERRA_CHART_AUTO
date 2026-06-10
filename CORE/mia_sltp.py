@@ -52,18 +52,15 @@ from dataclasses import dataclass, field
 #     - NQ swing trades 1-min peuvent avoir SL 40-70t en sessions volatiles.
 #     - Cap max 80t coherent avec MAX_TP_WALL_DISTANCE NQ (garde-fou budget).
 SL_BUDGET = {
-    # 🆕 01/05/2026 (Jackson "SL doit etre protege derriere le mur") :
-    # max_usd 75 → 120. Audit empirique 01/05 : 107 rejets "SL > budget $75"
-    # observes (95% des SHORTs bloques). Avec $120 :
-    #   NQ : SL max 80t (=$0.50*3*80) = exploite totalement max_ticks 80 NQ
-    #   ES : SL max 32t (=$1.25*3*32) = capped USD avant max_ticks 40 ES
-    # Topstep $50K daily limit -$1000 : 8 SL × $120 = -$960 (proche limit, OK).
-    # Cap 5 trades/jour Bot + circuit breaker 3 SL consec = garde-fou.
+    # 09/06 — Couche 2 Jackson : 3 micros via Sierra Cross Chart (MNQM26 + MESM26).
+    # Reduction $$$ par tick = 70% vs E-mini. Slippage cap reduit en proportion.
+    #   NQ Micro : 80t * $0.50/tick * 3 ctr = $120 max (au lieu de $400 E-mini)
+    #   ES Micro : 40t * $1.25/tick * 3 ctr = $150 max (au lieu de $500 E-mini)
+    #   MGC Micro : 40t * $1.00/tick * 3 ctr = $120 max
+    # SL doit etre protege derriere le mur (lecon 01/05). Si trop volatile -> resserrer
+    # max_ticks via env, PAS changer sizing.
     'NQ': {'max_ticks': 80, 'max_usd': 120.0, 'tick_value': 0.50, 'n_micros': 3},
-    'ES': {'max_ticks': 40, 'max_usd': 120.0, 'tick_value': 1.25, 'n_micros': 3},
-    # MGC ajoute 11/05/2026 (Phase 1.4) — Calibration tick-scaled depuis ES.
-    # tick_value=$1.00 (Micro Gold 10oz) -> max_ticks = $120 / ($1 * 3) = 40t (=4pt Gold)
-    # A recalibrer apres backtest Phase 2 MGC (PF + EV par regime).
+    'ES': {'max_ticks': 40, 'max_usd': 150.0, 'tick_value': 1.25, 'n_micros': 3},
     'MGC': {'max_ticks': 40, 'max_usd': 120.0, 'tick_value': 1.00, 'n_micros': 3},
 }
 
@@ -81,6 +78,30 @@ SL_BUFFER_EXTENDED_TICKS = {'NQ': 13, 'ES': 8, 'MGC': 15}  # MGC 10+5=15
 #   30t trop serre sur conditions calmes. Garde 20 comme plancher anti-bruit).
 # MGC 11/05 Phase 1.4 : 20t = 2pt Gold (plancher anti-bruit, recalibrer Phase 2)
 SL_MIN_TICKS = {'NQ': 20, 'ES': 10, 'MGC': 20}
+
+# 🆕 09/06 — FIX #55 SL Min ATR-aware (Jackson valide).
+# Probleme : SL serré 20-25 ticks vs ATR 580 ticks NQ = touche frequente bruit + slippage.
+# Solution : sl_min_effective = max(SL_MIN_TICKS, atr_ticks * SL_MIN_ATR_RATIO).
+# Exemple NQ ATR 580 : sl_min = max(20, 58) = 58t (au lieu de 20t).
+# Reversible via env var SLTP_SL_MIN_ATR_AWARE_ENABLED=0.
+# Ratio configurable par env SLTP_SL_MIN_ATR_RATIO (default 0.10 = 10% ATR).
+import os as _os_sltp
+SL_MIN_ATR_RATIO = float(_os_sltp.environ.get("SLTP_SL_MIN_ATR_RATIO", "0.10"))
+SL_MIN_ATR_AWARE_ENABLED = _os_sltp.environ.get("SLTP_SL_MIN_ATR_AWARE_ENABLED", "1") == "1"
+
+
+def get_sl_min_atr_aware(symbol: str, atr_ticks: Optional[float]) -> int:
+    """Retourne sl_min effectif : max(SL_MIN_TICKS[sym], atr_ticks * SL_MIN_ATR_RATIO).
+
+    Si SLTP_SL_MIN_ATR_AWARE_ENABLED=0 ou atr_ticks invalide -> retourne SL_MIN_TICKS de base.
+    """
+    base = SL_MIN_TICKS.get(symbol, 12)
+    if not SL_MIN_ATR_AWARE_ENABLED:
+        return base
+    if atr_ticks is None or atr_ticks != atr_ticks or atr_ticks <= 0:  # None ou NaN
+        return base
+    dynamic = int(atr_ticks * SL_MIN_ATR_RATIO)
+    return max(base, dynamic)
 
 # TP buffer avant l'obstacle (on prend profit AVANT le mur)
 TP_BUFFER_TICKS = {'NQ': 4, 'ES': 2, 'MGC': 4}  # MGC=4t=0.4pt Gold
@@ -682,6 +703,16 @@ class SLTPEngine:
         Returns: (sl_ticks, wall_name, tier, n_walls, reason)
         """
 
+        # 🆕 09/06 FIX #55 — SL Min ATR-aware (Jackson directive).
+        # Override sl_min_eff localement selon ATR de la bar courante.
+        # ATR 580t (NQ extreme) → sl_min_eff = max(20, 58) = 58t.
+        # Evite SL serré 20-25t qui touche bruit + slippage.
+        try:
+            _atr_now = float(row.get('atr', 0) or 0)
+        except (TypeError, ValueError, AttributeError):
+            _atr_now = 0
+        sl_min_eff = get_sl_min_atr_aware(self.symbol, _atr_now if _atr_now > 0 else None)
+
         # Scanner tous les murs DERRIÈRE le prix
         # LONG → murs EN-DESSOUS (dist < 0, ou support avec dist positif petit)
         # SHORT → murs AU-DESSUS (dist > 0, ou resist avec dist négatif petit)
@@ -708,7 +739,7 @@ class SLTPEngine:
         # ─── OPTION A: Tier 1 seul ───
         for wall in behind_t1:
             sl_ticks = wall.abs_dist + self.sl_buffer
-            if self.sl_min <= sl_ticks <= self.max_sl_ticks:
+            if sl_min_eff <= sl_ticks <= self.max_sl_ticks:
                 # Compter combien de murs sont entre le prix et le SL
                 n_walls = sum(1 for w in behind_t1 + behind_t2
                               if w.abs_dist <= sl_ticks)
@@ -729,7 +760,7 @@ class SLTPEngine:
                     farthest = max(cluster, key=lambda w: w.abs_dist)
                     sl_ticks = farthest.abs_dist + self.sl_buffer
 
-                    if self.sl_min <= sl_ticks <= self.max_sl_ticks:
+                    if sl_min_eff <= sl_ticks <= self.max_sl_ticks:
                         names = "+".join(w.name for w in cluster[:3])
                         n_walls = len(cluster)
                         return sl_ticks, names, 2, n_walls, \
@@ -740,7 +771,7 @@ class SLTPEngine:
         if behind_t2 and behind_t1:
             best_t2 = behind_t2[0]
             sl_ticks = best_t2.abs_dist + self.sl_buffer
-            if self.sl_min <= sl_ticks <= self.max_sl_ticks:
+            if sl_min_eff <= sl_ticks <= self.max_sl_ticks:
                 return sl_ticks, best_t2.name, 2, 1, \
                     f"SL derrière {best_t2.name} (T2 + T1 backup)"
 
@@ -753,7 +784,7 @@ class SLTPEngine:
         if behind_t2 and not behind_t1:
             best_t2 = behind_t2[0]
             sl_ticks_extended = best_t2.abs_dist + SL_BUFFER_EXTENDED_TICKS.get(self.symbol, self.sl_buffer + 5)
-            if self.sl_min <= sl_ticks_extended <= self.max_sl_ticks:
+            if sl_min_eff <= sl_ticks_extended <= self.max_sl_ticks:
                 return sl_ticks_extended, best_t2.name, 2, 1, \
                     f"SL derrière {best_t2.name} (T2 seul, buffer ETENDU anti stop-hunt)"
 
@@ -768,9 +799,9 @@ class SLTPEngine:
         elif behind_t2 and len(behind_t2) < 2:
             # Cas rare post-fix P3 : T2 seul mais SL extended hors bornes
             return 0, "", 0, 0, \
-                f"T2 {behind_t2[0].name} seul + SL extended hors bornes ({self.sl_min}-{self.max_sl_ticks}t)"
+                f"T2 {behind_t2[0].name} seul + SL extended hors bornes ({sl_min_eff}-{self.max_sl_ticks}t)"
         else:
-            return 0, "", 0, 0, f"SL hors limites ({self.sl_min}-{self.max_sl_ticks}t)"
+            return 0, "", 0, 0, f"SL hors limites ({sl_min_eff}-{self.max_sl_ticks}t)"
 
     # ─── FIND TP OBSTACLE ──────────────────────────────────────────
 

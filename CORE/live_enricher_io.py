@@ -18,6 +18,7 @@ Auteur : MIA Trading System V2
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -28,13 +29,44 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "CORE"))
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ENRICHER_SOURCE env var (Plan A Sem 1 — 07/06/2026)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Architecture shadow : default `databento` preserve la prod 24/7 (MIA-Live-Enricher
+# Running sur VPS). Bascule `sierra` reservee aux tests parite + cutover progressif.
+#
+# CONTRAINTE SOUVERAINE Jackson 07/06 : "on branche en parallele du systeme actuel,
+# on doit etre full Sierra". Sequence C (hybride) : bars/delta/swings/IB/VP via
+# Sierra natif, MAIS garde game_changers Python pour open_type/open_zone
+# (divergence empirique 100% sur 03/06 NQ - audit parite a faire Sem 2-3).
+#
+# Rollback : ENRICHER_SOURCE=databento (default) restaure le pipeline Databento.
+# ═══════════════════════════════════════════════════════════════════════════════
+ENRICHER_SOURCE = os.environ.get("ENRICHER_SOURCE", "databento").lower()
+if ENRICHER_SOURCE not in ("databento", "sierra"):
+    raise ValueError(
+        f"ENRICHER_SOURCE invalide : {ENRICHER_SOURCE!r}. "
+        f"Valeurs autorisees : 'databento' (default, prod) ou 'sierra' (Plan A shadow)."
+    )
+
 # Wrap readers existants (DRY)
 from live_cache import read_bar as read_ohlcv_bar  # OHLCV cache Databento Live
 from live_cache import read_last_trade_close, is_stream_alive
 from load_mq_levels import load_mq_levels  # Sierra MQ niveaux
 from vix_lite_reader import load_vix_lite_jsonl, enrich_vix_lite  # VIX_Lite
 
-# Trades buffer Chantier 2 deploye 13/05/2026
+# Import conditionnel Sierra reader (Plan A Sem 1)
+if ENRICHER_SOURCE == "sierra":
+    from sierra_live_io import SierraLiveReader
+    # Cache des readers par symbol (instanciation paresseuse, 1 per symbol)
+    _sierra_readers: dict[str, "SierraLiveReader"] = {}
+
+# Mapping Databento ticker (ES.c.0) -> Sierra filesystem symbol (ES)
+# MGC pas supporte Sierra V1 (cf sierra_live_io.SUPPORTED_SYMBOLS = ("ES", "NQ"))
+# -> en mode sierra, MGC fallback Databento (duplication temporaire Phase 8+).
+SYMBOL_TO_SIERRA_FS = {"ES.c.0": "ES", "NQ.c.0": "NQ"}
+
+# Trades buffer Chantier 2 deploye 13/05/2026 (consume uniquement mode databento)
 TRADES_BUFFER_DIR = ROOT / "DATA" / "LIVE_CACHE" / "trades"
 
 
@@ -230,6 +262,84 @@ def read_vix_latest(lookback_days: int = 2) -> Optional[dict]:
 # Orchestrateur global
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Sierra OHLCV reader (Plan A Sem 1 — 07/06/2026)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _get_sierra_reader(symbol_fs: str) -> "SierraLiveReader":
+    """Cache paresseux 1 SierraLiveReader par symbol filesystem (ES, NQ).
+
+    Reutilise le buffer rolling entre appels successifs (anti re-lecture
+    disk full daily JSONL a chaque poll).
+    """
+    if symbol_fs not in _sierra_readers:
+        # window_bars=480 = 8h de bars 1min, suffisant pour Phase B+/Wyckoff context
+        _sierra_readers[symbol_fs] = SierraLiveReader(
+            symbol=symbol_fs, window_bars=480, strict=False
+        )
+    return _sierra_readers[symbol_fs]
+
+
+def read_latest_ohlcv_sierra(symbol: str, max_age_sec: int = 90) -> Optional[dict]:
+    """Lit la derniere bar Sierra DMP et la mappe au contrat OHLCV expected.
+
+    Contrat de sortie identique a `read_latest_ohlcv` mode Databento :
+      ts_event_ns, ts_event_iso, open, high, low, close, volume
+
+    PLUS un passthrough `_sierra_bar` contenant la bar Sierra complete (380 cols)
+    pour que enricher_chain puisse lire les features natives Sierra (delta_bar,
+    swing_high, dist_ib_*, open_type, etc.) au lieu de les recalculer.
+
+    Returns:
+        dict | None si bar fraiche absente (age > max_age_sec) ou MGC (non
+        supporte Sierra V1).
+    """
+    if symbol not in SYMBOL_TO_SIERRA_FS:
+        # MGC : fallback transparent vers Databento (le caller doit gerer)
+        return None
+
+    symbol_fs = SYMBOL_TO_SIERRA_FS[symbol]
+    reader = _get_sierra_reader(symbol_fs)
+    df = reader.load_rolling_window()
+    if df is None or df.empty:
+        return None
+
+    # Check freshness via age dernier ts
+    age = reader.get_last_bar_age_seconds()
+    if age > max_age_sec:
+        return None
+
+    last = df.iloc[-1]
+    ts_ms = int(last["ts"])  # Sierra DMP : ts en millisecondes epoch UTC
+    ts_ns = ts_ms * 1_000_000  # Conversion ms -> ns (contrat enricher_chain)
+
+    # Mapping Sierra DMP -> contrat OHLCV
+    # Note B4.5 deploye 07/06 matin : `open` natif via r.price_open. Pre-deploy
+    # fichiers historiques (avant B4.5) n'ont pas `open` -> fallback close prev
+    # bar (degradation acceptable, audit empirique post-Asia open).
+    open_val = last.get("open")
+    if open_val is None or pd.isna(open_val):
+        # Fallback : close de la bar precedente (pre-B4.5 backward compat)
+        if len(df) >= 2:
+            open_val = float(df.iloc[-2]["price"])
+        else:
+            open_val = float(last["price"])
+
+    return {
+        "ts_event_ns": ts_ns,
+        "ts_event_iso": last["ts_event"].isoformat(),
+        "open": float(open_val),
+        "high": float(last["bar_high"]),
+        "low": float(last["bar_low"]),
+        "close": float(last["price"]),
+        "volume": float(last.get("total_vol", 0.0) or 0.0),
+        # Passthrough pour enricher_chain : permet lecture native Sierra
+        # (delta_bar, swing_*, dist_ib_*, open_type, day_type, dist_mq_*, etc.)
+        "_sierra_bar": last.to_dict(),
+        "_source": "sierra",
+    }
+
+
 def read_all_inputs(
     symbol: str,
     trades_window_sec: int = 60,
@@ -239,21 +349,45 @@ def read_all_inputs(
 
     Wrapper compose des 4 readers + check freshness. Usage Live Enricher.
 
+    Mode `databento` (default, prod) :
+      OHLCV via live_cache Databento + trades_df 60s + MQ Sierra + VIX Sierra.
+
+    Mode `sierra` (Plan A shadow, Sem 1 07/06) :
+      OHLCV via SierraLiveReader (380 cols natif C++ : delta_bar, swing, IB, etc.)
+      + trades_df vide (Sierra fournit delta_bar agrege) + MQ Sierra + VIX Sierra.
+      Le _sierra_bar passthrough permet a enricher_chain de skip recalcul Python
+      pour LOT 1-6 (trades aggregates), game_changers (day_type), Pass 4c-prereq
+      (IB/sess/VP), sessions_swings (lookahead bug).
+
     Returns:
         dict avec keys:
-          ohlcv : dict | None  (derniere bar OHLCV close)
-          trades_df : pd.DataFrame  (trades derniers `trades_window_sec` sec)
-          mq_levels : dict | None  (latest MQ snapshot)
-          vix : dict | None  (latest VIX enrichi)
-          stream_alive : bool  (state Databento Live stream)
+          ohlcv : dict | None  (derniere bar OHLCV close, +_sierra_bar si mode sierra)
+          trades_df : pd.DataFrame  (vide en mode sierra)
+          mq_levels : dict | None  (latest MQ snapshot Sierra)
+          vix : dict | None  (latest VIX enrichi Sierra)
+          stream_alive : bool  (state stream actif)
           ts_read_ns : int  (timestamp lecture)
+          source : str  ("databento" | "sierra" pour audit)
     """
     ts_read_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)
-    ohlcv = read_latest_ohlcv(symbol, max_age_sec=ohlcv_max_age_sec)
-    trades_df = read_trades_last_n_seconds(symbol, n_seconds=trades_window_sec)
+
+    if ENRICHER_SOURCE == "sierra":
+        ohlcv = read_latest_ohlcv_sierra(symbol, max_age_sec=ohlcv_max_age_sec)
+        # Fallback Databento pour MGC (Sierra V1 ne supporte pas)
+        if ohlcv is None and symbol not in SYMBOL_TO_SIERRA_FS:
+            ohlcv = read_latest_ohlcv(symbol, max_age_sec=ohlcv_max_age_sec)
+        # trades_df vide en mode Sierra : delta_bar deja agrege natif C++.
+        # enricher_chain detecte _source=="sierra" et skip LOT 1-6.
+        trades_df = pd.DataFrame()
+        stream_alive = ohlcv is not None  # heuristique : bar fraiche = alive
+    else:
+        # Mode databento (default, prod 24/7 inchange)
+        ohlcv = read_latest_ohlcv(symbol, max_age_sec=ohlcv_max_age_sec)
+        trades_df = read_trades_last_n_seconds(symbol, n_seconds=trades_window_sec)
+        stream_alive, _ = is_stream_alive()
+
     mq_levels = read_mq_latest(symbol)
     vix = read_vix_latest()
-    stream_alive, _ = is_stream_alive()
 
     return {
         "ohlcv": ohlcv,
@@ -262,6 +396,7 @@ def read_all_inputs(
         "vix": vix,
         "stream_alive": stream_alive,
         "ts_read_ns": ts_read_ns,
+        "source": ENRICHER_SOURCE,
     }
 
 

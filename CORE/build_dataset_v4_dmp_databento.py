@@ -1254,8 +1254,30 @@ def write_partitioned(df: pd.DataFrame, symbol: str, merge_existing: bool = True
 
         # Merge avec existant : drop les jours presents dans group_clean
         # puis concat. Garantit pas de doublons par ts_event.
+        existing = None
         if merge_existing and out_path.exists():
-            existing = pd.read_parquet(out_path)
+            try:
+                existing = pd.read_parquet(out_path)
+            except (OSError, PermissionError) as exc:
+                # Acces transitoire (verrou fichier / antivirus Windows). Le
+                # parquet est probablement SAIN -> NE PAS regenerer, sinon
+                # perte de l'historique du mois en cas nominal --test-day
+                # (le df courant ne couvre qu'1 jour). Skip, retry au cycle
+                # suivant du pipeline.
+                print(f"  [SKIP] partition {out_path} inaccessible "
+                      f"(transitoire {type(exc).__name__}: {exc}) -> "
+                      f"conservee, retry prochain cycle")
+                continue
+            except Exception as exc:
+                # Corruption REELLE (footer absent / ArrowInvalid). L'historique
+                # est deja perdu (fichier illisible) -> regenerer de zero pour
+                # debloquer le pipeline (incident #14 : NQ v4_enriched fige
+                # 2 jours, pd.read_parquet plantait a chaque cycle).
+                print(f"  [WARN] partition CORROMPUE {out_path}: "
+                      f"{type(exc).__name__}: {exc} -> regeneration de zero "
+                      f"(historique mois perdu, irrecuperable)")
+                existing = None
+        if existing is not None:
             # Harmonise tz : strip si l'un est aware (sinon TypeError au sort/compare)
             ex_ts = pd.to_datetime(existing["ts_event"])
             if isinstance(ex_ts.dtype, pd.DatetimeTZDtype):

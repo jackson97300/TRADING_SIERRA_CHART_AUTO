@@ -216,7 +216,10 @@ def add_phase_b_plus_plus_trades_streaming(
                 continue
             bucket = round((pf / tick), 0) * tick
             bucket = round(bucket, 4)
-            signed = int(sf) if side == "A" else (-int(sf) if side == "B" else 0)
+            # FIX 07/06/2026 : convention Databento side='A' = SELLER aggressif (-),
+            # side='B' = BUYER aggressif (+). Bug pre-fix : signe inverse.
+            # Cf enricher_chain.py:286-289 + check_delta_sign.py (268 bars NQ).
+            signed = -int(sf) if side == "A" else (int(sf) if side == "B" else 0)
             trades_data.append((bucket, int(sf), side, signed))
 
         if trades_data:

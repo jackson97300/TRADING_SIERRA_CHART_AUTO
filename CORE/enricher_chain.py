@@ -91,6 +91,24 @@ def compose_enriched_payload(
     ohlcv = inputs["ohlcv"]
     ts_event_ns = ohlcv.get("ts_event_ns", 0)
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # Plan A Sem 1 (07/06/2026) — Detection mode source ENRICHER_SOURCE
+    # ═══════════════════════════════════════════════════════════════════════
+    # En mode `sierra`, `ohlcv["_sierra_bar"]` contient les 380 cols Sierra
+    # natives (delta_bar, swing_*, ib_*, dist_mq_*, open_type, day_type, etc.)
+    # On les merge dans payload AVANT les engines Python pour :
+    #   1. Skip LOT 1 trades (delta_bar deja natif, pas de trades_df)
+    #   2. Skip LOT 2-4+6 (clusters/big/absorb/delta_div_ext natifs Sierra)
+    #   3. GARDER Pass 4c-prereq + game_changers Python (preservation Open
+    #      Type prod - divergence empirique a investiguer Sem 2-3)
+    #   4. GARDER LOT 5 trapped (besoin wrapper VAP→cells Sem 2)
+    #
+    # CONTRAINTE SOUVERAINE Jackson 07/06 : "on garde Open Type Python,
+    # on branche en parallele du systeme actuel, on doit etre full Sierra".
+    # Sequence C hybride (cf live_enricher_io.py docstring).
+    is_sierra_mode = ohlcv.get("_source") == "sierra"
+    _sierra_bar = ohlcv.get("_sierra_bar") if is_sierra_mode else None
+
     with state.lock:
         state.update_mq(inputs["mq_levels"])
         state.update_vix(inputs["vix"])
@@ -101,6 +119,20 @@ def compose_enriched_payload(
     payload = dict(ohlcv)  # base : OHLCV
     payload["symbol"] = symbol
     payload["ts_event_ns"] = ts_event_ns
+    payload["_enricher_source"] = "sierra" if is_sierra_mode else "databento"
+
+    # En mode Sierra : merger les features natives 380 cols dans payload AVANT
+    # les engines. Les engines downstream qui lisent payload.get("delta_bar"),
+    # payload.get("swing_high"), payload.get("ib_high"), etc., recoivent
+    # automatiquement les valeurs Sierra C++ au lieu de recalculs Python.
+    # Note : ne pas ecraser les cles deja dans payload (open/high/low/close/ts/symbol).
+    if is_sierra_mode and _sierra_bar:
+        _protected_keys = {"symbol", "ts_event_ns", "_enricher_source",
+                           "_source", "_sierra_bar",
+                           "open", "high", "low", "close", "volume"}
+        for k, v in _sierra_bar.items():
+            if k not in _protected_keys and k not in payload:
+                payload[k] = v
 
     # Inject MQ snapshot (passthrough Phase 3a)
     if inputs["mq_levels"]:
@@ -275,19 +307,28 @@ def compose_enriched_payload(
     #      Sans ce calcul : pattern V1 26 jours features mortes reproduit.
     import pandas as _pd  # local import (heavy module deja loaded)
     payload["ts_event"] = _pd.Timestamp(ts_event_ns, unit="ns", tz="UTC")
-    # delta_bar = sum signed_size (A=BUY +size / B=SELL -size / N=ignore)
+    # delta_bar = sum signed_size
+    # Mode databento : recompute Python depuis trades_df (fix 07/06 signe inverse).
+    # Mode sierra : SKIP (delta_bar natif C++ deja merge dans payload via _sierra_bar).
+    # FIX 07/06/2026 (verif empirique 268 bars NQ 03/06) : convention Databento
+    # side='A' = action sur ASK = SELLER aggressif (frappe l'ask) -> delta -= s
+    # side='B' = action sur BID = BUYER aggressif (frappe le bid) -> delta += s
+    # Bug pre-fix : signe inverse, bars baissieres avaient delta moyen +89.9,
+    # bars haussieres -91.0 (cf check_delta_sign.py + rapports backtest 07/06).
     # Fix B8 code-reviewer Round 3 : pd.notna() detecte NaN pandas
     # (not None ne suffit pas - NaN passe None check et propage en
     # float(NaN) = NaN -> cascade silent feature mortes).
-    delta_bar_total = 0.0
-    if not trades_df.empty and {"size", "side"}.issubset(trades_df.columns):
-        for _trade in trades_df[["size", "side"]].itertuples(index=False):
-            s = float(_trade.size) if _trade.size is not None and _pd.notna(_trade.size) else 0.0
-            if _trade.side == "A":
-                delta_bar_total += s
-            elif _trade.side == "B":
-                delta_bar_total -= s
-    payload["delta_bar"] = delta_bar_total
+    if not is_sierra_mode:
+        delta_bar_total = 0.0
+        if not trades_df.empty and {"size", "side"}.issubset(trades_df.columns):
+            for _trade in trades_df[["size", "side"]].itertuples(index=False):
+                s = float(_trade.size) if _trade.size is not None and _pd.notna(_trade.size) else 0.0
+                if _trade.side == "A":
+                    delta_bar_total -= s
+                elif _trade.side == "B":
+                    delta_bar_total += s
+        payload["delta_bar"] = delta_bar_total
+    # mode sierra : payload["delta_bar"] vient du merge _sierra_bar (C++ natif)
 
     # ──────────────────────────────────────────────────────────────────────
     # Phase 3c semaine 4 : engines streaming (76 + 4 MGC + 10 ES/NQ = 90 max)
@@ -408,13 +449,16 @@ def compose_enriched_payload(
         #      Sous lock state (anti corruption deque concurrent mutation).
         with state.lock:
             # LOT 1 : trades aggregates (foundation, produit delta_div_buy/sell)
-            s_trades = state.get_engine_state(
-                "phase_b_plus_plus_trades",
-                factory=lambda: make_phase_b_plus_plus_trades_state(symbol=symbol_pure),
-            )
-            payload = add_phase_b_plus_plus_trades_streaming(
-                payload, s_trades, trades_in_window=trades_records,
-            )
+            # Plan A Sem 1 : SKIP en mode sierra (delta_bar/cvd_day/delta_div_*
+            # natifs Sierra DMP deja merges dans payload via _sierra_bar).
+            if not is_sierra_mode:
+                s_trades = state.get_engine_state(
+                    "phase_b_plus_plus_trades",
+                    factory=lambda: make_phase_b_plus_plus_trades_state(symbol=symbol_pure),
+                )
+                payload = add_phase_b_plus_plus_trades_streaming(
+                    payload, s_trades, trades_in_window=trades_records,
+                )
 
             # ──────────────────────────────────────────────────────────
             # P6c + P6d : proxies streaming pour features DMP-C++ NON-
@@ -534,41 +578,61 @@ def compose_enriched_payload(
             )
 
             # LOT 2 : big orders V2 (10 features VAP scan)
-            s_big_v2 = state.get_engine_state(
-                "phase_b_plus_plus_big_v2",
-                factory=lambda: make_big_orders_v2_state(symbol=symbol_pure),
-            )
-            payload = add_big_orders_v2_streaming(payload, s_big_v2, footprint_cells=cells)
+            # Plan A Sem 1 : SKIP en mode sierra (dist_big_ask/bid_nearest_*
+            # + n_big_ask/bid_v2_t1-t4 natifs Sierra DMP via Batch B big_orders).
+            if not is_sierra_mode:
+                s_big_v2 = state.get_engine_state(
+                    "phase_b_plus_plus_big_v2",
+                    factory=lambda: make_big_orders_v2_state(symbol=symbol_pure),
+                )
+                payload = add_big_orders_v2_streaming(payload, s_big_v2, footprint_cells=cells)
 
             # LOT 3 : cluster V2 (5 features runs detection)
-            s_cluster_v2 = state.get_engine_state(
-                "phase_b_plus_plus_cluster_v2",
-                factory=lambda: make_cluster_v2_state(symbol=symbol_pure),
-            )
-            payload = add_cluster_v2_streaming(payload, s_cluster_v2, footprint_cells=cells)
+            # Plan A Sem 1 : SKIP en mode sierra (dist_cluster_nearest_up/dn +
+            # n_clusters_20t/50t natifs Sierra DMP).
+            if not is_sierra_mode:
+                s_cluster_v2 = state.get_engine_state(
+                    "phase_b_plus_plus_cluster_v2",
+                    factory=lambda: make_cluster_v2_state(symbol=symbol_pure),
+                )
+                payload = add_cluster_v2_streaming(payload, s_cluster_v2, footprint_cells=cells)
 
             # LOT 4 : stack + absorption (produit near_resistance/support_level)
-            s_absorb = state.get_engine_state(
-                "phase_b_plus_plus_absorb",
-                factory=lambda: make_stack_absorb_state(symbol=symbol_pure),
-            )
-            payload = add_stack_absorb_streaming(payload, s_absorb, footprint_cells=cells)
+            # Plan A Sem 1 : SKIP en mode sierra (bn_absorb_ask/bid natifs Sierra
+            # DMP_Reader.h:1180-1189 meme formule 3:1+seuil).
+            if not is_sierra_mode:
+                s_absorb = state.get_engine_state(
+                    "phase_b_plus_plus_absorb",
+                    factory=lambda: make_stack_absorb_state(symbol=symbol_pure),
+                )
+                payload = add_stack_absorb_streaming(payload, s_absorb, footprint_cells=cells)
 
             # LOT 5 : trapped traders (consomme near_* de LOT 4, fail-loud check)
-            s_trapped = state.get_engine_state(
-                "phase_b_plus_plus_trapped",
-                factory=lambda: make_trapped_traders_state(symbol=symbol_pure),
-            )
-            payload = add_trapped_traders_streaming(
-                payload, s_trapped, footprint_cells=cells,
-            )
+            # Plan A Sem 1 : SKIP TEMPORAIRE en mode sierra (LOT 4 absorb skip ->
+            # near_resistance/support_level absent du payload -> fail-loud raise).
+            # Sem 2 : wrapper VAP→cells depuis sc.VolumeAtPriceForBars natif Sierra
+            # C++ (~150 LOC) + reactiver LOT 4 + LOT 5 en mode sierra.
+            # Impact Sem 1 : 10 features trapped (categorie D unique inventaire 469)
+            # = absentes temporairement en mode sierra. Acceptable pour tests parite
+            # des autres 459 features.
+            if not is_sierra_mode:
+                s_trapped = state.get_engine_state(
+                    "phase_b_plus_plus_trapped",
+                    factory=lambda: make_trapped_traders_state(symbol=symbol_pure),
+                )
+                payload = add_trapped_traders_streaming(
+                    payload, s_trapped, footprint_cells=cells,
+                )
 
             # LOT 6 : delta_div extension lines (consomme delta_div_buy/sell de LOT 1)
-            s_delta_div = state.get_engine_state(
-                "phase_b_plus_plus_delta_div_ext",
-                factory=make_delta_div_ext_state,
-            )
-            payload = add_delta_div_ext_streaming(payload, s_delta_div)
+            # Plan A Sem 1 : SKIP en mode sierra (delta_div_buy/sell natifs Sierra
+            # DMP_Reader 3.7.5 fix delta_divergence_clean - Extension Lines C++).
+            if not is_sierra_mode:
+                s_delta_div = state.get_engine_state(
+                    "phase_b_plus_plus_delta_div_ext",
+                    factory=make_delta_div_ext_state,
+                )
+                payload = add_delta_div_ext_streaming(payload, s_delta_div)
 
         # ──────────────────────────────────────────────────────────────────
         # Pass 2 Phase 3c semaine 4 : gold_phase_d (MGC) + intermarket (ES/NQ)
