@@ -293,6 +293,60 @@ def test_nan_inputs():
 # Tests batch mode
 # ────────────────────────────────────────────────────────────────────────────
 
+def test_dist_us_high_pct_signed():
+    """dist_us_high_pct SIGNED : negatif si close < us_high."""
+    from CORE.sessions_fine import SessionsFineCalculator
+
+    calc = SessionsFineCalculator()
+    # us_cash open 09:30 ET bar high=110
+    ts1 = _et_to_utc(2026, 6, 10, 9, 30)
+    calc.update(bar_ts_utc=ts1, bar_high=110.0, bar_low=99.0, close=105.0)
+
+    # Bar 10:00 close=100 < us_high=110 -> dist = (100-110)/110*100 ~ -9.09 (negatif)
+    ts2 = _et_to_utc(2026, 6, 10, 10, 0)
+    f = calc.update(bar_ts_utc=ts2, bar_high=102.0, bar_low=99.0, close=100.0)
+    assert f["dist_us_high_pct"] < 0
+    assert abs(f["dist_us_high_pct"] - (-9.09)) < 0.1
+
+
+def test_dist_london_low_pct_positive_apres_remontee():
+    """dist_london_low_pct positif si close > london_low."""
+    from CORE.sessions_fine import SessionsFineCalculator
+
+    calc = SessionsFineCalculator()
+    # London 05:00 ET low=95
+    ts1 = _et_to_utc(2026, 6, 10, 5, 0)
+    calc.update(bar_ts_utc=ts1, bar_high=98.0, bar_low=95.0, close=96.0)
+
+    # Bar 07:00 close=100 > london_low=95 -> dist positif
+    ts2 = _et_to_utc(2026, 6, 10, 7, 0)
+    f = calc.update(bar_ts_utc=ts2, bar_high=101.0, bar_low=99.0, close=100.0)
+    assert f["dist_london_low_pct"] > 0
+
+
+def test_session_date_exposed():
+    """Q2 : session_date expose en ISO YYYY-MM-DD."""
+    from CORE.sessions_fine import SessionsFineCalculator
+
+    calc = SessionsFineCalculator()
+    ts = _et_to_utc(2026, 6, 10, 14, 0)
+    f = calc.update(bar_ts_utc=ts, bar_high=100.0, bar_low=99.0, close=99.5)
+    assert f["session_date"] == "2026-06-10"
+
+
+def test_session_date_trading_exposed():
+    """Q2 : session_date_trading expose, J+1 si >= 18:00 ET."""
+    from CORE.sessions_fine import SessionsFineCalculator
+
+    calc = SessionsFineCalculator()
+    # 18:30 ET = J+1 trading_date
+    ts = _et_to_utc(2026, 6, 10, 18, 30)
+    f = calc.update(bar_ts_utc=ts, bar_high=100.0, bar_low=99.0, close=99.5)
+    assert f["session_date_trading"] == "2026-06-11"
+    # Mais session_date (UTC civil) reste 10 (ou 11 selon convert UTC->ET)
+    assert f["session_date"] == "2026-06-10"
+
+
 def test_batch_mode_dataframe():
     """compute_sessions_fine_features batch sur DataFrame."""
     from CORE.sessions_fine import compute_sessions_fine_features

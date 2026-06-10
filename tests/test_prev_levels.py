@@ -93,6 +93,41 @@ def test_open_cash_snapshot_a_930_et():
     assert f_open["cash_low"] == 99.0
 
 
+def test_open_830_et_snapshot_economic_releases():
+    """Snapshot price a 08:30 ET (CPI/NFP/PCE releases)."""
+    from CORE.prev_levels import PrevLevelsCalculator
+
+    calc = PrevLevelsCalculator()
+
+    # Bar 08:00 ET (avant 08:30)
+    ts_pre = _et_to_utc(2026, 6, 10, 8, 0)
+    f_pre = calc.update(bar_ts_utc=ts_pre, bar_high=100.0, bar_low=99.0,
+                        close=99.5, atr=2.0)
+    assert math.isnan(f_pre["open_830_et"])
+
+    # Bar 08:30 ET = release window
+    ts_830 = _et_to_utc(2026, 6, 10, 8, 30)
+    f_830 = calc.update(bar_ts_utc=ts_830, bar_high=100.5, bar_low=99.5,
+                        close=100.0, atr=2.0)
+    assert f_830["open_830_et"] == 100.0
+
+
+def test_above_open_830_bool():
+    """above_open_830 True si close > open_830_et."""
+    from CORE.prev_levels import PrevLevelsCalculator
+
+    calc = PrevLevelsCalculator()
+    ts_830 = _et_to_utc(2026, 6, 10, 8, 30)
+    calc.update(bar_ts_utc=ts_830, bar_high=100.5, bar_low=99.5,
+                close=100.0, atr=2.0)
+
+    # Bar 09:00 close=102 > open_830=100 -> True
+    ts2 = _et_to_utc(2026, 6, 10, 9, 0)
+    f = calc.update(bar_ts_utc=ts2, bar_high=102.5, bar_low=100.0,
+                    close=102.0, atr=2.0)
+    assert f["above_open_830"] is True
+
+
 def test_above_open_cash():
     """close > open_cash -> above_open_cash True."""
     from CORE.prev_levels import PrevLevelsCalculator

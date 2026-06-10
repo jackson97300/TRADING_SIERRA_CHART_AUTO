@@ -45,7 +45,7 @@ def test_cold_start_under_window_short_empty_features():
     calc = CtxRollingCalculator()
     f = calc.update(close=100.0, bar_high=101.0, bar_low=99.0,
                     delta_bar=0.0, total_vol=1000.0, atr=2.0)
-    assert math.isnan(f["ctx_vol_z_5"])
+    assert math.isnan(f["ctx_vol_z_20"])
     assert f["ctx_climax_signal"] is False
 
 
@@ -64,7 +64,7 @@ def test_output_structure_25_features():
         "ctx_poor_high", "ctx_poor_low",
         "ctx_excess_high_bars", "ctx_excess_low_bars",
         "ctx_double_top_trap",
-        "ctx_vol_sell_buy_ratio_5", "ctx_vol_slope_5", "ctx_vol_z_5",
+        "ctx_vol_sell_buy_ratio_5", "ctx_vol_slope_5", "ctx_vol_z_20",
         "ctx_finish_strength_mean_5", "ctx_dist_vwap_velocity",
         "ctx_vwap_slope_accel", "ctx_va_position_velocity",
         "ctx_side_flip_count_10", "ctx_range_vs_atr_10",
@@ -215,7 +215,7 @@ def test_vol_slope_positive_increasing_volume():
     assert f["ctx_vol_slope_5"] > 0
 
 
-def test_vol_z_5_signed():
+def test_vol_z_20_signed():
     """Volume > rolling mean -> vol_z positif (SIGNED feature)."""
     from CORE.ctx_rolling import CtxRollingCalculator
 
@@ -228,7 +228,7 @@ def test_vol_z_5_signed():
     # Bar 6 : vol 3000 (spike)
     f = calc.update(close=100.0, bar_high=101.0, bar_low=99.0,
                     delta_bar=0.0, total_vol=3000.0, atr=2.0)
-    assert f["ctx_vol_z_5"] > 0
+    assert f["ctx_vol_z_20"] > 0
 
 
 def test_price_slope_5_negative_decreasing():
@@ -368,7 +368,7 @@ def test_nan_close_empty_features():
     f = calc.update(close=float("nan"), bar_high=101.0, bar_low=99.0,
                     delta_bar=0.0, total_vol=1000.0, atr=2.0)
     assert f["ctx_climax_signal"] is False
-    assert math.isnan(f["ctx_vol_z_5"])
+    assert math.isnan(f["ctx_vol_z_20"])
 
 
 def test_atr_zero_empty_features():
@@ -378,7 +378,7 @@ def test_atr_zero_empty_features():
     calc = CtxRollingCalculator()
     f = calc.update(close=100.0, bar_high=101.0, bar_low=99.0,
                     delta_bar=0.0, total_vol=1000.0, atr=0.0)
-    assert math.isnan(f["ctx_vol_z_5"])
+    assert math.isnan(f["ctx_vol_z_20"])
 
 
 def test_reset_clears_state():
@@ -391,7 +391,7 @@ def test_reset_clears_state():
     f = calc.update(close=100.0, bar_high=101.0, bar_low=99.0,
                     delta_bar=0.0, total_vol=1000.0, atr=2.0)
     # Apres reset, cold-start
-    assert math.isnan(f["ctx_vol_z_5"])
+    assert math.isnan(f["ctx_vol_z_20"])
 
 
 # ────────────────────────────────────────────────────────────────────────────

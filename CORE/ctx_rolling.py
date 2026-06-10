@@ -40,9 +40,9 @@ critere 8 (audit producing edge candidates -> ml-trainer obligatoire avant integ
 ## Volume rolling (3)
   13. ctx_vol_sell_buy_ratio_5 : float, mean sell_vol/buy_vol sur 5 bars
   14. ctx_vol_slope_5          : float SIGNED, slope total_vol 5 bars
-  15. ctx_vol_z_5              : float SIGNED, z-score total_vol vs window_long (20).
-                                 NOTE : nom "5" historique design doc, calcul reel sur 20.
-                                 A renommer ctx_vol_z_20 Phase 5 si DSR confirme utilite.
+  15. ctx_vol_z_20              : float SIGNED, z-score total_vol vs window_long (20 bars).
+                                 Renomme de ctx_vol_z_5 (10/06 review) pour coherence
+                                 semantique : le calcul est sur 20 bars, pas 5.
 
 ## Finish strength + VWAP velocity (4)
   16. ctx_finish_strength_mean_5 : float, mean finish_strength 5 bars
@@ -68,7 +68,7 @@ Sources :
   - Absorption Sierra : bn_absorb_ask, bn_absorb_bid (optionnels)
 
 Garde-fou SIGNE (8 features SIGNEES) :
-  - ctx_vol_slope_5, ctx_vol_z_5 (volume direction)
+  - ctx_vol_slope_5, ctx_vol_z_20 (volume direction)
   - ctx_dist_vwap_velocity, ctx_vwap_slope_accel (VWAP momentum)
   - ctx_va_position_velocity (VA position momentum)
   - ctx_price_slope_5, ctx_delta_sum_3, ctx_delta_slope_5 (price/delta direction)
@@ -453,7 +453,7 @@ class CtxRollingCalculator:
             # Volume rolling
             "ctx_vol_sell_buy_ratio_5": vol_sb_ratio,
             "ctx_vol_slope_5": vol_slope,
-            "ctx_vol_z_5": float(vol_z),
+            "ctx_vol_z_20": float(vol_z),
             # Finish + VWAP velocity
             "ctx_finish_strength_mean_5": finish_mean,
             "ctx_dist_vwap_velocity": dist_vwap_vel,
@@ -502,7 +502,7 @@ class CtxRollingCalculator:
             "ctx_double_top_trap": False,
             "ctx_vol_sell_buy_ratio_5": np.nan,
             "ctx_vol_slope_5": np.nan,
-            "ctx_vol_z_5": np.nan,
+            "ctx_vol_z_20": np.nan,
             "ctx_finish_strength_mean_5": np.nan,
             "ctx_dist_vwap_velocity": np.nan,
             "ctx_vwap_slope_accel": np.nan,

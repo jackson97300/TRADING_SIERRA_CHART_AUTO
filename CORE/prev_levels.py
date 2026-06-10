@@ -26,9 +26,11 @@ Module reproduit 16 features historiques sur OHLCV Sierra natif :
   9.  dist_cash_high_atr : (close - cash_high) / atr (signed)
   10. dist_cash_low_atr  : (close - cash_low) / atr (signed)
 
-  ## Open RTH cash
+  ## Opens (4)
   11. open_cash : prix au RTH open 09:30 ET (snapshot)
   12. above_open_cash : bool, close > open_cash
+  13. open_830_et : prix au open 08:30 ET (economic releases CPI/NFP/PCE)
+  14. above_open_830 : bool, close > open_830_et
 
   ## Overnight (18:00 ET J-1 -> 09:30 ET J)
   13. ovn_high : max bar_high pendant overnight
@@ -81,6 +83,8 @@ ET = ZoneInfo("America/New_York")
 # Heures cles RTH cash session (ET)
 CASH_OPEN_TIME_ET = time(9, 30)
 CASH_CLOSE_TIME_ET = time(16, 0)
+# Heure economic releases (CPI / NFP / PCE / Retail Sales)
+ECON_OPEN_TIME_ET = time(8, 30)
 # CME daily reset = 18:00 ET (nouveau session date trading)
 CME_DAILY_RESET_ET = time(18, 0)
 
@@ -117,6 +121,9 @@ class PrevLevelsCalculator:
         self._cash_low: Optional[float] = None
         self._open_cash: Optional[float] = None
         self._in_cash_session: bool = False
+        # Open 08:30 ET (economic releases)
+        self._open_830_et: Optional[float] = None
+        self._in_830_window: bool = False
         # Overnight
         self._ovn_high: Optional[float] = None
         self._ovn_low: Optional[float] = None
@@ -195,6 +202,14 @@ class PrevLevelsCalculator:
         )
 
         # ─────────────────────────────────────────────────────────
+        # Open 08:30 ET (economic releases : CPI/NFP/PCE/Retail Sales)
+        # Snapshot a la 1ere bar >= 08:30 ET du jour
+        # ─────────────────────────────────────────────────────────
+        if not self._in_830_window and ts_et.time() >= ECON_OPEN_TIME_ET:
+            self._open_830_et = close
+            self._in_830_window = True
+
+        # ─────────────────────────────────────────────────────────
         # Overnight (avant cash open RTH 09:30 ET, apres CME reset 18:00 ET)
         # ─────────────────────────────────────────────────────────
         in_ovn = ts_et.time() < CASH_OPEN_TIME_ET or ts_et.time() >= CME_DAILY_RESET_ET
@@ -245,6 +260,14 @@ class PrevLevelsCalculator:
                 bool(close > self._open_cash)
                 if self._open_cash is not None else False
             ),
+            # Open 08:30 ET (economic releases)
+            "open_830_et": (
+                self._open_830_et if self._open_830_et is not None else np.nan
+            ),
+            "above_open_830": (
+                bool(close > self._open_830_et)
+                if self._open_830_et is not None else False
+            ),
             # Overnight
             "ovn_high": self._ovn_high if self._ovn_high is not None else np.nan,
             "ovn_low": self._ovn_low if self._ovn_low is not None else np.nan,
@@ -290,6 +313,9 @@ class PrevLevelsCalculator:
         self._cash_low = None
         self._open_cash = None
         self._in_cash_session = False
+        # Reset open 830 ET
+        self._open_830_et = None
+        self._in_830_window = False
         # Reset overnight
         self._ovn_high = None
         self._ovn_low = None
@@ -313,6 +339,8 @@ class PrevLevelsCalculator:
             "dist_cash_low_atr": np.nan,
             "open_cash": np.nan,
             "above_open_cash": False,
+            "open_830_et": np.nan,
+            "above_open_830": False,
             "ovn_high": np.nan,
             "ovn_low": np.nan,
             "ovn_broken_up": False,

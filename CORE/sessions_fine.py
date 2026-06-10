@@ -35,9 +35,20 @@ Cf design doc DOCS/superpowers/specs/2026-06-06-sierra-full-migration-design.md 
   18. dist_ny_open_pct
   19. dist_after_open_pct
 
+## Distances pct highs/lows par session (8)
+  20. dist_asia_high_pct    : (close - asia_high) / asia_high * 100 (SIGNED)
+  21. dist_asia_low_pct     : (close - asia_low) / asia_low * 100 (SIGNED)
+  22. dist_london_high_pct, dist_london_low_pct (SIGNED)
+  23. dist_us_high_pct, dist_us_low_pct (SIGNED)
+  24. dist_after_high_pct, dist_after_low_pct (SIGNED)
+
 ## Misc (2)
-  20. pct_in_range          : (close - day_low) / (day_high - day_low), [0,1]
-  21. is_cash_session       : alias is_in_us_cash (compat downstream)
+  25. pct_in_range          : (close - day_low) / (day_high - day_low), [0,1]
+  26. is_cash_session       : alias is_in_us_cash (compat downstream)
+
+## Metadonnees exposees (2) - Q2 Jackson 10/06
+  27. session_date          : date civile UTC (group-by audits downstream)
+  28. session_date_trading  : date trading CME (reset 18:00 ET)
 
 ⚠️ DST hell prevention (regle PIVOT pour Phase 3.4) :
   - now_utc tz-aware OBLIGATOIRE -> ValueError si naive
@@ -287,9 +298,21 @@ class SessionsFineCalculator:
             "dist_london_open_pct": self._dist_pct(close, self._london_open),
             "dist_ny_open_pct": self._dist_pct(close, self._ny_open),
             "dist_after_open_pct": self._dist_pct(close, self._after_open),
+            # Distances pct highs/lows par session (SIGNED, Q1 Jackson 10/06)
+            "dist_asia_high_pct": self._dist_pct(close, self._asia_high),
+            "dist_asia_low_pct": self._dist_pct(close, self._asia_low),
+            "dist_london_high_pct": self._dist_pct(close, self._london_high),
+            "dist_london_low_pct": self._dist_pct(close, self._london_low),
+            "dist_us_high_pct": self._dist_pct(close, self._us_high),
+            "dist_us_low_pct": self._dist_pct(close, self._us_low),
+            "dist_after_high_pct": self._dist_pct(close, self._after_high),
+            "dist_after_low_pct": self._dist_pct(close, self._after_low),
             # Misc
             "pct_in_range": pct_in_range,
             "is_cash_session": bool(is_in_us_cash),
+            # Metadonnees exposees (Q2 Jackson 10/06)
+            "session_date": ts_et.date().isoformat(),
+            "session_date_trading": trading_date.isoformat(),
         }
 
     @staticmethod
@@ -351,8 +374,18 @@ class SessionsFineCalculator:
             "dist_london_open_pct": np.nan,
             "dist_ny_open_pct": np.nan,
             "dist_after_open_pct": np.nan,
+            "dist_asia_high_pct": np.nan,
+            "dist_asia_low_pct": np.nan,
+            "dist_london_high_pct": np.nan,
+            "dist_london_low_pct": np.nan,
+            "dist_us_high_pct": np.nan,
+            "dist_us_low_pct": np.nan,
+            "dist_after_high_pct": np.nan,
+            "dist_after_low_pct": np.nan,
             "pct_in_range": np.nan,
             "is_cash_session": False,
+            "session_date": None,
+            "session_date_trading": None,
         }
 
 
