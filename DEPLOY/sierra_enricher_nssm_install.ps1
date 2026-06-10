@@ -25,9 +25,9 @@ param(
     [ValidateSet("ES", "NQ", "MGC")]
     [string]$Symbol,
 
-    [string]$PythonExe = "C:/Program Files/Python313/python.exe",
+    [string]$PythonExe = "C:/Program Files/Python311/python.exe",
     [string]$ProjectRoot = "C:/TRADING_SIERRA_CHART_AUTO",
-    [string]$NssmExe = "C:/ProgramData/chocolatey/bin/nssm.exe",
+    [string]$NssmExe = "C:/windows/system32/nssm.exe",
     [int]$PollIntervalSec = 10
 )
 
@@ -98,7 +98,12 @@ Invoke-NssmSet $ServiceName Description "MIA Sierra Enricher $Symbol (Phase 4.2 
 Invoke-NssmSet $ServiceName Start "SERVICE_DEMAND_START"
 
 # Restart policy : restart 30s apres crash (auto-recovery propre)
-Invoke-NssmSet $ServiceName AppExit "Default" "Restart"
+# AppExit prend 2 sous-params (Default + Restart action), appel direct nssm
+& $NssmExe set $ServiceName AppExit Default Restart
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "nssm set AppExit failed (exit $LASTEXITCODE)"
+    exit 3
+}
 Invoke-NssmSet $ServiceName AppRestartDelay "30000"
 
 # Fix B1 review : graceful shutdown nssm

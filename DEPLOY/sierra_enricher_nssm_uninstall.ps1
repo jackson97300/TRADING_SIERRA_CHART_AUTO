@@ -11,7 +11,7 @@ param(
     [ValidateSet("ES", "NQ", "MGC")]
     [string]$Symbol,
 
-    [string]$NssmExe = "C:/ProgramData/chocolatey/bin/nssm.exe"
+    [string]$NssmExe = "C:/windows/system32/nssm.exe"
 )
 
 $ServiceName = "MIA-Sierra-Enricher-$Symbol"
