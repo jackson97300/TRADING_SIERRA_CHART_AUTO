@@ -7,6 +7,19 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE SIERRA-3.5-DSR 2026-06-10]** **CRITIQUE - Validation DSR Lopez ctx_rolling.py reportee Phase 4** | 1 jour ml-trainer audit | HIGH | WAITING_DATA
+  - **Source** : design doc section 4.6 + section 5 garde-fou SIGNE + `.claude/rules/critical-tasks-review.md` critere 8 (audit producing edge candidates)
+  - **Probleme** : ctx_rolling.py Phase 3.5 produit 25 features semantique trade-decisionnelle (climax_signal, failed_auction, absorption_streak, delta_exhaustion, momentum_exhaustion, poor_high/low, double_top_trap). Selon design doc s4.6 WARNING : "MUST pass DSR > 0.5 avant prod (ml-trainer review obligatoire)".
+  - **Validation requise** Phase 4 dual-run sur data reelle 5 jours :
+    1. Walk-forward 12-fold sur 6 mois Sierra historique
+    2. DSR Lopez >= 0.5 sur features SIGNED (8 features : vol_slope_5, vol_z_5, dist_vwap_velocity, vwap_slope_accel, va_position_velocity, price_slope_5, delta_sum_3, delta_slope_5)
+    3. Convergence cross-fold > 60% (5 jours haussiers / 5 jours baissiers)
+    4. HHI top-2 < 33% (anti concentration source)
+    5. Costs slippage inclus
+  - **Action** : agent ml-trainer obligatoire avant integration Phase 5 backtest Bot 1 V3.
+  - **Si DSR < 0.5 sur N features** : drop ces features OU reformuler semantique (mais pas integrer en prod).
+  - **Trigger** : Phase 4.4 Compare chaque feature convergence + Phase 5.3 Re-backtest Bot 1 V3.
+
 - **[DETTE SIERRA-3.3 2026-06-10]** **open_830_et + above_open_830 features (economic releases)** | 1h code + tests | LOW-MEDIUM | PROPOSED
   - **Source** : review batch code-reviewer agentId a29ed1d3858b5d53e (10/06) point A5 + question Jackson n°2
   - **Probleme** : `open_830_et` correspond a 08:30 ET = release CPI/NFP/PCE/Retail Sales. Pour modele ML "fade economic release" vs "fade NY open", c'est une feature distincte de `open_cash` (09:30 ET = equities open).
