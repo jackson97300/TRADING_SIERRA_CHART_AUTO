@@ -289,24 +289,32 @@ PROHIBITED_FEATURES = {
     "mq_dist_call_0dte",  # doublon de dist_mq_call_0dte normalise
 
     # ─────────────────────────────────────────────────────────────────
-    # TEMPORAIRE — REINCORPORER APRES 3+ JOURS SCHEMA 3.7.3 (~16-17/04)
-    # Les JSONL pre-13/04 ont les big_* a 0 (bug 26 jours) et pas cluster_*.
-    # Fix applique 13/04 : DMP_ReadBigOrdersFromVAP + DMP_ReadVolumeClustersFromVAP.
-    # Quand 3+ jours de collecte schema 3.7.3, retirer ces 28 features de
-    # PROHIBITED_FEATURES pour les reinjecter dans le dataset.
+    # AUDIT SPRINT 1 10/06/2026 — Cat 11 Big orders + clusters
+    # Audit croise code-reviewer agentId a6e29f5a7fdbddbb4 + claude empirique
+    # data NQ 08/06 (1125 bars). Verdict : 14/28 features sauvables.
+    #
+    # RETIREES de PROHIBITED (14 features) - voir tableau agent :
+    #   big_ask_cluster_20t, _50t            : 58-89% nz, mean 5-8 propre
+    #   big_bid_cluster_20t, _50t            : symetrique
+    #   n_big_ask_t3, n_big_bid_t3           : ES 32%/37%, NQ 23%/11% propre
+    #   dist_big_ask_nearest_up/dn           : 100% nz NQ, signal directionnel
+    #   dist_big_bid_nearest_up/dn           : idem
+    #   dist_cluster_nearest_up/dn           : 65% nz, signal directionnel
+    #   n_clusters_20t, n_clusters_50t       : 86-99% nz, vivants
+    #
+    # LAISSEES MORTES (14 features) - saturation cap C++ buffer NQ :
+    #   n_big_ask_t1, n_big_ask_t2, n_big_ask_t4 : NQ cap buffer 20 ou seuil $1000 trop eleve
+    #   n_big_bid_t1, n_big_bid_t2, n_big_bid_t4 : symetrique
+    #   big_ask_cluster_20t_t1, _t2, _t3, _t4    : tier-specific thresholds = leak
+    #   big_bid_cluster_20t_t1, _t2, _t3, _t4    : idem
     # ─────────────────────────────────────────────────────────────────
-    # Big orders (24 features)
-    "big_ask_cluster_20t", "big_ask_cluster_20t_t1", "big_ask_cluster_20t_t2",
-    "big_ask_cluster_20t_t3", "big_ask_cluster_20t_t4", "big_ask_cluster_50t",
-    "big_bid_cluster_20t", "big_bid_cluster_20t_t1", "big_bid_cluster_20t_t2",
-    "big_bid_cluster_20t_t3", "big_bid_cluster_20t_t4", "big_bid_cluster_50t",
-    "n_big_ask_t1", "n_big_ask_t2", "n_big_ask_t3", "n_big_ask_t4",
-    "n_big_bid_t1", "n_big_bid_t2", "n_big_bid_t3", "n_big_bid_t4",
-    "dist_big_ask_nearest_up", "dist_big_ask_nearest_dn",
-    "dist_big_bid_nearest_up", "dist_big_bid_nearest_dn",
-    # Cluster volume schema 3.7.3 (4 features)
-    "dist_cluster_nearest_up", "dist_cluster_nearest_dn",
-    "n_clusters_20t", "n_clusters_50t",
+    # Big orders TIER-SPECIFIC LAISSES MORTES (saturation cap C++ NQ)
+    "big_ask_cluster_20t_t1", "big_ask_cluster_20t_t2",
+    "big_ask_cluster_20t_t3", "big_ask_cluster_20t_t4",
+    "big_bid_cluster_20t_t1", "big_bid_cluster_20t_t2",
+    "big_bid_cluster_20t_t3", "big_bid_cluster_20t_t4",
+    "n_big_ask_t1", "n_big_ask_t2", "n_big_ask_t4",
+    "n_big_bid_t1", "n_big_bid_t2", "n_big_bid_t4",
 
     # ─────────────────────────────────────────────────────────────────
     # AJOUT 18/04/2026 — suite audit code-reviewer (GO-avec-reserves)
@@ -323,11 +331,13 @@ PROHIBITED_FEATURES = {
     # TODO : investiguer code C++ dist_ext_edge_sell (calcul different ES/NQ ?).
     "dist_ext_edge_sell_atr",
 
-    # RE-AJOUT 18/04 (purge v4 02/05) : bar_long_dn_bar + bar_long_up_bar
-    # pollution historique backfill (pre-fix DMP 3.7.6). NQ aggregate mean 0.737
-    # vs fire rate 11% post-fix 17/04 -> incompatible "rare event par design".
-    # Temporaire : reviennent post-rebuild v4 debut mai.
-    "bar_long_dn_bar", "bar_long_up_bar",
+    # AUDIT SPRINT 1 10/06/2026 — Cat 13 bar_long_*_bar SAUVES
+    # Audit empirique NQ 08/06 : bar_long_up_bar 22.9% nz, bar_long_dn_bar 24.4% nz.
+    # Agent code-reviewer ES 05/06 confirme rare-event sain post-fix DMP 3.7.6.
+    # Anciennement bloquees par pollution backfill pre-3.7.6 (NQ mean 0.737).
+    # Post-rebuild v4 debut mai + 2 mois data propre = securises.
+    # RETIREES de PROHIBITED : reincorporees dans dataset ML.
+    # (lignes supprimees, plus dans liste PROHIBITED)
 
     # RESERVE 3 RESOLUE : bn_score_bear + bn_score_raw = composites casses.
     # Audit DMP_Transform.h:1069-1075 : score_bear = sum(bn_color_dn, bn_absorb_bid,
