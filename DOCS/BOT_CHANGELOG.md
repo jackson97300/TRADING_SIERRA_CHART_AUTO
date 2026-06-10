@@ -62,6 +62,68 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-10 12:00 — KILL BN V5 definitif + capitalisation 4 idees vers Bot 3 v3 v2
+
+**Categorie** : ROLLBACK + REFACTORED-OUT
+**Impact prod** : PAPER (Bot 2 BN V5 sur Sim2 = freeze definitif)
+**Fichier(s)** :
+- Archive : `V1_ARCHIVE/BN_V5/` (engine + paper + tests + stress tool + README justification)
+- VPS env vars : `MIA_BN_V5_ENABLED=0` + `MIA_BN_V5_KILLED=1` + `MIA_BN_V5_KILLED_REASON=PATTERN_11_DATA_MINING_TRAP`
+
+**Reviewer(s) agent** : code-reviewer + market-analyst + claude self-audit (3/3 KILL convergent)
+
+### Quoi
+KILL definitif BN V5 (Bot 2 Sim2) apres 3 audits independants convergents. 4 idees valables capitalisees vers Bot 3 v3 v2.
+
+### Pourquoi
+- N=25 trades insuffisant (vs n>=100 Lopez)
+- PF Python 1.08, WR 36% (sous seuils GO)
+- HHI > 33% : 54% top 2 wins = doublons ES 05/06 (bug idempotence)
+- Sans doublons : PF = 0.50 (edge inexistant)
+- Bug Phase E mort (mutation ligne 970 invalide garde ligne 1003)
+- Pattern 11 V1 : 11 gates cascade (dont 5 ajoutees 10/06 sans backtest)
+- Logique patterns V/W/M/INV-V 1-min futures non validee litterature pro
+- 5/5 controles Lopez FAIL
+
+### Impact attendu
+- Sim2 vide (compte paper unlimited credit, pas de perte)
+- Economie 40-60h dev + 90j backtest BN V5 reinvestis Bot 3 v3 v2
+- Cesser le saignement -$3948 SC reel cumule (10/06 audit)
+- Focus sur 1 strategie qui marche (Bot 3 v3) vs 2 marginales (BN V5 + Bot 3 v3)
+
+### 4 idees capitalisees (backlog Bot 3 v3 v2)
+1. **Confluence MenthorQ** (HVL/PUT/CALL walls, GEX, BL) : edge reel (auto-realisation MM hedging)
+2. **Bar reversal niveau 1+2** (couleur + delta_bar) : filtre momentum minimal
+3. **Trailing Dow pullback** : methode classique adapter aux paliers ladder Bot 3 v3
+4. **Daily stop Douglas $300/$400** : helper commun cross-bot (deja partiel via DailyLimitsGuard)
+
+### Conditions reactivation future (non-negociables)
+1. Fix bug #6 (capture should_modify_dtc AVANT mutation pos["sl_current"])
+2. Backtest walk-forward 90j AVEC Phase E corrigee
+3. 5/5 controles Lopez OBLIGATOIRES (WF + DSR>=0.5 + n>=100 + HHI<33% + costs)
+4. Refonte minimaliste : ES M SHORT only + regime VIX>20 + SL pivot+buffer + TP cap + cooldown + cross-bot gate
+
+Si DSR < 0.3 sur backtest -> KILL definitif (pas de re-tentative).
+
+### Validation pre-deploy
+- [X] 3 audits agents convergents (KILL)
+- [X] Code-reviewer : bug #6 deal-breaker + 11 gates cascade
+- [X] Market-analyst : DATA_MINING_TRAP + doublons ES 05/06 + 0/5 Lopez
+- [X] Claude self-audit : confirmation bug #6 (mon code Phase E) + violation rules
+- [X] Jackson approuve : "OK GO MERCI"
+
+### Deployed at 2026-06-10 12:00 UTC
+- VPS env : `MIA_BN_V5_KILLED=1`
+- Service `MIA-DataBento-Paper-V2` Running (les autres bots continuent)
+- BN V5 ne booteront plus (kill switch `MIA_BN_V5_ENABLED=0` actif)
+
+### Lien
+- INCIDENT_LOG entry 2026-06-10 12:00 (27) [PATTERN_11 + DATA_MINING_TRAP]
+- Archive : `V1_ARCHIVE/BN_V5/README.md`
+- Memoire : `project_bn_v5_killed_20260610.md`
+
+---
+
 ## 2026-06-10 09:30 — FIX #56 SL HARDCAP $50 USD + Ladder recalibration empirique (SHADOW 24h)
 
 **Categorie** : FIX (protection) + RECALIBRATION (trailing/ladder)

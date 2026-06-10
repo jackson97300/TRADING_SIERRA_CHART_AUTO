@@ -567,6 +567,49 @@ TOUS DOIVENT etre coherents AVANT merge refacto, sinon bouton dashboard ment pen
 
 ---
 
+### 2026-06-10 12:00 (27) - [PATTERN_11 + DATA_MINING_TRAP] - KILL BN V5 definitif apres 3/3 audits convergents (code-reviewer + market-analyst + claude self-audit)
+
+**Contexte** : BN V5 deploye 23/05/2026 (decision souveraine Jackson malgre verdict NOGO walk-forward n=6 PF~1.2 ALEATOIRE). Apres 18 jours paper + sprint ULTRATHINK 10/06 matin (6 commits), audit complet de la logique trading commande par Jackson.
+
+**Ce qui a mal tourne** :
+1. **Edge non demontre statistiquement** : n=25 trades (vs n>=100 requis Lopez), PF Python 1.08 (sous seuil GO 1.3), WR 36% (sous 45%), 5/5 controles Lopez FAIL
+2. **Concentration HHI > 33%** : 2 trades doublons ES 05/06 07:51:34+35 (1 sec ecart, meme setup) = 54% du total wins. Sans ces doublons : PF tombe a 0.50
+3. **Pattern 11 V1 reproduit** : 11 gates en cascade (dont 5 ajoutees 10/06 matin sans backtest)
+4. **Bug deal-breaker Phase E** : `bn_v5_paper.py:968-1010` mutation ligne 970 puis re-test ligne 1003 = TOUJOURS False -> trailing DTC reel JAMAIS appele en live -> tous exits = SL initial ou TIMEOUT
+5. **Logique bancale** : patterns V/W/M/INV-V en 1-min futures non valides litterature pro (Bulkowski/Brooks/Raschke parlent DAILY stocks). SL pivot direct (no buffer) = whipsaw garanti. TP via trailing seul (no TP fixe) = TIMEOUT sur 60-70% range days
+
+**Cause racine** : 3 facteurs en composition
+- Theorie non-validee (patterns intraday sans contexte multi-frame)
+- Sample size insuffisant + concentration
+- Cascade gates qui tue l'edge (Pattern 11 V1)
+- Sprint ULTRATHINK 10/06 matin = 6 commits sans backtest = violation `.claude/rules/critical-tasks-review.md` (Trading/Risk critere 1 + Concept methodologique critere 4)
+
+**Lecon** : "PAS DE PAUSE JE SUIS FRAIS" cadence client n'excuse PAS le shortcut methodologique. Claude doit appliquer ses propres regles meme sous pression. Pattern Plan C 27/05 reproduit par Claude lui-meme dans Phase E.
+
+**Trigger prevention** :
+- Mandate ml-trainer obligatoire avant tout commit Trading/Risk (cf critere 1+8 critical-tasks-review.md)
+- Backtest 30-90j AVANT deploy modif edge (jamais skip meme si "petit fix")
+- Check 1/2/3 obligatoire SL/TP (rule Sizing/SL/TP 27/05) sur TOUS commits touchant trailing/SL
+- Si 5/5 controles Lopez < 100% -> NOGO automatique, jamais override
+- Apprendre des incidents passes : pattern 11 V1 detecte sur Bot 3 v3 + V1 -> meme vigilance BN V5
+
+**Action prise 10/06 12:00** :
+1. KILL definitif : `MIA_BN_V5_ENABLED=0` + `MIA_BN_V5_KILLED=1` + `MIA_BN_V5_KILLED_REASON=PATTERN_11_DATA_MINING_TRAP` sur VPS
+2. Archive `CORE/bn_v5_engine.py` + `bn_v5_paper.py` + tests + stress tool vers `V1_ARCHIVE/BN_V5/`
+3. README `V1_ARCHIVE/BN_V5/README.md` documente verdict + conditions reactivation future
+4. 4 idees CAPITALISEES pour Bot 3 v3 v2 :
+   - Confluence niveaux MenthorQ (HVL/PUT/CALL walls)
+   - Bar reversal niveau 1+2 (couleur + delta_bar)
+   - Trailing Dow pullback (paliers ladder)
+   - Daily stop Douglas $300/$400 (helper commun)
+
+**Reviewed** : 3 audits independants convergents :
+- code-reviewer (agent) : KILL ferme + bug #6 deal-breaker
+- market-analyst (agent) : DATA_MINING_TRAP + 0/5 controles Lopez
+- claude (self-audit) : confirmation bug #6 + violation rules ce matin
+
+---
+
 ### 2026-06-10 11:00 (26) - [VALIDATION_MISS] - Bot 3 v4 ne boot plus depuis 07:27 UTC, erreur bot3_wire_exc TypeError NoneType pre-existante au deploy persistance
 
 **Contexte** : Apres restart MIA-DataBento-Paper-V2 du 10/06 07:27 UTC (post fix Price1), Bot 3 v4 ne boot plus. Aucun emit `BOT3_V4_BOOT_START` ni `BOT3_V4_HEARTBEAT` depuis 06:57:18 UTC. Wire emit `BOT3_V3_LOOP_ERROR sym=*` (mal nomme — wire generic, peut etre v3 OU v4) avec `err=bot3_wire_exc: TypeError: 'NoneType' object is not iterable` toutes les 5-10min suite a watchdog restart en boucle.
