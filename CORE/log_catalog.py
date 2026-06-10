@@ -250,6 +250,25 @@ LOG_CODES = {
     # Couvre auto-reprice slip parent etendant SL au-dela du cap.
     # ⚠️ DECOUPLING : cap USD virtuel micro Python. Risk SC reel = x10 (E-mini exec).
     "BOT3_SL_RISK_VETO": (LogLevel.MAJEUR, "decisions", "Bot 3 SL risk USD VETO : {sym} {side} level={level} sl_ticks={sl_ticks}t tv={tick_value} qty={n_contracts} -> risk_usd={sl_risk_usd} > cap={max_allowed_usd} - trade SKIP signal_id={signal_id} reason={reason}"),
+    # 10/06 ULTRATHINK BN V5 Phase 5 — Couches protection (parite Bot 3 v3 FIX #54/55/56)
+    "BN_V5_VOL_VETO_HIGH_ATR": (LogLevel.MAJEUR, "decisions", "BN V5 VETO vol high ATR : {sym} {pattern} {side} atr={atr_ticks}t > limit={limit_ticks}t"),
+    "BN_V5_SL_MIN_ATR_EXTENDED": (LogLevel.ALERTE, "decisions", "BN V5 SL etendu ATR-aware : {sym} {pattern} {side} sl_orig={sl_orig_ticks}t -> sl_eff={sl_eff_ticks}t (atr={atr_ticks}t)"),
+    "BN_V5_SL_RISK_VETO": (LogLevel.MAJEUR, "decisions", "BN V5 SL risk USD VETO : {sym} {pattern} {side} sl_ticks={sl_ticks}t tv={tick_value} qty={n_contracts} -> risk_usd={sl_risk_usd} > cap={max_allowed_usd} - trade SKIP reason={reason}"),
+    # 10/06 ULTRATHINK BN V5 Phase G+H — Regime veto + daily stop preventif
+    "BN_V5_REGIME_VETO": (LogLevel.MAJEUR, "decisions", "BN V5 regime VETO : {sym} {pattern} {side} regime_favor={regime_favor} trend_score={trend_score} - reason={reason}"),
+    "BN_V5_DAILY_STOP_PREVENTIF_VETO": (LogLevel.MAJEUR, "decisions", "BN V5 daily stop preventif VETO : {sym} {pattern} {side} pnl={pnl_session_usd} - risk={perte_max_potentielle_usd} = cumul_apres={cumul_apres_perte} < limite={limite_loss_usd} - reason={reason}"),
+    "BN_V5_POSITIONS_RESTORED": (LogLevel.MAJEUR, "events", "BN V5 positions restored : n={n_positions} symbols={symbols}"),
+    "BN_V5_CID_INDEX_REBUILT": (LogLevel.INFO, "events", "BN V5 cid_index rebuilt : n_cids={n_cids}"),
+    "BN_V5_SIGNAL_COUNTER_RESTORED": (LogLevel.INFO, "events", "BN V5 signal counter restored : sym={sym} counter={counter}"),
+    "BN_V5_HALT_BOOT_REQUIRES_HUMAN": (LogLevel.CRITIQUE, "events", "BN V5 HALT BOOT requires human : case={case} symbol={symbol} message={message}"),
+    "BN_V5_POLL_SKIP_HALT": (LogLevel.MAJEUR, "events", "BN V5 poll skip HALT : reason={halt_reason} details={halt_details}"),
+    "BN_V5_POLL_SKIP_RECONCILE": (LogLevel.INFO, "events", "BN V5 poll skip - not reconciled yet"),
+    "BN_V5_FORCE_FLAT_FLAG_CONSUMED": (LogLevel.MAJEUR, "events", "BN V5 force_flat flag consumed"),
+    # 10/06 ULTRATHINK BN V5 Phase E — Trailing DTC reel (cancel+replace SL)
+    "BN_V5_TRAIL_DTC_MODIFY_OK": (LogLevel.MAJEUR, "execution", "BN V5 trail DTC modify OK : {sym} old_sl_cid={old_sl_cid} new_sl_cid={new_sl_cid} new_sl_price={new_sl_price}"),
+    "BN_V5_TRAIL_DTC_MODIFY_FAIL": (LogLevel.MAJEUR, "execution", "BN V5 trail DTC modify FAIL : {sym} err={err}"),
+    "BN_V5_TRAIL_DTC_CANCEL_FAIL": (LogLevel.MAJEUR, "execution", "BN V5 trail DTC cancel FAIL : {sym} old_sl_cid={old_sl_cid}"),
+    "BN_V5_TRAIL_DTC_SEND_FAIL": (LogLevel.MAJEUR, "execution", "BN V5 trail DTC send new SL FAIL : {sym} new_sl_cid={new_sl_cid} err={err}"),
     # 09/06 — FIX #56 Couche 4 STOP_LIMIT (Jackson valide). Audit J+7 shadow + activation.
     "DTC_SL_LIMIT_CALC": (LogLevel.INFO, "execution", "DTC SL_LIMIT calc : {sym} sl_cid={sl_cid} stop={stop_price} limit={limit_price} offset={offset_ticks}t mode={mode}"),
     # AUDIT TRACABILITE COMPLETE 08/06 (Jackson "tracker tous les blocages a tous les niveaux") :

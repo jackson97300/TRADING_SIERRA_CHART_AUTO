@@ -668,6 +668,154 @@ class BNV5PaperTrader:
             return
         self._n_setups_detected += 1
 
+        # ════════════════════════════════════════════════════════════════════
+        # 10/06 ULTRATHINK Phase 5 — COUCHES PROTECTION (parite Bot 3 v3)
+        # FIX #54 ATR veto + FIX #55 SL Min ATR-aware + FIX #56 SL HARDCAP $50
+        # ════════════════════════════════════════════════════════════════════
+        try:
+            last_bar = df.iloc[-1]
+            _bar_atr = float(last_bar.get("atr", 0) or 0)
+            if _bar_atr != _bar_atr:  # NaN
+                _bar_atr = 0.0
+        except (TypeError, ValueError, KeyError, IndexError):
+            _bar_atr = 0.0
+
+        # FIX #54 — ATR veto (BN V5 max ATR limits, env override)
+        if _bar_atr > 0:
+            if sym == "NQ":
+                _max_atr = float(os.environ.get("BN_V5_MAX_ATR_TICKS_NQ", "600"))
+            elif sym == "ES":
+                _max_atr = float(os.environ.get("BN_V5_MAX_ATR_TICKS_ES", "150"))
+            else:
+                _max_atr = 0.0
+            if _max_atr > 0 and _bar_atr > _max_atr:
+                _emit("BN_V5_VOL_VETO_HIGH_ATR",
+                      sym=sym, pattern=setup.pattern, side=setup.side,
+                      atr_ticks=int(_bar_atr), limit_ticks=int(_max_atr))
+                return
+
+        # FIX #55 — SL Min ATR-aware (elargit SL si trop serre)
+        try:
+            from CORE.mia_sltp import get_sl_min_atr_aware as _get_sl_min_atr_aware
+        except ImportError:
+            _get_sl_min_atr_aware = None
+        if _get_sl_min_atr_aware is not None and _bar_atr > 0:
+            try:
+                _tick = TICK_BY_SYMBOL[sym]
+                _sl_ticks_orig = abs(setup.entry_price - setup.sl_price) / _tick
+                _sl_min_eff = _get_sl_min_atr_aware(sym, _bar_atr)
+                if _sl_ticks_orig < _sl_min_eff:
+                    _dir_sign = 1 if setup.side == SIDE_LONG else -1
+                    _new_sl_price = float(setup.entry_price) - _dir_sign * _sl_min_eff * _tick
+                    _emit("BN_V5_SL_MIN_ATR_EXTENDED",
+                          sym=sym, side=setup.side, pattern=setup.pattern,
+                          sl_orig_ticks=int(_sl_ticks_orig),
+                          sl_eff_ticks=int(_sl_min_eff),
+                          atr_ticks=int(_bar_atr))
+                    setup.sl_price = round(_new_sl_price, 4)
+            except Exception as _e_sl_min:
+                _emit("BN_V5_LOOP_ERROR",
+                      sym=sym, err=f"sl_min_atr_aware: {type(_e_sl_min).__name__}: {str(_e_sl_min)[:200]}")
+
+        # FIX #56 — SL HARDCAP $50 USD VIRTUAL MICRO (anti slip catastrophe)
+        try:
+            from bot3_config import (
+                GUARD_RAILS_BOT3 as _GR_RISK,
+                MAX_SL_RISK_USD_BOT3 as _MAX_SL_RISK,
+            )
+        except ImportError:
+            from CORE.bot3_config import (
+                GUARD_RAILS_BOT3 as _GR_RISK,
+                MAX_SL_RISK_USD_BOT3 as _MAX_SL_RISK,
+            )
+        try:
+            _tick_risk = TICK_BY_SYMBOL[sym]
+            _sl_ticks_check = int(round(
+                abs(setup.entry_price - setup.sl_price) / _tick_risk))
+            _cfg_risk = _GR_RISK.get(sym, {})
+            _tick_value_risk = float(_cfg_risk.get("tick_value", 0.50))
+            _n_contracts_risk = int(_cfg_risk.get("n_contracts", 3))
+            _sl_risk_usd = _sl_ticks_check * _tick_value_risk * _n_contracts_risk
+            if _sl_risk_usd > _MAX_SL_RISK:
+                _emit("BN_V5_SL_RISK_VETO",
+                      sym=sym, pattern=setup.pattern, side=setup.side,
+                      sl_ticks=_sl_ticks_check,
+                      tick_value=_tick_value_risk,
+                      n_contracts=_n_contracts_risk,
+                      sl_risk_usd=round(_sl_risk_usd, 2),
+                      max_allowed_usd=_MAX_SL_RISK,
+                      reason="SL risk USD exceeds hardcap")
+                return
+        except Exception as _e_risk:
+            _emit("BN_V5_LOOP_ERROR",
+                  err=f"sl_risk_veto: {type(_e_risk).__name__}: {str(_e_risk)[:200]}")
+
+        # ════════════════════════════════════════════════════════════════════
+        # 10/06 ULTRATHINK Phase G — FILTRE REGIME (anti V LONG en bear market)
+        # Audit market-analyst : V LONG PF 0.90 sur 7j car 50% contre trend daily.
+        # Bloque entry si pattern contre-tendance regime_favor live_enriched.
+        # Override : env BN_V5_REGIME_VETO_DISABLED=1
+        # ════════════════════════════════════════════════════════════════════
+        if os.environ.get("BN_V5_REGIME_VETO_DISABLED", "0") != "1":
+            try:
+                _regime_favor = str(last_bar.get("regime_favor", "")).upper()
+                _trend_score = float(last_bar.get("ctx_trend_day_score", 0) or 0)
+                # Detection contre-tendance
+                # LONG patterns (V_LONG, W_LONG) : veto si regime SHORT ou trend < -0.3
+                # SHORT patterns (M_SHORT, INV_V_SHORT) : veto si regime LONG ou trend > +0.3
+                _veto = False
+                _veto_reason = ""
+                if setup.side == SIDE_LONG:
+                    if _regime_favor == "SHORT":
+                        _veto = True
+                        _veto_reason = f"LONG pattern vs regime_favor=SHORT"
+                    elif _trend_score < -0.3:
+                        _veto = True
+                        _veto_reason = f"LONG pattern vs trend_score={_trend_score:.2f}"
+                elif setup.side == SIDE_SHORT:
+                    if _regime_favor == "LONG":
+                        _veto = True
+                        _veto_reason = f"SHORT pattern vs regime_favor=LONG"
+                    elif _trend_score > 0.3:
+                        _veto = True
+                        _veto_reason = f"SHORT pattern vs trend_score={_trend_score:.2f}"
+                if _veto:
+                    _emit("BN_V5_REGIME_VETO",
+                          sym=sym, pattern=setup.pattern, side=setup.side,
+                          regime_favor=_regime_favor,
+                          trend_score=round(_trend_score, 3),
+                          reason=_veto_reason)
+                    return
+            except Exception as _e_reg:
+                _emit("BN_V5_LOOP_ERROR",
+                      err=f"regime_veto: {type(_e_reg).__name__}: {str(_e_reg)[:200]}")
+
+        # ════════════════════════════════════════════════════════════════════
+        # 10/06 ULTRATHINK Phase H — DAILY STOP PREVENTIF (vs reactif)
+        # Audit market-analyst : daily_stop existant declenche APRES trade perdant.
+        # Si cumul=-150 et trade risk=-100, daily_stop -200 dois VETO le trade
+        # AVANT (pas apres -250 deja realise).
+        # Calcul : si (cumul_pnl - max_perte_potentielle) < -daily_stop_loss → VETO
+        # ════════════════════════════════════════════════════════════════════
+        if self.params.daily_stop_enabled:
+            try:
+                _perte_max_potentielle = float(_sl_risk_usd)  # de FIX #56 ci-dessus
+                _cumul_apres_perte_max = self._pnl_session_usd - _perte_max_potentielle
+                _limite_loss = -float(self.params.daily_stop_loss_usd)
+                if _cumul_apres_perte_max < _limite_loss:
+                    _emit("BN_V5_DAILY_STOP_PREVENTIF_VETO",
+                          sym=sym, pattern=setup.pattern, side=setup.side,
+                          pnl_session_usd=round(self._pnl_session_usd, 2),
+                          perte_max_potentielle_usd=round(_perte_max_potentielle, 2),
+                          cumul_apres_perte=round(_cumul_apres_perte_max, 2),
+                          limite_loss_usd=round(_limite_loss, 2),
+                          reason="trade rejette : perte max trade ferait depasser daily_stop_loss")
+                    return
+            except Exception as _e_prev:
+                _emit("BN_V5_LOOP_ERROR",
+                      err=f"daily_stop_preventif: {type(_e_prev).__name__}: {str(_e_prev)[:200]}")
+        # ════════════════════════════════════════════════════════════════════
+
         # 5. Place bracket DTC (ou dry_run log only)
         if self.dry_run:
             qty = 3  # 10/06 SOIR DATA_COLLECTION : 3 micros Cross Chart Sierra (override 03/06 E-mini)
@@ -846,11 +994,20 @@ class BNV5PaperTrader:
                   mfe_ticks=round(trail.mfe_ticks / TICK_BY_SYMBOL[sym], 1),
                   mae_ticks=round(trail.mae_ticks / TICK_BY_SYMBOL[sym], 1),
                   close=round(float(last_bar.get("close", 0)), 2))
-            # Note : en mode TRADE reel, ici on devrait cancel+replace l'ordre SL
-            # via dtc.cancel_order + dtc.send_stop_order. Pour MVP V5 on tient
-            # juste le SL en memoire (trailing logique). Au prochain fill SL DTC
-            # initial, le bot prendra la perte au SL initial, pas au trail.
-            # TODO V5.1 : cancel+replace DTC pour vraie trail execution.
+
+        # 10/06 ULTRATHINK Phase E — TRAILING DTC REEL (cancel+replace SL)
+        # Resolution TODO V5.1 : sans cancel+replace, le trailing etait
+        # COSMETIQUE = tous les exits = SL initial fixe OU TIMEOUT 90 bars.
+        # L'edge backtest (PF 1.58 ES) reposait sur trailing reel.
+        # Pattern Bot 3 v3 ladder + post Price1 fix 10/06.
+        if (new_sl is not None and new_sl != pos["sl_current"]
+                and not self.dry_run and self.dtc is not None
+                and pos.get("sl_cid")):
+            try:
+                self._modify_sl_via_dtc_trail(sym, pos, new_sl)
+            except Exception as e_modify:
+                _emit("BN_V5_TRAIL_DTC_MODIFY_FAIL",
+                      sym=sym, err=f"{type(e_modify).__name__}: {str(e_modify)[:200]}")
 
         # Check timeout
         # FIX #A4 (08/06/2026) - audit BN V5 T2 = 310 bars sans force exit.
@@ -860,16 +1017,107 @@ class BNV5PaperTrader:
         # diff < timeout_bars meme apres 310 bars reels. BUG.
         # Fix : utiliser `pos["bars_held"]` qui est incremente a chaque cycle =
         # vraie duree position en bars.
+        # Check timeout + SL hit (memoire) inline (pre-refactor 10/06)
         if pos["bars_held"] >= self.params.timeout_bars:
             self._exit_position(sym, exit_price=float(last_bar.get("close", pos["entry_price"])),
                                 cause="TIMEOUT")
             return
-
-        # Check SL hit (en memoire — l'exit reel viendra du DTC fill)
         if is_sl_hit(trail, last_bar):
-            # En dry_run on simule l'exit. En reel, on attend que le SL DTC fill.
             if self.dry_run:
                 self._exit_position(sym, exit_price=trail.sl_current, cause="SL")
+
+    def _modify_sl_via_dtc_trail(self, sym: str, pos: Dict[str, Any],
+                                  new_sl_price: float) -> None:
+        """10/06 ULTRATHINK Phase E — Cancel ancien SL + send nouveau (avec Price1).
+
+        Pattern Bot 3 v3 ladder + Bot 4 trailing. Post Price1 fix 10/06.
+
+        Sequence :
+          1. Cancel old SL via dtc.cancel_order(sl_cid, trade_account)
+          2. Generate new sl_cid (uuid)
+          3. Pre-register trade_account + register_oco_pair (H6 anti-orphan)
+          4. Send new STOP Type 208 OrderType=3 avec Price1+Price2=0+StopPrice
+          5. Update pos["sl_cid"] + _cid_index
+          6. Persist position update
+        """
+        STOP_DTC = 3
+        old_sl_cid = pos.get("sl_cid")
+        if not old_sl_cid:
+            return
+        contract = SYMBOL_TO_CONTRACT.get(sym, f"{sym}M26-CME")
+
+        # Step 1 : Cancel old SL
+        try:
+            ok_cancel = self.dtc.cancel_order(
+                old_sl_cid, trade_account=self.trade_account)
+            if not ok_cancel:
+                _emit("BN_V5_TRAIL_DTC_CANCEL_FAIL",
+                      sym=sym, old_sl_cid=old_sl_cid[:20])
+                return
+        except Exception as e_cancel:
+            _emit("BN_V5_TRAIL_DTC_CANCEL_FAIL",
+                  sym=sym, old_sl_cid=old_sl_cid[:20],
+                  err=f"{type(e_cancel).__name__}: {str(e_cancel)[:200]}")
+            return
+
+        # Step 2 : New sl_cid
+        new_sl_cid = f"MIA_SL_BNV5_{uuid.uuid4().hex[:8]}"
+
+        # Step 3 : Pre-register trade_account + OCO pair (H6 anti-orphan)
+        try:
+            if hasattr(self.dtc, "_order_trade_accounts"):
+                self.dtc._order_trade_accounts[new_sl_cid] = self.trade_account
+            tp_cid = pos.get("tp_cid")
+            if tp_cid and hasattr(self.dtc, "register_oco_pair"):
+                self.dtc.register_oco_pair(tp_cid, new_sl_cid)
+        except Exception:
+            pass  # best-effort pre-register (non bloquant)
+
+        # Step 4 : Send new STOP avec Price1 (FIX 10/06 - 5 sites)
+        side_dtc = DTC_SELL if pos["side"] == SIDE_LONG else DTC_BUY
+        qty = int(pos.get("qty", 3))
+        try:
+            self.dtc._send({
+                "Type": 208,
+                "Symbol": contract,
+                "ClientOrderID": new_sl_cid,
+                "OrderType": STOP_DTC,
+                "BuySell": side_dtc,
+                "Quantity": qty,
+                "Price1": float(new_sl_price),    # SPEC : trigger price STOP
+                "Price2": 0.0,                     # default explicite (non STOP_LIMIT)
+                "StopPrice": float(new_sl_price), # defensif compat V1
+                "TimeInForce": 0,
+                "TradeAccount": self.trade_account,
+                "IsAutomatedOrder": 1,
+                "OpenCloseTrade": 2,
+            })
+        except Exception as e_send:
+            _emit("BN_V5_TRAIL_DTC_SEND_FAIL",
+                  sym=sym, new_sl_cid=new_sl_cid[:20],
+                  err=f"{type(e_send).__name__}: {str(e_send)[:200]}")
+            return
+
+        # Step 5 : Update pos + cid_index (sous lock)
+        with self._pos_lock:
+            if old_sl_cid in self._cid_index:
+                del self._cid_index[old_sl_cid]
+            pos["sl_cid"] = new_sl_cid
+            self._cid_index[new_sl_cid] = {
+                "sym": sym, "kind": "sl", "signal_id": pos["signal_id"],
+            }
+
+        # Step 6 : Persist position update (sl_cid change)
+        try:
+            self._positions_persist.save_position(sym, pos)
+        except Exception as e_persist:
+            _emit("BN_V5_LOOP_ERROR",
+                  sym=sym, err=f"save_position trail: {type(e_persist).__name__}: {str(e_persist)[:200]}")
+
+        _emit("BN_V5_TRAIL_DTC_MODIFY_OK",
+              sym=sym, old_sl_cid=old_sl_cid[:20],
+              new_sl_cid=new_sl_cid[:20],
+              new_sl_price=round(new_sl_price, 4))
 
     def _exit_position(self, sym: str, exit_price: float, cause: str) -> None:
         pos = self._position.get(sym)
