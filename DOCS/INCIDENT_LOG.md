@@ -567,6 +567,49 @@ TOUS DOIVENT etre coherents AVANT merge refacto, sinon bouton dashboard ment pen
 
 ---
 
+### 2026-06-10 11:00 (26) - [VALIDATION_MISS] - Bot 3 v4 ne boot plus depuis 07:27 UTC, erreur bot3_wire_exc TypeError NoneType pre-existante au deploy persistance
+
+**Contexte** : Apres restart MIA-DataBento-Paper-V2 du 10/06 07:27 UTC (post fix Price1), Bot 3 v4 ne boot plus. Aucun emit `BOT3_V4_BOOT_START` ni `BOT3_V4_HEARTBEAT` depuis 06:57:18 UTC. Wire emit `BOT3_V3_LOOP_ERROR sym=*` (mal nomme — wire generic, peut etre v3 OU v4) avec `err=bot3_wire_exc: TypeError: 'NoneType' object is not iterable` toutes les 5-10min suite a watchdog restart en boucle.
+
+**Ce qui marche encore** :
+- Bot 3 v3 : BOT_STATE_RESTORED OK (Sprint Phase 1 fonctionne)
+- BN V5 : BN_V5_STATE_RESTORED OK (daily_stop=True preserve cross-restart)
+- Bot 3 MP : BOT3_ENGINE_INIT_V2_STATE + BLACKLIST_LOADED
+- Bot 1 PAPER (MIA-Paper) : Running independant
+
+**Ce qui ne marche pas** :
+- Bot 3 v4 (Sim3) : aucun boot depuis 07:27 UTC = 4h sans trade possible
+- Watchdog restart en boucle (PID 21048 -> 9880 -> 5884 -> 10848 -> ...)
+
+**Investigation incomplete** :
+- Erreur antеrieure au deploy persistance Bot 3 v4 du 11:30 UTC (10/06)
+- Tests pytest Bot 3 v4 persistance : 10/10 PASS en local dry_run
+- Cause probable dans le wire `databento_paper_trader_v2.py:738` qui catche Exception generique
+- emit `BOT3_V3_LOOP_ERROR` hardcode meme pour Bot 3 v4 crash (mal nomme)
+
+**Hypotheses cause racine non confirmees** :
+1. Side effect de FIX #56 SL HARDCAP ou ladder recalibration (deploy 09:30 UTC)
+2. Bug pre-existant dans `_count_same_side_cross_bot` callback
+3. Helper `reconcile_with_dtc` retourne None dans cas non gere
+4. `dtc.request_position_blocking` retourne quelque chose d'inattendu
+
+**Lecon** : tout deploy critical-tasks (cf `.claude/rules/critical-tasks-review.md`) doit verifier J+15min que TOUS les bots affectes boot correctement (pas seulement le bot principal modifie). Voir BOT3_V4_BOOT_START + BOT3_V4_HEARTBEAT post-restart obligatoire.
+
+**Trigger prevention** :
+- Avant tout commit modif `databento_paper_trader_v2.py` : test empirique post-deploy grep BOT3_V{3,4}_BOOT_READY pour TOUS les bots wires
+- Le wire emit code log doit etre dynamique (BOT3_V3 OR BOT3_V4 selon stack), pas hardcode `BOT3_V3_LOOP_ERROR`
+- Si watchdog detecte restart en boucle > 5x : alerter Discord CRITIQUE
+
+**Action immediate** :
+- Bot 3 v4 verdict 28/05 etait deja KILL recommande (DSR 0.13)
+- Aucun trade Bot 3 v4 = 0 perte
+- Pas critique pour systeme (Bot 3 v3 + Bot 3 MP fonctionnent)
+- Investigation profonde reportee a session dediee (reproduire bug en local avec mock DTC)
+
+**Reviewed** : self (Jackson notifie session 10/06)
+
+---
+
 ### 2026-06-10 09:30 (25) - [VALIDATION_MISS] - BUG SIZING x10 NQM26-CME/ESM26-CME (E-mini exec vs Python micro virtual) — non detecte 4+ mois
 
 **Contexte** : Trade Activity Log SC partage par Jackson 10/06 07:45 UTC revele
