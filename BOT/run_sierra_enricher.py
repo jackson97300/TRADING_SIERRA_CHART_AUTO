@@ -72,10 +72,17 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "CORE"))
 
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from CORE.sierra_live_io import SierraLiveReader  # noqa: E402
 from CORE.sierra_pipeline import SierraPipelineOrchestrator  # noqa: E402
+
+
+# Constantes service (extraites apres review code-reviewer 10/06)
+DEFAULT_POLL_INTERVAL_SEC: float = 10.0
+DEFAULT_WINDOW_BARS: int = 480
+ERROR_LOG_LIMIT_FIRST_N: int = 5
 
 
 # Graceful shutdown flag
@@ -101,11 +108,17 @@ def _build_output_path(
     return output_dir / f"{date_str}_{symbol.upper()}_sierra_enriched.jsonl"
 
 
-def _write_atomic(output_path: Path, line: str) -> None:
-    """Append atomic ligne JSONL (rename .tmp -> final).
+def _write_durable(output_path: Path, line: str) -> None:
+    """Append ligne JSONL avec durability cross-crash.
 
-    Pour live mode : on append plutot que rename complet (perf).
-    Mais on flush + fsync pour durability cross-crash.
+    Honnete : ce n'est PAS atomic. Append + flush + fsync garantissent
+    durability (la ligne est ecrite sur disque avant retour) mais une ligne
+    > 4KB (cas typique JSONL enrichi 485 cols) peut etre tronquee si crash
+    mid-write. Verification J+1 obligatoire : grep JSONDecodeError dans
+    parse output JSONL pour detecter lignes corrompues.
+
+    Pour vraie atomicite : pattern tempfile + os.replace, mais incompatible
+    avec append-only (necessite read + rewrite, perf negative).
     """
     with open(output_path, "a", encoding="utf-8") as f:
         f.write(line + "\n")
@@ -115,8 +128,6 @@ def _write_atomic(output_path: Path, line: str) -> None:
 
 def _clean_value(v):
     """Convert numpy types + NaN -> Python native pour JSON standard."""
-    import numpy as np
-
     if v is None:
         return None
     if isinstance(v, float):
@@ -200,7 +211,7 @@ def run_batch_mode(
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 stats["errors"] += 1
                 stats["bars_skipped"] += 1
-                if stats["errors"] <= 5:  # log seulement les 5 premieres
+                if stats["errors"] <= ERROR_LOG_LIMIT_FIRST_N:
                     print(f"[warn] bar skipped : {e}", flush=True)
 
     pipeline_stats = pipeline.get_stats()
@@ -211,8 +222,8 @@ def run_batch_mode(
 def run_live_mode(
     symbol: str,
     output_dir: Path,
-    poll_interval_sec: float = 10.0,
-    window_bars: int = 480,
+    poll_interval_sec: float = DEFAULT_POLL_INTERVAL_SEC,
+    window_bars: int = DEFAULT_WINDOW_BARS,
     dry_run: bool = False,
     strict: bool = True,
     max_iterations: Optional[int] = None,
@@ -282,7 +293,7 @@ def run_live_mode(
                 bar_ts_utc = pipeline._extract_ts_utc(sierra_bar)
                 output_path = _build_output_path(output_dir, symbol, bar_ts_utc)
                 line = _serialize_payload(enriched)
-                _write_atomic(output_path, line)
+                _write_durable(output_path, line)
 
         if new_bars_count > 0:
             print(
@@ -309,8 +320,9 @@ def main():
                          help="Mode batch sur 1 fichier JSONL (skip live)")
     parser.add_argument("--output", type=Path, default=None,
                          help="Output explicite (batch mode only)")
-    parser.add_argument("--poll-interval", type=float, default=10.0)
-    parser.add_argument("--window-bars", type=int, default=480)
+    parser.add_argument("--poll-interval", type=float,
+                         default=DEFAULT_POLL_INTERVAL_SEC)
+    parser.add_argument("--window-bars", type=int, default=DEFAULT_WINDOW_BARS)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--strict", action="store_true", default=True)
     parser.add_argument("--max-iterations", type=int, default=None,

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -251,6 +252,118 @@ def test_e2e_batch_enriched_output_parseable(tmp_path):
     ]
     missing = [k for k in expected_phase3_keys if k not in last]
     assert not missing, f"Missing Phase 3 keys : {missing}"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Tests live mode (R2 review code-reviewer agentId a4209bcd08629b740 10/06)
+# Mock SierraLiveReader pour eviter dependance fichier reel + tail.
+# ────────────────────────────────────────────────────────────────────────────
+
+def _make_sierra_df(n_bars: int = 3, base_ts_ms: int = None) -> pd.DataFrame:
+    """Helper : creer DataFrame Sierra natif simule pour tests live."""
+    if base_ts_ms is None:
+        base_ts_ms = int(_et_to_utc(2026, 6, 10, 10, 0).timestamp() * 1000)
+    rows = []
+    for i in range(n_bars):
+        rows.append({
+            "ts": base_ts_ms + i * 60_000,  # +1 min en ms
+            "sym": "NQ",
+            "close": 100.0 + i * 0.5,
+            "bar_high": 100.5 + i * 0.5,
+            "bar_low": 99.5 + i * 0.5,
+            "delta_bar": 100.0,
+            "total_vol": 1000.0,
+            "atr": 2.0,
+            "dist_cur_vpoc": 5.0,
+            "dist_swing_high": 3.0,
+            "dist_swing_low": 8.0,
+        })
+    return pd.DataFrame(rows)
+
+
+def test_live_mode_max_iterations_exits(tmp_path, monkeypatch):
+    """max_iterations limite la boucle live (anti boucle infinie tests)."""
+    from unittest.mock import MagicMock
+    import run_sierra_enricher
+
+    # Mock SierraLiveReader pour retourner DataFrame stub
+    mock_reader_instance = MagicMock()
+    mock_reader_instance.load_rolling_window.return_value = _make_sierra_df(n_bars=2)
+    monkeypatch.setattr(
+        run_sierra_enricher, "SierraLiveReader",
+        lambda **kwargs: mock_reader_instance,
+    )
+
+    stats = run_sierra_enricher.run_live_mode(
+        symbol="NQ",
+        output_dir=tmp_path / "sierra",
+        poll_interval_sec=0.01,
+        dry_run=True,
+        max_iterations=3,
+    )
+
+    # Apres 3 iterations, exit propre
+    assert stats["polls"] == 3
+    # 2 bars enrichies au 1er poll, puis 0 (deja vues) aux 2-3
+    assert stats["bars_enriched_total"] == 2
+
+
+def test_live_mode_dedup_seen_ts(tmp_path, monkeypatch):
+    """seen_ts evite reenrich des bars deja vues (idempotence)."""
+    from unittest.mock import MagicMock
+    import run_sierra_enricher
+
+    df_same = _make_sierra_df(n_bars=3)
+    mock_reader_instance = MagicMock()
+    # Le reader retourne TOUJOURS le meme df (simule tail apres bar buffer)
+    mock_reader_instance.load_rolling_window.return_value = df_same
+    monkeypatch.setattr(
+        run_sierra_enricher, "SierraLiveReader",
+        lambda **kwargs: mock_reader_instance,
+    )
+
+    stats = run_sierra_enricher.run_live_mode(
+        symbol="NQ",
+        output_dir=tmp_path / "sierra",
+        poll_interval_sec=0.01,
+        dry_run=True,
+        max_iterations=5,
+    )
+
+    # 5 polls, mais seulement 3 bars uniques par ts -> pas de double enrich
+    assert stats["polls"] == 5
+    assert stats["bars_enriched_total"] == 3, (
+        f"Attendu 3 bars uniques enrichies (dedup seen_ts), "
+        f"obtenu {stats['bars_enriched_total']}"
+    )
+
+
+def test_live_mode_reader_exception_increments_errors(tmp_path, monkeypatch):
+    """Exception SierraLiveReader.load_rolling_window -> stats.errors + continue."""
+    from unittest.mock import MagicMock
+    import run_sierra_enricher
+
+    mock_reader_instance = MagicMock()
+    mock_reader_instance.load_rolling_window.side_effect = RuntimeError(
+        "Simulated reader failure"
+    )
+    monkeypatch.setattr(
+        run_sierra_enricher, "SierraLiveReader",
+        lambda **kwargs: mock_reader_instance,
+    )
+
+    stats = run_sierra_enricher.run_live_mode(
+        symbol="NQ",
+        output_dir=tmp_path / "sierra",
+        poll_interval_sec=0.01,
+        dry_run=True,
+        max_iterations=3,
+    )
+
+    # 3 polls -> 3 erreurs reader, mais pas de crash
+    assert stats["polls"] == 3
+    assert stats["errors"] == 3
+    assert stats["bars_enriched_total"] == 0
 
 
 if __name__ == "__main__":
