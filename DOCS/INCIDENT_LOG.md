@@ -567,6 +567,53 @@ TOUS DOIVENT etre coherents AVANT merge refacto, sinon bouton dashboard ment pen
 
 ---
 
+### 2026-06-10 09:30 (25) - [VALIDATION_MISS] - BUG SIZING x10 NQM26-CME/ESM26-CME (E-mini exec vs Python micro virtual) — non detecte 4+ mois
+
+**Contexte** : Trade Activity Log SC partage par Jackson 10/06 07:45 UTC revele
+mismatch x10 entre PnL Python (calcul micro $0.50/$1.25/tick) et PnL SC reel
+(E-mini standard $5/$12.50/tick). Bot envoyait NQM26-CME (E-mini) et ESM26-CME
+(E-mini) via DTC mais code calculait en micro.
+
+**Ce qui a mal tourne** : `bot3_paper_common.py:SYMBOL_TO_CONTRACT` mappait NQ→NQM26-CME
+(E-mini $5/tick) et ES→ESM26-CME (E-mini $12.50/tick). `GUARD_RAILS_BOT3.tick_value`
+configurait $0.50 NQ et $1.25 ES (micro). Resultat empirique :
+- Trade Bot 3 v3 NQ 10/06 06:30 : SC +$750 vs Python +$144 (ratio 5.2x via slip 50t vs 96t)
+- Trade Bot 3 v4 NQ 10/06 04:05 : SC -$45 vs Python +$18 (signe INVERSE bug Price1)
+- Trade Bot 3 v3 NQ 10/06 02:21 : SC -$885 (Python disait -$88.50)
+- Trade Bot 3 v3 NQ 10/06 03:31 : SC -$1410 (Python disait -$141)
+- **Sim1 cumul reel 10/06 = -$2820 USD (dashboard affichait +$226.50, x10+ caché)**
+
+**Cause racine** : rollback 03/06 "MNQM26 pas configure SC" base sur fausse alerte.
+Sim1 supporte MNQM26 (preuve test isolation 10/06 07:17 - Internal Order ID 23817+23818
+acceptes). Mais decision Jackson 10/06 : **decoupling volontaire pour paper unlimited** :
+contract envoye = E-mini (charts NQM26/ESM26 visibles), Python calcule en micro virtuel
+($0.50/$1.25), ratio x10 accepte en paper. **Migration Live AMP BLOQUEE** jusqu'a re-alignement.
+
+**Lecon** : tout mapping contract <-> tick_value DOIT etre prouve empiriquement via
+Trade Activity Log SC sur 1 trade reel avant deploy. Tests pytest qui valident la
+math du PnL sans confronter au Trade Activity Log SC = test inutile (Plan C 27/05
+reproduit, cf `.claude/rules/critical-tasks-review.md` section sizing/SL/TP).
+
+**Fix applique 10/06** :
+- `bot3_paper_common.py:SYMBOL_TO_CONTRACT` : commentaires DECOUPLING explicites
+  - NQ → "NQM26-CME" (E-mini SC) — Python calcul micro $0.50 virtual
+  - ES → "ESM26-CME" (E-mini SC) — Python calcul micro $1.25 virtual
+  - MGC → "MGCM26-CMECOMEX" (Micro coherent)
+- `bot3_config.py:MAX_SL_RISK_USD_BOT3 = 50.0` (cap micro virtual Python anti slip)
+- `databento_paper_trader_v2.py:_bot3_execute_trade` ligne 3416 : VETO check FIX #56
+- `log_catalog.py:BOT3_SL_RISK_VETO` ajoute (MAJEUR, decisions)
+- Tests pytest `test_bot3_sl_risk_veto.py` : 10/10 PASS
+
+**Trigger prevention futur** :
+- Avant deploy nouveau mapping symbol/tick_value : verifier empirique 1 trade reel SC
+- Si mismatch x10 observe en paper : flagger DECOUPLING explicite + bloquer Live AMP
+- Tests pytest valider math Python ET prevenir decoupling silencieux
+- Audit cross-bot annuel : grep contract envoye vs tick_value Python pour detecter drift
+
+**Reviewed** : Jackson empirique + market-analyst (audit 7j Bot 1) + code-reviewer (5 sites + cap)
+
+---
+
 ### 2026-06-10 07:30 (24-PARTIAL-ROLLBACK) - [VALIDATION_MISS] - Patch 01/06 etait BASE SUR FAUSSE AFFIRMATION SPEC DTC, REVERT 10/06 ajoute Price1
 
 **REVERT APPLIQUE 10/06** : Le patch original 01/06 (retrait Price1 du SL STOP payload) etait base sur affirmation jamais verifiee contre spec officielle DTC. Preuve empirique 10/06 : 5 trades casses en 48h (Bot 3 v3, Bot 3 v4, BN V5) + Trade Activity Log SC montre colonne Price VIDE pour STOP orders + BN V5 NQ LONG -$511.50 TIMEOUT car SL non arme.

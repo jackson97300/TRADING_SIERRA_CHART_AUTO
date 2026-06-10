@@ -3414,6 +3414,45 @@ class DatabentoPaperTraderV2:
                 _emit("GENERIC_MAJEUR",
                       msg=f"sl_min_atr_aware exception : {_e!r}")
 
+        # 🆕 10/06 — FIX #56 SL RISK HARDCAP USD (Jackson directive ultrathink).
+        # Couche complementaire au veto ATR (#54) + SL min ATR-aware (#55).
+        # VETO trade si sl_risk_usd > MAX_SL_RISK_USD_BOT3 (default $50 micro virtuel).
+        # Couvre les cas ou auto-reprice slip parent etend le SL au-dela du cap.
+        # ⚠️ Cap en USD VIRTUEL MICRO Python (decoupling SC E-mini, cf bot3_paper_common.py).
+        # Le risque SC reel = x10 le cap Python (= $500 SC pour $50 Python).
+        # Acceptable en paper unlimited, a re-aligner avant Live AMP.
+        try:
+            from bot3_config import (
+                GUARD_RAILS_BOT3 as _GR_RISK,
+                MAX_SL_RISK_USD_BOT3 as _MAX_SL_RISK,
+            )
+        except ImportError:
+            from CORE.bot3_config import (
+                GUARD_RAILS_BOT3 as _GR_RISK,
+                MAX_SL_RISK_USD_BOT3 as _MAX_SL_RISK,
+            )
+        try:
+            _sl_ticks_check = int(getattr(signal, "sl_ticks", 0) or 0)
+            _cfg_risk = _GR_RISK.get(sym, {})
+            _tick_value_risk = float(_cfg_risk.get("tick_value", 0.50))
+            _n_contracts_risk = int(_cfg_risk.get("n_contracts", 1))
+            _sl_risk_usd = _sl_ticks_check * _tick_value_risk * _n_contracts_risk
+            if _sl_risk_usd > _MAX_SL_RISK:
+                _emit("BOT3_SL_RISK_VETO",
+                      sym=sym, side=signal.side,
+                      level=signal.level_name,
+                      sl_ticks=_sl_ticks_check,
+                      tick_value=_tick_value_risk,
+                      n_contracts=_n_contracts_risk,
+                      sl_risk_usd=round(_sl_risk_usd, 2),
+                      max_allowed_usd=_MAX_SL_RISK,
+                      signal_id=getattr(signal, "signal_id", None),
+                      reason="SL risk USD exceeds hardcap")
+                return False
+        except Exception as _e_risk:
+            _emit("GENERIC_MAJEUR",
+                  msg=f"sl_risk_veto exception : {_e_risk!r}")
+
         # 29/05/2026 FIX Jackson : SLOPE ALIGNMENT GATE (filter VSLP_10 directionnel).
         # Backtest 62 trades 25-29/05 : 0 wins tues, 7 losses bloques, delta +$622.
         # Sauve le pire trade backtest (-$296 ES SHORT 28/05 contre uptrend).

@@ -17,6 +17,16 @@ BOT3_ENABLE_TIER2 = True            # tier 2 actif (CUR_VPOC, GEX_DN, etc.)
 BOT3_ENABLE_TIER3 = True            # tier 3 actif (required_context strict)
 BOT3_ENABLE_TIER2_NEUTRAL = True    # 8 niveaux NEUTRAL via 7 scenarios
 
+# 04/06/2026 (Jackson) — Blacklist levels backtest-validated.
+# Audit 33j Bot 3 MP : 2 niveaux genemnt 100% pertes dans pires jours catastrophe :
+#   - MQ_HVL : 9 trades 33j, WR 11.1%, PnL -$4500
+#   - MQ_CALL_POC_FLAT : 5 trades 33j, WR 0.0%, PnL -$5784
+# Cumul -$10,285 sur 14 trades (11% trades MP). Walk-forward MAI ET JUIN positifs
+# apres blacklist (anti-overfitting OK). Edge concept : HVL = niveau consolidation
+# (mauvais pour dip strategy), POC_FLAT = pas de structure (pas d'edge).
+# Cf BOT_CHANGELOG 04/06/2026 entry blacklist + memory feedback audit_jackson.
+BOT3_MP_LEVEL_BLACKLIST_ENABLED = True   # rollback rapide via flag
+
 # Phase 1 : ACCEPTANCE + REJECTION (Jackson 03/05 — ADN conserve)
 # Note : market-analyst (review 03/05) recommande False par defaut sur risque
 # Wyckoff spring (Steidlmayer canon : acceptance multi-barres, pas reversal 1-bar).
@@ -36,11 +46,16 @@ BOT3_TRADE_BREAKOUTS = True
 #
 # Default False (kill switch) tant que Phase 4d + Phase 5 pas validees paper.
 # Activation manuelle uniquement apres review Tier 1 + GO Jackson.
-BOT3_USE_NARRATIVE_DIRECTION: bool = False
+# ACTIVE 2026-05-19 02:30 (Jackson GO explicite) en mode SHADOW J+14 :
+#   USE_NARRATIVE=True + TRACKING_ONLY=True -> NSM transit + DirectionResolver
+#   register pendings + emit BOT3_V2_SHADOW_SIGNAL pour audit. V1 reste decideur.
+#   Cf BOT_CHANGELOG entry 2026-05-19 02:30 Phase 4d MVP.
+BOT3_USE_NARRATIVE_DIRECTION: bool = True
 
 # Tracking-only Phase 1-3 : NSM + StoryTrackers + PlotTwist + Validator +
 # DirectionResolver consument data MAIS ne MODIFIENT PAS le comportement legacy.
 # Resolver fire decisions parallele logged en shadow JSONL pour audit Phase 4-5.
+# Apres J+14 audit shadow signals -> flip False = V2 decideur (apres GO Jackson).
 BOT3_NARRATIVE_TRACKING_ONLY: bool = True
 
 # Bug 3 fix market-analyst : flag separe pour MIRROR_SHORT_OBSERVE levels.
@@ -99,7 +114,10 @@ MAX_DRIFT_TICKS: dict[str, int] = {
 # ════════════════════════════════════════════════════════════════════════
 GUARD_RAILS_BOT3: dict[str, dict] = {
     "NQ": {
-        "n_contracts": 3,                # MNQ
+        # 03/06 ROLLBACK migration MNQM26 (pas configure dans Sierra Chart).
+        # Option A pure : 1 NQ E-mini + 1 ES E-mini broker + dashboard cohérent.
+        # Si NQ trop volatile -> resserrer SL ticks, pas changer sizing.
+        "n_contracts": 3,                # 3 MNQM26-CME Micro NQ (Couche 2 Jackson 09/06)
         # 04/05 SOIR ROUND 1 (Jackson + agent code-reviewer) : recalibration TP/SL
         # Empirique 29 trades aujourd'hui = 100% TIMEOUT pnl=0t car SL=200t/TP=300t
         # inatteignables en 60min. MFE peak observe 121t < TP 300t.
@@ -120,51 +138,58 @@ GUARD_RAILS_BOT3: dict[str, dict] = {
         # Cas observes : trade #3 ES MFE 35t TIMEOUT, #4 ES MFE 40t TIMEOUT
         # auraient ete TP avec RR<=1.2 (TP=38t). Reduit faux TIMEOUT.
         "tp_rr_ratio": 1.2,              # TP = sl_ticks * 1.2 = 96t (24 pts) - etait 1.5 (120t)
-        "tick_value": 0.50,              # MNQ
+        # 03/06 ROLLBACK : E-mini NQM26 $5.00/tick PER CONTRACT (1 contrat).
+        # compute_pnl_R_usd multiplie par n_contracts=1 -> $5.00/tick total.
+        "tick_value": 0.50,              # Micro MNQM26 $0.50/tick (Couche 2 09/06)
         "tick_size": 0.25,
-        # 07/05 PHASE 1 OBSERVATION trailing + BE (Jackson directive — focus technique)
-        # Audit empirique 06/05 : MFE typique 30-50t/contract sur trades reussis.
-        # Calibrage cible : BE @ 1R (= sl_base 80t), trailing actif @ 1.5R (= 120t),
-        # distance trailing 0.5R (= 40t) → preserve 2/3 du MFE peak.
-        # Mode OBSERVE_ONLY : log triggers, pas modify DTC orders. Audit J+7.
-        "trailing_be_trigger_ticks": 80,        # MFE >= 80t (=1R) → SL hypothetique = entry (BE)
-        "trailing_active_trigger_ticks": 120,   # MFE >= 120t (=1.5R) → trailing actif
-        "trailing_distance_ticks": 40,          # SL trailing = MFE_price - 40t (0.5R)
-        # 11/05 LADDER PROFIT-LOCKING (Solution D2 Jackson directive "pas gourmand")
-        # Paliers croissants : (mfe_seuil_ticks, sl_lock_ticks_from_entry).
-        # Quand MFE atteint le seuil, SL bouge a entry + sl_lock_ticks (lock minimum).
-        # Empirique 11/05 : NQ trades MFE 32t/48t/66t/8t — palier 1 cible MFE 60t
-        # (capture trade #3 MFE=66t qui actuellement SL -$19.50 → lock $30).
-        # Palier 2 cible big runners (07/05 MFE 149t, 08/05 MFE 152t).
-        # NQ tick_value $0.50 micro × 3 micros = $1.50/tick total → lock USD = sl_lock × 1.5.
-        # 11/05 v2 Jackson "couper la poire en 2 enlever le premier palier".
-        # Empirique trade NQ 15:37 GEX_DN : MFE peak 77t → retrace MAE -26t → TP +176t.
-        # Palier 1 (60t) aurait cut a +$30 alors que TP a fait +$264 = -$234 perdu.
-        # Suppression palier 1 → ladder actif SEULEMENT MFE >= 100t (gros gains
-        # confirmes, peu de risque de retrace integrale apres ce niveau).
+        # 10/06 RECALIBRATION JACKSON (Option 1 conservateur + SHADOW 24h puis ACTION).
+        # Empirique 12 wins NQ (4-10 juin) : MFE p25=36t, p50=53t, p75=81t, max=113t.
+        # Paliers anciens (100/150/200) JAMAIS atteints → ladder inopérant. Recalibrage :
+        # - Palier 1 = TP cible (30t = RR 1.2 × 25t SL) → si retrace post-TP, lock +$7.50
+        # - Palier 2 = p50 winners (50t) → lock 1R favorable = +$22.50
+        # - Palier 3 = p75 winners (80t) → lock 1.4R favorable = +$52.50
+        # NQ tick_value $0.50 micro × 3 micros = $1.50/tick total.
+        # Trailing BE/Active aussi recalibre vers MFE empirique réel.
+        # Mode initial : SHADOW (MIA_BOT3_LADDER_MODE=OBSERVE) audit 24h, puis ACTION.
+        "trailing_be_trigger_ticks": 30,        # MFE >= 30t (TP cible) → SL hypothetique = entry (BE)
+        "trailing_active_trigger_ticks": 50,    # MFE >= 50t (p50 winners) → trailing actif
+        "trailing_distance_ticks": 20,          # SL trailing = MFE_price - 20t (cap perte vs MFE)
         "ladder_paliers": [
-            # ANCIEN palier 1 (60.0, 20.0) SUPPRIME 11/05 — cut trop tot
-            (100.0, 40.0),   # palier 1 : MFE +100t (=$75) → SL +40t (lock $60)
-            (150.0, 80.0),   # palier 2 : MFE +150t (=$112.50) → SL +80t (lock $120)
-            (200.0, 120.0),  # palier 3 : MFE +200t (=$150) → SL +120t (lock $180)
+            (30.0, 5.0),    # palier 1 : MFE +30t (TP cible) → SL +5t (lock $7.50)
+            (50.0, 15.0),   # palier 2 : MFE +50t (p50)     → SL +15t (lock $22.50)
+            (80.0, 35.0),   # palier 3 : MFE +80t (p75)     → SL +35t (lock $52.50)
         ],
     },
     "ES": {
-        "n_contracts": 3,                # MES
-        # 04/05 SOIR ROUND 1 : ES SL 32t (8 pts) au lieu de 80t (20 pts).
-        # Aligne sur Bot 1 historique avg SL 27t et anciens databento_trades.jsonl.
-        "sl_ticks_base": 32,             # 8 pts (etait 80t = 20 pts trop large)
-        "trailing_activation": 20,       # +5 pts ES (etait 48 = 12 pts)
-        "trailing_distance": 12,         # trail a 3 pts (etait 32 = 8 pts)
-        # 08/05 Jackson directive "30 MN PARTOUT" - aligne NQ
-        "timeout_minutes": 30,
-        "tp_cap_ticks": 80,              # cap securite 20 pts (RR max 2.5)
-        # 09/05 Jackson "ET SI ON REDUIT LEGEREMENT LE TP" - aligne NQ.
-        # ES sl_ticks_base=32 -> TP RR=1.2 = 38t (9.5 pts) vs RR=1.5 = 48t (12 pts).
-        # Backtest sample 25 trades : RR=1.2 capture 1 trade additionnel (#4 ES MFE 40t TIMEOUT
-        # -> aurait TP a 38t). SL INCHANGE.
-        "tp_rr_ratio": 1.2,              # TP = sl_ticks * 1.2 = 38t (9.5 pts) - etait 1.5 (48t)
-        "tick_value": 1.25,
+        # 28/05 DIRECTIVE Jackson : 1 contrat ES standard en COLLECTE Sim1
+        # (au lieu de 3 contrats avec tick_value MES). Le mapping symbole reste
+        # "ES" -> "ESM26-CME" (E-mini standard) cf databento_paper_trader_v2.py:212.
+        # tick_value passe de 1.25 (MES) a 12.50 (ES standard, $50/pt -> $12.50/tick).
+        # n_contracts 3 -> 1 : reduction 3x du nb contrats. Combine au tick_value
+        # corrige : USD/tick reel = 1 x 12.50 = $12.50 (avant 3 x 1.25 = $3.75 bot
+        # pensait, mais broker exec 3 x 12.50 = $37.50 reel = sur-sizing 10x). Nouveau
+        # = bot pense $12.50, broker exec $12.50 = aligned.
+        "n_contracts": 3,                # 3 MESM26 Micro ES (Couche 2 Jackson 09/06)
+        # 02/06 OPTION B Jackson "STRICT $150 USD partout, RR 1:1" :
+        # Analyse empirique 147 trades ES (PF 1.04, WR 48.2%, TIMEOUT 67%) :
+        # - MFE p75 winners = 15t, p90 = 25t
+        # - MAE p90 losers = 17.5t (= $219 USD, jamais touche SL 32t)
+        # - Old SL=32t ($400) sur-dimensionne (loser typique sort par TIMEOUT a -11t)
+        # Setup symetrique propre :
+        # - SL_base = 12t = $150 USD (= cap perte par trade)
+        # - TP_cap = 12t = $150 USD (= cap gain par trade)
+        # - RR 1:1 = coherent avec edge marginal (PF~1)
+        # - Timeout 30min = revert baseline pre-02/06 matin
+        # Trailing BE (32t) + Trailing actif (48t) + Ladder (40/60/80t) restent
+        # configures mais effectif DESACTIVE car triggers > TP cap (jamais atteint).
+        # A nettoyer en J+7 review apres observation.
+        "sl_ticks_base": 12,             # 32 -> 12 ($150 USD strict Jackson 02/06)
+        "trailing_activation": 20,       # legacy
+        "trailing_distance": 12,         # legacy
+        "timeout_minutes": 30,           # 60 -> 30 (revert baseline)
+        "tp_cap_ticks": 12,              # 150 -> 12 ($150 USD pour 1 ES std)
+        "tp_rr_ratio": 1.0,              # 1.5 -> 1.0 (RR symetrique 1:1)
+        "tick_value": 1.25,              # Micro MESM26 $1.25/tick (Couche 2 09/06)
         "tick_size": 0.25,
         # 07/05 PHASE 1 OBSERVATION trailing + BE (calibrage symetrique NQ).
         # ES MFE peak observe 06/05 : 35-40t/contract → 1R 32t deja au seuil profit.
@@ -173,17 +198,16 @@ GUARD_RAILS_BOT3: dict[str, dict] = {
         "trailing_active_trigger_ticks": 48,    # MFE >= 48t → trailing
         "trailing_distance_ticks": 16,          # SL trailing = MFE_price - 16t
         # 11/05 LADDER PROFIT-LOCKING (Solution D2 Jackson directive).
-        # ES tick_value $1.25 micro × 3 micros = $3.75/tick total → lock USD = sl_lock × 3.75.
-        # Cible : tick_value ES bcp + grosse que NQ → seuils plus serres.
-        # Palier 1 ~$30 lock, palier 2 ~$60, palier 3 ~$112, palier 4 ~$187.
-        # 11/05 v2 Jackson "couper la poire en 2 enlever le premier palier".
-        # Coherence avec NQ : suppression palier 1 ES (20t/8t cut trop tot).
-        # Ladder ES desormais : palier 1 = MFE 40t (>$150 peak/contract) → lock $60.
+        # 28/05 RECALCUL POST-FIX : ES standard $12.50/tick × 1 contrat = $12.50/tick total.
+        # Palier 1 MFE 40t = $500 peak  -> lock $200 (SL +16t).
+        # Palier 2 MFE 60t = $750 peak  -> lock $375 (SL +30t).
+        # Palier 3 MFE 80t = $1000 peak -> lock $625 (SL +50t).
+        # Niveaux de ticks ladder INCHANGES (la logique de tick reste valide,
+        # seul le mapping ticks->USD bouge avec le tick_value corrige).
         "ladder_paliers": [
-            # ANCIEN palier 1 (20.0, 8.0) SUPPRIME 11/05 — cut trop tot
-            (40.0, 16.0),    # palier 1 : MFE +40t (=$150) → SL +16t (lock $60)
-            (60.0, 30.0),    # palier 2 : MFE +60t (=$225) → SL +30t (lock $112.50)
-            (80.0, 50.0),    # palier 3 : MFE +80t (=$300) → SL +50t (lock $187.50)
+            (40.0, 16.0),    # palier 1 : MFE +40t (=$500) -> SL +16t (lock $200)
+            (60.0, 30.0),    # palier 2 : MFE +60t (=$750) -> SL +30t (lock $375)
+            (80.0, 50.0),    # palier 3 : MFE +80t (=$1000) -> SL +50t (lock $625)
         ],
     },
     # ────────────────────────────────────────────────────────────────────
@@ -218,6 +242,43 @@ GUARD_RAILS_BOT3: dict[str, dict] = {
 }
 
 # ════════════════════════════════════════════════════════════════════════
+# Ladder safety params (FIX 19/05 incident #10 fix 4 — race condition T+1s)
+# ════════════════════════════════════════════════════════════════════════
+# Avant ce fix : palier 1 declenchait en 1 seconde apres fill bracket initial
+# (8:39:53 fill → 8:39:54 BOT3_LADDER_SL_MODIFIED). ServerOrderID ancien SL
+# pas encore propage de _recv_loop → cancel Type 203 ignore silencieusement
+# (cf cancel_order require_sid=True qui maintenant return False dans ce cas).
+# Solution : refuser tout palier ladder tant que age trade < LADDER_MIN_AGE_SECONDS.
+# Permet propagation Server IDs des brackets initiaux avant tout modify.
+LADDER_MIN_AGE_SECONDS = 10
+
+
+# ════════════════════════════════════════════════════════════════════════
+# PROTECTION SL HARDCAP USD (10/06/2026 Jackson directive — anti slip catastrophe)
+# ════════════════════════════════════════════════════════════════════════
+# Cap dur sur le risk maximum par trade en USD VIRTUEL MICRO (Python compute).
+# Si le SL calculé dépasse ce seuil, le trade est VETO (rejeté sans envoi DTC)
+# avec emit BOT3_SL_RISK_VETO. Couche complémentaire au BOT3_VOL_VETO_HIGH_ATR
+# (FIX #54 09/06) et BOT3_SL_MIN_ATR_EXTENDED (FIX #55 09/06).
+#
+# Calcul : sl_risk_usd = sl_ticks * GR[sym]["tick_value"] * GR[sym]["n_contracts"]
+#
+# Configurations actuelles (USD virtuel micro Python) :
+#   - NQ : 25t × $0.50 × 3 = $37.50 (sous cap, OK)
+#   - ES : 12t × $1.25 × 3 = $45.00 (sous cap, OK)
+#   - MGC : 200t × $1.00 × 3 = $600.00 (CAP HIT → VETO automatique, à recalibrer si MGC actif)
+#
+# ⚠️ DECOUPLING avec SC (cf SYMBOL_TO_CONTRACT bot3_paper_common.py) :
+# SC exécute E-mini réel ($5/$12.50/tick), Python calcule en micro virtuel.
+# Le cap $50 USD est en VIRTUAL micro Python. Risk SC réel = x10 (= $500 max
+# en E-mini SC). Acceptable en paper unlimited, à revoir avant Live AMP.
+#
+# Trigger : auto-reprice slip étend SL → si nouveau SL_USD > $50, veto.
+# Aucune modif du calcul SL/TP existant (anti-régression).
+MAX_SL_RISK_USD_BOT3 = 50.0
+
+
+# ════════════════════════════════════════════════════════════════════════
 # Risk management — INDEPENDANTS par instrument
 # ════════════════════════════════════════════════════════════════════════
 # Jackson 03/05 soir round 5 : cap data quality (pas risque PnL).
@@ -235,13 +296,16 @@ RISK_BOT3: dict[str, dict] = {
         "max_trades_per_day": None,         # PAS de limite (aligne Bot 2)
         "max_losses_per_day": None,         # PAS de limite (aligne Bot 2)
         "kill_switch_daily_pnl": None,      # PnL illimite (Sim1 demo)
-        "position_size": 3,
+        # 02/06 FINALE "TOUT EN MINI" : alignement avec GUARD_RAILS_BOT3 NQ
+        # n_contracts=1 (1 E-mini NQM26 standard).
+        "position_size": 1,                 # 1 E-mini NQM26 standard
     },
     "ES": {
         "max_trades_per_day": None,         # PAS de limite (aligne Bot 2)
         "max_losses_per_day": None,         # PAS de limite (aligne Bot 2)
         "kill_switch_daily_pnl": None,
-        "position_size": 3,
+        # 28/05 FIX RESERVE #2 review : idem NQ, dead code aligne sur GUARD_RAILS=1.
+        "position_size": 1,
     },
     # MGC ajoute 12/05/2026 Bot 3 Gold integration.
     # Phase 1 OBSERVE-ONLY : caps actifs (data quality), aligne sur Gold spec

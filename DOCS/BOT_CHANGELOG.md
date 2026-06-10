@@ -62,6 +62,111 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-10 09:30 — FIX #56 SL HARDCAP $50 USD + Ladder recalibration empirique (SHADOW 24h)
+
+**Categorie** : FIX (protection) + RECALIBRATION (trailing/ladder)
+**Impact prod** : PAPER Bot 1 (Bot 3 v3 + Bot 3 MP) + Bot 3 v4 + BN V5 (tous via `_bot3_execute_trade`)
+**Fichier(s)** :
+- `CORE/bot3_paper_common.py:41-65` — commentaires DECOUPLING explicites (NQM26/ESM26 E-mini SC, Python virtual micro)
+- `CORE/bot3_config.py:262+` — MAX_SL_RISK_USD_BOT3 = 50.0 (cap virtual micro)
+- `CORE/bot3_config.py:145-170` — NQ trailing recalibre + ladder paliers (30,5)/(50,15)/(80,35)
+- `CORE/databento_paper_trader_v2.py:3416+` — VETO check FIX #56 SL risk USD
+- `CORE/log_catalog.py:248+` — code BOT3_SL_RISK_VETO (MAJEUR, decisions)
+- `tests/test_bot3_sl_risk_veto.py` (NEW, 10/10 PASS)
+- `tests/test_bot3_ladder_recalibration.py` (NEW, 10/10 PASS)
+
+**Reviewer(s) agent** : market-analyst (audit 7j Bot 1, 47 trades, MFE empirique) + code-reviewer (audit code Bot 3 v3 + Bot 3 MP, pattern 11 V1 confirme)
+
+### Quoi
+1. **DECOUPLING explicite SC ↔ Python** (decision Jackson 10/06) :
+   - Contract envoye DTC = NQM26-CME / ESM26-CME (E-mini, charts SC visibles)
+   - tick_value Python = micro virtuel ($0.50 NQ, $1.25 ES) pour calcul/dashboard
+   - SC execute E-mini reel ($5/$12.50/tick) → PnL SC reel = x10 Python affiche
+   - **Acceptable PAPER unlimited, BLOQUE Live AMP** jusqu'a re-alignement
+
+2. **FIX #56 SL HARDCAP $50 USD** (anti slip catastrophe) :
+   - Cap dur sl_risk_usd = sl_ticks × tick_value × n_contracts <= $50
+   - VETO trade (return False) si depasse + emit BOT3_SL_RISK_VETO
+   - Couvre cas auto-reprice slip parent etendant SL au-dela cap
+   - Configs actuelles : NQ $37.50 ✓ / ES $45 ✓ / MGC $600 (VETO auto a recalibrer)
+
+3. **Ladder paliers recalibres** (Option 1 conservateur Jackson) :
+   - Anciens (100/150/200) : 9% trades atteignaient palier 1, 0% palier 2/3 → INOPÉRANT
+   - Nouveaux empirique 12 wins NQ : (30, 5) / (50, 15) / (80, 35)
+   - Palier 1 = TP cible RR 1.2 → si retracement post-TP, lock +$7.50 virtual
+   - Palier 2 = MFE p50 winners → lock +$22.50 virtual
+   - Palier 3 = MFE p75 winners → lock +$52.50 virtual
+
+4. **Trailing BE / Active triggers recalibres** :
+   - trailing_be_trigger : 80t → **30t** (TP cible)
+   - trailing_active_trigger : 120t → **50t** (p50)
+   - trailing_distance : 40t → **20t** (cap perte vs MFE)
+
+### Pourquoi
+**BUG SIZING x10 confirme empirique** Trade Activity Log SC partage Jackson 10/06 07:45 :
+- Sim1 cumul reel 10/06 = -$2820 (dashboard +$226.50, x10+ cache)
+- Bot 3 v3 NQ trade 06:30 : SC +$750 vs Python +$144
+- Bot 3 v4 NQ trade 04:05 : SC -$45 vs Python +$18 (SIGNE INVERSE)
+- BN V5 NQ -$511 hier (SL Price1 non arme = bug fix 10/06 matin)
+
+**Pertes evitables 7j historique** si SL HARDCAP + ladder actif :
+- 04/06 18:55 PREV_VAL : -$300 (MFE 60t non secure)
+- 08/06 15:48 CUR_VPOC : -$570 (slip massif)
+- 08/06 19:08 MQ_HVL : -$500 (MFE 13t puis renverse)
+→ Estimation -$1000+ economisable par semaine.
+
+### Impact attendu
+- Plus de TRADE_CLOSE_SL avec PnL positif (= SL fill instantane bug Price1 fixe)
+- Plus de TIMEOUT massif type BN V5 -$511 (SL non arme)
+- Trailing/ladder operationnel (vs 0% atteinte sur paliers historiques)
+- Cap virtual $50 protege contre slip extreme (auto-reprice 60t+)
+
+### Validation pre-deploy
+- [X] Tests `tests/test_bot3_sl_risk_veto.py` : 10/10 PASS
+- [X] Tests `tests/test_bot3_ladder_recalibration.py` : 10/10 PASS
+- [X] Tests `tests/test_dtc_stop_with_price1.py` : 7/7 PASS (non regression)
+- [X] BOT/test_bot.py : 42/46 PASS (4 errors pre-existing migration micro)
+- [X] Audit empirique Trade Activity Log SC : bug sizing x10 confirme + cap protection coherent
+- [X] Review agent market-analyst : verdict RESERVES Bot 3 v3 + NOGO Bot 3 MP
+- [X] Review agent code-reviewer : verdict GO-AVEC-RESERVES code (pattern 11 V1 partiel mais propre)
+
+### Revert plan
+```bash
+# Restore previous configs
+cp CORE/bot3_config.py.bak_20260610_recalib CORE/bot3_config.py
+cp CORE/databento_paper_trader_v2.py.bak_20260610_fix56 CORE/databento_paper_trader_v2.py
+# Restore env vars VPS
+ssh Administrator@212.28.179.199 "nssm set MIA-DataBento-Paper-V2 AppEnvironmentExtra ... MIA_BOT3_LADDER_MODE=ACTION ..."
+ssh Administrator@212.28.179.199 "powershell -Command Restart-Service MIA-DataBento-Paper-V2"
+```
+
+### Deployed at 2026-06-10 09:30 UTC
+- SCP bot3_config.py + databento_paper_trader_v2.py + log_catalog.py + tests
+- Env var VPS : `MIA_BOT3_LADDER_MODE=OBSERVE` (SHADOW 24h)
+- Service MIA-DataBento-Paper-V2 Restarted, status Running
+
+### Note SHADOW mode
+Ladder en MODE=OBSERVE pour 24h : emit BOT3_LADDER_WOULD_LOCK_PALIER_N + BOT3_TRAILING_BE_OBSERVED sans modify SL DTC. Validation empirique avant ACTION.
+
+À J+1 (2026-06-11 09:30 UTC) :
+- Grep emits ladder : combien de trades AURAIENT bénéficié paliers 1/2/3
+- Calc gain théorique si ladder actif
+- Decision passage ACTION si 0 cascade rejection + gain net positif
+
+### Suivi post-deploy
+- J+1 : grep BOT3_SL_RISK_VETO occurrences (devrait etre rare avec configs actuelles)
+- J+1 : grep BOT3_LADDER_TICK count + WOULD_LOCK_PALIER count
+- J+1 : grep BOT3_TRAILING_BE_OBSERVED + BOT3_TRAILING_UPDATE_OBSERVED
+- J+7 : audit gain net theorique ladder ACTIVE vs SHADOW
+- J+7 : verifier 0 TRADE_CLOSE_SL pnl positif (bug Price1 fixe + sizing decouple)
+
+### Lien
+- INCIDENT_LOG entry 2026-06-10 09:30 (25)
+- Agent market-analyst verdict (audit Bot 1, MFE p50=53t empirique)
+- Agent code-reviewer verdict (audit code, pattern 11 V1 confirme Bot 3 MP)
+
+---
+
 ## 2026-06-10 07:30 — REVERT Price1 SL STOP (5 sites) — patch 01/06 etait base sur fausse affirmation spec DTC
 
 **Categorie** : FIX + ROLLBACK (patch 01/06)
