@@ -119,17 +119,30 @@ def test_roll_phase_plus_1_post_roll_stable():
     assert f["roll_phase"] == 1
 
 
-def test_cold_start_avant_premier_roll():
-    """Avant 1er roll connu (annee anterieure non couverte) -> days_since_roll NaN."""
-    from CORE.roll_calendar import compute_roll_features
+def test_year_1_lookback_couvre_q1_premier_jour_annee():
+    """1er janvier : year-1 lookback couvre dernier roll Dec annee precedente.
 
-    # 1er janvier 2024 : seul roll precedent serait 15/12/2023 (-1 = 2023)
-    # Mais on couvre year-1 dans get_roll_dates -> donc days_since_roll non-NaN
-    # Test reel cold-start : annee 2000 (avant get_roll_dates n'est appele que pour year-1)
-    f = compute_roll_features(date(2000, 1, 1), "NQ")
-    # Vu qu'on couvre year-1 (1999), il existe un roll. Test cold-start strict difficile
-    # Verifier juste que pas de crash
-    assert f["roll_phase"] in (-1, 0, 1)
+    NOTE : cold-start strict (avant 1er roll connu) IMPOSSIBLE en pratique
+    car compute_roll_features inclut year-1 + year + year+1 dans roll_dates.
+    Test renomme + objectif clarifie (fix review code-reviewer 10/06 :
+    ancien `test_cold_start` faux test, assertion triviale).
+    """
+    from CORE.roll_calendar import compute_roll_features, get_roll_dates_es_nq
+
+    f = compute_roll_features(date(2026, 1, 1), "NQ")
+    # 1er janvier 2026 : dernier roll = 18/12/2025 (3e vendredi Dec 2025)
+    last_roll_2025 = get_roll_dates_es_nq(2025)[-1]
+    expected_days = (date(2026, 1, 1) - last_roll_2025).days
+
+    assert f["days_since_roll"] == expected_days, (
+        f"1er janvier doit voir dec annee precedente, "
+        f"attendu {expected_days}, obtenu {f['days_since_roll']}"
+    )
+    # 1er janvier = 14 jours apres 18/12 -> phase=+1 stable
+    # (> POST_ROLL_TRANSITION_DAYS=1 et next roll 20/03/2026 dans 78 jours > PRE_ROLL_DAYS=5)
+    assert f["roll_phase"] == 1, (
+        f"1er janvier dans regime stable post-roll, obtenu {f['roll_phase']}"
+    )
 
 
 def test_batch_mode_dataframe():
@@ -146,7 +159,8 @@ def test_batch_mode_dataframe():
     })
     result = compute_roll_features_batch(df, "NQ")
 
-    assert result["is_roll_day"].iloc[0] is True or result["is_roll_day"].iloc[0] == True
+    # Cast explicite (pandas peut retourner np.bool_) - fix review 10/06
+    assert bool(result["is_roll_day"].iloc[0]) is True
     assert result["roll_phase"].iloc[0] == 0
     assert result["roll_phase"].iloc[1] == 0  # J+1 transition
     assert result["roll_phase"].iloc[2] == 1  # stable
@@ -162,13 +176,24 @@ def test_batch_missing_column_raises():
         compute_roll_features_batch(df)
 
 
-def test_unknown_symbol():
-    """Symbol inconnu -> defaults (pas crash)."""
+def test_unknown_symbol_raises_value_error():
+    """Symbol inconnu -> ValueError FAIL LOUD (fix silent fallback review 10/06).
+
+    Ancien test documentait une dette (`roll_phase=0` sur symbol inconnu = faux
+    signal roll-day). Refactor en fail-loud anti-pattern data-quality.md.
+    """
     from CORE.roll_calendar import compute_roll_features
 
-    f = compute_roll_features(date(2026, 6, 19), "UNKNOWN")
-    assert f["is_roll_day"] is False
-    assert f["roll_phase"] == 0
+    with pytest.raises(ValueError, match="symbol inconnu"):
+        compute_roll_features(date(2026, 6, 19), "UNKNOWN")
+
+
+def test_unknown_symbol_btc_raises():
+    """Verifier que le fail-loud s'applique aussi aux symboles plausibles non-CME."""
+    from CORE.roll_calendar import compute_roll_features
+
+    with pytest.raises(ValueError, match="BTC"):
+        compute_roll_features(date(2026, 6, 19), "BTC")
 
 
 if __name__ == "__main__":

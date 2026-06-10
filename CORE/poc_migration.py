@@ -110,14 +110,24 @@ class POCMigrationCalculator:
         +1 si difference positive (VPOC remonte),
         -1 si negative (VPOC descend),
          0 si variance < threshold (flat).
+
+        Bug fixed 10/06/2026 (review code-reviewer agentId a45bc299185cd0769) :
+        ternaire imbrique dans `if` -> Python parser interprete comme
+        `if (cond_a if cond_b else cond_c)`. Branche `ten_bars_ago == 0`
+        retournait `FLAT_VARIANCE_THRESHOLD` (float 0.0001 = truthy),
+        donc `return 0` declenchait toujours. Refactor en if/else explicite.
         """
         current = values[-1]
         ten_bars_ago = values[0]
         diff = current - ten_bars_ago
 
-        # Variance threshold (relatif au prix ~30000 NQ -> ~3 ticks)
-        # Si VPOC quasi-stable, dir=0
-        if abs(diff) < FLAT_VARIANCE_THRESHOLD * abs(ten_bars_ago) if ten_bars_ago != 0 else FLAT_VARIANCE_THRESHOLD:
+        # Threshold relatif si reference non-nulle, absolu sinon
+        if ten_bars_ago != 0:
+            threshold = FLAT_VARIANCE_THRESHOLD * abs(ten_bars_ago)
+        else:
+            threshold = FLAT_VARIANCE_THRESHOLD
+
+        if abs(diff) < threshold:
             return 0
         return int(np.sign(diff))
 

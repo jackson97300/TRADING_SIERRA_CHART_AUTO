@@ -192,5 +192,109 @@ def test_batch_mode_missing_column_raises():
         compute_poc_migration_features(df)
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Tests borderline ajoutes apres review code-reviewer agentId a45bc299185cd0769
+# (10/06/2026) - bug ternaire piege poc_migration.py:120 non couvert
+# ────────────────────────────────────────────────────────────────────────────
+
+def test_dir_ten_bars_ago_zero_with_strong_move_up():
+    """ten_bars_ago=0 + move haussier majeur -> dir=+1 (non 0).
+
+    Cas borderline qui declenchait le bug ternaire piege (FLAT_VARIANCE_THRESHOLD
+    interprete comme bool truthy quand `ten_bars_ago=0`).
+    """
+    from CORE.poc_migration import POCMigrationCalculator
+
+    calc = POCMigrationCalculator()
+    # Sequence : 0 -> 90 (move haussier majeur, ten_bars_ago=0)
+    values = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]
+    for v in values:
+        features = calc.update(v)
+
+    assert features["poc_migration_dir"] == 1, (
+        f"Move +90 avec ten_bars_ago=0 -> dir doit etre +1, "
+        f"obtenu {features['poc_migration_dir']} (regression bug ternaire)"
+    )
+    assert features["ctx_poc_migration_10"] > 0, (
+        f"Slope positif attendu, obtenu {features['ctx_poc_migration_10']}"
+    )
+
+
+def test_dir_ten_bars_ago_zero_with_strong_move_down():
+    """ten_bars_ago=0 + move baissier majeur -> dir=-1.
+
+    NOTE : impossible en pratique car move baissier depuis 0 = valeurs negatives,
+    mais teste la symetrie de la branche `ten_bars_ago == 0` du fix.
+    """
+    from CORE.poc_migration import POCMigrationCalculator
+
+    calc = POCMigrationCalculator()
+    # Sequence : 0 -> -90 (move baissier theorique)
+    values = [0.0, -10.0, -20.0, -30.0, -40.0, -50.0, -60.0, -70.0, -80.0, -90.0]
+    for v in values:
+        features = calc.update(v)
+
+    assert features["poc_migration_dir"] == -1, (
+        f"Move -90 avec ten_bars_ago=0 -> dir doit etre -1, "
+        f"obtenu {features['poc_migration_dir']}"
+    )
+
+
+def test_dir_ten_bars_ago_zero_flat_returns_zero():
+    """ten_bars_ago=0 + move < threshold absolu -> dir=0.
+
+    Branche else du fix : si reference nulle, on utilise FLAT_VARIANCE_THRESHOLD
+    en absolu (pas relatif). Move < 0.0001 reste flat.
+    """
+    from CORE.poc_migration import POCMigrationCalculator
+
+    calc = POCMigrationCalculator()
+    # Sequence : 0 -> 0.00005 (sous threshold absolu 0.0001)
+    values = [0.0] * 9 + [0.00005]
+    for v in values:
+        features = calc.update(v)
+
+    assert features["poc_migration_dir"] == 0, (
+        f"Move 0.00005 avec ten_bars_ago=0 sous threshold -> dir doit etre 0, "
+        f"obtenu {features['poc_migration_dir']}"
+    )
+
+
+def test_dir_borderline_variance_threshold_just_above():
+    """Move juste au-dessus threshold relatif -> dir signe correct."""
+    from CORE.poc_migration import POCMigrationCalculator
+
+    calc = POCMigrationCalculator()
+    # ten_bars_ago=1000, threshold=0.0001*1000=0.1, diff=0.15 (juste au-dessus)
+    values = [1000.0, 1000.05, 1000.05, 1000.05, 1000.05,
+              1000.05, 1000.05, 1000.05, 1000.05, 1000.15]
+    for v in values:
+        features = calc.update(v)
+
+    # diff = 0.15 > threshold 0.1 -> dir = +1
+    assert features["poc_migration_dir"] == 1, (
+        f"diff 0.15 > threshold 0.1 -> dir=+1, "
+        f"obtenu {features['poc_migration_dir']}"
+    )
+
+
+def test_dir_borderline_variance_threshold_just_below():
+    """Move juste sous threshold relatif -> dir=0."""
+    from CORE.poc_migration import POCMigrationCalculator
+
+    calc = POCMigrationCalculator()
+    # ten_bars_ago=1000, threshold=0.0001*1000=0.1, diff=0.05 (juste en-dessous)
+    values = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0,
+              1000.0, 1000.0, 1000.0, 1000.0, 1000.05]
+    for v in values:
+        features = calc.update(v)
+
+    # diff = 0.05 < threshold 0.1 -> dir = 0
+    assert features["poc_migration_dir"] == 0, (
+        f"diff 0.05 < threshold 0.1 -> dir=0, "
+        f"obtenu {features['poc_migration_dir']}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--no-cov"])

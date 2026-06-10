@@ -17,10 +17,30 @@ Conventions CME standards :
   - MGC (Gold Micro) : monthly (G/J/M/Q/V/Z avril/juin/aout/oct/dec/fev)
     Code GC monthly mais MGC actif moins liquide -> on suit le contract roll CME
 
+⚠️ CONFLIT SEMANTIQUE EN ATTENTE DECISION JACKSON (review code-reviewer 10/06) :
+
+  `enricher_chain.py:1948-1962` (Phase 3c-C, deployee 18/05) produit DEJA un
+  champ `roll_phase` mais avec semantique DIFFERENTE :
+    - Phase 3c-C (existant prod) : 0=early / 1=mid / 2=late (basee discontinuity)
+    - Phase 3.6 (ici, design doc) : -1=pre-roll / 0=roll-day / +1=stable (calendrier)
+
+  Decision integration enricher_chain attendue : (A) deprecate Phase 3c-C +
+  flag dataset retro, OU (B) renommer ici en `roll_phase_calendar` pour
+  coexistence. Cf IDEAS_BACKLOG.
+
+⚠️ APPROXIMATION MGC (validation Jackson requise) :
+
+  CME docs officielles disent "First Position Day = trading day prior to first
+  business day of contract month". Implementation actuelle = 3eme jeudi du mois
+  contrat (G/J/M/Q/V/Z). Peut decaler de ~2 semaines vs realite.
+  Action : valider empiriquement sur DMP dumps GC futures 6 mois historique.
+  Cf IDEAS_BACKLOG / Phase 3.6.2.
+
 Anti-pattern interdit (cf BN V5 KILL 10/06) :
   - Hardcode dates roll dans bot decision -> AS-IS feature contextuelle uniquement
   - Audit Phase 2 design : roll_phase ks=1.0 leak detected -> PAS UTILISER EN
     FEATURE ML DIRECTE. Garder pour visualisation/debug uniquement.
+  - Silent fallback symbol inconnu : FAIL LOUD via ValueError (fix 10/06).
 
 Auteur : MIA Trading V2 (Phase 3.6 Sierra Migration)
 """
@@ -97,22 +117,24 @@ def compute_roll_features(
         dict {"is_roll_day": bool, "days_since_roll": int OR NaN,
               "roll_phase": int -1/0/+1}
     """
-    if symbol.upper() in ("ES", "NQ"):
+    symbol_upper = symbol.upper()
+    if symbol_upper in ("ES", "NQ"):
         roll_dates = get_roll_dates_es_nq(bar_date.year)
         # Ajout annee precedente pour gerer Q1 (avant 1er roll annee)
         roll_dates = get_roll_dates_es_nq(bar_date.year - 1) + roll_dates
         # Et annee suivante pour pre-roll window cross-year
         roll_dates = roll_dates + get_roll_dates_es_nq(bar_date.year + 1)
-    elif symbol.upper() == "MGC":
+    elif symbol_upper == "MGC":
         roll_dates = get_roll_dates_mgc(bar_date.year)
         roll_dates = get_roll_dates_mgc(bar_date.year - 1) + roll_dates
         roll_dates = roll_dates + get_roll_dates_mgc(bar_date.year + 1)
     else:
-        return {
-            "is_roll_day": False,
-            "days_since_roll": np.nan,
-            "roll_phase": 0,
-        }
+        # FAIL LOUD : silent fallback supprime (review code-reviewer 10/06).
+        # `roll_phase=0` sur symbol inconnu = faux signal "roll-day".
+        raise ValueError(
+            f"compute_roll_features : symbol inconnu '{symbol}'. "
+            f"Supporte : ES, NQ, MGC"
+        )
 
     # is_roll_day : exact match
     is_roll = bar_date in roll_dates
