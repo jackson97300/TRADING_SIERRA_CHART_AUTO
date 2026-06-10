@@ -7,6 +7,88 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE SIERRA-3.6-A 2026-06-10]** **Conflit semantique `roll_phase` Phase 3c-C vs Phase 3.6** — decision integration enricher_chain | 30-60 min decision + impact dataset ML | MEDIUM | PROPOSED
+  - **Source** : review code-reviewer agentId a45bc299185cd0769 (10/06) sur `CORE/roll_calendar.py` Phase 3.6
+  - **Probleme** : `enricher_chain.py:1948-1962` (Phase 3c-C deployee 18/05) produit `roll_phase` avec semantique `0=early / 1=mid / 2=late` (discontinuity-based). Nouveau `CORE/roll_calendar.py` Phase 3.6 (commit dcf836e) utilise `-1=pre-roll / 0=roll-day / +1=stable` (calendrier statique CME).
+  - **Impact si merge sans decision** : datasets ML historique ont vu `roll_phase=0/1/2`. Nouveau `roll_phase=-1/0/+1` ecrasera silencieusement. Critere 7 critical-tasks-review.md (Irreversible/dataset historique).
+  - **3 options Jackson** :
+    - **A** : Deprecate Phase 3c-C lignes 1948-1962 + flag dataset retro (calendrier statique = ML-superieur prospectif vs reactif)
+    - **B** : Renommer Phase 3.6 en `roll_phase_calendar` (coexistence, 2 colonnes)
+    - **C** : Drop Phase 3.6 `roll_phase`, garder seulement `is_roll_day` + `days_since_roll`
+  - **Trigger decision** : avant integration `roll_calendar.py` dans `live_enricher.py` Phase 4 (~17/06)
+
+- **[DETTE SIERRA-3.6-B 2026-06-10]** **Approximation MGC 3eme jeudi vs CME First Position Day** — validation empirique DMP dumps | 2-3h validation + ajustement code si decalage | LOW-MEDIUM | WAITING_DATA
+  - **Source** : review code-reviewer agentId a45bc299185cd0769 (10/06) sur `CORE/roll_calendar.py:_third_thursday`
+  - **Probleme** : CME documentation officielle dit "First Position Day = trading day prior to first business day of contract month". Implementation actuelle = 3eme jeudi G/J/M/Q/V/Z. Peut decaler ~2 semaines vs realite.
+  - **Validation requise** : comparer `roll_calendar.py:get_roll_dates_mgc(2025)` avec contract switch reels via DMP dumps GC futures 6 mois historique. Si decalage > 5 jours -> remplacer par algorithme First Position Day.
+  - **Impact actuel** : `is_roll_day` MGC peut etre faux 6 fois/an (1 par roll). `days_since_roll` decale. `roll_phase` mal calibre.
+  - **Action** : Phase 3.6.2 (post Phase 3 modules done) - test empirique + ajustement.
+  - **Trigger** : avant integration MGC dans live_enricher OU avant backtest MGC base sur ces features.
+
+
+- **[DETTE R3-BOT3-V3-SIERRA 2026-06-07]** **Bot3V3SierraReader — incremental offset pour rolling 100% deterministe cross-poll** | ~150 LOC + 5 tests | MEDIUM (post-cutover Sierra J+7) | PROPOSED
+  - **Source** : review #1 GO-AVEC-RESERVES 6.5/10 R3 + fix Option A (documentation cross-poll drift) applique 2026-06-07
+  - **Probleme** : `load_rolling_window_tail_only()` reset le state buffer Phase B+ a chaque appel et re-transforme TOUT le buffer rolling Sierra. Pour les bars intermediaires (df.iloc[0:-1]), les features Phase B+ (long_up_bar, ctx_price_slope_5, niveaux session) varient cross-poll selon la presence de prev_bar. Seule `df.iloc[-1]` garantie deterministe.
+  - **Impact actuel** : ZERO (Bot 3 v3 engine ne consomme que `df.iloc[-1]`, cf `bot3_v3_continuation_paper.py:271`). Documentation R3 fix Option A suffit.
+  - **Trigger refactor** : si un autre consumer (BN V4, dashboard rolling features visualisation, audit replay J+7) commence a lire `df.iloc[k]` pour k != -1.
+  - **Fix propose** : cache `_last_ts_seen` + ne re-transformer que les NOUVELLES bars (offset incremental). Conserver le state buffer entre polls sans reset. ~150 LOC.
+  - **Tests** : 5 tests cross-poll determinisme (Phase B+ features identiques entre 2 polls successifs si meme bar visee).
+  - **Reference** : `DOCS/FIX_BOT3_V3_SIERRA_WRAPPER_REVIEW1.md` + warnings semantiques tete `CORE/bot3_v3_sierra_reader.py`.
+
+- **[DETTE R2-SIZING 2026-06-02]** **TICK_VALUE_USD["ES"]=1.25 (MES) divergent de GUARD_RAILS_BOT3 ES (12.50 standard)** dans bot3_paper_common.py:84 — Source de verite duplique. Si Bot 3 v3/v4 etend a NQ+ES via `MIA_BOT3_V3_SYMBOLS`, PnL ES sera sous-estime 10x. ACTUELLEMENT DORMANT (Bot 3 v3/v4 = NQ only). | 30 min | MEDIUM | PROPOSED
+- **[DETTE R2-SIZING 2026-06-02]** **bn_v4_paper.py qty=1 hardcoded** (ligne 668, 718, 737, 742) + `pnl_usd` ligne 828 ne multiplie pas par n_contracts. Aligne 1 micro Bot 2 actuellement, mais piege si sizing change | 1h | MEDIUM | PROPOSED
+- **[DETTE R2-SIZING 2026-06-02]** **SYMBOL_TO_CONTRACT duplique 4x** : bot3_paper_common.py:41, databento_paper_trader_v2.py:212, bn_v4_paper.py:73, NEW_BOT_2_MIA_TRADER/main.py:980. Refactor en config dynamic per-bot via dict centralise (CORE/constants.py) | 2h | MEDIUM | PROPOSED
+- **[DETTE TESTS ENGINES 2026-06-02]** **19 tests engines pre-existants FAIL** (test_bot3_v3_engine.py + test_bot3_v4_engine.py + test_bot2_edges_engine.py). Drift defaults engine vs tests. INCIDENT_LOG entry 26 (02/06 14:30) documente | 2-3h | HIGH | PROPOSED
+
+- **[DETTE J12-DASHBOARD 2026-05-27]** **3 P2 mineurs review plan V2 — fix au commit etape correspondante** | <5 min chacun | LOW | PROPOSED
+  - **T1 (J12.0)** : wrapper `run_bot4.py` doit `if not bot.connect(): sys.exit(1)` apres connect() pour eviter nssm restart loop si DTC offline. Sinon `run()` raise RuntimeError → loops infini.
+  - **T2 (J12.1)** : doc post-install nssm `nssm set MIA-Bot-4-Paper AppExit Default Restart` + `AppRestartDelay 30000` (30s delai restart si crash).
+  - **T3 (J12.5)** : ajouter `dry_run` field payload (lu depuis `BOT4_BOOT_START.ctx.dry_run`) + badge UI Card 1 pour visibilite debug.
+  - **Trigger** : a chaque commit J12.0 / J12.1 / J12.5 respectivement. Tracking simple.
+
+- **[DETTE BOT 4 2026-05-27 P1bis]** **Strategie recovery orphan flatten — auto-retry vs human-only** | 1-2h analyse + 30 LOC | MEDIUM (capital risk si oubli warning) | PROPOSED
+  - **Source** : code-reviewer re-review 2eme passe J10 GO conditionnel
+  - Le fix P1-1 actuel est LOG-ONLY : `_close_position_via_flatten` pop la position du tracking interne meme si `flatten_position_safely.sequence_completed=False` ou `orphan_detected_post_cleanup=True`. Le bot continue, mais broker peut avoir qty residuel.
+  - **Risque** : si Jackson ne lit pas le warning stderr, position broker zombie tant qu'il ne flatten pas manuellement Sierra Chart.
+  - **Decision a prendre** :
+    - Option A : auto-retry flatten N fois avant pop interne (++safe, --complex)
+    - Option B : si orphan detected → marquer position en etat `ORPHAN_PENDING_MANUAL`, ne plus pop, alerte Discord critique
+    - Option C : status quo (log-only) + monitoring J11 + alerte Telegram
+  - **Trigger** : avant Phase 7.2 PAPER AGGRESSIVE (3 micros = risk x3) ou si 1 incident orphan en Phase 7.1.
+
+- **[DETTE BOT 4 2026-05-27 P3]** **3 hardening defensive coding J11** | ~10 LOC total | LOW | PROPOSED
+  - **Source** : code-reviewer sweep final J10
+  - **P3.1 telemetry silent except** (`main.py:343, 367, 398, etc.` partout `except Exception: pass` apres `telemetry.emit`)
+    - Si telemetry plantee silencieusement, perte traces decisions/risk/sltp. Au minimum `print(stderr)` dans except, pas juste `pass`. ~3 LOC par occurrence.
+  - **P3.2 entry_price guard** (`main.py:387` calculs SL/TP/bracket)
+    - Pas de garde explicite `entry_price > 0` avant pricing. En pratique SLTPEngine plante avant (KeyError) et try/except global catch. Defensive coding manque, pas exploitable. ~3 LOC.
+  - **Trigger** : J11-LOGS quand on instrumente emit catch.
+
+- **[DETTE BOT 4 2026-05-27]** **3 reserves P2 review J10 main.py — hardening Phase 7+** | 30-60 min total | LOW-NOW-MEDIUM | **P2-1 CONFIRMED IN PROD 27/05 14:14 UTC** (cf INCIDENT_LOG #20). Promu MEDIUM.
+  - **Source** : code-reviewer + audit cross-check Claude J10 RE-REVIEW (verdict GO-AVEC-RESERVES, fix P1-1 + P2-3 appliques)
+  - **P2-1 Lock file stale apres kill -9** (`main.py:acquire_lock_file`) - **PROMU MEDIUM 27/05** apres incident reel
+    - `atexit` ne se declenche pas sur SIGKILL/segfault/`os._exit`/`Stop-Service Windows brutal`. Lock orphelin force user a delete manuel.
+    - **Fix propose** : parse PID dans lock + verifier `psutil.pid_exists(pid)` ou `os.kill(pid, 0)`. Si dead → log warning + overwrite (auto-recovery). Code minimal ~10 LOC.
+    - **Trigger** : si recurrent en Phase 7.1 SAFE COLLECT.
+  - **P2-2 Pas de cleanup broker si exception entre send_bracket OK et open_positions[]=** (`main.py:_process_symbol` lignes 418-453)
+    - Si `register_oco_pair` / `risk.on_trade_open` / `PositionState(...)` leve apres bracket place broker, position broker-side mais NON trackee → pas de monitoring → pas de close.
+    - **Severite** : LOW (les 3 operations sont triviales — dict set / dataclass init / RiskState mutation). Mais defensive coding manque.
+    - **Fix propose** : try/except autour des 3 op, cleanup via `flatten_position_safely` si erreur. ~15 LOC.
+    - **Trigger** : si crash inattendu Phase 7.1.
+  - **P2-4 sanity_check_main_e2e.py acces attribut prive `bot.reader._live_reader`** (sandbox/sanity_check_main_e2e.py:149)
+    - Sandbox replay reader bypass attribut prive M1Pipeline. Fragile si reader.py refactor.
+    - **Fix propose** : exposer setter public `M1Pipeline.set_live_reader_for_tests(reader)` ~5 LOC.
+    - **Trigger** : si refactor reader.py casse sanity check.
+  - **Note** : reserves NON-BLOQUANTES J10 GO. A traiter quand impact recurrent.
+
+- **[DETTE DASHBOARD 2026-05-24]** **Dashboard Bot 3 v3/v4 — refacto DRY + XSS escape** | 30 min | LOW (post-deploy J+1) | PROPOSED
+  - **Source** : code-reviewer GO-AVEC-RESERVES 24/05 sur dashboard 5 modes (Bot 3 v3 + v4 deploye paper TRADE direct)
+  - **2 patches recommandes** (non-bloquants deploy lundi) :
+    1. DRY `_makeStaleBanner(d, ageSec, logDir)` helper — duplication ~10 LOC entre `renderPaperBot3V3Section` et `renderPaperBot3V4Section` (dashboard.js)
+    2. XSS escape `escHtml()` sur champs string libres (`veto_reason`, `level`, `signal_id`, `tp_mode`) injectes via innerHTML — risque faible (JSONL controle interne) mais bonne pratique
+  - **Tick size helper** `_getTickSizeForSym(sym)` deja applique 24/05 (ES/NQ=0.25, MGC=0.10). Si extension multi-instrument Bot 3 -> migrer vers source unique CORE/constants.py via endpoint /api/config/ticks.
+  - **Trigger** : si Jackson signale ecart visuel UI ou si extension Bot 3 v3/v4 a ES/MGC
+
 - **[REFACTOR PARTAGE 2026-05-18]** **Bot 3 v2 Narrative Layer en service partage multi-bot** | 1-2 jours refactor | MEDIUM (post-paper GO Bot 3 v2) | PROPOSED
   - **Source** : question Jackson 2026-05-18 PM "ces modules est-ce qu'on pourrait les utiliser pour les autres bots est-ce qu'ils pourront les appeler ?"
   - **Architecture cible** : narrative layer = SERVICE PARTAGE consume par Bot 1 (DMP Sim3), Bot 2 (V6 Sim2), Bot 3 (MP Sim1), Bot 4 (BN V3), futur Bot MGC.
@@ -546,3 +628,86 @@ recalibrage seuils 600 -> X% adaptatif).
 - Etape 6 ml-trainer review : 30 min
 - Etapes 7-8 : variable selon resultats
 
+
+
+---
+
+## Backlog refacto post-Option C (review backtests 19/05/2026)
+
+### R3 Migration `--source` heterogeneous → convention unique
+**Status** : 3 patterns coexistent post-Option C migration :
+- `backtest_v6_groupa_predictivity.py` : kwarg argparse `--source v4_enriched|v4_pure`
+- `backtest_bot4_bn_v4_early.py` : env var `BACKTEST_SOURCE` + override CLI `--source`
+- `backtest_confluence_jackson_all.py` : choix `--source DMP|V4|V4_PURE|BOTH`
+
+**Cible** : convention unique partout (argparse `--source` standard + helper `load_v4_dataset(source, symbol)` factorisé).
+
+**Effort** : ~2h dev + tests. Reporter post-validation Option C (regen 8 mois + backtests).
+
+### R4 Conversion parquet → JSONL temporaire (confluence_jackson_all)
+**Status** : `backtest_confluence_jackson_all.py` charge parquet 8 mois (~250MB) puis convertit en JSONL temporaire (~500MB) car backtest_engine legacy consomme JSONL.
+
+**Impact** : disk IO inefficient, risque disk full si LOGS partition limited, duplication data.
+
+**Cible** : refactor backtest_engine pour consommer parquet direct (pandas-native). Garde le wrapper JSONL pour back-compat scripts legacy.
+
+**Effort** : ~3h dev + tests régression. Reporter post-validation Option C.
+
+### Cross-reference
+- Review code-reviewer 19/05 PM (ID a6c1ba41bd38ca6af) sur backtest adaptations
+- INCIDENT_LOG entry #10 (lien indirect : migration Option C cause refacto)
+
+
+## Dette technique BN V4 paper deploy (23/05/2026 reviewer iter3)
+
+Score iter3 = 7.5/10 (GO-AVEC-RESERVES). 2 P0 + 1 P1 fixes appliques avant deploy lundi 25/05. Restent 3 dettes mineures :
+
+### P1 #2 — TICK_VALUE_USD / TICK_BY_SYMBOL hardcodes dans bn_v4_paper.py
+
+**Fichier** : `CORE/bn_v4_paper.py:79-82`
+
+Deux dicts hardcodes :
+```python
+TICK_BY_SYMBOL = {"NQ": 0.25, "ES": 0.25, "MGC": 0.10}
+TICK_VALUE_USD = {"NQ": 0.50, "ES": 1.25, "MGC": 1.00}
+```
+
+Anti-pattern documente `.claude/rules/tick-size-policy.md` : source unique de verite = `CORE/constants.py` (`get_tick_size`, `get_tick_value`). Migrer ces dicts vers import depuis constants.py.
+
+Risque actuel : faible (valeurs correctes), mais si MGC active demain avec valeur diff = bug silencieux.
+
+**Action** : remplacer par `from CORE.constants import get_tick_size, get_tick_value` + adapter sites d'usage. Estime 15 min.
+
+### P1 #3 — parent_id slip metric pas trace BN V4
+
+**Fichier** : `CORE/bn_v4_paper.py:599-602`
+
+```python
+if kind == "parent":
+    return True
+```
+
+Bot 3 emit `PARENT_FILL_RECORDED` avec `slip_ticks` (paper_v2.py:2194). BN V4 ne le fait pas. Audit slip impossible J+1 sur trades BN V4.
+
+**Action** : ajouter emit `PARENT_FILL_RECORDED` ou variant `BN_V4_PARENT_FILL` dans `_handle_dtc_fill_bn_v4` quand kind=parent. Estime 10 min.
+
+### P2 — heartbeat 1x par poll_cycle (pas par symbol)
+
+**Fichier** : `CORE/bn_v4_paper.py:266`
+
+Si 2+ symbols et crash sur sym A, sym B est traite mais heartbeat global. Acceptable Phase 1 (NQ seul).
+
+**Action** : si on ajoute ES en Phase 2, heartbeat par symbol. Pour MVP NQ : RAS.
+
+### 7 codes BN_V4 ajoutes/retires depuis iter1
+
+**Catalog final** (39 codes vs 44 initial) :
+- Retires : BN_V4_DTC_LOST_DURING_OPEN, BN_V4_DTC_CONNECTED, BN_V4_DTC_RECONNECT, BN_V4_RISK_KILL_GLOBAL, BN_V4_GATE_OBSERVE_LIMIT
+- 38/39 emis literal + 1/39 emis via variable (log_code) = 0 orphelin reel
+
+### References
+
+- Review iter3 verdict (agent ID abe3847d9d777b61a) : `tasks/abe3847d9d777b61a.output`
+- `.claude/rules/tick-size-policy.md`
+- `.claude/rules/orphan-prevention.md`
+- Memory : `project_bn_v4_paper_decision_20260523.md` (paper deploy malgre NOGO audit setup)
