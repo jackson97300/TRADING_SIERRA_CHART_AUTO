@@ -40,7 +40,9 @@ critere 8 (audit producing edge candidates -> ml-trainer obligatoire avant integ
 ## Volume rolling (3)
   13. ctx_vol_sell_buy_ratio_5 : float, mean sell_vol/buy_vol sur 5 bars
   14. ctx_vol_slope_5          : float SIGNED, slope total_vol 5 bars
-  15. ctx_vol_z_5              : float SIGNED, z-score total_vol vs rolling 20
+  15. ctx_vol_z_5              : float SIGNED, z-score total_vol vs window_long (20).
+                                 NOTE : nom "5" historique design doc, calcul reel sur 20.
+                                 A renommer ctx_vol_z_20 Phase 5 si DSR confirme utilite.
 
 ## Finish strength + VWAP velocity (4)
   16. ctx_finish_strength_mean_5 : float, mean finish_strength 5 bars
@@ -103,6 +105,8 @@ SMALL_BODY_RATIO = 0.3             # body / range < 0.3 = small body
 POOR_HIGH_REJECT_RATIO = 0.6       # close <= bar_low + 0.6*range = rejet
 ABSORPTION_THRESHOLD = 0.5         # |bn_absorb_*| > 0.5 = absorption active
 DOUBLE_TOP_TOLERANCE_ATR = 0.3     # 2 highs egaux a 0.3 ATR pres
+MOMENTUM_DECAY_RATIO = 0.5         # slope_5 < 50% slope_prev -> exhaustion
+                                    # (extrait constante fix review B7.1 10/06)
 
 
 class CtxRollingCalculator:
@@ -316,7 +320,7 @@ class CtxRollingCalculator:
                 list(self._close_buffer)[-(self.window_short + 2):-2]
             ) if len(self._close_buffer) >= self.window_short + 2 else slope_5
             momentum_exhaustion = (
-                abs(slope_5) < abs(slope_3_prev) * 0.5
+                abs(slope_5) < abs(slope_3_prev) * MOMENTUM_DECAY_RATIO
                 and slope_3_prev != 0
             )
         else:

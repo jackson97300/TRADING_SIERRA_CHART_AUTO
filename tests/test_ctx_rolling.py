@@ -244,6 +244,67 @@ def test_price_slope_5_negative_decreasing():
     assert f["ctx_price_slope_5"] < 0
 
 
+def test_dist_vwap_velocity_signed_positive():
+    """dist_vwap_velocity positif si dist_vwap croit (close monte vs vwap).
+
+    Fix review B5 : test signed manquant.
+    """
+    from CORE.ctx_rolling import CtxRollingCalculator
+
+    calc = CtxRollingCalculator()
+    # 5 bars : dist_vwap = 0, 1, 2, 3, 4 (close monte vs vwap fixe)
+    for i in range(5):
+        f = calc.update(close=100.0 + i, bar_high=100.5 + i, bar_low=99.5 + i,
+                        delta_bar=0.0, total_vol=1000.0, atr=2.0,
+                        vwap_d=100.0)
+    # dist_vwap_velocity = dist[-1] - dist[-3] = 4 - 2 = 2 (positif)
+    assert f["ctx_dist_vwap_velocity"] > 0
+
+
+def test_va_position_velocity_signed_negative():
+    """va_position_velocity negatif si va_position descend (close dans VA inferieure)."""
+    from CORE.ctx_rolling import CtxRollingCalculator
+
+    calc = CtxRollingCalculator()
+    # va_position descend de 0.8 a 0.2
+    for i, va in enumerate([0.8, 0.7, 0.5, 0.3, 0.2]):
+        f = calc.update(close=100.0, bar_high=101.0, bar_low=99.0,
+                        delta_bar=0.0, total_vol=1000.0, atr=2.0,
+                        va_position_pct=va)
+    # vel = va[-1] - va[-3] = 0.2 - 0.5 = -0.3 (negatif)
+    assert f["ctx_va_position_velocity"] < 0
+
+
+def test_delta_slope_5_signed_positive():
+    """delta_slope_5 positif si delta_bar croit sur 5 bars."""
+    from CORE.ctx_rolling import CtxRollingCalculator
+
+    calc = CtxRollingCalculator()
+    # delta croit 100 -> 500
+    for d in [100.0, 200.0, 300.0, 400.0, 500.0]:
+        f = calc.update(close=100.0, bar_high=101.0, bar_low=99.0,
+                        delta_bar=d, total_vol=1000.0, atr=2.0)
+    # slope > 0
+    assert f["ctx_delta_slope_5"] > 0
+
+
+def test_vwap_slope_accel_signed_positive():
+    """vwap_slope_accel positif si VWAP accelere a la hausse."""
+    from CORE.ctx_rolling import CtxRollingCalculator
+
+    calc = CtxRollingCalculator()
+    # VWAP : 100, 100.1, 100.3, 100.6, 101.0, 101.5, 102.1 (accelere)
+    vwaps = [100.0, 100.1, 100.3, 100.6, 101.0, 101.5, 102.1]
+    f = None
+    for v in vwaps:
+        f = calc.update(close=v, bar_high=v + 0.5, bar_low=v - 0.5,
+                        delta_bar=0.0, total_vol=1000.0, atr=2.0,
+                        vwap_d=v)
+    # slope_recent (3 dernieres) > slope_prev (3 avant-dernieres)
+    # vwap accelere a la hausse -> slope_accel > 0
+    assert f["ctx_vwap_slope_accel"] > 0
+
+
 def test_delta_sum_3():
     """delta_sum_3 = sum 3 dernieres bars delta_bar."""
     from CORE.ctx_rolling import CtxRollingCalculator
