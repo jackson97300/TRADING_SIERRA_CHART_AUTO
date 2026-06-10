@@ -1,0 +1,119 @@
+{
+  "n_iterations": 5,
+  "n_pass": 5,
+  "n_fail": 0,
+  "pass_rate_pct": 100.0,
+  "workspace": "C:\\Users\\jacks\\AppData\\Local\\Temp\\bn_v5_stress_v4qay3n6",
+  "results": [
+    {
+      "ok": true,
+      "error": null,
+      "details": {
+        "state_path": "C:\\Users\\jacks\\AppData\\Local\\Temp\\bn_v5_stress_v4qay3n6\\iter_000\\state.json",
+        "state_exists": true,
+        "tmp_exists": false,
+        "json_valid": true,
+        "required_keys_present": true,
+        "positions_dict_valid": true,
+        "meta_dict_valid": true,
+        "signal_counter_present": true,
+        "signal_id_format_valid": true,
+        "last_iteration_max": 40,
+        "counter_NQ": 22,
+        "counter_ES": 20,
+        "positionpersistance_restore_ok": true,
+        "restored_n_positions": 2
+      },
+      "iteration": 0,
+      "kill_delay_sec": 3.918
+    },
+    {
+      "ok": true,
+      "error": null,
+      "details": {
+        "state_path": "C:\\Users\\jacks\\AppData\\Local\\Temp\\bn_v5_stress_v4qay3n6\\iter_001\\state.json",
+        "state_exists": true,
+        "tmp_exists": false,
+        "json_valid": true,
+        "required_keys_present": true,
+        "positions_dict_valid": true,
+        "meta_dict_valid": true,
+        "signal_counter_present": true,
+        "signal_id_format_valid": true,
+        "last_iteration_max": 23,
+        "counter_NQ": 13,
+        "counter_ES": 12,
+        "positionpersistance_restore_ok": true,
+        "restored_n_positions": 2
+      },
+      "iteration": 1,
+      "kill_delay_sec": 2.075
+    },
+    {
+      "ok": true,
+      "error": null,
+      "details": {
+        "state_path": "C:\\Users\\jacks\\AppData\\Local\\Temp\\bn_v5_stress_v4qay3n6\\iter_002\\state.json",
+        "state_exists": true,
+        "tmp_exists": false,
+        "json_valid": true,
+        "required_keys_present": true,
+        "positions_dict_valid": true,
+        "meta_dict_valid": true,
+        "signal_counter_present": true,
+        "signal_id_format_valid": true,
+        "last_iteration_max": 34,
+        "counter_NQ": 18,
+        "counter_ES": 18,
+        "positionpersistance_restore_ok": true,
+        "restored_n_positions": 2
+      },
+      "iteration": 2,
+      "kill_delay_sec": 2.825
+    },
+    {
+      "ok": true,
+      "error": null,
+      "details": {
+        "state_path": "C:\\Users\\jacks\\AppData\\Local\\Temp\\bn_v5_stress_v4qay3n6\\iter_003\\state.json",
+        "state_exists": true,
+        "tmp_exists": false,
+        "json_valid": true,
+        "required_keys_present": true,
+        "positions_dict_valid": true,
+        "meta_dict_valid": true,
+        "signal_counter_present": true,
+        "signal_id_format_valid": true,
+        "last_iteration_max": 36,
+        "counter_NQ": 19,
+        "counter_ES": 19,
+        "positionpersistance_restore_ok": true,
+        "restored_n_positions": 2
+      },
+      "iteration": 3,
+      "kill_delay_sec": 2.67
+    },
+    {
+      "ok": true,
+      "error": null,
+      "details": {
+        "state_path": "C:\\Users\\jacks\\AppData\\Local\\Temp\\bn_v5_stress_v4qay3n6\\iter_004\\state.json",
+        "state_exists": true,
+        "tmp_exists": false,
+        "json_valid": true,
+        "required_keys_present": true,
+        "positions_dict_valid": true,
+        "meta_dict_valid": true,
+        "signal_counter_present": true,
+        "signal_id_format_valid": true,
+        "last_iteration_max": 53,
+        "counter_NQ": 29,
+        "counter_ES": 26,
+        "positionpersistance_restore_ok": true,
+        "restored_n_positions": 2
+      },
+      "iteration": 4,
+      "kill_delay_sec": 4.209
+    }
+  ]
+}
