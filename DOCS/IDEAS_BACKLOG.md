@@ -7,6 +7,19 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[DETTE SIERRA-3.3 2026-06-10]** **open_830_et + above_open_830 features (economic releases)** | 1h code + tests | LOW-MEDIUM | PROPOSED
+  - **Source** : review batch code-reviewer agentId a29ed1d3858b5d53e (10/06) point A5 + question Jackson n°2
+  - **Probleme** : `open_830_et` correspond a 08:30 ET = release CPI/NFP/PCE/Retail Sales. Pour modele ML "fade economic release" vs "fade NY open", c'est une feature distincte de `open_cash` (09:30 ET = equities open).
+  - **Decision actuelle** : drop dans Phase 3.3 prev_levels.py (25 features deja beaucoup, garde uniquement `open_cash` + `above_open_cash`).
+  - **Trigger reactivation** : si Phase 5 backtest montre modele ML qui benefice de detection economic releases.
+  - **Impact** : 2 features supplementaires (open_830_et + above_open_830). Reutiliser meme pattern que open_cash snapshot a 08:30 ET.
+
+- **[DETTE SIERRA-3.4 2026-06-10]** **dist_*_high_pct / dist_*_low_pct par session (8 features)** | 2h code + tests + dual-run validation | MEDIUM | WAITING_DATA
+  - **Source** : review batch agentId a29ed1d3858b5d53e point B1
+  - **Probleme** : design doc liste `dist_asia_high_pct`, `dist_asia_low_pct`, ... `dist_after_high_pct`, `dist_after_low_pct` (8 features). Implementation Phase 3.4 a drop ces 8 features (justification fausse "redondance avec dist_*_open_pct" alors qu'elles mesurent une chose differente : position vs plus haut session ≠ derive depuis open).
+  - **Trigger reactivation** : Phase 4 dual-run montre que Sierra Sierra fournit deja ces 8 features (cf section 3.5 design doc "Session high/low (4)") avec valeur predictive.
+  - **Impact** : 8 features supplementaires sessions_fine.py.
+
 - **[DETTE SIERRA-3.6-A 2026-06-10]** **Conflit semantique `roll_phase` Phase 3c-C vs Phase 3.6** — decision integration enricher_chain | 30-60 min decision + impact dataset ML | MEDIUM | PROPOSED
   - **Source** : review code-reviewer agentId a45bc299185cd0769 (10/06) sur `CORE/roll_calendar.py` Phase 3.6
   - **Probleme** : `enricher_chain.py:1948-1962` (Phase 3c-C deployee 18/05) produit `roll_phase` avec semantique `0=early / 1=mid / 2=late` (discontinuity-based). Nouveau `CORE/roll_calendar.py` Phase 3.6 (commit dcf836e) utilise `-1=pre-roll / 0=roll-day / +1=stable` (calendrier statique CME).

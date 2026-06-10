@@ -11,6 +11,13 @@ Module reproduit 16 features historiques sur OHLCV Sierra natif :
   3.  dist_pdh_atr : (close - pdh) / atr (signed)
   4.  dist_pdl_atr : (close - pdl) / atr (signed)
 
+  ⚠️ SEMANTIQUE PDH/PDL (review batch A2 10/06) :
+  Implementation = session CME 24h high/low (Asia + London + RTH + after-hours).
+  PAS le RTH-only high 09:30-16:00 ET (convention classique TradingView).
+  Coherent avec reset 18:00 ET utilise partout dans le pipeline.
+  Si modele ML veut RTH high specifique, derivable depuis cash_high persistee
+  (snapshot a 16:00 ET) - feature backlog Phase 5.
+
   ## Cash session RTH (current day intraday)
   5.  cash_high : max bar_high depuis cash open RTH
   6.  cash_low  : min bar_low depuis cash open RTH
@@ -136,7 +143,15 @@ class PrevLevelsCalculator:
                 f"obtenu naive {bar_ts_utc}"
             )
 
-        # NaN handling -> features NaN/False
+        # Fix A4 review batch (agentId a29ed1d3858b5d53e) : reset cross-day
+        # AVANT filtre NaN/ATR=0. Le reset utilise UNIQUEMENT bar_ts_utc, donc
+        # sans dependance sur bar_high/bar_low/close/atr. Si ATR=0 bloque tout
+        # le processing, on perd le reset trading_date (bug latent).
+        ts_et = bar_ts_utc.astimezone(ET)
+        trading_date = self._compute_trading_date(ts_et)
+        self._maybe_reset_trading_date(trading_date)
+
+        # NaN handling -> features NaN/False (apres reset)
         if any(v is None or (isinstance(v, float) and np.isnan(v))
                for v in (bar_high, bar_low, close, atr)) or atr == 0:
             return self._empty_features()
@@ -145,34 +160,6 @@ class PrevLevelsCalculator:
         bar_low = float(bar_low)
         close = float(close)
         atr = float(atr)
-
-        # Convertir UTC -> ET pour determiner session_date_trading
-        ts_et = bar_ts_utc.astimezone(ET)
-        trading_date = self._compute_trading_date(ts_et)
-
-        # ─────────────────────────────────────────────────────────
-        # Detection nouveau session date trading (18:00 ET reset)
-        # ─────────────────────────────────────────────────────────
-        if self._current_trading_date is None:
-            # Cold-start : init
-            self._current_trading_date = trading_date
-        elif trading_date != self._current_trading_date:
-            # NEW DAY : snapshot day high/low -> pdh/pdl
-            self._pdh = self._today_high
-            self._pdl = self._today_low
-            self._today_high = None
-            self._today_low = None
-            # Reset cash session
-            self._cash_high = None
-            self._cash_low = None
-            self._open_cash = None
-            self._in_cash_session = False
-            # Reset overnight
-            self._ovn_high = None
-            self._ovn_low = None
-            self._ovn_broken_up = False
-            self._ovn_broken_dn = False
-            self._current_trading_date = trading_date
 
         # Update running today high/low (pour PDH/PDL futur)
         self._today_high = (
@@ -271,12 +258,44 @@ class PrevLevelsCalculator:
 
         Convention : si heure ET >= 18:00, le session date trading est J+1.
         Sinon J.
+
+        Note : pendant le week-end (vendredi 18:00 ET -> dimanche 18:00 ET),
+        trading_date peut etre samedi/dimanche meme si marche CME ferme.
+        C'est volontaire : reset PDH/PDL se fait dimanche 18:00 ET.
         """
         if ts_et.time() >= CME_DAILY_RESET_ET:
             # 18:00-23:59 ET = nouveau session date trading (J+1)
             from datetime import timedelta
             return (ts_et + timedelta(days=1)).date()
         return ts_et.date()
+
+    def _maybe_reset_trading_date(self, trading_date: date) -> None:
+        """Reset cross-day si trading_date change (helper Fix A4).
+
+        Reset PDH/PDL/cash/ovn snapshots (utilisable independamment du filtre
+        NaN/ATR=0 dans update()).
+        """
+        if self._current_trading_date is None:
+            self._current_trading_date = trading_date
+            return
+        if trading_date == self._current_trading_date:
+            return
+        # NEW DAY : snapshot day high/low -> pdh/pdl
+        self._pdh = self._today_high
+        self._pdl = self._today_low
+        self._today_high = None
+        self._today_low = None
+        # Reset cash session
+        self._cash_high = None
+        self._cash_low = None
+        self._open_cash = None
+        self._in_cash_session = False
+        # Reset overnight
+        self._ovn_high = None
+        self._ovn_low = None
+        self._ovn_broken_up = False
+        self._ovn_broken_dn = False
+        self._current_trading_date = trading_date
 
     @staticmethod
     def _empty_features() -> dict:

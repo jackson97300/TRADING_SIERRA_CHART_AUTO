@@ -13,7 +13,8 @@ Cf design doc DOCS/superpowers/specs/2026-06-06-sierra-full-migration-design.md 
   5. is_ib_window     : bool, premiere heure RTH (09:30-10:30 ET)
 
 ## Metadonnees temporelles (2)
-  6. session_segment  : string enum "asia"/"london"/"us_cash"/"us_after"
+  6. session_segment  : string enum "asia"/"london"/"us_cash"/"us_after"/"off"
+                       ("off" = input NaN bar, sinon une des 4 sessions actives)
   7. mins_et          : int, minutes depuis minuit ET (0-1439)
 
 ## Highs/Lows par session (8)

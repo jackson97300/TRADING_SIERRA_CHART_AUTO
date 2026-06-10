@@ -267,6 +267,41 @@ def test_atr_zero_empty_features():
     assert math.isnan(f["dist_pdh_atr"])
 
 
+def test_atr_zero_does_not_block_cross_day_reset():
+    """Fix A4 review batch : ATR=0 ne doit PAS court-circuiter reset cross-day.
+
+    Scenario : 1ere bar 18:30 ET nouveau jour arrive avec ATR=0 (cold-start ATR
+    apres gap data). Le reset PDH/PDL doit s'effectuer malgre tout.
+    """
+    from CORE.prev_levels import PrevLevelsCalculator
+
+    calc = PrevLevelsCalculator()
+
+    # Jour 1 : bars valides
+    ts1 = _et_to_utc(2026, 6, 10, 10, 0)
+    calc.update(bar_ts_utc=ts1, bar_high=110.0, bar_low=95.0, close=105.0, atr=2.0)
+    ts2 = _et_to_utc(2026, 6, 10, 14, 0)
+    calc.update(bar_ts_utc=ts2, bar_high=108.0, bar_low=98.0, close=105.0, atr=2.0)
+
+    # Bar 18:30 ET avec ATR=0 (cold-start ATR) -> empty features MAIS reset OK
+    ts_reset = _et_to_utc(2026, 6, 10, 18, 30)
+    f_reset = calc.update(bar_ts_utc=ts_reset, bar_high=104.0,
+                          bar_low=102.0, close=103.0, atr=0.0)
+    # empty features sur cette bar
+    assert math.isnan(f_reset["pdh"])
+
+    # Bar suivante 19:00 ET avec ATR valide -> doit voir PDH/PDL jour 1
+    ts3 = _et_to_utc(2026, 6, 10, 19, 0)
+    f3 = calc.update(bar_ts_utc=ts3, bar_high=104.0, bar_low=102.0,
+                     close=103.0, atr=2.0)
+    # PDH=110 (jour 1 high), PDL=95 (jour 1 low) - reset s'est effectue malgre ATR=0
+    assert f3["pdh"] == 110.0, (
+        f"Reset cross-day a echoue suite ATR=0, attendu pdh=110, "
+        f"obtenu {f3['pdh']} (regression bug A4)"
+    )
+    assert f3["pdl"] == 95.0
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Tests batch mode
 # ────────────────────────────────────────────────────────────────────────────
