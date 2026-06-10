@@ -24,15 +24,19 @@ if (-not $existing) {
     exit 0
 }
 
-# Stop service (graceful via SIGTERM si possible)
+# Stop service (graceful si AppStopMethodConsole configure dans install.ps1)
 if ($existing.Status -eq "Running") {
-    Write-Host "Stopping service..." -ForegroundColor Green
+    Write-Host "Stopping service (graceful 5s)..." -ForegroundColor Green
     Stop-Service -Name $ServiceName -Force
-    Start-Sleep -Seconds 3
+    Start-Sleep -Seconds 6  # 5s grace nssm + 1s buffer
 }
 
-# Remove service
+# Remove service (fix B2 review : check exit code)
 & $NssmExe remove $ServiceName confirm
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "nssm remove failed (exit $LASTEXITCODE)"
+    exit 3
+}
 
 Write-Host "=== Uninstall OK ===" -ForegroundColor Green
 Write-Host ""

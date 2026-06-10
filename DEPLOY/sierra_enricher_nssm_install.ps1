@@ -35,8 +35,18 @@ $ServiceName = "MIA-Sierra-Enricher-$Symbol"
 $WrapperScript = "$ProjectRoot/BOT/run_sierra_enricher.py"
 $OutputDir = "$ProjectRoot/DATA/live_enriched/sierra"
 $LogDir = "$ProjectRoot/LOGS/sierra_enricher"
-$StdoutLog = "$LogDir/sierra_enricher_$Symbol`_stdout.log"
-$StderrLog = "$LogDir/sierra_enricher_$Symbol`_stderr.log"
+$StdoutLog = "$LogDir/sierra_enricher_${Symbol}_stdout.log"
+$StderrLog = "$LogDir/sierra_enricher_${Symbol}_stderr.log"
+
+# Helper : check $LASTEXITCODE apres chaque commande nssm (fix A5 review 10/06)
+function Invoke-NssmSet {
+    param([string]$ServiceName, [string]$Key, [string]$Value)
+    & $NssmExe set $ServiceName $Key $Value
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "nssm set $Key failed (exit $LASTEXITCODE)"
+        exit 3
+    }
+}
 
 Write-Host "=== Install nssm service : $ServiceName ===" -ForegroundColor Cyan
 
@@ -66,23 +76,36 @@ if ($existing) {
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
-# 4. Install service nssm
+# 4. Install service nssm (fix A5+B1 review : exit codes + graceful shutdown)
 Write-Host "Installing service..." -ForegroundColor Green
 & $NssmExe install $ServiceName $PythonExe
-& $NssmExe set $ServiceName AppParameters "-X utf8 $WrapperScript --symbol $Symbol --poll-interval $PollIntervalSec --output-dir $OutputDir"
-& $NssmExe set $ServiceName AppDirectory $ProjectRoot
-& $NssmExe set $ServiceName AppStdout $StdoutLog
-& $NssmExe set $ServiceName AppStderr $StderrLog
-& $NssmExe set $ServiceName AppRotateFiles 1
-& $NssmExe set $ServiceName AppRotateBytes 10485760  # 10 MB
-& $NssmExe set $ServiceName Description "MIA Sierra Enricher $Symbol (Phase 4.2 dual-run Sierra Migration)"
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "nssm install failed (exit $LASTEXITCODE)"
+    exit 3
+}
+
+# Paths quotes dans AppParameters (resilience future paths avec espaces)
+$AppParams = "-X utf8 `"$WrapperScript`" --symbol $Symbol --poll-interval $PollIntervalSec --output-dir `"$OutputDir`""
+Invoke-NssmSet $ServiceName AppParameters $AppParams
+Invoke-NssmSet $ServiceName AppDirectory $ProjectRoot
+Invoke-NssmSet $ServiceName AppStdout $StdoutLog
+Invoke-NssmSet $ServiceName AppStderr $StderrLog
+Invoke-NssmSet $ServiceName AppRotateFiles "1"
+Invoke-NssmSet $ServiceName AppRotateBytes "10485760"  # 10 MB
+Invoke-NssmSet $ServiceName Description "MIA Sierra Enricher $Symbol (Phase 4.2 dual-run Sierra Migration)"
 
 # Manual start (Jackson confirme avant 1er start)
-& $NssmExe set $ServiceName Start SERVICE_DEMAND_START
+Invoke-NssmSet $ServiceName Start "SERVICE_DEMAND_START"
 
 # Restart policy : restart 30s apres crash (auto-recovery propre)
-& $NssmExe set $ServiceName AppExit Default Restart
-& $NssmExe set $ServiceName AppRestartDelay 30000
+Invoke-NssmSet $ServiceName AppExit "Default" "Restart"
+Invoke-NssmSet $ServiceName AppRestartDelay "30000"
+
+# Fix B1 review : graceful shutdown nssm
+# AppStopMethodSkip=0 : utilise toutes les methodes stop (CTRL_C, CTRL_BREAK, WM_CLOSE, TerminateProcess)
+# AppStopMethodConsole=5000 : 5s grace pour CTRL_BREAK (laisse wrapper Python flush via signal handler)
+Invoke-NssmSet $ServiceName AppStopMethodSkip "0"
+Invoke-NssmSet $ServiceName AppStopMethodConsole "5000"
 
 Write-Host "=== Install OK ===" -ForegroundColor Green
 Write-Host ""

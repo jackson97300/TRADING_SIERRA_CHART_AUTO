@@ -34,6 +34,13 @@ scp CORE/divergences_v2.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART
 scp CORE/ctx_rolling.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
 ```
 
+### CORE dependances obligatoires (fix C1 review 10/06)
+```bash
+# sierra_live_io.py est importe par sierra_pipeline + wrapper.
+# Verifier d'abord version VPS avant overwrite (peut etre deja deploye).
+scp CORE/sierra_live_io.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+```
+
 ### CORE orchestrateur Phase 4.1
 ```bash
 scp CORE/sierra_pipeline.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
@@ -63,8 +70,14 @@ ssh Administrator@212.28.179.199
 cd C:/TRADING_SIERRA_CHART_AUTO
 ls CORE/sierra_pipeline.py BOT/run_sierra_enricher.py DEPLOY/sierra_enricher_*.ps1
 
+# Creer dir temp Windows (fix C2 review : /tmp/ Unix incompatible)
+New-Item -ItemType Directory -Path C:/Temp -Force | Out-Null
+
 # Test wrapper local sur fichier reel (dry-run, sans ecrire)
-python -X utf8 BOT/run_sierra_enricher.py --symbol NQ --batch DATA/NQ/$(Get-Date -Format yyyyMMdd)_NQ.jsonl --output /tmp/test.jsonl --dry-run
+$today = Get-Date -Format yyyyMMdd
+python -X utf8 BOT/run_sierra_enricher.py --symbol NQ `
+    --batch DATA/NQ/${today}_NQ.jsonl `
+    --output C:/Temp/test_sierra_${today}.jsonl --dry-run
 
 # Si dry-run OK : install service nssm
 .\DEPLOY\sierra_enricher_nssm_install.ps1 -Symbol NQ
