@@ -62,6 +62,67 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-12 01:30 — Plan A dedup Sierra (5308 -> 637 bars 11/06) + metadata observabilite
+
+**Categorie** : FIX (dedup pipeline ML) + REFACTO (metadata observabilite collecteur)
+**Impact prod** : PAPER (dataset Sierra pour Phase 4 ML training futur + monitoring J+1)
+**Fichier(s)** :
+  - `CORE/research/sierra_dedup.py` (nouveau, 181 LOC) - dedup completeness-aware
+  - `BOT/run_sierra_enricher.py` - metadata injection (3 modes : batch + live + multi)
+  - `tests/sierra_port/test_sierra_dedup_metadata.py` (7 tests)
+**Schema/version** : `sierra_3.7.22+phase1_d1_d2` (constant `_SCHEMA_VERSION`)
+**Reviewer(s) agent** : code-reviewer (verdict GO post-fix ordre+primary key revises)
+
+### Quoi
+1. Script dedup `sierra_dedup.py` : primary key `(sym, ts_event_minute, is_bar_closed)` avec
+   tiebreak completeness-aware. Garde version OHLCV complet vs intermediate.
+2. Injection metadata observabilite collecteur : `schema_version`, `boot_id` (uuid4 par
+   process), `bars_since_boot` (dict per-symbole), `data_quality_flag` (warmup/stable/degraded).
+3. Resolution dette technique 8721 bars 11/06 NQ = 5.7x dup -> 637 bars uniques.
+
+### Pourquoi
+Code-reviewer (INCIDENT_LOG #47) a revele que :
+- Plan initial 3 -> 2 -> 1B etait piege (round = input dedup, doivent etre atomiques)
+- Primary key (sym, ts_min, schema_version) manquait `is_bar_closed` ou completeness
+- Bars dupliquees ne sont PAS identiques : early OHLCV=None (mid-formation Sierra)
+  vs late OHLCV complet. Sans completeness-aware, dedup .last() choisirait mauvaise bar 50%
+- 11 runs detectes 11/06 (vs 3 estimes), runs 0-2 inutilisables (OHLCV=None)
+
+### Impact attendu
+- Dataset Sierra Phase 4 ML training propre (post-dedup completeness-aware)
+- Monitoring J+1 via `boot_id` + `bars_since_boot` (detection restarts cross-day)
+- Filter `data_quality_flag != "degraded"` dans dataset_builder downstream
+- Anti-Pattern 11 : `BAR_DUPLICATE_DETECTED` ALERTE par dedup (anti-masquage bug DMP)
+
+### Validation pre-deploy
+- [x] Tests pytest : 91/91 PASS (84 anciens + 7 nouveaux dedup/metadata)
+- [x] Review agent : code-reviewer (GO post-fix 5 reserves : ordre + primary key + cost realiste)
+- [x] Test empirique : dedup 11/06 NQ 5308 -> 637 (8.33x compression)
+- [x] Test empirique : 10/06 NQ = 0 bar OHLCV complete (Phase 1 pas deploy) -> trashed
+
+### Revert plan
+```bash
+# Revert metadata injection seul (garder dedup CLI)
+git revert --no-commit <commit_sha>
+ssh Administrator@212.28.179.199 "Restart-Service MIA-Sierra-Enricher-ES"
+# Garder dedup script utilisable (`sierra_dedup.py` est standalone CLI)
+```
+
+### Deployed at TBD (apres review agent commit + SCP run_sierra_enricher.py)
+
+### Suivi post-deploy
+- J+1 : grep `boot_id` distinct dans LOGS/events_*.jsonl -> verifier 1 boot par jour normal
+- J+1 : grep `BAR_DUPLICATE_DETECTED` count -> doit etre 0 si dedup est en aval seulement
+- J+7 : `bars_since_boot` max ES vs NQ -> verifier symetrie (asymetrie = bug)
+- J+30 : ratio `data_quality_flag stable / total` doit etre > 95% en steady state
+
+### Liens
+- INCIDENT_LOG : #47 (PATTERN_11 sous-diagnostic + ordre artificiel)
+- Memory : `feedback_validation_miss_pre_deploy.md` (a creer, 8+ occurrences)
+- Commit : TBD
+
+---
+
 ## 2026-06-11 23:50 — D2 phase_b_helpers port (5 sub-engines + aliases + game_changers ressuscite)
 
 **Categorie** : FEATURE (debloque ~30 features ib_*/sess_*/open_*/date_et + 5 game_changers)

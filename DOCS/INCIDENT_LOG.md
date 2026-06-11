@@ -31,6 +31,44 @@
 
 ---
 
+### 2026-06-12 01:30 (47) - [PATTERN_11 + CONTEXT_MISS] - Plan dedup Sierra : sous-diagnostic restart only, oublie bars mid-formation
+
+**Categorie** : PATTERN_11 (plan ordre 3->2->1B separe artificiellement Prop 2+1B alors que round = input dedup) + CONTEXT_MISS (sous-diagnostic 8721 bars = restarts seuls vs realite "restarts + bars mid-formation 5.7x")
+
+**Contexte** : Apres incident #46 (Phase 4 NOGO 37%), Jackson propose 3 fixes (dedup, round-to-minute, metadata collecteur). Mon analyse initiale recommandait ordre 3 -> 2 -> 1B + primary key (sym, ts_minute, schema_version). Code-reviewer challenge :
+
+1. **Sous-diagnostic** : audit empirique 11/06 a revele 11 runs, runs 0-2 (idx 0-1027) avec OHLCV=None (Sierra ecrit bars MID-FORMATION pendant qu'elles se forment). Bug n'est pas que restart-concat, c'est restart + poll 10s re-lit bar incomplete avant cloture.
+
+2. **Ordre artificiel** : Prop 2 (round) et Prop 1B (dedup) doivent etre ATOMIQUES car le round est l'input du dedup. Les separer = 2 sources de bugs.
+
+3. **Primary key incomplete** : `(sym, ts_minute, schema_version)` manque `is_bar_closed` ou completeness score. Sans ca, dedup `.last()` choisit potentiellement la version OHLCV=None au lieu de la complete = bug silencieux 50% du temps.
+
+**Cause racine** : (1) j'ai construit le plan sur hypothese "deploys progressifs ont concatene" sans regarder le CONTENU des bars dupliquees. Si verif faite : OHLCV diferent entre early/late versions = aurait revele le vrai bug. (2) ordre proposed 3->2->1B etait piege : separation logique non justifiee techniquement.
+
+**Lecon** : avant tout plan dedup, examiner empiriquement N samples de bars dupliquees pour voir si contenu identique. Si different -> primary key DOIT inclure completeness. Mon habitude de proposer plan apres "analyse rapide" sans verif data = PATTERN_11 (rationalisation post-hoc d'une intuition).
+
+**Trigger prevention** :
+- Avant plan dedup : grep 5+ samples de bars dupliquees + diff contenu (champs differents = revele bars mid-formation, restart, ou autre cause)
+- Avant primary key : valider que TOUS les champs critiques de la key sont presentes dans 95%+ des bars
+- Round + dedup doivent etre ATOMIQUES dans une seule operation
+- Dispatch code-reviewer AVANT de coder le plan (regle critical-tasks-review.md cross-module + pipeline ML)
+
+**Resolution** : Plan A revise (3h30) :
+- Etape 0 : 1A one-shot (5 min) -> 11/06 dedup 5308 -> 637 bars (8.33x compression). 10/06 inutilisable (toute la journee pre-Phase 1 deploy, OHLCV=None partout).
+- Etape 1+3 : metadata observabilite (schema_version + boot_id uuid4 + bars_since_boot per-sym dict + data_quality_flag 3 valeurs warmup/stable/degraded)
+- Etape 2 : Prop 1B+2 ATOMIQUE dans `CORE/research/sierra_dedup.py` (round + dedup completeness-aware via primary key (sym, ts_min, is_bar_closed))
+- Etape 4 : 7 tests pytest PASS (91/91 total)
+- Etape 5 : backfill 11/06 OK, 10/06 trashed
+- Etape 7 : agent review post-implementation
+
+**Reviewed** : code-reviewer (verdict initial GO challenge -> ordre 3 partiel + 1B+2 atomique + 3 complet)
+
+**Files** : `CORE/research/sierra_dedup.py` (181 LOC), `BOT/run_sierra_enricher.py` (3 modes + metadata injection), `tests/sierra_port/test_sierra_dedup_metadata.py` (7 tests)
+
+**Stats** : PATTERN_11 5+ occurrences. Memoire dediee `feedback_pattern_11_dedup_planning.md` a creer si recurrent.
+
+---
+
 ### 2026-06-12 00:15 (46) - [VALIDATION_MISS + PATTERN_11] - Phase 4 audit coverage 80.7% sur N=100 cluster favorable = faux GO
 
 **Categorie** : VALIDATION_MISS (sample 100 bars 1 cluster temporel) + PATTERN_11 (rationalisation FAIL pour proteger verdict, code-reviewer detecte)

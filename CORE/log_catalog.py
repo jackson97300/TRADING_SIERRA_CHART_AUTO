@@ -1368,6 +1368,8 @@ LOG_CODES = {
     "MULTI_SYMBOL_BOOT":                     (LogLevel.INFO,   "events", "Multi-symbol orchestrator boot : syms={syms}"),
     "MULTI_SYMBOL_CYCLE_STATS":              (LogLevel.INFO,   "events", "Multi-symbol cycle stats : cycle={cycle} im_emitted={im_emitted} errors={errors}"),
     "MULTI_SYMBOL_SHUTDOWN":                 (LogLevel.INFO,   "events", "Multi-symbol shutdown : total_cycles={total_cycles} im_emitted={im_emitted}"),
+    # Plan A dedup (review code-reviewer Pattern 11 anti-silent-fallback)
+    "BAR_DUPLICATE_DETECTED":                (LogLevel.ALERTE, "events", "Bar duplicate detected : sym={sym} ts_min={ts_min} completeness_existing={completeness_existing} completeness_new={completeness_new}"),
     "SIERRA_PORT_BN_COMPOSITES_OK":          (LogLevel.INFO,   "events", "Sierra port bn_composites OK : sym={sym}"),
     "SIERRA_PORT_BN_COMPOSITES_FAIL":        (LogLevel.MAJEUR, "events", "Sierra port bn_composites FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_BN_COMPOSITES_DEGRADED":    (LogLevel.ALERTE, "events", "Sierra port bn_composites DEGRADED : sym={sym} reason={reason}"),

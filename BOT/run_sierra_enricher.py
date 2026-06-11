@@ -63,9 +63,45 @@ import os
 import signal
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+
+# ─── Phase Dedup Etape 1+3 - Metadonnees observabilite (review reviewer) ──
+# Sources de verite globales pour traceabilite cross-restart + dedup intelligent
+
+def _compute_schema_version() -> str:
+    """FIX MUST-HAVE #10 review : version + git hash auto-compute.
+
+    Format : `sierra_{semver}+{git_short_hash}`. Si git absent (env non-git),
+    fallback `unknown`. Trace exact le commit qui a produit la bar.
+    """
+    import subprocess
+    semver = "3.7.22"
+    try:
+        _root = Path(__file__).resolve().parents[1]
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(_root), stderr=subprocess.DEVNULL, timeout=2
+        ).decode().strip()
+    except Exception:  # noqa: BLE001
+        sha = "unknown"
+    return f"sierra_{semver}+{sha}"
+
+
+_SCHEMA_VERSION: str = _compute_schema_version()
+_BOOT_ID: str = str(uuid.uuid4())  # uuid v4 fixe au demarrage process
+_BARS_SINCE_BOOT: dict = {}  # per-symbol counter (review reviewer point #5)
+# Seuils data_quality_flag (Etape 3, calibres empiriquement)
+_WARMUP_THRESHOLD_BARS: int = 10  # < 10 bars depuis boot = warmup
+# FIX MUST-HAVE #3 review : justification _DEGRADED_KEYS.
+# Sentinel keys : si NaN apres warmup = indicateur cross-injection partner_bar
+# rate (im_* = features qui dependent du cross-symbol). PAS pour ib_atr/price_1030
+# qui sont event-based (NaN J+1-J+3 normal). Si bot consume data_quality_flag
+# plus tard comme gate, REVOIR cette liste avec ml-trainer pour DSR validation.
+_DEGRADED_KEYS = ("im_cross_delta_agreement_5",)
 
 # Add CORE to sys.path pour imports
 _ROOT = Path(__file__).resolve().parents[1]
@@ -127,6 +163,49 @@ def _write_durable(output_path: Path, line: str) -> None:
 
 
 _FLOAT_ROUND_DECIMALS = 6  # Precision suffisante : < tick (0.25 NQ/ES, 0.10 MGC)
+
+
+def _inject_observability_metadata(enriched: dict, symbol: str) -> None:
+    """Injecte schema_version + boot_id + bars_since_boot + data_quality_flag.
+
+    FIX MUST-HAVE #1 review : MUTATES enriched in-place, RETURN None pour
+    forcer le caller a utiliser la mutation (pas de faux contrat retour).
+
+    Phase Dedup Etape 1 (Prop 3 partiel) + Etape 3 (Prop 3 complet).
+    Review reviewer : per-symbol counter, boot_id uuid4, 3 valeurs flag.
+
+    NB boot_id = identifie le process Sierra enricher (PAS le symbole).
+    Distinction warmup ES vs NQ se fait via bars_since_boot per-sym.
+
+    Args:
+        enriched : dict bar enrichi sortant de SierraPipelineOrchestrator.
+                    Mute IN-PLACE avec 4 champs ajoutes.
+        symbol   : "ES" / "NQ" / "MGC".
+
+    Returns:
+        None (in-place mutation, anti-pattern faux contrat retour).
+    """
+    global _BARS_SINCE_BOOT
+    # Increment per-symbol (review reviewer point #5)
+    _BARS_SINCE_BOOT[symbol] = _BARS_SINCE_BOOT.get(symbol, 0) + 1
+    enriched["schema_version"] = _SCHEMA_VERSION
+    enriched["boot_id"] = _BOOT_ID
+    enriched["bars_since_boot"] = _BARS_SINCE_BOOT[symbol]
+    # data_quality_flag (Etape 3, review reviewer point #6 : 3 valeurs)
+    bsb = _BARS_SINCE_BOOT[symbol]
+    if bsb < _WARMUP_THRESHOLD_BARS:
+        flag = "warmup"
+    else:
+        # Check degraded : si une des features critiques est NaN apres warmup
+        degraded = False
+        for k in _DEGRADED_KEYS:
+            v = enriched.get(k)
+            if v is None or (isinstance(v, float) and v != v):
+                degraded = True
+                break
+        flag = "degraded" if degraded else "stable"
+    enriched["data_quality_flag"] = flag
+    # Mutation in-place, pas de return (anti faux contrat)
 
 
 def _clean_value(v):
@@ -225,6 +304,8 @@ def run_batch_mode(
             try:
                 sierra_bar = json.loads(line)
                 enriched = pipeline.enrich_bar(sierra_bar)
+                # Injection metadonnees observabilite (review reviewer)
+                _inject_observability_metadata(enriched, symbol)
                 stats["bars_enriched"] += 1
                 if not dry_run:
                     out_line = _serialize_payload(enriched)
@@ -317,6 +398,8 @@ def run_live_mode(
                 stats["errors"] += 1
                 print(f"[warn] enrich_bar failed for ts={ts} : {e}", flush=True)
                 continue
+            # Injection metadonnees observabilite (review reviewer)
+            _inject_observability_metadata(enriched, symbol)
 
             new_bars_count += 1
             stats["bars_enriched_total"] += 1
@@ -481,6 +564,8 @@ def run_multi_symbol_live_mode(
                     stats["errors"] += 1
                     print(f"[warn][{sym}] enrich_bar : {e}", flush=True)
                     continue
+                # Injection metadonnees observabilite (review reviewer)
+                _inject_observability_metadata(enriched, sym)
 
                 # FIX I4 review : compteur post-enrich sur valeur non-NaN reelle
                 # (pas pre-enrich qui ignorerait staleness check kick).
