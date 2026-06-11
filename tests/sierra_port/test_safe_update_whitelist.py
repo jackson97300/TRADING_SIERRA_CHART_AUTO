@@ -19,12 +19,14 @@ def test_whitelist_contains_bn_score():
     assert "bn_score_bear" in wl
 
 
-def test_whitelist_contains_bn_pressure():
-    """B3 - bn_pressure_* dans whitelist."""
+def test_whitelist_excludes_bn_pressure():
+    """CRITIQUE review 11/06 : bn_pressure_ask/bid RETIRES de la whitelist.
+    Signal Sierra VIVANT cf DMP_Transform.h:1393-1395 (Double/Triple Ask).
+    Verif empirique 20260605_ES.jsonl : 0.5%/1.2% bars non-zero."""
     from CORE.sierra_pipeline import SierraPipelineOrchestrator
     wl = SierraPipelineOrchestrator.SIERRA_ZERO_NEVER_CALCULATED
-    assert "bn_pressure_ask" in wl
-    assert "bn_pressure_bid" in wl
+    assert "bn_pressure_ask" not in wl
+    assert "bn_pressure_bid" not in wl
 
 
 def test_whitelist_contains_game_changers():

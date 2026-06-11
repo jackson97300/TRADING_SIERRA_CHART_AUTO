@@ -57,6 +57,14 @@ try:
     from CORE.session_utils import get_trading_date_from_utc, utc_to_et
     from CORE.menthorq_v2_sierra_proxy import inject_gamma_condition_proxy
     from CORE.aggressor_imbalance_proxy import inject_aggressor_imbalance_proxy
+    # Phase 1 Group A - portage modules Phase B+
+    from CORE.phase_b_plus_long_streaming import (
+        add_phase_b_plus_long_streaming, make_long_bar_state
+    )
+    from CORE.phase_b_plus_color_streaming import (
+        add_phase_b_plus_color_streaming, make_color_bar_state
+    )
+    from CORE.bn_composites_streaming import inject_bn_composites
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -70,6 +78,14 @@ except ImportError:
     from session_utils import get_trading_date_from_utc, utc_to_et
     from menthorq_v2_sierra_proxy import inject_gamma_condition_proxy
     from aggressor_imbalance_proxy import inject_aggressor_imbalance_proxy
+    # Phase 1 Group A
+    from phase_b_plus_long_streaming import (
+        add_phase_b_plus_long_streaming, make_long_bar_state
+    )
+    from phase_b_plus_color_streaming import (
+        add_phase_b_plus_color_streaming, make_color_bar_state
+    )
+    from bn_composites_streaming import inject_bn_composites
 
 
 # Default tick size par symbole (fallback si manquant)
@@ -123,6 +139,15 @@ class SierraPipelineOrchestrator:
 
         # Cross-day tracking
         self._current_trading_date: Optional[date] = None
+
+        # Phase 1 Group A - cvd_session minimal (fix C2 bug NULL)
+        # cumsum delta_bar reset par session. Reset au cross-day.
+        # Cf rolling_features_streaming.py:1170-1179 (sera porte Group B).
+        self._cvd_session_running: float = 0.0
+
+        # Phase 1 Group A - portage modules Phase B+ streaming
+        self._long_bar_state = make_long_bar_state(self.symbol)
+        self._color_bar_state = make_color_bar_state(self.symbol)
 
         # Stats orchestrateur (debug + monitoring)
         self._bars_processed: int = 0
@@ -194,10 +219,11 @@ class SierraPipelineOrchestrator:
     # Decision Jackson 11/06 : BN famille recodee Python pour controle (override
     # verdict 2 agents) - documenter PATTERN_11 vigilance si gate hardcode propose.
     SIERRA_ZERO_NEVER_CALCULATED = frozenset((
-        # B3 - bn_score_* placeholder C++ DMP_Transform.h:1414-1416
+        # B3 - bn_score_* placeholder C++ DMP_Transform.h:1397 (desactive 18/04)
         "bn_score_raw", "bn_score_bull", "bn_score_bear",
-        # B3 - bn_pressure_* dmp_validator.py:222 "toujours 0 mort post-3.7.0"
-        "bn_pressure_ask", "bn_pressure_bid",
+        # NB : bn_pressure_ask/bid RETIRES de la whitelist 11/06 - signal Sierra
+        # VIVANT cf DMP_Transform.h:1393-1395 (Double/Triple Ask). Verif empirique
+        # 20260605_ES.jsonl : 0.5%/1.2% bars non-zero. Override Python interdit.
         # B5 - game_changers placeholders Sierra DMP (decision post-Jackson)
         "trend_day_probability",   # remplace downstream par ctx_trend_day_score
         "open_direction",           # recalcul via game_changers.direction()
@@ -434,6 +460,72 @@ class SierraPipelineOrchestrator:
         inject_aggressor_imbalance_proxy(
             enriched, log_fn=self._proxy_log_wrapper, sym=self.symbol)
 
+        # ─── Phase 1 Group A - cvd_session minimal (fix C2 bug NULL) ───
+        # cumsum delta_bar reset par cross-day. Convention Sierra confirmee :
+        # delta_bar Sierra natif = AskVolume - BidVolume (signe sain post fix 07/06).
+        # cvd_session est consomme par bot3_context_analyzer.py:95.
+        # NB : portage complet rolling_features_streaming Group B remplacera ce fix.
+        delta_bar = sierra_bar.get("delta_bar")
+        if delta_bar is not None:
+            try:
+                self._cvd_session_running += float(delta_bar)
+                enriched["cvd_session"] = round(self._cvd_session_running, 2)
+            except (TypeError, ValueError):
+                pass
+
+        # ─── Phase 1 Group A - phase_b_plus_long_streaming (13 features) ───
+        # bn_long_up/dn, bar_body_ticks, range_*, long_*_pattern, extension lines.
+        # Necessite open/high/low/close dans enriched (aliases F2 deja faits).
+        try:
+            long_out = add_phase_b_plus_long_streaming(
+                enriched, self._long_bar_state)
+            # _safe_update merge avec gestion NaN + whitelist
+            self._safe_update(enriched, {k: long_out[k] for k in long_out
+                                          if k not in enriched})
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_PHASE_B_PLUS_LONG_OK",
+                                     sym=self.symbol)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as _e:  # noqa: BLE001
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_PHASE_B_PLUS_LONG_FAIL",
+                                     sym=self.symbol, err=str(_e)[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # ─── Phase 1 Group A - phase_b_plus_color_streaming (12 features lag-1) ───
+        # dist_color_*_pct, n_color_*_cluster (consomme par Bot 3 v3 wrapper).
+        try:
+            color_out = add_phase_b_plus_color_streaming(
+                enriched, self._color_bar_state)
+            self._safe_update(enriched, {k: color_out[k] for k in color_out
+                                          if k not in enriched})
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_COLOR_BARS_OK",
+                                     sym=self.symbol)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as _e:  # noqa: BLE001
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_COLOR_BARS_FAIL",
+                                     sym=self.symbol, err=str(_e)[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # ─── Phase 1 Group A - bn_composites Python (B3 decision Jackson) ───
+        # Sierra DMP emet bn_score_* a 0.0 (desactive 18/04/2026 cf DMP_Transform.h:1397).
+        # Python recalcule UNIQUEMENT bn_score_raw/bull/bear (PAS bn_pressure_*
+        # qui sont Sierra natifs vivants cf DMP_Transform.h:1393-1395).
+        # Route via _safe_update strict (whitelist SIERRA_ZERO_NEVER_CALCULATED).
+        # PATTERN_11 vigilance : ne PAS hardcoder gate sur bn_score_X sans DSR.
+        inject_bn_composites(enriched, safe_update_fn=self._safe_update,
+                              log_fn=self._log_event, sym=self.symbol)
+
         # ─── Fix A4 (11/06/2026) : Reconstruction dist_mq_*_pct manquants ───
         # Bug DMP C++ partiel : sur NQ `dist_mq_put_0dte_pct` est 100% NULL et
         # `dist_mq_call_0dte_pct` 50% NULL alors que les raw (ticks) sont OK.
@@ -529,6 +621,7 @@ class SierraPipelineOrchestrator:
         """Reset cross-day si trading_date change. Returns True si reset effectue."""
         if self._current_trading_date is None:
             self._current_trading_date = trading_date
+            self._cvd_session_running = 0.0  # reset cvd_session cumsum
             return False
         if trading_date == self._current_trading_date:
             return False
@@ -540,6 +633,12 @@ class SierraPipelineOrchestrator:
         self._divergences_v2.reset()
         self._ctx_rolling.reset()
         # prev_levels et sessions_fine se reset automatiquement
+        # Phase 1 Group A : reset cvd_session cumsum cross-day
+        self._cvd_session_running = 0.0
+        # Reset long/color bar states (factories deja importees top-of-file
+        # avec fallback CORE/ - cf review CRITIQUE 3 : pas d'import local).
+        self._long_bar_state = make_long_bar_state(self.symbol)
+        self._color_bar_state = make_color_bar_state(self.symbol)
         self._current_trading_date = trading_date
         return True
 

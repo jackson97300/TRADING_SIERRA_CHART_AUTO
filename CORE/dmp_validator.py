@@ -219,7 +219,7 @@ EXPECTED_COLS = EXPECTED_COLS_370 # rétrocompatibilité (remplacé dynamiquemen
 # checks MUST_FIRE/SHOULD_FIRE/MUST_HAVE_DIST/MUST_VARY/BOUNDS :
 #   - bn_color_up, bn_color_dn, bn_color_dn_2  → toujours 0 (BN Trigger per-bar ephemere)
 #   - bar_color_up, bar_color_dn              → Extension to Future Intersection desactivee
-#   - bn_pressure_ask                         → toujours 0 (mort post-3.7.0)
+#   - bn_pressure_ask/bid                     → SIGNAL VIVANT cf DMP_Transform.h:1393-1395
 #   - bn_long_up, bn_long_dn                  → idem
 #   - bn_volume_up, bn_volume_dn              → idem
 #   - bn_score_bull                           → idem (bn_score_bear/raw survivent)
