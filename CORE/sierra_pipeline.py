@@ -80,6 +80,10 @@ try:
     from CORE.rvol_streaming import (
         add_rvol_engine_streaming, RvolEngineState
     )
+    # Phase 1 Group D - intermarket (10 features cross-sym ES/NQ)
+    from CORE.intermarket_streaming import (
+        add_intermarket_streaming, IntermarketState
+    )
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -114,6 +118,10 @@ except ImportError:
     # Phase 1 Group C - rvol_engine
     from rvol_streaming import (
         add_rvol_engine_streaming, RvolEngineState
+    )
+    # Phase 1 Group D - intermarket
+    from intermarket_streaming import (
+        add_intermarket_streaming, IntermarketState
     )
 
 
@@ -205,6 +213,15 @@ class SierraPipelineOrchestrator:
         # add_rvol_engine_streaming change `out = dict(row)` -> `out = {}`, ou si
         # quelqu'un fait `del row["rvol"]`, regression silencieuse possible.
         self._rvol_state = RvolEngineState()
+
+        # Phase 1 Group D - intermarket state + buffer partner bar (cross-sym)
+        # Sierra DMP n'emet AUCUNE feature im_* native -> port complet necessaire.
+        # Caller (live_pipeline ou tests) doit appeler `set_partner_bar(bar)`
+        # AVANT enrich_bar pour fournir le bar du partenaire ES<->NQ.
+        # Sans partner_bar : other_inputs=None -> 10 features im_* = NaN propre.
+        # Staleness check : reject partner si > 120s old ou future timestamp.
+        self._intermarket_state = IntermarketState()
+        self._partner_bar: Optional[dict] = None
 
         # Stats orchestrateur (debug + monitoring)
         self._bars_processed: int = 0
@@ -791,6 +808,96 @@ class SierraPipelineOrchestrator:
         # construire footprint_cells sans modifier C++ (DEPLOY_UNSAFE).
         # Deferred Phase 1 Group D ou plus tard si A4 absorb prioritaire.
 
+        # ─── Phase 1 Group D - intermarket (10 features cross-sym ES/NQ) ────
+        # Sierra DMP n'emet AUCUNE feature im_* native (0/10).
+        # Caller (live_pipeline) doit appeler set_partner_bar(bar) AVANT
+        # enrich_bar pour fournir le bar partner ES<->NQ.
+        # Sans partner_bar : other_inputs=None -> 10 features = NaN propre.
+        # Staleness check (mirror enricher_chain.py:696-722) :
+        # - reject si partner_ts > target_ts (no future)
+        # - reject si target_ts - partner_ts > 120s (stale)
+        if self.symbol in ("ES", "NQ"):
+            try:
+                other_inputs = None
+                partner_bar = self._partner_bar
+                if partner_bar is not None:
+                    partner_ts_ns = partner_bar.get("ts_event_ns", 0)
+                    target_ts_ns = sierra_bar.get("ts_event_ns") or int(
+                        bar_ts_utc.timestamp() * 1_000_000_000)
+                    STALE_NS = 120 * 1_000_000_000
+                    if partner_ts_ns > target_ts_ns:
+                        partner_bar = None  # no future
+                        if self._log_event is not None:
+                            try:
+                                self._log_event("SIERRA_PARTNER_STALE",
+                                                 sym=self.symbol, reason="future")
+                            except Exception:  # noqa: BLE001
+                                pass
+                    elif (target_ts_ns - partner_ts_ns) > STALE_NS:
+                        partner_bar = None  # stale > 120s
+                        if self._log_event is not None:
+                            try:
+                                self._log_event("SIERRA_PARTNER_STALE",
+                                                 sym=self.symbol, reason="stale")
+                            except Exception:  # noqa: BLE001
+                                pass
+
+                if partner_bar is not None:
+                    # FIX MH1 review code-reviewer 11/06 : bug silent fallback `or`.
+                    # `partner_bar.get("close") or partner_bar.get("price")` tombait
+                    # sur price si close=0 (falsy mais valide). Remplace par check
+                    # is not None explicit (mirror semantique enricher_chain.py:729-731).
+                    _close = partner_bar.get("close")
+                    _vol = partner_bar.get("total_vol")
+                    other_inputs = {
+                        "price": _close if _close is not None else partner_bar.get("price"),
+                        "delta_bar": partner_bar.get("delta_bar"),
+                        "total_vol": _vol if _vol is not None else partner_bar.get("volume"),
+                        "delta_day": partner_bar.get("delta_day"),
+                        "dist_sess_high": partner_bar.get("dist_sess_high"),
+                        "dist_sess_low": partner_bar.get("dist_sess_low"),
+                        "large_trader_ratio": partner_bar.get("large_trader_ratio"),
+                        "open_bias_conf": partner_bar.get("open_bias_conf"),
+                        "open_direction": partner_bar.get("open_direction"),
+                        "open_type": partner_bar.get("open_type"),
+                    }
+
+                row_for_im = dict(enriched)
+                if "price" not in row_for_im and "close" in row_for_im:
+                    row_for_im["price"] = row_for_im["close"]
+                im_out = add_intermarket_streaming(
+                    row_for_im, self._intermarket_state,
+                    other_inputs=other_inputs)
+                # Merge uniquement im_* (evite price bloat)
+                im_features = {k: v for k, v in im_out.items()
+                                if k.startswith("im_")}
+                self._safe_update(enriched, im_features)
+                if self._log_event is not None:
+                    try:
+                        self._log_event("SIERRA_PORT_INTERMARKET_OK",
+                                         sym=self.symbol)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception as _e:  # noqa: BLE001
+                if self._log_event is not None:
+                    try:
+                        self._log_event("SIERRA_PORT_INTERMARKET_FAIL",
+                                         sym=self.symbol, err=str(_e)[:200])
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        # ─── Phase 1 Group D - D2/D3 NON PORTES (deps manquantes) ──────────
+        # D2 game_changers (5 features open_type/zone, day_type, open_direction,
+        #    open_bias_conf) : Sierra emet 5/5 PLACEHOLDERS (val=0/2/0/0.0).
+        #    Inputs Python deps phase_b_helpers (prev_vah/val/vpoc, ib_high/low,
+        #    ib_atr, sess_high/low, price_1030, date_et) ABSENTS du pipeline
+        #    Sierra. Porter game_changers sans phase_b_helpers = critical_inputs_valid
+        #    permanent False -> UNKNOWN broadcasting (PIRE que placeholder Sierra).
+        #    Solution : porter phase_b_helpers d'abord (effort ~5h separe).
+        # D3 absorb_streaming (10 features bn_absorb_*_zones_active,
+        #    near_resistance/support_level, dist_last_spike_origin_pct) :
+        #    requiert footprint_cells (absent Sierra). Meme blocker que C3 trapped.
+
         # ─── Fix A4 (11/06/2026) : Reconstruction dist_mq_*_pct manquants ───
         # Bug DMP C++ partiel : sur NQ `dist_mq_put_0dte_pct` est 100% NULL et
         # `dist_mq_call_0dte_pct` 50% NULL alors que les raw (ticks) sont OK.
@@ -882,6 +989,36 @@ class SierraPipelineOrchestrator:
 
         return enriched
 
+    def set_partner_bar(self, partner_bar: Optional[dict]) -> None:
+        """Phase 1 Group D - injecte le bar du symbole partenaire pour intermarket.
+
+        Convention cross-symbole (mirror enricher_chain.py:687-722) :
+        - ES.enrich_bar(es_bar) cycle : caller appelle pipe_es.set_partner_bar(last_nq_bar)
+        - NQ.enrich_bar(nq_bar) cycle : caller appelle pipe_nq.set_partner_bar(last_es_bar)
+        - Staleness + no-future verifies dans enrich_bar (reject si > 120s ou future)
+
+        TODO MH2 review code-reviewer 11/06 :
+        En PROD actuelle, BOT/run_sierra_enricher.py lance 1 process par symbole
+        sans memoire partagee. AUCUN caller n'appelle set_partner_bar -> 10 features
+        im_* seront 100% NaN en paper J+1.
+        Plan post-Phase 1 : multi-symbol orchestrator (mode --multi-symbol) qui
+        instancie ES+NQ dans le meme process + cross-injection partner_bar.
+        Pas bloquant pour Phase 1 (NaN propre, modeles ML defensifs) mais a corriger
+        avant Phase 4 dual-run parity Sierra vs Databento (Sierra im_*=NaN vs
+        Databento im_*=valeurs -> divergence faussera la metrique parite).
+        Anti pattern_11 : NE PAS gate les bots sur im_*=NaN tant que ce port
+        n'est pas activement aliemente.
+
+        Args:
+            partner_bar : dict bar partenaire enrichi (avec close, delta_bar,
+                           total_vol, delta_day, dist_sess_high/low,
+                           large_trader_ratio, open_*, ts_event_ns).
+                           None = reset partner (features im_* = NaN cycle suivant).
+        """
+        # NB thread-safety : dict assignment atomique CPython (GIL), mais
+        # documenter "1 instance = 1 symbole, pas thread-safe" reste valide.
+        self._partner_bar = partner_bar
+
     def _maybe_cross_day_reset(self, trading_date: date) -> bool:
         """Reset cross-day si trading_date change. Returns True si reset effectue."""
         if self._current_trading_date is None:
@@ -916,6 +1053,9 @@ class SierraPipelineOrchestrator:
         # chaque session, conforme batch mode RvolEngine.compute qui traite
         # chaque DataFrame independamment - review NICE-TO-HAVE #3)
         self._rvol_state = RvolEngineState()
+        # Phase 1 Group D - intermarket reset
+        self._intermarket_state = IntermarketState()
+        # partner_bar NE PAS reset (le caller cross-symbole gere son cycle)
         self._current_trading_date = trading_date
         return True
 

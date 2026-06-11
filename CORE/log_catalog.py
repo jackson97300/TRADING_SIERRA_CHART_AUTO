@@ -1359,6 +1359,11 @@ LOG_CODES = {
     "SIERRA_PORT_INTERMARKET_OK":            (LogLevel.INFO,   "events", "Sierra port intermarket OK : sym={sym}"),
     "SIERRA_PORT_INTERMARKET_FAIL":          (LogLevel.MAJEUR, "events", "Sierra port intermarket FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_INTERMARKET_DEGRADED":      (LogLevel.ALERTE, "events", "Sierra port intermarket DEGRADED : sym={sym} reason={reason}"),
+    # NB downgrade ALERTE -> INFO post-review (MH2 11/06) : tant que multi-symbol
+    # caller pas code, partner_bar=None par defaut -> pas d'emit. Mais si caller
+    # appelle set_partner_bar avec un bar tres vieux par accident, l'INFO suffit
+    # pour audit J+1 sans flood errors_*.jsonl (1440 bars/jour x 2 sym = 2880).
+    "SIERRA_PARTNER_STALE":                  (LogLevel.INFO,   "events", "Sierra partner bar stale : sym={sym} reason={reason}"),
     "SIERRA_PORT_BN_COMPOSITES_OK":          (LogLevel.INFO,   "events", "Sierra port bn_composites OK : sym={sym}"),
     "SIERRA_PORT_BN_COMPOSITES_FAIL":        (LogLevel.MAJEUR, "events", "Sierra port bn_composites FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_BN_COMPOSITES_DEGRADED":    (LogLevel.ALERTE, "events", "Sierra port bn_composites DEGRADED : sym={sym} reason={reason}"),
