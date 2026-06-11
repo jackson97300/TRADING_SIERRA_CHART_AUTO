@@ -31,6 +31,55 @@
 
 ---
 
+### 2026-06-11 23:50 (45) - [VALIDATION_MISS + COMMENT_FALSE] - D2 ib_atr -> ib_atr_python rename cassait game_changers
+
+**Categorie** : VALIDATION_MISS (rename sans verif consumer interne) + COMMENT_FALSE (commentaire "anti-collision Sierra atr" alors qu'aucune collision n'existe)
+
+**Contexte** : Phase 1 D2 port phase_b_helpers. Sub-engine 5 `add_ib_atr_streaming` output renomme `ib_atr -> ib_atr_python` "pour eviter collision Sierra natif `atr`". Decouvert par code-reviewer : `game_changers_streaming.py:204` consume `ib_atr` directement -> rename casse fallback `ib_atr_ratio=0.0` -> `classify_day_type` retourne `NORM_VAR(2)` permanent. **Port inert sur son objectif principal** (ressusciter day_type).
+
+**Cause racine** : (1) audit "qui consume ib_atr" verifie uniquement consumers EXTERNES (setup_engine.py, bots BOT/). Loupe consumer INTERNE `game_changers_streaming.py` qui est appele 2 lignes plus loin dans le meme bloc. (2) Affirmation "collision Sierra atr" jamais verifiee empiriquement - Sierra emet `atr` (ATR 14 daily, tick-based) different de `ib_atr` (Python sub-engine 5, 14 IB jours rolling). Aucune collision reelle.
+
+**Lecon** : grep consumers DOIT couvrir le fichier ENRICH lui-meme + tous les sub-engines downstream avant rename feature. Pas seulement BOT/ + setup_engine. Pattern critical-tasks-review.md regle "Test empirique avec log visible" : verifier sortie post-rename = sortie pre-rename + nouvelle valeur, pas juste presence cle.
+
+**Trigger prevention** :
+- Avant rename feature : grep cross-codebase (CORE/ + BOT/ + tests/) INCLUS le module appelant directement
+- Verifier la "collision" assumee EMPIRIQUEMENT (compare Sierra natif vs Python sub-engine sur 10 bars)
+- Test sortie post-rename : valeur sortie change correctement (pas juste cle presente)
+
+**Resolution** : drop rename `ib_atr_python`. Garde `ib_atr` simple. Validation empirique : `day_type=4 (TREND)` avec ib_atr=30 + ext_up=100 > 2*40=ib_range*2. Avant fix : day_type=2 (NORM_VAR) permanent.
+
+**Reviewed** : code-reviewer (4 MUST-HAVE traites avant commit)
+
+**Files** : `CORE/sierra_pipeline.py:899-902` (drop rename) + `tests/sierra_port/test_d2_phase_b_helpers.py` (test_d2_ib_atr_preserves_sierra_atr verifie atr Sierra=692 preserve + ib_atr present)
+
+**Stats** : VALIDATION_MISS 6+ occurrences (depuis 27/04) -> promotion memoire dediee `feedback_validation_miss_pre_deploy.md` mentionnee entry #43 EN COURS.
+
+---
+
+### 2026-06-11 21:00 (44) - [VALIDATION_MISS + COMMENT_FALSE] - D1 ts_event_ns absent dans SierraLiveReader output
+
+**Categorie** : VALIDATION_MISS (champ promis docstring jamais valide en prod) + COMMENT_FALSE (docstring ligne 482 sierra_live_io.py prometttait `ts_event_ns` non-emis)
+
+**Contexte** : Phase 1 D1 port multi-symbol orchestrator pour debloquer 10 features `im_*` (intermarket). Tests parite mono vs multi passent (7/7). MAIS code-reviewer audit empirique : `partner_bar.get("ts_event_ns", 0)` retourne 0 car `SierraLiveReader.load_rolling_window()` n'emet pas `ts_event_ns` malgre docstring. Staleness check `target_ts - 0 = 1.78e18 >> STALE_NS=1.2e11` -> classifie TOUS les partners comme stale -> partner_bar=None -> **10 features im_* = 100% NaN en prod**.
+
+**Cause racine** : test parite a injecte `ts_event_ns` artificiel via `_sample_raw_bar()` fixture, masquant le bug en environnement test. Le test E2E manquait : passer un bar Sierra DMP raw SANS ts_event_ns + injection mirror sierra_live_io.
+
+**Lecon** : test parite avec fixtures hand-rolled = trompeur si fixture diverge de prod reality. Test E2E avec mock du reader (ou simulation strict prod inputs) obligatoire pour features dependant de schema runtime.
+
+**Trigger prevention** :
+- Avant verdict GO sur port runtime : ecrire 1 test E2E "without [fixture-injected-field]" qui valide path prod
+- Grep cross-codebase : si docstring promet champ X mais `df["X"]` jamais ecrit dans le code -> incident VALIDATION_MISS source
+
+**Resolution** : (1) Fix source `sierra_live_io.py:530` ajout `df["ts_event_ns"] = df["ts"].astype("int64") * 1_000_000`. (2) Test E2E `test_multi_symbol_e2e_no_ts_event_ns_in_raw` simule prod path (raw bar sans champ + injection mirror). Validation empirique VPS post-deploy : `im_cross_delta_agreement_5 = 0.4` (NON-NaN, cross-injection ACTIVE).
+
+**Reviewed** : code-reviewer (5 MUST-HAVE bloquants + 5 NICE-TO-HAVE)
+
+**Files** : `CORE/sierra_live_io.py:530` (fix source) + `tests/sierra_port/test_d1_multi_symbol.py` (test E2E)
+
+**Stats** : VALIDATION_MISS 5+ occurrences (#27 cluster audit, #34 ROLLBACK sl, #41 sprint persistance, #42 mq_proxy diagnostic, #43 proxy deploy, #44 D1, #45 D2). **Promotion memoire dediee URGENTE** `feedback_validation_miss_pre_deploy.md`.
+
+---
+
 ### 2026-06-11 20:30 (43) - [VALIDATION_MISS] - Phase 5.0.A proxy MQ deploye sur diagnostic NON-VALIDE (regression d'entry #42)
 
 **Categorie** : VALIDATION_MISS + COMMENT_FALSE (entry #42 incident_log meme journee = redaction sans verification empirique)

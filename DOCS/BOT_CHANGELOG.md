@@ -62,6 +62,127 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-11 23:50 — D2 phase_b_helpers port (5 sub-engines + aliases + game_changers ressuscite)
+
+**Categorie** : FEATURE (debloque ~30 features ib_*/sess_*/open_*/date_et + 5 game_changers)
+**Impact prod** : PAPER (Bot 3 v3/v4 + setup_engine consume ces features avec default 0.0 defensif. Avec D2 = vrai contexte Market Profile)
+**Fichier(s)** :
+  - `CORE/sierra_pipeline.py:74-95` imports phase_b_helpers + game_changers
+  - `CORE/sierra_pipeline.py:217-245` init 6 states
+  - `CORE/sierra_pipeline.py:860-948` chain 5 sub-engines + aliases _lvl + game_changers
+  - `CORE/sierra_pipeline.py:1075-1085` reset cross-day (ib_atr_state EXCLU lookback 14j)
+  - `tests/sierra_port/test_d2_phase_b_helpers.py` 9 tests
+**Schema/version** : N/A (port Python only)
+**Reviewer(s) agent** : code-reviewer (NOGO 4 MUST-HAVE -> GO post-fix)
+
+### Quoi
+Port 5 sub-engines streaming phase_b_helpers dans sierra_pipeline.py (ordre IMPOSE) :
+session_metadata + ib_features + session_high_low + open_cash_price1030 + ib_atr.
++ 10 aliases _lvl Sierra -> Python (prev_vah_lvl -> prev_vah, etc.).
++ Ressuscite add_game_changers_streaming (5 features open_type/zone, day_type,
+open_direction, open_bias_conf) qui etaient placeholders Sierra (0/0/2/0/0.0).
+
+### Pourquoi
+Audit Plan agent identifie D2 comme dette Phase 1 pour debloquer features Bot 3
+contextual + setup_engine.py + dataset_builder ML. Sub-engines 5 (volume_profile)
+et 6 (rvol_inputs) SKIP car Sierra natif emet deja equivalents (16+ features _lvl).
+
+### Impact attendu
+- Bot 3 contextual : ctx_ib_extension_ratio + ctx_poc_migration_10 + ctx_va_developing_10
+  + ctx_rotation_factor_20 cesseront d'etre 0.0 defensif -> vraie info contexte
+- game_changers : ressuscite a J+3 (ib_atr 3 jours min_periods) avec day_type variable
+- setup_engine.py : open_type/zone variables au lieu de UNKNOWN/0 permanent
+
+### Validation pre-deploy
+- [x] Tests unitaires : 84/84 PASS
+- [x] Review agent : GO post-fix (4 MUST-HAVE C1+C2+C3+C4 + 2 IMPORTANT I1+I2)
+- [x] Test empirique : day_type=4 (TREND) avec ib_atr=30 + ext_up=100 (preuve C1 fix)
+- [x] Test empirique VPS J+0 : date_et=2026-06-11, ib_high=29049.5, sess_high=29049.5,
+       open_cash=28774.5, prev_vah=29129 (vs `null` avant D2)
+
+### Revert plan
+```bash
+ssh Administrator@212.28.179.199 "powershell -Command \"Stop-Service MIA-Sierra-Enricher-ES\""
+git checkout 155dc62 -- CORE/sierra_pipeline.py  # commit D1 sans D2
+scp CORE/sierra_pipeline.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/"
+ssh Administrator@212.28.179.199 "powershell -Command \"Restart-Service MIA-Sierra-Enricher-ES\""
+```
+
+### Deployed at 2026-06-11 23:30 UTC
+- SCP sierra_pipeline.py vers VPS
+- Restart MIA-Sierra-Enricher-ES (mode multi-symbol ES,NQ)
+- Validation J+0 : features D2 toutes presentes sur bars post-restart
+
+### Suivi post-deploy
+- J+1 : ib_atr aura 2eme jour de lookback (toujours NaN car min_periods=3)
+- J+3 : ib_atr calculable -> day_type evoluera (1/2/3/4/5 selon contexte)
+- J+7 : grep distribution day_type values + open_type variations -> stats prod
+
+### Liens
+- INCIDENT_LOG : #45 (rename ib_atr_python cassait game_changers) + #44 (D1)
+- Memory : `feedback_execute_dont_redebate.md`, `feedback_jackson_aime_choix_multiple.md`
+- Commit : `7da7713`
+- Review agent : NOGO -> GO (4 critiques bloquantes corrigees, validation empirique day_type)
+
+---
+
+## 2026-06-11 21:00 — D1 multi-symbol orchestrator (debloque 10 features im_*)
+
+**Categorie** : FEATURE + REFACTO (multi-symbol mode)
+**Impact prod** : PAPER (intermarket features im_* utilisees par setup_engine + dataset ML)
+**Fichier(s)** :
+  - `BOT/run_sierra_enricher.py` (+235 LOC) new mode `--multi-symbol ES,NQ`
+  - `CORE/sierra_live_io.py:528-530` fix C1 ajout `ts_event_ns`
+  - `CORE/log_catalog.py` 3 codes MULTI_SYMBOL_BOOT/CYCLE_STATS/SHUTDOWN
+  - `tests/sierra_port/test_d1_multi_symbol.py` 8 tests
+**Schema/version** : N/A (port Python only)
+**Reviewer(s) agent** : code-reviewer (NOGO 5 MUST-HAVE -> GO post-fix)
+
+### Quoi
+Mode `--multi-symbol ES,NQ` dans run_sierra_enricher.py qui instancie 2
+SierraPipelineOrchestrator + 2 SierraLiveReader dans le meme process avec
+cross-injection partner_bar (mirror enricher_chain.py:687-722 Databento).
+Architecture 4 phases : collecte -> snapshot fige -> enrich symetrique -> update.
+
+### Pourquoi
+Apres Group D 60e5461, sierra_pipeline expose `set_partner_bar()` mais aucun
+caller en prod -> 10 features `im_*` = 100% NaN. Plan agent audit Phase 1
+identifie D1 comme dette P0 bloquant Phase 4 dual-run parity.
+
+### Impact attendu
+- 10 features im_* (cross-delta agreement, smt_divergence, rolling_correlation,
+  volume_lead, open_type_agreement, etc.) emises en prod paper J+0
+- Setup_engine + dataset_builder ML peuvent utiliser intermarket signals
+
+### Validation pre-deploy
+- [x] Tests unitaires : 8/8 PASS (dont E2E sans ts_event_ns fixture)
+- [x] Review agent : NOGO -> GO post-fix (5 MUST-HAVE C1+C2+C3+I4+I5)
+- [x] Test manuel VPS : mode --multi-symbol --max-iterations 3 -> cycle 2 emit im_emitted_total=2
+
+### Revert plan
+```bash
+ssh Administrator@212.28.179.199 "powershell -Command \"nssm set MIA-Sierra-Enricher-ES AppParameters '-X utf8 C:/TRADING_SIERRA_CHART_AUTO/BOT/run_sierra_enricher.py --symbol ES --poll-interval 10 --output-dir C:/TRADING_SIERRA_CHART_AUTO/DATA/live_enriched/sierra'; nssm set MIA-Sierra-Enricher-NQ Start SERVICE_AUTO_START; Restart-Service MIA-Sierra-Enricher-ES, MIA-Sierra-Enricher-NQ\""
+```
+
+### Deployed at 2026-06-11 ~14:38 UTC
+- SCP 3 fichiers (sierra_live_io.py, log_catalog.py, run_sierra_enricher.py)
+- Stop+Disable MIA-Sierra-Enricher-NQ
+- Reconfigure MIA-Sierra-Enricher-ES AppParameters --symbol ES -> --multi-symbol ES,NQ
+- Restart MIA-Sierra-Enricher-ES
+
+### Suivi post-deploy
+- J+0 14:39 ET : im_cross_delta_agreement_5=0.4 (ES) / 1.0 (NQ) -> NON-NaN VALIDE
+- J+1 : grep counts par feature im_*, ratio non-NaN > 95% apres warmup 10 bars
+- J+7 : verifier MULTI_SYMBOL_CYCLE_STATS dans LOGS/events (toutes les 60 cycles)
+
+### Liens
+- INCIDENT_LOG : #44 (ts_event_ns absent)
+- Memory : `feedback_execute_dont_redebate.md`, `feedback_jackson_aime_choix_multiple.md`
+- Commit : `155dc62`
+- Review agent : NOGO -> GO (5 critiques bloquantes corrigees + test E2E ajoute)
+
+---
+
 ## 2026-06-11 11:30 — Phase 0 Sierra Pipeline Port (PREPARATION)
 
 **Categorie** : INFRA (portage modules streaming Databento → Sierra)
