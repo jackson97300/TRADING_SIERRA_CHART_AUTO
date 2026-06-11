@@ -31,6 +31,40 @@
 
 ---
 
+### 2026-06-12 00:15 (46) - [VALIDATION_MISS + PATTERN_11] - Phase 4 audit coverage 80.7% sur N=100 cluster favorable = faux GO
+
+**Categorie** : VALIDATION_MISS (sample 100 bars 1 cluster temporel) + PATTERN_11 (rationalisation FAIL pour proteger verdict, code-reviewer detecte)
+
+**Contexte** : Phase 4 LIGHT audit coverage Sierra dataset prod. Sample = 100 dernieres bars NQ 11/06 (15:04-16:44 ET = POST-deploy D1+D2 14:38 ET). Result 80.7% coverage -> verdict initial GO Sierra prod. Code-reviewer challenge : 7 points specifiques inclus "im_* a 48% restart artifact = explication fausse". J'ai retorque "warmup pattern" mais agent identifie idx 51 bloc contigu = warmup cross-feed PAS restart.
+
+**Cause racine** : (1) sample temporel etroit (99 min, 1 cluster) cache l'historique pre-deploy progressif. (2) rationalisation post-hoc FAIL im_* "restart STALE" pour proteger 80.7%. (3) absence benchmark Databento. (4) 88 features/582 fields = 15% du JSONL = cherry-picking inconscient.
+
+**Verite empirique cross-day** (audit v2 sur 8721 bars 10/06+11/06 entiers) :
+- Coverage 37% (vs 80.7% initial)
+- 10/06 : im_* 0% (D1 pas encore deploye)
+- 11/06 first_valid_idx=4733/5308 = a partir de 14:38 ET deploy D1
+- Drift train/test pdh/pdl 76% -> 100% confirme features arrivent progressivement
+- 13 FAIL groups + 2 WARN groups vs 0 fail initial
+
+**Lecon** : audit coverage doit etre N>=500 bars cross-day MINIMUM. Sample temporel etroit (1 cluster < 100 min) = trompeur par definition. Si la lecon de Lopez AFML chap 4 (sample weight uniqueness) etait appliquee, ce sample serait penalise pour overlap temporel.
+
+**Trigger prevention** :
+- Avant tout verdict GO/NOGO dataset : audit MINIMUM N>=500 bars sur AU MOINS 2 jours differents
+- Avant rationaliser un FAIL : verifier empiriquement le pattern (idx series, distribution temporelle), pas hypothese
+- Avant choisir features pour benchmark : prendre TOUS les fields non-Sierra-natifs, pas subset
+- Dispatch code-reviewer AVANT verdict final sur audit one-shot
+- **Categorie PATTERN_11 specifique** : "rationalisation post-hoc d'un FAIL" est une forme distincte de PATTERN_11 (V1 hardcoded gates rationalisaient pareil leur underperformance)
+
+**Resolution** : NOGO Sierra ML training maintenant. GO Sierra live enrichment (prod paper Bot 1 continuer). DEFER D3 VAP wrapper (aurait ete 12-18h sur dataset pourri = VALIDATION_MISS #6). Plan : attendre 7-15j live POST-Phase 1 stable OU batch enrich 99j raw DMP avec pipeline Phase 1 complet (~1-2h). Phase 4 ML training reportee.
+
+**Reviewed** : code-reviewer (verdict initial GO challenge, NOGO confirme post audit v2 cross-day)
+
+**Files** : `CORE/research/phase4_sierra_coverage_audit.py` (v1 sample 100 bars), `CORE/research/phase4_sierra_coverage_audit_v2.py` (v2 cross-day 8721 bars), `DATA/_sierra_20260610.jsonl`, `DATA/_sierra_20260611.jsonl`
+
+**Stats** : VALIDATION_MISS 6+ occurrences depuis 27/04. PATTERN_11 4+ occurrences sur 2 mois. Promotion memoire `feedback_validation_miss_pre_deploy.md` URGENTE (cf #43, #44, #45, #46).
+
+---
+
 ### 2026-06-11 23:50 (45) - [VALIDATION_MISS + COMMENT_FALSE] - D2 ib_atr -> ib_atr_python rename cassait game_changers
 
 **Categorie** : VALIDATION_MISS (rename sans verif consumer interne) + COMMENT_FALSE (commentaire "anti-collision Sierra atr" alors qu'aucune collision n'existe)
