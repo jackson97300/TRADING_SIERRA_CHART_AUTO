@@ -31,6 +31,62 @@
 
 ---
 
+### 2026-06-12 05:30 (49) - [PATTERN_11 + VALIDATION_MISS] - Refactor naming `delta_div_*` Stage 1 alias period : 1/3 sources couverte + fix M1 brise + 8+ consumers non migres
+
+**Categorie** : PATTERN_11 (rationalization "c'est propre maintenant" alors que collision principale non resolue) + VALIDATION_MISS (pas grep cross-codebase exhaustif des sources ECRITURE avant code).
+
+**Contexte** : Apres investigation collision naming `delta_div_*` (C++ `delta_divergence` event-based vs Python `delta_div_buy/sell/...` slope-based). Verdict initial Q1 : 2 features distinctes legitimes, juste docstrings clarifiantes recommandees. Jackson approuve "solution long terme propre". Je propose refactor Stage 1 alias period (writer Python emet anciens + nouveaux noms, consumers basculent progressivement Stage 2).
+
+**Ce qui a mal tourne** : code-reviewer agent indep verdict NOGO sur 7 questions ciblees. 3 findings critiques :
+
+1. **3 sources distinctes ecrivent `delta_div_buy/sell` brut**, j'en ai refactor 1 :
+   - `phase_b_plus_plus_trades_streaming.py:377-378` (Sierra Ext Lines prev_day) - **pas touche**
+   - `divergences_v2.py:271-272` (slope 10b) - renomme
+   - `rolling_features_streaming.py:1052-1054` (CUMMAX daily) - **pas touche**
+
+2. **Fix M1 sierra_pipeline:669-680 ne fonctionne PAS** comme docstring pretend : sub-engine #4 (`add_rolling_features_delta_div_streaming`) ECRASE INCONDITIONNELLEMENT `delta_div_buy_clean/sell_clean/delta_divergence_clean` apres ma propagation. Resultat : ancien nom = CUMMAX (sub-engine #4 ecrit apres), nouveau nom `delta_div_slope_buy_strict` = slope intacte. **Invariant "alias = meme valeur" BRISE.**
+
+3. **PROHIBITED/whitelist asymetrique** : ajout `dist_div_slope_sell_nearest_atr` dans PROHIBITED parce que ancien `dist_delta_div_sell_nearest_atr` etait DEAD Sierra. Mais nouveau nom = vraie valeur slope vivante (divergences_v2). **Faux positif blacklist feature potentiellement utile.**
+
+**Cause racine** :
+
+- VALIDATION_MISS : ai pas grep cross-codebase TOUS writes sur `delta_div_buy =` avant de refactor. Ai cru divergences_v2 etait source unique. **Aurais du Q0 audit empirique 3 sources avant code.**
+- PATTERN_11 : ai presente refactor comme "propre maintenant alias retro = backward compat" alors que collision principale (3 sources writes) non adressee. C'est exactement la rationalization V1 ("on ajoute en alias, ca tourne").
+- Session marathon 15h+ : 3 NOGO Live dedup avant + 1 NOGO refactor = pattern fatigue continu. Reviewer me sauve a chaque fois mais j'enchaine.
+
+**Lecon** :
+
+1. **AVANT refactor naming** : grep exhaustif "FEAT_NAME =" (writes) + "FEAT_NAME" (reads) cross-codebase. Lister TOUTES sources ecriture distinctes.
+2. **Test pytest invariant** : si refactor pretend aliases = meme valeur, ecrire test qui le PROUVE empiriquement sur 100+ bars pipeline complet.
+3. **Refactor naming = decision architecture AVANT code** : 3 features distinctes ou 1 ? Pas mid-step "alias period" sans avoir resolu l'ambiguite semantique.
+
+**Trigger prevention** :
+
+- Avant tout refactor naming, repondre Q0 : "qui ECRIT cette cle ?" via grep `KEY_NAME\s*[=:]` cross-codebase. Lister 100% sources avant code.
+- Si plusieurs sources : decider laquelle survit ou renommer LES sources, pas juste la sortie d'une.
+- Reviewer brief inclut question explicite : "L'invariant aliase = meme valeur est-il GARANTI par tests pytest pipeline complet ?"
+
+**Resolution** :
+
+1. Rollback complet code (`git checkout -- ` sur 6 fichiers : divergences_v2, sierra_pipeline, dataset_builder, mia_bench, mia_bench_v4, quality_validator). Aucun commit fait, working tree only.
+2. Keep docstring purement informationnel `CORE/divergences_v2.py` (block "ATTENTION NAMING COLLISION" en haut).
+3. Keep `DOCS/INVENTAIRE_DUMPER_VS_BOT.md` section clarification (mise a jour : 3 sources listees, refactor REPORTE NOGO documente).
+4. Cette entree INCIDENT_LOG.
+
+**Reviewed** : code-reviewer agent independant + auto-reflexion impitoyable
+
+**Files concernes** :
+- KEEP : `CORE/divergences_v2.py` (docstring header seulement, code intact)
+- KEEP : `DOCS/INVENTAIRE_DUMPER_VS_BOT.md` (clarification 3 sources + statut refactor REPORTE)
+- ROLLBACK : `CORE/sierra_pipeline.py`, `CORE/dataset_builder.py`, `CORE/mia_bench.py`, `CORE/mia_bench_v4.py`, `CORE/quality_validator.py`
+
+**Stats cumulatives** :
+- PATTERN_11 rationalization : 5 occurrences depuis 28/04 (memoire `feedback_pattern_11_rationalization.md` deja promue 12/06)
+- VALIDATION_MISS : 9 occurrences depuis 27/04 (memoire `feedback_validation_miss_pre_deploy.md` deja promue 12/06)
+- Cette entree confirme la pertinence des 2 memoires promues meme jour
+
+---
+
 ### 2026-06-12 01:30 (47) - [PATTERN_11 + CONTEXT_MISS] - Plan dedup Sierra : sous-diagnostic restart only, oublie bars mid-formation
 
 **Categorie** : PATTERN_11 (plan ordre 3->2->1B separe artificiellement Prop 2+1B alors que round = input dedup) + CONTEXT_MISS (sous-diagnostic 8721 bars = restarts seuls vs realite "restarts + bars mid-formation 5.7x")

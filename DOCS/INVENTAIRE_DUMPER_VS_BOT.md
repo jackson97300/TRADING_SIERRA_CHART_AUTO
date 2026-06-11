@@ -6,6 +6,70 @@
 
 ---
 
+## ⚠️ CLARIFICATION NAMING `delta_div*` (12/06/2026)
+
+**TROIS implémentations distinctes coexistent avec préfixe `delta_div`** — collision de naming créant ambiguïté pour tout consumer.
+
+### État actuel (collision préexistante, NON résolue)
+
+| # | Source | Fichier | Fenêtre | Sémantique | Fire rate |
+|---|---|---|---|---|---|
+| 1 | **C++ DMP** `delta_divergence` | `DMP_Reader.h:2517-2527` | Session daily extreme | Event new daily high/low + sign delta opposé | ~0.4% (rare) |
+| 2 | **Python `divergences_v2.py`** `delta_div_buy/sell/...` | `divergences_v2.py:144-229` | Rolling **10 bars** | Slopes price / delta opposés | ~30-60% (continu) |
+| 3 | **Python `rolling_features_streaming.py`** `delta_div_buy_clean/sell_clean/delta_divergence_clean` | lignes 1052-1062 | Daily CUMMAX reset session | New daily low (cummin) + delta>=0 OR daily high (cummax) + delta<=0 | rare |
+
+**Bug latent** : sources #2 et #3 écrivent les MÊMES clés Python (`delta_div_buy/sell`, `delta_div_buy_clean/sell_clean`, `delta_divergence_clean`). Selon l'ordre d'appel dans pipeline, le dernier gagne. Source #3 (sub-engine #4 rolling) écrit APRÈS divergences_v2, écrasant les valeurs slope par CUMMAX. Le `fix M1` `sierra_pipeline.py:669-680` prétend court-circuiter ce mismatch mais le sub-engine #4 réécrit inconditionnellement.
+
+### Consumers (8+ non synchronisés)
+
+- C++ `delta_divergence` → BN V4 live (Sierra natif)
+- Python `delta_div_buy/sell/...` lus par : `bias_calculator_v6.py:691-692`, `databento_paper_trader.py:2796-2805`, `phase_b_plus_plus_engine.py:1078,1169-1172`, `mia_bench_v4.py:1120`, `quality_gate_v3.py:245-248`, `log_catalog.py:515`, `BOT/audit_veto_delta_div_buy_for_short.py:95`, backtests, strategies
+- Aucun de ces consumers ne sait quelle SOURCE il lit (#2 ou #3 selon timing pipeline)
+
+### Refactor proposé (NON IMPLÉMENTÉ — audit NOGO 12/06)
+
+Solution propre = renommer les 3 sources distinctes :
+
+| Source | Nom canonique proposé |
+|---|---|
+| C++ `delta_divergence` | INCHANGÉ (BN V4 live consume + naming installé) |
+| `divergences_v2.py` (slope 10b) | `delta_div_slope_*` |
+| `rolling_features_streaming.py` (CUMMAX daily) | `delta_div_extreme_*` |
+
+| Ancien (à déprécier) | Nouveau (canonique) | Source écriture |
+|---|---|---|
+| `delta_div_buy` | `delta_div_slope_buy` OU `delta_div_extreme_buy` | divergences_v2 OU rolling_features (selon path) |
+| `delta_div_sell` | `delta_div_slope_sell` OU `delta_div_extreme_sell` | idem |
+| `delta_div_strength` | `delta_div_slope_strength_atr` OU `delta_div_extreme_strength` | idem |
+| `delta_divergence_any` | `delta_div_slope_any` | divergences_v2 only |
+| `delta_div_buy_clean` | `delta_div_slope_buy_strict` OU `delta_div_extreme_buy_strict` | les 2 sources |
+| `delta_div_sell_clean` | `delta_div_slope_sell_strict` OU `delta_div_extreme_sell_strict` | idem |
+| `delta_divergence_clean` | `delta_div_slope_strict` OU `delta_div_extreme_strict` (-1/0/+1) | idem |
+| `n_delta_div_*_zones_active` | `n_div_slope_*_zones_active` | divergences_v2 only |
+| `dist_delta_div_*_nearest_atr` | `dist_div_slope_*_nearest_atr` | divergences_v2 only |
+| `retest_*_delta_div` | `retest_*_div_slope` | divergences_v2 only |
+| `ctx_div_density_20` | `ctx_div_slope_density_20` | divergences_v2 only |
+| `ctx_bars_since_div` | `ctx_bars_since_div_slope` | divergences_v2 only |
+
+### Statut refactor (12/06/2026 soir)
+
+**REPORTÉ — audit code-reviewer NOGO**. Tentative Stage 1 alias period
+(commits non créés) rollback car :
+1. Couvrait 1/3 des sources écriture (divergences_v2 only)
+2. Fix M1 ne court-circuite PAS réellement le sub-engine #4 → invariant aliases = valeur identique BRISÉ
+3. 8+ consumers non migrés
+4. Pattern PATTERN_11 V1 rationalization (présentation "propre" sans audit cross-source)
+
+Avant tout futur refactor :
+- Audit empirique des 3 sources avec test pytest invariant
+- Décision architecture : 1 feature ou 3 features distinctes
+- Migration coordonnée TOUS consumers en Stage 1 (pas Stage 2)
+- Drop aliases retro = Stage 3 quand TOUTE migration validée
+
+Sources empiriques : `CORE/divergences_v2.py:1-53` + `CPP/MIA_REFACTORED/DUMPER/DMP_Reader.h:2517-2527` + `CORE/rolling_features_streaming.py:979-1067` + `CORE/sierra_pipeline.py:669-700`. Cf `DOCS/INCIDENT_LOG.md` entrée 2026-06-12 catégorie `PATTERN_11 + VALIDATION_MISS`.
+
+---
+
 ## 🔴 BILAN SYNTHÉTIQUE
 
 | Catégorie | Features Dumper | Utilisées Bot | **Écart** |

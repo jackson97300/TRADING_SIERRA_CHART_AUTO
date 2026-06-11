@@ -3,6 +3,36 @@
 Phase 3.8 Sierra Full Migration (10/06/2026).
 Cf design doc DOCS/superpowers/specs/2026-06-06-sierra-full-migration-design.md s4.3
 
+# ATTENTION NAMING COLLISION (12/06/2026 — doc seulement)
+#
+# Cette implementation calcule des features SLOPE-based 10 bars rolling.
+# Elle PARTAGE le prefixe `delta_div` avec DEUX autres implementations :
+#
+#   1. C++ DMP `delta_divergence` (CPP/MIA_REFACTORED/DUMPER/DMP_Reader.h:2517)
+#      = EVENT-based session daily extreme (fire rate ~0.4%, rare)
+#      consume par : BN V4 live (Sierra natif)
+#
+#   2. Python `rolling_features_streaming.py:1052-1062` ecrit
+#      `delta_div_buy_clean/sell_clean/delta_divergence_clean` = CUMMAX daily
+#      reset session. Cohabite/court-circuite par fix M1 sierra_pipeline:669-680.
+#
+#   3. Cette implementation (`divergences_v2.py`) = SLOPE 10 bars rolling
+#      (fire rate ~30-60%, continu)
+#      consume par : ML features dataset_builder, backtests, quality_gate
+#
+# Refactor naming complete REPORTE (audit 12/06 NOGO code-reviewer : 3 sources
+# distinctes ecrivent les memes cles, fix M1 ne court-circuite pas correctement
+# sub-engine #4 -> aliases retro ne garantissent PAS value-equivalence).
+# Cf INCIDENT_LOG.md categorie PATTERN_11 + VALIDATION_MISS 2026-06-12.
+# Cf DOCS/INVENTAIRE_DUMPER_VS_BOT.md section "CLARIFICATION NAMING `delta_div*`".
+#
+# Prerequis avant refactor :
+#   - Auditer les 3 sources (trades_streaming Sierra, divergences_v2 slope,
+#     rolling_features_streaming CUMMAX) et decider qui ecrit quoi
+#   - Test pytest invariant `test_no_delta_div_collision`
+#   - Migration coordonnee des 8+ consumers (bias_calculator_v6,
+#     databento_paper_trader, phase_b_plus_plus_engine, log_catalog, etc.)
+
 14 features divergences delta vs prix sur rolling window :
 
 ## Detection brute (4)
