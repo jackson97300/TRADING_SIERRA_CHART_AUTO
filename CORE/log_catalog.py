@@ -1364,6 +1364,10 @@ LOG_CODES = {
     # appelle set_partner_bar avec un bar tres vieux par accident, l'INFO suffit
     # pour audit J+1 sans flood errors_*.jsonl (1440 bars/jour x 2 sym = 2880).
     "SIERRA_PARTNER_STALE":                  (LogLevel.INFO,   "events", "Sierra partner bar stale : sym={sym} reason={reason}"),
+    # Phase 1 D1 multi-symbol orchestrator (regle souveraine LOGS TRACABILITE 01/05)
+    "MULTI_SYMBOL_BOOT":                     (LogLevel.INFO,   "events", "Multi-symbol orchestrator boot : syms={syms}"),
+    "MULTI_SYMBOL_CYCLE_STATS":              (LogLevel.INFO,   "events", "Multi-symbol cycle stats : cycle={cycle} im_emitted={im_emitted} errors={errors}"),
+    "MULTI_SYMBOL_SHUTDOWN":                 (LogLevel.INFO,   "events", "Multi-symbol shutdown : total_cycles={total_cycles} im_emitted={im_emitted}"),
     "SIERRA_PORT_BN_COMPOSITES_OK":          (LogLevel.INFO,   "events", "Sierra port bn_composites OK : sym={sym}"),
     "SIERRA_PORT_BN_COMPOSITES_FAIL":        (LogLevel.MAJEUR, "events", "Sierra port bn_composites FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_BN_COMPOSITES_DEGRADED":    (LogLevel.ALERTE, "events", "Sierra port bn_composites DEGRADED : sym={sym} reason={reason}"),

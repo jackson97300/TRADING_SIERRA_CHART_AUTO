@@ -341,11 +341,212 @@ def run_live_mode(
     return stats
 
 
+def run_multi_symbol_live_mode(
+    symbols: list,
+    output_dir: Path,
+    poll_interval_sec: float = DEFAULT_POLL_INTERVAL_SEC,
+    window_bars: int = DEFAULT_WINDOW_BARS,
+    dry_run: bool = False,
+    strict: bool = True,
+    max_iterations: Optional[int] = None,
+) -> dict:
+    """Phase 1 D1 - Mode live multi-symbol avec cross-injection partner_bar.
+
+    Resout dette D1 review code-reviewer 11/06 : sans cross-injection,
+    les 10 features `im_*` (intermarket) restent 100% NaN en prod.
+
+    Convention cross-symbole (mirror enricher_chain.py:687-722) :
+        ES.enrich consume last NQ raw bar via set_partner_bar(_last_bars["NQ"])
+        NQ.enrich consume last ES raw bar via set_partner_bar(_last_bars["ES"])
+    Staleness 120s + no-future check gere par sierra_pipeline.enrich_bar.
+
+    Bootstrap cold-start (R1.4 review fix code-reviewer 11/06) :
+        Cycle 1 : last_raw_bars vide -> snapshot fige = {ES: None, NQ: None}
+        -> les 2 symboles ont partner_bar=None -> features im_* = NaN propre.
+        Update last_raw_bars en fin Phase 4 cycle 1.
+        Cycle 2 : snapshot fige = bars cycle 1 -> features im_* commencent.
+        Symetrique (ES voit NQ_{t-1}, NQ voit ES_{t-1}, MEME timestamp).
+
+    Cross-day disalignement (R1.3 review) : si ES traverse 18:00 ET avant NQ,
+    ES utilise IntermarketState fraichement reset MAIS partner_bar NQ J-1
+    (pas reset car caller gere son cycle). Staleness check 120s catche ce cas
+    apres 2 min -> features im_* = NaN propre.
+
+    Args:
+        symbols : list ["ES", "NQ"] uniquement supporte par intermarket actuel.
+        output_dir : repertoire base output (sub-dir par symbol).
+        poll_interval_sec : delai entre cycles (default 10s).
+        window_bars : SierraLiveReader rolling window.
+        dry_run : si True, compute mais pas d'ecriture.
+        strict : SierraLiveReader strict (fail si fichier absent).
+        max_iterations : limite boucle (None=infini, utile tests).
+
+    Returns:
+        dict stats : {polls, per_symbol_bars_enriched, errors, pipelines}.
+    """
+    if not all(s in ("ES", "NQ") for s in symbols):
+        raise ValueError(
+            f"Multi-symbol intermarket supporte ES/NQ uniquement, recu : {symbols}")
+    if len(symbols) < 2:
+        raise ValueError(
+            f"Multi-symbol mode requiert au moins 2 symboles, recu : {symbols}")
+
+    # Init 1 reader + 1 pipeline par symbole (state isole per-sym)
+    readers: dict = {}
+    pipelines: dict = {}
+    seen_ts: dict = {}
+    last_raw_bars: dict = {}  # dernier bar RAW par symbole (pour cross-inject)
+
+    for sym in symbols:
+        readers[sym] = SierraLiveReader(
+            symbol=sym, window_bars=window_bars, strict=strict)
+        try:
+            from CORE.logging_v2 import get_logger
+            _slog = get_logger(f"sierra_enricher_{sym.lower()}",
+                                process="sierra_enricher")
+            _log_event = _slog.emit
+        except Exception:  # noqa: BLE001
+            _log_event = None
+        pipelines[sym] = SierraPipelineOrchestrator(symbol=sym, log_event=_log_event)
+        seen_ts[sym] = set()
+        last_raw_bars[sym] = None
+
+    stats = {
+        "polls": 0,
+        "per_symbol_bars_enriched": {s: 0 for s in symbols},
+        "errors": 0,
+        "im_features_emitted": 0,  # count bars avec partner_bar non-None
+    }
+
+    # Log boot multi-symbol (regle souveraine LOGS TRACABILITE 01/05)
+    try:
+        from CORE.logging_v2 import get_logger
+        _multi_log = get_logger("sierra_enricher_multi",
+                                 process="sierra_enricher")
+        _multi_log.emit("MULTI_SYMBOL_BOOT", syms=",".join(symbols))
+    except Exception:  # noqa: BLE001
+        _multi_log = None
+
+    iteration = 0
+    while _RUNNING:
+        if max_iterations is not None and iteration >= max_iterations:
+            break
+        iteration += 1
+        stats["polls"] += 1
+
+        # FIX C2 review code-reviewer 11/06 : asymetrie temporelle.
+        # Phase 1 : collecter nouvelles bars par sym (lecture readers).
+        # Phase 2 : snapshot last_raw_bars FIGE avant enrich.
+        # Phase 3 : enrich avec snapshot symetrique (ES voit NQ_{t-1}, NQ voit
+        # ES_{t-1}, MEME timestamp partner sans biais ordre).
+        # Phase 4 : update last_raw_bars apres TOUS les enrich du cycle.
+
+        # Phase 1 : collect new bars per sym
+        new_bars_per_sym: dict = {}
+        for sym in symbols:
+            try:
+                df = readers[sym].load_rolling_window()
+            except Exception as e:  # noqa: BLE001
+                stats["errors"] += 1
+                print(f"[error][{sym}] reader failed : {e}", flush=True)
+                new_bars_per_sym[sym] = []
+                continue
+            if df is None or len(df) == 0:
+                new_bars_per_sym[sym] = []
+                continue
+            collected = []
+            for _, row in df.iterrows():
+                ts = row.get("ts")
+                if ts is None or ts in seen_ts[sym]:
+                    continue
+                seen_ts[sym].add(ts)
+                collected.append(row.to_dict())
+            new_bars_per_sym[sym] = collected
+
+        # Phase 2 : snapshot fige (symetrique pour tous les enrich du cycle)
+        partner_snapshot = dict(last_raw_bars)
+
+        # Phase 3 : enrich avec snapshot fige
+        for sym in symbols:
+            partner_sym = "NQ" if sym == "ES" else "ES"
+            new_bars_count = 0
+            for sierra_bar in new_bars_per_sym[sym]:
+                # CROSS-INJECTION : snapshot fige (pas last_raw_bars muable)
+                partner_bar = partner_snapshot[partner_sym]
+                pipelines[sym].set_partner_bar(partner_bar)
+
+                try:
+                    enriched = pipelines[sym].enrich_bar(sierra_bar)
+                except ValueError as e:
+                    stats["errors"] += 1
+                    print(f"[warn][{sym}] enrich_bar : {e}", flush=True)
+                    continue
+
+                # FIX I4 review : compteur post-enrich sur valeur non-NaN reelle
+                # (pas pre-enrich qui ignorerait staleness check kick).
+                _im_emitted = any(
+                    enriched.get(k) is not None and enriched.get(k) == enriched.get(k)
+                    for k in enriched
+                    if k.startswith("im_")
+                )
+                if _im_emitted:
+                    stats["im_features_emitted"] += 1
+
+                new_bars_count += 1
+                stats["per_symbol_bars_enriched"][sym] += 1
+
+                if not dry_run:
+                    bar_ts_utc = pipelines[sym]._extract_ts_utc(sierra_bar)
+                    output_path = _build_output_path(output_dir, sym, bar_ts_utc)
+                    line = _serialize_payload(enriched)
+                    _write_durable(output_path, line)
+
+            if new_bars_count > 0:
+                print(
+                    f"[multi][{sym}] poll {stats['polls']} : "
+                    f"{new_bars_count} new bars "
+                    f"(im_emitted_total={stats['im_features_emitted']})",
+                    flush=True,
+                )
+
+        # Phase 4 : update last_raw_bars apres TOUS les enrich (commit cycle)
+        for sym in symbols:
+            if new_bars_per_sym[sym]:
+                last_raw_bars[sym] = new_bars_per_sym[sym][-1]
+
+        # Cycle stats log (chaque 60 cycles = ~10 min @ poll 10s)
+        if _multi_log is not None and (iteration % 60 == 0):
+            try:
+                _multi_log.emit("MULTI_SYMBOL_CYCLE_STATS",
+                                 cycle=iteration,
+                                 im_emitted=stats["im_features_emitted"],
+                                 errors=stats["errors"])
+            except Exception:  # noqa: BLE001
+                pass
+
+        time.sleep(poll_interval_sec)
+
+    if _multi_log is not None:
+        try:
+            _multi_log.emit("MULTI_SYMBOL_SHUTDOWN",
+                             total_cycles=iteration,
+                             im_emitted=stats["im_features_emitted"])
+        except Exception:  # noqa: BLE001
+            pass
+
+    stats["pipelines"] = {s: pipelines[s].get_stats() for s in symbols}
+    return stats
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Phase 4.2 Sierra Enricher dual-run wrapper"
     )
-    parser.add_argument("--symbol", required=True, choices=["ES", "NQ", "MGC"])
+    parser.add_argument("--symbol", required=False, choices=["ES", "NQ", "MGC"],
+                         help="Mono-symbol mode (backward compat). Mutually exclusive avec --multi-symbol.")
+    parser.add_argument("--multi-symbol", type=str, default=None,
+                         help="Phase 1 D1 - Mode multi-symbol cross-injection im_*. "
+                              "Ex: 'ES,NQ' (separateur virgule, ES/NQ uniquement).")
     parser.add_argument("--output-dir", type=Path,
                          default=Path("DATA/live_enriched/sierra"))
     parser.add_argument("--batch", type=Path, default=None,
@@ -362,17 +563,26 @@ def main():
 
     args = parser.parse_args()
 
+    # Validation args : --symbol OU --multi-symbol mutually exclusive
+    if args.symbol is None and args.multi_symbol is None:
+        parser.error("--symbol OU --multi-symbol requis")
+    if args.symbol is not None and args.multi_symbol is not None:
+        parser.error("--symbol et --multi-symbol mutuellement exclusifs")
+
     # Setup signal handlers (graceful shutdown live mode)
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    print(f"[init] sierra_enricher symbol={args.symbol} "
+    mode_label = (args.multi_symbol if args.multi_symbol else args.symbol)
+    print(f"[init] sierra_enricher mode={mode_label} "
           f"dry_run={args.dry_run}", flush=True)
 
     if args.batch is not None:
-        # Mode batch
+        # Mode batch (mono-symbol seulement)
+        if args.multi_symbol is not None:
+            parser.error("--batch incompatible avec --multi-symbol "
+                          "(use mono-sym sequential batch instead)")
         if args.output is None:
-            # Default : meme dir que batch, suffix _sierra_enriched
             args.output = args.batch.parent / (
                 args.batch.stem + "_sierra_enriched.jsonl"
             )
@@ -383,8 +593,23 @@ def main():
             output_file=args.output,
             dry_run=args.dry_run,
         )
+    elif args.multi_symbol is not None:
+        # Mode live multi-symbol (Phase 1 D1)
+        symbols = [s.strip().upper() for s in args.multi_symbol.split(",")]
+        print(f"[multi-live] symbols={symbols} output_dir={args.output_dir} "
+              f"poll={args.poll_interval}s window={args.window_bars}",
+              flush=True)
+        stats = run_multi_symbol_live_mode(
+            symbols=symbols,
+            output_dir=args.output_dir,
+            poll_interval_sec=args.poll_interval,
+            window_bars=args.window_bars,
+            dry_run=args.dry_run,
+            strict=args.strict,
+            max_iterations=args.max_iterations,
+        )
     else:
-        # Mode live
+        # Mode live mono-sym (backward compat)
         print(f"[live] output_dir={args.output_dir} "
               f"poll={args.poll_interval}s window={args.window_bars}",
               flush=True)

@@ -524,6 +524,10 @@ class SierraLiveReader:
 
         # Sierra DMP `ts` est en millisecondes epoch UTC. Conversion UTC datetime.
         df["ts_event"] = pd.to_datetime(df["ts"], utc=True, unit="ms")
+        # FIX C1 D1 review code-reviewer 11/06 : ts_event_ns absent provoque
+        # staleness check faux (partner_bar.get("ts_event_ns", 0) -> 0 ->
+        # target-0 > 120s STALE -> 100% NaN). Ajout systematique au source.
+        df["ts_event_ns"] = df["ts"].astype("int64") * 1_000_000
         df = df.sort_values("ts_event").reset_index(drop=True)
 
         # Cast defensif numeric cols (pattern P0-2 LiveEnrichedReader 23/05)
