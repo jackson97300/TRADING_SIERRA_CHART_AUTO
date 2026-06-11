@@ -84,6 +84,20 @@ try:
     from CORE.intermarket_streaming import (
         add_intermarket_streaming, IntermarketState
     )
+    # Phase 1 D2 - phase_b_helpers (5 sub-engines, ordre IMPOSE)
+    from CORE.phase_b_helpers import (
+        SessionMetadataState, IBState, SessionHighLowState,
+        OpenCashPrice1030State, IbAtrState,
+        add_session_metadata_streaming,
+        add_ib_features_streaming,
+        add_session_high_low_streaming,
+        add_open_cash_price1030_streaming,
+        add_ib_atr_streaming,
+    )
+    # Phase 1 D2 - game_changers (5 features ressuscitees post phase_b_helpers)
+    from CORE.game_changers_streaming import (
+        add_game_changers_streaming, GameChangersState
+    )
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -122,6 +136,19 @@ except ImportError:
     # Phase 1 Group D - intermarket
     from intermarket_streaming import (
         add_intermarket_streaming, IntermarketState
+    )
+    # Phase 1 D2 - phase_b_helpers
+    from phase_b_helpers import (
+        SessionMetadataState, IBState, SessionHighLowState,
+        OpenCashPrice1030State, IbAtrState,
+        add_session_metadata_streaming,
+        add_ib_features_streaming,
+        add_session_high_low_streaming,
+        add_open_cash_price1030_streaming,
+        add_ib_atr_streaming,
+    )
+    from game_changers_streaming import (
+        add_game_changers_streaming, GameChangersState
     )
 
 
@@ -222,6 +249,28 @@ class SierraPipelineOrchestrator:
         # Staleness check : reject partner si > 120s old ou future timestamp.
         self._intermarket_state = IntermarketState()
         self._partner_bar: Optional[dict] = None
+
+        # Phase 1 D2 - phase_b_helpers states (5 sub-engines, ORDRE IMPOSE)
+        # 1. session_metadata -> date_et, mins_et, session_date_trading,
+        #    is_cash_session, is_ib_window
+        # 2. ib_features -> ib_high/low, ib_complete, ib_range_ticks, etc.
+        #    REQUIERT date_et + mins_et + is_ib_window (raise ValueError sinon)
+        # 3. session_high_low -> sess_high/low absolus
+        # 4. open_cash_price1030 -> open_cash, price_1030, above_open_*
+        # 5. ib_atr -> ib_atr_python (rename anti-collision Sierra atr natif)
+        # Skip volume_profile (5) et rvol_inputs (6) : Sierra natif emet deja
+        # equivalents (16+ features cur/prev_vah/val/vpoc, delta_pct,
+        # finish_strength, range_size).
+        self._sm_state = SessionMetadataState()
+        self._ib_state = IBState()
+        self._shl_state = SessionHighLowState()
+        self._ocp_state = OpenCashPrice1030State()
+        self._ib_atr_state = IbAtrState()
+        # Phase 1 D2 - game_changers (5 features ressuscitees)
+        # Inputs requis : date_et + mins_et + open_cash + prev_vah/val/vpoc +
+        # ib_high/low + sess_high/low + close + price_1030 + pdh/pdl
+        # Apres aliases _lvl + chain phase_b_helpers, tous dispos.
+        self._gc_state = GameChangersState()
 
         # Stats orchestrateur (debug + monitoring)
         self._bars_processed: int = 0
@@ -808,6 +857,108 @@ class SierraPipelineOrchestrator:
         # construire footprint_cells sans modifier C++ (DEPLOY_UNSAFE).
         # Deferred Phase 1 Group D ou plus tard si A4 absorb prioritaire.
 
+        # ─── Phase 1 D2 - aliases _lvl Sierra -> Python (game_changers compat) ─
+        # Sierra DMP emet niveaux en suffixe `_lvl` (prev_vah_lvl, open_cash_lvl).
+        # game_changers + bots downstream attendent noms sans suffixe.
+        # Aliases sans ecrasement (preserve Sierra natif si deja set).
+        for _k_lvl, _k in (("prev_vah_lvl", "prev_vah"),
+                            ("prev_val_lvl", "prev_val"),
+                            ("prev_vpoc_lvl", "prev_vpoc"),
+                            ("cur_vah_lvl", "cur_vah"),
+                            ("cur_val_lvl", "cur_val"),
+                            ("cur_vpoc_lvl", "cur_vpoc"),
+                            ("open_cash_lvl", "open_cash"),
+                            ("open_830_lvl", "open_830"),
+                            ("ovn_high_lvl", "ovn_high"),
+                            ("ovn_low_lvl", "ovn_low")):
+            _v = enriched.get(_k_lvl)
+            if _v is not None and enriched.get(_k) is None:
+                enriched[_k] = _v
+
+        # ─── Phase 1 D2 - phase_b_helpers chain (5 sub-engines ORDRE IMPOSE) ─
+        # Sequence : session_metadata -> ib_features -> session_high_low ->
+        #            open_cash_price1030 -> ib_atr
+        # Chaque sub-engine raise ValueError si ses inputs (date_et, etc.)
+        # absents -> ordre IMPOSE critique.
+        # Bouclier try/except global anti-crash live (mais log MAJEUR).
+        try:
+            import pandas as _pd
+            # FIX C2 review code-reviewer 11/06 : PrevLevels (Phase 3) ecrit
+            # `enriched["open_cash"] = close` AVANT le chain. Sub-engine 4 batch
+            # semantique = `open` de bar us_start (different). Sans pop, sub-engine
+            # 4 = code mort (set_diff exclut clef existante). Pop pour permettre
+            # sub-engine 4 d'ecrire la valeur batch-fidele.
+            enriched.pop("open_cash", None)
+            # Convert bar_ts_utc datetime -> pandas.Timestamp (sub-engine 1 attendu)
+            row_for_pbh = dict(enriched)
+            row_for_pbh["ts_event"] = _pd.Timestamp(bar_ts_utc)
+            # Chain ordre IMPOSE
+            row_for_pbh = add_session_metadata_streaming(row_for_pbh, self._sm_state)
+            row_for_pbh = add_ib_features_streaming(
+                row_for_pbh, self._ib_state, tick=self.tick_size)
+            row_for_pbh = add_session_high_low_streaming(
+                row_for_pbh, self._shl_state, tick=self.tick_size)
+            row_for_pbh = add_open_cash_price1030_streaming(
+                row_for_pbh, self._ocp_state)
+            # FIX C1 review code-reviewer 11/06 : DROP rename ib_atr_python.
+            # `game_changers_streaming.py:204` consume `ib_atr` direct (PAS Sierra
+            # natif qui s'appelle juste `atr`). Rename cassait day_type ->
+            # NORM_VAR (2) permanent = port inert. Garde le nom `ib_atr` ;
+            # collision Sierra `atr` est innexistante (verifie : Sierra emet `atr`
+            # pour ATR 14 daily, jamais `ib_atr` natif).
+            row_for_pbh = add_ib_atr_streaming(row_for_pbh, self._ib_atr_state)
+            # Merge DIFF de cles (preserve Sierra natif si existant)
+            # NB exclu "ts_event" (conversion locale)
+            _produced = set(row_for_pbh) - set(enriched) - {"ts_event"}
+            self._safe_update(enriched, {k: row_for_pbh[k] for k in _produced})
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_PHASE_B_HELPERS_OK",
+                                     sym=self.symbol)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as _e:  # noqa: BLE001
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_PHASE_B_HELPERS_FAIL",
+                                     sym=self.symbol, err=str(_e)[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # ─── Phase 1 D2 - game_changers (5 features ressuscitees) ───────────
+        # Sierra DMP emet placeholders (open_type=0, day_type=2, ...).
+        # Python recalcule depuis inputs phase_b_helpers + Sierra aliases.
+        # _safe_update + whitelist SIERRA_ZERO_NEVER_CALCULATED force override.
+        try:
+            _gc_out = add_game_changers_streaming(
+                {**enriched}, self._gc_state, symbol=self.symbol)
+            # FIX I1 review : DROP boucle force-override doublon. La whitelist
+            # SIERRA_ZERO_NEVER_CALCULATED ligne ~225 contient deja open_direction
+            # + trend_day_probability + (post-D2) open_type/zone, day_type,
+            # open_bias_conf. `_safe_update` force override quand existing==0.0.
+            # Strategy unique = whitelist (regle souveraine LOGS TRACABILITE
+            # 01/05 : 1 source unique d'override, anti incoherence).
+            _gc_produced = set(_gc_out) - set(enriched)
+            self._safe_update(enriched, {k: _gc_out[k] for k in _gc_produced})
+            # Force override des 4 placeholders Sierra (existant=0.0 OU 2 placeholder)
+            for _gck in ("open_type", "open_zone", "day_type", "open_bias_conf"):
+                _gcv = _gc_out.get(_gck)
+                if _gcv is not None and _gcv == _gcv:  # not NaN
+                    enriched[_gck] = _gcv
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_GAME_CHANGERS_OK",
+                                     sym=self.symbol)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as _e:  # noqa: BLE001
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_GAME_CHANGERS_FAIL",
+                                     sym=self.symbol, err=str(_e)[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+
         # ─── Phase 1 Group D - intermarket (10 features cross-sym ES/NQ) ────
         # Sierra DMP n'emet AUCUNE feature im_* native (0/10).
         # Caller (live_pipeline) doit appeler set_partner_bar(bar) AVANT
@@ -1056,6 +1207,16 @@ class SierraPipelineOrchestrator:
         # Phase 1 Group D - intermarket reset
         self._intermarket_state = IntermarketState()
         # partner_bar NE PAS reset (le caller cross-symbole gere son cycle)
+        # Phase 1 D2 - phase_b_helpers + game_changers reset
+        # Note : session_metadata + open_cash + game_changers gerent leur propre
+        # date_et internal mais on reset au cas ou pour safety (idempotent).
+        self._sm_state = SessionMetadataState()
+        self._ib_state = IBState()
+        self._shl_state = SessionHighLowState()
+        self._ocp_state = OpenCashPrice1030State()
+        # ib_atr garde 14j lookback : NE PAS reset (sinon ib_atr=NaN chaque
+        # session pendant 3 jours min_periods)
+        self._gc_state = GameChangersState()
         self._current_trading_date = trading_date
         return True
 
