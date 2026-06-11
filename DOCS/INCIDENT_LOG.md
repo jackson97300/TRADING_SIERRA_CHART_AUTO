@@ -69,6 +69,56 @@
 
 ---
 
+### 2026-06-12 03:00 (48) - [VALIDATION_MISS + CONTEXT_MISS] - Jackson detecte 2 bugs en 1 regard que 5 reviews agents avaient rates (dist_comp_* + jitter timestamp)
+
+**Categorie** : VALIDATION_MISS (cumulative session marathon) + CONTEXT_MISS (audit pipeline incomplet)
+
+**Contexte** : Apres 5 reviews code-reviewer + 1 market-analyst sur ~12h session migration Sierra (Phase 1 + D1 + D2 + Plan A + Phase 4 LIGHT audit + 2 fixes Jackson), Jackson detecte EMPIRIQUEMENT 2 bugs majeurs en regardant les bars JSONL Sierra :
+
+1. **`dist_comp_20d_vpoc` valeurs aberrantes** : ES=+86556 ticks -> implied level=-14237 (impossible negatif). NQ=-89140 -> implied level=+51770 (NQ trade 28-30k, impossible). `dist_comp_*_atr` satures +/-20.0 constant. `dist_comp_50d_*` = NULL partout. Cause racine : charts Sierra 30/31 SUPPRIMES (Jackson confirme empirique) -> `DMP_SafeReadLast(sc, 30/31, ...)` lit sur charts inexistants -> valeurs uninitialized.
+
+2. **Jitter timestamp +/-1s Sierra** : sur 200 bars NQ, 31% ferment a `:59` au lieu `:00` exact. Notre code `sierra_dedup.py:round_ts_to_minute` utilisait FLOOR -> collision 16:44:59 + 16:44:00 -> 16:45 vide -> ~31% bars perdues. Solution ROUND > FLOOR : `round(ts/60000)*60000`. Validation : dedup 11/06 NQ 637 -> **923 bars (+45% recuperees)**.
+
+**Cause racine pipeline agents** :
+
+- code-reviewer x5 reviews : aucun n'a verifie les VALEURS empiriques de `dist_comp_*` (cross-comparison ES vs NQ aurait montre asymetrie absurde). Focus etait sur architecture / patterns / consumers, pas distribution numerique des features.
+- market-analyst review E1/E2 mq_gamma : focus sur logique fix 31/03 MQ + proxy v2. Pas regarde autres features Sierra natives.
+- moi (Claude) : audit Phase 4 v2 a sorti `dist_comp_20d_vpoc` saturated +/-20 sans le flagger. J'ai accepte la donnee, pas verifie l'unite/echelle.
+- 2 audits empiriques Jackson 11/06 soir : 13:11-13:15 ET ET 15:54-16:44 ET. Les 2 montraient les valeurs aberrantes mais je n'ai pas focus.
+
+**Lecon** : 
+1. **Audit numerique des features manque dans pipeline review** : cross-check ES vs NQ pour features instrument-agnostic (pourcentages, ratios) ou cross-check vs prix close pour distances en ticks (implied level doit etre plausible).
+2. **Jackson trader oeil empirique > pipeline agents Code** : 10+ ans 10000h+ Sierra Chart visuel. Detecte asymetries immediates. Mes agents codent-revoient-testent mais sans intuition "ca n'a pas de sens".
+3. **3 NOGO d'affilee sur Plan v1/v2/v3 Live dedup** = signal fatigue session 15h+. Decisions qualite baisse. Reviewer me sauve a chaque fois mais j'enchaine erreurs nouvelles.
+
+**Trigger prevention** :
+- Ajout sanity check empirique dans audit coverage : pour features distance/ratio, verifier `implied_level = close +/- (feature * tick_size)` plausible 
+- Documenter dans process review : "Avant verdict, cross-check ES vs NQ sur features asymetriques (BN, MQ, comp_*, etc.)"
+- Session marathon > 12h : self-check fatigue, accepter STOP plutot que continuer plan suivant
+- Pipeline agents : ajouter dans brief code-reviewer "verifier valeurs empiriques + plausibilite numerique", pas seulement architecture
+
+**Resolution** :
+1. Commit `37e2161` : fix Jackson #1 drop dist_comp_*/inside_comp_* explicit + fix #2 FLOOR->ROUND
+2. Commit `c04bdd1` : drop 18 features Sierra C++ DMP DEAD (charts 30/31 supprimes) cote pipeline path Sierra
+3. Memoires creees `feedback_validation_miss_pre_deploy.md` (8+ occurrences) + `feedback_pattern_11_rationalization.md` (4+ occurrences) auto-chargees
+4. Decision STOP session apres 3 NOGO consecutifs Plan v1/v2/v3 Live dedup integration
+
+**Reviewed** : auto-flagger (Jackson empirique direct, sans review formelle code-reviewer)
+
+**Files concernes** :
+- `CORE/research/sierra_dedup.py:round_ts_to_minute` (FLOOR -> ROUND)
+- `CORE/dataset_builder.py` PROHIBITED_FEATURES (+8 features explicit 50d + align + inside)
+- `BOT/run_sierra_enricher.py:_serialize_payload` (+18 DEAD fields drop)
+- `tests/sierra_port/test_sierra_dedup_metadata.py` (+1 test serialize drop)
+- Memory : `feedback_validation_miss_pre_deploy.md`, `feedback_pattern_11_rationalization.md`
+
+**Stats cumulatives**:
+- VALIDATION_MISS : 8 occurrences depuis 27/04 -> memoire dediee promotion 12/06
+- PATTERN_11 rationalization : 4 occurrences depuis 28/04 -> memoire dediee promotion 12/06
+- CONTEXT_MISS : reviewer #1 (oubli infra Phase 0 que j'avais code 12h avant)
+
+---
+
 ### 2026-06-12 00:15 (46) - [VALIDATION_MISS + PATTERN_11] - Phase 4 audit coverage 80.7% sur N=100 cluster favorable = faux GO
 
 **Categorie** : VALIDATION_MISS (sample 100 bars 1 cluster temporel) + PATTERN_11 (rationalisation FAIL pour proteger verdict, code-reviewer detecte)
