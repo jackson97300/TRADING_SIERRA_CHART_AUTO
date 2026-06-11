@@ -76,6 +76,10 @@ try:
     )
     # Phase 1 Group B - edge_zones (alias Sierra natif + buffer pour n_active)
     from CORE.extension_lines_manager import ExtensionLineBuffer
+    # Phase 1 Group C - rvol_engine (10 features rvol_*)
+    from CORE.rvol_streaming import (
+        add_rvol_engine_streaming, RvolEngineState
+    )
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -107,6 +111,10 @@ except ImportError:
         add_rolling_features_session_confluence_streaming,
     )
     from extension_lines_manager import ExtensionLineBuffer
+    # Phase 1 Group C - rvol_engine
+    from rvol_streaming import (
+        add_rvol_engine_streaming, RvolEngineState
+    )
 
 
 # Default tick size par symbole (fallback si manquant)
@@ -181,6 +189,22 @@ class SierraPipelineOrchestrator:
         self._edge_bar_idx = 0
         # Phase 1 Group B - delta_div : pas de state additionnel
         # (divergences_v2 Calculator Phase 3 le gere natif)
+
+        # Phase 1 Group C - rvol_engine state (10 features rvol_*)
+        # Inputs requis Sierra natif : total_vol, delta_pct, finish_strength, ts (ms).
+        # Sierra DMP emet 6 features natif (rvol, rvol_zscore, rvol_buy, rvol_sell,
+        # rvol_absorb_buy, rvol_absorb_sell). Python ajoute 4 features UNIQUES :
+        # rvol_regime, rvol_buy_strong, rvol_sell_strong, rvol_extreme.
+        #
+        # MECANISME PRESERVATION SIERRA (review code-reviewer 11/06 MUST-HAVE #1) :
+        # La preservation des 6 keys Sierra natifs N'utilise PAS _safe_update
+        # (_safe_update preserve UNIQUEMENT si phase3_v est NaN/None).
+        # Elle utilise `produced = set(rvol_out) - set(row_for_rvol)` ligne 720 :
+        # les keys deja dans row_for_rvol (= enriched = Sierra) sont EXCLUES
+        # du merge. Mecanisme valide mais FRAGILE : si refactor de
+        # add_rvol_engine_streaming change `out = dict(row)` -> `out = {}`, ou si
+        # quelqu'un fait `del row["rvol"]`, regression silencieuse possible.
+        self._rvol_state = RvolEngineState()
 
         # Stats orchestrateur (debug + monitoring)
         self._bars_processed: int = 0
@@ -685,6 +709,88 @@ class SierraPipelineOrchestrator:
         # consume directement). Pas de portage add_delta_div_ext_streaming
         # (creerait doublon + ecrasement valeurs validees).
 
+        # ─── Phase 1 Group C - rvol_engine (10 features rvol_*) ─────────────
+        # Sierra DMP emet 6 features natif. Python add 4 UNIQUES via merge
+        # set DIFF (produced exclut keys deja Sierra). Cf commentaire __init__.
+        try:
+            row_for_rvol = dict(enriched)
+            # Convert ts ns -> ms si dispo
+            if "ts" not in row_for_rvol:
+                ts_ns = sierra_bar.get("ts_event_ns")
+                if ts_ns is not None:
+                    row_for_rvol["ts"] = ts_ns / 1_000_000
+                else:
+                    row_for_rvol["ts"] = bar_ts_utc.timestamp() * 1000
+            # Capture Sierra rvol natifs AVANT sub-engine pour assert defensif
+            _sierra_rvol_keys = ("rvol", "rvol_zscore", "rvol_buy", "rvol_sell",
+                                   "rvol_absorb_buy", "rvol_absorb_sell")
+            _sierra_rvol_before = {k: enriched.get(k) for k in _sierra_rvol_keys
+                                     if k in enriched}
+            rvol_out = add_rvol_engine_streaming(row_for_rvol, self._rvol_state)
+            produced = set(rvol_out) - set(row_for_rvol)
+            # ASSERT DEFENSIF review MUST #1 : keys Sierra ne sont pas dans produced
+            # (si oui = regression mecanisme preservation set DIFF)
+            _leaked = [k for k in _sierra_rvol_before if k in produced]
+            if _leaked and self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_RVOL_DEGRADED", sym=self.symbol,
+                                     reason=f"sierra_keys_leaked={_leaked}")
+                except Exception:  # noqa: BLE001
+                    pass
+            self._safe_update(enriched, {k: rvol_out[k] for k in produced})
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_RVOL_OK", sym=self.symbol)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as _e:  # noqa: BLE001
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_RVOL_FAIL",
+                                     sym=self.symbol, err=str(_e)[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # ─── Phase 1 Group C - Aliases big_v2 Sierra -> setup_engine compat ─
+        # MUST-HAVE #2 review code-reviewer 11/06 :
+        # setup_engine.py:490-491 (consume par databento_paper_trader_v2 PROD)
+        # attend `n_big_ask_v2_t1..t4`, `n_big_bid_v2_t1..t4`,
+        # `max_big_ask_vol_in_bar`, `max_big_bid_vol_in_bar`.
+        # Sierra natif emet noms differents : `n_big_ask_t*` (sans `_v2_`) +
+        # `max_ask_vol_in_bar` / `max_bid_vol_in_bar` (sans `_big_`).
+        # SANS aliases : 8 features setup_engine = None silencieusement ->
+        # bigtrader features DEAD apres switch Sierra (CONTEXT_MISS pattern).
+        # PERTE SEMANTIQUE : Sierra `n_big_ask_t*` = cluster-based extension lines.
+        # Python `n_big_ask_v2_t*` = cellule VAP count. Differents mais best-effort
+        # car footprint_cells absent. Backtest A/B obligatoire avant trust live.
+        # PATTERN_11 vigilance : NE PAS recalibrer seuils setup_engine bigtrader
+        # sur cette distribution sans verifier divergence vs batch Databento.
+        for _ti in (1, 2, 3, 4):
+            _sierra_key = f"n_big_ask_t{_ti}"
+            _v2_key = f"n_big_ask_v2_t{_ti}"
+            if _v2_key not in enriched and _sierra_key in enriched:
+                enriched[_v2_key] = enriched[_sierra_key]
+            _sierra_key = f"n_big_bid_t{_ti}"
+            _v2_key = f"n_big_bid_v2_t{_ti}"
+            if _v2_key not in enriched and _sierra_key in enriched:
+                enriched[_v2_key] = enriched[_sierra_key]
+        # max_*_vol_in_bar alias
+        if "max_big_ask_vol_in_bar" not in enriched and "max_ask_vol_in_bar" in enriched:
+            enriched["max_big_ask_vol_in_bar"] = enriched["max_ask_vol_in_bar"]
+        if "max_big_bid_vol_in_bar" not in enriched and "max_bid_vol_in_bar" in enriched:
+            enriched["max_big_bid_vol_in_bar"] = enriched["max_bid_vol_in_bar"]
+
+        # ─── Phase 1 Group C - C1/C2/C3 NON PORTES (besoin footprint_cells) ─
+        # C1 big_v2 (10 features n_big_*_v2_t*) : aliases Sierra natif ci-dessus
+        #    PARTIEL (8 features count + 2 max). Pas porte completement.
+        # C2 cluster_v2 (5 features n_cluster_*) : requiert footprint_cells
+        # C3 trapped_traders (10 features bn_trapped_*) : requiert footprint_cells
+        #    + LOT 4 absorb (near_resistance_level, near_support_level) prerequis
+        #    Audit prod 11/06 : aucun bot actif ne consume bn_trapped_* (verifie)
+        # Sierra DMP n'expose pas trades_in_window stream -> aucun moyen de
+        # construire footprint_cells sans modifier C++ (DEPLOY_UNSAFE).
+        # Deferred Phase 1 Group D ou plus tard si A4 absorb prioritaire.
+
         # ─── Fix A4 (11/06/2026) : Reconstruction dist_mq_*_pct manquants ───
         # Bug DMP C++ partiel : sur NQ `dist_mq_put_0dte_pct` est 100% NULL et
         # `dist_mq_call_0dte_pct` 50% NULL alors que les raw (ticks) sont OK.
@@ -806,6 +912,10 @@ class SierraPipelineOrchestrator:
         self._edge_buy_buffer = ExtensionLineBuffer()
         self._edge_sell_buffer = ExtensionLineBuffer()
         self._edge_bar_idx = 0
+        # Phase 1 Group C - rvol state reset (cold-start 4 bars rvol=1.0
+        # chaque session, conforme batch mode RvolEngine.compute qui traite
+        # chaque DataFrame independamment - review NICE-TO-HAVE #3)
+        self._rvol_state = RvolEngineState()
         self._current_trading_date = trading_date
         return True
 
