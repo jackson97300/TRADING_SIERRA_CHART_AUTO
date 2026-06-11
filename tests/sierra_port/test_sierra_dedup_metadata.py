@@ -65,14 +65,26 @@ def test_dedup_preserves_distinct_minutes():
         assert len(out_bars) == 2  # distinct minutes preserved
 
 
-def test_round_to_minute_floor_not_ceil():
-    """Test #3 review : ts 12:59 round vers 12:00 (floor), pas 13:00."""
+def test_round_to_minute_uses_round_not_floor():
+    """FIX Jackson 11/06 : ts 12:12:59 round vers 12:13:00 (nearest), PAS 12:12.
+
+    Empirique 200 bars NQ : 31% des bars Sierra ferment a HH:MM:59.
+    FLOOR collisionnait avec bar HH:MM:00 -> 31% bars perdues dedup.
+    ROUND capture correctement la bar suivante.
+    """
     from CORE.research.sierra_dedup import round_ts_to_minute
-    # 13:12:59 UTC en ms
-    ts_59 = 1781183579000
-    # 13:12:00 UTC
+    # 13:12:59 UTC en ms -> round vers 13:13:00
+    ts_59 = 1781183579000  # 13:12:59
+    ts_13_00 = 1781183580000  # 13:13:00
+    assert round_ts_to_minute(ts_59) == ts_13_00
+    # 13:12:00 reste 13:12:00
     ts_00 = 1781183520000
-    assert round_ts_to_minute(ts_59) == ts_00
+    assert round_ts_to_minute(ts_00) == ts_00
+    # Demi-minute (30s) : convention `round` Python = round-half-to-even
+    # 30s = exactement 0.5 minute. Comportement deterministe documente.
+    ts_30 = 1781183550000  # 13:12:30
+    # 1781183550000 / 60000 = 29686392.5 -> round = 29686392 (even) -> *60000
+    assert round_ts_to_minute(ts_30) == 1781183520000  # 13:12:00 (banker rounding)
 
 
 def test_bars_since_boot_per_symbol():

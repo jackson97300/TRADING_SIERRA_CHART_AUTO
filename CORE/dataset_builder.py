@@ -361,13 +361,21 @@ PROHIBITED_FEATURES = {
     "dist_ext_color_up", "dist_ext_color_dn",
     "dist_color_up_nearest_pct", "dist_color_dn_nearest_pct",
     "dist_delta_div_sell_nearest_atr",
-    # Features Sierra C++ avec unite buggee (ticks vs points) - 5 features :
+    # Features Sierra C++ avec unite buggee (ticks vs points) - loader BROKEN.
     # mean -85856 sur NQ 28800 = absurd. Stored en ticks au lieu de points.
+    # FIX Jackson 11/06 : validation empirique ES bar 19:57 UTC close=7402,
+    # dist_comp_20d_vpoc=+86556 -> implied level=-14237 (impossible negatif).
+    # NQ bar 19:57 UTC close=29485, dist_comp_20d_vpoc=-89140 -> implied
+    # level=+51770 (impossible NQ trade 28-30k). vpoc_atr satures +/-20.0
+    # constant. Drop EXPLICITE des 20d ET 50d (50d NULL partout = DEAD).
     "dist_comp_20d_vpoc", "dist_comp_20d_vah", "dist_comp_20d_val",
     "dist_comp_20d_vwap", "dist_comp_20d_vpoc_atr",
+    "dist_comp_50d_vpoc", "dist_comp_50d_vah", "dist_comp_50d_val",
+    "dist_comp_50d_vwap", "dist_comp_50d_vpoc_atr",
+    "comp_vpoc_align_20_50", "comp_vpoc_align_day_20",  # derives potentiellement faux
+    "inside_comp_20d_va", "inside_comp_50d_va",  # derives potentiellement faux
     # ovn_range_ticks = 0 constant alors que ovn_high - ovn_low > 0
     "ovn_range_ticks",
-    # Note : dist_comp_50d_* deja PROHIBITED implicitement (DEAD)
 }
 
 
