@@ -170,5 +170,40 @@ def test_dedup_skip_before_idx():
         assert stats["n_skip"] == 2
 
 
+def test_serialize_drops_sierra_c_dead_fields():
+    """Charts 30/31 supprimes -> 18 features DEAD droppees du JSONL output.
+
+    Anti-pollution audits futurs (Jackson 11/06 soir).
+    Path Sierra UNIQUEMENT (path Databento intact).
+    """
+    from BOT.run_sierra_enricher import _serialize_payload, _SIERRA_C_DEAD_FIELDS
+    import json as _json
+    # Payload avec features valides + features DEAD
+    payload = {
+        "ts": 1781190420000,
+        "sym": "NQ",
+        "close": 28700.0,
+        # Valides : doivent rester
+        "delta_bar": 100,
+        "ctx_rvol_session": 1.5,
+        "im_cross_delta_agreement_5": 0.4,
+        # DEAD : doivent etre droppees
+        "dist_comp_20d_vpoc": -89140,
+        "dist_comp_50d_vpoc": None,
+        "dist_blind_nearest_up": None,
+        "ovn_high_lvl": None,
+        "comp_vpoc_align_20_50": 0,
+    }
+    out_line = _serialize_payload(payload)
+    out = _json.loads(out_line)
+    # Valides preservees
+    assert "delta_bar" in out
+    assert "ctx_rvol_session" in out
+    assert "im_cross_delta_agreement_5" in out
+    # DEAD droppees
+    for k in _SIERRA_C_DEAD_FIELDS:
+        assert k not in out, f"Field {k} should be dropped"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--no-cov"])

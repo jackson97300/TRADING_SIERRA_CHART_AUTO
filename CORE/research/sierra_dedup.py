@@ -150,10 +150,28 @@ def dedup_jsonl(input_path: Path, output_path: Path,
                 final[key2] = bar
                 stats["n_better_completeness"] += 1
 
+    # Drop SIERRA_C_DEAD_FIELDS (charts 30/31 supprimes) - cleanup historique
+    # Cf BOT/run_sierra_enricher.py:_SIERRA_C_DEAD_FIELDS pour la liste source
+    try:
+        from BOT.run_sierra_enricher import _SIERRA_C_DEAD_FIELDS as _DEAD
+    except ImportError:
+        _DEAD = frozenset((
+            "dist_comp_20d_vpoc", "dist_comp_20d_vah", "dist_comp_20d_val",
+            "dist_comp_20d_vwap", "dist_comp_20d_vpoc_atr",
+            "dist_comp_50d_vpoc", "dist_comp_50d_vah", "dist_comp_50d_val",
+            "dist_comp_50d_vwap", "dist_comp_50d_vpoc_atr",
+            "comp_vpoc_align_20_50", "comp_vpoc_align_day_20",
+            "inside_comp_20d_va", "inside_comp_50d_va",
+            "dist_blind_nearest_up", "dist_blind_nearest_dn",
+            "ovn_high_lvl", "ovn_low_lvl",
+        ))
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         for key2 in sorted(final.keys()):
             bar = final[key2]
+            # Drop fields DEAD avant write
+            bar = {k: v for k, v in bar.items() if k not in _DEAD}
             f.write(json.dumps(bar, separators=(",", ":"), default=str) + "\n")
             stats["n_output"] += 1
 

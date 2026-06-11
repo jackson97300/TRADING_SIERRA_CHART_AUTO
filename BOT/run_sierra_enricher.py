@@ -165,6 +165,33 @@ def _write_durable(output_path: Path, line: str) -> None:
 _FLOAT_ROUND_DECIMALS = 6  # Precision suffisante : < tick (0.25 NQ/ES, 0.10 MGC)
 
 
+# Charts 30/31 Sierra supprimes -> 16 features C++ DMP DEAD (NULL ou aberrants).
+# Drop systematique du JSONL Sierra pour eviter pollution audits futurs +
+# confusion "C'EST QUOI ÇA ?" sur valeurs +86556 ticks / null silencieux.
+# IMPORTANT : ces features peuvent etre re-injectees par menthorq_backfill_injector
+# ou load_mq_levels (sources Python) avec BONNES valeurs. On ne drop QUE celles
+# emises par DMP C++ sur path Sierra. Path Databento intact.
+# Validation Jackson 11/06 soir : ES dist_comp_20d_vpoc=+86556 implied -14237,
+# NQ dist_comp_20d_vpoc=-89140 implied +51770 = impossible.
+_SIERRA_C_DEAD_FIELDS = frozenset((
+    # dist_comp 20d/50d (10) + derivees (4)
+    "dist_comp_20d_vpoc", "dist_comp_20d_vah", "dist_comp_20d_val",
+    "dist_comp_20d_vwap", "dist_comp_20d_vpoc_atr",
+    "dist_comp_50d_vpoc", "dist_comp_50d_vah", "dist_comp_50d_val",
+    "dist_comp_50d_vwap", "dist_comp_50d_vpoc_atr",
+    "comp_vpoc_align_20_50", "comp_vpoc_align_day_20",
+    "inside_comp_20d_va", "inside_comp_50d_va",
+    # dist_blind nearest (NQ_COMPOSITE::MQ_BLIND chart 30 supprime)
+    # NB : si menthorq_backfill_injector emet ces 2 features apres,
+    # elles seront re-injectees avec BONNES valeurs (priorite Python).
+    "dist_blind_nearest_up", "dist_blind_nearest_dn",
+    # ovn_high/low_lvl natif Sierra (chart 30/31 OVN_HL supprime)
+    # NB : ovn_high/ovn_low Python (prev_levels.py) garde fonctionne -
+    # ces 2 features sont juste les versions natives SC redondantes.
+    "ovn_high_lvl", "ovn_low_lvl",
+))
+
+
 def _inject_observability_metadata(enriched: dict, symbol: str) -> None:
     """Injecte schema_version + boot_id + bars_since_boot + data_quality_flag.
 
@@ -247,8 +274,11 @@ def _serialize_payload(payload: dict) -> str:
     """Serialize payload dict en ligne JSONL JSON-standard.
 
     Convert numpy types + NaN -> Python native (None pour NaN).
+    Drop _SIERRA_C_DEAD_FIELDS (charts 30/31 supprimes).
     Output respect JSON standard (allow_nan=False compatible).
     """
+    # Drop 18 features C++ DMP DEAD (charts 30/31 supprimes Sierra)
+    payload = {k: v for k, v in payload.items() if k not in _SIERRA_C_DEAD_FIELDS}
     cleaned = _clean_value(payload)
     return json.dumps(cleaned, allow_nan=False, separators=(",", ":"),
                        default=str)
