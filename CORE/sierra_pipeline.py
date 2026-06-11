@@ -55,6 +55,8 @@ try:
     from CORE.roll_calendar import compute_roll_features
     from CORE.eco_news_features import compute_eco_news_features
     from CORE.session_utils import get_trading_date_from_utc, utc_to_et
+    from CORE.menthorq_v2_sierra_proxy import inject_gamma_condition_proxy
+    from CORE.aggressor_imbalance_proxy import inject_aggressor_imbalance_proxy
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -66,6 +68,8 @@ except ImportError:
     from roll_calendar import compute_roll_features
     from eco_news_features import compute_eco_news_features
     from session_utils import get_trading_date_from_utc, utc_to_et
+    from menthorq_v2_sierra_proxy import inject_gamma_condition_proxy
+    from aggressor_imbalance_proxy import inject_aggressor_imbalance_proxy
 
 
 # Default tick size par symbole (fallback si manquant)
@@ -93,9 +97,21 @@ class SierraPipelineOrchestrator:
         Pour multi-symbol : creer 1 instance par symbol.
     """
 
-    def __init__(self, symbol: str = "NQ") -> None:
+    def __init__(self, symbol: str = "NQ", log_event=None) -> None:
+        """
+        Args:
+            symbol     : ES / NQ / MGC / GC.
+            log_event  : Callable(code: str, **kwargs) | None.
+                Si fourni, propage aux proxies (gamma_condition, aggressor) pour
+                tracabilite J+1 (regle souveraine Jackson 01/05/2026 LOGS
+                TRACABILITE). Si None, les proxies ne logguent rien (mode
+                offline batch).
+        """
         self.symbol = symbol.upper()
         self.tick_size = DEFAULT_TICK_SIZE_BY_SYMBOL.get(self.symbol, 0.25)
+
+        # Log callback pour proxies (Phase 5.0.A + 5.0.B)
+        self._log_event = log_event
 
         # Initialize stateful calculators
         self._poc_migration = POCMigrationCalculator()
@@ -113,8 +129,82 @@ class SierraPipelineOrchestrator:
         self._bars_skipped_nan: int = 0
         self._cross_day_resets: int = 0
 
-    @staticmethod
-    def _safe_update(enriched: dict, phase3_feats: dict) -> None:
+        # Stats proxies Phase 5.0 (fix C2 review code-reviewer 11/06)
+        # Permet monitoring J+1 % bars proxy-active
+        self._proxy_gamma_injected: int = 0
+        self._proxy_gamma_skipped: int = 0
+        self._proxy_gamma_preserved: int = 0
+        self._proxy_aggressor_injected: int = 0
+        self._proxy_aggressor_skipped: int = 0
+        self._proxy_aggressor_preserved: int = 0
+
+    def _proxy_log_wrapper(self, code: str, **kwargs) -> None:
+        """Wrapper propre counters + forward au log_event externe.
+
+        Incremente les counters pour monitoring J+1, puis emit via log_event
+        si fourni. Pattern : compter d'abord, logger ensuite (counters fiables
+        meme si log_event raise).
+        """
+        if code == "MQ_PROXY_INJECTED":
+            self._proxy_gamma_injected += 1
+        elif code == "MQ_PROXY_SKIPPED_NO_FLIP_ZONE":
+            self._proxy_gamma_skipped += 1
+        elif code == "MQ_PROXY_PRESERVED_ORIGINAL":
+            self._proxy_gamma_preserved += 1
+        elif code == "AGGRESSOR_PROXY_INJECTED":
+            self._proxy_aggressor_injected += 1
+        elif code == "AGGRESSOR_PROXY_SKIPPED_MISSING_INPUTS":
+            self._proxy_aggressor_skipped += 1
+        elif code == "AGGRESSOR_PROXY_PRESERVED_ORIGINAL":
+            self._proxy_aggressor_preserved += 1
+
+        if self._log_event is not None:
+            try:
+                self._log_event(code, **kwargs)
+            except Exception:  # noqa: BLE001
+                pass  # log non-bloquant
+
+    def get_proxy_stats(self) -> dict:
+        """Stats proxies pour monitoring J+1 (fix C2 review).
+
+        Returns:
+            dict : counters par proxy + total bars + % rate.
+        """
+        total = max(self._bars_processed, 1)
+        return {
+            "bars_processed": self._bars_processed,
+            "gamma": {
+                "injected": self._proxy_gamma_injected,
+                "skipped": self._proxy_gamma_skipped,
+                "preserved": self._proxy_gamma_preserved,
+                "injected_pct": 100.0 * self._proxy_gamma_injected / total,
+            },
+            "aggressor": {
+                "injected": self._proxy_aggressor_injected,
+                "skipped": self._proxy_aggressor_skipped,
+                "preserved": self._proxy_aggressor_preserved,
+                "injected_pct": 100.0 * self._proxy_aggressor_injected / total,
+            },
+        }
+
+    # ─── Whitelist features Sierra placeholders (Phase 0 design v2 B3 + B5) ───
+    # Features ou Sierra DMP emet 0/placeholder cassé. Python override autoritatif.
+    # Cf DMP_Transform.h:1414-1416 (bn_score_* hardcoded 0.0f volontaire) +
+    # 15/MIA_PIPELINE_RECAP.md:434 (trend_day_probability DEAD historique).
+    # Decision Jackson 11/06 : BN famille recodee Python pour controle (override
+    # verdict 2 agents) - documenter PATTERN_11 vigilance si gate hardcode propose.
+    SIERRA_ZERO_NEVER_CALCULATED = frozenset((
+        # B3 - bn_score_* placeholder C++ DMP_Transform.h:1414-1416
+        "bn_score_raw", "bn_score_bull", "bn_score_bear",
+        # B3 - bn_pressure_* dmp_validator.py:222 "toujours 0 mort post-3.7.0"
+        "bn_pressure_ask", "bn_pressure_bid",
+        # B5 - game_changers placeholders Sierra DMP (decision post-Jackson)
+        "trend_day_probability",   # remplace downstream par ctx_trend_day_score
+        "open_direction",           # recalcul via game_changers.direction()
+    ))
+
+    @classmethod
+    def _safe_update(cls, enriched: dict, phase3_feats: dict) -> None:
         """Update enriched avec phase3_feats SANS ecraser valeurs Sierra natif non-NaN.
 
         Fix B6 audit ULTRATHINK 11/06 : Sierra DMP calcule deja certaines
@@ -122,8 +212,12 @@ class SierraPipelineOrchestrator:
         re-calculent et retournent NaN/None pendant cold-start, ce qui ECRASE
         les valeurs Sierra correctes.
 
-        Politique : si Phase 3 retourne None/NaN ET Sierra natif a une valeur,
-        garder Sierra. Sinon utiliser Phase 3 (incluant False/0 explicit).
+        Politique :
+        - Si Phase 3 retourne None/NaN ET Sierra natif a une valeur, garder Sierra.
+        - Sinon utiliser Phase 3 (incluant False/0 explicit).
+        - EXCEPTION (Phase 0 B3+B5) : features dans SIERRA_ZERO_NEVER_CALCULATED
+          ou Sierra=0.0 est un placeholder casse -> Python override autoritatif
+          meme si Phase 3 retourne valeur non-None.
         """
         import math
         for k, phase3_v in phase3_feats.items():
@@ -131,6 +225,15 @@ class SierraPipelineOrchestrator:
             # Phase 3 returns NaN/None -> garder Sierra si vivant
             is_p3_nan = (phase3_v is None or
                          (isinstance(phase3_v, float) and math.isnan(phase3_v)))
+
+            # EXCEPTION B3+B5 : Sierra placeholder 0.0 → Python override autoritatif
+            if (k in cls.SIERRA_ZERO_NEVER_CALCULATED
+                and existing == 0.0
+                and not is_p3_nan):
+                enriched[k] = phase3_v
+                continue
+
+            # Politique standard
             if is_p3_nan and existing is not None:
                 continue  # garde Sierra natif
             enriched[k] = phase3_v
@@ -185,15 +288,22 @@ class SierraPipelineOrchestrator:
         if total_vol is None:
             total_vol = sierra_bar.get("volume")
 
-        # Persiste alias dans enriched (fix B1 review code-reviewer)
+        # Persiste alias dans enriched (fix B1 review code-reviewer + fix Jackson 11/06).
+        # Double-aliases pour consumers legacy : 'close'/'price', 'bar_high'/'high',
+        # 'bar_low'/'low', 'total_vol'/'volume'. Sans ca, Bot3v4 fait row.get("high")
+        # et recoit None alors que bar_high existe.
         if close is not None:
             enriched["close"] = close
+            enriched["price"] = close  # alias Sierra DMP natif
         if bar_high is not None:
             enriched["bar_high"] = bar_high
+            enriched["high"] = bar_high  # alias Bot3v4 + consumers legacy Databento
         if bar_low is not None:
             enriched["bar_low"] = bar_low
+            enriched["low"] = bar_low
         if total_vol is not None:
             enriched["total_vol"] = total_vol
+            enriched["volume"] = total_vol
 
         # ─── Module 3.1 : POC Migration (2 features) ───
         poc_feats = self._poc_migration.update(
@@ -306,6 +416,108 @@ class SierraPipelineOrchestrator:
             bn_absorb_bid=sierra_bar.get("bn_absorb_bid", 0.0) or 0.0,
         )
         self._safe_update(enriched,ctx_feats)
+
+        # ─── Phase 5.0.A : Proxy MenthorQ Sierra-native (11/06/2026) ───
+        # Scraper MenthorQ down depuis 27/05 -> mq_gamma_condition absent.
+        # MQ API publique non encore dispo (Jackson liste d'attente).
+        # Proxy temporaire : bool_gex_flip_zone (Sierra DMP natif) -> mq_gamma_condition.
+        # Cf CORE/menthorq_v2_sierra_proxy.py docstring pour semantique + revert.
+        # Fix C1 review 11/06 : log_fn + sym branches pour tracabilite J+1.
+        inject_gamma_condition_proxy(
+            enriched, log_fn=self._proxy_log_wrapper, sym=self.symbol)
+
+        # ─── Phase 5.0.B : Proxy aggressor_imbalance Sierra-native (11/06/2026) ───
+        # Sierra DMP ne fournit pas trade-by-trade aggressor count (PhaseB+ original).
+        # Reconstruction count via buy_vol/avg_ask_size + sell_vol/avg_bid_size
+        # pour preserver semantique COUNT (vs ask_bid_imbalance volume-weighted).
+        # Cf CORE/aggressor_imbalance_proxy.py docstring.
+        inject_aggressor_imbalance_proxy(
+            enriched, log_fn=self._proxy_log_wrapper, sym=self.symbol)
+
+        # ─── Fix A4 (11/06/2026) : Reconstruction dist_mq_*_pct manquants ───
+        # Bug DMP C++ partiel : sur NQ `dist_mq_put_0dte_pct` est 100% NULL et
+        # `dist_mq_call_0dte_pct` 50% NULL alors que les raw (ticks) sont OK.
+        # Politique non-overwrite : recalcule UNIQUEMENT si pct est NULL.
+        # Formule : pct = (dist_ticks * tick_size / close) * 100
+        if close is not None and close > 0:
+            _mq_raw_keys = (
+                "dist_mq_put", "dist_mq_call", "dist_mq_hvl",
+                "dist_mq_put_0dte", "dist_mq_call_0dte", "dist_mq_hvl_0dte",
+            )
+            for raw_key in _mq_raw_keys:
+                pct_key = f"{raw_key}_pct"
+                if enriched.get(pct_key) is None:
+                    raw_val = enriched.get(raw_key)
+                    if raw_val is not None:
+                        try:
+                            enriched[pct_key] = round(
+                                (float(raw_val) * self.tick_size / close) * 100.0,
+                                6,
+                            )
+                        except (TypeError, ValueError, ZeroDivisionError):
+                            pass  # garde NULL si calcul echoue
+
+        # ─── Fix anomalies 6+7 (11/06/2026 matin) : OVN + PDH/PDL distances ───
+        # OVN : on a ovn_high/ovn_low (Sierra DMP raw) mais dist_ovn_high/low=null
+        # et ovn_range_ticks=0 (bug C++). Phase 3 sessions_fine ECRASE
+        # ovn_high/low par bar_high/low (premiere bar cold-start) -> on lit
+        # depuis sierra_bar original pour avoir les vrais niveaux Sierra DMP.
+        # PDH/PDL : pareil, on a dist_pdh_pct/pdl_pct OK mais dist_pdh_atr=null.
+        # Convention Sierra confirmee : dist = level - close (cf bar live 09:36 UTC).
+        # Politique non-overwrite : recalcule UNIQUEMENT si dist est NULL.
+        if close is not None and close > 0 and self.tick_size > 0:
+            # Anomalie 6 : OVN. Sierra DMP n'expose PAS ovn_high/low dans le RAW
+            # JSONL - ils sont calcules par Phase 3 (sessions_fine). On lit donc
+            # depuis enriched (Phase 3 output) pour avoir les vrais niveaux.
+            ovn_high_raw = enriched.get("ovn_high")
+            ovn_low_raw = enriched.get("ovn_low")
+            if enriched.get("dist_ovn_high") is None and ovn_high_raw is not None:
+                try:
+                    enriched["dist_ovn_high"] = round(
+                        (float(ovn_high_raw) - close) / self.tick_size, 4)
+                except (TypeError, ValueError):
+                    pass
+            if enriched.get("dist_ovn_low") is None and ovn_low_raw is not None:
+                try:
+                    enriched["dist_ovn_low"] = round(
+                        (float(ovn_low_raw) - close) / self.tick_size, 4)
+                except (TypeError, ValueError):
+                    pass
+            # ovn_range_ticks : DMP C++ retourne 0 par bug.
+            cur_range = enriched.get("ovn_range_ticks")
+            if (cur_range in (None, 0, 0.0)
+                and ovn_high_raw is not None and ovn_low_raw is not None):
+                try:
+                    enriched["ovn_range_ticks"] = round(
+                        (float(ovn_high_raw) - float(ovn_low_raw)) / self.tick_size, 4)
+                except (TypeError, ValueError):
+                    pass
+
+            # Anomalie 7 : PDH/PDL ATR-normalises (lecture sierra_bar)
+            # prev_levels.PrevLevelsCalculator retourne np.nan en cold-start,
+            # ecrit dans enriched. On considere None ET NaN comme "vide".
+            import math as _m
+            def _is_empty(v):
+                if v is None: return True
+                if isinstance(v, float) and _m.isnan(v): return True
+                return False
+
+            atr_raw = sierra_bar.get("atr")  # Sierra ATR en TICKS
+            if atr_raw is not None and atr_raw > 0:
+                pdh_raw = sierra_bar.get("pdh")
+                pdl_raw = sierra_bar.get("pdl")
+                if _is_empty(enriched.get("dist_pdh_atr")) and pdh_raw is not None:
+                    try:
+                        dist_ticks = (float(pdh_raw) - close) / self.tick_size
+                        enriched["dist_pdh_atr"] = round(dist_ticks / atr_raw, 6)
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        pass
+                if _is_empty(enriched.get("dist_pdl_atr")) and pdl_raw is not None:
+                    try:
+                        dist_ticks = (float(pdl_raw) - close) / self.tick_size
+                        enriched["dist_pdl_atr"] = round(dist_ticks / atr_raw, 6)
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        pass
 
         # Meta orchestrateur
         enriched["_phase3_enriched"] = True

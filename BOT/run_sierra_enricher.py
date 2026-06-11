@@ -126,17 +126,29 @@ def _write_durable(output_path: Path, line: str) -> None:
         os.fsync(f.fileno())
 
 
+_FLOAT_ROUND_DECIMALS = 6  # Precision suffisante : < tick (0.25 NQ/ES, 0.10 MGC)
+
+
 def _clean_value(v):
-    """Convert numpy types + NaN -> Python native pour JSON standard."""
+    """Convert numpy types + NaN -> Python native pour JSON standard.
+
+    Fix Jackson 11/06 : arrondi 6 decimales sur floats pour eviter
+    pollution JSONL (ex: ctx_rvol_session=0.568020872158032 sur 15 decimales).
+    Precision largement suffisante : 1e-6 << tick_size partout (0.25 / 0.10).
+    """
     if v is None:
         return None
     if isinstance(v, float):
-        return None if (v != v) else v  # NaN -> None
+        if v != v:  # NaN
+            return None
+        return round(v, _FLOAT_ROUND_DECIMALS)
     if isinstance(v, (np.integer,)):
         return int(v)
     if isinstance(v, (np.floating,)):
         f = float(v)
-        return None if np.isnan(f) else f
+        if np.isnan(f):
+            return None
+        return round(f, _FLOAT_ROUND_DECIMALS)
     if isinstance(v, np.bool_):
         return bool(v)
     if isinstance(v, np.ndarray):
@@ -186,7 +198,17 @@ def run_batch_mode(
     if not batch_file.exists():
         raise FileNotFoundError(f"Batch file not found : {batch_file}")
 
-    pipeline = SierraPipelineOrchestrator(symbol=symbol)
+    # Fix C1 review 11/06 : brancher log_event pour tracabilite proxies J+1
+    # (codes MQ_PROXY_* + AGGRESSOR_PROXY_*).
+    try:
+        from CORE.logging_v2 import get_logger
+        _sierra_log = get_logger(f"sierra_enricher_{symbol.lower()}",
+                                  process="sierra_enricher")
+        _log_event = _sierra_log.emit
+    except Exception:
+        _log_event = None
+
+    pipeline = SierraPipelineOrchestrator(symbol=symbol, log_event=_log_event)
     stats = {"bars_read": 0, "bars_enriched": 0, "bars_skipped": 0, "errors": 0}
 
     if not dry_run:
@@ -247,7 +269,17 @@ def run_live_mode(
         window_bars=window_bars,
         strict=strict,
     )
-    pipeline = SierraPipelineOrchestrator(symbol=symbol)
+    # Fix C1 review 11/06 : brancher log_event pour tracabilite proxies J+1
+    # (codes MQ_PROXY_* + AGGRESSOR_PROXY_*).
+    try:
+        from CORE.logging_v2 import get_logger
+        _sierra_log = get_logger(f"sierra_enricher_{symbol.lower()}",
+                                  process="sierra_enricher")
+        _log_event = _sierra_log.emit
+    except Exception:
+        _log_event = None
+
+    pipeline = SierraPipelineOrchestrator(symbol=symbol, log_event=_log_event)
     seen_ts: set = set()
     stats = {"polls": 0, "bars_enriched_total": 0, "errors": 0}
 

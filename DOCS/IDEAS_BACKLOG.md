@@ -7,6 +7,18 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[SIERRA-5.0-MQ-PROXY 2026-06-11]** **REVERT proxy mq_gamma_condition quand API MenthorQ disponible** | 2-4h | HIGH | WAITING_API
+  - **Contexte** : Phase 5.0.A deploy `CORE/menthorq_v2_sierra_proxy.py` proxy temporaire car scraper MenthorQ down (Cloudflare) + API publique pas encore dispo. Jackson sur liste d'attente early access.
+  - **Limitation actuelle** : proxy `bool_gex_flip_zone (zone entre put_support et call_resistance)` est structurellement different de `net_gex > 0` (somme algebrique reelle). Approximation acceptable sur distribution 8 mois (52-58% top freq) mais regimes shift possible vs Databento historique.
+  - **Action revert** :
+    1. Restaurer pipeline scraper Python OU integration API directe MenthorQ
+    2. Mettre `_USE_PROXY = False` dans `menthorq_v2_sierra_proxy.py` OU supprimer l'appel `inject_gamma_condition_proxy(enriched)` dans `sierra_pipeline.py:317` + `enricher_chain.py:271`
+    3. Brancher source MenthorQ originale dans enricher_chain + sierra_pipeline
+    4. Parity check : comparer distribution gamma proxy vs gamma API sur 1 mois live -> documenter ecart
+    5. Backtests : re-runner Phase 5.3 DSR avec gamma API pour confirmer ML stable
+  - **Trigger** : email/MAJ Jackson recevant acces API MenthorQ. Relance scrape /api/cta-positions.
+  - **Cross-ref** : INCIDENT_LOG incident 42 (2026-06-11), `feedback_log_debug_protocol.md`, regle `.claude/rules/lessons.md` "gamma hardcode 0.0".
+
 - **[DETTE SIERRA-3.5-DSR 2026-06-10]** **CRITIQUE - Validation DSR Lopez ctx_rolling.py reportee Phase 4** | 1 jour ml-trainer audit | HIGH | WAITING_DATA
   - **Source** : design doc section 4.6 + section 5 garde-fou SIGNE + `.claude/rules/critical-tasks-review.md` critere 8 (audit producing edge candidates)
   - **Probleme** : ctx_rolling.py Phase 3.5 produit 25 features semantique trade-decisionnelle (climax_signal, failed_auction, absorption_streak, delta_exhaustion, momentum_exhaustion, poor_high/low, double_top_trap). Selon design doc s4.6 WARNING : "MUST pass DSR > 0.5 avant prod (ml-trainer review obligatoire)".

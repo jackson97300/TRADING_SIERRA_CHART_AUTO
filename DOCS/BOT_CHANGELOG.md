@@ -62,6 +62,122 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-11 11:30 — Phase 0 Sierra Pipeline Port (PREPARATION)
+
+**Categorie** : INFRA (portage modules streaming Databento → Sierra)
+**Impact prod** : AUCUN (Phase 0 = preparation, pas de modif live)
+**Fichier(s)** :
+  - `CORE/sierra_enricher_state.py` (nouveau, ~180 LOC) - Option C B1
+  - `CORE/sierra_format_adapters.py` (nouveau, ~220 LOC) - B2 conversions
+  - `CORE/sierra_databento_parity_harness.py` (nouveau, ~370 LOC) - harness drift
+  - `CORE/sierra_pipeline.py` - whitelist `SIERRA_ZERO_NEVER_CALCULATED` (B3+B5)
+  - `CORE/log_catalog.py` - +61 codes SIERRA_PORT_* + meta
+  - `tests/sierra_port/*.py` - 28 tests pytest PASS
+**Schema/version** : Phase 0 (pas de bump JSONL schema)
+**Reviewer(s) agent** : 2 agents convergence (code-reviewer + market-analyst) sur Strategy 2 Hybride
+
+### Quoi
+Preparation Phase 0 du portage de 13 modules streaming Phase B+/3c depuis `enricher_chain.py` (pipeline Databento) vers `sierra_pipeline.py` (pipeline Sierra DMP). Infrastructure : state management isole, conversions format Sierra→Databento, 61 codes log, harness parity, whitelist `_safe_update` pour BN famille + game_changers placeholders.
+
+### Pourquoi
+Audit data quality Sierra Enricher (matin 11/06) revele ~30% features DEAD vs Databento. Cause : sierra_pipeline.py importe 8 modules Phase 3 de base seulement, vs enricher_chain.py qui en importe ~20 (Phase B+/3c). Pour migration Bots Databento→Sierra, il faut combler ce gap.
+
+Code-reviewer round 1 (NOGO sur plan initial 6h) a identifie 6 pieges majeurs (state, footprint cells, format, ordre modules, snapshot pickle, intermarket). Plan agent + code-reviewer round 2 ont converge sur Phase 0 PREPARATION 6h obligatoire AVANT Phase 1 implementation.
+
+### Decisions Phase 0 actees (5 bloquants)
+- **B1** STATE_DIR : Option C (sierra_enricher_state.py duplique save/load, zero impact Databento)
+- **B2** VAP→trades degradation : classer p99_trade_size + max_size_buy/sell en C3 harness (exclues drift check)
+- **B3** bn_score_* + bn_pressure_* : recoder Python (override decision agents apres Jackson explicite "BN famille en Python pour controle")
+- **B4** Consumers JSONL +200 cols : aucun risque, 0 schema_check strict, row.get() partout
+- **B5** game_changers : PORTER (Sierra natif trend_day_probability + open_direction sont placeholders)
+
+### Impact attendu
+- Aucun immediat (Phase 0 = prep, pas de deploy)
+- Phase 1 +22h portage modules, puis cutover Bot 1/2/3 sur Sierra
+
+### Validation pre-deploy
+- [x] 28/28 tests pytest PASS (tests/sierra_port/)
+- [x] Code-reviewer round 1 NOGO + round 2 GO-AVEC-RESERVES 5 bloquants + **round 3 GO COMMIT** (7 reserves Phase 1)
+- [x] 2 agents avis croisés (code-reviewer + market-analyst) convergent Strategy 2 Hybride
+- [x] Decision Jackson explicite sur B3 BN Python override agents
+- [x] Categorie C5 ajoutee dans harness (R6 round 3) - Python override exclu drift
+- [ ] Phase 1 implementation : modules portage + parity validation 7j
+
+### Reserves round 3 a traiter Phase 1
+- R1 : `_validate_path_isolation` multi-symbol monitoring
+- R2 : Clarifier logique all-None mq_gex
+- R3 : Ajouter boucles C2/C3/C4 dans `run_parity_harness`
+- R4 : Test cas `existing == False` pour `open_direction`
+- R5 : Ajouter code log `BN_PYTHON_GATE_TRIGGERED` + wiring Bot 1/2/3/4
+- (R6 traitee dans commit Phase 0)
+- (R7 traitee dans commit Phase 0)
+
+### Revert plan
+- Phase 0 modules SANS impact prod : revert = supprimer les nouveaux fichiers + revert whitelist sierra_pipeline.py
+- Si Phase 1 ouverte : revert branche `feat/sierra-full-migration` complete
+
+### Suivi post-deploy
+- J+1 : verifier 0 incident_log
+- J+7 : verifier parity_harness sur 7j Sierra vs Databento
+- J+30 : decision cutover Bot 1/2/3 sur Sierra
+
+### Liens
+- INCIDENT_LOG : aucune entry (Phase 0 preparation)
+- Design doc v2 : `DOCS/superpowers/specs/2026-06-11-sierra-pipeline-port-phase0-design-v2.md`
+- Memoire portage : pending Phase 1 deploy
+- PATTERN_11 vigilance documentee : si gate hardcode sur bn_score_X > seuil propose → INCIDENT_LOG immediat
+
+---
+
+## 2026-06-11 18:30 — Phase 5.0.A Proxy MenthorQ Sierra (mq_gamma_condition fallback)
+
+**Categorie** : FIX + FEATURE (gate fail-closed fallback)
+**Impact prod** : LIVE (5 bots V2CLEAN/Bot1/Bot2/Bot3/Bot4 + primary_models BN/pullback)
+**Fichier(s)** : `CORE/menthorq_v2_sierra_proxy.py` (nouveau, 200 LOC), `CORE/sierra_pipeline.py:69,316-322`, `CORE/enricher_chain.py:46-51,260-275`, `CORE/log_catalog.py:1303-1308`, `tests/test_menthorq_v2_sierra_proxy.py` (17 tests)
+**Schema/version** : pipeline enricher v2 -> v2.proxy_5.0.A
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES, 4 reserves R1/R2/I-1/I-2 traitees)
+
+### Quoi
+Injection d'un PROXY de `mq_gamma_condition` derive depuis `bool_gex_flip_zone` (Sierra DMP natif). Source unique au niveau enricher : `inject_gamma_condition_proxy(payload)` mute in-place. Politique non-overwrite (preserve Databento si present). 3 codes log `MQ_PROXY_*` pour audit J+1.
+
+### Pourquoi
+Scraper MenthorQ Python down depuis 27/05/2026 (Cloudflare anti-bot). `mq_gamma_condition` (gate fail-closed cf `BOT/bot_main.py:564`, `BOT/signal_engine.py:248`, V2CLEAN, primary_models) etait None depuis 15+ jours -> bots arretes de trader. MenthorQ API publique pas encore dispo (Jackson sur liste d'attente).
+
+Decision Jackson souveraine (chat 11/06) : "OK O SOLUTION A ET LE DOCUMENTER LE CHOIS CES EN ATTENDANT LAPI GENERAL DE MONTHOR Q JE SUIS SUR LISTE DA TTENTE". Source unique Sierra long terme.
+
+### Impact attendu
+- Bots reprennent le trading apres deploy VPS (gates fail-closed receivent `mq_gamma_condition` populated)
+- Distribution proxy sur historique 8 mois (Databento parquets v4_pure) : NQ 48% stable / 52% volatile, ES 42% stable / 58% volatile -> top freq 52-58% < 95% -> **quality_validator NE droppera PAS la feature**
+- Regime shift silencieux possible vs Databento historique (proxy structurel != net_gex agregat). Pertinence ML a re-evaluer Phase 5.3.
+
+### Validation pre-deploy
+- [x] Tests unitaires: 17/17 pytest PASS (`tests/test_menthorq_v2_sierra_proxy.py`)
+- [x] Test empirique : `inject_gamma_condition_proxy` sur 137 bars NQ 10/06 DMP -> 100% coverage proxy
+- [x] Validation empirique R1 : distribution proxy 217k bars NQ + 218k bars ES sur 8 mois historique -> top freq 52-58% (pas quasi-constante)
+- [x] Review agent code-reviewer : GO-AVEC-RESERVES + 4 reserves traitees (R2 logging, I-1 test inverse, I-2 doc, R1 empirical)
+- [ ] Pas de backtest preservation (proxy = fallback, pas modif scoring)
+
+### Revert plan
+1. Quand API MenthorQ disponible (Jackson recoit acces early-bird) :
+2. Restaurer pipeline scraper Python OU integration API directe
+3. Supprimer `inject_gamma_condition_proxy(enriched)` ligne `sierra_pipeline.py:322` + `enricher_chain.py:273`
+4. Parity check distribution gamma proxy vs gamma API sur 1 mois live
+5. Re-runner Phase 5.3 DSR sur backfill avec gamma API
+6. Cross-ref `IDEAS_BACKLOG.md` entree SIERRA-5.0-MQ-PROXY
+
+### Suivi post-deploy
+- J+1 : grep `MQ_PROXY_INJECTED` dans LOGS/decisions -> verifier > 95% coverage live
+- J+1 : count trades par bot vs J-1 -> verifier reprise
+- J+7 : distribution proxy gamma_0 vs gamma_1 par symbole
+- J+30 : confirmer aucun bot bloque par gate fail-closed `mq_gamma_condition`
+
+### Liens
+- INCIDENT_LOG : 2026-06-11 entry #42 MENTHORQ_SCRAPER_DOWN
+- IDEAS_BACKLOG : SIERRA-5.0-MQ-PROXY
+- Review agent : code-reviewer agentId aa5e1eac051ca7833 (GO-AVEC-RESERVES)
+- Cross-ref : `.claude/rules/lessons.md` "gamma hardcode 0.0", `feedback_log_debug_protocol.md`
+
+
 ## 2026-06-10 12:00 — KILL BN V5 definitif + capitalisation 4 idees vers Bot 3 v3 v2
 
 **Categorie** : ROLLBACK + REFACTORED-OUT

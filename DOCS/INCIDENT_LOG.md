@@ -31,6 +31,60 @@
 
 ---
 
+### 2026-06-11 20:30 (43) - [VALIDATION_MISS] - Phase 5.0.A proxy MQ deploye sur diagnostic NON-VALIDE (regression d'entry #42)
+
+**Categorie** : VALIDATION_MISS + COMMENT_FALSE (entry #42 incident_log meme journee = redaction sans verification empirique)
+
+**Contexte** : Apres deploy Phase 5.0.A (3h travail : module proxy + 17 tests + refactor 4 fichiers + restart 7 services VPS), audit empirique 30min trades/jour par bot sur 7 derniers jours montre :
+- Bot 3 v3 : 2-11 trades/jour (08/06=10, 09/06=2, 10/06=2)
+- Bot 3 v4 : 0-19 trades/jour (03/06=19, 04/06=3, 10/06=2)
+- BN V5 : 2-71 position_updates/jour (08/06=71, 09/06=36, 10/06=9)
+
+**LES BOTS TRADAIENT.** Aucune chute. Aucun bot prod actif ne consomme `mq_gamma_condition` comme gate fail-closed :
+- `CORE/mia_paper_trader.py` (MIA-Paper) : aucun grep mq_gamma_condition
+- `CORE/databento_paper_trader_v2.py` (MIA-DataBento-Paper-V2) : aucun grep
+- `V2CLEAN/bot_main.py` : uniquement logging GEX metadata (pas gate)
+- `BOT/bot_main.py` : a le gate mais N'EST PAS lance par nssm en prod
+
+**Cause racine** : confiance aveugle au verdict "3 agents convergents Option A" Phase 5.0 sans valider la question #1 de `feedback_pre_deploy_3_questions.md` : "qui consomme en prod ACTIVE ?". Diagnostic produit a partir d'un grep code BOT/bot_main.py qui n'est PAS execute en prod.
+
+**Lecon** : tout verdict agent investigation portant sur "bug bloque les bots" DOIT etre valide par audit empirique des trades/jour AVANT de coder le fix. Sans cela = pattern data_mining_trap cousin (verdict habille en preuve, sans validation empirique production).
+
+**Trigger prevention** :
+- Avant tout fix de "bug critique" : compter trades/jour des 7 derniers jours pour chaque bot prod (LOGS/execution/execution_*_paper_v2.jsonl)
+- Si trades > 0/jour : le bug suppose n'existe probablement pas. Demander preuve directe (signal_id specifique bloque + grep cross-references) AVANT de coder le fix
+- Toujours grep cross-codebase sur le field "fail-closed" suppose pour identifier les vrais consumers AVANT le verdict agent
+
+**Resolution** : le code Phase 5.0.A reste deploye et techniquement correct (proxy 100% coverage Sierra, 17 tests PASS, politique non-overwrite defensive). MAIS il NE RESOUT AUCUN PROBLEME REEL. Considere comme dette tech preventive : utile QUAND `BOT/bot_main.py` sera ré-active ou si V2CLEAN gate fail-closed est rajoute plus tard. INCIDENT_LOG entry #42 redigee plus tot dans la session etait basee sur le meme diagnostic non-valide. Entry #42 maintenue pour trace mais entry #43 (celle-ci) corrige le diagnostic.
+
+**Categorie escalation** : 5+ occurrences VALIDATION_MISS depuis 27/04 (incident #28 audit clusters, #34 ROLLBACK sl, #41 sprint persistance, #42 mq_proxy, #43 proxy deploy) -> promouvoir memoire dediee `feedback_validation_miss_pre_deploy.md` consolidant le pattern.
+
+**Reviewed** : self (Jackson a demande audit empirique 30min)
+
+**Files concernes** : aucun rollback - tout code Phase 5.0.A garde deploye comme dette tech preventive
+
+---
+
+### 2026-06-11 18:00 (42) - [VALIDATION_MISS] - Scraper MenthorQ down 15+ jours, mq_gamma_condition None bloque 8 gates fail-closed
+
+**Categorie** : VALIDATION_MISS (regression mq_gamma_condition non detectee J+1 apres 27/05 dernier JSON) + DEPLOY_UNSAFE (aucun monitoring auto cassure scraper)
+
+**Contexte** : Bots V2CLEAN, Bot 1, Bot 2 BN V4, primary_models BN/pullback ont arrete de trader entre 27/05 et 11/06. Diagnostic agent investigation : `mq_gamma_condition` (gate fail-closed source unique BOT/bot_main.py:564, V2CLEAN, primary models) etait None car MenthorQ scraper Python n'avait pas produit de JSON depuis 27/05 (Cloudflare anti-bot). Cause : MenthorQ a renforce sa protection mi-mai. Pas de retry/alerte.
+
+**Cause racine** : (1) Scraper avec point de defaillance unique (Cloudflare-dependent), (2) Aucun health-check J+1 sur fraicheur JSON MQ, (3) Toute la couche MQ derive d'un seul champ `mq_net_gex` (somme algebrique GEX) qui n'est PAS expose par Sierra MQ_GAMMA etude (etude expose niveaux mais pas l'agregat).
+
+**Lecon** : Toute source externe critique pour gates fail-closed DOIT avoir monitoring fraicheur J+1 + alerte Discord automatique si data > 24h stale. Diversifier sources (Sierra natif est plus stable que Cloudflare API). Eviter de creer 8 gates fail-closed sur 1 seul champ.
+
+**Trigger prevention** : avant tout deploy d'un gate fail-closed sur une feature externe -> obligatoire (1) sanity check fraicheur quotidien (2) fallback ou degradation gracieuse (3) limit blast radius (pas 8 gates sur meme field).
+
+**Resolution Phase 5.0.A (11/06)** : proxy `bool_gex_flip_zone -> mq_gamma_condition` injecte au niveau enricher (`CORE/menthorq_v2_sierra_proxy.py`), single source of truth. Validation empirique 8 mois NQ/ES = top freq 52-58% (pas quasi-constante). 17 tests pytest PASS. 3 codes log MQ_PROXY_* enregistres pour audit J+1. Solution temporaire en attendant API MenthorQ publique (Jackson sur liste d'attente).
+
+**Reviewed** : agent code-reviewer (GO-AVEC-RESERVES, 4 reserves traitees) + verification empirique 217k bars NQ + 218k bars ES
+
+**Files** : `CORE/menthorq_v2_sierra_proxy.py` (nouveau), `CORE/sierra_pipeline.py:317`, `CORE/enricher_chain.py:271`, `CORE/log_catalog.py:1303`, `tests/test_menthorq_v2_sierra_proxy.py` (17 tests)
+
+---
+
 ### 2026-06-09 23:30 (41) - [VALIDATION_MISS] - Sprint stabilite Bot 3 v3 : 4 bugs persistance latents revelees session 09/06
 
 **Categorie** : VALIDATION_MISS (persistance positions/state non testee avant deploy) + COMMENT_FALSE (architecture annoncee "bots robustes" mais aucun ne survivait a un restart sans corrompre etat)
