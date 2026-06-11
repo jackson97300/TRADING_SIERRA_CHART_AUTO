@@ -65,6 +65,17 @@ try:
         add_phase_b_plus_color_streaming, make_color_bar_state
     )
     from CORE.bn_composites_streaming import inject_bn_composites
+    # Phase 1 Group B - rolling_features (5 sub-engines, 35 ctx_* features)
+    from CORE.rolling_features_streaming import (
+        RollingFeaturesState,
+        add_rolling_features_basic_streaming,
+        add_rolling_features_medium_streaming,
+        add_rolling_features_advanced_streaming,
+        add_rolling_features_delta_div_streaming,
+        add_rolling_features_session_confluence_streaming,
+    )
+    # Phase 1 Group B - edge_zones (alias Sierra natif + buffer pour n_active)
+    from CORE.extension_lines_manager import ExtensionLineBuffer
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -86,6 +97,16 @@ except ImportError:
         add_phase_b_plus_color_streaming, make_color_bar_state
     )
     from bn_composites_streaming import inject_bn_composites
+    # Phase 1 Group B
+    from rolling_features_streaming import (
+        RollingFeaturesState,
+        add_rolling_features_basic_streaming,
+        add_rolling_features_medium_streaming,
+        add_rolling_features_advanced_streaming,
+        add_rolling_features_delta_div_streaming,
+        add_rolling_features_session_confluence_streaming,
+    )
+    from extension_lines_manager import ExtensionLineBuffer
 
 
 # Default tick size par symbole (fallback si manquant)
@@ -148,6 +169,18 @@ class SierraPipelineOrchestrator:
         # Phase 1 Group A - portage modules Phase B+ streaming
         self._long_bar_state = make_long_bar_state(self.symbol)
         self._color_bar_state = make_color_bar_state(self.symbol)
+
+        # Phase 1 Group B - rolling_features state (5 sub-engines)
+        self._rolling_state = RollingFeaturesState()
+        # Phase 1 Group B - edge_zones extension buffers (Sierra natif + n_active)
+        # Sierra DMP fire bar_edge_buy/sell (binaire) mais ne maintient pas
+        # n_active count. ExtensionLineBuffer track les zones active jusqu'a
+        # touche par bar high/low (mirror logique batch edge_zones_engine).
+        self._edge_buy_buffer = ExtensionLineBuffer()
+        self._edge_sell_buffer = ExtensionLineBuffer()
+        self._edge_bar_idx = 0
+        # Phase 1 Group B - delta_div : pas de state additionnel
+        # (divergences_v2 Calculator Phase 3 le gere natif)
 
         # Stats orchestrateur (debug + monitoring)
         self._bars_processed: int = 0
@@ -526,6 +559,132 @@ class SierraPipelineOrchestrator:
         inject_bn_composites(enriched, safe_update_fn=self._safe_update,
                               log_fn=self._log_event, sym=self.symbol)
 
+        # ─── Phase 1 Group B - rolling_features (5 sub-engines, 35+ ctx_*) ───
+        # Pattern mirror enricher_chain.py:1071-1105 Databento. Aliases requis :
+        # - 'ts' en MILLISECONDES (delta_div module utilise pour trading_date CME)
+        # - 'price' alias close, 'bar_high'/'bar_low' alias high/low
+        # Merge par DIFF de cles (pas whitelist) pour capturer toutes les
+        # features produites par les 5 sub-engines.
+        try:
+            ts_event_ns = sierra_bar.get("ts_event_ns") or int(
+                bar_ts_utc.timestamp() * 1_000_000_000)
+            row_for_rolling = dict(enriched)
+            if "price" not in row_for_rolling and "close" in row_for_rolling:
+                row_for_rolling["price"] = row_for_rolling["close"]
+            row_for_rolling["ts"] = ts_event_ns / 1_000_000
+            if "bar_high" not in row_for_rolling and "high" in row_for_rolling:
+                row_for_rolling["bar_high"] = row_for_rolling["high"]
+            if "bar_low" not in row_for_rolling and "low" in row_for_rolling:
+                row_for_rolling["bar_low"] = row_for_rolling["low"]
+            # FIX M1 review code-reviewer 11/06 : doublon delta_div cache.
+            # divergences_v2 Calculator (Phase 3) emet delta_div_*_clean SLOPE-based.
+            # rolling_features sub-engine #4 calcule sa propre version CUMMAX-based,
+            # consommee par session_confluence pour ctx_div_density_20 / bars_since_div.
+            # SANS ce fix : enriched final = slope-based (visible bots), MAIS
+            # ctx_div_* = calcule sur cummax-based (mismatch silencieux).
+            # On force row_for_rolling[delta_div_*_clean] = version Phase 3 pour
+            # que session_confluence consume la MEME source que les bots.
+            for _k in ("delta_div_buy_clean", "delta_div_sell_clean",
+                        "delta_divergence_clean"):
+                if _k in enriched:
+                    row_for_rolling[_k] = enriched[_k]
+            er = add_rolling_features_basic_streaming(row_for_rolling, self._rolling_state)
+            er = add_rolling_features_medium_streaming(er, self._rolling_state)
+            er = add_rolling_features_advanced_streaming(er, self._rolling_state)
+            er = add_rolling_features_delta_div_streaming(er, self._rolling_state)
+            er = add_rolling_features_session_confluence_streaming(er, self._rolling_state)
+            # Merge DIFF de cles uniquement (evite ecrasement)
+            produced_keys = set(er) - set(row_for_rolling)
+            self._safe_update(enriched, {k: er[k] for k in produced_keys})
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_ROLLING_FEATURES_OK", sym=self.symbol,
+                                     n_produced=len(produced_keys))
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as _e:  # noqa: BLE001
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_ROLLING_FEATURES_FAIL",
+                                     sym=self.symbol, err=str(_e)[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # ─── Phase 1 Group B - edge_zones n_active via Sierra fire + buffer ───
+        # Sierra DMP fire bar_edge_buy/sell (binaire) + dist_edge_*_nearest_pct
+        # natif. On COMPLETE avec n_edge_*_active via ExtensionLineBuffer.
+        # Logique : si Sierra fire = 1, on add_zone a close. Buffer deactive
+        # automatiquement les zones traversees par bar high/low.
+        # ALIAS bar_edge_buy_fire = bar_edge_buy (compat consommateur BN V4).
+        #
+        # === RESERVE M2 review code-reviewer 11/06 ===
+        # PERTE SEMANTIQUE vs batch edge_zones_engine.py :
+        # - Batch add_zone(idx, stack_prices_consecutifs) -> epaisseur 4-15 ticks
+        #   (groupe cellules VAP imbalance >= threshold). Zone vit plusieurs bars.
+        # - Sierra-port add_zone(idx, [close]) -> epaisseur 0. Zone meurt en
+        #   1-3 bars (bar future overlap close direct).
+        # CONSEQUENCE : `n_edge_*_active` Sierra-port est CONSERVATIVE (~0-1)
+        # vs batch (~5-15). Gates downstream sur `n_edge_*_active >= 1`
+        # seront strictement plus restrictifs.
+        # PATTERN_11 vigilance : NE PAS recalibrer seuils consumer en se basant
+        # sur cette distribution Sierra-port sans verifier divergence vs batch
+        # Databento (harness Phase 4 parity).
+        # Affecte : bn_v4_engine.py:311,758 (gate BN V4), mia_paper_trader.py:2139
+        # (observabilite). dataset_builder ML utilise bar_edge_*_zone_size que
+        # ce port ne calcule PAS (epaisseur 0). Dataset offline non-bloqu.
+        try:
+            bar_high_f = enriched.get("bar_high") or enriched.get("high")
+            bar_low_f = enriched.get("bar_low") or enriched.get("low")
+            close_f = enriched.get("close")
+            fire_buy = int(enriched.get("bar_edge_buy", 0) or 0)
+            fire_sell = int(enriched.get("bar_edge_sell", 0) or 0)
+
+            # 1. Update : deactive zones touchees
+            if bar_high_f is not None and bar_low_f is not None:
+                self._edge_buy_buffer.update_with_bar(
+                    self._edge_bar_idx, float(bar_low_f), float(bar_high_f))
+                self._edge_sell_buffer.update_with_bar(
+                    self._edge_bar_idx, float(bar_low_f), float(bar_high_f))
+
+            # 2. Add zone si Sierra fire
+            if fire_buy == 1 and close_f is not None:
+                self._edge_buy_buffer.add_zone(
+                    self._edge_bar_idx, [float(close_f)], "buy")
+            if fire_sell == 1 and close_f is not None:
+                self._edge_sell_buffer.add_zone(
+                    self._edge_bar_idx, [float(close_f)], "sell")
+
+            # 3. Features : count active
+            edge_out = {
+                "bar_edge_buy_fire": fire_buy,
+                "bar_edge_sell_fire": fire_sell,
+                "n_edge_buy_active": self._edge_buy_buffer.count_active("buy"),
+                "n_edge_sell_active": self._edge_sell_buffer.count_active("sell"),
+            }
+            self._safe_update(enriched, edge_out)
+            self._edge_bar_idx += 1
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_EDGE_ZONES_OK", sym=self.symbol)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as _e:  # noqa: BLE001
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_EDGE_ZONES_FAIL",
+                                     sym=self.symbol, err=str(_e)[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # ─── Phase 1 Group B - delta_div : DEJA FAIT par divergences_v2 ─────
+        # divergences_v2 Calculator (Phase 3) calcule 14 features delta_div_*
+        # natif Python (slope-based Lopez-style) : delta_div_buy/sell,
+        # delta_div_strength, n_delta_div_*_zones_active, dist_delta_div_*_atr,
+        # retest_high/low_delta_div, ctx_div_density_20, ctx_bars_since_div.
+        # Sierra natif `delta_divergence` reste accessible aux bots (BN V4 le
+        # consume directement). Pas de portage add_delta_div_ext_streaming
+        # (creerait doublon + ecrasement valeurs validees).
+
         # ─── Fix A4 (11/06/2026) : Reconstruction dist_mq_*_pct manquants ───
         # Bug DMP C++ partiel : sur NQ `dist_mq_put_0dte_pct` est 100% NULL et
         # `dist_mq_call_0dte_pct` 50% NULL alors que les raw (ticks) sont OK.
@@ -639,6 +798,14 @@ class SierraPipelineOrchestrator:
         # avec fallback CORE/ - cf review CRITIQUE 3 : pas d'import local).
         self._long_bar_state = make_long_bar_state(self.symbol)
         self._color_bar_state = make_color_bar_state(self.symbol)
+        # Phase 1 Group B : reset rolling_features + edge_zones + delta_div_ext
+        # rolling_features_streaming gere lui-meme le reset cvd_session via
+        # `current_trading_date` interne (cf sub-engine delta_div + session)
+        # mais on reset le state au cas ou pour safety.
+        self._rolling_state = RollingFeaturesState()
+        self._edge_buy_buffer = ExtensionLineBuffer()
+        self._edge_sell_buffer = ExtensionLineBuffer()
+        self._edge_bar_idx = 0
         self._current_trading_date = trading_date
         return True
 

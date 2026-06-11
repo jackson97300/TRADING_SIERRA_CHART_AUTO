@@ -1347,7 +1347,7 @@ LOG_CODES = {
     "SIERRA_PORT_RVOL_OK":                   (LogLevel.INFO,   "events", "Sierra port rvol OK : sym={sym}"),
     "SIERRA_PORT_RVOL_FAIL":                 (LogLevel.MAJEUR, "events", "Sierra port rvol FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_RVOL_DEGRADED":             (LogLevel.ALERTE, "events", "Sierra port rvol DEGRADED : sym={sym} reason={reason}"),
-    "SIERRA_PORT_ROLLING_FEATURES_OK":       (LogLevel.INFO,   "events", "Sierra port rolling_features OK : sym={sym}"),
+    "SIERRA_PORT_ROLLING_FEATURES_OK":       (LogLevel.INFO,   "events", "Sierra port rolling_features OK : sym={sym} n_produced={n_produced}"),
     "SIERRA_PORT_ROLLING_FEATURES_FAIL":     (LogLevel.MAJEUR, "events", "Sierra port rolling_features FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_ROLLING_FEATURES_DEGRADED": (LogLevel.ALERTE, "events", "Sierra port rolling_features DEGRADED : sym={sym} reason={reason}"),
     "SIERRA_PORT_EDGE_ZONES_OK":             (LogLevel.INFO,   "events", "Sierra port edge_zones OK : sym={sym}"),
@@ -1362,6 +1362,9 @@ LOG_CODES = {
     "SIERRA_PORT_BN_COMPOSITES_OK":          (LogLevel.INFO,   "events", "Sierra port bn_composites OK : sym={sym}"),
     "SIERRA_PORT_BN_COMPOSITES_FAIL":        (LogLevel.MAJEUR, "events", "Sierra port bn_composites FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_BN_COMPOSITES_DEGRADED":    (LogLevel.ALERTE, "events", "Sierra port bn_composites DEGRADED : sym={sym} reason={reason}"),
+    "SIERRA_PORT_DELTA_DIV_EXT_OK":          (LogLevel.INFO,   "events", "Sierra port delta_div_ext OK : sym={sym}"),
+    "SIERRA_PORT_DELTA_DIV_EXT_FAIL":        (LogLevel.MAJEUR, "events", "Sierra port delta_div_ext FAIL : sym={sym} err={err}"),
+    "SIERRA_PORT_DELTA_DIV_EXT_DEGRADED":    (LogLevel.ALERTE, "events", "Sierra port delta_div_ext DEGRADED : sym={sym} reason={reason}"),
 
     # Meta codes (13 codes) - state, format, harness
     "SIERRA_STATE_SNAPSHOT_OK":              (LogLevel.INFO,   "events", "Sierra state snapshot OK : sym={sym} bars={bars} trades={trades} engines={engines} path={path}"),
