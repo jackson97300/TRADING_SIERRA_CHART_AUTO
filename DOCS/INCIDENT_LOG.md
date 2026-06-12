@@ -31,6 +31,26 @@
 
 ---
 
+### 2026-06-12 23:00 (54) - [VALIDATION_MISS] - Bug C++ DMP_OpenType cross-session leak detecte par audit fiabilite
+
+**Contexte** : Jackson doute fiabilite feature `open_type` Phase B v4 scenarios. Audit empirique trading-strategy-analyst sur 7 jours JSONL live NQ (02-11/06).
+
+**Ce qui a mal tourne** : 
+- 6/7 jours analyses ont `open_type` non-nul des mins_et=1200 (20:00 ET = Asia open J)
+- Convention futures : open_type doit etre 0 avant RTH IB complete (10:30 ET J)
+- Cause : `DMP_OT_IsNewSession()` utilise `sc.IsNewTradingDay()` qui ne triggere pas a 18:00 ET sur NQ continuous chart 24/5 -> reset cross-session jamais execute correctement
+- Consequence : `cached_ot` du jour J-1 persiste pendant Asia/London/pre-RTH J -> echo cross-session sur 6/7 jours
+
+**Cause racine** : Couplage du reset session a la config Sierra Chart "Session Times" (variable selon symbole) au lieu d'une detection ET timestamp-based independante.
+
+**Lecon** : Toute logique de reset session doit etre INDEPENDANTE de la config chart Sierra. Convention futures = 18:00 ET RTH close. Utiliser session_date_id ET-based (YYYYMMDD encoded) avec forward-to-next-day si h_et >= 18.
+
+**Trigger prevention** : Avant d'introduire une feature qui depend de reset session, verifier (a) la detection se fait via timestamp ET (pas IsNewTradingDay), (b) tests empiriques sur 7+ jours JSONL avec mins_et=1200 = open_type==0, (c) PersistentFloat reset bien execute via grep logs.
+
+**Reviewed** : trading-strategy-analyst (audit 30 min, 7 jours JSONL + lecture C++ source).
+
+---
+
 ### 2026-06-12 16:00 (52) - [RESOLUTION] - INCIDENT #51 DOUBLE MISMATCH delta_div_* COMPLETE deploy + valide empirique
 
 **Categorie** : RESOLUTION incident #51 (ARCHITECTURAL_MISMATCH delta_div_*).

@@ -78,14 +78,21 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── Indices persistants ───────────────────────────────────────────────────────
-constexpr int DMP_OT_P_OPEN_TYPE  = 80;
-constexpr int DMP_OT_P_DAY_TYPE   = 81;
-constexpr int DMP_OT_P_PRICE_1030 = 82;
-constexpr int DMP_OT_P_R80_STATE  = 83;
-constexpr int DMP_OT_P_R80_BAR    = 84;
-constexpr int DMP_OT_P_OPEN_ZONE  = 85;
-constexpr int DMP_OT_P_PDH        = 86;
-constexpr int DMP_OT_P_PDL        = 87;
+constexpr int DMP_OT_P_OPEN_TYPE       = 80;
+constexpr int DMP_OT_P_DAY_TYPE        = 81;
+constexpr int DMP_OT_P_PRICE_1030      = 82;
+constexpr int DMP_OT_P_R80_STATE       = 83;
+constexpr int DMP_OT_P_R80_BAR         = 84;
+constexpr int DMP_OT_P_OPEN_ZONE       = 85;
+constexpr int DMP_OT_P_PDH             = 86;
+constexpr int DMP_OT_P_PDL             = 87;
+// 🆕 FIX 12/06/2026 — cross-session reset ET-based (INCIDENT #54)
+//   Slot stocke session_date_id YYYYMMDD du dernier bar traite.
+//   Convention futures : RTH close = 18:00 ET -> bars 18:00-23:59 ET du
+//   jour D appartiennent a la session D+1. Ancienne logique
+//   sc.IsNewTradingDay() depend de la config "Session Times" du chart,
+//   variable selon symbole/timezone -> cached_ot leakee cross-session.
+constexpr int DMP_OT_P_LAST_SESSION_ID = 88;
 
 // ── Sentinelle ────────────────────────────────────────────────────────────────
 constexpr float DMP_OT_NOT_SET = -1.0f;
@@ -166,8 +173,60 @@ static inline float DMP_OT_PDL(SCStudyInterfaceRef sc) {
 // SECTION 3 — RESET DE SESSION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-static inline bool DMP_OT_IsNewSession(SCStudyInterfaceRef sc) {
-    return (sc.Index > 0 && sc.IsNewTradingDay(sc.Index));
+// 🆕 FIX 12/06/2026 — session_date_id ET-based (INCIDENT #54)
+// Convention futures : RTH close = 18:00 ET.
+//   - Bars 00:00-17:59 ET du jour D appartiennent a la session D
+//   - Bars 18:00-23:59 ET du jour D appartiennent a la session D+1
+// Retourne YYYYMMDD encoded en int (ex: 20260612).
+static inline int DMP_OT_GetSessionDateID(int y_et, int mo_et, int d_et, int h_et) {
+    if (h_et < 18) {
+        return y_et * 10000 + mo_et * 100 + d_et;
+    }
+    // Forward au jour suivant via mktime (gere fin de mois/annee)
+    struct tm t{};
+    t.tm_year = y_et - 1900;
+    t.tm_mon  = mo_et - 1;
+    t.tm_mday = d_et;
+    t.tm_hour = 12;  // midi pour eviter ambiguites DST sur add 86400
+    t.tm_min  = 0;
+    t.tm_sec  = 0;
+    t.tm_isdst = -1;  // laisse mktime determiner
+    time_t s = mktime(&t);
+    if (s == (time_t)-1) {
+        // Fallback : si mktime echoue, on reset par securite (force re-classif)
+        return -1;
+    }
+    s += 86400;  // + 1 jour
+    struct tm t2{};
+#ifdef _WIN32
+    localtime_s(&t2, &s);
+#else
+    localtime_r(&s, &t2);
+#endif
+    return (t2.tm_year + 1900) * 10000 + (t2.tm_mon + 1) * 100 + t2.tm_mday;
+}
+
+// FIX 12/06/2026 — detection nouvelle session via session_date_id ET-based.
+// Remplace sc.IsNewTradingDay() qui depend de la config Sierra "Session Times"
+// (variable selon symbole/timezone) et ne triggere pas correctement a 18:00 ET
+// sur NQ continuous chart 24/5 -> cached_ot leakee cross-session (INCIDENT #54).
+static inline bool DMP_OT_IsNewSession(SCStudyInterfaceRef sc,
+                                       int y_et, int mo_et, int d_et, int h_et)
+{
+    const int curr_id = DMP_OT_GetSessionDateID(y_et, mo_et, d_et, h_et);
+    float& cached_id = sc.GetPersistentFloat(DMP_OT_P_LAST_SESSION_ID);
+    // Cas 1 : premiere bar (cached_id pas encore set, vaut 0.0 ou NOT_SET)
+    if (cached_id == 0.0f || cached_id == DMP_OT_NOT_SET) {
+        cached_id = (float)curr_id;
+        return false;  // pas "nouvelle" : juste init
+    }
+    // Cas 2 : session changee
+    if ((int)cached_id != curr_id) {
+        cached_id = (float)curr_id;
+        return true;
+    }
+    // Cas 3 : meme session
+    return false;
 }
 
 static inline void DMP_OT_ResetSession(SCStudyInterfaceRef sc) {
@@ -177,7 +236,9 @@ static inline void DMP_OT_ResetSession(SCStudyInterfaceRef sc) {
     sc.GetPersistentFloat(DMP_OT_P_R80_STATE)  = R80_IDLE;
     sc.GetPersistentFloat(DMP_OT_P_R80_BAR)    = DMP_OT_NOT_SET;
     sc.GetPersistentFloat(DMP_OT_P_OPEN_ZONE)  = DMP_OT_NOT_SET;
-    // PDH (86) et PDL (87) : NE PAS RÉINITIALISER — inter-sessions
+    // PDH (86), PDL (87), LAST_SESSION_ID (88) : NE PAS REINIT — inter-sessions
+    // PDH/PDL = persistent volontaire (inter-sessions).
+    // LAST_SESSION_ID = mis a jour par DMP_OT_IsNewSession lui-meme.
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -486,6 +547,8 @@ inline void DMP_UpdateOpenType(
     SCDateTime bar_dt = sc.BaseDateTimeIn[sc.Index];
     long long ot_ts_ms = (long long)((bar_dt.GetAsDouble() - 25569.0) * 86400.0) * 1000LL;
     int h_et = 0, m_et = 0;
+    // 🆕 FIX 12/06/2026 — ajout y_et, mo_et, d_et pour DMP_OT_IsNewSession ET-based
+    int y_et = 0, mo_et = 0, d_et = 0;
     {
         time_t ot_sec = (time_t)(ot_ts_ms / 1000);
         struct tm ot_gm{};
@@ -508,6 +571,19 @@ inline void DMP_UpdateOpenType(
         int utc_offset = is_dst ? 4 : 5;
         h_et = (ot_gm.tm_hour - utc_offset + 24) % 24;
         m_et = ot_gm.tm_min;
+
+        // 🆕 FIX 12/06/2026 — calcul date ET (peut differer date UTC si UTC late)
+        // Ex : 03:00 UTC = 22:00 ET J-1 -> jour ET = jour UTC - 1
+        time_t et_sec = ot_sec - (time_t)(utc_offset * 3600);
+        struct tm et_gm{};
+#ifdef _WIN32
+        gmtime_s(&et_gm, &et_sec);
+#else
+        gmtime_r(&et_sec, &et_gm);
+#endif
+        y_et  = et_gm.tm_year + 1900;
+        mo_et = et_gm.tm_mon + 1;
+        d_et  = et_gm.tm_mday;
     }
     const int time_et = h_et * 60 + m_et;
 
@@ -515,9 +591,15 @@ inline void DMP_UpdateOpenType(
     if (time_et >= 15 * 60 + 30 && r.is_rth_session)
         DMP_OT_SaveEODLevels(sc, r.sess_high, r.sess_low);
 
-    // ── 2. Reset si nouvelle session ──────────────────────────────────────────
-    if (DMP_OT_IsNewSession(sc))
+    // ── 2. Reset si nouvelle session (FIX 12/06 ET-based, INCIDENT #54) ───────
+    if (DMP_OT_IsNewSession(sc, y_et, mo_et, d_et, h_et)) {
         DMP_OT_ResetSession(sc);
+        char msg[120];
+        snprintf(msg, sizeof(msg),
+            "[DMP_OpenType] RESET session (ET %04d-%02d-%02d %02d:%02d)",
+            y_et, mo_et, d_et, h_et, m_et);
+        sc.AddMessageToLog(msg, 0);
+    }
 
     // Références persistants
     float& cached_ot   = sc.GetPersistentFloat(DMP_OT_P_OPEN_TYPE);
@@ -664,6 +746,11 @@ inline void DMP_UpdateOpenType(
     f.open_zone      = (cached_oz >= 1.0f && cached_oz <= 7.0f) ? cached_oz : OZ_AT_POC;
     f.open_bias_conf = DMP_OT_Confidence(ot);
     f.open_direction = DMP_OT_Direction(ot);  // +1=bull / 0=neutre / -1=bear
+    // Decision Jackson 06/06/2026 nuit : REVERT du null Asia/London (Plan
+    // agent Niveau 1). Jackson rejette day_type=null car ML perd info.
+    // Voie retenue : calibrer SEUILS Dalton sur dataset etendu (133 jours
+    // live_enriched + Sierra) pour avoir distribution valide TOUTES sessions.
+    // Phase 2.1.C : backtest-runner re-dispatch avec n=133 jours.
     f.day_type       = cached_dt;
 }
 
