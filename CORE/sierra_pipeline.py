@@ -100,6 +100,13 @@ try:
     )
     # Phase 1.5 - Normalisation ts (fix jitter +/-1s Sierra natif, INCIDENT #48)
     from CORE.sierra_ts import normalize_payload_ts
+    # Phase A.2a + A.3 - Market Profile + ICT/Wyckoff enrichment
+    from CORE.market_profile_v5 import (
+        compute_market_profile_v5_features, FVGState
+    )
+    from CORE.market_profile_advanced import (
+        compute_market_profile_advanced_features, MarketProfileAdvancedState
+    )
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -110,6 +117,12 @@ except ImportError:
     from ctx_rolling import CtxRollingCalculator
     from roll_calendar import compute_roll_features
     from sierra_ts import normalize_payload_ts  # type: ignore
+    from market_profile_v5 import (  # type: ignore
+        compute_market_profile_v5_features, FVGState
+    )
+    from market_profile_advanced import (  # type: ignore
+        compute_market_profile_advanced_features, MarketProfileAdvancedState
+    )
     from eco_news_features import compute_eco_news_features
     from session_utils import get_trading_date_from_utc, utc_to_et
     from menthorq_v2_sierra_proxy import inject_gamma_condition_proxy
@@ -203,6 +216,16 @@ class SierraPipelineOrchestrator:
         self._sessions_fine = SessionsFineCalculator()
         self._divergences_v2 = DivergencesV2Calculator()
         self._ctx_rolling = CtxRollingCalculator()
+        # Phase A.2a + A.3 - Market Profile + ICT/Wyckoff enrichment states
+        # Stateful : FVG (state machine 3-bar rolling)
+        # Stateful : Composite POC (rolling 5/20 daily VPOCs)
+        # Stateful : Liquidity Sweep (rolling N-bar + active sweeps tracking)
+        # Stateful : Judas Swing (London session entry/exit)
+        # Stateless : Single Prints (calcul instantane), PSD+2/-2, Open Relation,
+        #             Profile Overlap, Range Extension (calcul instantane).
+        # State per-symbol (orchestrator instancie par symbol = isolation ES/NQ).
+        self._fvg_state = FVGState()
+        self._market_profile_advanced_state = MarketProfileAdvancedState()
 
         # Cross-day tracking
         self._current_trading_date: Optional[date] = None
@@ -1148,6 +1171,41 @@ class SierraPipelineOrchestrator:
         # Meta orchestrateur
         enriched["_phase3_enriched"] = True
         enriched["_phase3_bars_processed"] = self._bars_processed
+
+        # Phase A.2a + A.3 (12/06/2026 PM) - Market Profile + ICT/Wyckoff
+        # Enrichissement Python avec ~28 nouvelles features Dalton/Steidlmayer/ICT :
+        #   EASY (12 features) : PSD+2/-2, Open Relation Type, Profile Overlap,
+        #                        Range Extension vs IB, FVG (Fair Value Gap)
+        #   MEDIUM (16 features) : Single Prints + position, Composite POC 5d/20d,
+        #                          Liquidity Sweep detector, Judas Swing detector
+        # Aucune dependance externe : utilise features pipeline existantes.
+        # Cf CORE/market_profile_v5.py + CORE/market_profile_advanced.py.
+        # Cf INCIDENT_LOG #51 (audit narration NQ live cross-check 2 agents).
+        try:
+            mp_v5_feats = compute_market_profile_v5_features(
+                enriched, self._fvg_state
+            )
+            enriched.update(mp_v5_feats)
+        except Exception as _e:  # noqa: BLE001
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_MARKET_PROFILE_V5_FAIL",
+                                     sym=self.symbol, err=str(_e)[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+
+        try:
+            mp_adv_feats = compute_market_profile_advanced_features(
+                enriched, self._market_profile_advanced_state
+            )
+            enriched.update(mp_adv_feats)
+        except Exception as _e:  # noqa: BLE001
+            if self._log_event is not None:
+                try:
+                    self._log_event("SIERRA_PORT_MARKET_PROFILE_ADV_FAIL",
+                                     sym=self.symbol, err=str(_e)[:200])
+                except Exception:  # noqa: BLE001
+                    pass
 
         # Phase 1.5 (12/06/2026) - Normalisation timestamp Sierra LIVE.
         # Sierra Chart emet bars 1-min avec jitter +/-1s (31% bars a :59
