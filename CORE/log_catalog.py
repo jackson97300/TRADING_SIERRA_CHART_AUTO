@@ -1396,6 +1396,24 @@ LOG_CODES = {
     "SIERRA_INTERMARKET_PARTNER_MISSING":    (LogLevel.ALERTE, "events", "Sierra intermarket partner state missing : sym={sym} partner={partner}"),
     "SIERRA_INTERMARKET_PARTNER_STALE":      (LogLevel.ALERTE, "events", "Sierra intermarket partner stale : sym={sym} partner={partner} delta_ns={delta_ns}"),
     "SIERRA_HARNESS_DRIFT_DETECTED":         (LogLevel.MAJEUR, "data", "Sierra harness drift detecte : feature={feature} drift_mean_abs={drift} threshold={thr}"),
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Phase B.5 - ScenarioTracker lifecycle (12 codes)
+    # Lifecycle states transitions + telemetrie Phase C calibration.
+    # Reference Lopez AFML ch.3 Triple Barrier + .claude/rules/critical-tasks-review.md.
+    # ════════════════════════════════════════════════════════════════════════
+    "SCENARIO_CREATED":                      (LogLevel.INFO,   "decisions", "Scenario CREATED : id={scenario_id} name={name} sym={sym} side={side} entry={entry} score={score}"),
+    "SCENARIO_ENTRY_ZONE_TOUCHED":           (LogLevel.INFO,   "decisions", "Scenario entry zone touched : id={scenario_id} name={name} bar_low={bar_low} bar_high={bar_high}"),
+    "SCENARIO_TRIGGERED":                    (LogLevel.INFO,   "decisions", "Scenario TRIGGERED : id={scenario_id} name={name} matched={matched} bars_in_zone={bars_in_zone}"),
+    "SCENARIO_TARGET_1_HIT":                 (LogLevel.INFO,   "decisions", "Scenario target_1 HIT : id={scenario_id} name={name} target={target} bars_alive={bars_alive}"),
+    "SCENARIO_TARGET_2_HIT":                 (LogLevel.INFO,   "decisions", "Scenario target_2 HIT (COMPLETED) : id={scenario_id} name={name} target={target} bars_alive={bars_alive} mfe={mfe} mae={mae}"),
+    "SCENARIO_STOP_HIT":                     (LogLevel.ALERTE, "decisions", "Scenario STOP HIT (INVALIDATED) : id={scenario_id} name={name} stop={stop} bars_alive={bars_alive} mae={mae}"),
+    "SCENARIO_INVALIDATED":                  (LogLevel.ALERTE, "decisions", "Scenario INVALIDATED conditions : id={scenario_id} name={name} reason={reason} bars_alive={bars_alive}"),
+    "SCENARIO_EXPIRED":                      (LogLevel.INFO,   "decisions", "Scenario EXPIRED : id={scenario_id} name={name} reason={reason} bars_alive={bars_alive}"),
+    "SCENARIO_CONDITION_UNPARSABLE":         (LogLevel.ALERTE, "decisions", "Scenario condition unparsable : name={name} condition={condition} reason={reason}"),
+    "SCENARIO_SESSION_FLUSH":                (LogLevel.INFO,   "events",    "Scenario session flush at rollover : n_active={n_active} n_flushed={n_flushed}"),
+    "SCENARIO_TRACKER_INIT":                 (LogLevel.INFO,   "events",    "ScenarioTracker init : sym={sym} max_bars_per_setup={max_bars}"),
+    "SCENARIO_JSONL_WRITE_FAIL":             (LogLevel.MAJEUR, "events",    "Scenario JSONL write FAIL : path={path} err={err}"),
 }
 
 
