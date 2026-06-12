@@ -31,6 +31,82 @@
 
 ---
 
+### 2026-06-12 10:55 (50) - [RESOLUTION] - INCIDENT #48 jitter ts +/-1s Sierra LIVE pipeline FIX deploye VPS valide empirique
+
+**Categorie** : RESOLUTION incident #48 (jitter ts Sierra natif).
+
+**Contexte** : Audit matin live JSONL NQ (`DATA/_AUDIT/20260612_NQ_live.jsonl`) montrait 31% bars (159/512) avec `ts % 60000 = 59000` (jitter brut Sierra). Hier soir le fix etait UNIQUEMENT POST-PROCESS dedup (`CORE/research/sierra_dedup.py`). Pipeline LIVE emettait toujours ts brut.
+
+**Action 12/06 matin (Phase 1.5)** :
+
+1. Plan v1 propose -> NOGO 3 RB code-reviewer
+   - RB1 : architecture CLI au lieu d'orchestrator
+   - RB2 : `ts_event` ISO non synchronise
+   - RB3 : grep consumers downstream manquant
+
+2. Plan v2 integre 8 actions correctives :
+   - Normalisation dans `SierraPipelineOrchestrator.enrich_bar()` (orchestrator)
+   - Coherence 3 champs `ts`/`ts_event`/`ts_event_ns`
+   - Grep cross-codebase : `live_enriched_reader.py:227` dedup par `ts_event_ns`
+     -> coherence maintenue, aucun bot Sim1-4 casse
+   - Idempotence `if "ts_raw_ms" not in payload`
+   - Tests cross-instrument ES+NQ
+   - Script J+1/J+7 automatise (`tools/check_ts_normalized.py`)
+
+3. Code livre (commits f769cda + 423cf5a) :
+   - `CORE/sierra_ts.py` (NEW) : round_ts_to_minute + normalize_payload_ts
+   - `CORE/sierra_pipeline.py` : appel avant return enrich_bar
+   - `CORE/research/sierra_dedup.py` : consolidation DRY (import depuis sierra_ts)
+   - `tests/sierra_port/test_ts_normalization.py` : 10 tests pytest PASS
+
+4. Review code-reviewer FINAL : GO-AVEC-RESERVES-MINEURES (4 action items
+   non-bloquants post-deploy).
+
+5. Deploy VPS 10:50 Paris (Jackson confirmation explicite) :
+   - SCP 3 fichiers vers VPS
+   - Restart MIA-Sierra-Enricher-ES (gere ES + NQ multi-symbol)
+   - Wait 90s pour 1ere bar post-restart
+
+6. **Validation empirique succes** :
+   - `check_ts_normalized.py` : 30/30 bars OK (100%)
+   - Bar concrete 08:52 : `ts_raw_ms=1781254319000` (08:51:59 brut Sierra)
+     -> `ts=1781254320000` (08:52:00 ROUND)
+     -> `ts_event="2026-06-12T08:52:00+00:00"` (ISO coherent)
+   - **PREUVE EMPIRIQUE : pipeline arrondit + preserve brut**
+
+**Trigger prevention applique** :
+
+- 4 NOGO hier sauves par reviewer -> procedure STRICTE plan v1 -> review -> plan v2 -> review -> code -> review final -> deploy
+- Anti-VALIDATION_MISS : grep cross-codebase consumers + script J+1 automatise
+- Anti-PATTERN_11 : architecture orchestrator (proprie ́te ́ contrat), pas CLI
+- Anti-COMMENT_FALSE : chiffres verifies empirique (31% jitter confirme audit)
+
+**Stats** :
+
+- 4 commits : 887eb32 (Phase 0a) + cfc738e + c20a1e9 (Phase 1) + f769cda + 423cf5a (Phase 1.5)
+- 18/18 tests pytest PASS (10 ts_normalization + 8 sierra_dedup non-breaking)
+- 1 service restart (gere multi-symbol ES + NQ ensemble)
+- 0 regression downstream (live_enriched_reader dedup par ts_event_ns coherent)
+
+**Action items POST-DEPLOY restants (non-bloquants)** :
+
+- [ ] J+1 (13/06) : execute `tools/check_ts_normalized.py` sur 1000 bars cross-day
+- [ ] J+7 (19/06) : meme verification, valider stabilite long terme
+- [ ] Audit `ts_utc` callers (decouverte connexe)
+- [ ] CHANGELOG entry post-validation J+7
+
+**Reviewed** : code-reviewer agent (plan v1 NOGO -> plan v2 GO -> code GO-AVEC-RESERVES-MINEURES) + auto-reflexion
+
+**Files concernes** :
+
+- KEEP : `CORE/sierra_ts.py` (NEW module)
+- KEEP : `CORE/sierra_pipeline.py` (modifie 2 endroits)
+- KEEP : `CORE/research/sierra_dedup.py` (consolidation DRY)
+- KEEP : `tests/sierra_port/test_ts_normalization.py` (10 tests)
+- KEEP : `tools/check_ts_normalized.py` (anti-VALIDATION_MISS)
+
+---
+
 ### 2026-06-12 05:30 (49) - [PATTERN_11 + VALIDATION_MISS] - Refactor naming `delta_div_*` Stage 1 alias period : 1/3 sources couverte + fix M1 brise + 8+ consumers non migres
 
 **Categorie** : PATTERN_11 (rationalization "c'est propre maintenant" alors que collision principale non resolue) + VALIDATION_MISS (pas grep cross-codebase exhaustif des sources ECRITURE avant code).
