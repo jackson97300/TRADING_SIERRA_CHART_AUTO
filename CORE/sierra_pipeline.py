@@ -669,22 +669,30 @@ class SierraPipelineOrchestrator:
                 row_for_rolling["bar_high"] = row_for_rolling["high"]
             if "bar_low" not in row_for_rolling and "low" in row_for_rolling:
                 row_for_rolling["bar_low"] = row_for_rolling["low"]
-            # FIX M1 review code-reviewer 11/06 : doublon delta_div cache.
-            # divergences_v2 Calculator (Phase 3) emet delta_div_*_clean SLOPE-based.
-            # rolling_features sub-engine #4 calcule sa propre version CUMMAX-based,
-            # consommee par session_confluence pour ctx_div_density_20 / bars_since_div.
-            # SANS ce fix : enriched final = slope-based (visible bots), MAIS
-            # ctx_div_* = calcule sur cummax-based (mismatch silencieux).
-            # On force row_for_rolling[delta_div_*_clean] = version Phase 3 pour
-            # que session_confluence consume la MEME source que les bots.
-            for _k in ("delta_div_buy_clean", "delta_div_sell_clean",
-                        "delta_divergence_clean"):
-                if _k in enriched:
-                    row_for_rolling[_k] = enriched[_k]
+            # Phase 2.2 (12/06/2026 PM) : refactor delta_div_* coherence.
+            #
+            # AVANT (FIX M1) : sub-engine #4 add_rolling_features_delta_div_streaming
+            # recalculait CUMMAX et ecrasait delta_div_*_clean dans `er`.
+            # Sub-engine #5 session_confluence LISAIT cette version CUMMAX pour
+            # calculer ctx_div_density_20, ctx_bars_since_div, ctx_div_at_swing,
+            # div_at_key_level_ticks, div_confluence_dmp, div_confluence_with_regime.
+            # Resultat MISMATCH SILENCIEUX LIVE : delta_div_*_clean final = SLOPE
+            # (protege par set-diff), ctx_div_* = CUMMAX.
+            # Le fix M1 forcait row_for_rolling[delta_div_*_clean] = SLOPE mais
+            # sub-engine #4 ecrasait apres -> fix incomplet.
+            #
+            # APRES Phase 2.2 : SUPPRESSION sub-engine #4 + fix M1.
+            # divergences_v2.update() ecrit delta_div_*_clean SLOPE dans
+            # enriched en amont (ligne 533-538). row_for_rolling = dict(enriched)
+            # contient SLOPE. Sub-engine #5 lit row["delta_divergence_clean"]
+            # = SLOPE directement. Coherence interne LIVE garantie.
+            #
+            # Cf INCIDENT_LOG #51 + CORE/divergences_v2.py docstring complete.
             er = add_rolling_features_basic_streaming(row_for_rolling, self._rolling_state)
             er = add_rolling_features_medium_streaming(er, self._rolling_state)
             er = add_rolling_features_advanced_streaming(er, self._rolling_state)
-            er = add_rolling_features_delta_div_streaming(er, self._rolling_state)
+            # PHASE 2.2 : sub-engine #4 SUPPRIME (code dissimule CUMMAX,
+            # cf INCIDENT_LOG #51). Sub-engine #5 lit directement SLOPE.
             er = add_rolling_features_session_confluence_streaming(er, self._rolling_state)
             # Merge DIFF de cles uniquement (evite ecrasement)
             produced_keys = set(er) - set(row_for_rolling)

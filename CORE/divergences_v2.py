@@ -304,13 +304,27 @@ class DivergencesV2Calculator:
             if self._last_div_idx is not None else np.nan
         )
 
+        # Phase 2.2 (12/06/2026 PM) : ajout composite delta_divergence_clean
+        # pour combler le gap apres suppression sub-engine #4 dissimule dans
+        # sierra_pipeline.py. Semantique SLOPE coherente avec autres features.
+        # Convention : -1 si sell_clean, +1 si buy_clean, 0 sinon (mirror batch
+        # rolling_features.py:489 mais SLOPE-based).
+        # Cf INCIDENT_LOG #51 + sierra_pipeline.py Phase 2.2 refactor.
+        delta_divergence_clean_slope = (
+            int(delta_div_buy_clean) - int(delta_div_sell_clean)
+        )
+
+        # Phase 2.2 fix code-reviewer action #1 : cast int pour coherence
+        # JSONL serialise vs datasets historiques v3 (CUMMAX emis int 0/1).
+        # bool True == 1 en Python mais "true/false" vs entiers dans JSON output.
         return {
             "delta_div_buy": bool(delta_div_buy),
             "delta_div_sell": bool(delta_div_sell),
             "delta_div_strength": delta_div_strength,
             "delta_divergence_any": bool(delta_divergence_any),
-            "delta_div_buy_clean": bool(delta_div_buy_clean),
-            "delta_div_sell_clean": bool(delta_div_sell_clean),
+            "delta_div_buy_clean": int(bool(delta_div_buy_clean)),  # 0/1 int
+            "delta_div_sell_clean": int(bool(delta_div_sell_clean)),  # 0/1 int
+            "delta_divergence_clean": delta_divergence_clean_slope,  # Phase 2.2
             "n_delta_div_buy_zones_active": n_buy_zones,
             "n_delta_div_sell_zones_active": n_sell_zones,
             "dist_delta_div_buy_nearest_atr": dist_buy,
@@ -362,8 +376,9 @@ class DivergencesV2Calculator:
             "delta_div_sell": False,
             "delta_div_strength": np.nan,
             "delta_divergence_any": False,
-            "delta_div_buy_clean": False,
-            "delta_div_sell_clean": False,
+            "delta_div_buy_clean": 0,  # Phase 2.2 fix action #1 : int (coherence dataset historique)
+            "delta_div_sell_clean": 0,  # Phase 2.2 fix action #1 : int
+            "delta_divergence_clean": 0,  # Phase 2.2 : composite SLOPE
             "n_delta_div_buy_zones_active": 0,
             "n_delta_div_sell_zones_active": 0,
             "dist_delta_div_buy_nearest_atr": np.nan,

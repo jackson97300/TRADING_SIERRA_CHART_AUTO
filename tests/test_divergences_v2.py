@@ -122,11 +122,13 @@ def test_div_buy_clean_passes_threshold():
     for p, d in zip(prices, deltas):
         f = calc.update(close=p, delta_bar=d, atr=2.0)
 
-    assert f["delta_div_buy_clean"] is True
+    # Phase 2.2 (12/06 PM) : delta_div_*_clean cast int (0/1) pour coherence
+    # JSONL serialise vs datasets historiques v3. Avant: bool. Apres: int.
+    assert f["delta_div_buy_clean"] == 1
 
 
 def test_div_buy_clean_filtered_low_slope():
-    """Bullish div mais slope_delta < MIN_DELTA_SLOPE -> clean False."""
+    """Bullish div mais slope_delta < MIN_DELTA_SLOPE -> clean 0."""
     from CORE.divergences_v2 import DivergencesV2Calculator
 
     calc = DivergencesV2Calculator(slope_window=10, min_delta_slope=500.0)
@@ -138,8 +140,9 @@ def test_div_buy_clean_filtered_low_slope():
     for p, d in zip(prices, deltas):
         f = calc.update(close=p, delta_bar=d, atr=2.0)
 
-    assert f["delta_div_buy"] is True  # detection brute reste vraie
-    assert f["delta_div_buy_clean"] is False  # mais clean filtree
+    assert f["delta_div_buy"] is True  # detection brute reste bool
+    # Phase 2.2 fix action #1 cast int
+    assert f["delta_div_buy_clean"] == 0  # mais clean filtree (int 0)
 
 
 # ────────────────────────────────────────────────────────────────────────────
