@@ -1,0 +1,576 @@
+feature,family,subfamily,status,reasons,is_event_based,n_total,null_pct,n_unique,top_value,top_freq_pct,std
+_aggressor_source,META,0b_pipeline_meta,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,'sierra_proxy_count',100.0,0.0
+_mq_gamma_source,META,0b_pipeline_meta,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,'sierra_proxy_v2',100.0,0.0
+_phase3_bars_processed,META,0b_pipeline_meta,ALIVE,,False,2041,0.0,1057,1,0.15,320.710630530307
+_phase3_enriched,META,0b_pipeline_meta,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,True,100.0,0.0
+above_open_830,3_IB_OVERNIGHT,3_bool,DEAD,std<0.00e+00,False,2041,0.0,2,False,62.57,0.0
+above_open_cash,3_IB_OVERNIGHT,3_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+after_high,3_IB_OVERNIGHT,3_sessions_levels,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+after_low,3_IB_OVERNIGHT,3_sessions_levels,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+after_open,3_IB_OVERNIGHT,3_sessions_levels,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+aggressor_imbalance,5_ORDER_FLOW,5b_microstructure,ALIVE,,False,2041,0.0,550,0.0,1.71,0.242330224782111
+asia_high,3_IB_OVERNIGHT,3_sessions_levels,ALIVE,,False,2041,0.0,24,29587.0,47.08,25.190437903473374
+asia_low,3_IB_OVERNIGHT,3_sessions_levels,ALIVE,,False,2041,0.0,44,29464.75,35.47,66.46729972378274
+asia_open,3_IB_OVERNIGHT,3_sessions_levels,ALIVE,,False,2041,0.0,4,29486.25,26.16,51.62575988657677
+ask_bid_imbalance,5_ORDER_FLOW,5b_imbalance,ALIVE,,False,2041,0.0,472,0.0,2.6,0.3215715010272194
+ask_pct,5_ORDER_FLOW,5b_imbalance,ALIVE,,False,2041,0.0,469,0.5,2.6,0.16078656527054314
+atr,9_VOLATILITY_VIX,9_atr,ALIVE,,False,2041,0.0,29,727.96,53.36,5.861083261325766
+atr_14m,9_VOLATILITY_VIX,9_atr,ALIVE,,False,2041,0.0,421,45.5,0.98,17.36208526202481
+atr_14m_pct,9_VOLATILITY_VIX,9_atr,ALIVE,,False,2041,0.0,341,0.0376,1.37,0.014739652396314164
+avg_ask_size,5_ORDER_FLOW,5b_trader,ALIVE,,False,2041,0.0,329,1.5,4.16,0.6055006345216644
+avg_bid_size,5_ORDER_FLOW,5b_trader,ALIVE,,False,2041,0.0,317,1.0,3.72,0.7412737564892458
+avg_trade_size,5_ORDER_FLOW,5b_trader,ALIVE,,False,2041,0.0,461,2.0,1.37,0.8200728139956907
+bar_body_pct,1_MARKET_STRUCTURE,1a_bar_microstructure,ALIVE,,False,2041,0.0,500,-100.0,1.18,56.26046387777819
+bar_body_ticks,1_MARKET_STRUCTURE,1a_bar_microstructure,ALIVE,,False,2041,0.0,169,-24.0,2.3,40.13944324695264
+bar_color_dn,6_SIERRA_BN,6_bar_color,ALIVE,,False,2041,0.0,2,0,83.24,0.37347947336512544
+bar_color_up,6_SIERRA_BN,6_bar_color,ALIVE,,False,2041,0.0,2,0,86.77,0.3388037104850752
+bar_duration_sec,5_ORDER_FLOW,5b_volume_abs,ALIVE,,False,2041,0.0,19,59.0,32.88,3.0087312427019297
+bar_edge_buy,6_SIERRA_BN,6_edge,ALIVE,,False,2041,0.0,2,1,73.2,0.4429206791739409
+bar_edge_buy_fire,6_SIERRA_BN,6_edge,ALIVE,,False,2041,0.0,2,1,73.2,0.4429206791739409
+bar_edge_sell,6_SIERRA_BN,6_edge,ALIVE,,False,2041,0.0,2,1,73.15,0.4431769643846528
+bar_edge_sell_fire,6_SIERRA_BN,6_edge,ALIVE,,False,2041,0.0,2,1,73.15,0.4431769643846528
+bar_high,META,0a_bar_meta,ALIVE,,False,2041,0.0,433,29530.0,1.13,79.37795286828725
+bar_long_dn_bar,6_SIERRA_BN,6_bar_long,ALIVE,,False,2041,0.0,2,0,76.63,0.423189183833923
+bar_long_dn_up,6_SIERRA_BN,6_bar_long,ALIVE,,False,2041,0.0,2,0,92.99,0.25525433005750164
+bar_long_up_bar,6_SIERRA_BN,6_bar_long,ALIVE,,False,2041,0.0,2,0,75.55,0.42978321960375115
+bar_long_up_dn,6_SIERRA_BN,6_bar_long,ALIVE,,False,2041,0.0,2,0,92.11,0.2695559098619679
+bar_low,META,0a_bar_meta,ALIVE,,False,2041,0.0,422,29525.0,1.18,80.385688867914
+bar_lower_wick_pct,1_MARKET_STRUCTURE,1a_bar_microstructure,ALIVE,,False,2041,0.0,114,0.0,16.07,0.011694271091443355
+bar_no_trade,1_MARKET_STRUCTURE,1a_bar_microstructure,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+bar_pressure_ask,6_SIERRA_BN,6_bar_pressure,ALIVE,,False,2041,0.0,2,0,91.52,0.2785277576535228
+bar_pressure_bid,6_SIERRA_BN,6_bar_pressure,ALIVE,,False,2041,0.0,2,0,92.36,0.2656898549632383
+bar_upper_wick_pct,1_MARKET_STRUCTURE,1a_bar_microstructure,ALIVE,,False,2041,0.0,118,0.0,18.77,0.013368440779665088
+bars_in_va,1_MARKET_STRUCTURE,1b_vp_current_range,ALIVE,,False,2041,0.0,154,0.0,65.95,42.70644254121244
+bars_since_boot,META,0c_observability,ALIVE,,False,2041,0.0,1057,1,0.15,320.710630530307
+bars_since_last_swing_high,1_MARKET_STRUCTURE,1c_swing,ALIVE,,False,2041,27.58,291,0,0.61,82.13120907727114
+bars_since_last_swing_low,1_MARKET_STRUCTURE,1c_swing,ALIVE,,False,2041,16.76,263,0,0.77,69.8408707610449
+bars_since_retest_high,1_MARKET_STRUCTURE,1c_retest,ALIVE,,False,2041,79.08,38,1.0,7.73,9.914087234906807
+bars_since_retest_low,1_MARKET_STRUCTURE,1c_retest,ALIVE,,False,2041,84.52,18,1.0,11.71,4.590353225356006
+bid_pct,5_ORDER_FLOW,5b_imbalance,ALIVE,,False,2041,0.0,469,0.5,2.6,0.16078687298584973
+big_ask_cluster_20t,5_ORDER_FLOW,5c_big_clusters,ALIVE,,False,2041,0.0,6,0.0,59.63,0.9110974745474485
+big_ask_cluster_20t_t1,5_ORDER_FLOW,5c_big_clusters,ALIVE,,False,2041,0.0,5,0.0,59.63,0.8313548331772189
+big_ask_cluster_20t_t2,5_ORDER_FLOW,5c_big_clusters,DEAD,top_freq>96%,False,2041,0.0,2,0.0,95.84,0.199779482292942
+big_ask_cluster_20t_t3,5_ORDER_FLOW,5c_big_clusters,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+big_ask_cluster_20t_t4,5_ORDER_FLOW,5c_big_clusters,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+big_ask_cluster_50t,5_ORDER_FLOW,5c_big_clusters,ALIVE,,False,2041,0.0,8,0.0,35.77,1.5977868441746006
+big_bid_cluster_20t,5_ORDER_FLOW,5c_big_clusters,ALIVE,,False,2041,0.0,6,0.0,52.52,0.9613127120407549
+big_bid_cluster_20t_t1,5_ORDER_FLOW,5c_big_clusters,ALIVE,,False,2041,0.0,6,0.0,52.52,0.8887851416267365
+big_bid_cluster_20t_t2,5_ORDER_FLOW,5c_big_clusters,DEAD,top_freq>97%,False,2041,0.0,2,0.0,96.62,0.180731975607417
+big_bid_cluster_20t_t3,5_ORDER_FLOW,5c_big_clusters,DEAD,top_freq>100%,False,2041,0.0,2,0.0,99.71,0.054139573136937846
+big_bid_cluster_20t_t4,5_ORDER_FLOW,5c_big_clusters,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+big_bid_cluster_50t,5_ORDER_FLOW,5c_big_clusters,ALIVE,,False,2041,0.0,10,1.0,32.63,1.6372464313686774
+bn_absorb_ask,6_SIERRA_BN,6_bn_absorb,DEAD,top_freq>100%,False,2041,0.0,2,0,99.8,0.04422649327348068
+bn_absorb_bid,6_SIERRA_BN,6_bn_absorb,DEAD,top_freq>99%,False,2041,0.0,2,0,99.22,0.0881920627143557
+bn_color_dn,6_SIERRA_BN,6_bn_color,ALIVE,,False,2041,0.0,2,0,78.69,0.4095193188953631
+bn_color_dn_2,6_SIERRA_BN,6_bn_color,DEAD,top_freq>97%,False,2041,0.0,2,0,97.35,0.16049178552494067
+bn_color_dn_2_fwd1,6_SIERRA_BN,6_bn_color,DEAD,top_freq>98%,False,2041,0.0,2,0,98.33,0.1279882615250245
+bn_color_dn_fwd1,6_SIERRA_BN,6_bn_color,ALIVE,,False,2041,0.0,2,0,83.0,0.37564571195588997
+bn_color_up,6_SIERRA_BN,6_bn_color,ALIVE,,False,2041,0.0,2,0,79.23,0.4056905892340959
+bn_color_up_2,6_SIERRA_BN,6_bn_color,DEAD,top_freq>98%,False,2041,0.0,2,0,98.24,0.1316331984942956
+bn_color_up_2_fwd1,6_SIERRA_BN,6_bn_color,DEAD,top_freq>99%,False,2041,0.0,2,0,98.68,0.11425326257408393
+bn_color_up_fwd1,6_SIERRA_BN,6_bn_color,ALIVE,,False,2041,0.0,2,0,83.88,0.3677111714835065
+bn_long_dn,6_SIERRA_BN,6_bn_long,ALIVE,,False,2041,0.0,2,0,61.1,0.48752902134781373
+bn_long_up,6_SIERRA_BN,6_bn_long,ALIVE,,False,2041,0.0,2,0,59.63,0.49064331983016657
+bn_pressure_ask,6_SIERRA_BN,6_bn_pressure,ALIVE,,False,2041,0.0,2,0.0,92.7,0.26014213219821036
+bn_pressure_bid,6_SIERRA_BN,6_bn_pressure,ALIVE,,False,2041,0.0,2,0.0,91.77,0.27484037019133994
+bn_score_bear,6_SIERRA_BN,6_bn_score,ALIVE,,False,2041,0.0,6,0.0,60.9,0.3073134241733566
+bn_score_bull,6_SIERRA_BN,6_bn_score,ALIVE,,False,2041,0.0,4,0.0,59.63,0.3017909272550815
+bn_score_raw,6_SIERRA_BN,6_bn_score,ALIVE,,False,2041,0.0,9,0.0,20.53,0.5430344478968385
+bn_volume_dn,6_SIERRA_BN,6_bn_volume,DEAD,top_freq>100%,False,2041,0.0,2,0,99.8,0.04422649327348068
+bn_volume_up,6_SIERRA_BN,6_bn_volume,DEAD,top_freq>100%,False,2041,0.0,2,0,99.61,0.0624842667983532
+bool_above_cur_vpoc,1_MARKET_STRUCTURE,1b_vp_current_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+bool_above_mq_call,8_OPTIONS_GAMMA,8_mq_bool,ALIVE,,False,2041,0.0,2,0,61.73,0.48603526892156734
+bool_above_mq_hvl,8_OPTIONS_GAMMA,8_mq_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+bool_above_prev_vpoc,2_NIVEAUX_VEILLE,2_prev_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+bool_above_vwap_d,4_VWAP_ANCHOR,4_vwap_bool,DEAD,top_freq>98%,False,2041,0.0,2,1,98.43,0.12422870351192929
+bool_above_vwap_m,4_VWAP_ANCHOR,4_vwap_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+bool_above_vwap_w,4_VWAP_ANCHOR,4_vwap_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+bool_gex_flip_zone,8_OPTIONS_GAMMA,8_mq_bool,ALIVE,,False,2041,0.0,2,1,61.73,0.48603526892156734
+bool_ib_inside,3_IB_OVERNIGHT,3_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+bool_near_level,10_SESSION_CALENDAR,10_levels_bool,ALIVE,,False,2041,0.0,2,0,90.05,0.2992800500130176
+bool_session_early,10_SESSION_CALENDAR,10_session_flags,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+bool_va_confluence,1_MARKET_STRUCTURE,1b_vp_current_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+boot_id,META,0c_observability,DEAD,std<0.00e+00,False,2041,0.0,4,'3d61b74d-f3da-45ef-9dde-08c63,26.16,0.0
+buy_sell_ratio,5_ORDER_FLOW,5b_imbalance,ALIVE,,False,2041,0.0,469,0.5,2.6,0.16078656527054314
+buy_vol,5_ORDER_FLOW,5b_volume_abs,ALIVE,,False,2041,0.0,135,10.0,2.99,41.888154478233965
+cash_high,2_NIVEAUX_VEILLE,2_cash_levels_abs,DEAD,top_freq>96%,False,2041,0.0,13,29645.5,95.64,7.011727964181053
+cash_low,2_NIVEAUX_VEILLE,2_cash_levels_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28678.5,100.0,0.0
+close,META,0a_bar_meta,ALIVE,,False,2041,0.0,437,29521.25,0.93,79.95566892366914
+contract,META,0a_bar_meta,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,'NQM26-CME',100.0,0.0
+ctx_absorption_score_5,12_CONTEXT_ROLLING,12_ctx_rolling,DEAD,top_freq>95%,False,2041,0.59,2,0.0,95.07,0.0432926392429724
+ctx_absorption_streak_5,12_CONTEXT_ROLLING,12_ctx_rolling,DEAD,top_freq>99%,False,2041,0.0,2,0,99.02,0.09850429109556277
+ctx_bars_since_div,7_REVERSAL_EXHAUSTION,7_ctx_div,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+ctx_climax_signal,7_REVERSAL_EXHAUSTION,7_ctx_exhaustion,DEAD,std<0.00e+00,True,2041,0.0,2,False,96.37,0.0
+ctx_cvd_recovery_rate,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,1.47,595,0.0,0.55,1.2179672184506525
+ctx_cvd_session,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.0,905,-87.0,0.64,347.2306929863
+ctx_day_type_intensity,12_CONTEXT_ROLLING,12_ctx_rolling,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+ctx_delta_exhaustion,7_REVERSAL_EXHAUSTION,7_ctx_exhaustion,DEAD,std<0.00e+00,True,2041,0.0,2,False,94.37,0.0
+ctx_delta_slope_5,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,317,2.4,1.18,12.018005920739965
+ctx_delta_sum_10,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.0,335,11.0,1.27,114.58984712979553
+ctx_delta_sum_3,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,228,-13.0,1.72,64.60730151007984
+ctx_dist_vwap_velocity,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,547,-5.06,0.59,13.977982790650282
+ctx_div_at_swing,7_REVERSAL_EXHAUSTION,7_ctx_div,DEAD,top_freq>100%,False,2041,0.0,2,0.0,99.95,0.02212952433245706
+ctx_div_density_20,7_REVERSAL_EXHAUSTION,7_ctx_div,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+ctx_double_top_trap,7_REVERSAL_EXHAUSTION,7_ctx_exhaustion,DEAD,std<0.00e+00,True,2041,0.0,2,True,74.28,0.0
+ctx_excess_high_bars,7_REVERSAL_EXHAUSTION,7_ctx_exhaustion,ALIVE,,False,2041,0.0,18,11,14.75,2.868054804334568
+ctx_excess_low_bars,7_REVERSAL_EXHAUSTION,7_ctx_exhaustion,ALIVE,,False,2041,0.0,15,9,15.04,2.790817902782238
+ctx_failed_auction,7_REVERSAL_EXHAUSTION,7_ctx_exhaustion,DEAD,std<0.00e+00,True,2041,0.0,2,False,86.23,0.0
+ctx_finish_strength_mean_5,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,105,0.0,3.55,4.342776711802547
+ctx_ib_extension_ratio,12_CONTEXT_ROLLING,12_ctx_rolling,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+ctx_ib_position_velocity,12_CONTEXT_ROLLING,12_ctx_rolling,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+ctx_instant_absorption,12_CONTEXT_ROLLING,12_ctx_rolling,DEAD,std<0.00e+00,True,2041,0.0,2,False,99.02,0.0
+ctx_momentum_exhaustion,7_REVERSAL_EXHAUSTION,7_ctx_exhaustion,DEAD,std<0.00e+00,True,2041,0.0,2,False,70.46,0.0
+ctx_mq_put_call_ratio,8_OPTIONS_GAMMA,8_mq_ctx,ALIVE,,False,2041,0.0,238,3.312102,2.35,0.5076134202573551
+ctx_poc_migration_10,5_ORDER_FLOW,5d_poc_dynamics,ALIVE,,False,2041,1.32,573,-0.157576,0.4,13.65605946606119
+ctx_poor_high,7_REVERSAL_EXHAUSTION,7_ctx_exhaustion,DEAD,std<0.00e+00,True,2041,0.0,2,False,92.55,0.0
+ctx_poor_low,7_REVERSAL_EXHAUSTION,7_ctx_exhaustion,DEAD,std<0.00e+00,True,2041,0.0,2,False,94.76,0.0
+ctx_price_delta_div_3,7_REVERSAL_EXHAUSTION,7_ctx_div,ALIVE,,False,2041,0.0,3,0.0,80.11,0.44599714681476044
+ctx_price_slope_5,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,408,-0.65,0.99,4.913163653210586
+ctx_range_vs_atr_10,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,1.32,490,0.014355,0.89,0.0062707469688541625
+ctx_rotation_factor_20,12_CONTEXT_ROLLING,12_ctx_rolling,DEAD,top_freq>98%,False,2041,0.59,2,0.0,97.63,0.15197802954920087
+ctx_rvol_session,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,2028,0.28359,0.1,0.9338116821990179
+ctx_session_phase,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.0,2,0,69.23,0.9230769230769231
+ctx_side_flip_count_10,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.0,10,5,24.06,1.570163054547822
+ctx_trend_day_score,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.0,6,0.4,48.02,0.09782558276058784
+ctx_va_developing_10,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,1.47,345,-1.0,12.33,168.45447930772553
+ctx_va_position_velocity,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,17.79,157,0.0,42.67,0.026132082698674824
+ctx_va_width,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.0,364,1680.0,2.74,291.05655123300807
+ctx_vol_sell_buy_ratio_5,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,585,1.0,0.64,0.3984345128585544
+ctx_vol_slope_5,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,384,4.5,1.08,21.12706516771802
+ctx_vol_z_20,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,646,0.715431,0.2,0.9985568690058096
+ctx_vol_z_5,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.15,608,-0.58255,0.2,0.9198145985424544
+ctx_vwap_slope_accel,12_CONTEXT_ROLLING,12_ctx_rolling,ALIVE,,False,2041,0.59,45,0.0,12.86,0.030108609117157296
+cur_vah,1_MARKET_STRUCTURE,1b_vp_current,ALIVE,,False,2041,0.0,81,29487.0,6.47,2.9952006616352
+cur_vah_lvl,1_MARKET_STRUCTURE,1b_vp_current,ALIVE,,False,2041,0.0,81,29487.0,6.47,2.9952006616352
+cur_val,1_MARKET_STRUCTURE,1b_vp_current,ALIVE,,False,2041,0.0,5,29068.5,69.82,5.675357247070255
+cur_val_lvl,1_MARKET_STRUCTURE,1b_vp_current,ALIVE,,False,2041,0.0,5,29068.5,69.82,5.675357247070255
+cur_vpoc,1_MARKET_STRUCTURE,1b_vp_current,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,29196.5,100.0,0.0
+cur_vpoc_lvl,1_MARKET_STRUCTURE,1b_vp_current,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,29196.5,100.0,0.0
+cvd_bar_delta,5_ORDER_FLOW,5a_cvd,ALIVE,,False,2041,0.0,151,-6.0,3.14,36.76309555845561
+cvd_day,5_ORDER_FLOW,5a_cvd,ALIVE,,False,2041,0.0,412,16449.0,1.08,273.2557062494704
+cvd_day_dir,5_ORDER_FLOW,5a_cvd,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+cvd_ohlc_range,5_ORDER_FLOW,5a_cvd,ALIVE,,False,2041,0.0,8,7518.0,79.18,44.27317791162775
+cvd_session,5_ORDER_FLOW,5a_cvd,ALIVE,,False,2041,0.0,1103,-49.0,0.39,413.0499645088759
+data_quality_flag,META,0c_observability,DEAD,std<0.00e+00,False,2041,0.0,3,'degraded',69.23,0.0
+date_et,META,0a_bar_meta,DEAD,std<0.00e+00,False,2041,0.0,2,'2026-06-12',66.05,0.0
+day_type,1_MARKET_STRUCTURE,1a_tpo_concepts,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,2,100.0,0.0
+days_since_roll,10_SESSION_CALENDAR,10_roll,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,84,100.0,0.0
+delta_bar,5_ORDER_FLOW,5a_delta,ALIVE,,False,2041,0.0,151,-6.0,3.14,36.76309555845561
+delta_bar_vol_norm,5_ORDER_FLOW,5a_delta,ALIVE,,False,2041,0.0,472,0.0,2.6,0.3215715010272194
+delta_day,5_ORDER_FLOW,5a_delta,ALIVE,,False,2041,0.0,412,7079.0,1.08,273.2557062494704
+delta_day_dir,5_ORDER_FLOW,5a_delta,DEAD,CONSTANT,True,2041,0.0,1,1,100.0,0.0
+delta_div_buy,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,std<0.00e+00,True,2041,0.0,2,False,74.91,0.0
+delta_div_buy_clean,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+delta_div_sell,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,std<0.00e+00,True,2041,0.0,2,False,77.61,0.0
+delta_div_sell_clean,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+delta_div_slope_buy,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,std<0.00e+00,True,2041,76.43,2,False,75.88,0.0
+delta_div_slope_buy_clean,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,CONSTANT,True,2041,76.43,1,0,100.0,0.0
+delta_div_slope_clean,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,CONSTANT,True,2041,76.43,1,0,100.0,0.0
+delta_div_slope_sell,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,std<0.00e+00,True,2041,76.43,2,False,77.55,0.0
+delta_div_slope_sell_clean,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,CONSTANT,True,2041,76.43,1,0,100.0,0.0
+delta_div_slope_strength,7_REVERSAL_EXHAUSTION,7_delta_div,ALIVE,,True,2041,76.87,466,3.7e-05,0.42,0.006610974878700664
+delta_div_strength,7_REVERSAL_EXHAUSTION,7_delta_div,ALIVE,,True,2041,1.32,592,3.7e-05,0.4,0.006889694015271038
+delta_divergence,7_REVERSAL_EXHAUSTION,7_delta_div,ALIVE,,True,2041,0.0,2,0,99.22,0.0881920627143557
+delta_divergence_any,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,std<0.00e+00,True,2041,0.0,2,False,52.52,0.0
+delta_divergence_clean,7_REVERSAL_EXHAUSTION,7_delta_div,ALIVE,,True,2041,0.0,3,0,99.02,0.09891286288926987
+delta_pct,5_ORDER_FLOW,5a_delta,ALIVE,,False,2041,0.0,472,0.0,2.6,0.3215715010272194
+diag_imbalance,5_ORDER_FLOW,5a_pullback,ALIVE,,False,2041,0.0,441,0.0,2.6,0.47384108767246563
+diag_neg_delta,5_ORDER_FLOW,5a_pullback,ALIVE,,False,2041,0.0,113,7.0,3.63,31.439067488779262
+diag_pos_delta,5_ORDER_FLOW,5a_pullback,ALIVE,,False,2041,0.0,105,7.0,3.87,30.036690807962064
+discount_zone,1_MARKET_STRUCTURE,1b_vp_current_zones,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+dist_1d_max_ticks,1_MARKET_STRUCTURE,1d_1d_extremes,ALIVE,,False,2041,0.0,490,-1371.8828,0.73,1828.2455549499816
+dist_1d_max_ticks_pct,1_MARKET_STRUCTURE,1d_dist_pct,ALIVE,,False,2041,0.0,168,1.69,3.33,1.5509358091364367
+dist_1d_min_ticks,1_MARKET_STRUCTURE,1d_1d_extremes,ALIVE,,False,2041,0.0,490,-6366.1172,0.73,2040.23106271026
+dist_1d_min_ticks_pct,1_MARKET_STRUCTURE,1d_dist_pct,ALIVE,,False,2041,0.0,159,-2.15,2.89,1.7243483895797644
+dist_after_high_pct,3_IB_OVERNIGHT,3_sessions_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_after_low_pct,3_IB_OVERNIGHT,3_sessions_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_after_open_pct,3_IB_OVERNIGHT,3_sessions_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_asia_high_pct,3_IB_OVERNIGHT,3_sessions_dist,ALIVE,,False,2041,0.0,1160,-0.24335,0.39,0.2843081882125829
+dist_asia_low_pct,3_IB_OVERNIGHT,3_sessions_dist,ALIVE,,False,2041,0.0,723,0.191755,0.73,0.24424071598741406
+dist_asia_open_pct,3_IB_OVERNIGHT,3_sessions_dist,ALIVE,,False,2041,0.0,1499,0.154309,0.24,0.32509330102638434
+dist_big_ask_nearest_dn,5_ORDER_FLOW,5c_big_nearest,ALIVE,,False,2041,28.86,95,-1.0,5.3,29.84179952744459
+dist_big_ask_nearest_up,5_ORDER_FLOW,5c_big_nearest,ALIVE,,False,2041,10.34,125,0.0,4.1,44.516392101069904
+dist_big_bid_nearest_dn,5_ORDER_FLOW,5c_big_nearest,ALIVE,,False,2041,7.4,109,-2.0,3.97,41.59169465333124
+dist_big_bid_nearest_up,5_ORDER_FLOW,5c_big_nearest,ALIVE,,False,2041,18.72,76,0.0,5.55,18.964883433439798
+dist_cash_high_atr,2_NIVEAUX_VEILLE,2_cash_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_cash_high_pct,2_NIVEAUX_VEILLE,2_cash_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_cash_low_atr,2_NIVEAUX_VEILLE,2_cash_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_cash_low_pct,2_NIVEAUX_VEILLE,2_cash_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_cluster_nearest_dn,5_ORDER_FLOW,5c_clusters_agg,ALIVE,,False,2041,9.8,141,-1.0,3.2,41.22708050598101
+dist_cluster_nearest_up,5_ORDER_FLOW,5c_clusters_agg,ALIVE,,False,2041,27.49,124,9.0,3.45,38.87276340043776
+dist_color_dn_nearest_pct,1_MARKET_STRUCTURE,1d_dist_pct,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_color_up_nearest_pct,1_MARKET_STRUCTURE,1d_dist_pct,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_cur_vah,1_MARKET_STRUCTURE,1b_vp_current_dist,ALIVE,,False,2041,0.0,447,-166.0,0.98,322.24625598700936
+dist_cur_vah_pct,1_MARKET_STRUCTURE,1b_vp_current_dist,ALIVE,,False,2041,0.0,122,-0.15,4.75,0.2738303351034745
+dist_cur_val,1_MARKET_STRUCTURE,1b_vp_current_dist,ALIVE,,False,2041,0.0,438,-1811.0,0.93,319.42760263474565
+dist_cur_val_pct,1_MARKET_STRUCTURE,1b_vp_current_dist,ALIVE,,False,2041,0.0,119,-1.56,4.65,0.26763112472517114
+dist_cur_vpoc,1_MARKET_STRUCTURE,1b_vp_current_dist,ALIVE,,False,2041,0.0,437,-1299.0,0.93,319.82267569467655
+dist_cur_vpoc_pct,1_MARKET_STRUCTURE,1b_vp_current_dist,ALIVE,,False,2041,0.0,119,-1.15,4.65,0.2690263015128786
+dist_cur_vwap_vp,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,599,-137.8359,0.39,331.75058729089756
+dist_delta_div_buy_nearest_atr,7_REVERSAL_EXHAUSTION,7_delta_div_zones,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_delta_div_sell_nearest_atr,7_REVERSAL_EXHAUSTION,7_delta_div_zones,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_edge_buy_nearest_pct,1_MARKET_STRUCTURE,1d_dist_pct,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_edge_sell_nearest_pct,1_MARKET_STRUCTURE,1d_dist_pct,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_ext_color_dn,6_SIERRA_BN,6_extensions,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_ext_color_up,6_SIERRA_BN,6_extensions,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_ext_edge_buy,6_SIERRA_BN,6_edge_zones,ALIVE,,False,2041,8.28,85,0.0,12.45,22.86961578959685
+dist_ext_edge_sell,6_SIERRA_BN,6_edge_zones,ALIVE,,False,2041,17.98,71,0.0,13.68,20.23447031232175
+dist_ext_long_dn,6_SIERRA_BN,6_extensions,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_ext_long_up,6_SIERRA_BN,6_extensions,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_gex_nearest_dn,8_OPTIONS_GAMMA,8_mq_gex,ALIVE,,False,2041,0.0,423,-85.0,0.93,432.0663573489573
+dist_gex_nearest_dn_pct,8_OPTIONS_GAMMA,8_mq_gex,ALIVE,,False,2041,0.0,106,-0.05,3.67,0.3659684332581679
+dist_gex_nearest_up,8_OPTIONS_GAMMA,8_mq_gex,ALIVE,,False,2041,11.86,368,115.0,0.83,348.466643394788
+dist_gex_nearest_up_pct,8_OPTIONS_GAMMA,8_mq_gex,ALIVE,,False,2041,11.86,104,0.22,3.95,0.2970881429934191
+dist_ib_high,3_IB_OVERNIGHT,3_ib_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_ib_high_pct,3_IB_OVERNIGHT,3_ib_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_ib_low,3_IB_OVERNIGHT,3_ib_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_ib_low_pct,3_IB_OVERNIGHT,3_ib_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_london_high_pct,3_IB_OVERNIGHT,3_sessions_dist,ALIVE,,False,2041,69.23,169,-0.156692,1.27,0.10135710657677839
+dist_london_low_pct,3_IB_OVERNIGHT,3_sessions_dist,ALIVE,,False,2041,69.23,164,0.048633,1.27,0.38962318126086315
+dist_london_open_pct,3_IB_OVERNIGHT,3_sessions_dist,ALIVE,,False,2041,69.23,163,-0.132879,1.27,0.36780924731986037
+dist_long_dn_nearest_pct,1_MARKET_STRUCTURE,1d_dist_pct,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_long_up_nearest_pct,1_MARKET_STRUCTURE,1d_dist_pct,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_mq_call,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,490,-2185.0,0.73,2154.0926622693914
+dist_mq_call_0dte,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,490,-3245.0,0.73,1131.7003580415465
+dist_mq_call_0dte_pct,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,490,-2.74802,0.73,0.956787610369915
+dist_mq_call_pct,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,165,1.59,2.55,1.8265425268770625
+dist_mq_hvl,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,470,-2564.0,0.73,399.3934488803304
+dist_mq_hvl_0dte,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,490,-3245.0,0.73,1131.7003580415465
+dist_mq_hvl_0dte_pct,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,163,-2.78,2.4,0.956862251199513
+dist_mq_hvl_pct,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,139,-2.15,3.53,0.33394040790436424
+dist_mq_put,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,437,-6085.0,0.93,319.82267569467655
+dist_mq_put_0dte,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,490,-3245.0,0.73,761.9188019450398
+dist_mq_put_0dte_pct,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,25.38,315,-1.81,4.46,0.5468097734889746
+dist_mq_put_pct,8_OPTIONS_GAMMA,8_mq_dist,ALIVE,,False,2041,0.0,116,-5.18,4.8,0.25807762171904275
+dist_ny_open_pct,3_IB_OVERNIGHT,3_sessions_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_open_830,2_NIVEAUX_VEILLE,2_cash_dist,ALIVE,,False,2041,0.0,465,-2463.0,0.93,828.3193441508627
+dist_open_cash,2_NIVEAUX_VEILLE,2_cash_dist,ALIVE,,False,2041,0.0,437,-2999.0,0.93,319.82267569467655
+dist_ovn_high,3_IB_OVERNIGHT,3_ovn_dist,ALIVE,,False,2041,0.0,827,288.0,0.59,321.7804652020557
+dist_ovn_low,3_IB_OVERNIGHT,3_ovn_dist,ALIVE,,False,2041,0.0,488,-168.0,0.78,371.0834738303536
+dist_pdh_atr,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,819,0.126381,0.69,0.40920113330159485
+dist_pdh_pct,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,437,0.0779,0.93,0.2722578085468622
+dist_pdl_atr,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,849,-6.898731,0.69,3.510531410979714
+dist_pdl_pct,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,437,-4.2529,0.93,0.2604779756832348
+dist_prev_vah,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,437,-2550.0,0.93,319.82267569467655
+dist_prev_vah_pct,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,117,-2.19,5.05,0.2662666755290214
+dist_prev_val,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,437,-3754.0,0.93,319.82267569467655
+dist_prev_val_pct,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,119,-3.21,5.14,0.26337979869254796
+dist_prev_vpoc,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,437,-3685.0,0.93,319.82267569467655
+dist_prev_vpoc_atr,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,477,-5.0621,0.93,0.4511929403937217
+dist_prev_vpoc_pct,2_NIVEAUX_VEILLE,2_prev_levels_dist,ALIVE,,False,2041,0.0,118,-3.15,4.41,0.2634706444702986
+dist_prev_vwap,4_VWAP_ANCHOR,4_pvwap_dist,ALIVE,,False,2041,0.0,437,-3173.2578,0.93,319.82267569467655
+dist_prev_vwap_sd1d,4_VWAP_ANCHOR,4_pvwap_dist,ALIVE,,False,2041,0.0,437,-3763.2812,0.93,319.8226756946766
+dist_prev_vwap_sd1u,4_VWAP_ANCHOR,4_pvwap_dist,ALIVE,,False,2041,0.0,437,-2579.75,0.93,319.82267569467655
+dist_sess_high,10_SESSION_CALENDAR,10_session_range,ALIVE,,False,2041,0.0,438,497.0,0.93,318.607179865888
+dist_sess_high_pct,10_SESSION_CALENDAR,10_session_range,ALIVE,,False,2041,0.0,119,0.39,5.05,0.27225604959527233
+dist_sess_low,10_SESSION_CALENDAR,10_session_range,ALIVE,,False,2041,0.0,437,-3371.0,0.93,319.82267569467655
+dist_sess_low_pct,10_SESSION_CALENDAR,10_session_range,ALIVE,,False,2041,0.0,118,-2.9,5.44,0.2642809345718911
+dist_session_hvn_above,1_MARKET_STRUCTURE,1b_session_hvn_lvn,ALIVE,,False,2041,52.47,127,1.0,8.87,107.3484575536294
+dist_session_hvn_below,1_MARKET_STRUCTURE,1b_session_hvn_lvn,ALIVE,,False,2041,23.37,319,1.0,5.88,591.8509455148878
+dist_session_lvn_above,1_MARKET_STRUCTURE,1b_session_hvn_lvn,ALIVE,,False,2041,52.33,180,1.0,6.58,182.8626888410665
+dist_session_lvn_below,1_MARKET_STRUCTURE,1b_session_hvn_lvn,ALIVE,,False,2041,8.57,405,1.0,4.29,801.6961676172924
+dist_swing_high,1_MARKET_STRUCTURE,1c_swing,ALIVE,,False,2041,0.0,432,174.0,0.78,305.95703671142877
+dist_swing_low,1_MARKET_STRUCTURE,1c_swing,ALIVE,,False,2041,0.0,438,-84.0,0.98,311.4492723710702
+dist_us_high_pct,3_IB_OVERNIGHT,3_sessions_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_us_low_pct,3_IB_OVERNIGHT,3_sessions_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_vix_call,9_VOLATILITY_VIX,9_vix_dist,ALIVE,,False,2041,0.0,61,5.56,71.97,0.2810937117526959
+dist_vix_call_0dte,9_VOLATILITY_VIX,9_vix_dist,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+dist_vix_gex_nearest_dn,9_VOLATILITY_VIX,9_vix_dist,ALIVE,,False,2041,0.0,61,-1.94,71.97,0.2810937117526957
+dist_vix_gex_nearest_up,9_VOLATILITY_VIX,9_vix_dist,ALIVE,,False,2041,0.0,61,0.56,71.97,0.2810937117526957
+dist_vix_hvl,9_VOLATILITY_VIX,9_vix_dist,ALIVE,,False,2041,0.0,61,2.06,71.97,0.2810937117526957
+dist_vix_hvl_0dte,9_VOLATILITY_VIX,9_vix_dist,ALIVE,,False,2041,0.0,61,-0.44,71.97,0.28109371175269576
+dist_vix_put,9_VOLATILITY_VIX,9_vix_dist,ALIVE,,False,2041,0.0,61,-1.44,71.97,0.2810937117526957
+dist_vix_put_0dte,9_VOLATILITY_VIX,9_vix_dist,ALIVE,,False,2041,0.0,61,-1.44,71.97,0.2810937117526957
+dist_vwap_d,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,600,-137.8281,0.39,331.75019819333846
+dist_vwap_d_atr,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,588,-1.4946,0.39,0.4550506314261134
+dist_vwap_d_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,121,-0.85,4.26,0.2801181333452921
+dist_vwap_d_sd1d,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,597,-999.1484,0.39,334.1781754194618
+dist_vwap_d_sd1d_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,123,-1.63,4.16,0.27988767607565357
+dist_vwap_d_sd1u,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,599,-174.7969,0.39,329.50432850102806
+dist_vwap_d_sd1u_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,121,-0.06,4.41,0.2804403267034355
+dist_vwap_d_sd2d,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,599,-2825.2656,0.39,336.78456916659735
+dist_vwap_d_sd2d_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,123,-2.4,4.02,0.2800031286940767
+dist_vwap_d_sd2u,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,600,670.5469,0.2,327.4440733010729
+dist_vwap_d_sd2u_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,124,0.72,4.65,0.28049962639254716
+dist_vwap_d_sd3d,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,600,-3767.4297,0.34,339.5646937024957
+dist_vwap_d_sd3d_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,125,-3.2,4.51,0.2804618984315306
+dist_vwap_d_sd3u,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,599,1806.8516,0.39,325.57354459329207
+dist_vwap_d_sd3u_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,130,1.5,4.8,0.280948567337479
+dist_vwap_m,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,599,573.0234,0.39,319.3438718448324
+dist_vwap_m_atr,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,580,0.7263,0.59,0.43035267131742044
+dist_vwap_m_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,120,0.49,4.65,0.27300144778964003
+dist_vwap_m_sd1d_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,120,-1.97,5.1,0.266964962083106
+dist_vwap_m_sd1u_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,125,2.94,4.46,0.27905953155194646
+dist_vwap_w,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,599,-1778.6562,0.39,321.55585745533375
+dist_vwap_w_atr,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,591,-2.6261,0.39,0.44411605494692613
+dist_vwap_w_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,119,-1.5,4.41,0.2696942521544545
+dist_vwap_w_sd1d_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,119,-2.77,4.56,0.2661432517582153
+dist_vwap_w_sd1u_pct,4_VWAP_ANCHOR,4_vwap_dist,ALIVE,,False,2041,0.0,121,-0.24,4.56,0.273153085852278
+div_at_key_level_ticks,7_REVERSAL_EXHAUSTION,7_div_aggregates,DEAD,NULL>99%,True,2041,99.02,16,69.0,10.0,60.399006614347556
+div_confluence_dmp,7_REVERSAL_EXHAUSTION,7_div_aggregates,ALIVE,,True,2041,0.0,3,0,99.02,0.13037799333670702
+div_confluence_with_regime,7_REVERSAL_EXHAUSTION,7_div_aggregates,ALIVE,,True,2041,0.0,4,0,61.24,0.5065504315667337
+div_regime_proxy_ok,7_REVERSAL_EXHAUSTION,7_div_aggregates,ALIVE,,True,2041,0.0,2,0,61.73,0.48603526892156734
+equal_highs_detected,1_MARKET_STRUCTURE,1c_liquidity,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+equal_lows_detected,1_MARKET_STRUCTURE,1c_liquidity,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+finish_delta_pct,5_ORDER_FLOW,5a_finish,ALIVE,,False,2041,0.0,7,1.0,84.47,0.3452468788742943
+finish_strength,5_ORDER_FLOW,5a_finish,ALIVE,,False,2041,0.0,60,0.0,20.87,9.724323718301642
+fp_edge_buy,6_SIERRA_BN,6_edge,DEAD,top_freq>97%,False,2041,0.0,2,0,97.16,0.16616224419496933
+fp_edge_sell,6_SIERRA_BN,6_edge,DEAD,top_freq>97%,False,2041,0.0,2,0,96.82,0.1755929777336334
+gex_cluster_count,8_OPTIONS_GAMMA,8_mq_gex,ALIVE,,False,2041,0.0,2,0.0,89.02,0.3125780432190187
+high,META,0a_bar_meta,ALIVE,,False,2041,0.0,433,29530.0,1.13,79.37795286828725
+high_ask_vol_pct,5_ORDER_FLOW,5b_extreme,ALIVE,,False,2041,0.0,12,1.0,84.47,0.30791900801559435
+high_pullback_delta,5_ORDER_FLOW,5a_pullback,ALIVE,,False,2041,0.0,15,1.0,56.25,1.5999904457113179
+hvn_between,1_MARKET_STRUCTURE,1b_session_hvn_lvn,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+ib_atr,3_IB_OVERNIGHT,3_ib,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+ib_broken_dn,3_IB_OVERNIGHT,3_ib,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+ib_broken_down,3_IB_OVERNIGHT,3_ib,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+ib_broken_up,3_IB_OVERNIGHT,3_ib,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+ib_complete,3_IB_OVERNIGHT,3_ib,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+ib_high,3_IB_OVERNIGHT,3_ib,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+ib_is_narrow,3_IB_OVERNIGHT,3_ib,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+ib_is_wide,3_IB_OVERNIGHT,3_ib,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+ib_low,3_IB_OVERNIGHT,3_ib,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+ib_position_pct,3_IB_OVERNIGHT,3_ib,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+ib_range,3_IB_OVERNIGHT,3_ib,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+ib_range_atr,3_IB_OVERNIGHT,3_ib,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+ib_range_ticks,3_IB_OVERNIGHT,3_ib,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+im_cross_delta_agreement_5,11_INTERMARKET,11_im,ALIVE,,False,2041,70.55,10,0.4,33.78,0.20656330593681102
+im_cross_delta_weighted_5,11_INTERMARKET,11_im,ALIVE,,False,2041,70.55,117,5.0,2.5,6.46358494081191
+im_cross_open_signal,11_INTERMARKET,11_im,DEAD,CONSTANT | top_freq>100%,False,2041,70.55,1,0.0,100.0,0.0
+im_delta_day_divergence,11_INTERMARKET,11_im,DEAD,CONSTANT | top_freq>100%,False,2041,70.55,1,0.0,100.0,0.0
+im_ltr_slope_diff,11_INTERMARKET,11_im,ALIVE,,False,2041,70.7,596,-0.02499,0.33,0.1774022278981927
+im_open_type_agreement,11_INTERMARKET,11_im,DEAD,CONSTANT | top_freq>100%,False,2041,70.55,1,0.0,100.0,0.0
+im_price_ratio_slope_10,11_INTERMARKET,11_im,ALIVE,,False,2041,70.7,438,-1e-05,1.17,0.00035757249641428545
+im_rolling_correlation_10,11_INTERMARKET,11_im,ALIVE,,False,2041,71.14,589,0.729571,0.17,0.2619307759505372
+im_smt_divergence,11_INTERMARKET,11_im,ALIVE,,False,2041,70.99,3,0.0,81.93,0.4248671805091286
+im_volume_lead,11_INTERMARKET,11_im,ALIVE,,False,2041,70.7,458,-2.9,0.84,52.38888048546324
+inside_cur_va,1_MARKET_STRUCTURE,1b_vp_current_range,ALIVE,,False,2041,0.0,2,0,65.95,0.47388387112753627
+inside_prev_va,2_NIVEAUX_VEILLE,2_prev_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+is_blocked_combined,10_SESSION_CALENDAR,10_session_flags,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+is_cash_session,10_SESSION_CALENDAR,10_session_flags,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+is_critical_news_60m,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+is_double_dist,1_MARKET_STRUCTURE,1a_tpo_profile,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+is_eco_blocked,10_SESSION_CALENDAR,10_session_flags,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+is_ib_window,10_SESSION_CALENDAR,10_session_flags,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+is_in_asia,10_SESSION_CALENDAR,10_session_flags,DEAD,std<0.00e+00,False,2041,0.0,2,True,69.23,0.0
+is_in_london,10_SESSION_CALENDAR,10_session_flags,DEAD,std<0.00e+00,False,2041,0.0,2,False,69.23,0.0
+is_in_us_after,10_SESSION_CALENDAR,10_session_flags,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+is_in_us_cash,10_SESSION_CALENDAR,10_session_flags,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+is_new_cash_high,10_SESSION_CALENDAR,10_session_range,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+is_new_cash_low,10_SESSION_CALENDAR,10_session_range,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+is_new_sess_high,10_SESSION_CALENDAR,10_session_range,DEAD,top_freq>98%,False,2041,0.0,2,0,97.6,0.15307339072116588
+is_new_sess_low,10_SESSION_CALENDAR,10_session_range,ALIVE,,False,2041,0.0,2,0,94.71,0.22386427864963362
+is_news_15m,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+is_news_30m,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+is_news_5m,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+is_news_60m,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+is_news_715,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+is_news_730,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+is_news_830,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+is_news_845,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+is_news_900,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+is_news_930,10_SESSION_CALENDAR,10_news_flags,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+is_roll_day,10_SESSION_CALENDAR,10_session_flags,DEAD,CONSTANT,True,2041,0.0,1,False,100.0,0.0
+is_session_blocked,10_SESSION_CALENDAR,10_session_flags,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+large_trader_max_size,5_ORDER_FLOW,5b_trader,ALIVE,,False,2041,0.0,96,1.0,20.68,1.7477384721839306
+large_trader_ratio,5_ORDER_FLOW,5b_trader,ALIVE,,False,2041,0.0,531,1.0,1.57,0.3626196576235958
+liquidity_sweep_high_lag5,1_MARKET_STRUCTURE,1c_liquidity,DEAD,std<0.00e+00,True,2041,0.0,2,False,92.01,0.0
+liquidity_sweep_low_lag5,1_MARKET_STRUCTURE,1c_liquidity,DEAD,std<0.00e+00,True,2041,0.0,2,False,94.37,0.0
+london_high,3_IB_OVERNIGHT,3_sessions_levels,ALIVE,,False,2041,69.23,31,29575.0,32.32,108.85440016499142
+london_low,3_IB_OVERNIGHT,3_sessions_levels,ALIVE,,False,2041,69.23,10,29260.0,89.81,14.165031398764096
+london_open,3_IB_OVERNIGHT,3_sessions_levels,DEAD,CONSTANT | top_freq>100%,False,2041,69.23,1,29350.0,100.0,0.0
+long_dn_bar,6_SIERRA_BN,6_bar_long,ALIVE,,False,2041,0.0,2,0,61.1,0.48752902134781373
+long_dn_up_pattern,6_SIERRA_BN,6_bar_long,ALIVE,,False,2041,0.0,2,0,94.86,0.22090437712014813
+long_up_bar,6_SIERRA_BN,6_bar_long,ALIVE,,False,2041,0.0,2,0,59.63,0.49064331983016657
+long_up_dn_pattern,6_SIERRA_BN,6_bar_long,ALIVE,,False,2041,0.0,2,0,92.8,0.25852684726173303
+low,META,0a_bar_meta,ALIVE,,False,2041,0.0,422,29525.0,1.18,80.385688867914
+low_bid_vol_pct,5_ORDER_FLOW,5b_extreme,ALIVE,,False,2041,0.0,8,1.0,89.71,0.26973855137224223
+low_pullback_delta,5_ORDER_FLOW,5a_pullback,ALIVE,,False,2041,0.0,21,1.0,57.03,2.0010036656505363
+lvn_between,1_MARKET_STRUCTURE,1b_session_hvn_lvn,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+lvn_confluence_count,1_MARKET_STRUCTURE,1b_session_hvn_lvn,ALIVE,,False,2041,0.0,6,0,86.33,0.8431823669115452
+ma_trend,1_MARKET_STRUCTURE,1a_trend,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+max_ask_vol_in_bar,5_ORDER_FLOW,5b_extreme,ALIVE,,False,2041,0.0,37,3.0,16.32,6.540024309198993
+max_bid_vol_in_bar,5_ORDER_FLOW,5b_extreme,ALIVE,,False,2041,0.0,42,4.0,15.43,10.06802081218497
+max_big_ask_vol_in_bar,5_ORDER_FLOW,5c_big_volume,ALIVE,,False,2041,0.0,37,3.0,16.32,6.540024309198993
+max_big_bid_vol_in_bar,5_ORDER_FLOW,5c_big_volume,ALIVE,,False,2041,0.0,42,4.0,15.43,10.06802081218497
+mins_et,10_SESSION_CALENDAR,10_clock,ALIVE,,False,2041,0.0,414,1320,0.39,564.5832751123827
+mins_since_news,10_SESSION_CALENDAR,10_news_countdown,ALIVE,,False,2041,66.05,166,750,1.15,59.83643839249564
+mins_to_next_news,10_SESSION_CALENDAR,10_news_countdown,ALIVE,,False,2041,33.95,248,433.0,0.59,99.0758940140276
+momentum_3b,5_ORDER_FLOW,5a_momentum,ALIVE,,False,2041,0.0,175,-6.0,2.2,10.19511695437192
+momentum_5b,5_ORDER_FLOW,5a_momentum,ALIVE,,False,2041,0.0,208,6.5,1.62,13.997571947261077
+mq_gamma_condition,8_OPTIONS_GAMMA,8_mq,ALIVE,,False,2041,0.0,2,0,61.73,0.48603526892156734
+n_big_ask_t1,5_ORDER_FLOW,5c_big_orders,ALIVE,,False,2041,0.0,21,20.0,21.56,7.227518184635752
+n_big_ask_t2,5_ORDER_FLOW,5c_big_orders,ALIVE,,False,2041,0.0,5,0.0,37.92,1.1876280472046539
+n_big_ask_t3,5_ORDER_FLOW,5c_big_orders,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+n_big_ask_t4,5_ORDER_FLOW,5c_big_orders,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+n_big_ask_v2_t1,5_ORDER_FLOW,5c_big_orders,ALIVE,,False,2041,0.0,21,20.0,21.56,7.227518184635752
+n_big_ask_v2_t2,5_ORDER_FLOW,5c_big_orders,ALIVE,,False,2041,0.0,5,0.0,37.92,1.1876280472046539
+n_big_ask_v2_t3,5_ORDER_FLOW,5c_big_orders,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+n_big_ask_v2_t4,5_ORDER_FLOW,5c_big_orders,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+n_big_bid_t1,5_ORDER_FLOW,5c_big_orders,ALIVE,,False,2041,0.0,18,20.0,36.06,6.25215142073879
+n_big_bid_t2,5_ORDER_FLOW,5c_big_orders,ALIVE,,False,2041,0.0,8,0.0,42.68,0.9671434176342633
+n_big_bid_t3,5_ORDER_FLOW,5c_big_orders,DEAD,top_freq>95%,False,2041,0.0,3,0.0,95.35,0.30648690197027756
+n_big_bid_t4,5_ORDER_FLOW,5c_big_orders,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+n_big_bid_v2_t1,5_ORDER_FLOW,5c_big_orders,ALIVE,,False,2041,0.0,18,20.0,36.06,6.25215142073879
+n_big_bid_v2_t2,5_ORDER_FLOW,5c_big_orders,ALIVE,,False,2041,0.0,8,0.0,42.68,0.9671434176342633
+n_big_bid_v2_t3,5_ORDER_FLOW,5c_big_orders,DEAD,top_freq>95%,False,2041,0.0,3,0.0,95.35,0.30648690197027756
+n_big_bid_v2_t4,5_ORDER_FLOW,5c_big_orders,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+n_clusters_20t,5_ORDER_FLOW,5c_clusters_agg,ALIVE,,False,2041,0.0,5,0.0,48.85,0.8086003407691242
+n_clusters_50t,5_ORDER_FLOW,5c_clusters_agg,ALIVE,,False,2041,0.0,8,1.0,32.34,1.295094427017056
+n_color_dn_cluster_within_0_2pct,6_SIERRA_BN,6_extensions_zones,ALIVE,,False,2041,0.0,10,2,22.34,1.877721596065319
+n_color_dn_zones_active,6_SIERRA_BN,6_extensions_zones,ALIVE,,False,2041,0.0,30,4,15.09,7.719320682314899
+n_color_up_cluster_within_0_2pct,6_SIERRA_BN,6_extensions_zones,ALIVE,,False,2041,0.0,7,2,29.69,1.3339677325191346
+n_color_up_zones_active,6_SIERRA_BN,6_extensions_zones,ALIVE,,False,2041,0.0,22,1,22.05,4.938699079260423
+n_delta_div_buy_zones_active,7_REVERSAL_EXHAUSTION,7_delta_div_zones,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+n_delta_div_sell_zones_active,7_REVERSAL_EXHAUSTION,7_delta_div_zones,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+n_edge_buy_active,6_SIERRA_BN,6_edge_zones,ALIVE,,False,2041,0.0,12,3,17.64,2.5342161012342985
+n_edge_sell_active,6_SIERRA_BN,6_edge_zones,ALIVE,,False,2041,0.0,12,3,17.44,2.693563942182228
+n_long_dn_cluster_within_0_2pct,6_SIERRA_BN,6_extensions_zones,ALIVE,,False,2041,0.0,12,4,19.6,2.0932534431626366
+n_long_dn_zones_active,6_SIERRA_BN,6_extensions_zones,ALIVE,,False,2041,0.0,34,5,10.88,8.115111342821804
+n_long_up_cluster_within_0_2pct,6_SIERRA_BN,6_extensions_zones,ALIVE,,False,2041,0.0,9,3,23.86,1.5425126962044984
+n_long_up_zones_active,6_SIERRA_BN,6_extensions_zones,ALIVE,,False,2041,0.0,33,2,16.71,8.349796401726465
+new_swing_high,1_MARKET_STRUCTURE,1c_swing,ALIVE,,True,2041,0.0,2,0,98.78,0.10999482763666657
+new_swing_low,1_MARKET_STRUCTURE,1c_swing,ALIVE,,True,2041,0.0,2,0,98.43,0.12422870351192929
+news_minutes_until,10_SESSION_CALENDAR,10_news_countdown,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+news_seconds_until,10_SESSION_CALENDAR,10_news_countdown,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+next_wall_dist_ticks,8_OPTIONS_GAMMA,8_mq_walls,ALIVE,,False,2041,0.0,358,11.0,1.47,210.82232341152258
+next_wall_is_call,8_OPTIONS_GAMMA,8_mq_walls,ALIVE,,False,2041,0.0,2,1,54.09,0.49832345325202815
+ny_open,3_IB_OVERNIGHT,3_open_abs,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+open,META,0a_bar_meta,ALIVE,,False,2041,0.0,443,29531.25,1.18,79.81656771993646
+open_830,2_NIVEAUX_VEILLE,2_cash_levels_abs,ALIVE,,False,2041,0.0,2,28905.5,86.67,212.6699955753782
+open_830_et,3_IB_OVERNIGHT,3_open_abs,ALIVE,,False,2041,0.0,4,29486.25,26.16,51.62575988657677
+open_830_lvl,2_NIVEAUX_VEILLE,2_cash_levels_abs,ALIVE,,False,2041,0.0,2,28905.5,86.67,212.6699955753782
+open_bias_conf,1_MARKET_STRUCTURE,1a_tpo_concepts,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+open_cash,2_NIVEAUX_VEILLE,2_cash_levels_abs,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+open_cash_lvl,2_NIVEAUX_VEILLE,2_cash_levels_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28771.5,100.0,0.0
+open_direction,1_MARKET_STRUCTURE,1a_tpo_concepts,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+open_gap_ticks,1_MARKET_STRUCTURE,1a_open_dynamics,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,-686.0,100.0,0.0
+open_in_prev_va,2_NIVEAUX_VEILLE,2_prev_bool,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+open_position,1_MARKET_STRUCTURE,1a_open_dynamics,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+open_type,1_MARKET_STRUCTURE,1a_tpo_concepts,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+open_zone,1_MARKET_STRUCTURE,1a_tpo_concepts,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+ovn_broken_dn,3_IB_OVERNIGHT,3_ovn,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+ovn_broken_up,3_IB_OVERNIGHT,3_ovn,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+ovn_high,3_IB_OVERNIGHT,3_ovn,ALIVE,,False,2041,0.0,35,29587.0,43.02,27.199527216778417
+ovn_low,3_IB_OVERNIGHT,3_ovn,ALIVE,,False,2041,0.0,52,29464.75,35.47,95.36446972628909
+ovn_range_ticks,3_IB_OVERNIGHT,3_ovn,ALIVE,,False,2041,0.0,122,1308.0,11.95,404.5447841228302
+p99_trade_size_proxy,5_ORDER_FLOW,5b_microstructure,ALIVE,,False,2041,0.0,458,1.0,20.68,0.6616246101159666
+pct_in_range,1_MARKET_STRUCTURE,1b_vp_current_zones,ALIVE,,False,2041,0.0,1451,0.0,0.59,0.25899614553163325
+pdh,2_NIVEAUX_VEILLE,2_prev_levels_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,29544.25,100.0,0.0
+pdl,2_NIVEAUX_VEILLE,2_prev_levels_abs,ALIVE,,False,2041,0.0,2,28265.75,73.84,137.02212930308235
+poc_bar_dist,5_ORDER_FLOW,5d_poc_dynamics,ALIVE,,False,2041,0.0,81,0.0,5.98,20.432863950420053
+poc_migration_dir,5_ORDER_FLOW,5d_poc_dynamics,ALIVE,,False,2041,1.32,3,1,50.99,0.997727310177424
+poc_position,5_ORDER_FLOW,5d_poc_dynamics,DEAD,top_freq>95%,False,2041,0.0,7,0.5357,95.44,0.003918448620630107
+poc_separation_ticks,1_MARKET_STRUCTURE,1a_tpo_profile,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+position_in_range,1_MARKET_STRUCTURE,1b_vp_current_zones,ALIVE,,False,2041,0.0,287,1.0,38.27,0.2511452966309692
+premium_zone,1_MARKET_STRUCTURE,1b_vp_current_zones,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+prev_vah,2_NIVEAUX_VEILLE,2_prev_levels_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28883.75,100.0,0.0
+prev_vah_lvl,2_NIVEAUX_VEILLE,2_prev_levels_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28883.75,100.0,0.0
+prev_val,2_NIVEAUX_VEILLE,2_prev_levels_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28582.75,100.0,0.0
+prev_val_lvl,2_NIVEAUX_VEILLE,2_prev_levels_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28582.75,100.0,0.0
+prev_vpoc,2_NIVEAUX_VEILLE,2_prev_levels_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28600.0,100.0,0.0
+prev_vpoc_lvl,2_NIVEAUX_VEILLE,2_prev_levels_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28600.0,100.0,0.0
+price,META,0a_bar_meta,ALIVE,,False,2041,0.0,437,29521.25,0.93,79.95566892366914
+price_1030,3_IB_OVERNIGHT,3_intraday_anchor,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+price_vs_swing_mid,1_MARKET_STRUCTURE,1c_swing,ALIVE,,False,2041,0.0,3,1.0,49.88,0.9987743591423224
+profile_hvn_dominant,1_MARKET_STRUCTURE,1a_tpo_profile,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,29196.5,100.0,0.0
+profile_shape,1_MARKET_STRUCTURE,1a_tpo_concepts,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+profile_skew,1_MARKET_STRUCTURE,1a_tpo_concepts,ALIVE,,False,2041,0.0,113,0.263,3.18,0.01516871242664207
+pvwap,4_VWAP_ANCHOR,4_pvwap_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28727.94,100.0,0.0
+pvwap_sd1d,4_VWAP_ANCHOR,4_pvwap_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28580.43,100.0,0.0
+pvwap_sd1u,4_VWAP_ANCHOR,4_pvwap_abs,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,28876.31,100.0,0.0
+range_h_minus_lprev_ticks,1_MARKET_STRUCTURE,1a_bar_microstructure,ALIVE,,False,2041,0.15,156,59,1.72,43.14529578011882
+range_hprev_minus_l_ticks,1_MARKET_STRUCTURE,1a_bar_microstructure,ALIVE,,False,2041,0.15,153,34,2.31,39.81181354057657
+range_pos_va,1_MARKET_STRUCTURE,1b_vp_current_range,ALIVE,,False,2041,0.0,172,100.0,65.95,13.220032757313453
+range_size,1_MARKET_STRUCTURE,1a_bar_microstructure,ALIVE,,False,2041,0.0,124,12.0,2.94,7.957057077148168
+range_size_ticks,1_MARKET_STRUCTURE,1b_vp_current_range,ALIVE,,False,2041,0.0,73,1680.0,4.51,22.72819398343964
+retest_high_count,1_MARKET_STRUCTURE,1c_retest,ALIVE,,False,2041,0.0,4,0,79.08,0.5731076850855942
+retest_high_delta_div,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+retest_low_count,1_MARKET_STRUCTURE,1c_retest,ALIVE,,False,2041,0.0,3,0,84.52,0.46837939360830533
+retest_low_delta_div,7_REVERSAL_EXHAUSTION,7_delta_div,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,False,100.0,0.0
+roll_phase,10_SESSION_CALENDAR,10_roll,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+rotation_dn,5_ORDER_FLOW,5a_rotation,ALIVE,,False,2041,0.0,2,0.0,78.29,0.4122372628748244
+rotation_up,5_ORDER_FLOW,5a_rotation,ALIVE,,False,2041,0.0,2,0.0,76.92,0.42132504423474315
+rotation_zz_osc,5_ORDER_FLOW,5a_rotation,ALIVE,,False,2041,0.0,166,0.0,5.83,9.874631902329709
+rule_80pct,1_MARKET_STRUCTURE,1a_tpo_concepts,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+rvol,5_ORDER_FLOW,5d_rvol,ALIVE,,False,2041,0.0,590,0.3093,0.39,0.6680375560376329
+rvol_absorb_buy,5_ORDER_FLOW,5d_rvol,ALIVE,,True,2041,0.0,2,0,99.85,0.038310666932532315
+rvol_absorb_sell,5_ORDER_FLOW,5d_rvol,ALIVE,,True,2041,0.0,2,0,99.22,0.0881920627143557
+rvol_buy,5_ORDER_FLOW,5d_rvol,DEAD,top_freq>97%,False,2041,0.0,2,0,97.01,0.17027641890337575
+rvol_buy_strong,5_ORDER_FLOW,5d_rvol,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+rvol_extreme,5_ORDER_FLOW,5d_rvol,ALIVE,,True,2041,0.0,2,0,99.8,0.04422649327348068
+rvol_regime,5_ORDER_FLOW,5d_rvol,ALIVE,,False,2041,0.0,5,0,39.88,0.9290985116121514
+rvol_sell,5_ORDER_FLOW,5d_rvol,DEAD,top_freq>96%,False,2041,0.0,2,0,96.28,0.18934117538213718
+rvol_sell_strong,5_ORDER_FLOW,5d_rvol,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+rvol_zscore,5_ORDER_FLOW,5d_rvol,ALIVE,,False,2041,0.0,594,-0.9813,0.39,1.0017885365738497
+schema_version,META,0c_observability,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,'sierra_3.7.22+unknown',100.0,0.0
+sell_vol,5_ORDER_FLOW,5b_volume_abs,ALIVE,,False,2041,0.0,136,25.0,2.99,42.29829290502205
+sess_high,10_SESSION_CALENDAR,10_session_range,ALIVE,,False,2041,0.0,35,29587.0,43.02,27.199527216778417
+sess_low,10_SESSION_CALENDAR,10_session_range,ALIVE,,False,2041,0.0,52,29464.75,35.47,95.36446972628909
+sess_range_atr,10_SESSION_CALENDAR,10_session_range,ALIVE,,False,2041,0.0,29,5.3134,53.36,0.047212452671207106
+sess_range_ticks,10_SESSION_CALENDAR,10_session_range,DEAD,top_freq>96%,False,2041,0.0,13,3868.0,95.64,28.04691185672421
+session,META,0a_bar_meta,ALIVE,,False,2041,0.0,2,0,69.23,0.46153846153846156
+session_date,META,0a_bar_meta,DEAD,std<0.00e+00,False,2041,0.0,2,'2026-06-12',66.05,0.0
+session_date_trading,META,0a_bar_meta,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,'2026-06-12',100.0,0.0
+session_hvn_count,1_MARKET_STRUCTURE,1b_session_hvn_lvn,ALIVE,,False,2041,0.0,11,0,89.22,2.570061907896356
+session_id,META,0a_bar_meta,DEAD,std<0.00e+00,False,2041,0.0,2,'Asia',69.23,0.0
+session_lvn_count,1_MARKET_STRUCTURE,1b_session_hvn_lvn,ALIVE,,False,2041,0.0,10,0,91.72,2.303722538947697
+session_segment,META,0a_bar_meta,DEAD,std<0.00e+00,False,2041,0.0,2,'asia',69.23,0.0
+single_print_count,1_MARKET_STRUCTURE,1a_tpo_profile,ALIVE,,False,2041,0.0,29,886,29.54,26.288666344101056
+single_print_mid,1_MARKET_STRUCTURE,1a_tpo_profile,DEAD,top_freq>95%,False,2041,0.0,7,29162.0,95.44,3.467643829523153
+swing_range_ticks,1_MARKET_STRUCTURE,1c_swing,ALIVE,,False,2041,0.0,33,248.0,11.17,233.64121441798576
+sym,META,0a_bar_meta,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,'NQ',100.0,0.0
+ticks_count,5_ORDER_FLOW,5b_volume_abs,ALIVE,,False,2041,0.0,196,44,1.76,66.30612059550174
+total_vol,5_ORDER_FLOW,5b_volume_abs,ALIVE,,False,2041,0.0,215,44.0,1.91,75.7363911307023
+trend_day_probability,1_MARKET_STRUCTURE,1a_tpo_concepts,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+ts,META,0a_bar_meta,ALIVE,,False,2041,0.0,751,1781229600000,0.2,9123659.404891435
+ts_event,META,0a_bar_meta,DEAD,std<0.00e+00,False,2041,0.0,751,'2026-06-12T02:00:00+00:00',0.2,0.0
+ts_event_ns,META,0a_bar_meta,ALIVE,,False,2041,0.0,751,1781229600000000000,0.2,9123659404891.436
+ts_raw_ms,OTHER,unclassified,ALIVE,,False,2041,26.16,547,1781229600000,0.2,8791065.402979655
+us_high,3_IB_OVERNIGHT,3_sessions_levels,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+us_low,3_IB_OVERNIGHT,3_sessions_levels,DEAD,NULL>100%,False,2041,100.0,0,None,0.0,0.0
+va_position_pct,1_MARKET_STRUCTURE,1b_vp_current_range,ALIVE,,False,2041,65.95,169,0.865,1.15,0.14584070275869507
+vah_touches_20b,1_MARKET_STRUCTURE,1b_vp_current_touches,ALIVE,,False,2041,0.0,5,0.0,87.65,0.7237356897062173
+val_touches_20b,1_MARKET_STRUCTURE,1b_vp_current_touches,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0.0,100.0,0.0
+vix_above_hvl,9_VOLATILITY_VIX,9_vix_core,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+vix_above_hvl_0dte,9_VOLATILITY_VIX,9_vix_core,ALIVE,,False,2041,0.0,2,1,80.99,0.3923821882708138
+vix_level,9_VOLATILITY_VIX,9_vix_core,ALIVE,,False,2041,0.0,61,19.44,71.97,0.28109371175269615
+vix_regime,9_VOLATILITY_VIX,9_vix_core,DEAD,CONSTANT,True,2041,0.0,1,1,100.0,0.0
+vol_per_sec,5_ORDER_FLOW,5b_volume_abs,ALIVE,,False,2041,0.0,459,0.9831,0.98,1.2728183967180555
+volume,META,0a_bar_meta,ALIVE,,False,2041,0.0,215,44.0,1.91,75.7363911307023
+volume_imbalance,1_MARKET_STRUCTURE,1a_tpo_profile,ALIVE,,False,2041,0.0,121,3.8153,0.98,0.23886309359921462
+vwap_d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,580,29289.13,0.98,8.33697730480852
+vwap_d_sd1d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,582,29044.67,0.39,9.731259137439606
+vwap_d_sd1u,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,533,29517.5,1.96,7.249492802261924
+vwap_d_sd2d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,551,28821.68,0.59,11.318907366730311
+vwap_d_sd2u,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,510,29746.8,1.57,6.6212853071840225
+vwap_d_sd3d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,527,28589.63,0.78,13.029772000630407
+vwap_d_sd3u,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,532,29970.69,0.78,6.584902223010212
+vwap_d_side,4_VWAP_ANCHOR,4_vwap_side,DEAD,top_freq>98%,False,2041,0.0,2,1,98.43,0.24845740702385857
+vwap_m,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,148,29673.2,2.94,0.44150886909788933
+vwap_m_sd1d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,138,28947.34,7.64,0.23258246096137047
+vwap_m_sd1u,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,357,30399.23,1.18,1.0892863630805822
+vwap_m_sd2d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,359,28221.99,1.18,0.8743926961071653
+vwap_m_sd2u,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,465,31126.17,0.78,1.7404746972126706
+vwap_m_sd3d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,459,27495.11,0.78,1.5251849697250266
+vwap_m_sd3u,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,520,31852.26,0.59,2.3922307816413824
+vwap_m_side,4_VWAP_ANCHOR,4_vwap_side,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,-1,100.0,0.0
+vwap_ma_align,4_VWAP_ANCHOR,4_vwap_dynamics,DEAD,top_freq>98%,False,2041,0.0,2,1,98.43,0.12422870351192929
+vwap_slope_10,4_VWAP_ANCHOR,4_vwap_dynamics,ALIVE,,False,2041,0.0,543,0.5749,0.59,0.44226294109516784
+vwap_slope_10_dir,4_VWAP_ANCHOR,4_vwap_dynamics,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+vwap_slope_30,4_VWAP_ANCHOR,4_vwap_dynamics,ALIVE,,False,2041,0.0,568,0.6771,0.59,0.41472872948870765
+vwap_triple_align,4_VWAP_ANCHOR,4_vwap_dynamics,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,0,100.0,0.0
+vwap_w,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,459,29090.1,0.98,1.4683667546668893
+vwap_w_sd1d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,439,28715.97,0.78,1.4605477754272909
+vwap_w_sd1u,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,452,29465.21,1.18,1.4880851706413987
+vwap_w_sd2d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,395,28342.04,0.98,1.4644593491766036
+vwap_w_sd2u,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,443,29838.86,3.53,1.518861253337483
+vwap_w_sd3d,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,311,27972.31,1.32,1.4802090705590587
+vwap_w_sd3u,4_VWAP_ANCHOR,4_vwap_abs,ALIVE,,False,2041,0.0,440,30212.6,2.74,1.560206902319613
+vwap_w_side,4_VWAP_ANCHOR,4_vwap_side,DEAD,CONSTANT | top_freq>100%,False,2041,0.0,1,1,100.0,0.0
+within_news_715_5m,10_SESSION_CALENDAR,10_news_proximity,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+within_news_730_5m,10_SESSION_CALENDAR,10_news_proximity,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+within_news_830_5m,10_SESSION_CALENDAR,10_news_proximity,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+within_news_845_5m,10_SESSION_CALENDAR,10_news_proximity,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+within_news_900_5m,10_SESSION_CALENDAR,10_news_proximity,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
+within_news_930_5m,10_SESSION_CALENDAR,10_news_proximity,DEAD,CONSTANT,True,2041,0.0,1,0,100.0,0.0
