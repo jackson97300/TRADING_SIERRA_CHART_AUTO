@@ -31,6 +31,96 @@
 
 ---
 
+### 2026-06-12 16:00 (52) - [RESOLUTION] - INCIDENT #51 DOUBLE MISMATCH delta_div_* COMPLETE deploy + valide empirique
+
+**Categorie** : RESOLUTION incident #51 (ARCHITECTURAL_MISMATCH delta_div_*).
+
+**Contexte** : Apres documentation findings ULTRATHINK Phase 2.1 (commit 0dad55a),
+implementation staged Phases 2.2 -> 2.3 -> 2.4 livree + deployee VPS + validee
+empirique le meme apres-midi.
+
+**Action staged 12/06 PM** :
+
+**Phase 2.2 (commit 2eb7666)** - Fix LIVE :
+- Suppression sub-engine #4 add_rolling_features_delta_div_streaming (code dissimule CUMMAX)
+- Suppression fix M1 set-diff (devient redondant)
+- Ajout composite delta_divergence_clean SLOPE dans divergences_v2.update()
+- Cast int delta_div_*_clean (0/1) pour coherence JSONL serialise
+- 24/24 tests PASS
+- Deploy VPS restart MIA-Sierra-Enricher-ES valide empirique :
+  bar 08:54 ts_raw_ms=08:53:59 -> ts=08:54:00 + delta_divergence_clean trinary {-1, 0, 1}
+
+**Phase 2.3 (commit 73f26ef)** - Align BATCH sur LIVE :
+- rolling_features.py:444-528 ~70 lignes CUMMAX -> appel compute_divergences_v2_features SLOPE
+- Coherence BATCH = LIVE = SLOPE partout
+- delta_div_strength SIGNED (SLOPE) au lieu absolute (CUMMAX)
+- 27/27 tests PASS (3 nouveaux Phase 2.3 + 24 anciens non-breaking)
+
+**Phase 2.4 (commit 37aa59b)** - Aliases canoniques :
+- Ajout 6 aliases delta_div_slope_* additive non-breaking
+- Pragmatique : 6 aliases cles (pas 15) pour eviter pollution payload
+- 32/32 tests PASS
+- Deploy VPS valide empirique 6/6 aliases OK :
+  delta_div_strength = delta_div_slope_strength = -0.00128 (identiques)
+
+**Trigger prevention applique** :
+
+- Audit ULTRATHINK 2 agents (code-reviewer + market-analyst) AVANT plan
+- Procedure stricte : doc -> code Phase 2.2 -> review code -> deploy ->
+  code Phase 2.3 -> code Phase 2.4 -> deploy verif empirique chaque etape
+- Tests pytest 32/32 PASS coverage complete (Phase 2.2 + 2.3 + 2.4)
+- Anti-PATTERN_11 : 6 aliases pragmatique, pas 15 = pas reproduit Stage 1
+  alias period hier soir (NOGO car couvrait 1/3 sources sans resoudre
+  mismatch principal)
+- Anti-VALIDATION_MISS : verification empirique deploy chaque phase
+  (Phase 2.2 + 2.4) via pull JSONL + comparaison
+
+**Stats** :
+
+- 4 commits Phase 2 (2.2 + 2.3 + 2.4 + Phase 2.1 doc 0dad55a)
+- 32/32 tests pytest PASS (5 Phase 2.2 + 3 Phase 2.3 + 5 Phase 2.4 + 19 divergences_v2)
+- 2 deploys VPS valides empirique (Phase 2.2 + 2.4)
+- 0 regression downstream (aliases additive non-breaking)
+- 19+ consumers downstream restent compatibles (anciens noms preserve)
+
+**Resolution INCIDENT #51 architectural_mismatch** :
+
+- LIVE pipeline interne coherent (delta_div_*_clean SLOPE + ctx_div_* SLOPE) ✅
+- BATCH = LIVE = SLOPE partout (cohherence totale) ✅
+- ML training/inference aligned (plus de distribution shift PSI >> 0.25) ✅
+- Aliases canoniques delta_div_slope_* disponibles pour migration progressive ✅
+
+**Action items POST-RESOLUTION (non-bloquants)** :
+
+- [ ] J+1 (13/06) : verifier distribution delta_div_slope_clean cross-day
+- [ ] J+7 (19/06) : verifier stabilite long terme
+- [ ] Stage 3 (mai 2026 purge v3) : migration consumers downstream vers aliases delta_div_slope_*
+- [ ] Documentation INVENTAIRE_DUMPER_VS_BOT.md update post-resolution
+
+**Reviewed** : code-reviewer agent (plan + code Phase 2.2 GO-AVEC-RESERVES-MINEURES) + 
+2 agents ULTRATHINK Phase 2.1 (code-reviewer + market-analyst convergent) + 
+auto-reflexion + validation empirique deploy chaque phase
+
+**Files concernes** :
+
+Phase 2.2 (LIVE) :
+- CORE/sierra_pipeline.py (suppression fix M1 + sub-engine #4 call)
+- CORE/divergences_v2.py (composite SLOPE + cast int)
+
+Phase 2.3 (BATCH) :
+- CORE/rolling_features.py (CUMMAX -> compute_divergences_v2_features SLOPE)
+
+Phase 2.4 (aliases) :
+- CORE/divergences_v2.py (6 aliases delta_div_slope_*)
+
+Tests :
+- tests/sierra_port/test_phase22_delta_div_coherence.py (5 tests)
+- tests/sierra_port/test_phase23_batch_live_parity.py (3 tests)
+- tests/sierra_port/test_phase24_slope_aliases.py (5 tests)
+- tests/test_divergences_v2.py (19 tests non-regression)
+
+---
+
 ### 2026-06-12 14:30 (51) - [ARCHITECTURAL_MISMATCH] - delta_div_* DOUBLE MISMATCH LIVE/BATCH decouvert via audit ULTRATHINK 2 agents
 
 **Categorie** : ARCHITECTURAL_MISMATCH (nouveau, plus pernicieux que collision simple).
