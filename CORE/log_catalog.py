@@ -1359,6 +1359,11 @@ LOG_CODES = {
     "SIERRA_PORT_INTERMARKET_OK":            (LogLevel.INFO,   "events", "Sierra port intermarket OK : sym={sym}"),
     "SIERRA_PORT_INTERMARKET_FAIL":          (LogLevel.MAJEUR, "events", "Sierra port intermarket FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_INTERMARKET_DEGRADED":      (LogLevel.ALERTE, "events", "Sierra port intermarket DEGRADED : sym={sym} reason={reason}"),
+    # Phase A.4 Market Profile + ICT/Wyckoff (12/06/2026 PM, regle LOGS TRACABILITE)
+    "SIERRA_PORT_MARKET_PROFILE_V5_OK":      (LogLevel.INFO,   "events", "Sierra port market_profile_v5 OK : sym={sym}"),
+    "SIERRA_PORT_MARKET_PROFILE_V5_FAIL":    (LogLevel.MAJEUR, "events", "Sierra port market_profile_v5 FAIL : sym={sym} err={err}"),
+    "SIERRA_PORT_MARKET_PROFILE_ADV_OK":     (LogLevel.INFO,   "events", "Sierra port market_profile_advanced OK : sym={sym}"),
+    "SIERRA_PORT_MARKET_PROFILE_ADV_FAIL":   (LogLevel.MAJEUR, "events", "Sierra port market_profile_advanced FAIL : sym={sym} err={err}"),
     # NB downgrade ALERTE -> INFO post-review (MH2 11/06) : tant que multi-symbol
     # caller pas code, partner_bar=None par defaut -> pas d'emit. Mais si caller
     # appelle set_partner_bar avec un bar tres vieux par accident, l'INFO suffit

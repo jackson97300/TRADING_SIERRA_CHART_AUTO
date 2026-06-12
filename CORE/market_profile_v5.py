@@ -350,14 +350,24 @@ def detect_fvg(payload: dict, state: FVGState) -> dict:
             state.active_fvg_dn.append((gap_low, gap_high))
             fvg_dn_created = True
 
-    # Cleanup : retire FVG fill (close traverse zone gap)
+    # Cleanup : retire FVG "fully filled" (close traverse entierement la zone gap)
+    #
+    # CHOIX EXPLICITE Phase A.4 review code-reviewer reserve #4 :
+    #   FVG UP "filled" = close DESCEND sous gap_low (= zone gap completement fillee)
+    #     -> filter actif tant que c >= lo (close au-dessus ou DANS le gap = encore actif)
+    #   FVG DN "filled" = close MONTE au-dessus gap_high
+    #     -> filter actif tant que c <= hi (close en-dessous ou DANS le gap = encore actif)
+    #
+    # Definition "Closed FVG" ICT stricte = 100% fill. Alternative "Equilibrium FVG"
+    # (fill = 50%) non implementee. Si downstream consumer veut 50% fill, calculer
+    # via `dist_fvg_*_nearest_atr` + threshold custom (pas hardcoder ici).
     state.active_fvg_up = [
         (lo, hi) for (lo, hi) in state.active_fvg_up
-        if c > lo  # Si close < gap_low, gap reste below close (UP fvg actif jusqu'a fill par close descendant dans gap)
+        if c >= lo  # actif tant que close pas ENCORE traverse sous gap_low
     ]
     state.active_fvg_dn = [
         (lo, hi) for (lo, hi) in state.active_fvg_dn
-        if c < hi
+        if c <= hi  # actif tant que close pas ENCORE traverse au-dessus gap_high
     ]
 
     # Cap max_active (FIFO)

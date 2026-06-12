@@ -1172,6 +1172,21 @@ class SierraPipelineOrchestrator:
         enriched["_phase3_enriched"] = True
         enriched["_phase3_bars_processed"] = self._bars_processed
 
+        # Phase 1.5 (12/06/2026) - Normalisation timestamp Sierra LIVE.
+        # Sierra Chart emet bars 1-min avec jitter +/-1s (31% bars a :59
+        # empirique 12/06 NQ live). Fix : ROUND ts a la minute nominale +
+        # preserve ts_raw_ms brut + reconstitue ts_event ISO + ts_event_ns
+        # coherents. Cf CORE/sierra_ts.py + INCIDENT_LOG #48.
+        # Contrat post-normalisation = propriete de l'orchestrator (1 fix
+        # couvre les 3 entry points : batch + live mono + live multi).
+        #
+        # ORDRE Phase A.4 (12/06 PM, review code-reviewer reserve #3) :
+        # normalize_payload_ts AVANT Market Profile sub-engines, sinon
+        # CompositePOCState._ts_to_trading_day lit le ts brut Sierra avec
+        # jitter +/-1s -> frontiere CME 22:00 UTC potentiellement franchie
+        # 1s trop tot/tard -> archive VPOC dans le mauvais trading day.
+        enriched = normalize_payload_ts(enriched)
+
         # Phase A.2a + A.3 (12/06/2026 PM) - Market Profile + ICT/Wyckoff
         # Enrichissement Python avec ~28 nouvelles features Dalton/Steidlmayer/ICT :
         #   EASY (12 features) : PSD+2/-2, Open Relation Type, Profile Overlap,
@@ -1206,15 +1221,6 @@ class SierraPipelineOrchestrator:
                                      sym=self.symbol, err=str(_e)[:200])
                 except Exception:  # noqa: BLE001
                     pass
-
-        # Phase 1.5 (12/06/2026) - Normalisation timestamp Sierra LIVE.
-        # Sierra Chart emet bars 1-min avec jitter +/-1s (31% bars a :59
-        # empirique 12/06 NQ live). Fix : ROUND ts a la minute nominale +
-        # preserve ts_raw_ms brut + reconstitue ts_event ISO + ts_event_ns
-        # coherents. Cf CORE/sierra_ts.py + INCIDENT_LOG #48.
-        # Contrat post-normalisation = propriete de l'orchestrator (1 fix
-        # couvre les 3 entry points : batch + live mono + live multi).
-        enriched = normalize_payload_ts(enriched)
 
         return enriched
 
@@ -1295,6 +1301,13 @@ class SierraPipelineOrchestrator:
         # ib_atr garde 14j lookback : NE PAS reset (sinon ib_atr=NaN chaque
         # session pendant 3 jours min_periods)
         self._gc_state = GameChangersState()
+        # Phase A.4 (12/06 PM) : reset Market Profile + ICT/Wyckoff states
+        # cross-day pour eviter faux signaux J+1 (FVG accumules, sweeps obsoletes,
+        # London open zombie). Composite POC gere son propre cross-day via
+        # _ts_to_trading_day mais on reset au cas ou pour safety.
+        # Cf review code-reviewer Phase A.4 reserve #2.
+        self._fvg_state = FVGState()
+        self._market_profile_advanced_state = MarketProfileAdvancedState()
         self._current_trading_date = trading_date
         return True
 
