@@ -62,6 +62,62 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-12 14:00 — Phase B v3 narrative_engine + scenario_generator (Lot 1+2+3+4)
+
+**Categorie** : FEATURE (observation only - no auto-trade)
+**Impact prod** : OFFLINE (modules Python consumes par dashboard backlog)
+**Fichier(s)** :
+- `CORE/narrative_engine.py` (~530 LOC)
+- `CORE/scenario_generator.py` (~720 LOC, 8 scenario builders)
+- `tests/sierra_port/test_narrative_engine.py` (35 tests)
+**Commits** : fb1d1a5 (v1) -> c359905 (v2) -> a35f34b (v3 GO)
+**Reviewer(s) agent** : code-reviewer GO round 3 + market-analyst GO-AVEC-RESERVES round 3
+
+### Quoi
+
+Formalisation reproductible analyse narration marche en NarrativeContext +
+8 scenarios heuristiques + VIX regime filter prefix-based.
+
+### Lots appliques
+
+- **Lot 1** : 5 bugs mecaniques (CONFLUENCE 0.10 ATR, cluster distance refactor,
+  range_pos_va_pct fix, bearish_rejection AND Wyckoff, Range split XOR)
+- **Lot 2** : Anti-PATTERN_11 (heuristic_score rename, docstring NON-CALIBRE,
+  warning sample, ValueError validation)
+- **Lot 3** : 3 scenarios manquants (Failed Breakout Spring/UTAD, FVG Magnet
+  UP/DOWN, Single Print Magnet)
+- **Lot 4** : VIX_INCOMPATIBLE_PREFIXES (extreme drops Range/FVG/Bullish cont,
+  stressed drops FVG, calm_vix_low drops Single Print) + 3 stubs backlog
+  (eco event, multi-TF, cross-instrument)
+- **Round 2** : R:R swing target_2 (Bearish 0.95 -> 2.48, Bullish 0.95 -> 1.54)
+
+### Validation
+
+- [x] Tests : 35/35 PASS
+- [x] Smoke live NQ : 6 scenarios coherents Lopez-compliant
+- [x] Review code-reviewer round 3 : GO explicite
+- [x] Review market-analyst round 3 : GO-AVEC-RESERVES (Phase C only)
+
+### Reserves Phase C non-bloquantes observation
+
+1. Logging JSONL granulaire par scenario_name + setup_type + regime VIX
+   (n>=100 par bucket avant calibration Platt/isotonic Lopez ch.13)
+2. Range bound R:R : target_2 = mid-range opposite si range_atr > 1.0 ATR
+3. Flag dashboard "FVG Magnet = Steidlmayer, pas ICT canonique"
+4. Spring secondary test confirm (Wyckoff VSA WR brut ~30%)
+
+### Revert
+
+```bash
+git revert a35f34b c359905 fb1d1a5
+```
+
+### Deployed
+
+N/A - module Python observation, consume dashboard backlog. Pas de deploy VPS requis.
+
+---
+
 ## 2026-06-12 01:30 — Plan A dedup Sierra (5308 -> 637 bars 11/06) + metadata observabilite
 
 **Categorie** : FIX (dedup pipeline ML) + REFACTO (metadata observabilite collecteur)
