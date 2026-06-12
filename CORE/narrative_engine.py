@@ -71,6 +71,22 @@ class MarketStructureState:
     inside_va: bool = False
     profile_overlap_pct: Optional[float] = None
     trend_day_probability: float = 0.0
+    # Phase B v4 - Open Type Dalton (Tier 1 INVENTAIRE)
+    open_type: Optional[str] = None     # raw open_type C++ (OD/OA/OAIR/OAOR/OOR)
+    open_drive: bool = False             # open drive detected
+    open_bias_conf: float = 0.0          # confidence 0-1
+    open_direction: int = 0              # +1 up / -1 dn / 0 neutral
+    # Phase B v4 - Initial Balance Dalton (21 features inutilisees)
+    ib_complete: bool = False
+    ib_broken_up: bool = False
+    ib_broken_down: bool = False
+    ib_range_atr: Optional[float] = None
+    ib_is_narrow: bool = False
+    ib_is_wide: bool = False
+    ib_position_pct: Optional[float] = None
+    ib_extension_ratio: Optional[float] = None
+    ib_high: Optional[float] = None
+    ib_low: Optional[float] = None
 
 
 @dataclass
@@ -85,6 +101,18 @@ class OrderFlowState:
     delta_div_slope_strength: float = 0.0
     delta_div_event: int = 0  # C++ event +1/-1/0
     finish_strength: float = 0.0
+    # Phase B v4 - Battle Navale extended (souverain Jackson section 4-5 manuel)
+    bn_color_up: int = 0
+    bn_color_dn: int = 0
+    bn_long_up: int = 0
+    bn_long_dn: int = 0
+    bn_absorb_ask: int = 0
+    bn_absorb_bid: int = 0
+    bn_score_raw: float = 0.0
+    bn_pressure_ask: float = 0.0
+    bn_pressure_bid: float = 0.0
+    bn_bull_strength: int = 0  # compteur derive (Lot A1)
+    bn_bear_strength: int = 0
 
 
 @dataclass
@@ -138,6 +166,15 @@ class NarrativeContext:
     patterns: PatternsDetected = field(default_factory=PatternsDetected)
     macro_regime: str = "UNKNOWN"  # "calm_vix_low" / "elevated" / "extreme"
     vix_level: float = 0.0
+    # Phase B v4 - VWAP bands brutes (pour scenarios SD2/SD3 touch reversal)
+    vwap_d: Optional[float] = None
+    vwap_d_sd2u: Optional[float] = None
+    vwap_d_sd2d: Optional[float] = None
+    vwap_d_sd3u: Optional[float] = None
+    vwap_d_sd3d: Optional[float] = None
+    vwap_triple_align: int = 0  # 0/1 alignement triple VWAP day/week/month
+    bool_above_vwap_d: bool = False
+    prev_vwap: Optional[float] = None
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -416,7 +453,7 @@ def _cluster_levels(levels: list, atr: float, close: float) -> list:
 # ════════════════════════════════════════════════════════════════════════════
 
 def _extract_market_structure(bar: dict) -> MarketStructureState:
-    """Extrait MarketStructureState depuis bar."""
+    """Extrait MarketStructureState depuis bar (Phase B v4 enrichi)."""
     return MarketStructureState(
         open_relation=OPEN_RELATION_MAP.get(_safe_int(bar, "open_relation_type"), "UNKNOWN"),
         profile_shape=PROFILE_SHAPE_MAP.get(_safe_int(bar, "profile_shape"), "UNKNOWN"),
@@ -426,6 +463,22 @@ def _extract_market_structure(bar: dict) -> MarketStructureState:
         inside_va=_safe_bool(bar, "inside_cur_va"),
         profile_overlap_pct=bar.get("profile_overlap_pct"),
         trend_day_probability=_safe_float(bar, "trend_day_probability"),
+        # Phase B v4 - Open Type Dalton
+        open_type=bar.get("open_type"),
+        open_drive=_safe_bool(bar, "open_drive"),
+        open_bias_conf=_safe_float(bar, "open_bias_conf"),
+        open_direction=_safe_int(bar, "open_direction"),
+        # Phase B v4 - Initial Balance
+        ib_complete=_safe_bool(bar, "ib_complete"),
+        ib_broken_up=_safe_bool(bar, "ib_broken_up"),
+        ib_broken_down=_safe_bool(bar, "ib_broken_down") or _safe_bool(bar, "ib_broken_dn"),
+        ib_range_atr=bar.get("ib_range_atr") or bar.get("ib_atr"),
+        ib_is_narrow=_safe_bool(bar, "ib_is_narrow"),
+        ib_is_wide=_safe_bool(bar, "ib_is_wide"),
+        ib_position_pct=bar.get("ib_position_pct"),
+        ib_extension_ratio=bar.get("ib_extension_ratio"),
+        ib_high=bar.get("ib_high"),
+        ib_low=bar.get("ib_low"),
     )
 
 
@@ -435,12 +488,32 @@ def _extract_order_flow(bar: dict) -> OrderFlowState:
     cvd_day = _safe_int(bar, "cvd_day")
     cvd_session = _safe_int(bar, "cvd_session")
 
-    # BN signals actifs si au moins 1 non-nul
-    bn_active = any(
-        _safe_float(bar, k) != 0.0
-        for k in ("bn_color_up", "bn_color_dn", "bn_absorb_ask", "bn_absorb_bid",
-                  "bn_score_raw", "bn_long_up", "bn_long_dn")
+    # BN signals individuels (Phase B v4 - souverain Jackson section 4-5 manuel)
+    bn_color_up = _safe_int(bar, "bn_color_up")
+    bn_color_dn = _safe_int(bar, "bn_color_dn")
+    bn_long_up = _safe_int(bar, "bn_long_up")
+    bn_long_dn = _safe_int(bar, "bn_long_dn")
+    bn_absorb_ask = _safe_int(bar, "bn_absorb_ask")
+    bn_absorb_bid = _safe_int(bar, "bn_absorb_bid")
+    bn_score_raw = _safe_float(bar, "bn_score_raw")
+    bn_pressure_ask = _safe_float(bar, "bn_pressure_ask")
+    bn_pressure_bid = _safe_float(bar, "bn_pressure_bid")
+
+    # Strength compteurs derives (anti-PATTERN_11 : count, pas score arbitraire)
+    bn_bull_strength = (
+        (1 if bn_color_up > 0 else 0)
+        + (1 if bn_long_up > 0 else 0)
+        + (1 if bn_absorb_bid > 0 else 0)  # smart money buying
+        + (1 if bn_pressure_bid > bn_pressure_ask and bn_pressure_bid > 0 else 0)
     )
+    bn_bear_strength = (
+        (1 if bn_color_dn > 0 else 0)
+        + (1 if bn_long_dn > 0 else 0)
+        + (1 if bn_absorb_ask > 0 else 0)  # smart money selling
+        + (1 if bn_pressure_ask > bn_pressure_bid and bn_pressure_ask > 0 else 0)
+    )
+
+    bn_active = (bn_bull_strength + bn_bear_strength) > 0 or bn_score_raw != 0.0
 
     return OrderFlowState(
         delta_day=delta_day,
@@ -452,6 +525,18 @@ def _extract_order_flow(bar: dict) -> OrderFlowState:
         delta_div_slope_strength=_safe_float(bar, "delta_div_slope_strength"),
         delta_div_event=_safe_int(bar, "delta_divergence"),
         finish_strength=_safe_float(bar, "finish_strength"),
+        # Phase B v4 - BN extended
+        bn_color_up=bn_color_up,
+        bn_color_dn=bn_color_dn,
+        bn_long_up=bn_long_up,
+        bn_long_dn=bn_long_dn,
+        bn_absorb_ask=bn_absorb_ask,
+        bn_absorb_bid=bn_absorb_bid,
+        bn_score_raw=bn_score_raw,
+        bn_pressure_ask=bn_pressure_ask,
+        bn_pressure_bid=bn_pressure_bid,
+        bn_bull_strength=bn_bull_strength,
+        bn_bear_strength=bn_bear_strength,
     )
 
 
@@ -545,4 +630,13 @@ def build_narrative_context(bar: dict) -> NarrativeContext:
         patterns=_extract_patterns(bar),
         macro_regime=_macro_regime_from_vix(vix),
         vix_level=vix,
+        # Phase B v4 - VWAP bands raw (pour scenarios SD2/SD3 touch reversal)
+        vwap_d=bar.get("vwap_d"),
+        vwap_d_sd2u=bar.get("vwap_d_sd2u"),
+        vwap_d_sd2d=bar.get("vwap_d_sd2d"),
+        vwap_d_sd3u=bar.get("vwap_d_sd3u"),
+        vwap_d_sd3d=bar.get("vwap_d_sd3d"),
+        vwap_triple_align=_safe_int(bar, "vwap_triple_align"),
+        bool_above_vwap_d=_safe_bool(bar, "bool_above_vwap_d"),
+        prev_vwap=bar.get("prev_vwap"),
     )

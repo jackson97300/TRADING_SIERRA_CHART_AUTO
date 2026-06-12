@@ -200,7 +200,7 @@ def test_generate_scenarios_returns_at_least_one():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     assert len(scenarios) >= 1
 
 
@@ -209,7 +209,7 @@ def test_scenarios_sorted_by_score():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     scores = [s.heuristic_score for s in scenarios]
     assert scores == sorted(scores, reverse=True), f"Not sorted: {scores}"
 
@@ -218,7 +218,7 @@ def test_scenarios_contain_setups_with_rr():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     for sc in scenarios:
         assert sc.name
         assert sc.direction in ("bullish", "bearish", "range")
@@ -235,7 +235,7 @@ def test_bullish_continuation_present_when_cvd_day_strong():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     # CVD day +16188 -> bull continuation devrait etre present
     assert any("Bullish continuation" in n for n in names)
@@ -245,7 +245,7 @@ def test_bearish_rejection_present_when_confluence():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert any("Bearish rejection" in n for n in names)
 
@@ -255,7 +255,7 @@ def test_range_bound_split_into_2_scenarios():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     # 2 Scenarios distincts au lieu de 1 Scenario avec 2 setups
     assert any("Range bound LONG fade" in n for n in names)
@@ -271,7 +271,7 @@ def test_judas_scenario_absent_when_judas_not_active():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert not any("Judas Swing" in n for n in names)
 
@@ -284,7 +284,7 @@ def test_judas_scenario_present_when_activated():
     bar["judas_swing_active"] = True
     bar["judas_swing_direction"] = -1
     ctx = build_narrative_context(bar)
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert any("Judas Swing reversal SHORT" in n for n in names)
 
@@ -336,7 +336,7 @@ def test_lot1_bearish_rejection_AND_confluence_and_distance():
     bar["vwap_w"] = 30500.0
     bar["dist_swing_high"] = 1000.0
     ctx = build_narrative_context(bar)
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     # Sans confluence proche, bearish rejection NE DOIT PAS apparaitre
     assert not any("Bearish rejection" in n for n in names), (
@@ -353,7 +353,7 @@ def test_lot2_no_probability_pct_attribute():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     for sc in scenarios:
         assert hasattr(sc, "heuristic_score")
         assert not hasattr(sc, "probability_pct"), (
@@ -373,7 +373,7 @@ def test_lot3_failed_breakout_spring_when_sweep_low():
     bar["sweep_low_this_bar"] = True
     bar["range_pos_va"] = 50.0  # >= 30 = retour dans range
     ctx = build_narrative_context(bar)
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert any("Failed Breakout LONG (Spring)" in n for n in names)
 
@@ -387,7 +387,7 @@ def test_lot3_failed_breakout_utad_when_sweep_high():
     bar["range_pos_va"] = 50.0  # <= 70 = retour dans range
     bar["cvd_day"] = -2000  # macro BEAR pour bonus score
     ctx = build_narrative_context(bar)
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert any("Failed Breakout SHORT (UTAD)" in n for n in names)
 
@@ -401,7 +401,7 @@ def test_lot3_fvg_magnet_up_when_fvg_present_macro_bull():
     bar["dist_fvg_up_nearest_atr"] = 0.4  # proche au-dessus
     bar["cvd_day"] = 5000  # macro BULL
     ctx = build_narrative_context(bar)
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert any("FVG Magnet UP" in n for n in names)
 
@@ -417,7 +417,7 @@ def test_lot3_single_print_magnet_when_present():
     bar["dist_single_print_atr"] = -0.4
     bar["single_print_density"] = 0.6
     ctx = build_narrative_context(bar)
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert any("Single Print Magnet SHORT" in n for n in names)
 
@@ -434,7 +434,7 @@ def test_lot4_vix_extreme_drops_range_scenarios():
     bar["vix_level"] = 42.0  # extreme
     ctx = build_narrative_context(bar)
     assert ctx.macro_regime == "extreme"
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert not any("Range bound" in n for n in names), (
         f"Range scenarios non filtres en VIX extreme : {names}"
@@ -475,7 +475,7 @@ def test_round2_vix_stressed_drops_fvg_magnet():
     bar["cvd_day"] = 5000  # BULL pour declencher FVG up
     ctx = build_narrative_context(bar)
     assert ctx.macro_regime == "stressed"
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert not any("FVG Magnet" in n for n in names), (
         f"FVG Magnet non filtre en VIX stressed : {names}"
@@ -491,7 +491,7 @@ def test_round2_vix_extreme_drops_bullish_continuation():
     bar["cvd_day"] = 10000  # BULL fort
     ctx = build_narrative_context(bar)
     assert ctx.macro_regime == "extreme"
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert not any("Bullish continuation" in n for n in names), (
         f"Bullish continuation non filtre en VIX extreme : {names}"
@@ -510,7 +510,7 @@ def test_round2_vix_calm_drops_single_print_magnet():
     bar["single_print_density"] = 0.6
     ctx = build_narrative_context(bar)
     assert ctx.macro_regime == "calm_vix_low"
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert not any("Single Print Magnet" in n for n in names), (
         f"Single Print Magnet non filtre en VIX calm_vix_low : {names}"
@@ -526,7 +526,7 @@ def test_round2_fvg_renamed_to_magnet():
     bar["dist_fvg_up_nearest_atr"] = 0.4
     bar["cvd_day"] = 5000
     ctx = build_narrative_context(bar)
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert any("FVG Magnet UP" in n for n in names)
     assert not any("FVG Fill" in n for n in names)
@@ -547,7 +547,7 @@ def test_round2_spring_utad_score_base_35():
     bar["bn_score_raw"] = 0.0
     bar["cvd_day"] = 500  # neutre (sous threshold 1000)
     ctx = build_narrative_context(bar)
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     spring = next((s for s in scenarios if "Spring" in s.name), None)
     assert spring is not None
     assert spring.heuristic_score == 35, (
@@ -561,7 +561,7 @@ def test_round2_swing_rr_uses_target_2_when_available():
     from CORE.scenario_generator import generate_scenarios, _compute_r_r
     bar = _build_realistic_nq_bar()
     ctx = build_narrative_context(bar)
-    scenarios = generate_scenarios(ctx)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
     # Bullish continuation a target_1 (nearest res) + target_2 (second res)
     bull = next((s for s in scenarios if "Bullish continuation" in s.name), None)
     if bull is None:
@@ -588,6 +588,261 @@ def test_round2_adversarial_bearish_rejection_boundary():
     # Le bar realiste a un cluster confluence>=2 distance ~0.43 ATR
     sc = _scenario_bearish_rejection(ctx)
     assert sc is not None, "Bearish rejection devrait declencher (conf>=2 ET dist<=1.5)"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Phase B v4 Lot A - Nouveaux scenarios (souverains + Tier 1)
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_phaseB_v4_A1_bn_fired_confluence_long():
+    """A1 : BN bull strength + niveau confluence + macro BULL -> BN Fired LONG."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["bn_color_up"] = 1
+    bar["bn_long_up"] = 1
+    bar["bn_absorb_bid"] = 1
+    bar["bn_score_raw"] = 0.6
+    bar["cvd_day"] = 10000  # macro BULL
+    ctx = build_narrative_context(bar)
+    assert ctx.order_flow.bn_bull_strength >= 3
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    names = [s.name for s in scenarios]
+    assert any("BN Fired Confluence" in n for n in names)
+
+
+def test_phaseB_v4_A1_bn_souverain_score_can_exceed_75():
+    """A1 : BN scenario peut atteindre 85 (souverain Jackson)."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["bn_color_up"] = 1
+    bar["bn_long_up"] = 1
+    bar["bn_absorb_bid"] = 1
+    bar["bn_pressure_bid"] = 1.0
+    bar["bn_score_raw"] = 0.8
+    bar["cvd_day"] = 15000
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    bn = next((s for s in scenarios if "BN Fired" in s.name), None)
+    assert bn is not None
+    assert bn.heuristic_score > 75, f"BN souverain score doit pouvoir depasser 75, got {bn.heuristic_score}"
+
+
+def test_phaseB_v4_A2_open_drive_only_in_us_cash_first_30min():
+    """A2 : Open Drive emis uniquement us_cash_open + first 30min."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["open_drive"] = True
+    bar["trend_day_probability"] = 0.7
+    bar["open_direction"] = 1
+    bar["open_bias_conf"] = 0.8
+    # Hors window us_cash_open -> pas de scenario
+    bar["session_segment"] = "london"
+    bar["is_in_us_cash"] = False
+    bar["mins_et"] = 377
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    names = [s.name for s in scenarios]
+    assert not any("Open Drive" in n for n in names), "Open Drive ne doit pas declencher hors us_cash first 30min"
+
+
+def test_phaseB_v4_A2_open_drive_us_cash_first_30min_triggers():
+    """A2 : Open Drive declenche dans us_cash_open + first 30min."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["open_drive"] = True
+    bar["trend_day_probability"] = 0.7
+    bar["open_direction"] = 1
+    bar["open_bias_conf"] = 0.8
+    bar["session_segment"] = "us_cash"
+    bar["is_in_london"] = False
+    bar["is_in_us_cash"] = True
+    bar["mins_et"] = 580  # 09:40 ET (dans window)
+    bar["cvd_day"] = 10000  # macro BULL coherent
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    names = [s.name for s in scenarios]
+    assert any("Open Drive LONG" in n for n in names)
+
+
+def test_phaseB_v4_A3_ib_break_continuation_long():
+    """A3 : IB cassee up + macro BULL -> IB Break Continuation LONG."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["ib_complete"] = True
+    bar["ib_broken_up"] = True
+    bar["ib_range_atr"] = 1.2
+    bar["ib_is_narrow"] = True
+    bar["ib_high"] = 29550.0
+    bar["ib_low"] = 29380.0
+    bar["cvd_day"] = 10000
+    bar["cvd_session"] = 500
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    names = [s.name for s in scenarios]
+    assert any("IB Break Continuation LONG" in n for n in names)
+
+
+def test_phaseB_v4_A3_ib_break_short_when_broken_down():
+    """A3 : IB cassee down + macro BEAR -> IB Break Continuation SHORT."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["ib_complete"] = True
+    bar["ib_broken_down"] = True
+    bar["ib_range_atr"] = 1.2
+    bar["ib_is_narrow"] = True
+    bar["ib_high"] = 29550.0
+    bar["ib_low"] = 29380.0
+    bar["cvd_day"] = -10000
+    bar["cvd_session"] = -500
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    names = [s.name for s in scenarios]
+    assert any("IB Break Continuation SHORT" in n for n in names)
+
+
+def test_phaseB_v4_A4_vwap_sd3_touch_reversal():
+    """A4 : Price touche VWAP SD3 upper -> SD3 Touch Reversal SHORT."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    # Place close pres de vwap_d_sd3u (29900) - close est 29594.5 et atr 186
+    # Donc on doit deplacer close ou ajuster sd3u
+    bar["close"] = 29940.0  # tout pres de sd3u 29950
+    bar["vwap_d_sd3u"] = 29950.0
+    bar["delta_divergence"] = -1  # divergence bearish
+    bar["finish_strength"] = -30
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    names = [s.name for s in scenarios]
+    assert any("VWAP SD3 Touch Reversal SHORT" in n for n in names)
+
+
+def test_phaseB_v4_A5_holy_grail_long_in_us_session():
+    """A5 : Holy Grail LONG en us_cash + trend_prob + pullback VWAP."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["trend_day_probability"] = 0.7
+    bar["close"] = 29350.0  # pres vwap_d 29304 (pullback)
+    bar["vwap_d"] = 29304.67
+    bar["session_segment"] = "us_cash"
+    bar["is_in_us_cash"] = True
+    bar["is_in_london"] = False
+    bar["mins_et"] = 700  # 11:40 ET (us_cash power)
+    bar["cvd_day"] = 5000  # BULL
+    bar["vwap_triple_align"] = 1
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    names = [s.name for s in scenarios]
+    assert any("Holy Grail Raschke LONG" in n for n in names)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Phase B v4 Lot B - Recalibration scores
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_phaseB_v4_B_bullish_continuation_cap_65():
+    """Lot B : Bullish continuation cap recalibre 75->65."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    # Tous bonus activated -> score max
+    bar["cvd_day"] = 15000  # BULL
+    bar["profile_shape"] = 1  # P
+    bar["open_relation_type"] = 2  # OAOR
+    bar["range_pos_va"] = 90.0  # > 0.7 mais pas pct
+    bar["judas_swing_direction"] = 1
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    bull = next((s for s in scenarios if s.name == "Bullish continuation"), None)
+    assert bull is not None
+    assert bull.heuristic_score <= 65, f"Bullish continuation cap doit etre 65, got {bull.heuristic_score}"
+
+
+def test_phaseB_v4_B_judas_cap_60():
+    """Lot B : Judas reversal cap recalibre 75->60."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["judas_swing_active"] = True
+    bar["judas_swing_direction"] = -1
+    bar["bn_color_up"] = 1
+    bar["bn_score_raw"] = 0.5
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx, apply_filter=False)
+    judas = next((s for s in scenarios if "Judas Swing" in s.name), None)
+    assert judas is not None
+    assert judas.heuristic_score <= 60, f"Judas cap doit etre 60, got {judas.heuristic_score}"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Phase B v4 Lot C - Filtre Douglas
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_phaseB_v4_C_douglas_filter_drops_low_score():
+    """Lot C : filter drop scenarios heuristic_score < MIN_SCORE_FILTER (55)."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios, MIN_SCORE_FILTER
+    ctx = build_narrative_context(_build_realistic_nq_bar())
+    scenarios_all = generate_scenarios(ctx, apply_filter=False)
+    scenarios_filtered = generate_scenarios(ctx, apply_filter=True)
+    # Tous les filtres doivent avoir score >= 55
+    for sc in scenarios_filtered:
+        assert sc.heuristic_score >= MIN_SCORE_FILTER, (
+            f"Scenario {sc.name} a score {sc.heuristic_score} < {MIN_SCORE_FILTER}"
+        )
+    # Filter peut avoir moins d'elements
+    assert len(scenarios_filtered) <= len(scenarios_all)
+
+
+def test_phaseB_v4_C_max_scenarios_per_bar_3():
+    """Lot C : max MAX_SCENARIOS_PER_BAR=3 scenarios retournes."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios, MAX_SCENARIOS_PER_BAR
+    ctx = build_narrative_context(_build_realistic_nq_bar())
+    scenarios = generate_scenarios(ctx, apply_filter=True)
+    assert len(scenarios) <= MAX_SCENARIOS_PER_BAR
+
+
+def test_phaseB_v4_C_primary_tag_on_top_scenario():
+    """Lot C : primary=True sur le top-1 scenario par heuristic_score."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    ctx = build_narrative_context(_build_realistic_nq_bar())
+    scenarios = generate_scenarios(ctx, apply_filter=True)
+    if scenarios:
+        assert scenarios[0].primary is True
+        for sc in scenarios[1:]:
+            assert sc.primary is False
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Phase B v4 Lot D - VIX hierarchy boost/penalize
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_phaseB_v4_D_vix_calm_boosts_bullish_continuation():
+    """Lot D : VIX calm_vix_low boost Bullish continuation +10."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar_calm = _build_realistic_nq_bar()
+    bar_calm["vix_level"] = 12.0  # calm_vix_low
+    bar_calm["has_single_prints"] = False  # disable single print drop in calm
+    bar_normal = _build_realistic_nq_bar()
+    bar_normal["vix_level"] = 22.0  # elevated
+    ctx_calm = build_narrative_context(bar_calm)
+    ctx_normal = build_narrative_context(bar_normal)
+    sc_calm = generate_scenarios(ctx_calm, apply_filter=False)
+    sc_normal = generate_scenarios(ctx_normal, apply_filter=False)
+    bull_calm = next((s for s in sc_calm if s.name == "Bullish continuation"), None)
+    bull_normal = next((s for s in sc_normal if s.name == "Bullish continuation"), None)
+    if bull_calm and bull_normal:
+        assert bull_calm.heuristic_score >= bull_normal.heuristic_score
 
 
 if __name__ == "__main__":
