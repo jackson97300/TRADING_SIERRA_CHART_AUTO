@@ -66,19 +66,33 @@ _LOG = logging.getLogger("scenario_generator")
 # Lopez AFML ch.3 (Triple Barrier) : stop >= 1.5x volatilite intrabar.
 # ATR 1min ~= volatilite intrabar -> stop minimum ~ 1 ATR pour swing.
 # Scalp accepte stop plus serre car horizon court (1-5 bars).
+#
+# Trade-off mecanique :
+#   - Swing stop 0.8 ATR + target_1 a nearest support/resistance proche
+#     -> R:R 0.95 frequent. Compense par target_2 (full move) base R:R
+#     quand dispo (cf _rr_base_target).
+#   - Scalp stop 0.3 ATR + target proche -> R:R 1.5-2.0 typique.
+#
+# Acceptable ranges etroits + win rate eleve assume (Lopez asymetrie),
+# mais NON-CALIBRE empirique - Phase C arbitrera.
 STOP_ATR_FRAC_SWING = 0.8
 STOP_ATR_FRAC_SCALP = 0.3
 ENTRY_ZONE_ATR_FRAC = 0.10  # +/- 10% ATR autour entry
 
 # VIX regime filter - drop scenarios incompatibles avec regime courant.
 # Reference : Vilkov/Dimitrov 2024 (cf feedback_regime_gex_finding.md).
-VIX_INCOMPATIBLE = {
-    "extreme": {"Range bound LONG fade", "Range bound SHORT fade", "FVG Fill"},
-    "stressed": {"FVG Fill"},
-    "calm_vix_low": set(),
-    "calm": set(),
-    "elevated": set(),
-    "UNKNOWN": set(),
+# Re-review market-analyst 12/06 v2 : ajout Bullish continuation en extreme
+# (mean reversion domine en VIX>35) + Single Print Magnet en calm (pas de
+# fast moves donc magnet inefficace).
+# Re-review code-reviewer 12/06 v2 : filtre par prefix matching pour couvrir
+# les noms scenarios variantes (ex: "FVG Magnet UP" + "FVG Magnet DOWN").
+VIX_INCOMPATIBLE_PREFIXES = {
+    "extreme": ("Range bound", "FVG Magnet", "Bullish continuation"),
+    "stressed": ("FVG Magnet",),
+    "calm_vix_low": ("Single Print Magnet",),
+    "calm": (),
+    "elevated": (),
+    "UNKNOWN": (),
 }
 
 
@@ -176,14 +190,30 @@ def _stop_distance_atr(setup_type: str) -> float:
     return STOP_ATR_FRAC_SWING
 
 
+def _rr_base_target(target_1: float, target_2: Optional[float], setup_type: str) -> float:
+    """R:R base : target_2 si swing + disponible (plein move), sinon target_1.
+
+    Re-review market-analyst 12/06 v2 : R:R 0.95 mecanique inacceptable
+    Lopez sur swing. Solution : R:R calcule sur target_2 (full move) par
+    defaut sur swing. target_1 reste cible partielle (50% close convention).
+    """
+    if setup_type == "swing" and target_2 is not None:
+        return target_2
+    return target_1
+
+
 def _make_setup_long(name: str, entry: float, target: float, ctx: NarrativeContext,
                      setup_type: str = "swing", target_2: Optional[float] = None,
                      conditions_validation: Optional[list] = None,
                      conditions_invalidation: Optional[list] = None,
                      confidence: str = "medium", rationale: str = "") -> TradingSetup:
-    """Factory LONG setup avec stops calibres."""
+    """Factory LONG setup avec stops calibres.
+
+    R:R calcule sur target_2 si swing + disponible (full move), sinon target_1.
+    """
     stop_frac = _stop_distance_atr(setup_type)
     stop = entry - stop_frac * ctx.atr
+    rr_target = _rr_base_target(target, target_2, setup_type)
     return TradingSetup(
         name=name, side="long",
         entry_price=entry,
@@ -191,7 +221,7 @@ def _make_setup_long(name: str, entry: float, target: float, ctx: NarrativeConte
         entry_zone_high=entry + ENTRY_ZONE_ATR_FRAC * ctx.atr,
         target_1=target, target_2=target_2,
         stop_loss=round(stop, 2),
-        r_r_ratio=_compute_r_r(entry, target, stop, "long"),
+        r_r_ratio=_compute_r_r(entry, rr_target, stop, "long"),
         setup_type=setup_type,
         conditions_validation=conditions_validation or [],
         conditions_invalidation=conditions_invalidation or [],
@@ -204,9 +234,13 @@ def _make_setup_short(name: str, entry: float, target: float, ctx: NarrativeCont
                       conditions_validation: Optional[list] = None,
                       conditions_invalidation: Optional[list] = None,
                       confidence: str = "medium", rationale: str = "") -> TradingSetup:
-    """Factory SHORT setup avec stops calibres."""
+    """Factory SHORT setup avec stops calibres.
+
+    R:R calcule sur target_2 si swing + disponible (full move), sinon target_1.
+    """
     stop_frac = _stop_distance_atr(setup_type)
     stop = entry + stop_frac * ctx.atr
+    rr_target = _rr_base_target(target, target_2, setup_type)
     return TradingSetup(
         name=name, side="short",
         entry_price=entry,
@@ -214,7 +248,7 @@ def _make_setup_short(name: str, entry: float, target: float, ctx: NarrativeCont
         entry_zone_high=entry + ENTRY_ZONE_ATR_FRAC * ctx.atr,
         target_1=target, target_2=target_2,
         stop_loss=round(stop, 2),
-        r_r_ratio=_compute_r_r(entry, target, stop, "short"),
+        r_r_ratio=_compute_r_r(entry, rr_target, stop, "short"),
         setup_type=setup_type,
         conditions_validation=conditions_validation or [],
         conditions_invalidation=conditions_invalidation or [],
@@ -533,12 +567,14 @@ def _scenario_failed_breakout(ctx: NarrativeContext) -> Optional[Scenario]:
         near_res = _nearest_resistance(ctx)
         if near_res is None:
             return None
-        score = 45
+        # Re-review market-analyst 12/06 v2 : Failed Breakout WR historique
+        # ~30% sans confirmation N+1 (Wyckoff VSA). Score base reduit 45->35.
+        score = 35
         if ctx.order_flow.bn_signals_active:
             score += 10
         if ctx.order_flow.macro_bias == "BULL":
             score += 10
-        score = min(score, 75)
+        score = min(score, 65)
 
         setup = _make_setup_long(
             name="LONG Spring (failed breakdown)",
@@ -576,12 +612,13 @@ def _scenario_failed_breakout(ctx: NarrativeContext) -> Optional[Scenario]:
         near_sup = _nearest_support(ctx)
         if near_sup is None:
             return None
-        score = 45
+        # Re-review market-analyst 12/06 v2 : score base reduit 45->35
+        score = 35
         if ctx.order_flow.bn_signals_active:
             score += 10
         if ctx.order_flow.macro_bias == "BEAR":
             score += 10
-        score = min(score, 75)
+        score = min(score, 65)
 
         setup = _make_setup_short(
             name="SHORT UTAD (failed breakout)",
@@ -617,20 +654,26 @@ def _scenario_failed_breakout(ctx: NarrativeContext) -> Optional[Scenario]:
     return None
 
 
-def _scenario_fvg_fill(ctx: NarrativeContext) -> Optional[Scenario]:
-    """Scenario : FVG Fill (ICT - price returns to fill Fair Value Gap).
+def _scenario_fvg_magnet(ctx: NarrativeContext) -> Optional[Scenario]:
+    """Scenario : FVG Magnet (price attire vers zone d'inefficience FVG).
 
-    Reference : ICT Smart Money Concepts. FVG up = gap bullish a combler
-    par retour down. FVG dn = gap bearish a combler par retour up.
+    # Convention semantique (cf market_profile_v5.py:_extract_fvg_state)
 
-    Trigger : FVG present + distance < 1.0 ATR + direction compatible.
+    `active_fvg_up` est filtre sur `gap_low >= close` : ce sont les FVG UP
+    dont la zone se trouve AU-DESSUS du close. `dist_fvg_up_nearest_atr > 0`.
+    Interpretation : zone d'inefficience que le price tend a venir "remplir"
+    (effet magnet Steidlmayer-like, pas strict ICT "fill by retrace").
+
+    NB ICT canonique : un bullish FVG (formed during move up) est typiquement
+    consomme par retrace DOWN. Notre convention SC = magnet UP vers zone
+    above. Difference assume - calibration Phase C arbitrera.
+
+    Trigger : FVG present + distance < 1.0 ATR + macro compatible.
     """
-    # FVG up proche au-dessus -> attente de retour DOWN pour fill (bear scenario)
+    # FVG zone above (positive dist) -> magnet LONG si pas macro BEAR
     if (ctx.patterns.fvg_up_count > 0
             and ctx.patterns.fvg_up_dist_atr is not None
             and 0 < ctx.patterns.fvg_up_dist_atr < 1.0):
-        # Price below FVG up zone -> FVG comblee si price monte
-        # Pattern ICT : si macro BEAR, price ne reviendra peut-etre pas combler
         if ctx.order_flow.macro_bias == "BEAR":
             return None
         near_res = _nearest_resistance(ctx)
@@ -638,14 +681,14 @@ def _scenario_fvg_fill(ctx: NarrativeContext) -> Optional[Scenario]:
             return None
         score = 35
         if ctx.patterns.fvg_up_count >= 3:
-            score += 10  # Multiple FVG renforce zone
+            score += 10
         if ctx.order_flow.macro_bias == "BULL":
             score += 10
         score = min(score, 60)
 
         target_price = ctx.close + (ctx.patterns.fvg_up_dist_atr * ctx.atr)
         setup = _make_setup_long(
-            name="LONG FVG fill (up gap)",
+            name="LONG FVG magnet (above)",
             entry=ctx.close,
             target=round(target_price, 2),
             ctx=ctx,
@@ -656,21 +699,21 @@ def _scenario_fvg_fill(ctx: NarrativeContext) -> Optional[Scenario]:
             ],
             conditions_invalidation=["Reversal BEAR avec volume"],
             confidence="medium",
-            rationale="ICT FVG up proche - price tend a combler les gaps",
+            rationale="FVG zone above proche - price tend vers inefficience",
         )
         return Scenario(
-            name="FVG Fill (up)",
+            name="FVG Magnet UP",
             direction="bullish",
             heuristic_score=score,
             description=(
                 f"FVG up active a {ctx.patterns.fvg_up_dist_atr:.2f} ATR "
-                f"({ctx.patterns.fvg_up_count} gaps). Price tend a combler."
+                f"({ctx.patterns.fvg_up_count} gaps). Convention magnet."
             ),
             key_levels_used=[near_res],
             setups=[setup],
         )
 
-    # FVG dn proche en-dessous -> attente de retour UP pour fill (bull scenario)
+    # FVG zone below (negative dist) -> magnet SHORT si pas macro BULL
     if (ctx.patterns.fvg_dn_count > 0
             and ctx.patterns.fvg_dn_dist_atr is not None
             and -1.0 < ctx.patterns.fvg_dn_dist_atr < 0):
@@ -688,7 +731,7 @@ def _scenario_fvg_fill(ctx: NarrativeContext) -> Optional[Scenario]:
 
         target_price = ctx.close + (ctx.patterns.fvg_dn_dist_atr * ctx.atr)
         setup = _make_setup_short(
-            name="SHORT FVG fill (dn gap)",
+            name="SHORT FVG magnet (below)",
             entry=ctx.close,
             target=round(target_price, 2),
             ctx=ctx,
@@ -699,15 +742,15 @@ def _scenario_fvg_fill(ctx: NarrativeContext) -> Optional[Scenario]:
             ],
             conditions_invalidation=["Reversal BULL avec volume"],
             confidence="medium",
-            rationale="ICT FVG dn proche - price tend a combler les gaps",
+            rationale="FVG zone below proche - price tend vers inefficience",
         )
         return Scenario(
-            name="FVG Fill (dn)",
+            name="FVG Magnet DOWN",
             direction="bearish",
             heuristic_score=score,
             description=(
                 f"FVG dn active a {ctx.patterns.fvg_dn_dist_atr:.2f} ATR "
-                f"({ctx.patterns.fvg_dn_count} gaps). Price tend a combler."
+                f"({ctx.patterns.fvg_dn_count} gaps). Convention magnet."
             ),
             key_levels_used=[near_sup],
             setups=[setup],
@@ -849,21 +892,27 @@ def _apply_vix_regime_filter(scenarios: list, ctx: NarrativeContext) -> list:
     """Lot 4 : Drop scenarios incompatibles avec regime VIX courant.
 
     Reference Vilkov/Dimitrov 2024 (feedback_regime_gex_finding.md) :
-    - VIX extreme (>35) : range scenarios incoherents (range explose)
+    - VIX extreme (>35) : range + FVG + continuation incoherents
+      (mean reversion domine, range explose)
     - VIX stressed (25-35) : FVG fill peu fiable (volatilite tue precision)
+    - VIX calm_vix_low (<15) : Single Print Magnet inefficace (pas fast moves)
 
-    Filtre DROP, n'AJUSTE PAS heuristic_score (anti-PATTERN_11 :
-    on n'invente pas de proba calibree, on coupe ce qui ne marche pas).
+    Filtre DROP via prefix matching (re-review 12/06 v2 : bug exact-match
+    "FVG Fill (up)" jamais detecte par "FVG Fill"), n'AJUSTE PAS
+    heuristic_score (anti-PATTERN_11).
     """
     regime = ctx.macro_regime
-    incompatible = VIX_INCOMPATIBLE.get(regime, set())
-    if not incompatible:
+    prefixes = VIX_INCOMPATIBLE_PREFIXES.get(regime, ())
+    if not prefixes:
         return scenarios
-    filtered = [s for s in scenarios if s.name not in incompatible]
+    filtered = [
+        s for s in scenarios
+        if not any(s.name.startswith(p) for p in prefixes)
+    ]
     dropped = len(scenarios) - len(filtered)
     if dropped > 0:
-        _LOG.debug("VIX regime %s : %d scenarios filtres (%s)",
-                   regime, dropped, incompatible)
+        _LOG.debug("VIX regime %s : %d scenarios filtres (prefixes=%s)",
+                   regime, dropped, prefixes)
     return filtered
 
 
@@ -878,7 +927,7 @@ _BUILDERS: list[Callable[[NarrativeContext], Optional[Scenario]]] = [
     _scenario_range_bound_short_fade,   # Lot 1 split
     _scenario_judas_reversal,
     _scenario_failed_breakout,          # Lot 3
-    _scenario_fvg_fill,                 # Lot 3
+    _scenario_fvg_magnet,               # Lot 3 (rename v3 : magnet convention)
     _scenario_single_print_magnet,      # Lot 3
 ]
 
