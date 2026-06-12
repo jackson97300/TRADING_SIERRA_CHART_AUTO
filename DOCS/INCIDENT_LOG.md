@@ -121,6 +121,117 @@ Tests :
 
 ---
 
+### 2026-06-12 16:30 (53) - [RESOLUTION+ENRICHMENT] - Phase A Market Profile + ICT/Wyckoff enrichment livre + deploye VPS valide empirique
+
+**Categorie** : RESOLUTION (10 angles morts narration identifies) + ENRICHMENT (28+ nouvelles features pipeline LIVE).
+
+**Contexte** : Apres audit ULTRATHINK 12/06 PM cross-check 2 agents sur narration NQ live, identifie 10 angles morts du Market Profile + ICT/Wyckoff manquants du pipeline. Implementation staged Phase A.2a + A.3 + A.4 livree + deployee VPS + validee empirique apres-midi.
+
+**Action staged 12/06 PM** :
+
+**Phase A.2a (commit c68939d)** - 5 EASY features stateless + 1 stateful :
+- compute_psd_sd2_levels() : extension SD1 existante
+- classify_open_relation() : Dalton OAIR/OAOR/OOR
+- compute_profile_overlap() : continuation indicator
+- compute_range_extension() : RE vs IB
+- detect_fvg() : Fair Value Gap ICT 3-bar rolling
+- 19/19 tests PASS
+
+**Phase A.2b (commit 67c5525)** - Catalog reorganization :
+- 12_CONTEXT_ROLLING sous-clusters (5 sous-clusters thematiques)
+- Fusion 5 sous-familles solo (1a_trend, 3_intraday_anchor, 8_mq, 8_mq_ctx, 10_clock, 10_levels_bool)
+- Fix orpheline ts_raw_ms -> META
+
+**Phase A.3 (commit e2b1630)** - 4 MEDIUM features stateful :
+- detect_single_prints() : exploit Sierra DMP natif
+- compute_composite_poc() : rolling 5/20 daily VPOCs
+- detect_liquidity_sweep() : ICT/Smart Money multi-bar pattern
+- detect_judas_swing() : ICT London session pattern
+- 35/35 tests PASS (16 nouveaux + 19 non-regression)
+
+**Phase A.4 integration (commit 647d4be + 941edd2)** :
+- Sub-engines integres sierra_pipeline.enrich_bar() avec try/except safe
+- States stateful per-symbol orchestrator instance (isolation ES/NQ)
+- 4 reserves bloquantes code-reviewer corriges :
+  - #1 CRITIQUE : 4 codes log ajoutes log_catalog.py (anti silent fail)
+  - #2 CRITIQUE : reset states cross-day dans _maybe_cross_day_reset
+  - #3 IMPORTANT : ordre normalize_payload_ts AVANT Market Profile
+  - #4 IMPORTANT : FVG fill definition explicit "Closed FVG" 100% fill
+- 169/169 tests PASS (49 nouveaux + 120 non-regression)
+
+**Phase A.5 deploy VPS valide empirique** :
+- SCP 4 fichiers : market_profile_v5.py + market_profile_advanced.py + sierra_pipeline.py + log_catalog.py
+- Restart MIA-Sierra-Enricher-ES (multi-symbol ES+NQ)
+- Verify J+0 : **39/39 features Phase A presentes dans bar live** :
+  - 19/19 EASY (PSD+2/-2, Open Relation OAOR detected, Profile Overlap, RE, FVG)
+  - 20/20 MEDIUM (Single Prints below detected, FVG 16up+3dn active, London open UP first hour)
+- 0 erreur dans logs (sub-engines tournent sans crash)
+
+**Findings empiriques NQ live 16:30 UTC** :
+- has_single_prints=True (single print sous close 0.56 ATR, density 0.51)
+- fvg_up_active=16, fvg_dn_active=3 (paysage liquidity riche)
+- open_relation_type=2 (OAOR : open OUT of VA mais IN prev range)
+- london_open=29350, first_hour_direction=+1 (UP)
+- bars_since_london_open=254 (~4h25 depuis London open)
+- judas_swing_active=False (current direction = first hour = pas Judas)
+- composite_poc_5d/20d=None (premier jour, valeurs J+1)
+
+**Resolution 10 angles morts narration** :
+- [x] Single Prints (Dalton)        : has_single_prints + position + density
+- [x] PSD+2 / PSD-2                 : prev_vwap_sd2u/d
+- [x] Open Relation Type            : open_relation_type + 3 bool flags
+- [x] Profile Overlap               : profile_overlap_pct + above/below variants
+- [x] Range Extension vs IB         : range_extension_*_ib_atr + completed
+- [x] FVG (Fair Value Gap) ICT      : fvg_up/dn_active + dist nearest atr
+- [x] Liquidity Sweep ICT           : sweep_high/low_active + this_bar + bars_since
+- [x] Judas Swing ICT London        : judas_swing_active + direction + london_open tracking
+- [x] Composite POC 5d/20d          : composite_poc_5d/20d + dist atr (J+1 ready)
+- [ ] UTAD Wyckoff complet          : backlog hard (multi-bar phases A-E)
+- [ ] VIX_term / VVIX externe       : backlog (Databento integration)
+- [ ] TPO Count exact               : backlog (Sierra TPO letters access)
+
+Couverture concepts narration : ~50% -> **~85%** (cible Phase A complete atteinte).
+
+**Trigger prevention applique** :
+- Audit ULTRATHINK 2 agents AVANT plan
+- Procedure stricte : doc A.1 -> code A.2a -> tests -> code A.3 -> tests -> integration A.4 -> REVIEW code-reviewer (4 reserves) -> fixes -> deploy A.5 -> verify J+0
+- Tests pytest 169/169 PASS coverage complete
+- Anti-VALIDATION_MISS : codes log ajoutes log_catalog.py (regle souveraine LOGS TRACABILITE 01/05)
+- Anti-PATTERN_11 : features = OBSERVATIONS pas gates (ML/strategy consume librement)
+- Anti-COMMENT_FALSE : tous commentaires verifies par tests
+
+**Stats Phase A** :
+- 5 commits Phase A (c68939d + 67c5525 + e2b1630 + 647d4be + 941edd2)
+- 169/169 tests PASS coverage complete
+- 1 deploy VPS valide empirique
+- 0 regression downstream
+- 39+ nouvelles features ajoutees pipeline LIVE
+
+**Files concernes** :
+
+Code (CORE/) :
+- market_profile_v5.py (NEW, ~280 LOC, EASY features)
+- market_profile_advanced.py (NEW, ~380 LOC, MEDIUM features)
+- sierra_pipeline.py (modif imports + states + appels enrich_bar + cross_day_reset)
+- log_catalog.py (4 codes log ajoutes)
+
+Tests (tests/sierra_port/) :
+- test_market_profile_v5_easy.py (NEW, 19 tests)
+- test_market_profile_advanced.py (NEW, 16 tests)
+
+Tools (tools/) :
+- feature_catalog_v5.py (reorganization sous-clusters + fusion solos)
+
+**Reviewed** : code-reviewer agent (Phase A.4 review GO-AVEC-RESERVES -> 4 fixes appliques) + 2 agents Phase A.1 audit narration cross-check + auto-reflexion + validation empirique deploy
+
+**Action items POST-RESOLUTION (non-bloquants)** :
+- [ ] J+1 (13/06) : verifier evolution composite_poc_5d/20d cross-day
+- [ ] J+7 (19/06) : stabilite long terme + alpha decay tracking
+- [ ] Phase A.5.3 (FAIT) : INCIDENT_LOG + INVENTAIRE update
+- [ ] Backlog hard : UTAD Wyckoff (multi-bar phases) + VIX_term externe + TPO exact + DEAD 5j re-run + cascade 4.3-4.12 + Phases 5-8 + refactor bots
+
+---
+
 ### 2026-06-12 14:30 (51) - [ARCHITECTURAL_MISMATCH] - delta_div_* DOUBLE MISMATCH LIVE/BATCH decouvert via audit ULTRATHINK 2 agents
 
 **Categorie** : ARCHITECTURAL_MISMATCH (nouveau, plus pernicieux que collision simple).
