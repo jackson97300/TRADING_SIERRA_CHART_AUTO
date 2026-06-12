@@ -317,7 +317,13 @@ class DivergencesV2Calculator:
         # Phase 2.2 fix code-reviewer action #1 : cast int pour coherence
         # JSONL serialise vs datasets historiques v3 (CUMMAX emis int 0/1).
         # bool True == 1 en Python mais "true/false" vs entiers dans JSON output.
+        #
+        # Phase 2.4 (12/06/2026 PM) : ajout aliases canoniques `delta_div_slope_*`
+        # additive non-breaking. Clarifie semantique (SLOPE 10b rolling) vs
+        # C++ `delta_divergence` (EVENT Wyckoff). Anciens noms preserve pour
+        # consumers existants. Migration Stage 3 future (mai 2026 purge v3).
         return {
+            # Features actuelles (preservees pour consumers existants)
             "delta_div_buy": bool(delta_div_buy),
             "delta_div_sell": bool(delta_div_sell),
             "delta_div_strength": delta_div_strength,
@@ -333,6 +339,13 @@ class DivergencesV2Calculator:
             "retest_low_delta_div": retest_low,
             "ctx_div_density_20": ctx_div_density_20,
             "ctx_bars_since_div": ctx_bars_since_div,
+            # Phase 2.4 ALIASES SLOPE (additive non-breaking, 6 features cles)
+            "delta_div_slope_buy": bool(delta_div_buy),  # alias delta_div_buy
+            "delta_div_slope_sell": bool(delta_div_sell),  # alias delta_div_sell
+            "delta_div_slope_strength": delta_div_strength,  # alias delta_div_strength
+            "delta_div_slope_buy_clean": int(bool(delta_div_buy_clean)),  # alias clean
+            "delta_div_slope_sell_clean": int(bool(delta_div_sell_clean)),  # alias clean
+            "delta_div_slope_clean": delta_divergence_clean_slope,  # alias composite
         }
 
     @staticmethod
@@ -387,6 +400,13 @@ class DivergencesV2Calculator:
             "retest_low_delta_div": False,
             "ctx_div_density_20": 0,
             "ctx_bars_since_div": np.nan,
+            # Phase 2.4 ALIASES SLOPE (additive non-breaking, defaults coherents)
+            "delta_div_slope_buy": False,
+            "delta_div_slope_sell": False,
+            "delta_div_slope_strength": np.nan,
+            "delta_div_slope_buy_clean": 0,
+            "delta_div_slope_sell_clean": 0,
+            "delta_div_slope_clean": 0,
         }
 
 

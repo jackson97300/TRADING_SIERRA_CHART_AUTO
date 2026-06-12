@@ -91,16 +91,16 @@ def test_sierra_pipeline_imports_ok_after_phase22():
 # Phase 2.2 : non-regression existing divergences_v2 tests
 # ════════════════════════════════════════════════════════════════════════════
 
-def test_divergences_v2_dict_count_15_keys():
-    """Apres ajout delta_divergence_clean, dict retourne doit avoir 15 keys
-    (14 features originales + 1 composite Phase 2.2).
+def test_divergences_v2_dict_count_21_keys():
+    """Apres Phase 2.4 aliases : dict retourne doit avoir 21 keys
+    (14 features originales + 1 composite Phase 2.2 + 6 aliases Phase 2.4).
     """
     from CORE.divergences_v2 import DivergencesV2Calculator
     calc = DivergencesV2Calculator()
     out = {}
     for i in range(15):
         out = calc.update(close=100.0 + i, delta_bar=10.0, atr=5.0)
-    assert len(out) == 15
+    assert len(out) == 21
 
 
 if __name__ == "__main__":
