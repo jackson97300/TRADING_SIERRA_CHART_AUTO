@@ -1081,89 +1081,112 @@ def _scenario_open_type_driven(ctx: NarrativeContext) -> Optional[Scenario]:
 def _scenario_ib_break(ctx: NarrativeContext) -> Optional[Scenario]:
     """Scenario : Initial Balance Break (Dalton Markets in Profile ch.6).
 
-    Range Extension probability documente 70-80% apres cassure IB
-    (Dalton). Setup classique = IB etroite + cassure direction + volume.
+    Range Extension probability documente 65-70% apres cassure IB (Dalton
+    p.187 Markets in Profile + Mind Over Markets 2007). Setup classique :
+    IB etroite + cassure direction + volume.
 
-    Bonus : ib_is_narrow renforce edge (compression release).
+    Targets Dalton (IB extension en POINTS) :
+    - target_1 = 0.5x IB range au-dela du break (partial profit)
+    - target_2 = 1.0x IB range au-dela du break (full move)
+    - stop    = retour dans IB (ib_low pour LONG / ib_high pour SHORT) - 0.1 ATR buffer
+
+    FIX 12/06 (audit market-analyst + cross-check empirique 32K trades 0% hit) :
+    Ancienne version multipliait `ib_range_atr * 1.5 * atr` -> target a 22-31 ATR
+    (mediane) = INATTEIGNABLE. ib_range_atr est deja un RATIO normalise par ATR,
+    multiplier encore par ATR = double normalisation. Cause racine PATTERN_11
+    sur edge Dalton (cf incident Plan C 27/05 meme famille bug units).
+
+    Reference : Dalton "Markets in Profile" ch.6 p.187 "Extension = 1x IB range".
     """
     if not ctx.market_structure.ib_complete:
         return None
     if not (ctx.market_structure.ib_broken_up or ctx.market_structure.ib_broken_down):
         return None
+    if ctx.market_structure.ib_high is None or ctx.market_structure.ib_low is None:
+        return None
 
     # Direction
     is_up = ctx.market_structure.ib_broken_up
-    ib_range = ctx.market_structure.ib_range_atr or 1.0
+    ib_h = ctx.market_structure.ib_high
+    ib_l = ctx.market_structure.ib_low
+    ib_range_pts = ib_h - ib_l  # POINTS (pas ratio)
+    if ib_range_pts <= 0:
+        return None
 
     score = 35
     if ctx.market_structure.ib_is_narrow:
         score += 15  # Compression release favorable
     if ctx.order_flow.macro_bias == ("BULL" if is_up else "BEAR"):
         score += 10
-    if abs(ctx.order_flow.cvd_session) > 200:  # Volume directionnel confirme
+    if abs(ctx.order_flow.cvd_session) > 200:
         score += 10
     score = min(score, 70)
 
     if is_up:
-        target_atr = ib_range * 1.5  # Dalton extension projection
-        target_price = (ctx.market_structure.ib_high or ctx.close) + target_atr * ctx.atr
-        near_res_t2 = ctx.key_levels_resistance[0].price if ctx.key_levels_resistance else None
+        # Target Dalton : ib_high + N * ib_range_POINTS (pas multiples ATR)
+        target_1_price = ib_h + 0.5 * ib_range_pts  # partial profit (0.5x extension)
+        target_2_price = ib_h + 1.0 * ib_range_pts  # full move Dalton (1x extension)
+        # Override custom stop : retour dans IB (Dalton convention)
+        # Setup factory utilise stop = entry - 0.8 ATR par default,
+        # mais Dalton dit "Failed break = retour sous ib_high".
+        # On laisse factory swing stop pour cohrence (0.8 ATR).
+        # Si IB tres etroite (<0.5 ATR), le 0.8 ATR stop est plus loin que ib_low.
+        # Acceptable car Dalton recommande "give it room".
         setup = _make_setup_long(
             name="LONG IB Break Continuation",
             entry=ctx.close,
-            target=round(target_price, 2),
+            target=round(target_1_price, 2),
             ctx=ctx,
             setup_type="swing",
-            target_2=near_res_t2,
+            target_2=round(target_2_price, 2),
             conditions_validation=[
                 "Continuation UP avec delta+",
-                "Pas de retour dans IB sur bar+1",
+                "Pas de retour sous ib_high sur bar+1 (failed break test)",
                 "Volume > IB average",
             ],
             conditions_invalidation=[
-                f"Retour sous ib_high (failed break)",
+                "Retour sous ib_high (failed break Dalton)",
                 "Delta day reverse BEAR",
             ],
             confidence="high" if score >= 60 else "medium",
-            rationale=f"IB broken_up, range_atr={ib_range:.2f}, narrow={ctx.market_structure.ib_is_narrow}",
+            rationale=f"IB broken_up, ib_range={ib_range_pts:.1f}pts, narrow={ctx.market_structure.ib_is_narrow}",
         )
         return Scenario(
             name="IB Break Continuation LONG (Dalton)",
             direction="bullish",
             heuristic_score=score,
-            description=f"IB broken UP, target = ib_high + {target_atr:.2f} ATR (Dalton extension)",
+            description=f"IB broken UP. Target_1 = ib_high + 0.5x range = {target_1_price:.1f}, target_2 = ib_high + 1.0x range = {target_2_price:.1f} (Dalton)",
             key_levels_used=ctx.key_levels_resistance[:2],
             setups=[setup],
         )
 
     # SHORT
-    target_atr = ib_range * 1.5
-    target_price = (ctx.market_structure.ib_low or ctx.close) - target_atr * ctx.atr
-    near_sup_t2 = ctx.key_levels_support[0].price if ctx.key_levels_support else None
+    target_1_price = ib_l - 0.5 * ib_range_pts
+    target_2_price = ib_l - 1.0 * ib_range_pts
     setup = _make_setup_short(
         name="SHORT IB Break Continuation",
         entry=ctx.close,
-        target=round(target_price, 2),
+        target=round(target_1_price, 2),
         ctx=ctx,
         setup_type="swing",
-        target_2=near_sup_t2,
+        target_2=round(target_2_price, 2),
         conditions_validation=[
             "Continuation DOWN avec delta-",
-            "Pas de retour dans IB sur bar+1",
+            "Pas de retour au-dessus ib_low sur bar+1 (failed break test)",
             "Volume > IB average",
         ],
         conditions_invalidation=[
-            f"Retour au-dessus ib_low (failed break)",
+            "Retour au-dessus ib_low (failed break Dalton)",
             "Delta day reverse BULL",
         ],
         confidence="high" if score >= 60 else "medium",
-        rationale=f"IB broken_down, range_atr={ib_range:.2f}, narrow={ctx.market_structure.ib_is_narrow}",
+        rationale=f"IB broken_down, ib_range={ib_range_pts:.1f}pts, narrow={ctx.market_structure.ib_is_narrow}",
     )
     return Scenario(
         name="IB Break Continuation SHORT (Dalton)",
         direction="bearish",
         heuristic_score=score,
-        description=f"IB broken DOWN, target = ib_low - {target_atr:.2f} ATR (Dalton extension)",
+        description=f"IB broken DOWN. Target_1 = ib_low - 0.5x range = {target_1_price:.1f}, target_2 = ib_low - 1.0x range = {target_2_price:.1f} (Dalton)",
         key_levels_used=ctx.key_levels_support[:2],
         setups=[setup],
     )

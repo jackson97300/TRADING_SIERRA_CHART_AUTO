@@ -1,7 +1,7 @@
 # Backtest Phase B v4 - Robust Subset Rapport
 
 Genere : DOCS\BACKTEST_PHASE_B_V4_REPORT.md
-Total outcomes : 135,487
+Total outcomes : 147,864
 
 ## Methodologie
 
@@ -15,6 +15,8 @@ Total outcomes : 135,487
 
 | Scenario | N | Wins | Losses | Hit Rate | R median | R mean | MFE | MAE | Cap actuel |
 |---|---|---|---|---|---|---|---|---|---|
+| IB Break Continuation SHORT (Dalton) | 20587 | 14442 | 2307 | 86.23% | -0.51 | -0.9 | 0.149 | -0.157 | 70 |
+| IB Break Continuation LONG (Dalton) | 24076 | 15197 | 3030 | 83.38% | -0.594 | -1.042 | 0.148 | -0.159 | 70 |
 | VWAP SD3 Touch Reversal SHORT | 2594 | 997 | 299 | 76.93% | -0.0 | -0.022 | 0.234 | -0.214 | 65 |
 | VWAP SD3 Touch Reversal LONG | 2239 | 732 | 307 | 70.45% | 0.0 | -0.034 | 0.281 | -0.241 | 65 |
 | Bearish rejection | 17398 | 3132 | 1835 | 63.06% | -0.0 | 0.046 | 0.707 | -0.083 | 70 |
@@ -23,8 +25,6 @@ Total outcomes : 135,487
 | Range bound LONG fade | 20972 | 1668 | 4087 | 28.98% | 0.0 | -0.116 | 0.726 | -0.198 | 50 |
 | VWAP SD2 Touch Reversal SHORT | 14317 | 430 | 3114 | 12.13% | -0.0 | -0.193 | 0.167 | -0.146 | 55 |
 | VWAP SD2 Touch Reversal LONG | 12377 | 449 | 3515 | 11.33% | 0.0 | -0.252 | 0.19 | -0.174 | 55 |
-| IB Break Continuation LONG (Dalton) | 17571 | 7 | 2726 | 0.26% | 0.0 | -0.155 | 0.285 | -0.308 | 70 |
-| IB Break Continuation SHORT (Dalton) | 14715 | 0 | 2066 | 0.0% | -0.0 | -0.14 | 0.295 | -0.296 | 70 |
 
 ## Hit Rate par Scenario x Regime VIX
 
@@ -36,12 +36,12 @@ Total outcomes : 135,487
 | Bullish continuation | calm | 2332 | 33.63% | 0.0 |
 | Bullish continuation | elevated | 13562 | 60.67% | 0.0 |
 | Bullish continuation | stressed | 37 | 23.08% | 0.0 |
-| IB Break Continuation LONG (Dalton) | calm | 3181 | 0.0% | 0.0 |
-| IB Break Continuation LONG (Dalton) | elevated | 14277 | 0.0% | 0.0 |
-| IB Break Continuation LONG (Dalton) | stressed | 113 | 46.67% | 0.0 |
-| IB Break Continuation SHORT (Dalton) | calm | 2751 | 0.0% | -0.0 |
-| IB Break Continuation SHORT (Dalton) | elevated | 11818 | 0.0% | -0.0 |
-| IB Break Continuation SHORT (Dalton) | stressed | 146 | 0.0% | -0.0 |
+| IB Break Continuation LONG (Dalton) | calm | 3450 | 62.08% | -0.525 |
+| IB Break Continuation LONG (Dalton) | elevated | 20353 | 86.09% | -0.585 |
+| IB Break Continuation LONG (Dalton) | stressed | 273 | 98.9% | -2.466 |
+| IB Break Continuation SHORT (Dalton) | calm | 3049 | 68.14% | -0.336 |
+| IB Break Continuation SHORT (Dalton) | elevated | 17402 | 89.24% | -0.525 |
+| IB Break Continuation SHORT (Dalton) | stressed | 136 | 61.95% | -0.355 |
 | Range bound LONG fade | calm | 3538 | 25.63% | 0.0 |
 | Range bound LONG fade | elevated | 17434 | 30.02% | 0.0 |
 | Range bound SHORT fade | calm | 2744 | 25.1% | -0.0 |
@@ -65,8 +65,8 @@ Total outcomes : 135,487
 |---|---|---|---|---|
 | Bearish rejection | swing | 17398 | 63.06% | -0.0 |
 | Bullish continuation | swing | 15931 | 55.59% | 0.0 |
-| IB Break Continuation LONG (Dalton) | swing | 17571 | 0.26% | 0.0 |
-| IB Break Continuation SHORT (Dalton) | swing | 14715 | 0.0% | -0.0 |
+| IB Break Continuation LONG (Dalton) | swing | 24076 | 83.38% | -0.594 |
+| IB Break Continuation SHORT (Dalton) | swing | 20587 | 86.23% | -0.51 |
 | Range bound LONG fade | swing | 20972 | 28.98% | 0.0 |
 | Range bound SHORT fade | swing | 17373 | 32.93% | -0.0 |
 | VWAP SD2 Touch Reversal LONG | scalp | 12377 | 11.33% | 0.0 |
@@ -79,9 +79,8 @@ Total outcomes : 135,487
 Reference Lopez AFML ch.13 : si hit_rate_empirical >> cap heuristic_score,
 le scenario est sous-calibre (manque opportunites). Si <<, sur-calibre (faux signaux).
 
+- **IB Break Continuation SHORT (Dalton)** : hit_rate=86.23% vs cap=70 (+16.2) -> SOUS-CALIBRE (raise cap)
 - **Range bound SHORT fade** : hit_rate=32.93% vs cap=50 (-17.1) -> SUR-CALIBRE (lower cap)
 - **Range bound LONG fade** : hit_rate=28.98% vs cap=50 (-21.0) -> SUR-CALIBRE (lower cap)
 - **VWAP SD2 Touch Reversal SHORT** : hit_rate=12.13% vs cap=55 (-42.9) -> SUR-CALIBRE (lower cap)
 - **VWAP SD2 Touch Reversal LONG** : hit_rate=11.33% vs cap=55 (-43.7) -> SUR-CALIBRE (lower cap)
-- **IB Break Continuation LONG (Dalton)** : hit_rate=0.26% vs cap=70 (-69.7) -> SUR-CALIBRE (lower cap)
-- **IB Break Continuation SHORT (Dalton)** : hit_rate=0.0% vs cap=70 (-70.0) -> SUR-CALIBRE (lower cap)

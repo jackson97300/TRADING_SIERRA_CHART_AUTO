@@ -31,6 +31,32 @@
 
 ---
 
+### 2026-06-13 00:30 (55) - [PATTERN_11] - Bug mathematique IB Break Continuation target double-normalisation ATR
+
+**Contexte** : Backtest Phase B v4 robust subset 7 mois (135K trades) revele IB Break Continuation = 0% hit_rate sur 32K trades (0 win sur 14715 SHORT). Audit market-analyst + cross-check local confirment bug mathematique.
+
+**Ce qui a mal tourne** :
+- Code `_scenario_ib_break` : `target_atr = ib_range_atr * 1.5; target_price = ib_high + target_atr * ctx.atr`
+- `ib_range_atr` est deja un RATIO normalise par ATR (= ib_range_ticks / atr_ticks)
+- Multiplier encore par ATR = double normalisation -> target a 22-31 ATR (median empirique 17K outcomes ES)
+- Stop = entry - 0.8 ATR
+- R:R median = 27.9:1 INATTEIGNABLE
+- 84.4% des outcomes EXPIRED (timeout 120 bars sans atteindre target)
+
+**Cause racine** : Confusion units type (ratio vs points) dans le calcul target. PATTERN_11 sur edge Dalton : "1.5x extension" interprete comme multiplicateur d'ATR au lieu de multiplicateur d'IB range en POINTS.
+
+**Lecon** : Dans tout calcul target/stop, **expliciter unite** (points vs ratio vs ATR vs ticks). Pattern 11 V1 = scenario qui code une edge correcte conceptuellement mais avec math fausse = generation de signaux 100% perdants statistiquement.
+
+**Trigger prevention** : Avant tout deploy scenario, **smoke test 30 cas synthetiques** : calculer target_distance / ATR empirique. Si median > 5 ATR -> ALERTE bug units. Compare avec litterature reference (Dalton 0.5-1.0 IB range, Lopez triple barrier 1-2 ATR stop, etc.).
+
+**Reference** : Aligne avec incident Plan C 27/05 (SL hybride atr14_15min POINTS vs row['atr'] TICKS) - meme famille de bug units silencieux. Necessite ajout test units empirique a `.claude/rules/critical-tasks-review.md` Lot D Check #4.
+
+**Fix applique** : `target_1 = ib_high + 0.5 * ib_range_POINTS`, `target_2 = ib_high + 1.0 * ib_range_POINTS` (Dalton 0.5x/1.0x extension). Stop reste 0.8 ATR swing factory default (Lopez compliant).
+
+**Reviewed** : market-analyst (audit) + cross-check local sur 17571 outcomes IB Break LONG (median target_1 distance 22.31 ATR confirmes empirique).
+
+---
+
 ### 2026-06-12 23:00 (54) - [VALIDATION_MISS] - Bug C++ DMP_OpenType cross-session leak detecte par audit fiabilite
 
 **Contexte** : Jackson doute fiabilite feature `open_type` Phase B v4 scenarios. Audit empirique trading-strategy-analyst sur 7 jours JSONL live NQ (02-11/06).
