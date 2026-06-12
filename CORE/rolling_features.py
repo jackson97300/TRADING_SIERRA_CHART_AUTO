@@ -456,71 +456,41 @@ class RollingFeatures:
         # Validation 20260416 NQ : 2 triggers SELL (06:07, 06:10 UTC) matchent
         # les 2 triangles visibles sur la capture Jackson.
 
-        if all(c in df.columns for c in ["bar_high", "bar_low", "delta_bar", "ts"]):
-            # Trading date CME (reset session a 18:00 ET = 22:00 UTC)
-            ts_ms = pd.to_numeric(df["ts"], errors="coerce")
-            dt_utc = pd.to_datetime(ts_ms, unit="ms", utc=True)
-            dt_et = dt_utc.dt.tz_convert("America/New_York")
-            # Si hour_ET >= 18, la trading date est le jour suivant
-            shift_day = (dt_et.dt.hour >= 18).astype(int)
-            trading_date_base = dt_et.dt.normalize()
-            trading_date = trading_date_base + pd.to_timedelta(shift_day, unit="D")
+        # ─── DELTA DIVERGENCE Phase 2.3 (12/06/2026 PM) ─────────────────────
+        #
+        # AVANT Phase 2.3 : reconstruction Python CUMMAX (semantique C cf
+        # divergences_v2.py docstring) :
+        #   - daily_high/low cummax/cummin par trading date CME
+        #   - BUY = (daily_low < daily_low[-1]) & (delta_b >= 0) & same_session
+        #   - SELL = (daily_high > daily_high[-1]) & (delta_b <= 0) & same_session
+        #   - delta_div_strength = abs(delta_b) winsorize p99.5
+        #
+        # APRES Phase 2.3 : alignement avec LIVE pipeline (SLOPE B coherent).
+        #   - DivergencesV2Calculator row-by-row (slope rolling 10b)
+        #   - Coherence BATCH = LIVE = SLOPE partout
+        #   - Resolution distribution shift PSI >> 0.25 (Lopez AFML ch.7)
+        #     identifie incident #51 ARCHITECTURAL_MISMATCH 12/06 PM
+        #
+        # Datasets v3 historiques (CUMMAX) restent compatibles pour
+        # consumers existants (4 features identiques en nom). Migration
+        # Stage 3 (mai 2026 purge v3) regenerera v4 SLOPE.
+        if all(c in df.columns for c in ["price", "delta_bar", "atr"]):
+            # Import gracieux DivergencesV2 (evite circular import si besoin)
+            try:
+                from CORE.divergences_v2 import compute_divergences_v2_features
+            except ImportError:
+                from divergences_v2 import compute_divergences_v2_features  # type: ignore
 
-            # Running Daily High/Low par trading date (reset a chaque session CME)
-            bar_high_num = pd.to_numeric(df["bar_high"], errors="coerce")
-            bar_low_num  = pd.to_numeric(df["bar_low"],  errors="coerce")
-            daily_high = bar_high_num.groupby(trading_date).cummax()
-            daily_low  = bar_low_num.groupby(trading_date).cummin()
+            # Rename `price` -> `close` pour API compute_divergences_v2_features
+            df_for_div = df.rename(columns={"price": "close"})
+            df_div = compute_divergences_v2_features(df_for_div)
 
-            # Formule SC
-            dh_prev = daily_high.shift(1)
-            dl_prev = daily_low.shift(1)
-            delta_b = pd.to_numeric(df["delta_bar"], errors="coerce").fillna(0)
-
-            # Ne trigger que si on est dans la meme trading date que la barre
-            # precedente (sinon passage de session = false positive au reset)
-            same_session = (trading_date == trading_date.shift(1))
-
-            # WARNING ULTRATHINK 12/06 PM (Phase 2.1 doc)
-            #
-            # Cette implementation BATCH calcule semantique CUMMAX (running
-            # session intra-day, equivalent A mais sans prev_day reference)
-            # = SEMANTIQUE C (cf divergences_v2.py docstring section
-            # "SEMANTIQUES DES 3 SOURCES").
-            #
-            # LIVE pipeline (sierra_pipeline.py) utilise SEMANTIQUE B (SLOPE
-            # rolling 10b via divergences_v2.py) pour les MEMES clefs
-            # delta_div_*_clean.
-            #
-            # CONSEQUENCE = MISMATCH BATCH (CUMMAX) vs LIVE (SLOPE) :
-            #   - Modeles ML entraines sur dataset BATCH (CUMMAX) puis
-            #     inference LIVE (SLOPE) = distribution shift PSI >> 0.25
-            #     (Lopez AFML ch.7 feature drift)
-            #   - Hallucinations predictions ML risque reel
-            #
-            # PLAN REFACTOR Phase 2.3 (session 3 future) :
-            #   - Replace ce code CUMMAX par DivergencesV2Calculator
-            #     row-by-row (SLOPE)
-            #   - Cohherence BATCH = LIVE = SLOPE partout
-            #
-            # Cf INCIDENT_LOG #51 (ARCHITECTURAL_MISMATCH 12/06 PM).
-            div_buy_raw  = (daily_low  < dl_prev) & (delta_b >= 0) & same_session
-            div_sell_raw = (daily_high > dh_prev) & (delta_b <= 0) & same_session
-
-            df["delta_div_buy_clean"]    = div_buy_raw.astype(int)
-            df["delta_div_sell_clean"]   = div_sell_raw.astype(int)
-            df["delta_divergence_clean"] = df["delta_div_buy_clean"] - df["delta_div_sell_clean"]
-
-            # Intensite (magnitude delta quand divergence active, 0 sinon)
-            # Utile pour le ML : differencier div faible vs div forte
-            # Winsorization p99.5 : evite outlier explosion (delta spike rare)
-            raw_strength = delta_b.abs() * (div_buy_raw | div_sell_raw).astype(int)
-            active_vals = raw_strength[raw_strength > 0]
-            if len(active_vals) > 20:
-                clip_high = float(active_vals.quantile(0.995))
-                df["delta_div_strength"] = raw_strength.clip(upper=clip_high)
-            else:
-                df["delta_div_strength"] = raw_strength
+            # Copie 4 colonnes downstream (compat consumers existants)
+            # Note Phase 2.2 : delta_div_*_clean cast int (0/1), pas bool
+            df["delta_div_buy_clean"] = df_div["delta_div_buy_clean"].astype(int).values
+            df["delta_div_sell_clean"] = df_div["delta_div_sell_clean"].astype(int).values
+            df["delta_divergence_clean"] = df_div["delta_divergence_clean"].astype(int).values
+            df["delta_div_strength"] = df_div["delta_div_strength"].values
         else:
             df["delta_div_buy_clean"]    = 0
             df["delta_div_sell_clean"]   = 0
