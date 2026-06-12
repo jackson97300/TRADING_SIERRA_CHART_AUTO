@@ -397,5 +397,165 @@ def test_recent_terminals_after_completion():
     assert recent[0].state == "COMPLETED"
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# Fix review #5 (12/06) - test parse_legacy_condition integration
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_fix5_legacy_string_conditions_parsed_at_creation():
+    """conditions_validation: list[str] -> parsed en ConditionNode au create.
+
+    Verifie l'integration scenario_conditions.parse_legacy_conditions_list
+    dans ScenarioTracker._create_instance (ligne ~653).
+    """
+    from CORE.scenario_tracker import ScenarioTracker
+    from CORE.scenario_conditions import AtomicCondition, CompositeCondition
+    tracker = ScenarioTracker(symbol="NQ")
+    fresh = _make_fresh_bullish(entry=29500)
+    # Setup avec strings legacy (comme scenario_generator.py emet)
+    fresh.setups[0].conditions_validation = [
+        "delta_bar > 0",  # parsable -> AtomicCondition
+        "bn_absorb_bid > 0 OU bn_long_up = 1",  # OR composite
+        "Reversal bar avec long wick haut",  # unparsable semantique
+    ]
+    fresh.setups[0].conditions_invalidation = [
+        "finish_strength < 0",
+    ]
+    # Bar 1 : create + zone touch
+    bar = _bar(1000, 29500, high=29505)
+    bar["delta_bar"] = 5
+    bar["bn_long_up"] = 1
+    bar["bn_absorb_bid"] = 0
+    bar["finish_strength"] = 10  # invalidation ne match pas
+    tracker.update(FakeCtx(), bar, [fresh])
+    inst = tracker.get_active()[0]
+    # Verif : strings ont ete parsees en ConditionNode
+    assert all(
+        isinstance(c, (AtomicCondition, CompositeCondition))
+        for c in inst.conditions_validation
+    )
+    # Le 3eme (Reversal bar...) doit etre AtomicCondition is_unparsable
+    assert any(
+        isinstance(c, AtomicCondition) and c.is_unparsable
+        for c in inst.conditions_validation
+    )
+
+
+def test_fix5_legacy_conditions_evaluated_at_trigger():
+    """Conditions parsees evaluees correctement -> TRIGGERED si match."""
+    from CORE.scenario_tracker import ScenarioTracker
+    tracker = ScenarioTracker(symbol="NQ")
+    fresh = _make_fresh_bullish(entry=29500)
+    fresh.setups[0].conditions_validation = [
+        "delta_bar > 0",
+    ]
+    # Bar : zone touchee + delta_bar > 0 -> TRIGGERED
+    bar = _bar(1000, 29500, high=29505)
+    bar["delta_bar"] = 10
+    tracker.update(FakeCtx(), bar, [fresh])
+    assert tracker.get_active()[0].state == "TRIGGERED"
+
+
+def test_fix1_gap_before_entry_distinguished_from_stop_hit():
+    """Fix review #1 (12/06) : PENDING jamais entered -> gap_before_entry.
+
+    Au lieu de "stop_hit" qui suggere que le trade etait engage, on
+    distingue le cas ou price gap au-dessus du stop AVANT zone touch.
+    """
+    from CORE.scenario_tracker import ScenarioTracker
+    tracker = ScenarioTracker(symbol="NQ")
+    fresh = _make_fresh_bullish(entry=29500, stop=29400)
+    # Bar 1 : create PENDING (close hors zone)
+    tracker.update(FakeCtx(), _bar(1000, 29450), [fresh])
+    # Bar 2 : stop hit AVANT zone touch (low=29380 < stop=29400, zone 29490-29510)
+    update = tracker.update(FakeCtx(), _bar(60000, 29380, low=29380), [fresh])
+    assert len(update.terminal_instances) == 1
+    inst = update.terminal_instances[0]
+    assert inst.state == "INVALIDATED"
+    # Fix #1 : distinguer gap_before_entry vs stop_hit
+    assert inst.invalidation_reason == "gap_before_entry"
+    assert inst.entry_touched_at_ts is None
+
+
+def test_fix2_triggered_via_conditions_in_payload():
+    """Fix review #2 (12/06) : triggered_via_conditions bool dans JSONL."""
+    from CORE.scenario_tracker import ScenarioTracker
+    from CORE.scenario_serializer import serialize_instance
+    from CORE.scenario_conditions import AtomicCondition
+    tracker = ScenarioTracker(symbol="NQ")
+    fresh = _make_fresh_bullish(entry=29500, target=29700, stop=29400)
+    fresh.setups[0].conditions_validation = [
+        AtomicCondition("delta_bar", ">", 0),
+    ]
+    # Bar 1 : zone + delta+ -> TRIGGERED via validation_match
+    bar1 = _bar(1000, 29500, high=29505)
+    bar1["delta_bar"] = 10
+    tracker.update(FakeCtx(), bar1, [fresh])
+    # Bar 2 : target_2 -> COMPLETED
+    tracker.update(FakeCtx(), _bar(60000, 29710), [fresh])
+    update = tracker.update(FakeCtx(), _bar(120000, 29810, high=29810), [fresh])
+    inst = update.terminal_instances[0]
+    payload = serialize_instance(inst)
+    assert payload["triggered_via_conditions"] is True
+
+
+def test_fix2_triggered_via_conditions_false_when_skip():
+    """Skip TRIGGERED (ACTIVE -> VALIDATED direct) -> triggered_via_conditions=False."""
+    from CORE.scenario_tracker import ScenarioTracker
+    from CORE.scenario_serializer import serialize_instance
+    tracker = ScenarioTracker(symbol="NQ")
+    fresh = _make_fresh_bullish(entry=29500, target=29700, stop=29400)
+    # Pas de conditions -> skip TRIGGERED
+    fresh.setups[0].conditions_validation = []
+    tracker.update(FakeCtx(), _bar(1000, 29500, high=29505), [fresh])
+    tracker.update(FakeCtx(), _bar(60000, 29710), [fresh])  # ACTIVE -> VALIDATED direct
+    update = tracker.update(FakeCtx(), _bar(120000, 29810, high=29810), [fresh])
+    inst = update.terminal_instances[0]
+    payload = serialize_instance(inst)
+    assert payload["triggered_via_conditions"] is False
+
+
+def test_fix3_mfe_neg_excursion_only_lopez_convention():
+    """Fix review #3 (12/06) : mfe_atr capture signed max meme si negatif.
+
+    Scenario LONG defensif : price reste strictement sous entry des bar 1.
+    MFE doit refleter le "meilleur" prix observe (peut etre negatif).
+    Avec init=0.0 (avant fix), max(0.0, -X)=0.0 -> info perdue.
+    Avec init=-inf : capture -X correctement.
+    """
+    from CORE.scenario_tracker import ScenarioTracker
+    tracker = ScenarioTracker(symbol="NQ")
+    fresh = _make_fresh_bullish(entry=29500, stop=29200)
+    # Bar 1 : zone touchee mais high < entry strict (pas d'excursion favorable)
+    tracker.update(FakeCtx(), _bar(1000, 29490, high=29495, low=29490), [fresh])
+    # Bar 2 : price baisse plus
+    tracker.update(FakeCtx(), _bar(60000, 29460, high=29470, low=29460), [fresh])
+    inst = tracker.get_active()[0]
+    # MFE = max(0.05 - 0.05, ...) -> bar 1 fav = (29495-29500)/100 = -0.05
+    # Avec init -inf : capture -0.05 (Lopez signed)
+    assert inst.mfe_atr < 0.0  # negatif
+    assert inst.mfe_atr != float("-inf")  # update a eu lieu
+
+
+def test_fix3_mfe_no_update_fallback_zero_at_flush():
+    """Si scenario flush sans MFE update (impossible normal, edge case theorique).
+
+    Au flush, mfe_atr=-inf doit etre remplace par 0.0 pour serialization JSON.
+    """
+    from CORE.scenario_tracker import ScenarioInstance
+    inst = ScenarioInstance(
+        scenario_id="x", scenario_name="x", symbol="NQ",
+        side="long", setup_type="swing",
+        created_at_ts=0, last_update_ts=0,
+        atr_at_creation=100.0,
+        entry_price=29500, stop_loss=29400,
+    )
+    assert inst.mfe_atr == float("-inf")
+    # Simule flush (compute_outcome_r)
+    from CORE.scenario_tracker import ScenarioTracker
+    tracker = ScenarioTracker(symbol="NQ")
+    tracker._compute_outcome_r(inst)
+    assert inst.mfe_atr == 0.0  # fallback
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--no-cov"])

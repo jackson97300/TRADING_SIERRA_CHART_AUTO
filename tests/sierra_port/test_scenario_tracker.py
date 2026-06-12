@@ -163,7 +163,11 @@ def test_make_scenario_id_distinct_on_different_inputs():
 # ════════════════════════════════════════════════════════════════════════════
 
 def test_scenario_instance_default_state_pending():
-    """Nouveau ScenarioInstance default state = PENDING."""
+    """Nouveau ScenarioInstance default state = PENDING.
+
+    Fix review #3 (12/06) : mfe_atr default = -inf (sentinel).
+    Fallback a 0.0 au flush si jamais update (cf _compute_outcome_r).
+    """
     from CORE.scenario_tracker import ScenarioInstance
     inst = ScenarioInstance(
         scenario_id="abc123",
@@ -176,7 +180,7 @@ def test_scenario_instance_default_state_pending():
     )
     assert inst.state == "PENDING"
     assert inst.bars_alive == 0
-    assert inst.mfe_atr == 0.0
+    assert inst.mfe_atr == float("-inf")  # sentinel
     assert inst.mae_atr == 0.0
     assert inst.is_terminal() is False
 

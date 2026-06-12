@@ -241,7 +241,9 @@ class ScenarioInstance:
     target_2_hit_at_ts: Optional[int] = None
     stop_hit_at_ts: Optional[int] = None
     terminal_ts: Optional[int] = None
-    mfe_atr: float = 0.0   # Max favorable excursion en ATR units (signed)
+    # Fix review #3 (12/06) : init sentinel -inf permet de tracker correctement
+    # le max signed (Lopez convention). Si jamais update -> fallback 0.0 au flush.
+    mfe_atr: float = float("-inf")
     mae_atr: float = 0.0   # Max adverse excursion (signed - LONG = negatif si bar.low < entry)
     outcome_pnl_atr: Optional[float] = None
     outcome_pnl_r: Optional[float] = None  # pnl / risk_initial (Lopez R-multiple)
@@ -488,7 +490,15 @@ class ScenarioTracker:
         if stop_hit and inst.state in (STATE_TRIGGERED, STATE_VALIDATED,
                                        STATE_ACTIVE_ENTRY_ZONE, STATE_PENDING):
             inst.stop_hit_at_ts = bar_ts
-            inst.invalidation_reason = "stop_hit"
+            # Fix review #1 (12/06) : distinguer gap_before_entry vs stop_hit
+            # PENDING jamais entered = gap qui bypass le stop avant entry zone
+            # touchee. Sample qualitativement different pour Phase C calibration.
+            if inst.entry_touched_at_ts is None:
+                inst.invalidation_reason = "gap_before_entry"
+                trigger = "gap_before_entry"
+            else:
+                inst.invalidation_reason = "stop_hit"
+                trigger = "stop_hit"
             inst.outcome_pnl_atr = round(
                 (inst.stop_loss - inst.entry_price) / inst.atr_at_creation
                 if inst.side == "long"
@@ -496,7 +506,7 @@ class ScenarioTracker:
                 4,
             )
             return self._transition(
-                inst, STATE_INVALIDATED, bar_ts, "stop_hit", bar_close,
+                inst, STATE_INVALIDATED, bar_ts, trigger, bar_close,
             )
 
         # Check target hits (TRIGGERED -> VALIDATED via target_1)
@@ -784,7 +794,13 @@ class ScenarioTracker:
         return flushed
 
     def _compute_outcome_r(self, inst) -> None:
-        """Compute outcome_pnl_r (Lopez R-multiple) avant serialization."""
+        """Compute outcome_pnl_r (Lopez R-multiple) + fallback MFE -inf.
+
+        Fix review #3 (12/06) : si mfe_atr == -inf (jamais d'update favorable),
+        fallback a 0.0 pour serialization JSON-safe.
+        """
+        if inst.mfe_atr == float("-inf"):
+            inst.mfe_atr = 0.0
         if inst.outcome_pnl_r is not None:
             return
         if inst.atr_at_creation <= 0:

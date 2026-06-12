@@ -41,6 +41,14 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
+# Fix review #4 (12/06) : zoneinfo precision DST exacte (stdlib Python 3.9+)
+# au lieu de l'approximation `3 <= mo <= 10` (faux 2-3j autour DST shifts).
+try:
+    from zoneinfo import ZoneInfo
+    _TZ_ET = ZoneInfo("America/New_York")
+except ImportError:
+    _TZ_ET = None  # fallback approximation pour Python < 3.9
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # CONFIG
@@ -59,16 +67,22 @@ def session_date_id_from_ts(ts_ms: int) -> str:
     Convention futures (aligne DMP_OT_GetSessionDateID C++) :
     - bars 00:00-17:59 ET du jour D -> session D
     - bars 18:00-23:59 ET du jour D -> session D+1
+
+    Fix review #4 (12/06) : utilise zoneinfo.ZoneInfo("America/New_York") si
+    disponible (precision DST exacte). Fallback approximation si Python <3.9.
     """
     if ts_ms <= 0:
         return "0000-00-00"
     dt_utc = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
-    # Detection DST simple (US: 2nd dimanche mars - 1er dimanche novembre)
-    # Pour simplicite ici on utilise -4h en ete, -5h en hiver (suffisant)
-    mo = dt_utc.month
-    is_dst = 3 <= mo <= 10  # approximation
-    offset_h = 4 if is_dst else 5
-    dt_et = dt_utc - timedelta(hours=offset_h)
+    if _TZ_ET is not None:
+        # Conversion ET exacte via zoneinfo (gere DST automatiquement)
+        dt_et = dt_utc.astimezone(_TZ_ET)
+    else:
+        # Fallback approximation pour Python < 3.9
+        mo = dt_utc.month
+        is_dst = 3 <= mo <= 10
+        offset_h = 4 if is_dst else 5
+        dt_et = (dt_utc - timedelta(hours=offset_h)).replace(tzinfo=None)
     if dt_et.hour >= 18:
         dt_et = dt_et + timedelta(days=1)
     return dt_et.strftime("%Y-%m-%d")
@@ -150,9 +164,15 @@ def serialize_instance(inst) -> dict:
     """
     # Aggregation validation_matches depuis state_history
     validation_matches = []
+    triggered_via_conditions = False
     for t in inst.state_history:
         if t.to_state in ("TRIGGERED", "VALIDATED"):
             validation_matches.extend(t.matched_conditions)
+        # Fix review #2 (12/06) : distinguer trigger via conditions vs skip TRIGGERED
+        # Phase C calibration : sample qualitativement different selon que les
+        # conditions_validation ont matche ou non. target_1_hit_no_trigger = skip.
+        if t.to_state == "TRIGGERED" and t.trigger == "validation_match":
+            triggered_via_conditions = True
     validation_matches = list(dict.fromkeys(validation_matches))  # dedup preserve order
 
     transitions = [
@@ -205,6 +225,7 @@ def serialize_instance(inst) -> dict:
         "invalidation_reason": inst.invalidation_reason,
         "expiration_reason": inst.expiration_reason,
         "validation_matches": validation_matches,
+        "triggered_via_conditions": triggered_via_conditions,
         "transitions_count": len(inst.state_history),
         "transitions": transitions,
         # Narrative cross-link
