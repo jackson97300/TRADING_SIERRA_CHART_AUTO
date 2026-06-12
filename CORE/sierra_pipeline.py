@@ -98,6 +98,8 @@ try:
     from CORE.game_changers_streaming import (
         add_game_changers_streaming, GameChangersState
     )
+    # Phase 1.5 - Normalisation ts (fix jitter +/-1s Sierra natif, INCIDENT #48)
+    from CORE.sierra_ts import normalize_payload_ts
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -107,6 +109,7 @@ except ImportError:
     from divergences_v2 import DivergencesV2Calculator
     from ctx_rolling import CtxRollingCalculator
     from roll_calendar import compute_roll_features
+    from sierra_ts import normalize_payload_ts  # type: ignore
     from eco_news_features import compute_eco_news_features
     from session_utils import get_trading_date_from_utc, utc_to_et
     from menthorq_v2_sierra_proxy import inject_gamma_condition_proxy
@@ -1137,6 +1140,15 @@ class SierraPipelineOrchestrator:
         # Meta orchestrateur
         enriched["_phase3_enriched"] = True
         enriched["_phase3_bars_processed"] = self._bars_processed
+
+        # Phase 1.5 (12/06/2026) - Normalisation timestamp Sierra LIVE.
+        # Sierra Chart emet bars 1-min avec jitter +/-1s (31% bars a :59
+        # empirique 12/06 NQ live). Fix : ROUND ts a la minute nominale +
+        # preserve ts_raw_ms brut + reconstitue ts_event ISO + ts_event_ns
+        # coherents. Cf CORE/sierra_ts.py + INCIDENT_LOG #48.
+        # Contrat post-normalisation = propriete de l'orchestrator (1 fix
+        # couvre les 3 entry points : batch + live mono + live multi).
+        enriched = normalize_payload_ts(enriched)
 
         return enriched
 

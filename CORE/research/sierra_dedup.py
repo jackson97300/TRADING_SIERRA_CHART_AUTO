@@ -54,19 +54,13 @@ def is_bar_closed(bar: dict) -> bool:
     return True
 
 
-def round_ts_to_minute(ts_ms: int) -> int:
-    """ROUND (nearest) timestamp ms epoch -> minute precise.
-
-    FIX Jackson 11/06 : FLOOR collisionnait sur 31% des bars Sierra qui
-    ferment a HH:MM:59 (alors que les bars normales sont a HH:MM:00).
-    Avec FLOOR : 16:44:00 et 16:44:59 collisionnent sur 16:44 -> 16:45 vide.
-    Avec ROUND : 16:44:59 -> 16:45:00 -> capture correctement la bar.
-
-    Validation empirique : 200 bars NQ analysees 11/06, distribution
-    {:00 = 137 (68%), :59 = 62 (31%)}. Sans fix, dedup perd ~31% des bars
-    en compression artificielle.
-    """
-    return round(ts_ms / 60_000) * 60_000
+# Consolidation DRY 12/06 (Phase 1.5) : round_ts_to_minute migre vers
+# CORE/sierra_ts.py (source unique partagee LIVE pipeline + post-process dedup).
+# Cf INCIDENT_LOG #48 + CORE/sierra_ts.py docstring.
+try:
+    from CORE.sierra_ts import round_ts_to_minute
+except ImportError:
+    from sierra_ts import round_ts_to_minute  # type: ignore
 
 
 def dedup_jsonl(input_path: Path, output_path: Path,
