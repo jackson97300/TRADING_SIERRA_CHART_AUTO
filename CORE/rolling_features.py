@@ -481,6 +481,29 @@ class RollingFeatures:
             # precedente (sinon passage de session = false positive au reset)
             same_session = (trading_date == trading_date.shift(1))
 
+            # WARNING ULTRATHINK 12/06 PM (Phase 2.1 doc)
+            #
+            # Cette implementation BATCH calcule semantique CUMMAX (running
+            # session intra-day, equivalent A mais sans prev_day reference)
+            # = SEMANTIQUE C (cf divergences_v2.py docstring section
+            # "SEMANTIQUES DES 3 SOURCES").
+            #
+            # LIVE pipeline (sierra_pipeline.py) utilise SEMANTIQUE B (SLOPE
+            # rolling 10b via divergences_v2.py) pour les MEMES clefs
+            # delta_div_*_clean.
+            #
+            # CONSEQUENCE = MISMATCH BATCH (CUMMAX) vs LIVE (SLOPE) :
+            #   - Modeles ML entraines sur dataset BATCH (CUMMAX) puis
+            #     inference LIVE (SLOPE) = distribution shift PSI >> 0.25
+            #     (Lopez AFML ch.7 feature drift)
+            #   - Hallucinations predictions ML risque reel
+            #
+            # PLAN REFACTOR Phase 2.3 (session 3 future) :
+            #   - Replace ce code CUMMAX par DivergencesV2Calculator
+            #     row-by-row (SLOPE)
+            #   - Cohherence BATCH = LIVE = SLOPE partout
+            #
+            # Cf INCIDENT_LOG #51 (ARCHITECTURAL_MISMATCH 12/06 PM).
             div_buy_raw  = (daily_low  < dl_prev) & (delta_b >= 0) & same_session
             div_sell_raw = (daily_high > dh_prev) & (delta_b <= 0) & same_session
 

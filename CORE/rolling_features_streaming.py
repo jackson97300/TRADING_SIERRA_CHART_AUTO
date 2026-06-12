@@ -982,6 +982,53 @@ def add_rolling_features_delta_div_streaming(
 ) -> dict:
     """Sub-engine #9 — 4 features GROUPE D delta divergence streaming.
 
+    # WARNING ULTRATHINK 12/06 PM Phase 2.1 doc
+    #
+    # Cette implementation CUMMAX (semantique C) est CODE DISSIMULE en LIVE :
+    #
+    #   1. Calcule delta_div_buy_clean/sell_clean/delta_divergence_clean
+    #      via cummax/cummin daily (= semantique sub-engine #4 batch
+    #      rolling_features.py:485-505).
+    #
+    #   2. Ces cles sont DEJA presentes dans `row` (ecrites par
+    #      divergences_v2.py SLOPE semantique B en amont via
+    #      sierra_pipeline.py:533-538).
+    #
+    #   3. L'output `out` ecrase row[delta_div_*_clean] avec CUMMAX.
+    #
+    #   4. sierra_pipeline.py:690 `produced_keys = set(er) - set(row_for_rolling)`
+    #      EXCLUT delta_div_*_clean (present dans les 2 sets) -> SLOPE survit
+    #      dans enriched final.
+    #
+    #   5. MAIS sub-engine #5 session_confluence (ligne 1138 ci-dessous)
+    #      LIT out["delta_divergence_clean"] = CUMMAX et calcule
+    #      ctx_div_density_20, ctx_bars_since_div, ctx_double_top_trap,
+    #      div_confluence_dmp SUR BASE CUMMAX.
+    #
+    # # CONSEQUENCE = MISMATCH SILENCIEUX LIVE
+    #
+    #   enriched[delta_div_*_clean] = SLOPE (B)
+    #   enriched[ctx_div_density_20], etc. = CUMMAX (C)
+    #
+    # Sub-engine #4 = pas mort mais DISSIMULE. Si quelqu'un le supprime sans
+    # rebrancher sub-engine #5 sur SLOPE explicite -> casse les ctx_div_*.
+    #
+    # # PLAN REFACTOR (Phase 2.2 future)
+    #
+    #   - Supprimer sub-engine #4 (ce module)
+    #   - Modifier sub-engine #5 pour recevoir delta_divergence_clean SLOPE
+    #     en argument explicite (pas via mutation `er`)
+    #   - Supprimer fix M1 sierra_pipeline:680-683 (devient redondant)
+    #
+    # # PLAN BATCH (Phase 2.3 future)
+    #
+    #   - rolling_features.py:485-505 (CUMMAX) -> remplacer par
+    #     DivergencesV2Calculator row-by-row (SLOPE)
+    #   - Cohherence BATCH = LIVE = SLOPE partout
+    #
+    # Cf INCIDENT_LOG #51 (ARCHITECTURAL_MISMATCH 12/06 PM).
+    # Cf CORE/divergences_v2.py docstring (semantique complete).
+
     Features :
       delta_div_buy_clean    - 1 si new daily low ET delta_b >= 0
       delta_div_sell_clean   - 1 si new daily high ET delta_b <= 0

@@ -51,22 +51,67 @@ Solution propre = renommer les 3 sources distinctes :
 | `ctx_div_density_20` | `ctx_div_slope_density_20` | divergences_v2 only |
 | `ctx_bars_since_div` | `ctx_bars_since_div_slope` | divergences_v2 only |
 
-### Statut refactor (12/06/2026 soir)
+### Statut refactor — UPDATE 12/06 PM (ULTRATHINK 2 agents cross-check)
 
-**REPORTÉ — audit code-reviewer NOGO**. Tentative Stage 1 alias period
-(commits non créés) rollback car :
-1. Couvrait 1/3 des sources écriture (divergences_v2 only)
-2. Fix M1 ne court-circuite PAS réellement le sub-engine #4 → invariant aliases = valeur identique BRISÉ
-3. 8+ consumers non migrés
-4. Pattern PATTERN_11 V1 rationalization (présentation "propre" sans audit cross-source)
+Hier soir audit "3 sources collision" → NOGO. **Aujourd'hui audit ULTRATHINK révèle l'analyse hier était SIMPLISTE**. Plus pernicieux :
 
-Avant tout futur refactor :
-- Audit empirique des 3 sources avec test pytest invariant
-- Décision architecture : 1 feature ou 3 features distinctes
-- Migration coordonnée TOUS consumers en Stage 1 (pas Stage 2)
-- Drop aliases retro = Stage 3 quand TOUTE migration validée
+1. **`phase_b_plus_plus_trades_streaming` PAS appelé en LIVE Sierra** (grep sierra_pipeline = 0 hit). Hier comptait source legacy non active.
 
-Sources empiriques : `CORE/divergences_v2.py:1-53` + `CPP/MIA_REFACTORED/DUMPER/DMP_Reader.h:2517-2527` + `CORE/rolling_features_streaming.py:979-1067` + `CORE/sierra_pipeline.py:669-700`. Cf `DOCS/INCIDENT_LOG.md` entrée 2026-06-12 catégorie `PATTERN_11 + VALIDATION_MISS`.
+2. **Fix M1 set-diff FONCTIONNE pour delta_div_*_clean brutes** (pattern `set(er) - set(row_for_rolling)` exclut auto les clés présentes). Bar live empirique confirme : SLOPE values survivent.
+
+3. **MAIS sub-engine #4 = DISSIMULÉ, pas mort** : calcule CUMMAX puis sub-engine #5 session_confluence LIT version CUMMAX écrasée pour calculer `ctx_div_density_20`, `ctx_bars_since_div`, `ctx_double_top_trap`, `div_confluence_dmp`.
+
+4. **MISMATCH SILENCIEUX LIVE** : `delta_div_*_clean` final = SLOPE (B), `ctx_div_*` = CUMMAX (C). Même bar = sémantiques mixtes brutes vs dérivées.
+
+5. **DOUBLE MISMATCH LIVE vs BATCH** : BATCH (`rolling_features.py:485-505` dataset_builder) = TOUT CUMMAX cohérent. LIVE = SLOPE+CUMMAX incohérent. ML models trained BATCH (CUMMAX) puis inference LIVE (SLOPE+CUMMAX) = distribution shift PSI >> 0.25 (Lopez AFML ch.7 feature drift) = hallucinations predictions ML risque réel.
+
+### Plan refactor staged (consensus 2 agents — Option B+ améliorée)
+
+**Phase 2.1 (FAIT 12/06 PM, doc-only)** : documenter findings dans 3 fichiers source + INCIDENT_LOG #51 + cette section.
+
+**Phase 2.2 (session 2 frais, 3-4h)** :
+- Supprimer sub-engine #4 `add_rolling_features_delta_div_streaming`
+- Rebrancher sub-engine #5 sur SLOPE explicite (passer en argument)
+- Supprimer fix M1 set-diff (devient redondant)
+- Tests parity → cohérence interne LIVE garantie
+
+**Phase 2.3 (session 3, 1-2h)** :
+- Aligner BATCH sur LIVE : remplace `rolling_features.py:485-505` CUMMAX par `DivergencesV2Calculator` row-by-row (SLOPE)
+- Cohérence BATCH = LIVE = SLOPE partout
+
+**Phase 2.4 (session 3, 1h)** :
+- Aliases canoniques additive (non-breaking) :
+  - `delta_div_slope_*` (= SLOPE divergences_v2)
+  - `delta_div_extreme_*` (= C++ scalaire `delta_divergence`)
+- Migration consumers Stage 3 future (mai 2026 purge dette v3)
+
+**Phase 2.5 (session 3, 1-2h)** :
+- Tests parity `test_batch_streaming_parity_delta_div`
+- Test `test_no_live_internal_mismatch`
+- REVIEW code-reviewer + deploy VPS Asia low-vol
+
+### Consumer mapping recommandé (market-analyst)
+
+| Consumer | Variante recommandée | Justification trading |
+|---|---|---|
+| **BN V4 live** | A (C++ event `delta_divergence`) | Wyckoff "failed auction at extreme" = high conviction |
+| **ML features dataset_builder** | A + B distincts | A event categorical + B `delta_div_slope_strength` regressore continu |
+| **Backtests** | A entrée + B conditionnement | A = signal entrée rare event Lopez. B = filtre régime momentum |
+| **Gates / vetos** | A (event-based asymétrique) | SLOPE fire rate 30% = veto destructeur |
+| **Audit Bot** | A (aligné Gate) | Cohérent avec `quality_gate_v3` |
+
+### Bar live empirique 12/06 NQ post-deploy Phase 1.5
+
+```
+delta_div_buy        = False       (SLOPE B)
+delta_div_buy_clean  = False       (SLOPE B strict)
+delta_div_strength   = -0.007019   (SLOPE B signed)
+delta_divergence     = 0           (C++ event A scalaire)
+delta_divergence_clean = 0         (SLOPE B trinary)
+ctx_price_delta_div_3 = 0.0        (CUMMAX C dérivé via sub-engine #5)
+```
+
+Sources empiriques : `CORE/divergences_v2.py:1-110` + `CORE/rolling_features_streaming.py:979-1067` + `CORE/rolling_features.py:485-505` + `CORE/sierra_pipeline.py:533-697` + `CPP/MIA_REFACTORED/DUMPER/DMP_Reader.h:2517-2527`. Cf `DOCS/INCIDENT_LOG.md` entrée #51 (ARCHITECTURAL_MISMATCH 2026-06-12 PM).
 
 ---
 

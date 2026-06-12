@@ -20,18 +20,81 @@ Cf design doc DOCS/superpowers/specs/2026-06-06-sierra-full-migration-design.md 
 #      (fire rate ~30-60%, continu)
 #      consume par : ML features dataset_builder, backtests, quality_gate
 #
-# Refactor naming complete REPORTE (audit 12/06 NOGO code-reviewer : 3 sources
-# distinctes ecrivent les memes cles, fix M1 ne court-circuite pas correctement
-# sub-engine #4 -> aliases retro ne garantissent PAS value-equivalence).
-# Cf INCIDENT_LOG.md categorie PATTERN_11 + VALIDATION_MISS 2026-06-12.
-# Cf DOCS/INVENTAIRE_DUMPER_VS_BOT.md section "CLARIFICATION NAMING `delta_div*`".
+# UPDATE ULTRATHINK 12/06 PM (Phase 2.1 doc) :
 #
-# Prerequis avant refactor :
-#   - Auditer les 3 sources (trades_streaming Sierra, divergences_v2 slope,
-#     rolling_features_streaming CUMMAX) et decider qui ecrit quoi
-#   - Test pytest invariant `test_no_delta_div_collision`
-#   - Migration coordonnee des 8+ consumers (bias_calculator_v6,
-#     databento_paper_trader, phase_b_plus_plus_engine, log_catalog, etc.)
+# Audit cross-agents 12/06 PM (market-analyst + code-reviewer) a revele que
+# l'analyse d'hier soir etait SIMPLISTE. La realite est plus pernicieuse :
+#
+# # SEMANTIQUES DES 3 SOURCES (market-analyst review)
+#
+#   A. C++ DMP `delta_divergence` (EVENT-based PDH/PDL)
+#      = Wyckoff "failed auction at extreme" : new daily_low + delta >= 0
+#      (no demand at low) vs PREV_DAY high/low. Fire rate ~0.4% rare.
+#      = Triangles Sierra ID33 que Jackson trade visuellement.
+#
+#   B. divergences_v2.py (cette implementation) = SLOPE rolling 10b
+#      "waning momentum facon RSI/MACD". Fire rate ~30-60% continu.
+#      Bruit eleve mais informatif comme regressore ML continu.
+#
+#   C. rolling_features_streaming.py sub-engine #4 = CUMMAX running session
+#      Semantique IDENTIQUE a A mais sur intra-day cummin/cummax (vs prev_day).
+#      Fire rate ~2-5%.
+#
+# # CHAOS PIPELINE LIVE (CODE-REVIEWER ULTRATHINK)
+#
+#   Ordre execution sierra_pipeline.enrich_bar() :
+#     1. C++ DMP emet `delta_divergence` (scalaire intouchable BN V4)
+#     2. divergences_v2.update() ecrit 14 features SLOPE (B)
+#     3. sub-engine #4 RECALCULE CUMMAX (C) et ECRASE delta_div_*_clean
+#        dans variable locale `er`
+#     4. sub-engine #5 session_confluence LIT er["delta_divergence_clean"]
+#        = CUMMAX (C) et calcule ctx_div_density_20, ctx_bars_since_div,
+#        ctx_double_top_trap, div_confluence_dmp SUR BASE CUMMAX
+#     5. produced_keys = set(er) - set(row_for_rolling) EXCLUT delta_div_*_clean,
+#        INCLUT ctx_div_*
+#
+#   Resultat = MISMATCH SILENCIEUX LIVE :
+#     - delta_div_*_clean final = SLOPE (B) — set-diff protege
+#     - ctx_div_*, div_confluence_dmp = CUMMAX (C) — sub-engine #5 a lu version
+#       ecrasee. Sub-engine #4 = pas mort mais DISSIMULE (alimente sub-engine
+#       #5 via mutation locale `er` non documentee).
+#
+# # DOUBLE MISMATCH LIVE vs BATCH (datasets ML training)
+#
+#   BATCH (rolling_features.py:487-505 dataset_builder) :
+#     - delta_div_*_clean = CUMMAX (C)
+#     - ctx_div_* = CUMMAX (C) — coherent interne batch
+#
+#   LIVE (sierra_pipeline.py) :
+#     - delta_div_*_clean = SLOPE (B)
+#     - ctx_div_* = CUMMAX (C) — INCOHERENT interne live
+#
+#   Modeles ML entraines BATCH (tout CUMMAX) puis inference LIVE (SLOPE brutes
+#   + CUMMAX derivees) = distribution shift garanti, PSI >> 0.25
+#   (Lopez AFML ch.7 feature drift). Risque hallucinations predictions ML.
+#
+# # PLAN REFACTOR (staged Phase 2.1-2.5)
+#
+#   Phase 2.1 (ICI, doc-only)     : documenter findings + INCIDENT_LOG entry
+#   Phase 2.2 (session 2, 3-4h)   : supprimer sub-engine #4 + rebrancher
+#                                   sub-engine #5 sur SLOPE explicite
+#   Phase 2.3 (session 3, 1-2h)   : aligner BATCH sur LIVE (replace
+#                                   rolling_features.py CUMMAX par
+#                                   DivergencesV2Calculator row-by-row)
+#   Phase 2.4 (session 3, 1h)     : aliases canoniques additive
+#                                   (delta_div_slope_*, delta_div_extreme_*)
+#   Phase 2.5 (session 3, 1-2h)   : tests parity + REVIEW + deploy
+#
+# # CONSUMER MAPPING RECOMMANDE (market-analyst)
+#
+#   - BN V4 live          -> A (C++ event scalaire delta_divergence)
+#   - ML features         -> A + B distincts (event + slope_strength regressore)
+#   - Backtests           -> A pour signal entree, B pour conditionnement
+#   - Gates / vetos       -> A (event-based asymetrique, anti-veto destructeur)
+#   - Audit Bot           -> A (aligne sur Gate)
+#
+# Cf INCIDENT_LOG.md entry #51 (ARCHITECTURAL_MISMATCH 2026-06-12 PM).
+# Cf DOCS/INVENTAIRE_DUMPER_VS_BOT.md section "delta_div_* ULTRATHINK findings".
 
 14 features divergences delta vs prix sur rolling window :
 

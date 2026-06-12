@@ -31,6 +31,112 @@
 
 ---
 
+### 2026-06-12 14:30 (51) - [ARCHITECTURAL_MISMATCH] - delta_div_* DOUBLE MISMATCH LIVE/BATCH decouvert via audit ULTRATHINK 2 agents
+
+**Categorie** : ARCHITECTURAL_MISMATCH (nouveau, plus pernicieux que collision simple).
+
+**Contexte** : Hier soir 12/06 nuit, audit "3 sources collision delta_div_*" -> verdict NOGO refactor naming. Ce matin Phase 1.5 (jitter ts) deployee succes. Apres-midi audit ULTRATHINK 2 agents (code-reviewer + market-analyst) + lecture code source perso revele que l'analyse d'hier etait SIMPLISTE.
+
+**Ce qui a ete decouvert (cross-check 2 agents convergent)** :
+
+1. **`phase_b_plus_plus_trades_streaming.py` PAS appele en LIVE Sierra**.
+   Grep `add_phase_b_plus_plus_trades_streaming` dans `sierra_pipeline.py` = 0 hit.
+   Appele seulement dans `enricher_chain.py` (pipeline Databento legacy) et
+   `live_enricher_v_pre_refactor.py` (pre-refactor). Hier verdict "3 sources
+   collision" comptait cette source qui n'est pas active LIVE Sierra.
+
+2. **Fix M1 sierra_pipeline:680-691 fonctionne via set-diff PATTERN**.
+   `produced_keys = set(er) - set(row_for_rolling)` EXCLUT automatiquement
+   toutes les cles deja dans row_for_rolling. Donc CUMMAX de sub-engine #4
+   ne survit PAS dans enriched final pour `delta_div_*_clean`.
+   Hier code-reviewer affirmait inverse (CUMMAX ecrase SLOPE). EMPIRIQUEMENT
+   FAUX : bar live post-deploy contient bien SLOPE values.
+
+3. **MAIS sub-engine #4 N'EST PAS CODE MORT — IL EST DISSIMULE**.
+   `rolling_features_streaming.py:1052-1054` ecrit CUMMAX dans `er`. Puis
+   `add_rolling_features_session_confluence_streaming(er)` ligne 1138 LIT
+   `out["delta_divergence_clean"]` = version CUMMAX ecrasee. Et calcule
+   `ctx_div_density_20`, `ctx_bars_since_div`, `ctx_double_top_trap`,
+   `div_confluence_dmp` SUR BASE CUMMAX. Ces ctx_div_* survivent dans
+   produced_keys (calcules ex nihilo, pas dans row_for_rolling).
+
+4. **MISMATCH SILENCIEUX LIVE** :
+   - `delta_div_*_clean` final = SLOPE (B) — set-diff protege
+   - `ctx_div_density_20`, `ctx_bars_since_div`, etc. = CUMMAX (C)
+   - Bot ML lit dans MEME BAR features brutes SLOPE + features derivees
+     CUMMAX = incoherence semantique
+
+5. **DOUBLE MISMATCH LIVE vs BATCH** :
+   BATCH (`rolling_features.py:485-505` dataset_builder) = TOUT CUMMAX coherent.
+   LIVE (`sierra_pipeline.py:533-697`) = SLOPE brutes + CUMMAX derivees.
+   ML modeles entraines BATCH (tout CUMMAX) puis inference LIVE (SLOPE+CUMMAX)
+   = distribution shift PSI >> 0.25 (Lopez AFML ch.7 feature drift) =
+   hallucinations predictions ML potentielles.
+
+**Cause racine** :
+
+- Plusieurs implementations historiques (C++ event PDH/PDL + Python SLOPE
+  divergences_v2 ajoute pour ML continu + Python CUMMAX rolling_features
+  port batch) accumule au fil du temps sans consolidation.
+- Set-diff pattern `produced_keys = er - row_for_rolling` introduit comme
+  fix M1 protege les valeurs SLOPE des cles brutes MAIS sub-engine #5
+  consomme deja la version CUMMAX en interne (via mutation locale `er`
+  non documentee).
+- Aucune documentation explicite que ces 3 implementations ont
+  SEMANTIQUES DIFFERENTES (event Wyckoff vs slope RSI vs CUMMAX intra-day).
+
+**Lecon** :
+
+1. **Audit "collision" via grep statique est INSUFFISANT**. Doit verifier
+   ORDRE EXECUTION reel + valeurs empiriques dans bar live.
+2. **Sub-engine peut etre DISSIMULE** (calcule + consomme en interne mais
+   sort exclu par pattern set-diff). Supprimer un sub-engine sans
+   verifier downstream consumers internes = casse silencieuse.
+3. **Mismatch BATCH vs LIVE** est risque ML major si meme noms cles
+   utilises mais semantiques differentes -> feature drift garantie.
+
+**Trigger prevention** :
+
+- Avant tout refactor implementation feature : verifier ORDRE EXECUTION
+  pipeline + tracer quelle valeur survit empiriquement
+- Test invariant `test_batch_streaming_parity_<feature>` pour features
+  partagees BATCH/LIVE
+- Documenter explicit SEMANTIQUE par implementation (event vs slope vs CUMMAX)
+
+**Resolution staged (validee Jackson 12/06 PM)** :
+
+- [x] Phase 2.1 (aujourd'hui, 1h) : documentation findings + INCIDENT_LOG
+  + docstrings 3 sources (divergences_v2 + rolling_features + rolling_features_streaming)
+- [ ] Phase 2.2 (session 2 frais, 3-4h) : supprimer sub-engine #4 (code
+  dissimule) + rebrancher sub-engine #5 sur SLOPE explicite + supprimer
+  fix M1 (devient redondant) + tests parity
+- [ ] Phase 2.3 (session 3, 1-2h) : aligner BATCH sur LIVE
+  (`rolling_features.py:485-505` CUMMAX -> DivergencesV2Calculator SLOPE)
+- [ ] Phase 2.4 (session 3, 1h) : aliases canoniques additive
+  (`delta_div_slope_*`, `delta_div_extreme_*`) non-breaking
+- [ ] Phase 2.5 (session 3, 1-2h) : tests parity + REVIEW + deploy VPS
+
+**Stats cross-check 2 agents** :
+
+| Finding | Code-reviewer | Market-analyst | Mon audit |
+|---|---|---|---|
+| phase_b_plus_plus_trades PAS LIVE | CONFIRME | CONFIRME | CONFIRME |
+| Sub-engine #4 dissimule (pas mort) | CONFIRME | CONFIRME | CONFIRME |
+| MISMATCH LIVE interne (brutes vs derivees) | DECOUVERT | DECOUVERT | (manque) |
+| DOUBLE MISMATCH LIVE vs BATCH | CONFIRME | CONFIRME | (manque) |
+| Recommandation Option B+ amelioree | OUI | OUI | OUI |
+
+**Files concernes (Phase 2.1 doc only)** :
+
+- KEEP : `CORE/divergences_v2.py` (docstring complete semantiques 3 sources)
+- KEEP : `CORE/rolling_features_streaming.py` (docstring sub-engine #4 dissimule)
+- KEEP : `CORE/rolling_features.py` (docstring batch CUMMAX vs LIVE SLOPE)
+- KEEP : `DOCS/INCIDENT_LOG.md` (cette entree #51)
+
+**Reviewed** : code-reviewer agent + market-analyst agent (cross-check ULTRATHINK convergent) + auto-reflexion
+
+---
+
 ### 2026-06-12 10:55 (50) - [RESOLUTION] - INCIDENT #48 jitter ts +/-1s Sierra LIVE pipeline FIX deploye VPS valide empirique
 
 **Categorie** : RESOLUTION incident #48 (jitter ts Sierra natif).
