@@ -35,9 +35,14 @@ Date   : 2026-06-12
 """
 from __future__ import annotations
 
+import logging
+import random
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
+
+_LOG = logging.getLogger("narrative_engine")
+_WARN_SAMPLE_RATE = 0.001  # 1/1000 fallback warnings to avoid spam
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -161,36 +166,56 @@ OPEN_RELATION_MAP = {
     3: "OOR",   # Outside Range
 }
 
-CONFLUENCE_TICKS = 0.5  # tolerance pour clustering niveaux (en ATR units)
+CONFLUENCE_ATR_FRAC = 0.10  # tolerance clustering niveaux = 10% ATR
+# Review market-analyst + code-reviewer 12/06 : 0.5 ATR avalait
+# 6 sources sur 89 pts NQ (47% ATR). 0.10 = ~18 pts NQ live = cluster honnete.
+# Pour seuil absolu tick-based, voir get_tick_size(symbol) backlog Phase C.
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # EXTRACTION HELPERS
 # ════════════════════════════════════════════════════════════════════════════
 
+def _maybe_warn(key: str, default, exc: Optional[Exception] = None) -> None:
+    """Echantillonne 1/1000 les fallbacks silencieux pour audit (anti-VALIDATION_MISS).
+
+    Eviter spam log si bar legitimement incomplete (ex: backfill historique).
+    """
+    if random.random() < _WARN_SAMPLE_RATE:
+        _LOG.warning(
+            "narrative_engine fallback key=%s default=%r exc=%s",
+            key, default, exc,
+        )
+
+
 def _safe_float(bar: dict, key: str, default: float = 0.0) -> float:
     v = bar.get(key)
     if v is None:
+        _maybe_warn(key, default)
         return default
     try:
         return float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        _maybe_warn(key, default, exc)
         return default
 
 
 def _safe_int(bar: dict, key: str, default: int = 0) -> int:
     v = bar.get(key)
     if v is None:
+        _maybe_warn(key, default)
         return default
     try:
         return int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        _maybe_warn(key, default, exc)
         return default
 
 
 def _safe_bool(bar: dict, key: str, default: bool = False) -> bool:
     v = bar.get(key)
     if v is None:
+        _maybe_warn(key, default)
         return default
     return bool(v)
 
@@ -272,7 +297,7 @@ def _extract_resistance_levels(bar: dict, close: float, atr: float) -> list:
 
     # Sort by distance ascending
     levels.sort(key=lambda l: l.distance_atr)
-    return _cluster_levels(levels, atr)
+    return _cluster_levels(levels, atr, close)
 
 
 def _extract_support_levels(bar: dict, close: float, atr: float) -> list:
@@ -333,13 +358,19 @@ def _extract_support_levels(bar: dict, close: float, atr: float) -> list:
 
     # Sort by distance descending (plus proche = distance plus proche de 0)
     levels.sort(key=lambda l: -l.distance_atr)
-    return _cluster_levels(levels, atr)
+    return _cluster_levels(levels, atr, close)
 
 
-def _cluster_levels(levels: list, atr: float) -> list:
-    """Clusterise niveaux proches (<0.5 ATR) en confluences.
+def _cluster_levels(levels: list, atr: float, close: float) -> list:
+    """Clusterise niveaux proches (<CONFLUENCE_ATR_FRAC ATR) en confluences.
 
-    Returns liste avec confluence_count + sources fusionnees.
+    Args:
+        levels : List[KeyLevel] pre-triee par distance
+        atr : ATR units pour normaliser tolerance
+        close : prix courant pour recalcul distance_atr cluster
+
+    Returns:
+        Liste avec confluence_count + sources fusionnees + distance_atr propre.
     """
     if not levels or atr <= 0:
         return levels
@@ -357,7 +388,7 @@ def _cluster_levels(levels: list, atr: float) -> list:
             if used[j]:
                 continue
             other = levels[j]
-            if abs(other.price - level.price) / atr <= CONFLUENCE_TICKS:
+            if abs(other.price - level.price) / atr <= CONFLUENCE_ATR_FRAC:
                 cluster_sources.extend(other.sources)
                 cluster_count += 1
                 cluster_prices.append(other.price)
@@ -365,18 +396,16 @@ def _cluster_levels(levels: list, atr: float) -> list:
         used[i] = True
         # Cluster level = mediane des prix + sources fusionnees
         median_price = round(sum(cluster_prices) / len(cluster_prices), 2)
+        # Distance ATR propre depuis close
+        distance_atr_cluster = round((median_price - close) / atr, 4)
         new_level = KeyLevel(
             price=median_price,
             label=" + ".join(cluster_sources) if cluster_count > 1 else level.label,
             level_type=level.level_type,
-            distance_atr=round((median_price - (median_price - level.price * 0))
-                               / atr, 4),  # placeholder fix below
+            distance_atr=distance_atr_cluster,
             sources=cluster_sources,
             confluence_count=cluster_count,
         )
-        # Recalcul distance pour mediane
-        new_level.distance_atr = round((median_price - (level.price - level.distance_atr * atr))
-                                       / atr, 4)
         clustered.append(new_level)
 
     return clustered
@@ -483,7 +512,14 @@ def build_narrative_context(bar: dict) -> NarrativeContext:
 
     Returns:
         NarrativeContext immutable (sauf via dataclass setattr).
+
+    Raises:
+        ValueError : si bar None ou pas dict (anti-VALIDATION_MISS).
     """
+    if not bar or not isinstance(bar, dict):
+        raise ValueError(
+            f"build_narrative_context: bar empty or invalid (type={type(bar).__name__})"
+        )
     close = _safe_float(bar, "close")
     atr = _safe_float(bar, "atr", default=1.0)
     atr_14m = _safe_float(bar, "atr_14m", default=1.0)

@@ -204,13 +204,14 @@ def test_generate_scenarios_returns_at_least_one():
     assert len(scenarios) >= 1
 
 
-def test_scenarios_sorted_by_probability():
+def test_scenarios_sorted_by_score():
+    """Lot 2 : sort par heuristic_score descending (rename anti-PATTERN_11)."""
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
     scenarios = generate_scenarios(ctx)
-    probas = [s.probability_pct for s in scenarios]
-    assert probas == sorted(probas, reverse=True), f"Not sorted: {probas}"
+    scores = [s.heuristic_score for s in scenarios]
+    assert scores == sorted(scores, reverse=True), f"Not sorted: {scores}"
 
 
 def test_scenarios_contain_setups_with_rr():
@@ -221,11 +222,13 @@ def test_scenarios_contain_setups_with_rr():
     for sc in scenarios:
         assert sc.name
         assert sc.direction in ("bullish", "bearish", "range")
-        assert 0 <= sc.probability_pct <= 100
+        assert 0 <= sc.heuristic_score <= 100  # Lot 2 rename
         for setup in sc.setups:
             assert setup.side in ("long", "short")
             assert setup.r_r_ratio >= 0
             assert setup.entry_price > 0
+            # Lot 1 : setup_type defini
+            assert setup.setup_type in ("scalp", "swing")
 
 
 def test_bullish_continuation_present_when_cvd_day_strong():
@@ -247,14 +250,20 @@ def test_bearish_rejection_present_when_confluence():
     assert any("Bearish rejection" in n for n in names)
 
 
-def test_range_bound_present_when_normvar():
+def test_range_bound_split_into_2_scenarios():
+    """Lot 1 fix : Range bound split en 2 Scenarios distincts (XOR exclusif)."""
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     ctx = build_narrative_context(_build_realistic_nq_bar())
     scenarios = generate_scenarios(ctx)
     names = [s.name for s in scenarios]
-    # day_type = NormVar + trend_day_prob = 0 -> Range bound devrait etre present
-    assert any("Range bound" in n for n in names)
+    # 2 Scenarios distincts au lieu de 1 Scenario avec 2 setups
+    assert any("Range bound LONG fade" in n for n in names)
+    assert any("Range bound SHORT fade" in n for n in names)
+    # Chaque Scenario range a 1 seul setup (pas 2 dans le meme)
+    for sc in scenarios:
+        if "Range bound" in sc.name:
+            assert len(sc.setups) == 1
 
 
 def test_judas_scenario_absent_when_judas_not_active():
@@ -278,6 +287,177 @@ def test_judas_scenario_present_when_activated():
     scenarios = generate_scenarios(ctx)
     names = [s.name for s in scenarios]
     assert any("Judas Swing reversal SHORT" in n for n in names)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Lot 1 - Bugs mecaniques
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_lot1_confluence_atr_frac_010_tighter_cluster():
+    """Lot 1 fix #1 : CONFLUENCE_ATR_FRAC = 0.10 (vs 0.5 initial)."""
+    from CORE.narrative_engine import CONFLUENCE_ATR_FRAC
+    assert CONFLUENCE_ATR_FRAC == 0.10
+
+
+def test_lot1_cluster_distance_atr_propre():
+    """Lot 1 fix #3 : distance_atr cluster = (median - close) / atr (sans dead code)."""
+    from CORE.narrative_engine import build_narrative_context
+    ctx = build_narrative_context(_build_realistic_nq_bar())
+    close = ctx.close
+    atr = ctx.atr
+    for lvl in ctx.key_levels_resistance + ctx.key_levels_support:
+        expected = round((lvl.price - close) / atr, 4)
+        assert abs(lvl.distance_atr - expected) < 1e-3, (
+            f"Cluster {lvl.label}: dist_atr={lvl.distance_atr} expected~{expected}"
+        )
+
+
+def test_lot1_bearish_rejection_AND_confluence_and_distance():
+    """Lot 1 fix #4 : bearish rejection requiert confluence>=2 ET distance<=1.5 ATR."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    # Modifier bar : eloigner toutes les resistances > 2 ATR (close 29594.5, atr 186)
+    # -> 2 ATR = 372 pts -> tous niveaux > 29966 ne devraient PAS declencher bearish rejection
+    bar = _build_realistic_nq_bar()
+    # Drop niveaux proches de 29675 (confluence)
+    for k in ("cash_high", "sess_high", "ovn_high", "vwap_m"):
+        bar[k] = 30500.0  # tres loin
+    bar["pdh"] = 30500.0
+    bar["vwap_d_sd1u"] = 30500.0
+    bar["vwap_d_sd2u"] = 30500.0
+    bar["vwap_d_sd3u"] = 30500.0
+    bar["cur_vah"] = 30500.0
+    bar["prev_vah"] = 30500.0
+    bar["prev_vwap_sd1u"] = 30500.0
+    bar["prev_vwap_sd2u"] = 30500.0
+    bar["prev_vwap"] = 30500.0
+    bar["composite_poc_5d"] = 30500.0
+    bar["composite_poc_20d"] = 30500.0
+    bar["vwap_w"] = 30500.0
+    bar["dist_swing_high"] = 1000.0
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx)
+    names = [s.name for s in scenarios]
+    # Sans confluence proche, bearish rejection NE DOIT PAS apparaitre
+    assert not any("Bearish rejection" in n for n in names), (
+        f"Bearish rejection emis sans confluence proche : {names}"
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Lot 2 - Anti-PATTERN_11
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_lot2_no_probability_pct_attribute():
+    """Lot 2 : probability_pct renomme en heuristic_score (anti-PATTERN_11)."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    ctx = build_narrative_context(_build_realistic_nq_bar())
+    scenarios = generate_scenarios(ctx)
+    for sc in scenarios:
+        assert hasattr(sc, "heuristic_score")
+        assert not hasattr(sc, "probability_pct"), (
+            "probability_pct trompeur car non-calibre (PATTERN_11)"
+        )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Lot 3 - Scenarios manquants (Failed Breakout, FVG Fill, Single Print)
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_lot3_failed_breakout_spring_when_sweep_low():
+    """Lot 3 : Sweep low + retour range -> Wyckoff Spring (LONG)."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["sweep_low_this_bar"] = True
+    bar["range_pos_va"] = 50.0  # >= 30 = retour dans range
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx)
+    names = [s.name for s in scenarios]
+    assert any("Failed Breakout LONG (Spring)" in n for n in names)
+
+
+def test_lot3_failed_breakout_utad_when_sweep_high():
+    """Lot 3 : Sweep high + retour range -> Wyckoff UTAD (SHORT)."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["sweep_high_this_bar"] = True
+    bar["range_pos_va"] = 50.0  # <= 70 = retour dans range
+    bar["cvd_day"] = -2000  # macro BEAR pour bonus score
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx)
+    names = [s.name for s in scenarios]
+    assert any("Failed Breakout SHORT (UTAD)" in n for n in names)
+
+
+def test_lot3_fvg_fill_up_when_fvg_present_macro_bull():
+    """Lot 3 : FVG up proche + macro BULL -> FVG Fill scenario."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["fvg_up_active"] = 5
+    bar["dist_fvg_up_nearest_atr"] = 0.4  # proche au-dessus
+    bar["cvd_day"] = 5000  # macro BULL
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx)
+    names = [s.name for s in scenarios]
+    assert any("FVG Fill" in n for n in names)
+
+
+def test_lot3_single_print_magnet_when_present():
+    """Lot 3 : Single print proche + density >= 0.5 -> Single Print Magnet."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["has_single_prints"] = True
+    bar["single_print_below"] = True
+    bar["single_print_above"] = False
+    bar["dist_single_print_atr"] = -0.4
+    bar["single_print_density"] = 0.6
+    ctx = build_narrative_context(bar)
+    scenarios = generate_scenarios(ctx)
+    names = [s.name for s in scenarios]
+    assert any("Single Print Magnet SHORT" in n for n in names)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Lot 4 - VIX regime filter + anti-VALIDATION_MISS
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_lot4_vix_extreme_drops_range_scenarios():
+    """Lot 4 : VIX extreme (>35) drop range scenarios (volatilite incompatible)."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import generate_scenarios
+    bar = _build_realistic_nq_bar()
+    bar["vix_level"] = 42.0  # extreme
+    ctx = build_narrative_context(bar)
+    assert ctx.macro_regime == "extreme"
+    scenarios = generate_scenarios(ctx)
+    names = [s.name for s in scenarios]
+    assert not any("Range bound" in n for n in names), (
+        f"Range scenarios non filtres en VIX extreme : {names}"
+    )
+
+
+def test_lot4_invalid_bar_raises():
+    """Anti-VALIDATION_MISS : build_narrative_context(None) raise ValueError."""
+    from CORE.narrative_engine import build_narrative_context
+    with pytest.raises(ValueError):
+        build_narrative_context(None)
+    with pytest.raises(ValueError):
+        build_narrative_context({})
+    with pytest.raises(ValueError):
+        build_narrative_context("not a dict")
+
+
+def test_lot4_eco_event_placeholder_returns_false():
+    """Lot 4 : placeholder eco event = no-op stable."""
+    from CORE.narrative_engine import build_narrative_context
+    from CORE.scenario_generator import is_high_impact_eco_event_imminent
+    ctx = build_narrative_context(_build_realistic_nq_bar())
+    assert is_high_impact_eco_event_imminent(ctx) is False
 
 
 if __name__ == "__main__":
