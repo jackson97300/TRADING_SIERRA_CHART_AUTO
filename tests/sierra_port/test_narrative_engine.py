@@ -649,11 +649,15 @@ def test_phaseB_v4_A2_open_drive_only_in_us_cash_first_30min():
 
 
 def test_phaseB_v4_A2_open_drive_us_cash_first_30min_triggers():
-    """A2 : Open Drive declenche dans us_cash_open + first 30min."""
+    """A2 : Open Drive declenche dans us_cash_open + first 30min.
+
+    Phase B v4.1 : open_drive est derive depuis open_type in (1, 2).
+    On set open_type=1 (OD_UP) au lieu d'un champ separe open_drive.
+    """
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     bar = _build_realistic_nq_bar()
-    bar["open_drive"] = True
+    bar["open_type"] = 1  # OD_UP = Open Drive Up (DMP_OpenType.h:261-263)
     bar["trend_day_probability"] = 0.7
     bar["open_direction"] = 1
     bar["open_bias_conf"] = 0.8
@@ -663,9 +667,41 @@ def test_phaseB_v4_A2_open_drive_us_cash_first_30min_triggers():
     bar["mins_et"] = 580  # 09:40 ET (dans window)
     bar["cvd_day"] = 10000  # macro BULL coherent
     ctx = build_narrative_context(bar)
+    assert ctx.market_structure.open_drive is True
     scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert any("Open Drive LONG" in n for n in names)
+
+
+def test_phaseB_v4_1_open_drive_derived_from_open_type():
+    """Phase B v4.1 fix : open_drive derive depuis open_type in (1, 2)."""
+    from CORE.narrative_engine import build_narrative_context
+    bar = _build_realistic_nq_bar()
+    # open_type=0 (UNKNOWN) -> open_drive=False
+    bar["open_type"] = 0
+    assert build_narrative_context(bar).market_structure.open_drive is False
+    # open_type=1 (OD_UP) -> open_drive=True
+    bar["open_type"] = 1
+    assert build_narrative_context(bar).market_structure.open_drive is True
+    # open_type=2 (OD_DOWN) -> open_drive=True
+    bar["open_type"] = 2
+    assert build_narrative_context(bar).market_structure.open_drive is True
+    # open_type=7 (OAIR) -> open_drive=False
+    bar["open_type"] = 7
+    assert build_narrative_context(bar).market_structure.open_drive is False
+    # open_type=8 (OAOR_UP) -> open_drive=False (gap qui tient != drive)
+    bar["open_type"] = 8
+    assert build_narrative_context(bar).market_structure.open_drive is False
+
+
+def test_phaseB_v4_1_pvwap_alias_for_prev_vwap():
+    """Phase B v4.1 fix : utilise pvwap si prev_vwap null (alias Sierra DMP)."""
+    from CORE.narrative_engine import build_narrative_context
+    bar = _build_realistic_nq_bar()
+    bar["prev_vwap"] = None
+    bar["pvwap"] = 28727.94  # Valeur observee bar live 12/06 13:09 UTC
+    ctx = build_narrative_context(bar)
+    assert ctx.prev_vwap == 28727.94
 
 
 def test_phaseB_v4_A3_ib_break_continuation_long():

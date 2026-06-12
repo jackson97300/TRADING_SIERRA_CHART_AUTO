@@ -321,7 +321,8 @@ def _extract_resistance_levels(bar: dict, close: float, atr: float) -> list:
     # PSD veille (Phase A.2a)
     _add(bar.get("prev_vwap_sd2u"), "PSD +2")
     _add(bar.get("prev_vwap_sd1u"), "PSD +1")
-    _add(bar.get("prev_vwap"), "PVWAP")
+    # Phase B v4.1 fix : alias pvwap si prev_vwap null
+    _add(bar.get("prev_vwap") or bar.get("pvwap"), "PVWAP")
     # Swing
     swing_high = None
     dsh = bar.get("dist_swing_high")
@@ -375,6 +376,14 @@ def _extract_support_levels(bar: dict, close: float, atr: float) -> list:
     # PSD veille
     _add(bar.get("prev_vwap_sd1d"), "PSD -1")
     _add(bar.get("prev_vwap_sd2d"), "PSD -2")
+    # Phase B v4.1 fix : alias pvwap (PVWAP peut etre below close)
+    pv = bar.get("prev_vwap") or bar.get("pvwap")
+    if pv is not None:
+        try:
+            if float(pv) < close:
+                _add(pv, "PVWAP")
+        except (TypeError, ValueError):
+            pass
     # Composite POC (peut etre below)
     cp5d = bar.get("composite_poc_5d")
     if cp5d is not None:
@@ -453,7 +462,16 @@ def _cluster_levels(levels: list, atr: float, close: float) -> list:
 # ════════════════════════════════════════════════════════════════════════════
 
 def _extract_market_structure(bar: dict) -> MarketStructureState:
-    """Extrait MarketStructureState depuis bar (Phase B v4 enrichi)."""
+    """Extrait MarketStructureState depuis bar (Phase B v4 enrichi).
+
+    Phase B v4.1 fix (audit empirique 12/06 bar 13:09 UTC) :
+    - open_drive : derive depuis open_type (1=OD_UP, 2=OD_DOWN). Le JSONL
+      n'emet pas de champ separe `open_drive` (verifie sur schema 3.7.22+),
+      mais DMP_OpenType.h ligne 261-263 encode OD direct dans open_type.
+    """
+    # Open Drive = open_type in (OD_UP=1, OD_DOWN=2)
+    open_type_int = _safe_int(bar, "open_type")
+    is_open_drive = open_type_int in (1, 2)
     return MarketStructureState(
         open_relation=OPEN_RELATION_MAP.get(_safe_int(bar, "open_relation_type"), "UNKNOWN"),
         profile_shape=PROFILE_SHAPE_MAP.get(_safe_int(bar, "profile_shape"), "UNKNOWN"),
@@ -465,7 +483,7 @@ def _extract_market_structure(bar: dict) -> MarketStructureState:
         trend_day_probability=_safe_float(bar, "trend_day_probability"),
         # Phase B v4 - Open Type Dalton
         open_type=bar.get("open_type"),
-        open_drive=_safe_bool(bar, "open_drive"),
+        open_drive=is_open_drive,
         open_bias_conf=_safe_float(bar, "open_bias_conf"),
         open_direction=_safe_int(bar, "open_direction"),
         # Phase B v4 - Initial Balance
@@ -638,5 +656,7 @@ def build_narrative_context(bar: dict) -> NarrativeContext:
         vwap_d_sd3d=bar.get("vwap_d_sd3d"),
         vwap_triple_align=_safe_int(bar, "vwap_triple_align"),
         bool_above_vwap_d=_safe_bool(bar, "bool_above_vwap_d"),
-        prev_vwap=bar.get("prev_vwap"),
+        # Phase B v4.1 fix : "prev_vwap" peut etre absent du JSONL,
+        # l'alias canonique Sierra DMP est "pvwap" (verifie schema 3.7.22+).
+        prev_vwap=bar.get("prev_vwap") or bar.get("pvwap"),
     )
