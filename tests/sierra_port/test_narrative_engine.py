@@ -674,34 +674,55 @@ def test_phaseB_v4_A2_open_drive_us_cash_first_30min_triggers():
 
 
 def test_phaseB_v4_1_open_drive_derived_from_open_type():
-    """Phase B v4.1 fix : open_drive derive depuis open_type in (1, 2)."""
+    """Phase B v4.1 fix : open_drive derive depuis open_type in (1, 2).
+
+    Boundary tests : OTD (3, 4) doit etre False car OTD est 70% confiance
+    (mouvement > 50% IB seulement), pas OD (85% > 75% IB). Reference
+    DMP_OpenType.h:282-291 helper DMP_OT_Confidence + ligne 261-275.
+    """
     from CORE.narrative_engine import build_narrative_context
     bar = _build_realistic_nq_bar()
-    # open_type=0 (UNKNOWN) -> open_drive=False
-    bar["open_type"] = 0
-    assert build_narrative_context(bar).market_structure.open_drive is False
-    # open_type=1 (OD_UP) -> open_drive=True
-    bar["open_type"] = 1
-    assert build_narrative_context(bar).market_structure.open_drive is True
-    # open_type=2 (OD_DOWN) -> open_drive=True
-    bar["open_type"] = 2
-    assert build_narrative_context(bar).market_structure.open_drive is True
-    # open_type=7 (OAIR) -> open_drive=False
-    bar["open_type"] = 7
-    assert build_narrative_context(bar).market_structure.open_drive is False
-    # open_type=8 (OAOR_UP) -> open_drive=False (gap qui tient != drive)
-    bar["open_type"] = 8
-    assert build_narrative_context(bar).market_structure.open_drive is False
+    cases = [
+        (0, False, "UNKNOWN"),
+        (1, True,  "OD_UP - strict drive"),
+        (2, True,  "OD_DOWN - strict drive"),
+        (3, False, "OTD_UP boundary - 70% conf != drive"),
+        (4, False, "OTD_DOWN boundary - 70% conf != drive"),
+        (5, False, "ORR_UP"),
+        (6, False, "ORR_DOWN"),
+        (7, False, "OAIR"),
+        (8, False, "OAOR_UP"),
+        (9, False, "OAOR_DOWN"),
+        (10, False, "ODF_UP (Open Drive Fail = not active drive)"),
+        (11, False, "ODF_DOWN"),
+    ]
+    for ot, expected, label in cases:
+        bar["open_type"] = ot
+        actual = build_narrative_context(bar).market_structure.open_drive
+        assert actual is expected, f"open_type={ot} ({label}) attendu {expected}, got {actual}"
 
 
 def test_phaseB_v4_1_pvwap_alias_for_prev_vwap():
     """Phase B v4.1 fix : utilise pvwap si prev_vwap null (alias Sierra DMP)."""
     from CORE.narrative_engine import build_narrative_context
     bar = _build_realistic_nq_bar()
+    # Cas 1 : prev_vwap=None + pvwap=valeur -> fallback pvwap
     bar["prev_vwap"] = None
-    bar["pvwap"] = 28727.94  # Valeur observee bar live 12/06 13:09 UTC
-    ctx = build_narrative_context(bar)
-    assert ctx.prev_vwap == 28727.94
+    bar["pvwap"] = 28727.94
+    assert build_narrative_context(bar).prev_vwap == 28727.94
+    # Cas 2 : prev_vwap=valeur + pvwap=autre -> priorite prev_vwap
+    bar["prev_vwap"] = 28800.0
+    bar["pvwap"] = 999.0
+    assert build_narrative_context(bar).prev_vwap == 28800.0
+    # Cas 3 : prev_vwap=0.0 (sumv non reconstruit) + pvwap=valide -> fallback
+    # Reference lessons.md : Number of Bars=20 bug peut produire prev_vwap=0
+    bar["prev_vwap"] = 0.0
+    bar["pvwap"] = 28727.94
+    assert build_narrative_context(bar).prev_vwap == 28727.94
+    # Cas 4 : prev_vwap=None + pvwap=None -> None
+    bar["prev_vwap"] = None
+    bar["pvwap"] = None
+    assert build_narrative_context(bar).prev_vwap is None
 
 
 def test_phaseB_v4_A3_ib_break_continuation_long():

@@ -257,6 +257,16 @@ def _safe_bool(bar: dict, key: str, default: bool = False) -> bool:
     return bool(v)
 
 
+def _pvwap(bar: dict) -> Optional[float]:
+    """Phase B v4.1 fix : helper PVWAP avec fallback canonique Sierra DMP.
+
+    prev_vwap est le nom historique. pvwap est l'alias Sierra DMP actuel
+    (schema 3.7.22+). Le `or` filtre aussi prev_vwap=0.0 invalide
+    (cf lessons.md : sumv non reconstruit / Number of Bars=20 bug).
+    """
+    return bar.get("prev_vwap") or bar.get("pvwap")
+
+
 def _bias_from_value(value: float, threshold: float = 0.0) -> str:
     if value > threshold:
         return "BULL"
@@ -321,8 +331,7 @@ def _extract_resistance_levels(bar: dict, close: float, atr: float) -> list:
     # PSD veille (Phase A.2a)
     _add(bar.get("prev_vwap_sd2u"), "PSD +2")
     _add(bar.get("prev_vwap_sd1u"), "PSD +1")
-    # Phase B v4.1 fix : alias pvwap si prev_vwap null
-    _add(bar.get("prev_vwap") or bar.get("pvwap"), "PVWAP")
+    _add(_pvwap(bar), "PVWAP")
     # Swing
     swing_high = None
     dsh = bar.get("dist_swing_high")
@@ -376,14 +385,8 @@ def _extract_support_levels(bar: dict, close: float, atr: float) -> list:
     # PSD veille
     _add(bar.get("prev_vwap_sd1d"), "PSD -1")
     _add(bar.get("prev_vwap_sd2d"), "PSD -2")
-    # Phase B v4.1 fix : alias pvwap (PVWAP peut etre below close)
-    pv = bar.get("prev_vwap") or bar.get("pvwap")
-    if pv is not None:
-        try:
-            if float(pv) < close:
-                _add(pv, "PVWAP")
-        except (TypeError, ValueError):
-            pass
+    # _add filtre deja p >= close, pas besoin de check supplementaire
+    _add(_pvwap(bar), "PVWAP")
     # Composite POC (peut etre below)
     cp5d = bar.get("composite_poc_5d")
     if cp5d is not None:
@@ -656,7 +659,5 @@ def build_narrative_context(bar: dict) -> NarrativeContext:
         vwap_d_sd3d=bar.get("vwap_d_sd3d"),
         vwap_triple_align=_safe_int(bar, "vwap_triple_align"),
         bool_above_vwap_d=_safe_bool(bar, "bool_above_vwap_d"),
-        # Phase B v4.1 fix : "prev_vwap" peut etre absent du JSONL,
-        # l'alias canonique Sierra DMP est "pvwap" (verifie schema 3.7.22+).
-        prev_vwap=bar.get("prev_vwap") or bar.get("pvwap"),
+        prev_vwap=_pvwap(bar),
     )
