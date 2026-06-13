@@ -31,6 +31,32 @@
 
 ---
 
+### 2026-06-13 11:30 (56) - [CONTEXT_MISS + recidive mai 2026] - Bug `==` strict mins_int dans phase_b_helpers cause open_type=UNKNOWN forever
+
+**Contexte** : Cross-check 4 agents 13/06 (general-purpose + trading-strategy-analyst + market-analyst + Plan) sur la dette technique Open Type. Probe live JSONL 12/06 NQ (3176 bars) : open_type=0 sur 100% des bars. Le fix C++ INCIDENT #54 hier soir (commit d0ad7b9) etait COSMETIQUE car le C++ DMP_OpenType est zombie (Python `game_changers_streaming` override systematique via `SIERRA_ZERO_NEVER_CALCULATED` whitelist).
+
+**Ce qui a mal tourne** :
+- `phase_b_helpers.py:854` : `if mins_int == ib_close and ...` (= 630 pile pour NQ)
+- Empirique 12/06 : `mins_et=630` apparait 0 fois dans le JSONL
+- Bars Sierra 1min off-grid de secondes -> mins_et calcule = 628, 629, 631 (jamais 630)
+- Resultat : `cached_price_1030 = None` toute la journee
+- `game_changers_streaming.py:147-150` check `critical_inputs_valid` echoue
+- `cached_open_type = 0` (UNKNOWN) forever
+
+**Cause racine** : `==` strict sur un timestamp arrondi minute alors que les bars source ne sont pas alignees sur des minutes pile. Pattern V1 reproduit (commits mai 26/05 `7da7713` "game_changers ressuscite" + 27/05 `615913f` "fix(v4+pass3): bug game_changers open_type=0 const") -> Jackson a deja vecu ce bug en mai, recidive 13/06.
+
+**Lecon** : Pour tout check de seuil temporel sur bars stream (mins_et, ts_event, etc.), preferer `>=` + check `cached_*_is_None` (capture 1 fois) plutot que `==` strict. Les pipelines stream Sierra arrivent toujours off-grid de secondes.
+
+**Fix** : `==` -> `>=` dans `add_open_cash_price1030_streaming` (streaming) ET `add_open_cash_price1030` (batch) pour parite. Validation empirique replay JSONL 12/06 : `price_1030 = 29542.75` capture a mins_et=631 -> `open_type = 8 (OAOR_UP)` direction +1 confidence 0.65 = coherent marche du jour.
+
+**Trigger prevention** : Audit grep `== us_start\|== ib_close\|== mins_et` dans tout le codebase Python (`tools/check_strict_minute_equals.py` futur). Tout `==` sur mins_et = candidat bug latent.
+
+**Reviewed** : trading-strategy-analyst (audit zombie C++) + general-purpose (recherche web pro methodology - Dalton refuse mecanisation) + market-analyst (Day Type / Profile Shape vs litterature) + Plan agent (architecture solution). Cross-check empirique replay JSONL local confirme.
+
+**Dette restante** : (a) `atr_daily=None` (INCIDENT #38 day_type semantique non resolu), (b) `composite_poc_5d/20d=0` (state pas persiste cross-batch), (c) C++ DMP_OpenType decommissionnement (zombie).
+
+---
+
 ### 2026-06-13 00:30 (55) - [PATTERN_11] - Bug mathematique IB Break Continuation target double-normalisation ATR
 
 **Contexte** : Backtest Phase B v4 robust subset 7 mois (135K trades) revele IB Break Continuation = 0% hit_rate sur 32K trades (0 win sur 14715 SHORT). Audit market-analyst + cross-check local confirment bug mathematique.

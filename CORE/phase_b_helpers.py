@@ -775,11 +775,14 @@ def add_open_cash_price1030(df: pd.DataFrame, bounds: dict | None = None) -> pd.
     # AVANT (bug) : `["close"].first()` = close 09:30-09:31 (1 minute apres) -> bascule
     # de famille OAOR/ORR vs OTD/OAIR -> 36-41% mismatch open_type vs DMP.
     # APRES : `["open"].first()` = open exact bar 09:30 (= 1er tick = aligne C++).
-    open_cash = df[df["mins_et"] == us_start].groupby("date_et")["open"].first().rename("open_cash")
-    # Price 10:30 (ou 09:30 MGC) = close de la barre us_start+60, premiere apres IB complete
+    # FIX BUG RACINE 13/06 : `==` strict ne matche jamais si bars Sierra off-grid
+    # (ex: mins_et=628, 629, 631, mais pas 630 pile). Fix : >= + .first() (1ere bar
+    # sur ou apres le seuil). Parite avec add_open_cash_price1030_streaming.
+    open_cash = df[df["mins_et"] >= us_start].groupby("date_et")["open"].first().rename("open_cash")
+    # Price 10:30 (ou 09:30 MGC) = close de la 1ere bar AU OU APRES us_start+60.
     # NOTE : price_1030 reste sur close (cote C++ aussi prend price_close de la 1ere bar
     # post-ib_complete via DMP_OT_CapturePrice1030). Convention identique.
-    price_1030 = df[df["mins_et"] == ib_close].groupby("date_et")["close"].first().rename("price_1030")
+    price_1030 = df[df["mins_et"] >= ib_close].groupby("date_et")["close"].first().rename("price_1030")
     df = df.merge(open_cash, on="date_et", how="left")
     df = df.merge(price_1030, on="date_et", how="left")
     return df
@@ -843,15 +846,27 @@ def add_open_cash_price1030_streaming(
         state.cached_open_cash = None
         state.cached_price_1030 = None
 
-    # Capture open pour open_cash + close pour price_1030
+    # Capture open pour open_cash + close pour price_1030.
+    #
+    # FIX BUG RACINE OPEN_TYPE=0 (13/06/2026) - probe empirique 3176 bars NQ 12/06 :
+    # mins_et=630 (10:30 ET pile) = 0 bar dans le JSONL. Bars autour : 628, 629, 631.
+    # Les bars Sierra 1min commencent souvent a des secondes != 00 -> mins_et arrondi
+    # peut sauter une minute (ex: bars 10:29:55, 10:30:55 -> mins_et=629, 629 puis 631).
+    # L'ancien check `mins_int == ib_close` ne matchait JAMAIS -> price_1030=None forever
+    # -> game_changers_streaming.classify_open_type retourne UNKNOWN forever.
+    # Idem fragile pour open_cash (== us_start strict).
+    #
+    # FIX : `>=` au lieu de `==`. Le check `cached_*_is_None` garantit qu'on capture
+    # qu'UNE seule fois (la 1ere bar sur ou apres le seuil).
+    # Cf cross-check 4 agents 13/06 + audit trading-strategy-analyst.
     if mins_et is not None:
         try:
             mins_int = int(mins_et)
-            # FIX : open_cash = OPEN bar us_start (pas close, voir batch fix ligne 773)
-            if mins_int == us_start and state.cached_open_cash is None and open_val is not None:
+            # open_cash = OPEN de la 1ere bar AU OU APRES us_start
+            if mins_int >= us_start and state.cached_open_cash is None and open_val is not None:
                 state.cached_open_cash = float(open_val)
-            # price_1030 reste sur close (convention C++ DMP_OT_CapturePrice1030 = price_close)
-            elif mins_int == ib_close and state.cached_price_1030 is None and close is not None:
+            # price_1030 = CLOSE de la 1ere bar AU OU APRES ib_close (10:30 ET)
+            if mins_int >= ib_close and state.cached_price_1030 is None and close is not None:
                 state.cached_price_1030 = float(close)
         except (TypeError, ValueError):
             pass
