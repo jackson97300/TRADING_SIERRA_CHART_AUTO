@@ -226,14 +226,27 @@ def _build_meta_path(symbol_fs: str, day_str: str) -> Path:
 
 def _list_recent_daily_paths(symbol_fs: str,
                               n_days: int = DEFAULT_N_DAYS_LOOKBACK) -> list[Path]:
-    """Retourne les paths daily UTC pour les n_days derniers jours
-    (ordre chronologique ascending : ancien -> recent). Gere cross-day
-    boundary + week-end / pre-open (n_days=4 default fix R3).
+    """Retourne les paths daily pour les n_days derniers jours UTC + tomorrow.
+
+    Ordre chronologique ascending (ancien -> recent). Gere :
+      - cross-day boundary + week-end / pre-open (n_days=4 default fix R3)
+      - **rollover session-date Sierra Chart en avance d'1 jour UTC** :
+        le DMP raw bascule de `YYYYMMDD_SYM.jsonl` a `YYYYMMDD+1_SYM.jsonl`
+        a 18:00 ET (= 22:00 UTC) car convention CME Globex "session day"
+        commence a 18:00 ET. L'enricher tournant en UTC pure aurait rate
+        ~2h de bars/jour (22:00 UTC -> 00:00 UTC suivant) sans lookahead.
+
+        Decouvert 15/06/2026 22:01 UTC : DMP a roll vers 20260616_ES.jsonl
+        alors que UTC date = 15/06 -> enricher gele sur 20260615 ancien.
 
     Args:
         n_days : nombre de jours UTC a chercher en remontant depuis maintenant.
                  Default 4 couvre week-end (vendredi -> lundi). Si holiday
                  long (Noel 24-26), passer n_days=7+ explicitement.
+
+    Returns:
+        Paths existants triees ancien -> recent. Si fichier `tomorrow_utc`
+        existe (rollover session-date DMP), il est inclus en dernier.
     """
     now_utc = datetime.now(timezone.utc)
     paths = []
@@ -243,6 +256,12 @@ def _list_recent_daily_paths(symbol_fs: str,
         p = _build_daily_path(symbol_fs, day_str)
         if p.exists():
             paths.append(p)
+    # Fix 15/06/2026 : lookahead +1 jour pour gerer rollover DMP session-date
+    # Sierra Chart (18:00 ET = 22:00 UTC) en avance de l'UTC calendar.
+    tomorrow = now_utc + timedelta(days=1)
+    p_tomorrow = _build_daily_path(symbol_fs, tomorrow.strftime("%Y%m%d"))
+    if p_tomorrow.exists():
+        paths.append(p_tomorrow)
     return paths
 
 

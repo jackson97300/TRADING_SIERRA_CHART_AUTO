@@ -305,5 +305,66 @@ class TestReaderIncrementalLoad(unittest.TestCase):
                 self.assertEqual(df.delta_bar.iloc[0], -10.0)
 
 
+class TestRolloverSessionDateLookahead(unittest.TestCase):
+    """Tests fix 15/06/2026 : lookahead +1 jour pour rollover DMP session-date.
+
+    Le DMP Sierra Chart rolle le fichier `YYYYMMDD_SYM.jsonl` a 18:00 ET
+    (= 22:00 UTC) par convention CME Globex "session day". Sans lookahead,
+    l'enricher tournant en UTC pure rate ~2h de bars/jour entre 22:00 UTC
+    et 00:00 UTC suivant.
+    """
+
+    def test_lookahead_includes_tomorrow_file_if_exists(self):
+        """Si DMP a roll vers `YYYYMMDD+1_SYM.jsonl` (UTC tomorrow), il est inclus."""
+        from CORE.sierra_live_io import _list_recent_daily_paths
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            es_dir = base / "ES"
+            es_dir.mkdir()
+            now_utc = datetime.now(timezone.utc)
+            today_str = now_utc.strftime("%Y%m%d")
+            tomorrow_str = (now_utc + timedelta(days=1)).strftime("%Y%m%d")
+
+            # Crée today + tomorrow (simule rollover DMP session-date à 22:00 UTC)
+            (es_dir / f"{today_str}_ES.jsonl").write_text("{}\n", encoding="utf-8")
+            (es_dir / f"{tomorrow_str}_ES.jsonl").write_text("{}\n", encoding="utf-8")
+
+            with patch("CORE.sierra_live_io.DMP_BASE", base):
+                paths = _list_recent_daily_paths("ES", n_days=2)
+
+            names = [p.name for p in paths]
+            self.assertIn(f"{today_str}_ES.jsonl", names)
+            self.assertIn(
+                f"{tomorrow_str}_ES.jsonl", names,
+                msg=(
+                    "Fix 15/06 manquant : tomorrow file existe sur disque mais pas "
+                    "remonte. Cause bug enricher gele 22:01 UTC sur file ancien."
+                ),
+            )
+            # Ordre chronologique : tomorrow en dernier
+            self.assertEqual(names[-1], f"{tomorrow_str}_ES.jsonl")
+
+    def test_lookahead_skips_tomorrow_file_if_absent(self):
+        """Si pas de file tomorrow (cas normal weekday), pas d'ajout fantome."""
+        from CORE.sierra_live_io import _list_recent_daily_paths
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            es_dir = base / "ES"
+            es_dir.mkdir()
+            now_utc = datetime.now(timezone.utc)
+            today_str = now_utc.strftime("%Y%m%d")
+            (es_dir / f"{today_str}_ES.jsonl").write_text("{}\n", encoding="utf-8")
+
+            with patch("CORE.sierra_live_io.DMP_BASE", base):
+                paths = _list_recent_daily_paths("ES", n_days=2)
+
+            names = [p.name for p in paths]
+            tomorrow_str = (now_utc + timedelta(days=1)).strftime("%Y%m%d")
+            self.assertNotIn(f"{tomorrow_str}_ES.jsonl", names)
+            self.assertEqual(len(paths), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
