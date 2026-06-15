@@ -1255,6 +1255,7 @@ LOG_CODES = {
     # Execution M5 (14 codes - IO transitions DTC)
     "BOT4_EXEC_BRACKET_SENT":       (LogLevel.INFO,     "execution", "Bot4 exec bracket sent : sym={sym} side={side} qty={qty} parent={parent_id} tp_cid={tp_cid} sl_cid={sl_cid} signal_ref={signal_ref_price}"),
     "BOT4_EXEC_BRACKET_FAIL":       (LogLevel.MAJEUR,   "execution", "Bot4 exec bracket FAIL : sym={sym} side={side} qty={qty} reject_reason={reject_reason}"),
+    "BOT4_SCENARIO_SLTP_REJECT_SIDE": (LogLevel.MAJEUR, "execution", "Bot4 scenario SL/TP du mauvais cote -> fallback sltp_engine : sym={sym} scenario={scenario} entry={entry} sl={sl} tp={tp}"),
     "BOT4_EXEC_FILL_PARENT":        (LogLevel.INFO,     "execution", "Bot4 exec FILL parent : sym={sym} cid={cid} fill_price={fill_price} signal_ref={signal_ref_price} slip_ticks={slip_ticks}"),
     "BOT4_EXEC_FILL_TP":            (LogLevel.INFO,     "execution", "Bot4 exec FILL TP : sym={sym} cid={cid} fill_price={fill_price} pnl_ticks={pnl_ticks}"),
     "BOT4_EXEC_FILL_SL":            (LogLevel.INFO,     "execution", "Bot4 exec FILL SL : sym={sym} cid={cid} fill_price={fill_price} pnl_ticks={pnl_ticks}"),
