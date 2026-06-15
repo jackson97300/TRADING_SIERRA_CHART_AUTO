@@ -1438,6 +1438,16 @@ LOG_CODES = {
     "BOT1V2_TRADABLE_HYPOTHETICAL": (LogLevel.INFO,     "decisions", "Bot1V2 TRADABLE_HYPO : {sym} {direction} @ {entry_price:.2f} session={session_phase} (audit Asia/London - non execute)"),
     "BOT1V2_ORDER_SENT":            (LogLevel.INFO,     "execution", "Bot1V2 ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
     "BOT1V2_ORDER_FAIL":            (LogLevel.CRITIQUE, "execution", "Bot1V2 ordre fail : {sym} {direction} err={err_msg}"),
+
+    # === SIERRA ENRICHER fonctionnel (16/06/2026 audit logs - decouverte gel 22:01 UTC) ===
+    # Le sierra_enricher emettait 9 SIERRA_PORT_*_OK par bar = 5000 INFO/jour de noise
+    # mais ZERO event fonctionnel (NO_NEW_BARS, ROLLOVER, STALE) -> gel 57 min invisible.
+    # Ces 5 codes permettent detection precoce + audit JSONL via /errors_*.jsonl.
+    "SIERRA_ENRICHER_BAR_ENRICHED":     (LogLevel.INFO,     "events", "Sierra enricher bar OK : sym={sym} poll={poll} n_new_bars={n_new_bars} im_emitted_total={im_total}"),
+    "SIERRA_ENRICHER_NO_NEW_BARS":      (LogLevel.ALERTE,   "events", "Sierra enricher NO new bars : sym={sym} streak_polls={streak} last_ts={last_ts}"),
+    "SIERRA_ENRICHER_FILE_ROLLOVER":    (LogLevel.INFO,     "events", "Sierra enricher file rollover : sym={sym} {old_path} -> {new_path}"),
+    "SIERRA_ENRICHER_WRITE_FAIL":       (LogLevel.CRITIQUE, "events", "Sierra enricher write FAIL : sym={sym} path={path} err={err}"),
+    "SIERRA_ENRICHER_READER_FAIL":      (LogLevel.CRITIQUE, "events", "Sierra enricher reader FAIL : sym={sym} err={err}"),
 }
 
 

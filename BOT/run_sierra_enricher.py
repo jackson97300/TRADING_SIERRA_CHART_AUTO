@@ -555,6 +555,14 @@ def run_multi_symbol_live_mode(
         "im_features_emitted": 0,  # count bars avec partner_bar non-None
     }
 
+    # Audit 16/06/2026 : tracker streak de polls SANS new bar pour detecter gel
+    # precoce (cf incident enricher 22:01 UTC invisible 57min).
+    no_new_bars_streak = {s: 0 for s in symbols}
+    NO_NEW_BARS_ALERT_THRESHOLD = 3  # 3 polls @ 10s = 30s sans bar -> ALERTE
+    # Tracker output path courant par sym pour detecter rollover (cross-day
+    # ou rollover DMP session-date Sierra Chart 18:00 ET).
+    last_output_path: dict[str, "Optional[Path]"] = {s: None for s in symbols}
+
     # Log boot multi-symbol (regle souveraine LOGS TRACABILITE 01/05)
     try:
         from CORE.logging_v2 import get_logger
@@ -586,6 +594,12 @@ def run_multi_symbol_live_mode(
             except Exception as e:  # noqa: BLE001
                 stats["errors"] += 1
                 print(f"[error][{sym}] reader failed : {e}", flush=True)
+                if _multi_log is not None:
+                    try:
+                        _multi_log.emit("SIERRA_ENRICHER_READER_FAIL",
+                                         sym=sym, err=str(e)[:200])
+                    except Exception:  # noqa: BLE001
+                        pass
                 new_bars_per_sym[sym] = []
                 continue
             if df is None or len(df) == 0:
@@ -638,15 +652,73 @@ def run_multi_symbol_live_mode(
                     bar_ts_utc = pipelines[sym]._extract_ts_utc(sierra_bar)
                     output_path = _build_output_path(output_dir, sym, bar_ts_utc)
                     line = _serialize_payload(enriched)
-                    _write_durable(output_path, line)
+                    try:
+                        _write_durable(output_path, line)
+                    except Exception as _we:  # noqa: BLE001
+                        stats["errors"] += 1
+                        if _multi_log is not None:
+                            try:
+                                _multi_log.emit("SIERRA_ENRICHER_WRITE_FAIL",
+                                                 sym=sym, path=str(output_path),
+                                                 err=str(_we)[:200])
+                            except Exception:  # noqa: BLE001
+                                pass
+                        continue
+                    # Detection rollover : path change vs precedent ce sym
+                    prev_path = last_output_path[sym]
+                    if prev_path is not None and prev_path != output_path:
+                        if _multi_log is not None:
+                            try:
+                                _multi_log.emit("SIERRA_ENRICHER_FILE_ROLLOVER",
+                                                 sym=sym,
+                                                 old_path=prev_path.name,
+                                                 new_path=output_path.name)
+                            except Exception:  # noqa: BLE001
+                                pass
+                    last_output_path[sym] = output_path
 
+            # Tracker streak no-new-bars + ALERTE precoce gel
             if new_bars_count > 0:
+                no_new_bars_streak[sym] = 0
+                if _multi_log is not None:
+                    try:
+                        _multi_log.emit(
+                            "SIERRA_ENRICHER_BAR_ENRICHED",
+                            sym=sym, poll=stats["polls"],
+                            n_new_bars=new_bars_count,
+                            im_total=stats["im_features_emitted"],
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                # Conservation print stdout pour service nssm stdout.log
                 print(
                     f"[multi][{sym}] poll {stats['polls']} : "
                     f"{new_bars_count} new bars "
                     f"(im_emitted_total={stats['im_features_emitted']})",
                     flush=True,
                 )
+            else:
+                no_new_bars_streak[sym] += 1
+                # ALERTE precoce a 3 polls (30s) - emit qu'UNE seule fois
+                # par streak (boundary 3 exactement) pour eviter spam.
+                if (no_new_bars_streak[sym] == NO_NEW_BARS_ALERT_THRESHOLD
+                    and _multi_log is not None):
+                    # seen_ts[sym] est un set : prendre le max() = ts plus recent
+                    last_ts_str = "none"
+                    try:
+                        if seen_ts[sym]:
+                            last_ts_str = str(max(seen_ts[sym]))
+                    except Exception:  # noqa: BLE001
+                        pass
+                    try:
+                        _multi_log.emit(
+                            "SIERRA_ENRICHER_NO_NEW_BARS",
+                            sym=sym,
+                            streak=no_new_bars_streak[sym],
+                            last_ts=last_ts_str,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
 
         # Phase 4 : update last_raw_bars apres TOUS les enrich (commit cycle)
         for sym in symbols:

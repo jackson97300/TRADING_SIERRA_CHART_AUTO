@@ -209,7 +209,20 @@ class SierraPipelineOrchestrator:
         self.tick_size = DEFAULT_TICK_SIZE_BY_SYMBOL.get(self.symbol, 0.25)
 
         # Log callback pour proxies (Phase 5.0.A + 5.0.B)
-        self._log_event = log_event
+        # Audit 16/06/2026 : filtrer le noise SIERRA_PORT_*_OK qui spammait
+        # 5000 INFO/jour (9 phases x ~555 bars) dans events_*_sierra_enricher.jsonl.
+        # On garde les FAIL/DEGRADED (utiles pour detection regression).
+        if log_event is not None:
+            def _filtered_log_event(code: str, **kwargs):
+                # Skip noise positive : confirmer qu'une phase a marche n'apporte
+                # rien si pas suivi de detection precoce (NO_NEW_BARS / ROLLOVER /
+                # WRITE_FAIL au niveau enricher l'apportent deja).
+                if code.startswith("SIERRA_PORT_") and code.endswith("_OK"):
+                    return
+                log_event(code, **kwargs)
+            self._log_event = _filtered_log_event
+        else:
+            self._log_event = None
 
         # Initialize stateful calculators
         self._poc_migration = POCMigrationCalculator()
