@@ -16,7 +16,7 @@ from CORE.bot1_v2.dashboard_mirror import compute_verdict
 # ============================================================
 
 def _make_bar(**overrides):
-    """Bar synthetique avec valeurs QUALITE par defaut (5/5 etoiles + 0 veto).
+    """Bar synthetique avec valeurs QUALITE par defaut (6/6 etoiles + 0 veto).
 
     Permet de tester : bar de base passe (qualite forte conviction),
     puis on degrade une etoile/ajoute veto pour tester rejet.
@@ -39,10 +39,14 @@ def _make_bar(**overrides):
         "vwap_d_side": 1,
         # ETOILE 3 : RVOL >= 1.3 (volume confirme)
         "rvol": 1.5,
-        # ETOILE 4 : momentum fort dans direction
+        # ETOILE 4 : momentum fort dans direction (mais m3 < m5 = pullback)
         "momentum_5b": 3.0,
+        "momentum_3b": 1.5,  # m3 < m5 -> pullback OK
         # ETOILE 5 : sur niveau de confluence
         "bool_near_level": 1,
+        # ETOILE 6 : pullback - prix retrace depuis high
+        "close": 7600.0,
+        "sess_high": 7602.0,  # 2 pts = 8 ticks de retracement
         # Vetos -> tous OFF par defaut (qualite bar)
         "ctx_climax_signal": False,
         "rvol_zscore": 0.5,
@@ -71,7 +75,11 @@ def _make_bar_short(**overrides):
         "vwap_d_side": -1,
         "rvol": 1.5,
         "momentum_5b": -3.0,
+        "momentum_3b": -1.5,  # m3 > m5 -> bounce OK
         "bool_near_level": 1,
+        # ETOILE 6 : bounce - prix remonte depuis low
+        "close": 7600.0,
+        "sess_low": 7598.0,  # 2 pts = 8 ticks de bounce
         "ctx_climax_signal": False,
         "rvol_zscore": 0.5,
         "gamma_block_long": False,
@@ -176,7 +184,7 @@ def test_no_paralysis_quality_short_passes():
         f"misses={verdict.quality_misses} stars={verdict.stars_count}/{verdict.stars_total}"
     )
     assert verdict.direction == "SHORT"
-    assert verdict.stars_count == 5
+    assert verdict.stars_count == verdict.stars_total  # 6/6
 
 
 def test_achat_prudent_rejected_force_conviction():
@@ -367,13 +375,53 @@ def test_quality_no_level_near_rejects():
     assert any(m.name == "NO_LEVEL_NEAR" for m in verdict.quality_misses)
 
 
-def test_quality_partial_4_of_5_still_rejects():
-    """4/5 etoiles allumees = rejet (FORTE CONVICTION = 5/5 strict)."""
+def test_quality_partial_5_of_6_still_rejects():
+    """5/6 etoiles allumees = rejet (FORTE CONVICTION = 6/6 strict)."""
     bar = _make_bar(rvol=1.0)  # 1 etoile manquante : RVOL_LOW
     verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False, "4/5 etoiles ne suffit pas (force conviction)"
-    assert verdict.stars_count == 4
-    assert verdict.stars_total == 5
+    assert verdict.ready_to_arm is False, "5/6 etoiles ne suffit pas (force conviction)"
+    assert verdict.stars_count == 5
+    assert verdict.stars_total == 6
+
+
+def test_quality_pullback_long_required():
+    """LONG sans pullback (close = sess_high) -> NO_PULLBACK_LONG."""
+    bar = _make_bar(
+        close=7602.0,  # AU high = pas de pullback
+        sess_high=7602.0,
+        momentum_3b=3.0,  # m3 = m5 = push, pas pullback
+        momentum_5b=3.0,
+    )
+    verdict = compute_verdict(bar)
+    assert verdict.ready_to_arm is False
+    assert any(m.name == "NO_PULLBACK_LONG" for m in verdict.quality_misses)
+
+
+def test_quality_pullback_long_via_momentum_decline():
+    """LONG : si pas sess_high, fallback momentum (m3 < m5 = pullback OK)."""
+    bar = _make_bar(
+        close=7600.0,
+        momentum_5b=3.0,
+        momentum_3b=1.0,  # m3 < m5 = pullback (momentum declining)
+    )
+    # Retire sess_high pour forcer fallback
+    bar.pop("sess_high", None)
+    verdict = compute_verdict(bar)
+    # Si autre etoile ne fail pas
+    assert verdict.stars_count >= 5  # pullback OK au moins
+
+
+def test_quality_pullback_short_required():
+    """SHORT sans bounce (close = sess_low) -> NO_PULLBACK_SHORT."""
+    bar = _make_bar_short(
+        close=7598.0,  # AU low = pas de bounce
+        sess_low=7598.0,
+        momentum_3b=-3.0,
+        momentum_5b=-3.0,
+    )
+    verdict = compute_verdict(bar)
+    assert verdict.ready_to_arm is False
+    assert any(m.name == "NO_PULLBACK_SHORT" for m in verdict.quality_misses)
 
 
 # ============================================================

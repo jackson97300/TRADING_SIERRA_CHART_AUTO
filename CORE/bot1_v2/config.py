@@ -98,14 +98,30 @@ class Bot1V2Config:
     # RISK HARD CAPS (root cause trade -$967 : SL Tier1 trop loin)
     # ============================================================
     # SL maximum en ticks (par symbole). Si mur Tier1 > cap = REJECT trade.
-    SL_HARD_CAP_TICKS_ES: int = _env_int("SL_HARD_CAP_TICKS_ES", 12)
-    SL_HARD_CAP_TICKS_NQ: int = _env_int("SL_HARD_CAP_TICKS_NQ", 20)
-    SL_HARD_CAP_TICKS_MGC: int = _env_int("SL_HARD_CAP_TICKS_MGC", 30)
+    # SL HARD CAP : empeche trades avec SL trop loin (root cause -$967)
+    # Cap relaxe pour absorber le BUFFER anti stop-hunter.
+    SL_HARD_CAP_TICKS_ES: int = _env_int("SL_HARD_CAP_TICKS_ES", 20)
+    SL_HARD_CAP_TICKS_NQ: int = _env_int("SL_HARD_CAP_TICKS_NQ", 30)
+    SL_HARD_CAP_TICKS_MGC: int = _env_int("SL_HARD_CAP_TICKS_MGC", 35)
 
     # SL minimum en ticks (plancher anti-bruit micro-mouvement)
-    SL_MIN_TICKS_ES: int = _env_int("SL_MIN_TICKS_ES", 4)
-    SL_MIN_TICKS_NQ: int = _env_int("SL_MIN_TICKS_NQ", 8)
-    SL_MIN_TICKS_MGC: int = _env_int("SL_MIN_TICKS_MGC", 10)
+    SL_MIN_TICKS_ES: int = _env_int("SL_MIN_TICKS_ES", 6)
+    SL_MIN_TICKS_NQ: int = _env_int("SL_MIN_TICKS_NQ", 10)
+    SL_MIN_TICKS_MGC: int = _env_int("SL_MIN_TICKS_MGC", 12)
+
+    # SL BUFFER anti stop-hunter (Jackson : "SL qui laisse respirer le prix")
+    # Place le SL DERRIERE le mur Tier1, pas AU mur exact (= cible des hunters).
+    SL_BUFFER_TICKS_ES: int = _env_int("SL_BUFFER_TICKS_ES", 3)
+    SL_BUFFER_TICKS_NQ: int = _env_int("SL_BUFFER_TICKS_NQ", 5)
+    SL_BUFFER_TICKS_MGC: int = _env_int("SL_BUFFER_TICKS_MGC", 5)
+
+    # PULLBACK ENTRY : entrer sur retracement, pas sur extremum local
+    # Critere : prix doit avoir retrace au moins X ticks depuis high/low recent
+    PULLBACK_REQUIRED: bool = _env_bool("PULLBACK_REQUIRED", True)
+    PULLBACK_LOOKBACK_BARS: int = _env_int("PULLBACK_LOOKBACK_BARS", 5)
+    PULLBACK_MIN_TICKS_ES: int = _env_int("PULLBACK_MIN_TICKS_ES", 3)
+    PULLBACK_MIN_TICKS_NQ: int = _env_int("PULLBACK_MIN_TICKS_NQ", 5)
+    PULLBACK_MIN_TICKS_MGC: int = _env_int("PULLBACK_MIN_TICKS_MGC", 5)
 
     # ============================================================
     # PATIENCE & RISK MANAGEMENT (Mark Douglas)
@@ -188,6 +204,28 @@ class Bot1V2Config:
             return self.SL_MIN_TICKS_MGC
         return self.SL_MIN_TICKS_ES
 
+    def sl_buffer_ticks(self, symbol: str) -> int:
+        """Buffer SL anti stop-hunter (place SL DERRIERE le mur, pas au mur)."""
+        s = symbol.upper()
+        if s == "ES":
+            return self.SL_BUFFER_TICKS_ES
+        if s == "NQ":
+            return self.SL_BUFFER_TICKS_NQ
+        if s == "MGC":
+            return self.SL_BUFFER_TICKS_MGC
+        return self.SL_BUFFER_TICKS_ES
+
+    def pullback_min_ticks(self, symbol: str) -> int:
+        """Minimum retracement requis pour entry sur pullback."""
+        s = symbol.upper()
+        if s == "ES":
+            return self.PULLBACK_MIN_TICKS_ES
+        if s == "NQ":
+            return self.PULLBACK_MIN_TICKS_NQ
+        if s == "MGC":
+            return self.PULLBACK_MIN_TICKS_MGC
+        return self.PULLBACK_MIN_TICKS_ES
+
     @classmethod
     def from_env(cls) -> "Bot1V2Config":
         """Construit depuis env vars (snapshot au boot).
@@ -209,12 +247,20 @@ class Bot1V2Config:
             VIX_REGIME_VETO_ENABLED=_env_bool("VIX_REGIME_VETO_ENABLED", True),
             VIX_LEVEL_MAX=_env_float("VIX_LEVEL_MAX", 35.0),
             VIX_LEVEL_MIN=_env_float("VIX_LEVEL_MIN", 13.0),
-            SL_HARD_CAP_TICKS_ES=_env_int("SL_HARD_CAP_TICKS_ES", 12),
-            SL_HARD_CAP_TICKS_NQ=_env_int("SL_HARD_CAP_TICKS_NQ", 20),
-            SL_HARD_CAP_TICKS_MGC=_env_int("SL_HARD_CAP_TICKS_MGC", 30),
-            SL_MIN_TICKS_ES=_env_int("SL_MIN_TICKS_ES", 4),
-            SL_MIN_TICKS_NQ=_env_int("SL_MIN_TICKS_NQ", 8),
-            SL_MIN_TICKS_MGC=_env_int("SL_MIN_TICKS_MGC", 10),
+            SL_HARD_CAP_TICKS_ES=_env_int("SL_HARD_CAP_TICKS_ES", 20),
+            SL_HARD_CAP_TICKS_NQ=_env_int("SL_HARD_CAP_TICKS_NQ", 30),
+            SL_HARD_CAP_TICKS_MGC=_env_int("SL_HARD_CAP_TICKS_MGC", 35),
+            SL_MIN_TICKS_ES=_env_int("SL_MIN_TICKS_ES", 6),
+            SL_MIN_TICKS_NQ=_env_int("SL_MIN_TICKS_NQ", 10),
+            SL_MIN_TICKS_MGC=_env_int("SL_MIN_TICKS_MGC", 12),
+            SL_BUFFER_TICKS_ES=_env_int("SL_BUFFER_TICKS_ES", 3),
+            SL_BUFFER_TICKS_NQ=_env_int("SL_BUFFER_TICKS_NQ", 5),
+            SL_BUFFER_TICKS_MGC=_env_int("SL_BUFFER_TICKS_MGC", 5),
+            PULLBACK_REQUIRED=_env_bool("PULLBACK_REQUIRED", True),
+            PULLBACK_LOOKBACK_BARS=_env_int("PULLBACK_LOOKBACK_BARS", 5),
+            PULLBACK_MIN_TICKS_ES=_env_int("PULLBACK_MIN_TICKS_ES", 3),
+            PULLBACK_MIN_TICKS_NQ=_env_int("PULLBACK_MIN_TICKS_NQ", 5),
+            PULLBACK_MIN_TICKS_MGC=_env_int("PULLBACK_MIN_TICKS_MGC", 5),
             MAX_TRADES_PER_DAY=_env_int("MAX_TRADES_PER_DAY", 5),
             COOLDOWN_POST_CLOSE_MIN=_env_int("COOLDOWN_POST_CLOSE_MIN", 60),
             COOLDOWN_POST_LOSS_MIN=_env_int("COOLDOWN_POST_LOSS_MIN", 90),

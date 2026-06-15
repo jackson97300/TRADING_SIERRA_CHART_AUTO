@@ -76,22 +76,31 @@ def compute_sl_tp(
     tick = get_tick_size(symbol)
     sl_cap_ticks = cfg.sl_hard_cap_ticks(symbol)
     sl_min_ticks = cfg.sl_min_ticks(symbol)
+    sl_buffer_ticks = cfg.sl_buffer_ticks(symbol)
 
     # Trouve mur SL : pour SHORT = prix > entry, pour LONG = prix < entry
-    # On utilise les niveaux disponibles dans le bar sierra_enriched
-    sl_wall_name, sl_price, sl_tier = _find_sl_wall(bar, direction, entry_price)
-    if sl_price <= 0:
+    sl_wall_name, wall_price, sl_tier = _find_sl_wall(bar, direction, entry_price)
+    if wall_price <= 0:
         return SLTPResult(
             accepted=False,
             reject_reason="NO_SL_WALL_FOUND",
             direction=direction,
         )
 
-    # Compute SL distance en ticks REELS
+    # SL BUFFER anti stop-hunter : place SL DERRIERE le mur, pas AU mur exact
+    # Jackson : "SL qui laisse respirer le prix pour eviter stop hunter"
+    # Pour SHORT : SL au-dessus mur + buffer
+    # Pour LONG : SL sous mur - buffer
+    if direction == "SHORT":
+        sl_price = wall_price + sl_buffer_ticks * tick
+    else:
+        sl_price = wall_price - sl_buffer_ticks * tick
+
+    # Compute SL distance en ticks REELS (apres buffer)
     sl_distance_pts = abs(entry_price - sl_price)
     sl_ticks = int(round(sl_distance_pts / tick))
 
-    # HARD CAP : si mur trop loin -> REJECT
+    # HARD CAP : si SL total (mur + buffer) trop loin -> REJECT
     if sl_ticks > sl_cap_ticks:
         return SLTPResult(
             accepted=False,
@@ -103,7 +112,7 @@ def compute_sl_tp(
             direction=direction,
         )
 
-    # PLANCHER : si mur trop proche -> use min (anti-bruit micro)
+    # PLANCHER : si SL trop proche -> use min (anti-bruit micro)
     if sl_ticks < sl_min_ticks:
         sl_ticks = sl_min_ticks
         if direction == "SHORT":
@@ -111,8 +120,10 @@ def compute_sl_tp(
         else:
             sl_price = entry_price - sl_min_ticks * tick
 
-    # TP : R:R 2.0 par defaut (peut etre override par TP de mur si meilleur)
-    tp_ticks = sl_ticks * 2
+    # TP : R:R 1.5 par defaut (empirique : 2.0 trop ambitieux, jamais atteint)
+    # TP_ticks = SL_ticks * 1.5 -> plus de TP hits, edge positif possible
+    rr_target = 1.5
+    tp_ticks = int(round(sl_ticks * rr_target))
     if direction == "LONG":
         tp_price = entry_price + tp_ticks * tick
     else:
@@ -135,79 +146,81 @@ def compute_sl_tp(
 def _find_sl_wall(
     bar: dict, direction: str, entry_price: float,
 ) -> tuple[str, float, int]:
-    """Trouve le mur SL le plus proche valide.
+    """Trouve le mur SL le PLUS PROCHE valide parmi TOUS les tiers.
 
-    Hierarchie Tier 1/2/3 simplifiee :
-      Tier 1 : niveau immediat (VWAP SD1, cur_vah/val, EXT_EDGE_*)
-      Tier 2 : niveau swing (prev_vah/val, ovn_high/low, ib_high/low)
-      Tier 3 : niveau journalier (pdh/pdl, mq levels)
+    Hierarchie informative (pas filtrant) :
+      Tier 1 : VWAP SD bands, cur_vah/val, EXT_EDGE_*
+      Tier 2 : prev_vah/val, ovn_high/low, ib_high/low, SD2/SD3
+      Tier 3 : pdh/pdl, sess_high/low, mq levels
 
-    Pour SHORT : cherche prix > entry
-    Pour LONG : cherche prix < entry
+    Strategie : on collecte tous murs valides (>entry pour SHORT, <entry pour LONG)
+    et on prend celui dont la distance est MINIMALE.
 
     Returns:
         (wall_name, price, tier) ou ("", 0.0, 0) si aucun.
     """
     if direction == "SHORT":
-        op = lambda v: isinstance(v, (int, float)) and v > entry_price
+        valid = lambda v: isinstance(v, (int, float)) and v > entry_price
     else:
-        op = lambda v: isinstance(v, (int, float)) and v < entry_price
+        valid = lambda v: isinstance(v, (int, float)) and v < entry_price
 
-    # Tier 1 : VWAP SD bands + cur_vah/val
-    candidates_t1 = [
+    # Collecte TOUS les murs candidats avec leurs tiers
+    candidates_all = []
+
+    # Tier 1
+    t1_pairs = [
         ("VWAP_D_SD1U" if direction == "SHORT" else "VWAP_D_SD1D",
-         bar.get("vwap_d_sd1u" if direction == "SHORT" else "vwap_d_sd1d")),
+         bar.get("vwap_d_sd1u" if direction == "SHORT" else "vwap_d_sd1d"), 1),
         ("CUR_VAH" if direction == "SHORT" else "CUR_VAL",
-         bar.get("cur_vah_lvl") or bar.get("cur_vah")),
-        ("CUR_VAH" if direction == "SHORT" else "CUR_VAL",
-         bar.get("cur_val_lvl") if direction == "LONG" else bar.get("cur_vah_lvl")),
+         bar.get("cur_vah_lvl") or bar.get("cur_vah") if direction == "SHORT"
+         else bar.get("cur_val_lvl") or bar.get("cur_val"), 1),
         ("EXT_EDGE",
-         bar.get("ext_edge_sell_price" if direction == "SHORT" else "ext_edge_buy_price")),
+         bar.get("ext_edge_sell_price" if direction == "SHORT" else "ext_edge_buy_price"), 1),
+        ("EXT_COLOR",
+         bar.get("ext_color_up_price" if direction == "SHORT" else "ext_color_dn_price"), 1),
+        ("EXT_LONG",
+         bar.get("ext_long_up_price" if direction == "SHORT" else "ext_long_dn_price"), 1),
     ]
-    for name, price in candidates_t1:
-        if price is None:
-            continue
-        try:
-            price = float(price)
-        except (TypeError, ValueError):
-            continue
-        if op(price):
-            return name, price, 1
-
-    # Tier 2 : prev_vah/val + ovn + ib
-    candidates_t2 = [
+    # Tier 2
+    t2_pairs = [
+        ("VWAP_D_SD2U" if direction == "SHORT" else "VWAP_D_SD2D",
+         bar.get("vwap_d_sd2u" if direction == "SHORT" else "vwap_d_sd2d"), 2),
         ("PREV_VAH" if direction == "SHORT" else "PREV_VAL",
-         bar.get("prev_vah") or bar.get("prev_vah_lvl")),
+         bar.get("prev_vah") or bar.get("prev_vah_lvl") if direction == "SHORT"
+         else bar.get("prev_val") or bar.get("prev_val_lvl"), 2),
         ("OVN_HIGH" if direction == "SHORT" else "OVN_LOW",
-         bar.get("ovn_high") if direction == "SHORT" else bar.get("ovn_low")),
+         bar.get("ovn_high") if direction == "SHORT" else bar.get("ovn_low"), 2),
         ("IB_HIGH" if direction == "SHORT" else "IB_LOW",
-         bar.get("ib_high") if direction == "SHORT" else bar.get("ib_low")),
+         bar.get("ib_high") if direction == "SHORT" else bar.get("ib_low"), 2),
+        ("SWING_HIGH" if direction == "SHORT" else "SWING_LOW",
+         bar.get("swing_high") if direction == "SHORT" else bar.get("swing_low"), 2),
     ]
-    for name, price in candidates_t2:
-        if price is None:
-            continue
-        try:
-            price = float(price)
-        except (TypeError, ValueError):
-            continue
-        if op(price):
-            return name, price, 2
-
-    # Tier 3 : pdh/pdl + sess_high/low
-    candidates_t3 = [
+    # Tier 3
+    t3_pairs = [
+        ("VWAP_D_SD3U" if direction == "SHORT" else "VWAP_D_SD3D",
+         bar.get("vwap_d_sd3u" if direction == "SHORT" else "vwap_d_sd3d"), 3),
         ("PDH" if direction == "SHORT" else "PDL",
-         bar.get("pdh") if direction == "SHORT" else bar.get("pdl")),
+         bar.get("pdh") if direction == "SHORT" else bar.get("pdl"), 3),
         ("SESS_HIGH" if direction == "SHORT" else "SESS_LOW",
-         bar.get("sess_high") if direction == "SHORT" else bar.get("sess_low")),
+         bar.get("sess_high") if direction == "SHORT" else bar.get("sess_low"), 3),
     ]
-    for name, price in candidates_t3:
-        if price is None:
-            continue
-        try:
-            price = float(price)
-        except (TypeError, ValueError):
-            continue
-        if op(price):
-            return name, price, 3
 
-    return "", 0.0, 0
+    for pairs in (t1_pairs, t2_pairs, t3_pairs):
+        for name, price, tier in pairs:
+            if price is None:
+                continue
+            try:
+                price = float(price)
+            except (TypeError, ValueError):
+                continue
+            if valid(price):
+                distance = abs(price - entry_price)
+                candidates_all.append((distance, name, price, tier))
+
+    if not candidates_all:
+        return "", 0.0, 0
+
+    # Trouve le PLUS PROCHE
+    candidates_all.sort()
+    _, name, price, tier = candidates_all[0]
+    return name, price, tier

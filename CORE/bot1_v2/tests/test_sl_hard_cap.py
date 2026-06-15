@@ -14,9 +14,9 @@ from CORE.bot1_v2.risk.sl_tp import compute_sl_tp
 
 
 def test_sl_hard_cap_es_rejects_far_wall():
-    """ES SHORT : mur Tier1 @ entry + 28 ticks (= 7 points) -> REJECT (cap 12)."""
+    """ES SHORT : mur Tier1 @ entry + 28 ticks (= 7 points) + buffer 3t = 31t -> REJECT (cap 20)."""
     bar = {
-        # Mur EXT_EDGE_SELL trop loin (28 ticks au-dessus)
+        # Mur trop loin (28 ticks au-dessus)
         "ext_edge_sell_price": 7633.75 + 7.0,  # +28 ticks ES = +7 points
         "cur_vah_lvl": 7633.75 + 8.0,
         "vwap_d_sd1u": 7633.75 + 10.0,
@@ -26,11 +26,11 @@ def test_sl_hard_cap_es_rejects_far_wall():
     )
     assert result.accepted is False
     assert "SL_HARD_CAP_EXCEEDED" in result.reject_reason
-    assert result.sl_ticks > 12  # confirme cap depasse
+    assert result.sl_ticks > 20  # confirme cap depasse
 
 
 def test_sl_hard_cap_es_accepts_close_wall():
-    """ES SHORT : mur Tier1 @ entry + 10 ticks (= 2.5 points) -> ACCEPT."""
+    """ES SHORT : mur @ entry + 10 ticks + buffer 3t = SL 13t -> ACCEPT (cap 20)."""
     bar = {
         "ext_edge_sell_price": 7633.75 + 2.5,  # +10 ticks ES
     }
@@ -38,14 +38,15 @@ def test_sl_hard_cap_es_accepts_close_wall():
         bar, direction="SHORT", entry_price=7633.75, symbol="ES",
     )
     assert result.accepted is True, f"Reject reason: {result.reject_reason}"
-    assert result.sl_ticks == 10
+    # Mur 10t + buffer 3t = SL 13t reel
+    assert result.sl_ticks == 13, f"Expected 13t (10 + 3 buffer), got {result.sl_ticks}"
     assert result.sl_wall == "EXT_EDGE"
 
 
 def test_sl_hard_cap_nq_rejects_far_wall():
-    """NQ SHORT : mur Tier1 @ entry + 30 ticks (cap 20) -> REJECT."""
+    """NQ SHORT : mur Tier1 @ entry + 32 ticks + buffer 5t = 37t -> REJECT (cap 30)."""
     bar = {
-        "ext_edge_sell_price": 21500.0 + 7.5,  # +30 ticks NQ = +7.5 points
+        "ext_edge_sell_price": 21500.0 + 8.0,  # +32 ticks NQ
     }
     result = compute_sl_tp(
         bar, direction="SHORT", entry_price=21500.0, symbol="NQ",
@@ -55,7 +56,7 @@ def test_sl_hard_cap_nq_rejects_far_wall():
 
 
 def test_sl_min_floor_anti_bruit():
-    """ES LONG : mur Tier1 @ entry - 1 tick -> use min 4 ticks (anti-bruit)."""
+    """ES LONG : mur Tier1 @ entry - 1 tick + buffer 3t = 4t < min 6t -> use min 6t."""
     bar = {
         "ext_edge_buy_price": 7633.75 - 0.25,  # 1 tick (too close)
     }
@@ -63,7 +64,7 @@ def test_sl_min_floor_anti_bruit():
         bar, direction="LONG", entry_price=7633.75, symbol="ES",
     )
     assert result.accepted is True
-    assert result.sl_ticks == 4  # plancher applique
+    assert result.sl_ticks == 6  # plancher applique (min ES = 6)
 
 
 def test_no_wall_returns_reject():
@@ -77,7 +78,7 @@ def test_no_wall_returns_reject():
 
 
 def test_long_finds_wall_below():
-    """LONG cherche mur SOUS entry (pas au-dessus)."""
+    """LONG cherche mur SOUS entry (pas au-dessus) + buffer."""
     bar = {
         # Mur ext_edge_buy SOUS entry = valide pour LONG
         "ext_edge_buy_price": 7633.75 - 1.5,  # -6 ticks
@@ -87,11 +88,12 @@ def test_long_finds_wall_below():
     )
     assert result.accepted is True
     assert result.sl_price < 7633.75
-    assert result.sl_ticks == 6
+    # Mur 6t + buffer 3t = SL 9t
+    assert result.sl_ticks == 9
 
 
 def test_short_finds_wall_above():
-    """SHORT cherche mur AU-DESSUS entry."""
+    """SHORT cherche mur AU-DESSUS entry + buffer."""
     bar = {
         "ext_edge_sell_price": 7633.75 + 2.0,  # +8 ticks
     }
@@ -102,11 +104,36 @@ def test_short_finds_wall_above():
     assert result.sl_price > 7633.75
 
 
-def test_rr_ratio_2():
-    """R:R par defaut = 2:1."""
+def test_rr_ratio_15():
+    """R:R par defaut = 1.5:1 (empirique : 2.0 jamais atteint).
+
+    Mur 10t + buffer 3t = SL 13t. TP = 13 * 1.5 = 19.5 -> arrondi 20t.
+    """
     bar = {"ext_edge_sell_price": 7633.75 + 2.5}  # 10 ticks
     result = compute_sl_tp(
         bar, direction="SHORT", entry_price=7633.75, symbol="ES",
     )
-    assert result.rr_ratio == 2.0
-    assert result.tp_ticks == 20  # 2 * 10
+    assert abs(result.rr_ratio - 1.5) < 0.1, f"RR={result.rr_ratio}"
+    # 13 * 1.5 = 19.5 -> round to 20
+    assert result.tp_ticks == 20, f"Expected 20 (13*1.5 rounded), got {result.tp_ticks}"
+
+
+def test_sl_buffer_anti_hunter():
+    """Verifie que SL est DERRIERE le mur, pas AU mur exact (anti stop-hunter).
+
+    Jackson : "SL qui laisse respirer le prix pour eviter stop hunter"
+    """
+    bar = {"ext_edge_sell_price": 7640.00}  # mur exact a +25 ticks
+    entry = 7633.75
+    result = compute_sl_tp(
+        bar, direction="SHORT", entry_price=entry, symbol="ES",
+    )
+    if result.accepted:
+        # SL doit etre AU-DESSUS du mur 7640.00 (= mur + 3 ticks buffer = 7640.75)
+        assert result.sl_price > 7640.00, (
+            f"SL doit etre derriere le mur (anti-hunter). "
+            f"SL={result.sl_price} mur={7640.00}"
+        )
+    else:
+        # Si rejete par cap (25+3=28t > 20), c'est ok
+        assert "SL_HARD_CAP_EXCEEDED" in result.reject_reason

@@ -148,37 +148,45 @@ def _direction_from_action(action: str) -> Optional[str]:
 # ============================================================
 
 def _compute_mtf_counts(bar: dict) -> tuple[int, int, int]:
-    """MTF confluence : compte bulls/bears/neutres sur 4 timeframes (1M/5M/15M/1H).
+    """MTF confluence : compte bulls/bears/neutres sur 4 VRAIES timeframes.
 
-    Reproduit dashboard builders.py mtf logique. Si pas de dashboard data injectee,
-    derive depuis features sierra_enriched : delta_day_dir + vwap_*_side +
-    momentum_5b + ctx_session_phase (proxy 1M/5M/15M/1H).
+    Source 1 : si dashboard injecte mtf_bulls/bears (live mode) -> read direct.
+    Source 2 : fallback VRAI MTF a partir de sierra_enriched 613 features :
+      - TF1 (court 3-min) : momentum_3b sign
+      - TF2 (moyen 5-min) : momentum_5b sign
+      - TF3 (daily) : vwap_d_side (au-dessus/sous VWAP daily)
+      - TF4 (long terme) : vwap_w_side OU vwap_m_side (weekly preferable)
+
+    Ces 4 TF sont REELLEMENT differentes (3min / 5min / 1day / 1week)
+    contrairement au fallback precedent qui melangeait indicateurs sur meme bar.
     """
-    # Si bar contient deja les comptes (dashboard data injectee)
+    # Si bar contient deja les comptes (dashboard data injectee live)
     mtf_bulls = _as_int(bar.get("mtf_bulls"))
     mtf_bears = _as_int(bar.get("mtf_bears"))
     mtf_neutres = _as_int(bar.get("mtf_neutres"))
     if (mtf_bulls + mtf_bears + mtf_neutres) > 0:
         return mtf_bulls, mtf_bears, mtf_neutres
 
-    # Sinon derive proxy 4 TF :
-    # TF1 (instant) : delta_bar sign
-    # TF2 (court) : momentum_3b sign
-    # TF3 (moyen) : momentum_5b sign
-    # TF4 (long) : vwap_d_side
+    # Fallback VRAI MTF : 4 timeframes distinctes
     bulls = 0
     bears = 0
-    for v in (
-        bar.get("delta_bar"),
-        bar.get("momentum_3b"),
-        bar.get("momentum_5b"),
-        bar.get("vwap_d_side"),
-    ):
-        f = _as_float(v)
-        if f > 0:
-            bulls += 1
-        elif f < 0:
-            bears += 1
+    # TF1 : momentum 3-min (court terme)
+    m3 = _as_float(bar.get("momentum_3b"))
+    if m3 > 0.5: bulls += 1
+    elif m3 < -0.5: bears += 1
+    # TF2 : momentum 5-min (moyen terme)
+    m5 = _as_float(bar.get("momentum_5b"))
+    if m5 > 0.5: bulls += 1
+    elif m5 < -0.5: bears += 1
+    # TF3 : VWAP daily (tendance journaliere)
+    vwap_d = _as_int(bar.get("vwap_d_side"))
+    if vwap_d > 0: bulls += 1
+    elif vwap_d < 0: bears += 1
+    # TF4 : VWAP weekly (tendance hebdomadaire = grosse direction)
+    vwap_w = _as_int(bar.get("vwap_w_side"))
+    if vwap_w > 0: bulls += 1
+    elif vwap_w < 0: bears += 1
+
     neutres = 4 - bulls - bears
     return bulls, bears, neutres
 
@@ -463,6 +471,83 @@ def _check_quality_near_level(
     )
 
 
+def _check_quality_pullback(
+    bar: dict, direction: str, cfg: Bot1V2Config, symbol: str = "ES",
+) -> Optional[QualityMiss]:
+    """Etoile qualite : entry sur PULLBACK, pas sur extremum local.
+
+    LONG : prix doit etre RETRACE depuis le high recent
+      = close < high_recent - min_pullback_ticks
+    SHORT : prix doit etre RETRACE depuis le low recent
+      = close > low_recent + min_pullback_ticks
+
+    Si pas de features high/low recent disponibles, fallback sur momentum :
+      LONG : momentum_3b doit etre moins positif que momentum_5b (= debut pullback)
+      SHORT : momentum_3b doit etre moins negatif que momentum_5b
+    """
+    if not cfg.PULLBACK_REQUIRED:
+        return None
+
+    close = _as_float(bar.get("close"))
+    if close <= 0:
+        return None
+
+    min_pullback_ticks = cfg.pullback_min_ticks(symbol)
+    try:
+        from CORE.constants import get_tick_size
+    except ImportError:
+        from constants import get_tick_size  # type: ignore
+    tick = get_tick_size(symbol)
+    min_pullback_pts = min_pullback_ticks * tick
+
+    # Methode 1 : high/low session locale (si dispo)
+    if direction == "LONG":
+        # Cherche le high recent : sess_high ou cash_high ou day_max
+        for key in ("sess_high", "cash_high", "day_max_price"):
+            high_recent = _as_float(bar.get(key))
+            if high_recent > close:
+                pullback_pts = high_recent - close
+                if pullback_pts >= min_pullback_pts:
+                    return None  # OK pullback present
+                else:
+                    return QualityMiss(
+                        name="NO_PULLBACK_LONG",
+                        reason=f"close={close:.2f} too close to {key}={high_recent:.2f} (only {pullback_pts:.2f}pts retracement, need {min_pullback_pts:.2f})",
+                    )
+        # Methode 2 fallback : momentum 3b vs 5b (debut pullback)
+        m3 = _as_float(bar.get("momentum_3b"))
+        m5 = _as_float(bar.get("momentum_5b"))
+        # Pour LONG : on veut m5 > m3 (recent momentum decline = pullback)
+        if m5 > 0 and m3 < m5:
+            return None  # pullback OK via momentum
+        return QualityMiss(
+            name="NO_PULLBACK_LONG",
+            reason=f"momentum_3b={m3:.2f} >= momentum_5b={m5:.2f} (push haussier, pas pullback)",
+        )
+    else:  # SHORT
+        for key in ("sess_low", "cash_low", "day_min_price"):
+            low_recent = _as_float(bar.get(key))
+            if 0 < low_recent < close:
+                bounce_pts = close - low_recent
+                if bounce_pts >= min_pullback_pts:
+                    return None
+                else:
+                    return QualityMiss(
+                        name="NO_PULLBACK_SHORT",
+                        reason=f"close={close:.2f} too close to {key}={low_recent:.2f} (only {bounce_pts:.2f}pts bounce, need {min_pullback_pts:.2f})",
+                    )
+        # Fallback momentum
+        m3 = _as_float(bar.get("momentum_3b"))
+        m5 = _as_float(bar.get("momentum_5b"))
+        # Pour SHORT : on veut m5 < m3 (recent momentum recovery = bounce)
+        if m5 < 0 and m3 > m5:
+            return None
+        return QualityMiss(
+            name="NO_PULLBACK_SHORT",
+            reason=f"momentum_3b={m3:.2f} <= momentum_5b={m5:.2f} (push baissier, pas bounce)",
+        )
+
+
 def _check_vix_veto(
     bar: dict, cfg: Bot1V2Config,
 ) -> Optional[VetoFired]:
@@ -495,22 +580,25 @@ def _check_vix_veto(
 # ORCHESTRATEUR
 # ============================================================
 
-def compute_verdict(bar: dict, cfg: Optional[Bot1V2Config] = None) -> MirrorVerdict:
-    """Calcule le verdict miroir dashboard + applique 4 vetos hard.
+def compute_verdict(
+    bar: dict, cfg: Optional[Bot1V2Config] = None, symbol: str = "ES",
+) -> MirrorVerdict:
+    """Calcule le verdict miroir dashboard + applique vetos + etoiles qualite.
 
     Args:
         bar : dict sierra_enriched (613 features) + dashboard data optionnelle
         cfg : config (default si None)
+        symbol : "ES" / "NQ" / "MGC" pour pullback ticks calibration
 
     Returns:
-        MirrorVerdict avec :
-          - action (dashboard verdict)
-          - direction (LONG/SHORT/None)
-          - vetos (liste vetos declenches)
-          - ready_to_arm (True ssi action valide ET aucun veto)
+        MirrorVerdict avec ready_to_arm True ssi action valide + 0 veto + 6/6 stars.
     """
     if cfg is None:
         cfg = Bot1V2Config.from_env()
+    # Auto-detect symbol depuis bar si possible
+    bar_sym = bar.get("sym") or bar.get("symbol")
+    if isinstance(bar_sym, str) and bar_sym in ("ES", "NQ", "MGC"):
+        symbol = bar_sym
 
     # 1. BASE - reproduit dashboard
     bull_pts, bear_pts = _compute_pts(bar)
@@ -559,8 +647,8 @@ def compute_verdict(bar: dict, cfg: Optional[Bot1V2Config] = None) -> MirrorVerd
             vetos.append(veto)
 
     # 4. ETOILES QUALITE (FORTE CONVICTION cluster)
-    # Jackson souverain : "ON DOIS SELECTIONNNER LES SIGNAUX FORT CONVICTION"
-    # 5 etoiles. TOUTES doivent etre allumees pour ready_to_arm = True.
+    # Jackson souverain : "SIGNAUX FORT CONVICTION" + "TRADE DANS SENS TENDANCE"
+    # 6 etoiles. TOUTES doivent etre allumees pour ready_to_arm = True.
     quality_misses: list[QualityMiss] = []
     for check_fn in (
         lambda: _check_quality_bias(bar, direction, bias_score, cfg),
@@ -568,12 +656,13 @@ def compute_verdict(bar: dict, cfg: Optional[Bot1V2Config] = None) -> MirrorVerd
         lambda: _check_quality_rvol(bar, cfg),
         lambda: _check_quality_momentum(bar, direction, cfg),
         lambda: _check_quality_near_level(bar, cfg),
+        lambda: _check_quality_pullback(bar, direction, cfg, symbol),
     ):
         miss = check_fn()
         if miss:
             quality_misses.append(miss)
 
-    stars_total = 5
+    stars_total = 6
     stars_count = stars_total - len(quality_misses)
 
     # Verdict : aucun veto ET toutes etoiles allumees (5/5)
