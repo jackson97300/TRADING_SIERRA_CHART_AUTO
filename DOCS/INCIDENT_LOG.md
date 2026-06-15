@@ -31,6 +31,27 @@
 
 ---
 
+### 2026-06-16 (61) - [VALIDATION_MISS] - sur-diagnostic ES BN : alias bn_long_up corrige attrape par tests (fix reverte)
+
+**Contexte** : Investigation sous-regime scenarios ES (moteur narratif Bot 4). ES = 108 scenarios filtres vs NQ 537. BN Fired fire 73x NQ vs 6x ES.
+
+**Hypothese initiale (PARTIELLEMENT FAUSSE)** : `bn_long_up` (DMP brut C++, Extension Lines mortes ES : 19 vs NQ 1021) non aliase au port Python `long_up_bar` (marche ES : 148). J'ai propose+code l'override `bn_long_up=long_up_bar` dans sierra_pipeline.
+
+**Ce qui a mal tourne (mon erreur)** :
+- Test EMPIRIQUE du fix : impact NEGLIGEABLE. ES `bn_score_raw` 9%->10%, BN Fired 6->6 (inchange), bn_bull_strength 70->85 seulement. Le fix ne resout PAS le BN ES.
+- Le fix a CASSE 2 tests (`test_bn_composites_python_override_*`) : override bn_long_up avant bn_composites viole comportement teste.
+- -> Fix REVERTE. Cout (tests casses + risque multi-bots) >> benefice (negligeable).
+
+**Cause racine reelle ES BN faible** : multi-facteurs (signaux footprint ES structurellement moins marques + confluence ES 9% vs NQ 12%), PAS le seul bn_long_up. ES a un regime BN intrinsequement plus faible.
+
+**Lecon** : TESTER EMPIRIQUEMENT un fix (impact reel + pytest) AVANT de documenter sa cause comme resolue. J'ai documente #61 v1 en sur-vendant bn_long_up avant de mesurer. Cousin pattern_11 rationalisation.
+
+**Trigger prevention** : sur ES, le BN reste faible (accepte) ; Bot 4 ES tradera les autres scenarios (Bearish rejection, IB Break, Range fade - tous OK ES). NE PAS re-tenter l'alias bn_long_up sans nouvelle preuve empirique d'impact.
+
+**Reviewed** : self (auto-correction empirique + pytest, Jackson 16/06)
+
+---
+
 ### 2026-06-15 11:30 (60) - [VALIDATION_MISS] - dist_blind_nearest_up/dn re-injection promise inexistante - BN V5 Sim2 + Bot 3 Gold silencieusement degrades
 
 **Contexte** : Audit DEAD features post-migration Bot 1 vers sierra_enriched (commit `a201b15` 15/06 matin). Agent general-purpose investigation dispatch confirme `dist_blind_nearest_up/dn` NULL 100% sur 15169 bars NQ 4 jours + 11762 bars ES 5 jours.
