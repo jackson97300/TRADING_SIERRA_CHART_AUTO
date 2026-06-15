@@ -371,16 +371,13 @@ def _scenario_bullish_continuation(ctx: NarrativeContext) -> Optional[Scenario]:
         setup_type="swing",
         target_2=ctx.key_levels_resistance[1].price if len(ctx.key_levels_resistance) > 1 else None,
         stop_level=bc_stop,
+        # Confirmation DSL (order-flow haussier au rebond) - 2 signaux non redondants
         conditions_validation=[
-            "Rebond confirme sur support (close > entry + 0.2 ATR)",
-            "Delta_bar > 0 sur la bar du rebond",
-            "BN absorb_bid > 0 OU bn_long_up = 1",
+            "delta_bar > 0",
             "finish_strength > 0",
         ],
         conditions_invalidation=[
-            "Stop touche (entry - 0.8 ATR)",
-            "Cassure support avec volume > 2x average",
-            "Delta day passe NEUTRAL ou BEAR",
+            "cvd_day < 0",  # macro flip bear = continuation morte
         ],
         confidence="high" if score >= 60 else "medium",
         rationale=f"Macro BULL (CVD day {ctx.order_flow.cvd_day:+d}), pullback opportuniste sur {near_sup.label}",
@@ -440,17 +437,14 @@ def _scenario_bearish_rejection(ctx: NarrativeContext) -> Optional[Scenario]:
         target_2=ctx.key_levels_support[1].price if len(ctx.key_levels_support) > 1 else None,
         # Invalidation Wyckoff : test rate = close acceptee au-dessus de la resistance.
         stop_level=major_res.price,
+        # Contre-tendance : exhaustion order-flow OBLIGATOIRE (delta- + divergence
+        # baissiere) sinon on se fait ecraser dans une tendance haussiere.
         conditions_validation=[
-            "Rejet confirme (long wick haut > 0.3 ATR)",
-            "Delta_bar < 0 sur la bar de rejet",
-            "BN absorb_ask > 0 OU bn_long_dn = 1",
-            "finish_strength < 0",
-            f"Confluence {major_res.confluence_count} niveaux superposes",
+            "delta_bar < 0",
+            "delta_div_strength < 0",
         ],
         conditions_invalidation=[
-            "Stop touche (entry + 0.8 ATR)",
-            f"Cassure {major_res.label} avec volume > 2x average",
-            "Delta day reste BULL fort",
+            "cvd_day > 0",  # macro reste franchement bull = rejet dangereux
         ],
         confidence="high" if score >= 55 else "medium",
         rationale=f"Confluence {major_res.confluence_count} sources sur {major_res.price} ({major_res.label}), setup contre-trend",
@@ -507,10 +501,10 @@ def _scenario_range_bound_long_fade(ctx: NarrativeContext) -> Optional[Scenario]
         # Invalidation : cassure du support = sortie de range par le bas.
         stop_level=near_sup.price,
         conditions_validation=[
-            "Touch support + delta+ + finish_strength +",
-            "BN absorb_bid > 0 OU bn_long_up = 1",
+            "delta_bar > 0",
+            "finish_strength > 0",
         ],
-        conditions_invalidation=["Cassure support avec volume > 2x average"],
+        conditions_invalidation=[],
         confidence="medium",
         rationale="Range NormVar attendu, fade support (XOR vs SHORT fade)",
     )
@@ -545,10 +539,10 @@ def _scenario_range_bound_short_fade(ctx: NarrativeContext) -> Optional[Scenario
         # Invalidation : cassure de la resistance = sortie de range par le haut.
         stop_level=near_res.price,
         conditions_validation=[
-            "Touch resistance + delta- + finish_strength -",
-            "BN absorb_ask > 0 OU bn_long_dn = 1",
+            "delta_bar < 0",
+            "finish_strength < 0",
         ],
-        conditions_invalidation=["Cassure resistance avec volume > 2x average"],
+        conditions_invalidation=[],
         confidence="medium",
         rationale="Range NormVar attendu, fade resistance (XOR vs LONG fade)",
     )
@@ -599,8 +593,8 @@ def _scenario_judas_reversal(ctx: NarrativeContext) -> Optional[Scenario]:
             target=near_res.price,
             ctx=ctx,
             setup_type="swing",
-            conditions_validation=["Continuation UP confirme post-Judas detected"],
-            conditions_invalidation=["Retour direction first hour London"],
+            conditions_validation=["delta_bar > 0", "finish_strength > 0"],
+            conditions_invalidation=[],
             confidence="high" if score >= 65 else "medium",
             rationale="Judas Swing ICT detected, direction vraie identifiee",
         )
@@ -626,8 +620,8 @@ def _scenario_judas_reversal(ctx: NarrativeContext) -> Optional[Scenario]:
         target=near_sup.price,
         ctx=ctx,
         setup_type="swing",
-        conditions_validation=["Continuation DOWN confirme post-Judas detected"],
-        conditions_invalidation=["Retour direction first hour London"],
+        conditions_validation=["delta_bar < 0", "finish_strength < 0"],
+        conditions_invalidation=[],
         confidence="high" if score >= 65 else "medium",
         rationale="Judas Swing ICT detected, direction vraie identifiee",
     )
@@ -682,15 +676,8 @@ def _scenario_failed_breakout(ctx: NarrativeContext) -> Optional[Scenario]:
             # Invalidation Wyckoff (Pruden) : re-cassure du low du Spring lui-meme
             # (la barre de sweep). Si refranchi, l'accumulation est invalidee.
             stop_level=ctx.bar_low,
-            conditions_validation=[
-                "Close > entry sur bar suivante (acceptance reverse)",
-                "Delta_bar > 0 + finish_strength > 0",
-                "BN absorb_bid > 0 (smart money LONG)",
-            ],
-            conditions_invalidation=[
-                "Re-cassure low avec volume",
-                "Stop touche (entry - 0.8 ATR)",
-            ],
+            conditions_validation=["delta_bar > 0", "finish_strength > 0"],
+            conditions_invalidation=[],
             confidence="high" if score >= 60 else "medium",
             rationale="Sweep low + retour dans range = Spring Wyckoff (failed breakdown)",
         )
@@ -729,15 +716,8 @@ def _scenario_failed_breakout(ctx: NarrativeContext) -> Optional[Scenario]:
             setup_type="swing",
             # Invalidation Wyckoff : re-cassure du high de l'UTAD (barre de sweep).
             stop_level=ctx.bar_high,
-            conditions_validation=[
-                "Close < entry sur bar suivante (acceptance reverse)",
-                "Delta_bar < 0 + finish_strength < 0",
-                "BN absorb_ask > 0 (smart money SHORT)",
-            ],
-            conditions_invalidation=[
-                "Re-cassure high avec volume",
-                "Stop touche (entry + 0.8 ATR)",
-            ],
+            conditions_validation=["delta_bar < 0", "finish_strength < 0"],
+            conditions_invalidation=[],
             confidence="high" if score >= 60 else "medium",
             rationale="Sweep high + retour dans range = UTAD Wyckoff (failed breakout)",
         )
@@ -796,11 +776,8 @@ def _scenario_fvg_magnet(ctx: NarrativeContext) -> Optional[Scenario]:
             target=round(target_price, 2),
             ctx=ctx,
             setup_type="scalp",
-            conditions_validation=[
-                "Continuation UP avec delta+",
-                "Pas de rejection sur niveau intermediaire",
-            ],
-            conditions_invalidation=["Reversal BEAR avec volume"],
+            conditions_validation=["delta_bar > 0"],
+            conditions_invalidation=[],
             confidence="medium",
             rationale="FVG zone above proche - price tend vers inefficience",
         )
@@ -839,11 +816,8 @@ def _scenario_fvg_magnet(ctx: NarrativeContext) -> Optional[Scenario]:
             target=round(target_price, 2),
             ctx=ctx,
             setup_type="scalp",
-            conditions_validation=[
-                "Continuation DOWN avec delta-",
-                "Pas de bounce sur niveau intermediaire",
-            ],
-            conditions_invalidation=["Reversal BULL avec volume"],
+            conditions_validation=["delta_bar < 0"],
+            conditions_invalidation=[],
             confidence="medium",
             rationale="FVG zone below proche - price tend vers inefficience",
         )
@@ -895,11 +869,8 @@ def _scenario_single_print_magnet(ctx: NarrativeContext) -> Optional[Scenario]:
             target=round(target_price, 2),
             ctx=ctx,
             setup_type="scalp",
-            conditions_validation=[
-                "Acceleration UP vers single print zone",
-                "Pas de niveau majeur intermediaire",
-            ],
-            conditions_invalidation=["Reversal vers cur_vpoc"],
+            conditions_validation=["delta_bar > 0"],
+            conditions_invalidation=[],
             confidence="medium",
             rationale="Steidlmayer single print magnet - inefficience a combler",
         )
@@ -924,11 +895,8 @@ def _scenario_single_print_magnet(ctx: NarrativeContext) -> Optional[Scenario]:
             target=round(target_price, 2),
             ctx=ctx,
             setup_type="scalp",
-            conditions_validation=[
-                "Acceleration DOWN vers single print zone",
-                "Pas de niveau majeur intermediaire",
-            ],
-            conditions_invalidation=["Reversal vers cur_vpoc"],
+            conditions_validation=["delta_bar < 0"],
+            conditions_invalidation=[],
             confidence="medium",
             rationale="Steidlmayer single print magnet - inefficience a combler",
         )
@@ -1039,16 +1007,14 @@ def _scenario_bn_fired_confluence(ctx: NarrativeContext) -> Optional[Scenario]:
         # un long) -> 96% fallback ATR (reserve code-reviewer 15/06). sup_lvl est
         # garanti du bon cote de l'entry.
         stop_level=(sup_lvl.price if sup_lvl is not None else None),
-        conditions_validation=[
-            f"BN strength {ctx.order_flow.bn_bull_strength if bn_dir > 0 else ctx.order_flow.bn_bear_strength} signals actifs",
-            f"Confluence {confluence_level.confluence_count} sources @ {confluence_level.price}",
-            "Continuation direction BN confirmed bar+1",
-        ],
-        conditions_invalidation=[
-            "BN strength flip oppose",
-            "Macro_bias reverse",
-            "Cassure niveau confluence avec volume > 2x",
-        ],
+        # Confirmation DSL direction-aware : delta + BN score alignes
+        conditions_validation=(
+            ["delta_bar > 0", "bn_score_raw > 0"] if bn_dir > 0
+            else ["delta_bar < 0", "bn_score_raw < 0"]
+        ),
+        conditions_invalidation=(
+            ["bn_score_raw < 0"] if bn_dir > 0 else ["bn_score_raw > 0"]
+        ),
         confidence="high",
         rationale=f"BN {('bull' if bn_dir > 0 else 'bear')} strength={ctx.order_flow.bn_bull_strength if bn_dir > 0 else ctx.order_flow.bn_bear_strength} + confluence {confluence_level.confluence_count}",
     )
@@ -1112,8 +1078,8 @@ def _scenario_open_type_driven(ctx: NarrativeContext) -> Optional[Scenario]:
                 target_2=ctx.key_levels_resistance[1].price if len(ctx.key_levels_resistance) > 1 else None,
                 # Invalidation Dalton : un Open Drive ne retrace pas a l'open cash.
                 stop_level=ctx.open_cash,
-                conditions_validation=["Continuation UP us_cash_open first 30min"],
-                conditions_invalidation=["Reversal vers open price + delta-"],
+                conditions_validation=["delta_bar > 0"],
+                conditions_invalidation=[],
                 confidence="high" if score >= 60 else "medium",
                 rationale=f"Dalton Open Drive UP + trend_prob {trend_prob:.2f}",
             )
@@ -1139,8 +1105,8 @@ def _scenario_open_type_driven(ctx: NarrativeContext) -> Optional[Scenario]:
             target_2=ctx.key_levels_support[1].price if len(ctx.key_levels_support) > 1 else None,
             # Invalidation Dalton : un Open Drive ne retrace pas a l'open cash.
             stop_level=ctx.open_cash,
-            conditions_validation=["Continuation DOWN us_cash_open first 30min"],
-            conditions_invalidation=["Reversal vers open price + delta+"],
+            conditions_validation=["delta_bar < 0"],
+            conditions_invalidation=[],
             confidence="high" if score >= 60 else "medium",
             rationale=f"Dalton Open Drive DOWN + trend_prob {trend_prob:.2f}",
         )
@@ -1215,15 +1181,8 @@ def _scenario_ib_break(ctx: NarrativeContext) -> Optional[Scenario]:
             setup_type="swing",
             target_2=round(target_2_price, 2),
             stop_level=ib_h,
-            conditions_validation=[
-                "Continuation UP avec delta+",
-                "Pas de retour sous ib_high sur bar+1 (failed break test)",
-                "Volume > IB average",
-            ],
-            conditions_invalidation=[
-                "Retour sous ib_high (failed break Dalton)",
-                "Delta day reverse BEAR",
-            ],
+            conditions_validation=["delta_bar > 0", "ib_broken_up == 1"],
+            conditions_invalidation=[],
             confidence="high" if score >= 60 else "medium",
             rationale=f"IB broken_up, ib_range={ib_range_pts:.1f}pts, narrow={ctx.market_structure.ib_is_narrow}",
         )
@@ -1247,15 +1206,8 @@ def _scenario_ib_break(ctx: NarrativeContext) -> Optional[Scenario]:
         setup_type="swing",
         target_2=round(target_2_price, 2),
         stop_level=ib_l,
-        conditions_validation=[
-            "Continuation DOWN avec delta-",
-            "Pas de retour au-dessus ib_low sur bar+1 (failed break test)",
-            "Volume > IB average",
-        ],
-        conditions_invalidation=[
-            "Retour au-dessus ib_low (failed break Dalton)",
-            "Delta day reverse BULL",
-        ],
+        conditions_validation=["delta_bar < 0", "ib_broken_down == 1"],
+        conditions_invalidation=[],
         confidence="high" if score >= 60 else "medium",
         rationale=f"IB broken_down, ib_range={ib_range_pts:.1f}pts, narrow={ctx.market_structure.ib_is_narrow}",
     )
@@ -1304,15 +1256,8 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
             # exhaustion refutee. Buffer 0.5 (bandes SD percees a la meche).
             stop_level=sd_level,
             stop_buffer_atr=0.5,
-            conditions_validation=[
-                "Delta divergence bearish confirmed",
-                "Reversal bar avec long wick haut",
-                "finish_strength < 0",
-            ],
-            conditions_invalidation=[
-                "Acceptance >= 2 bars au-dessus SD3 (breakout reel)",
-                "Delta_bar reverse BULL",
-            ],
+            conditions_validation=["delta_div_strength < 0", "finish_strength < 0"],
+            conditions_invalidation=[],
             confidence="high" if score >= 55 else "medium",
             rationale=f"VWAP SD3 upper touch @ {sd_level:.2f}, 0.3% statistique exhaustion",
         )
@@ -1347,15 +1292,8 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
             # Invalidation Steenbarger : acceptance sous la bande SD3. Buffer 0.5.
             stop_level=sd_level,
             stop_buffer_atr=0.5,
-            conditions_validation=[
-                "Delta divergence bullish confirmed",
-                "Reversal bar avec long wick bas",
-                "finish_strength > 0",
-            ],
-            conditions_invalidation=[
-                "Acceptance >= 2 bars sous SD3 (breakdown reel)",
-                "Delta_bar reverse BEAR",
-            ],
+            conditions_validation=["delta_div_strength > 0", "finish_strength > 0"],
+            conditions_invalidation=[],
             confidence="high" if score >= 55 else "medium",
             rationale=f"VWAP SD3 lower touch @ {sd_level:.2f}, 0.3% statistique exhaustion",
         )
@@ -1388,8 +1326,8 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
             setup_type="swing",
             stop_level=sd_level,
             stop_buffer_atr=0.5,
-            conditions_validation=["Delta divergence bearish + reversal bar"],
-            conditions_invalidation=["Breakout SD2 avec volume confirme"],
+            conditions_validation=["delta_div_strength < 0"],
+            conditions_invalidation=[],
             confidence="medium",
             rationale=f"VWAP SD2 upper touch @ {sd_level:.2f}",
         )
@@ -1421,8 +1359,8 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
             setup_type="swing",
             stop_level=sd_level,
             stop_buffer_atr=0.5,
-            conditions_validation=["Delta divergence bullish + reversal bar"],
-            conditions_invalidation=["Breakdown SD2 avec volume confirme"],
+            conditions_validation=["delta_div_strength > 0"],
+            conditions_invalidation=[],
             confidence="medium",
             rationale=f"VWAP SD2 lower touch @ {sd_level:.2f}",
         )
@@ -1506,16 +1444,12 @@ def _scenario_holy_grail(ctx: NarrativeContext) -> Optional[Scenario]:
         ctx=ctx,
         setup_type="swing",
         stop_level=hg_stop,
-        conditions_validation=[
-            f"trend_day_probability {ctx.market_structure.trend_day_probability:.2f} >= 0.5",
-            "Pullback termine + reversal bar VWAP day",
-            "Macro bias coherent direction",
-        ],
-        conditions_invalidation=[
-            "Cassure du swing low/high du pullback (Raschke)",
-            "Macro bias flip",
-            "Stop touche",
-        ],
+        # Confirmation reprise de tendance post-pullback (side-aware)
+        conditions_validation=(
+            ["delta_bar > 0", "finish_strength > 0"] if side == "long"
+            else ["delta_bar < 0", "finish_strength < 0"]
+        ),
+        conditions_invalidation=[],
         confidence="high" if score >= 65 else "medium",
         rationale=f"Raschke Holy Grail (Street Smarts ch.7) - trend_prob {ctx.market_structure.trend_day_probability:.2f} + pullback VWAP",
     )
