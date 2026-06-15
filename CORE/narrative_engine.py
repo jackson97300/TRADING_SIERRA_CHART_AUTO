@@ -41,6 +41,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+try:
+    from CORE.constants import get_tick_size as _get_tick_size
+except ImportError:
+    from constants import get_tick_size as _get_tick_size
+
 _LOG = logging.getLogger("narrative_engine")
 _WARN_SAMPLE_RATE = 0.001  # 1/1000 fallback warnings to avoid spam
 
@@ -175,6 +180,13 @@ class NarrativeContext:
     vwap_triple_align: int = 0  # 0/1 alignement triple VWAP day/week/month
     bool_above_vwap_d: bool = False
     prev_vwap: Optional[float] = None
+    # Niveaux d'invalidation structurels (stop_level par scenario, cf
+    # DOCS/SCENARIO_INVALIDATION_ANALYSIS.md) :
+    swing_low: Optional[float] = None    # holy_grail / continuation (Raschke)
+    swing_high: Optional[float] = None
+    open_cash: Optional[float] = None    # open_drive invalidation (Dalton OD)
+    bar_low: Optional[float] = None      # spring sweep extreme (Wyckoff)
+    bar_high: Optional[float] = None     # UTAD sweep extreme
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -627,8 +639,19 @@ def build_narrative_context(bar: dict) -> NarrativeContext:
             f"build_narrative_context: bar empty or invalid (type={type(bar).__name__})"
         )
     close = _safe_float(bar, "close")
-    atr = _safe_float(bar, "atr", default=1.0)
-    atr_14m = _safe_float(bar, "atr_14m", default=1.0)
+    # Sierra emet deux ATR, tous deux en TICKS (cf INCIDENT_LOG #779,
+    # sierra_pipeline.py:1160) :
+    #   - "atr"     = ATR 14 DAILY  (ex NQ ~784 ticks = ~196 pts/jour)
+    #   - "atr_14m" = ATR 14 intraday (ex NQ ~50 ticks = ~12 pts)
+    # ctx.atr sert d'unite de distance INTRADAY (stops, entry zones,
+    # clustering confluence, proximite VWAP SD). Il DOIT etre l'ATR intraday
+    # converti en POINTS, sinon stops/zones ~16x trop larges (RR casse,
+    # confluence sur-mergee). Bug d'unite famille incident Plan C 27/05.
+    sym = bar.get("sym", "NQ")
+    tick = _get_tick_size(sym)
+    atr_14m_ticks = _safe_float(bar, "atr_14m", default=1.0)
+    atr = atr_14m_ticks * tick  # ATR intraday en POINTS (unite distance ctx)
+    atr_14m = atr_14m_ticks     # brut ticks conserve pour compat downstream
     vix = _safe_float(bar, "vix_level", default=20.0)
 
     ts_ms = bar.get("ts", 0)
@@ -636,6 +659,22 @@ def build_narrative_context(bar: dict) -> NarrativeContext:
         ts_iso = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
     except (TypeError, ValueError, OSError):
         ts_iso = "unknown"
+
+    # Niveaux d'invalidation structurels (prix absolus reconstruits depuis dist_*)
+    def _level_from_dist(key: str) -> Optional[float]:
+        d = bar.get(key)
+        if d is None:
+            return None
+        try:
+            return close + float(d)
+        except (TypeError, ValueError):
+            return None
+
+    swing_low = _level_from_dist("dist_swing_low")
+    swing_high = _level_from_dist("dist_swing_high")
+    open_cash = bar.get("open_cash")
+    bar_low = bar.get("low")
+    bar_high = bar.get("high")
 
     return NarrativeContext(
         timestamp_utc=ts_iso,
@@ -660,4 +699,9 @@ def build_narrative_context(bar: dict) -> NarrativeContext:
         vwap_triple_align=_safe_int(bar, "vwap_triple_align"),
         bool_above_vwap_d=_safe_bool(bar, "bool_above_vwap_d"),
         prev_vwap=_pvwap(bar),
+        swing_low=swing_low,
+        swing_high=swing_high,
+        open_cash=open_cash,
+        bar_low=bar_low,
+        bar_high=bar_high,
     )

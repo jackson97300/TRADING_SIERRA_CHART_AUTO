@@ -78,6 +78,10 @@ _LOG = logging.getLogger("scenario_generator")
 STOP_ATR_FRAC_SWING = 0.8
 STOP_ATR_FRAC_SCALP = 0.3
 ENTRY_ZONE_ATR_FRAC = 0.10  # +/- 10% ATR autour entry
+# Buffer de bruit ajoute sous/au-dessus d'un stop STRUCTUREL (niveau
+# d'invalidation reel : ib_low/high, swing, support fade). Evite d'etre
+# sorti par le bruit exactement au niveau. ctx.atr = ATR intraday POINTS.
+STOP_BUFFER_ATR_FRAC = 0.25
 
 # VIX regime filter - drop scenarios incompatibles avec regime courant.
 # Reference : Vilkov/Dimitrov 2024 (cf feedback_regime_gex_finding.md).
@@ -236,13 +240,35 @@ def _make_setup_long(name: str, entry: float, target: float, ctx: NarrativeConte
                      setup_type: str = "swing", target_2: Optional[float] = None,
                      conditions_validation: Optional[list] = None,
                      conditions_invalidation: Optional[list] = None,
-                     confidence: str = "medium", rationale: str = "") -> TradingSetup:
+                     confidence: str = "medium", rationale: str = "",
+                     stop_level: Optional[float] = None,
+                     stop_buffer_atr: float = STOP_BUFFER_ATR_FRAC) -> TradingSetup:
     """Factory LONG setup avec stops calibres.
 
+    stop_level : niveau d'invalidation STRUCTUREL (ib_low, swing low, support
+        fade...). Si fourni, stop = stop_level - buffer (coherence d'horizon
+        avec target structurel). Sinon fallback ATR intraday (scalp/swing).
+    stop_buffer_atr : marge sous le niveau (default 0.25 ATR). Override possible
+        (ex vwap_sd 0.5 : bandes SD transpercees a la meche = fait structurel).
     R:R calcule sur target_2 si swing + disponible (full move), sinon target_1.
     """
-    stop_frac = _stop_distance_atr(setup_type)
-    stop = entry - stop_frac * ctx.atr
+    if stop_level is not None and stop_level <= entry:
+        # <= : famille A (fade) a entry == niveau, le buffer cree la marge.
+        stop = stop_level - stop_buffer_atr * ctx.atr
+    else:
+        if stop_level is not None:
+            # stop_level fourni mais du mauvais cote (> entry) -> fallback ATR
+            # silencieux = anti-pattern VALIDATION_MISS. On trace.
+            _LOG.warning(
+                "LONG '%s' : stop_level=%.2f rejete (> entry=%.2f), fallback ATR %s",
+                name, stop_level, entry, setup_type,
+            )
+        stop_frac = _stop_distance_atr(setup_type)
+        stop = entry - stop_frac * ctx.atr
+    # Arrondi AVANT calcul RR : le RR expose doit correspondre au stop_loss
+    # expose (sinon incoherence visible sur famille A ou risk = buffer seul
+    # ~3 pts amplifie l'ecart d'arrondi). Coherence interne, pas seuil.
+    stop = round(stop, 2)
     rr_target = _rr_base_target(target, target_2, setup_type)
     return TradingSetup(
         name=name, side="long",
@@ -250,7 +276,7 @@ def _make_setup_long(name: str, entry: float, target: float, ctx: NarrativeConte
         entry_zone_low=entry - ENTRY_ZONE_ATR_FRAC * ctx.atr,
         entry_zone_high=entry + ENTRY_ZONE_ATR_FRAC * ctx.atr,
         target_1=target, target_2=target_2,
-        stop_loss=round(stop, 2),
+        stop_loss=stop,
         r_r_ratio=_compute_r_r(entry, rr_target, stop, "long"),
         setup_type=setup_type,
         conditions_validation=conditions_validation or [],
@@ -263,13 +289,31 @@ def _make_setup_short(name: str, entry: float, target: float, ctx: NarrativeCont
                       setup_type: str = "swing", target_2: Optional[float] = None,
                       conditions_validation: Optional[list] = None,
                       conditions_invalidation: Optional[list] = None,
-                      confidence: str = "medium", rationale: str = "") -> TradingSetup:
+                      confidence: str = "medium", rationale: str = "",
+                      stop_level: Optional[float] = None,
+                      stop_buffer_atr: float = STOP_BUFFER_ATR_FRAC) -> TradingSetup:
     """Factory SHORT setup avec stops calibres.
 
+    stop_level : niveau d'invalidation STRUCTUREL (ib_high, swing high,
+        resistance fade...). Si fourni, stop = stop_level + buffer. Sinon
+        fallback ATR intraday (scalp/swing).
+    stop_buffer_atr : marge au-dessus du niveau (default 0.25 ATR). Override
+        possible (ex vwap_sd 0.5).
     R:R calcule sur target_2 si swing + disponible (full move), sinon target_1.
     """
-    stop_frac = _stop_distance_atr(setup_type)
-    stop = entry + stop_frac * ctx.atr
+    if stop_level is not None and stop_level >= entry:
+        # >= : famille A (fade) a entry == niveau, le buffer cree la marge.
+        stop = stop_level + stop_buffer_atr * ctx.atr
+    else:
+        if stop_level is not None:
+            _LOG.warning(
+                "SHORT '%s' : stop_level=%.2f rejete (< entry=%.2f), fallback ATR %s",
+                name, stop_level, entry, setup_type,
+            )
+        stop_frac = _stop_distance_atr(setup_type)
+        stop = entry + stop_frac * ctx.atr
+    # Arrondi AVANT calcul RR : coherence stop_loss expose <-> RR expose.
+    stop = round(stop, 2)
     rr_target = _rr_base_target(target, target_2, setup_type)
     return TradingSetup(
         name=name, side="short",
@@ -277,7 +321,7 @@ def _make_setup_short(name: str, entry: float, target: float, ctx: NarrativeCont
         entry_zone_low=entry - ENTRY_ZONE_ATR_FRAC * ctx.atr,
         entry_zone_high=entry + ENTRY_ZONE_ATR_FRAC * ctx.atr,
         target_1=target, target_2=target_2,
-        stop_loss=round(stop, 2),
+        stop_loss=stop,
         r_r_ratio=_compute_r_r(entry, rr_target, stop, "short"),
         setup_type=setup_type,
         conditions_validation=conditions_validation or [],
@@ -315,6 +359,10 @@ def _scenario_bullish_continuation(ctx: NarrativeContext) -> Optional[Scenario]:
         score += 10
     score = min(score, 65)
 
+    # Invalidation (market-analyst 15/06) : continuation de tendance = cassure
+    # du swing low (higher-low Brooks) prioritaire ; sinon cassure du support.
+    bc_stop = (ctx.swing_low if (ctx.swing_low is not None and ctx.swing_low < near_sup.price)
+               else near_sup.price)
     setup = _make_setup_long(
         name=f"LONG pullback {near_sup.label}",
         entry=near_sup.price,
@@ -322,6 +370,7 @@ def _scenario_bullish_continuation(ctx: NarrativeContext) -> Optional[Scenario]:
         ctx=ctx,
         setup_type="swing",
         target_2=ctx.key_levels_resistance[1].price if len(ctx.key_levels_resistance) > 1 else None,
+        stop_level=bc_stop,
         conditions_validation=[
             "Rebond confirme sur support (close > entry + 0.2 ATR)",
             "Delta_bar > 0 sur la bar du rebond",
@@ -389,6 +438,8 @@ def _scenario_bearish_rejection(ctx: NarrativeContext) -> Optional[Scenario]:
         ctx=ctx,
         setup_type="swing",
         target_2=ctx.key_levels_support[1].price if len(ctx.key_levels_support) > 1 else None,
+        # Invalidation Wyckoff : test rate = close acceptee au-dessus de la resistance.
+        stop_level=major_res.price,
         conditions_validation=[
             "Rejet confirme (long wick haut > 0.3 ATR)",
             "Delta_bar < 0 sur la bar de rejet",
@@ -453,6 +504,8 @@ def _scenario_range_bound_long_fade(ctx: NarrativeContext) -> Optional[Scenario]
         target=near_res.price,
         ctx=ctx,
         setup_type="swing",
+        # Invalidation : cassure du support = sortie de range par le bas.
+        stop_level=near_sup.price,
         conditions_validation=[
             "Touch support + delta+ + finish_strength +",
             "BN absorb_bid > 0 OU bn_long_up = 1",
@@ -489,6 +542,8 @@ def _scenario_range_bound_short_fade(ctx: NarrativeContext) -> Optional[Scenario
         target=near_sup.price,
         ctx=ctx,
         setup_type="swing",
+        # Invalidation : cassure de la resistance = sortie de range par le haut.
+        stop_level=near_res.price,
         conditions_validation=[
             "Touch resistance + delta- + finish_strength -",
             "BN absorb_ask > 0 OU bn_long_dn = 1",
@@ -513,7 +568,15 @@ def _scenario_range_bound_short_fade(ctx: NarrativeContext) -> Optional[Scenario
 
 
 def _scenario_judas_reversal(ctx: NarrativeContext) -> Optional[Scenario]:
-    """Scenario : Judas Swing detected -> reversal vraie direction."""
+    """Scenario : Judas Swing detected -> reversal vraie direction.
+
+    STOP STRUCTUREL EN ATTENTE (market-analyst 15/06) : l'invalidation canon ICT
+    est le retour au-dela de l'extreme du judas swing (London first hour). Or
+    london_high/low ne sont PAS persistes jusqu'a la session US (london_open=None
+    confirme empiriquement). Tant que le pipeline ne les expose pas, ce builder
+    reste en fallback ATR swing (0.8) - NE PAS marquer "corrige". Cf
+    DOCS/SCENARIO_INVALIDATION_ANALYSIS.md (judas bloque pipeline).
+    """
     if not ctx.patterns.judas_swing_active:
         return None
     direction = ctx.session.judas_swing_direction
@@ -616,6 +679,9 @@ def _scenario_failed_breakout(ctx: NarrativeContext) -> Optional[Scenario]:
             target=near_res.price,
             ctx=ctx,
             setup_type="swing",
+            # Invalidation Wyckoff (Pruden) : re-cassure du low du Spring lui-meme
+            # (la barre de sweep). Si refranchi, l'accumulation est invalidee.
+            stop_level=ctx.bar_low,
             conditions_validation=[
                 "Close > entry sur bar suivante (acceptance reverse)",
                 "Delta_bar > 0 + finish_strength > 0",
@@ -661,6 +727,8 @@ def _scenario_failed_breakout(ctx: NarrativeContext) -> Optional[Scenario]:
             target=near_sup.price,
             ctx=ctx,
             setup_type="swing",
+            # Invalidation Wyckoff : re-cassure du high de l'UTAD (barre de sweep).
+            stop_level=ctx.bar_high,
             conditions_validation=[
                 "Close < entry sur bar suivante (acceptance reverse)",
                 "Delta_bar < 0 + finish_strength < 0",
@@ -965,6 +1033,12 @@ def _scenario_bn_fired_confluence(ctx: NarrativeContext) -> Optional[Scenario]:
         ctx=ctx,
         setup_type="swing",
         target_2=target_2,
+        # Invalidation : niveau d'invalidation du BON cote (sup_lvl = support
+        # sous close pour long / resistance au-dessus pour short, deja calcule).
+        # confluence_level est souvent du mauvais cote (resistance au-dessus pour
+        # un long) -> 96% fallback ATR (reserve code-reviewer 15/06). sup_lvl est
+        # garanti du bon cote de l'entry.
+        stop_level=(sup_lvl.price if sup_lvl is not None else None),
         conditions_validation=[
             f"BN strength {ctx.order_flow.bn_bull_strength if bn_dir > 0 else ctx.order_flow.bn_bear_strength} signals actifs",
             f"Confluence {confluence_level.confluence_count} sources @ {confluence_level.price}",
@@ -1036,6 +1110,8 @@ def _scenario_open_type_driven(ctx: NarrativeContext) -> Optional[Scenario]:
                 ctx=ctx,
                 setup_type="swing",
                 target_2=ctx.key_levels_resistance[1].price if len(ctx.key_levels_resistance) > 1 else None,
+                # Invalidation Dalton : un Open Drive ne retrace pas a l'open cash.
+                stop_level=ctx.open_cash,
                 conditions_validation=["Continuation UP us_cash_open first 30min"],
                 conditions_invalidation=["Reversal vers open price + delta-"],
                 confidence="high" if score >= 60 else "medium",
@@ -1061,6 +1137,8 @@ def _scenario_open_type_driven(ctx: NarrativeContext) -> Optional[Scenario]:
             ctx=ctx,
             setup_type="swing",
             target_2=ctx.key_levels_support[1].price if len(ctx.key_levels_support) > 1 else None,
+            # Invalidation Dalton : un Open Drive ne retrace pas a l'open cash.
+            stop_level=ctx.open_cash,
             conditions_validation=["Continuation DOWN us_cash_open first 30min"],
             conditions_invalidation=["Reversal vers open price + delta+"],
             confidence="high" if score >= 60 else "medium",
@@ -1126,12 +1204,9 @@ def _scenario_ib_break(ctx: NarrativeContext) -> Optional[Scenario]:
         # Target Dalton : ib_high + N * ib_range_POINTS (pas multiples ATR)
         target_1_price = ib_h + 0.5 * ib_range_pts  # partial profit (0.5x extension)
         target_2_price = ib_h + 1.0 * ib_range_pts  # full move Dalton (1x extension)
-        # Override custom stop : retour dans IB (Dalton convention)
-        # Setup factory utilise stop = entry - 0.8 ATR par default,
-        # mais Dalton dit "Failed break = retour sous ib_high".
-        # On laisse factory swing stop pour cohrence (0.8 ATR).
-        # Si IB tres etroite (<0.5 ATR), le 0.8 ATR stop est plus loin que ib_low.
-        # Acceptable car Dalton recommande "give it room".
+        # Stop STRUCTUREL (Dalton) : invalidation = retour sous ib_high (le
+        # niveau casse devenu support). Coherence d'horizon avec target Dalton.
+        # Pas de stop ATR 1min (asymetrie d'horizon -> RR gonfle).
         setup = _make_setup_long(
             name="LONG IB Break Continuation",
             entry=ctx.close,
@@ -1139,6 +1214,7 @@ def _scenario_ib_break(ctx: NarrativeContext) -> Optional[Scenario]:
             ctx=ctx,
             setup_type="swing",
             target_2=round(target_2_price, 2),
+            stop_level=ib_h,
             conditions_validation=[
                 "Continuation UP avec delta+",
                 "Pas de retour sous ib_high sur bar+1 (failed break test)",
@@ -1170,6 +1246,7 @@ def _scenario_ib_break(ctx: NarrativeContext) -> Optional[Scenario]:
         ctx=ctx,
         setup_type="swing",
         target_2=round(target_2_price, 2),
+        stop_level=ib_l,
         conditions_validation=[
             "Continuation DOWN avec delta-",
             "Pas de retour au-dessus ib_low sur bar+1 (failed break test)",
@@ -1223,6 +1300,10 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
             ctx=ctx,
             setup_type="swing",
             target_2=near_sup.price,
+            # Invalidation Steenbarger : acceptance au-dela de la bande SD3 =
+            # exhaustion refutee. Buffer 0.5 (bandes SD percees a la meche).
+            stop_level=sd_level,
+            stop_buffer_atr=0.5,
             conditions_validation=[
                 "Delta divergence bearish confirmed",
                 "Reversal bar avec long wick haut",
@@ -1263,6 +1344,9 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
             ctx=ctx,
             setup_type="swing",
             target_2=near_res.price,
+            # Invalidation Steenbarger : acceptance sous la bande SD3. Buffer 0.5.
+            stop_level=sd_level,
+            stop_buffer_atr=0.5,
             conditions_validation=[
                 "Delta divergence bullish confirmed",
                 "Reversal bar avec long wick bas",
@@ -1300,7 +1384,10 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
             entry=ctx.close,
             target=ctx.vwap_d,
             ctx=ctx,
-            setup_type="scalp",
+            # Reclasse scalp->swing (target=vwap_d ~2 SD = horizon swing, pas scalp).
+            setup_type="swing",
+            stop_level=sd_level,
+            stop_buffer_atr=0.5,
             conditions_validation=["Delta divergence bearish + reversal bar"],
             conditions_invalidation=["Breakout SD2 avec volume confirme"],
             confidence="medium",
@@ -1330,7 +1417,10 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
             entry=ctx.close,
             target=ctx.vwap_d,
             ctx=ctx,
-            setup_type="scalp",
+            # Reclasse scalp->swing (target=vwap_d ~2 SD = horizon swing, pas scalp).
+            setup_type="swing",
+            stop_level=sd_level,
+            stop_buffer_atr=0.5,
             conditions_validation=["Delta divergence bullish + reversal bar"],
             conditions_invalidation=["Breakdown SD2 avec volume confirme"],
             confidence="medium",
@@ -1404,19 +1494,25 @@ def _scenario_holy_grail(ctx: NarrativeContext) -> Optional[Scenario]:
     score = min(score, 75)
 
     factory = _make_setup_long if side == "long" else _make_setup_short
+    # Invalidation Raschke (Street Smarts ch.7) : le stop va sous le SWING LOW du
+    # pullback (long) / au-dessus du swing high (short), PAS a la VWAP day. La
+    # VWAP day (proxy 20-EMA) est la zone d'ENTREE, pas l'invalidation : y placer
+    # le stop = stop a l'entree (faux corrige 15/06 sur verdict market-analyst).
+    hg_stop = ctx.swing_low if side == "long" else ctx.swing_high
     setup = factory(
         name=f"{side.upper()} Holy Grail Raschke",
         entry=entry,
         target=target,
         ctx=ctx,
         setup_type="swing",
+        stop_level=hg_stop,
         conditions_validation=[
             f"trend_day_probability {ctx.market_structure.trend_day_probability:.2f} >= 0.5",
             "Pullback termine + reversal bar VWAP day",
             "Macro bias coherent direction",
         ],
         conditions_invalidation=[
-            "VWAP day breached (proxy 20-EMA loss)",
+            "Cassure du swing low/high du pullback (Raschke)",
             "Macro bias flip",
             "Stop touche",
         ],

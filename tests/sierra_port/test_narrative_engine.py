@@ -21,8 +21,8 @@ def _build_realistic_nq_bar() -> dict:
         "ts": 1781256960000,
         "sym": "NQ",
         "close": 29594.50,
-        "atr": 186.0,
-        "atr_14m": 15.0,
+        "atr": 186.0,        # ATR 14 DAILY ticks (Sierra) - non utilise pour ctx.atr
+        "atr_14m": 50.0,     # ATR 14 intraday TICKS -> ctx.atr = 50*0.25 = 12.5 pts
         "vix_level": 18.85,
         # Niveaux veille
         "pdh": 29544.25,
@@ -118,7 +118,8 @@ def test_build_context_returns_valid_struct():
     ctx = build_narrative_context(_build_realistic_nq_bar())
     assert ctx.symbol == "NQ"
     assert ctx.close == 29594.50
-    assert ctx.atr == 186.0
+    # ctx.atr = ATR intraday POINTS = atr_14m(50 ticks) * tick_size(0.25) = 12.5
+    assert ctx.atr == 12.5
     assert ctx.vix_level == 18.85
 
 
@@ -244,7 +245,17 @@ def test_bullish_continuation_present_when_cvd_day_strong():
 def test_bearish_rejection_present_when_confluence():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
-    ctx = build_narrative_context(_build_realistic_nq_bar())
+    bar = _build_realistic_nq_bar()
+    # Confluence resistance REELLE proche (<=1.5 ATR intraday = 18.75 pts du
+    # close 29594.5). On regroupe 3 niveaux a ~29605 (<1.25 pt entre eux donc
+    # ils clusterisent sous CONFLUENCE_ATR_FRAC=0.10*atr). Sous l'ancien ATR
+    # daily (186) la fixture clusterisait artificiellement Cash high/Session
+    # high/OVN high a 78 pts ; avec l'ATR intraday correct (12.5) il faut une
+    # vraie confluence proche pour declencher le fade Wyckoff.
+    bar["cur_vah"] = 29605.0
+    bar["prev_vah"] = 29605.5
+    bar["composite_poc_5d"] = 29606.0
+    ctx = build_narrative_context(bar)
     scenarios = generate_scenarios(ctx, apply_filter=False)
     names = [s.name for s in scenarios]
     assert any("Bearish rejection" in n for n in names)
@@ -579,13 +590,17 @@ def test_round2_swing_rr_uses_target_2_when_available():
 
 
 def test_round2_adversarial_bearish_rejection_boundary():
-    """Adversarial : confluence_count == 2 ET distance_atr == 1.5 (limite exacte)."""
+    """Adversarial : confluence_count >= 2 ET distance_atr <= 1.5 (limite exacte)."""
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import _scenario_bearish_rejection
     bar = _build_realistic_nq_bar()
+    # Confluence resistance proche (cf test_bearish_rejection_present) : sous
+    # l'ATR intraday correct (12.5), il faut une vraie confluence a <=1.5 ATR.
+    bar["cur_vah"] = 29605.0
+    bar["prev_vah"] = 29605.5
+    bar["composite_poc_5d"] = 29606.0
     ctx = build_narrative_context(bar)
-    # Si confluence==2 AND distance<=1.5 -> trigger
-    # Le bar realiste a un cluster confluence>=2 distance ~0.43 ATR
+    # cluster confluence_count=3 a ~0.88 ATR (<=1.5) -> trigger AND obligatoire
     sc = _scenario_bearish_rejection(ctx)
     assert sc is not None, "Bearish rejection devrait declencher (conf>=2 ET dist<=1.5)"
 
@@ -604,6 +619,14 @@ def test_phaseB_v4_A1_bn_fired_confluence_long():
     bar["bn_absorb_bid"] = 1
     bar["bn_score_raw"] = 0.6
     bar["cvd_day"] = 10000  # macro BULL
+    # Confluence SUPPORT proche (<=0.5 ATR intraday = 6.25 pts sous le close
+    # 29594.5). Un BN bull fire en TENANT un support confluent : le niveau
+    # devient le stop structurel (du bon cote = sous l'entry pour un long).
+    # Sous l'ancien ATR daily (186), 0.5 ATR = 93 pts avalait des niveaux
+    # eloignes ; avec l'ATR intraday correct il faut une vraie confluence proche.
+    bar["cur_val"] = 29590.0
+    bar["prev_val"] = 29589.5
+    bar["prev_vpoc"] = 29589.0
     ctx = build_narrative_context(bar)
     assert ctx.order_flow.bn_bull_strength >= 3
     scenarios = generate_scenarios(ctx, apply_filter=False)
@@ -622,6 +645,11 @@ def test_phaseB_v4_A1_bn_souverain_score_can_exceed_75():
     bar["bn_pressure_bid"] = 1.0
     bar["bn_score_raw"] = 0.8
     bar["cvd_day"] = 15000
+    # Confluence SUPPORT proche avec confluence_count >= 3 : le bonus +15
+    # (confluence_count >= 3) est requis pour que le score souverain atteigne 85.
+    bar["cur_val"] = 29590.0
+    bar["prev_val"] = 29589.5
+    bar["prev_vpoc"] = 29589.0
     ctx = build_narrative_context(bar)
     scenarios = generate_scenarios(ctx, apply_filter=False)
     bn = next((s for s in scenarios if "BN Fired" in s.name), None)
@@ -768,9 +796,12 @@ def test_phaseB_v4_A4_vwap_sd3_touch_reversal():
     from CORE.narrative_engine import build_narrative_context
     from CORE.scenario_generator import generate_scenarios
     bar = _build_realistic_nq_bar()
-    # Place close pres de vwap_d_sd3u (29900) - close est 29594.5 et atr 186
-    # Donc on doit deplacer close ou ajuster sd3u
-    bar["close"] = 29940.0  # tout pres de sd3u 29950
+    # Touch SD3 = close a <= 0.1 ATR de la bande. Sous l'ATR intraday correct
+    # (12.5 pts), la tolerance touch = 1.25 pt (seuil 29948.75). L'ancienne
+    # fixture (close 29940, sd3u 29950) supposait l'ATR daily 186 -> tolerance
+    # 18.6 pts ; avec l'ATR correct 29940 est a 10 pts = PAS un touch. On place
+    # le close a 1 pt sous la bande (touch reel realiste).
+    bar["close"] = 29949.0  # touch sd3u 29950 (a 0.08 ATR)
     bar["vwap_d_sd3u"] = 29950.0
     bar["delta_divergence"] = -1  # divergence bearish
     bar["finish_strength"] = -30
@@ -786,7 +817,13 @@ def test_phaseB_v4_A5_holy_grail_long_in_us_session():
     from CORE.scenario_generator import generate_scenarios
     bar = _build_realistic_nq_bar()
     bar["trend_day_probability"] = 0.7
-    bar["close"] = 29350.0  # pres vwap_d 29304 (pullback)
+    # Holy Grail = pullback PROCHE de la VWAP day (proxy 20-EMA). Le check
+    # pullback est -0.1 <= (close - vwap_d)/atr <= 0.5. Sous l'ATR intraday
+    # correct (12.5 pts), la fenetre = -1.25 a +6.25 pts au-dessus vwap_d.
+    # L'ancienne fixture (close 29350, vwap_d 29304 = 45 pts) supposait l'ATR
+    # daily 186 (45/186 = 0.24, dans la fenetre). Avec l'ATR correct il faut
+    # un close au contact de la VWAP day.
+    bar["close"] = 29310.0  # ~5.3 pts au-dessus vwap_d -> 0.43 ATR (pullback)
     bar["vwap_d"] = 29304.67
     bar["session_segment"] = "us_cash"
     bar["is_in_us_cash"] = True
