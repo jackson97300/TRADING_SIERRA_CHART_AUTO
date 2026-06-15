@@ -236,15 +236,25 @@ def main():
 
     dtc_connector = None
     if not dry_run:
-        # En prod : import DTC connector legacy
+        # En prod : import DTC connector legacy.
+        # BOT/dtc_connector.py fait `from bot_config import DTCConfig` (import
+        # relatif au cwd BOT/). On ajoute BOT/ au sys.path AVANT l'import sinon
+        # ModuleNotFoundError silent fallback dry-run.
         try:
+            import sys as _sys
+            from pathlib import Path as _P
+            _bot_dir = str((_P(__file__).resolve().parents[2] / "BOT"))
+            if _bot_dir not in _sys.path:
+                _sys.path.insert(0, _bot_dir)
             from BOT.dtc_connector import DTCConnector
-            dtc_connector = DTCConnector(
-                host="127.0.0.1", port=11099,
-                trade_account=cfg.TRADE_ACCOUNT,
-            )
+            from BOT.bot_config import DTCConfig
+            # ClientName unique pour coexistence VPS (MIA_Bot_V2 utilise par
+            # MIA-Paper legacy). TradeAccount=Sim2 explicite cote OrderRouter
+            # via cfg.TRADE_ACCOUNT (PAS hardcode Sim3 piege orphan-prevention).
+            dtc_cfg = DTCConfig(client_name="MIA_Bot1V2")
+            dtc_connector = DTCConnector(config=dtc_cfg)
             dtc_connector.connect()
-            logging.info(f"DTC connector connected (Sim2)")
+            logging.info(f"DTC connector connected (ClientName=MIA_Bot1V2, TA={cfg.TRADE_ACCOUNT})")
         except Exception as e:
             logging.error(f"DTC connector failed: {e}. Falling back to dry-run.")
             dry_run = True
