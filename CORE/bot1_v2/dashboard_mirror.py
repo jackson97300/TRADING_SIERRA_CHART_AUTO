@@ -448,27 +448,142 @@ def _check_quality_momentum(
 
 
 def _check_quality_near_level(
-    bar: dict, cfg: Bot1V2Config,
+    bar: dict, cfg: Bot1V2Config, symbol: str = "ES",
 ) -> Optional[QualityMiss]:
-    """Etoile qualite : price action SUR un niveau de confluence.
+    """Etoile qualite : price action AU NIVEAU D'INTERVENTION PRO.
 
-    Critere : `bool_near_level == 1` (feature dashboard).
-    Fallback : verifier dist_cur_vpoc OR dist_vwap_d OR dist_cur_vah/val proche.
+    Jackson souverain : "ON DOIS AVOIR DES ZONES OU INTERVENIR
+                         ON NE DOIS PAS TRADER A TOUT VAS"
+
+    15 zones d'intervention pro valides (sierra_enriched distances en ticks) :
+      1. CUR_VPOC : POC volume jour
+      2. CUR_VAH / CUR_VAL : extremes VA jour Dalton
+      3. VWAP_D : mean reversion jour
+      4. VWAP_W : mean reversion semaine
+      5. VWAP_M : mean reversion mois
+      6. PREV_VPOC / PREV_VAH / PREV_VAL : niveaux veille MP
+      7. PDH / PDL : high/low veille (acceptance/rejection)
+      8. OPEN_CASH / OPEN_830 : open RTH (Dalton open type)
+      9. IB_HIGH / IB_LOW : Initial Balance breakouts
+      10. SESS_HIGH / SESS_LOW : range jour en cours
+      11. MQ_CALL / MQ_PUT / MQ_HVL : MenthorQ gamma walls
+      12. NEXT_WALL : mur MenthorQ le plus proche
+
+    Le bot trade UNIQUEMENT si <= NEAR_LEVEL_MAX_TICKS d'AU MOINS UN niveau.
     """
     if not cfg.REQUIRE_NEAR_LEVEL:
         return None
-    bool_near = _as_int(bar.get("bool_near_level"))
-    if bool_near == 1:
-        return None
-    # Fallback : verifier si proche d'un niveau key dans le bar
-    for key in ("dist_cur_vpoc", "dist_vwap_d", "dist_cur_vah", "dist_cur_val"):
-        dist = _as_float(bar.get(key))
-        if 0 < abs(dist) <= 5:  # +/- 5 ticks d'un niveau key
-            return None
+
+    max_ticks = cfg.near_level_max_ticks(symbol)
+    # Note : sierra_enriched dist_* est en ticks (convention DMP).
+
+    # Cherche AU MOINS un niveau pro a distance <= max_ticks
+    key_levels = [
+        # Market Profile - jour
+        "dist_cur_vpoc",
+        "dist_cur_vah",
+        "dist_cur_val",
+        # VWAP multi-TF
+        "dist_vwap_d",
+        "dist_vwap_w",
+        "dist_vwap_m",
+        # Niveaux veille
+        "dist_prev_vpoc",
+        "dist_prev_vah",
+        "dist_prev_val",
+        # Veille high/low
+        "dist_pdh",
+        "dist_pdl",
+        # Open levels RTH
+        "dist_open_cash",
+        "dist_open_830",
+        # Initial Balance
+        "dist_ib_high",
+        "dist_ib_low",
+        # Session range
+        "dist_sess_high",
+        "dist_sess_low",
+        # MenthorQ gamma walls (peut etre tres loin, on tente quand meme)
+        "next_wall_dist_ticks",
+    ]
+
+    nearest_level = None
+    nearest_distance = float("inf")
+    for key in key_levels:
+        dist = bar.get(key)
+        if dist is None:
+            continue
+        try:
+            abs_dist = abs(float(dist))
+        except (TypeError, ValueError):
+            continue
+        if abs_dist < nearest_distance:
+            nearest_distance = abs_dist
+            nearest_level = key
+        if abs_dist <= max_ticks:
+            return None  # AU NIVEAU - OK
+
     return QualityMiss(
-        name="NO_LEVEL_NEAR",
-        reason="bool_near_level=0 et aucun niveau key proche (price dans le vide)",
+        name="NOT_AT_LEVEL",
+        reason=(
+            f"Pas dans zone d'intervention pro (nearest={nearest_level} "
+            f"@ {nearest_distance:.1f}t > {max_ticks}t cible)"
+        ),
+        value=nearest_distance,
     )
+
+
+def _check_quality_bar_confirmation(
+    bar: dict, direction: str, cfg: Bot1V2Config,
+) -> Optional[QualityMiss]:
+    """Etoile qualite : la bar d'entry doit deja confirmer la direction.
+
+    Wyckoff "test bar" : on N'ENTRE PAS sur la chute du pullback,
+    on entre quand la bar courante MONTRE deja le rebond.
+
+    Critere LONG :
+      - close > open (bar verte)
+      - finish_strength >= 30% (clot pres du high de la bar)
+      - OR bar_color_up == 1
+    Critere SHORT (symetrique).
+    """
+    if not cfg.BAR_CONFIRMATION_REQUIRED:
+        return None
+
+    close = _as_float(bar.get("close"))
+    open_p = _as_float(bar.get("open"))
+    if close <= 0 or open_p <= 0:
+        return None
+
+    finish_strength = _as_float(bar.get("finish_strength"))
+    # Note : finish_strength_pct existe peut-etre dans certaines bars (0-1)
+    # mais on utilise finish_strength en ticks/points selon sierra_enriched
+
+    if direction == "LONG":
+        # bar verte
+        bar_is_green = close > open_p
+        # OR bar_color_up flag
+        bar_color = _as_int(bar.get("bar_color_up"))
+        # OR finish_strength positif fort
+        strength_ok = finish_strength > 0  # decroissant = clot pres du high
+
+        # Methode robust : exiger AU MOINS bar verte
+        if not bar_is_green and bar_color != 1:
+            return QualityMiss(
+                name="BAR_NOT_CONFIRMED_LONG",
+                reason=f"LONG mais bar rouge (close={close:.2f} <= open={open_p:.2f}, color_up={bar_color})",
+            )
+        return None
+    else:  # SHORT
+        bar_is_red = close < open_p
+        bar_color = _as_int(bar.get("bar_color_dn"))
+
+        if not bar_is_red and bar_color != 1:
+            return QualityMiss(
+                name="BAR_NOT_CONFIRMED_SHORT",
+                reason=f"SHORT mais bar verte (close={close:.2f} >= open={open_p:.2f}, color_dn={bar_color})",
+            )
+        return None
 
 
 def _check_quality_pullback(
@@ -648,21 +763,22 @@ def compute_verdict(
 
     # 4. ETOILES QUALITE (FORTE CONVICTION cluster)
     # Jackson souverain : "SIGNAUX FORT CONVICTION" + "TRADE DANS SENS TENDANCE"
-    # 6 etoiles. TOUTES doivent etre allumees pour ready_to_arm = True.
+    # 7 etoiles. TOUTES doivent etre allumees pour ready_to_arm = True.
     quality_misses: list[QualityMiss] = []
     for check_fn in (
         lambda: _check_quality_bias(bar, direction, bias_score, cfg),
         lambda: _check_quality_mtf(direction, mtf_bulls, mtf_bears, cfg),
         lambda: _check_quality_rvol(bar, cfg),
         lambda: _check_quality_momentum(bar, direction, cfg),
-        lambda: _check_quality_near_level(bar, cfg),
+        lambda: _check_quality_near_level(bar, cfg, symbol),
         lambda: _check_quality_pullback(bar, direction, cfg, symbol),
+        lambda: _check_quality_bar_confirmation(bar, direction, cfg),
     ):
         miss = check_fn()
         if miss:
             quality_misses.append(miss)
 
-    stars_total = 6
+    stars_total = 7
     stars_count = stars_total - len(quality_misses)
 
     # Verdict : aucun veto ET toutes etoiles allumees (5/5)

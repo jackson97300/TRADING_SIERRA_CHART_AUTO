@@ -70,8 +70,14 @@ class Bot1V2Config:
     # Momentum 5b minimum absolu (direction confirmation)
     MOMENTUM_5B_MIN_ABS: float = _env_float("MOMENTUM_5B_MIN_ABS", 2.0)
 
-    # Sur niveau de confluence (price action AT a level, pas dans le vide)
+    # Sur niveau de confluence : price action AU NIVEAU pro (pas dans le vide)
+    # Jackson souverain : "ON DOIT AVOIR DES ZONES OU INTERVENIR
+    #                      ON NE DOIS PAS TRADER A TOUT VAS"
     REQUIRE_NEAR_LEVEL: bool = _env_bool("REQUIRE_NEAR_LEVEL", True)
+    # Distance maximale en ticks pour considerer "AU niveau" (strict)
+    NEAR_LEVEL_MAX_TICKS_ES: int = _env_int("NEAR_LEVEL_MAX_TICKS_ES", 4)
+    NEAR_LEVEL_MAX_TICKS_NQ: int = _env_int("NEAR_LEVEL_MAX_TICKS_NQ", 8)
+    NEAR_LEVEL_MAX_TICKS_MGC: int = _env_int("NEAR_LEVEL_MAX_TICKS_MGC", 8)
 
     # Confirmation bar N+1 : OFF en v1 (BN V4 trade SUR la bar, edge intraday)
     # Activable si trop de faux signaux apres backtest 14j.
@@ -122,6 +128,13 @@ class Bot1V2Config:
     PULLBACK_MIN_TICKS_ES: int = _env_int("PULLBACK_MIN_TICKS_ES", 3)
     PULLBACK_MIN_TICKS_NQ: int = _env_int("PULLBACK_MIN_TICKS_NQ", 5)
     PULLBACK_MIN_TICKS_MGC: int = _env_int("PULLBACK_MIN_TICKS_MGC", 5)
+
+    # BAR CONFIRMATION (Wyckoff "test bar") : la bar d'entry doit etre
+    # bullish pour LONG (close > open + finish_strength positif)
+    # bearish pour SHORT (close < open + finish_strength negatif)
+    # Sinon : on entre au mauvais moment du pullback (=dans la chute)
+    BAR_CONFIRMATION_REQUIRED: bool = _env_bool("BAR_CONFIRMATION_REQUIRED", True)
+    BAR_FINISH_STRENGTH_MIN: float = _env_float("BAR_FINISH_STRENGTH_MIN", 30.0)
 
     # ============================================================
     # PATIENCE & RISK MANAGEMENT (Mark Douglas)
@@ -226,6 +239,17 @@ class Bot1V2Config:
             return self.PULLBACK_MIN_TICKS_MGC
         return self.PULLBACK_MIN_TICKS_ES
 
+    def near_level_max_ticks(self, symbol: str) -> int:
+        """Distance maximale en ticks pour considerer 'AU niveau' pro."""
+        s = symbol.upper()
+        if s == "ES":
+            return self.NEAR_LEVEL_MAX_TICKS_ES
+        if s == "NQ":
+            return self.NEAR_LEVEL_MAX_TICKS_NQ
+        if s == "MGC":
+            return self.NEAR_LEVEL_MAX_TICKS_MGC
+        return self.NEAR_LEVEL_MAX_TICKS_ES
+
     @classmethod
     def from_env(cls) -> "Bot1V2Config":
         """Construit depuis env vars (snapshot au boot).
@@ -261,6 +285,11 @@ class Bot1V2Config:
             PULLBACK_MIN_TICKS_ES=_env_int("PULLBACK_MIN_TICKS_ES", 3),
             PULLBACK_MIN_TICKS_NQ=_env_int("PULLBACK_MIN_TICKS_NQ", 5),
             PULLBACK_MIN_TICKS_MGC=_env_int("PULLBACK_MIN_TICKS_MGC", 5),
+            BAR_CONFIRMATION_REQUIRED=_env_bool("BAR_CONFIRMATION_REQUIRED", True),
+            BAR_FINISH_STRENGTH_MIN=_env_float("BAR_FINISH_STRENGTH_MIN", 30.0),
+            NEAR_LEVEL_MAX_TICKS_ES=_env_int("NEAR_LEVEL_MAX_TICKS_ES", 4),
+            NEAR_LEVEL_MAX_TICKS_NQ=_env_int("NEAR_LEVEL_MAX_TICKS_NQ", 8),
+            NEAR_LEVEL_MAX_TICKS_MGC=_env_int("NEAR_LEVEL_MAX_TICKS_MGC", 8),
             MAX_TRADES_PER_DAY=_env_int("MAX_TRADES_PER_DAY", 5),
             COOLDOWN_POST_CLOSE_MIN=_env_int("COOLDOWN_POST_CLOSE_MIN", 60),
             COOLDOWN_POST_LOSS_MIN=_env_int("COOLDOWN_POST_LOSS_MIN", 90),

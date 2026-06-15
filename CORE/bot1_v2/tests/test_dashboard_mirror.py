@@ -16,10 +16,9 @@ from CORE.bot1_v2.dashboard_mirror import compute_verdict
 # ============================================================
 
 def _make_bar(**overrides):
-    """Bar synthetique avec valeurs QUALITE par defaut (6/6 etoiles + 0 veto).
+    """Bar synthetique avec valeurs QUALITE par defaut (7/7 etoiles + 0 veto).
 
-    Permet de tester : bar de base passe (qualite forte conviction),
-    puis on degrade une etoile/ajoute veto pour tester rejet.
+    7 etoiles : bias + mtf + rvol_min + momentum + near_level + pullback + bar_confirmation.
     """
     base = {
         # Dashboard verdict FORT (ACHAT, pas ACHAT PRUDENT)
@@ -42,11 +41,17 @@ def _make_bar(**overrides):
         # ETOILE 4 : momentum fort dans direction (mais m3 < m5 = pullback)
         "momentum_5b": 3.0,
         "momentum_3b": 1.5,  # m3 < m5 -> pullback OK
-        # ETOILE 5 : sur niveau de confluence
-        "bool_near_level": 1,
+        # ETOILE 5 : AU NIVEAU pro (distance <= 4t ES)
+        # dist_vwap_d en ticks (convention sierra_enriched)
+        "dist_vwap_d": 2,  # 2 ticks de VWAP D = AU niveau
         # ETOILE 6 : pullback - prix retrace depuis high
         "close": 7600.0,
+        "open": 7599.0,  # close > open = bar verte (bar confirmation)
+        "high": 7600.5,
         "sess_high": 7602.0,  # 2 pts = 8 ticks de retracement
+        "finish_strength": 5.0,  # positif = clot pres du high
+        # ETOILE 7 : bar confirmation (couleur up)
+        "bar_color_up": 1,
         # Vetos -> tous OFF par defaut (qualite bar)
         "ctx_climax_signal": False,
         "rvol_zscore": 0.5,
@@ -60,7 +65,7 @@ def _make_bar(**overrides):
 
 
 def _make_bar_short(**overrides):
-    """Bar synthetique SHORT qualite (miroir de _make_bar pour SHORT)."""
+    """Bar synthetique SHORT qualite 7/7 etoiles."""
     base = {
         "conseil_action": "VENTE",
         "bull_pts": 0,
@@ -76,10 +81,15 @@ def _make_bar_short(**overrides):
         "rvol": 1.5,
         "momentum_5b": -3.0,
         "momentum_3b": -1.5,  # m3 > m5 -> bounce OK
-        "bool_near_level": 1,
+        "dist_vwap_d": -2,  # AU VWAP D
         # ETOILE 6 : bounce - prix remonte depuis low
         "close": 7600.0,
+        "open": 7601.0,  # close < open = bar rouge (bar confirmation)
+        "low": 7599.5,
         "sess_low": 7598.0,  # 2 pts = 8 ticks de bounce
+        "finish_strength": -5.0,  # negatif = clot pres du low
+        # ETOILE 7 : bar confirmation (couleur dn)
+        "bar_color_dn": 1,
         "ctx_climax_signal": False,
         "rvol_zscore": 0.5,
         "gamma_block_long": False,
@@ -362,7 +372,7 @@ def test_quality_momentum_weak_rejects():
 
 
 def test_quality_no_level_near_rejects():
-    """bool_near_level=0 et pas niveau key proche -> NO_LEVEL_NEAR."""
+    """Pas niveau key proche -> NOT_AT_LEVEL (anciennement NO_LEVEL_NEAR)."""
     bar = _make_bar(
         bool_near_level=0,
         dist_cur_vpoc=20,  # trop loin
@@ -370,18 +380,78 @@ def test_quality_no_level_near_rejects():
         dist_cur_vah=12,
         dist_cur_val=18,
     )
+    # Pop tous les autres dist proches qui sont dans _make_bar par defaut
+    for k in list(bar.keys()):
+        if k.startswith("dist_") and k not in (
+            "dist_vwap_d", "dist_cur_vpoc", "dist_cur_vah", "dist_cur_val",
+        ):
+            bar.pop(k)
     verdict = compute_verdict(bar)
     assert verdict.ready_to_arm is False
-    assert any(m.name == "NO_LEVEL_NEAR" for m in verdict.quality_misses)
+    assert any(m.name == "NOT_AT_LEVEL" for m in verdict.quality_misses)
 
 
-def test_quality_partial_5_of_6_still_rejects():
-    """5/6 etoiles allumees = rejet (FORTE CONVICTION = 6/6 strict)."""
+def test_quality_partial_6_of_7_still_rejects():
+    """6/7 etoiles allumees = rejet (FORTE CONVICTION = 7/7 strict)."""
     bar = _make_bar(rvol=1.0)  # 1 etoile manquante : RVOL_LOW
     verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False, "5/6 etoiles ne suffit pas (force conviction)"
-    assert verdict.stars_count == 5
-    assert verdict.stars_total == 6
+    assert verdict.ready_to_arm is False, "6/7 etoiles ne suffit pas (force conviction)"
+    assert verdict.stars_count == 6
+    assert verdict.stars_total == 7
+
+
+def test_quality_not_at_level_rejects():
+    """Pas dans zone d'intervention pro -> NOT_AT_LEVEL."""
+    bar = _make_bar(
+        # Eloigne TOUS les niveaux key (>4t ES)
+        dist_vwap_d=20,  # 20 ticks
+        dist_cur_vpoc=15,
+        dist_cur_vah=18,
+        dist_cur_val=22,
+    )
+    # Pop tous les autres dist pour forcer la valeur
+    for k in list(bar.keys()):
+        if k.startswith("dist_") and k not in ("dist_vwap_d", "dist_cur_vpoc",
+                                                "dist_cur_vah", "dist_cur_val"):
+            bar.pop(k)
+    verdict = compute_verdict(bar)
+    assert verdict.ready_to_arm is False
+    assert any(m.name == "NOT_AT_LEVEL" for m in verdict.quality_misses)
+
+
+def test_quality_at_level_passes():
+    """Proche d'AU MOINS UN niveau pro -> NEAR_LEVEL OK."""
+    bar = _make_bar(
+        dist_vwap_d=2,  # 2 ticks de VWAP D = AU NIVEAU
+    )
+    verdict = compute_verdict(bar)
+    # Doit passer si proche d'au moins un niveau
+    near_level_misses = [m for m in verdict.quality_misses if m.name == "NOT_AT_LEVEL"]
+    assert not near_level_misses, f"dist_vwap_d=2 doit etre considere AU niveau"
+
+
+def test_quality_bar_confirmation_long_requires_green():
+    """LONG bar rouge (close < open) -> BAR_NOT_CONFIRMED_LONG."""
+    bar = _make_bar(
+        open=7601.0,
+        close=7600.0,  # close < open = rouge
+        bar_color_up=0,
+    )
+    verdict = compute_verdict(bar)
+    assert verdict.ready_to_arm is False
+    assert any(m.name == "BAR_NOT_CONFIRMED_LONG" for m in verdict.quality_misses)
+
+
+def test_quality_bar_confirmation_short_requires_red():
+    """SHORT bar verte -> BAR_NOT_CONFIRMED_SHORT."""
+    bar = _make_bar_short(
+        open=7599.0,
+        close=7600.0,  # close > open = verte
+        bar_color_dn=0,
+    )
+    verdict = compute_verdict(bar)
+    assert verdict.ready_to_arm is False
+    assert any(m.name == "BAR_NOT_CONFIRMED_SHORT" for m in verdict.quality_misses)
 
 
 def test_quality_pullback_long_required():
