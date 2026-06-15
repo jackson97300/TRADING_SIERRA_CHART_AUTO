@@ -125,8 +125,15 @@ class Bot1V2:
 
         Emit codes catalog + JSONL decisions a chaque chemin (skip/tradable).
 
+        DRY-EVALUATE Asia/London (Jackson 16/06) :
+          - Session non-RTH : on EVALUE le cluster malgre tout
+          - On LOGUE le verdict hypothetique dans JSONL (hypothetical=True)
+          - On N'EXECUTE PAS l'ordre (juste audit)
+          - Apres 2-3 semaines : grep bot1_v2_decisions pour decider d'ouvrir
+            Asia/London ou rester US RTH only (data-driven, pas vibes-driven)
+
         Returns:
-            ClusterDecision si trade envoye, None sinon.
+            ClusterDecision si trade REEL envoye, None sinon (skip ou hypo).
         """
         ds = self.data_sources[sym]
         bar = ds.read_last_bar()
@@ -150,29 +157,30 @@ class Bot1V2:
             bot_log.emit("BOT1V2_SKIP_HAS_POSITION", sym=sym)
             return None
 
-        # Session gate
+        # Session gate - DRY-EVALUATE : on n'arrete plus si non-RTH, on logue
         sess = self.session_gate.check_allow_entry(bar)
-        if not sess.allowed:
+        session_allowed = sess.allowed
+        session_phase = sess.session_phase or "?"
+        if not session_allowed:
             bot_log.emit(
                 "BOT1V2_GATE_SESSION_BLOCK",
                 sym=sym,
-                phase=sess.session_phase or "?",
+                phase=session_phase,
                 reason=sess.skip_reason or "?",
             )
-            return None
+            # PAS de return -> on continue pour dry-evaluate + audit JSONL
 
-        # Daily limits gate
+        # Daily limits gate - bloque uniquement les trades REELS (pas l'audit)
         daily = self.daily_gate.check_allow_entry()
-        if not daily.allowed:
+        if session_allowed and not daily.allowed:
             self.log.info(f"{sym} daily limit: {daily.skip_reason}")
             bot_log.emit("BOT1V2_GATE_DAILY_BLOCK", sym=sym, reason=daily.skip_reason)
             return None
 
-        # Cluster evaluate
+        # Cluster evaluate (TOUJOURS, meme hors RTH pour audit empirique)
         decision = self.clusters[sym].evaluate(bar)
 
         if not decision.tradable:
-            # JSONL decisions dedie : skip = AUDIT empirique
             vetos_str = ",".join(v.name for v in decision.vetos_active) if decision.vetos_active else ""
             bot_log.emit(
                 "BOT1V2_NOT_TRADABLE",
@@ -187,10 +195,36 @@ class Bot1V2:
                 bar_ts=bar_ts, symbol=sym,
                 mirror=decision.mirror, sltp=decision.sltp,
                 decision=decision, executed=False,
+                session_phase=session_phase,
+                hypothetical=not session_allowed,
             )
             return None
 
-        # Tradable ! Send order
+        # TRADABLE - 2 chemins selon session
+        if not session_allowed:
+            # HYPOTHETIQUE : cluster aurait trade mais Asia/London non execute
+            self.log.info(
+                f"{sym} TRADABLE_HYPO {decision.direction} @ {decision.entry_price:.2f} "
+                f"session={session_phase} (Asia/London audit - non execute)"
+            )
+            bot_log.emit(
+                "BOT1V2_TRADABLE_HYPOTHETICAL",
+                sym=sym,
+                direction=decision.direction,
+                entry_price=decision.entry_price,
+                session_phase=session_phase,
+                signal_id=decision.signal_id,
+            )
+            log_decision_jsonl(
+                bar_ts=bar_ts, symbol=sym,
+                mirror=decision.mirror, sltp=decision.sltp,
+                decision=decision, executed=False,
+                session_phase=session_phase,
+                hypothetical=True,
+            )
+            return None
+
+        # TRADABLE + session RTH = execution REELLE
         self.log.info(
             f"{sym} TRADABLE {decision.direction} @ {decision.entry_price:.2f} "
             f"SL {decision.sl_ticks}t({decision.sl_wall}) TP {decision.tp_ticks}t "
@@ -225,6 +259,8 @@ class Bot1V2:
                 mirror=decision.mirror, sltp=decision.sltp,
                 decision=decision, executed=False,
                 order_error=order_result.error_msg,
+                session_phase=session_phase,
+                hypothetical=False,
             )
             return None
 
@@ -242,6 +278,8 @@ class Bot1V2:
             mirror=decision.mirror, sltp=decision.sltp,
             decision=decision, executed=True,
             fill_price=order_result.fill_price,
+            session_phase=session_phase,
+            hypothetical=False,
         )
 
         # Persist position

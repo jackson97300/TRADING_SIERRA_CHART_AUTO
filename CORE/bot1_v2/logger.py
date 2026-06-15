@@ -56,6 +56,8 @@ def log_decision_jsonl(
     executed: bool = False,
     fill_price: Optional[float] = None,
     order_error: Optional[str] = None,
+    session_phase: Optional[str] = None,
+    hypothetical: bool = False,
 ) -> None:
     """Append une ligne JSONL pour CHAQUE evaluation (skip OU tradable).
 
@@ -127,6 +129,12 @@ def log_decision_jsonl(
             "executed": executed,
             "fill_price": fill_price,
             "order_error": order_error,
+            # Dry-evaluate Asia/London audit (Jackson 16/06) :
+            #   session_phase = US_RTH / ASIA / LONDON / EOD / NEWS / ...
+            #   hypothetical  = True ssi cluster evalue mais session non-RTH
+            #                   (decision pas executee, juste loggee)
+            "session_phase": session_phase,
+            "hypothetical": hypothetical,
         }
         line = json.dumps(entry, default=str, ensure_ascii=False) + "\n"
         with _decisions_path().open("a", encoding="utf-8") as fh:

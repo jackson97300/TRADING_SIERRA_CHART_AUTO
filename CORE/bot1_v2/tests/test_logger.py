@@ -31,6 +31,7 @@ BOT1V2_CODES = (
     "BOT1V2_GATE_DAILY_BLOCK",
     "BOT1V2_NOT_TRADABLE",
     "BOT1V2_TRADABLE",
+    "BOT1V2_TRADABLE_HYPOTHETICAL",
     "BOT1V2_ORDER_SENT",
     "BOT1V2_ORDER_FAIL",
 )
@@ -156,6 +157,35 @@ def test_decisions_jsonl_writes_verdict_complete(tmp_path, monkeypatch):
     assert len(entry["verdict"]["vetos"]) == 1
     assert entry["verdict"]["vetos"][0]["name"] == "CLIMAX_WYCKOFF"
     assert entry["verdict"]["ctx_climax_signal"] is True
+
+
+def test_decisions_jsonl_session_phase_hypothetical(tmp_path, monkeypatch):
+    """JSONL decisions inclut session_phase + hypothetical (audit Asia/London)."""
+    monkeypatch.setenv("MIA_LOG_DIR", str(tmp_path))
+    import importlib
+    import CORE.bot1_v2.logger as logger_mod
+    importlib.reload(logger_mod)
+
+    from CORE.bot1_v2.cluster import ClusterDecision
+
+    d = ClusterDecision(
+        tradable=True, signal_id="hypo1", direction="SHORT",
+        entry_price=30793.5, symbol="NQ",
+    )
+    logger_mod.log_decision_jsonl(
+        bar_ts=1781560800000, symbol="NQ",
+        mirror=None, sltp=None, decision=d, executed=False,
+        session_phase="ASIA", hypothetical=True,
+    )
+
+    dec_dir = tmp_path / "bot1_v2_decisions"
+    files = list(dec_dir.glob("*.jsonl"))
+    assert len(files) == 1
+    entry = json.loads(files[0].read_text(encoding="utf-8").strip())
+    assert entry["session_phase"] == "ASIA"
+    assert entry["hypothetical"] is True
+    assert entry["executed"] is False
+    assert entry["tradable"] is True  # cluster aurait trade
 
 
 def test_decisions_jsonl_append_mode(tmp_path, monkeypatch):

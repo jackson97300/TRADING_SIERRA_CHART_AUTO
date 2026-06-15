@@ -1435,6 +1435,7 @@ LOG_CODES = {
     "BOT1V2_GATE_DAILY_BLOCK":      (LogLevel.MAJEUR,   "decisions", "Bot1V2 daily limit : {sym} {reason}"),
     "BOT1V2_NOT_TRADABLE":          (LogLevel.INFO,     "decisions", "Bot1V2 skip {sym} {direction} : {skip_reason} stars={stars_count}/{stars_total} vetos={vetos}"),
     "BOT1V2_TRADABLE":              (LogLevel.INFO,     "decisions", "Bot1V2 TRADABLE : {sym} {direction} @ {entry_price:.2f} SL {sl_ticks}t({sl_wall}) TP {tp_ticks}t RR {rr_ratio:.1f} stars {stars_count}/{stars_total}"),
+    "BOT1V2_TRADABLE_HYPOTHETICAL": (LogLevel.INFO,     "decisions", "Bot1V2 TRADABLE_HYPO : {sym} {direction} @ {entry_price:.2f} session={session_phase} (audit Asia/London - non execute)"),
     "BOT1V2_ORDER_SENT":            (LogLevel.INFO,     "execution", "Bot1V2 ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
     "BOT1V2_ORDER_FAIL":            (LogLevel.CRITIQUE, "execution", "Bot1V2 ordre fail : {sym} {direction} err={err_msg}"),
 }
