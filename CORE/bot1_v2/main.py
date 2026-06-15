@@ -10,6 +10,12 @@ Boucle principale :
   7. Si tradable -> OrderRouter.send_bracket
   8. Persist state
 
+Logs (regle souveraine LOGS TRACABILITE 01/05) :
+  - Codes catalog BOT1V2_* via CORE.logging_v2 (JSONL events/decisions/execution)
+  - JSONL DEDIE decisions : LOGS/bot1_v2_decisions/*.jsonl append-only
+    avec verdict mirror complet + sltp + decision pour CHAQUE evaluation
+    (audit empirique : pourquoi 0 trade, distribution stars, tuning futur)
+
 Usage :
   python -m CORE.bot1_v2.main --symbols ES,NQ --dry-run
 
@@ -33,10 +39,17 @@ from CORE.bot1_v2.data_source import SierraDataSource
 from CORE.bot1_v2.execution.order_router import OrderRouter
 from CORE.bot1_v2.gates.daily_limits import DailyLimitsGate
 from CORE.bot1_v2.gates.session import SessionGate
+from CORE.bot1_v2.logger import bot_log, log_decision_jsonl
 from CORE.bot1_v2.state.position_store import PositionStore
 
 
 def _setup_logging(verbose: bool = False):
+    """Setup stdlib logging (stderr) en plus du logger catalog.
+
+    Le logger catalog (CORE.logging_v2) ecrit dans LOGS/<cat>/*.jsonl pour
+    chaque code emis. Le stdlib logging garde le miroir stderr pour debug live
+    via service nssm (LOGS/bot1_v2/stderr.log).
+    """
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,
@@ -64,7 +77,9 @@ class Bot1V2:
         # State load
         self.store = PositionStore()
         loaded = self.store.load()
-        self.log.info(f"State load: {'OK' if loaded else 'NEW (no file)'}")
+        state_status = "OK" if loaded else "NEW_NO_FILE"
+        self.log.info(f"State load: {state_status}")
+        bot_log.emit("BOT1V2_STATE_LOAD", status=state_status)
 
         # Per-symbol engines
         self.clusters: dict[str, ClusterEngine] = {}
@@ -99,12 +114,16 @@ class Bot1V2:
     def _rotate_day_if_needed(self):
         """Rollover daily limits si nouveau jour."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if self.daily_gate.state.date_str != today:
-            self.log.info(f"Day rollover: {self.daily_gate.state.date_str} -> {today}")
+        old_date = self.daily_gate.state.date_str
+        if old_date != today:
+            self.log.info(f"Day rollover: {old_date} -> {today}")
+            bot_log.emit("BOT1V2_DAY_ROLLOVER", old_date=old_date, new_date=today)
             self.daily_gate.reset_for_new_day(today)
 
     def _process_symbol(self, sym: str) -> Optional[ClusterDecision]:
         """Process une iteration pour un symbole.
+
+        Emit codes catalog + JSONL decisions a chaque chemin (skip/tradable).
 
         Returns:
             ClusterDecision si trade envoye, None sinon.
@@ -112,34 +131,64 @@ class Bot1V2:
         ds = self.data_sources[sym]
         bar = ds.read_last_bar()
         if bar is None:
-            return None  # pas de nouvelle bar
+            return None  # pas de nouvelle bar (silent - dedup tail-follow)
+
+        bar_ts = bar.get("ts")
 
         # Staleness check
         is_fresh, age_sec = ds.is_fresh(bar)
         if not is_fresh:
             self.log.warning(f"{sym} bar stale: age={age_sec:.0f}s")
+            bot_log.emit(
+                "BOT1V2_BAR_STALE",
+                sym=sym, age_sec=age_sec, max_age=self.cfg.DMP_BAR_MAX_AGE_SEC,
+            )
             return None
 
         # Position deja ouverte ?
         if self.store.has_position(sym):
-            return None  # skip silently
+            bot_log.emit("BOT1V2_SKIP_HAS_POSITION", sym=sym)
+            return None
 
         # Session gate
         sess = self.session_gate.check_allow_entry(bar)
         if not sess.allowed:
-            return None  # skip silently (loggue dans verbose)
+            bot_log.emit(
+                "BOT1V2_GATE_SESSION_BLOCK",
+                sym=sym,
+                phase=sess.session_phase or "?",
+                reason=sess.skip_reason or "?",
+            )
+            return None
 
         # Daily limits gate
         daily = self.daily_gate.check_allow_entry()
         if not daily.allowed:
             self.log.info(f"{sym} daily limit: {daily.skip_reason}")
+            bot_log.emit("BOT1V2_GATE_DAILY_BLOCK", sym=sym, reason=daily.skip_reason)
             return None
 
         # Cluster evaluate
         decision = self.clusters[sym].evaluate(bar)
 
         if not decision.tradable:
-            return None  # silent skip (verbose loggue)
+            # JSONL decisions dedie : skip = AUDIT empirique
+            vetos_str = ",".join(v.name for v in decision.vetos_active) if decision.vetos_active else ""
+            bot_log.emit(
+                "BOT1V2_NOT_TRADABLE",
+                sym=sym,
+                direction=decision.direction or "?",
+                skip_reason=decision.skip_reason,
+                stars_count=decision.stars_count,
+                stars_total=decision.stars_total,
+                vetos=vetos_str,
+            )
+            log_decision_jsonl(
+                bar_ts=bar_ts, symbol=sym,
+                mirror=decision.mirror, sltp=decision.sltp,
+                decision=decision, executed=False,
+            )
+            return None
 
         # Tradable ! Send order
         self.log.info(
@@ -147,10 +196,53 @@ class Bot1V2:
             f"SL {decision.sl_ticks}t({decision.sl_wall}) TP {decision.tp_ticks}t "
             f"RR {decision.rr_ratio:.1f} stars {decision.stars_count}/{decision.stars_total}"
         )
+        bot_log.emit(
+            "BOT1V2_TRADABLE",
+            sym=sym,
+            direction=decision.direction,
+            entry_price=decision.entry_price,
+            sl_ticks=decision.sl_ticks,
+            sl_wall=decision.sl_wall,
+            tp_ticks=decision.tp_ticks,
+            rr_ratio=decision.rr_ratio,
+            stars_count=decision.stars_count,
+            stars_total=decision.stars_total,
+            signal_id=decision.signal_id,
+        )
+
         order_result = self.router.send_bracket(decision)
         if not order_result.success:
             self.log.error(f"{sym} ORDER FAIL: {order_result.error_msg}")
+            bot_log.emit(
+                "BOT1V2_ORDER_FAIL",
+                sym=sym,
+                direction=decision.direction,
+                err_msg=order_result.error_msg,
+                signal_id=decision.signal_id,
+            )
+            log_decision_jsonl(
+                bar_ts=bar_ts, symbol=sym,
+                mirror=decision.mirror, sltp=decision.sltp,
+                decision=decision, executed=False,
+                order_error=order_result.error_msg,
+            )
             return None
+
+        bot_log.emit(
+            "BOT1V2_ORDER_SENT",
+            sym=sym,
+            direction=decision.direction,
+            n_micros=decision.n_micros,
+            parent_cid=order_result.parent_cid,
+            fill_price=order_result.fill_price,
+            signal_id=decision.signal_id,
+        )
+        log_decision_jsonl(
+            bar_ts=bar_ts, symbol=sym,
+            mirror=decision.mirror, sltp=decision.sltp,
+            decision=decision, executed=True,
+            fill_price=order_result.fill_price,
+        )
 
         # Persist position
         self.store.open_position(sym, {
@@ -176,10 +268,18 @@ class Bot1V2:
         now = time.time()
         if now - self._last_heartbeat_ts > 30:
             n_positions = len(self.store.positions)
+            n_trades = self.daily_gate.state.n_trades_today
+            pnl = self.daily_gate.state.cumul_pnl_usd
             self.log.info(
                 f"HEARTBEAT positions={n_positions} "
-                f"trades_today={self.daily_gate.state.n_trades_today} "
-                f"pnl_today=${self.daily_gate.state.cumul_pnl_usd:.2f}"
+                f"trades_today={n_trades} "
+                f"pnl_today=${pnl:.2f}"
+            )
+            bot_log.emit(
+                "BOT1V2_HEARTBEAT",
+                n_positions=n_positions,
+                n_trades_today=n_trades,
+                pnl_today=pnl,
             )
             self._last_heartbeat_ts = now
 
@@ -189,6 +289,12 @@ class Bot1V2:
             f"Bot 1 v2 starting (dry_run={self.dry_run}, "
             f"symbols={self.symbols}, "
             f"trade_account={self.cfg.TRADE_ACCOUNT})"
+        )
+        bot_log.emit(
+            "BOT1V2_BOOT",
+            dry_run=self.dry_run,
+            symbols=",".join(self.symbols),
+            trade_account=self.cfg.TRADE_ACCOUNT,
         )
         signal.signal(signal.SIGINT, self.stop)
         try:
@@ -205,9 +311,11 @@ class Bot1V2:
                 self._heartbeat()
             except Exception as e:
                 self.log.exception(f"Loop error: {e}")
+                bot_log.emit("BOT1V2_LOOP_EXCEPTION", err=repr(e), exc=e)
             time.sleep(self.cfg.POLL_INTERVAL_SEC)
         self.store.save()
         self.log.info("Bot 1 v2 stopped cleanly.")
+        bot_log.emit("BOT1V2_SHUTDOWN")
 
 
 def main():
@@ -255,8 +363,14 @@ def main():
             dtc_connector = DTCConnector(config=dtc_cfg)
             dtc_connector.connect()
             logging.info(f"DTC connector connected (ClientName=MIA_Bot1V2, TA={cfg.TRADE_ACCOUNT})")
+            bot_log.emit(
+                "BOT1V2_DTC_CONNECTED",
+                client_name="MIA_Bot1V2",
+                trade_account=cfg.TRADE_ACCOUNT,
+            )
         except Exception as e:
             logging.error(f"DTC connector failed: {e}. Falling back to dry-run.")
+            bot_log.emit("BOT1V2_DTC_FALLBACK_DRYRUN", err=repr(e))
             dry_run = True
 
     bot = Bot1V2(

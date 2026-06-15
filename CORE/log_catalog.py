@@ -1418,6 +1418,24 @@ LOG_CODES = {
     "SCENARIO_SESSION_FLUSH":                (LogLevel.INFO,   "events",    "Scenario session flush at rollover : n_active={n_active} n_flushed={n_flushed}"),
     "SCENARIO_TRACKER_INIT":                 (LogLevel.INFO,   "events",    "ScenarioTracker init : sym={sym} max_bars_per_setup={max_bars}"),
     "SCENARIO_JSONL_WRITE_FAIL":             (LogLevel.MAJEUR, "events",    "Scenario JSONL write FAIL : path={path} err={err}"),
+
+    # === BOT 1 V2 (paper Sim2, refonte 15/06/2026 - regle souveraine LOGS TRACABILITE 01/05) ===
+    "BOT1V2_BOOT":                  (LogLevel.INFO,     "events",    "Bot1V2 boot : dry_run={dry_run} symbols={symbols} ta={trade_account}"),
+    "BOT1V2_SHUTDOWN":              (LogLevel.INFO,     "events",    "Bot1V2 shutdown clean"),
+    "BOT1V2_STATE_LOAD":            (LogLevel.INFO,     "events",    "Bot1V2 state load : {status}"),
+    "BOT1V2_DAY_ROLLOVER":          (LogLevel.INFO,     "events",    "Bot1V2 day rollover : {old_date} -> {new_date}"),
+    "BOT1V2_HEARTBEAT":             (LogLevel.INFO,     "events",    "Bot1V2 heartbeat : positions={n_positions} trades={n_trades_today} pnl=${pnl_today:.2f}"),
+    "BOT1V2_BAR_STALE":             (LogLevel.ALERTE,   "events",    "Bot1V2 bar stale : {sym} age={age_sec:.0f}s > {max_age}s"),
+    "BOT1V2_LOOP_EXCEPTION":        (LogLevel.CRITIQUE, "events",    "Bot1V2 loop exception : {err}"),
+    "BOT1V2_DTC_CONNECTED":         (LogLevel.INFO,     "execution", "Bot1V2 DTC connecte : client={client_name} ta={trade_account}"),
+    "BOT1V2_DTC_FALLBACK_DRYRUN":   (LogLevel.MAJEUR,   "execution", "Bot1V2 DTC echec -> fallback dry-run : {err}"),
+    "BOT1V2_SKIP_HAS_POSITION":     (LogLevel.INFO,     "decisions", "Bot1V2 skip {sym} : position deja ouverte"),
+    "BOT1V2_GATE_SESSION_BLOCK":    (LogLevel.INFO,     "decisions", "Bot1V2 skip {sym} : session gate {phase} ({reason})"),
+    "BOT1V2_GATE_DAILY_BLOCK":      (LogLevel.MAJEUR,   "decisions", "Bot1V2 daily limit : {sym} {reason}"),
+    "BOT1V2_NOT_TRADABLE":          (LogLevel.INFO,     "decisions", "Bot1V2 skip {sym} {direction} : {skip_reason} stars={stars_count}/{stars_total} vetos={vetos}"),
+    "BOT1V2_TRADABLE":              (LogLevel.INFO,     "decisions", "Bot1V2 TRADABLE : {sym} {direction} @ {entry_price:.2f} SL {sl_ticks}t({sl_wall}) TP {tp_ticks}t RR {rr_ratio:.1f} stars {stars_count}/{stars_total}"),
+    "BOT1V2_ORDER_SENT":            (LogLevel.INFO,     "execution", "Bot1V2 ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
+    "BOT1V2_ORDER_FAIL":            (LogLevel.CRITIQUE, "execution", "Bot1V2 ordre fail : {sym} {direction} err={err_msg}"),
 }
 
 
