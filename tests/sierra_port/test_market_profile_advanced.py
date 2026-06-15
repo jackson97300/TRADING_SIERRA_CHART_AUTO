@@ -76,6 +76,87 @@ def test_composite_poc_accumulates_daily():
     assert out["composite_poc_5d"] == 105.0
 
 
+def test_composite_poc_preserves_history_when_substates_reset():
+    """Fix INCIDENT #58 (15/06/2026) — pattern reset selectif cross-day.
+
+    AVANT fix : `sierra_pipeline._maybe_cross_day_reset` reinstanciait
+    `MarketProfileAdvancedState()` complet -> daily_vpocs_5d/20d effacees.
+    APRES fix : reset selectif sweep + judas, composite_poc preserve.
+
+    Ce test simule le pattern de reset selectif et verifie que :
+      - daily_vpocs_5d/20d gardent leur historique
+      - sweep et judas sont bien reinitialises
+    """
+    from CORE.market_profile_advanced import (
+        MarketProfileAdvancedState, LiquiditySweepState, JudasSwingState,
+        compute_composite_poc,
+    )
+
+    state = MarketProfileAdvancedState()
+    # Simule 3 jours consecutifs : VPOC J1=100, J2=110, J3=105 (en cours)
+    days = [
+        (1781000000000, 100.0),
+        (1781086400000, 110.0),
+        (1781172800000, 105.0),
+    ]
+    for ts, vpoc in days:
+        compute_composite_poc(
+            {"ts": ts, "cur_vpoc": vpoc, "close": vpoc, "atr": 5.0},
+            state.composite_poc,
+        )
+
+    # State avant reset : 2 daily VPOCs figes
+    assert len(state.composite_poc.daily_vpocs_5d) == 2
+    assert state.composite_poc.last_vpoc_today == 105.0
+
+    # Simule le pattern reset selectif (= ce que fait sierra_pipeline.py:1310 apres fix)
+    state.sweep = LiquiditySweepState(sweep_window_bars=5)
+    state.judas = JudasSwingState()
+    # composite_poc PRESERVE (pas reinstancie)
+
+    # APRES reset selectif : composite_poc PRESERVES, sweep + judas reset
+    assert len(state.composite_poc.daily_vpocs_5d) == 2, \
+        "composite_poc.daily_vpocs_5d DOIT survivre au reset selectif"
+    assert state.composite_poc.last_vpoc_today == 105.0
+    assert len(state.sweep.active_sweeps_high) == 0  # sweep reset
+    assert state.judas.in_london is False  # judas reset
+
+
+def test_composite_poc_destructive_reset_loses_history():
+    """Reproduit le bug AVANT fix : reinstancier MarketProfileAdvancedState() complet.
+
+    Ce test DOCUMENTE l'anti-pattern. Si quelqu'un reintroduit le reset
+    destructeur, ce test passe mais flag le risque dans docstring.
+    """
+    from CORE.market_profile_advanced import (
+        MarketProfileAdvancedState, compute_composite_poc,
+    )
+
+    state = MarketProfileAdvancedState()
+    days = [
+        (1781000000000, 100.0),
+        (1781086400000, 110.0),
+    ]
+    for ts, vpoc in days:
+        compute_composite_poc(
+            {"ts": ts, "cur_vpoc": vpoc, "close": vpoc, "atr": 5.0},
+            state.composite_poc,
+        )
+
+    assert len(state.composite_poc.daily_vpocs_5d) == 1  # day 1 archive
+    saved_vpocs = list(state.composite_poc.daily_vpocs_5d)
+
+    # ANTI-PATTERN : reinstancie complet (= ce qui causait INCIDENT #58)
+    state = MarketProfileAdvancedState()
+
+    # Apres reset destructeur : historique perdu
+    assert len(state.composite_poc.daily_vpocs_5d) == 0, \
+        "daily_vpocs_5d devrait etre vide apres reset destructeur (bug AVANT fix)"
+    assert state.composite_poc.last_vpoc_today is None
+    # Documentation : saved_vpocs n'existent plus dans le state
+    assert saved_vpocs == [100.0]  # On les avait, on les a perdus
+
+
 def test_composite_poc_distance_in_atr():
     from CORE.market_profile_advanced import compute_composite_poc, CompositePOCState
     state = CompositePOCState()

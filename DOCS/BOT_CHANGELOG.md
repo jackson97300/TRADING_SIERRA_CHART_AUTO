@@ -62,6 +62,77 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-15 19:30 — Fix composite_poc cross-day reset destructeur (INCIDENT #58)
+
+**Categorie** : FIX (Python pipeline enricher)
+**Impact prod** : LIVE (sierra_enriched -> composite_poc_5d/20d + cascade comp_vpoc_align_*)
+**Fichier(s)** :
+- `CORE/sierra_pipeline.py:107-110` (imports +1 ligne `LiquiditySweepState, JudasSwingState`)
+- `CORE/sierra_pipeline.py:122-126` (fallback imports +1 ligne identique)
+- `CORE/sierra_pipeline.py:229-234` (commentaire warning ligne init R2)
+- `CORE/sierra_pipeline.py:1304-1326` (fix A reset selectif sweep+judas, preserve composite_poc)
+- `tests/sierra_port/test_market_profile_advanced.py` (+2 tests preserves + destructive_reset)
+- `tests/sierra_port/test_sierra_pipeline_cross_day_reset.py` (nouveau, 4 tests E2E avec importorskip)
+**Schema** : sierra_enriched 613 fields inchange
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES R1 + R2 fixes appliques -> GO sec)
+
+### Quoi
+
+Fix Fix A : `sierra_pipeline._maybe_cross_day_reset` (ligne 1304) ne reinstancie plus `MarketProfileAdvancedState()` complet (qui ecrase `composite_poc.daily_vpocs_5d/20d` rolling cross-day). Reset selectif uniquement des sub-states ephemeres :
+- `sweep` (LiquiditySweepState) : reset (events day-scoped)
+- `judas` (JudasSwingState) : reset (London session J-only)
+- `composite_poc` : PRESERVE (rolling 5d/20d a vocation cross-day)
+
+Fix B (pickle persistance disque cross-restart nssm) : BACKLOG accepte code-reviewer. Justification : daily_vpocs reconstit en 5 jours uptime continu, restart nssm rare, pickle stateful pipeline = scope creep.
+
+### Pourquoi
+
+Pattern COMMENT_FALSE (commentaire "safety reset" = CASSAIT la feature) + VALIDATION_MISS (action item J+1 commit `941edd2` du 12/06 jamais coche). Bug present depuis 12/06 PM. Resultat empirique : composite_poc_5d/20d NULL 100% (15169 bars NQ 4j) + cascade comp_vpoc_align_*/dist_comp_20d_vpoc_atr CONSTANT 0.
+
+### Impact attendu
+
+Replay 4 jours NQ post-fix :
+- J1 (10/06) : daily_vpocs_5d=0 (normal 1er jour)
+- J2 (11/06) : daily_vpocs_5d=1 (archive VPOC 29196.5)
+- J3 (12/06) : daily_vpocs_5d=1
+- J4 (15/06) : daily_vpocs_5d=2 (archive VPOC 29907.0)
+- composite_poc_5d=29551.75 (mediane) au lieu de NULL 100% bug
+
+Cascade :
+- `composite_poc_5d/20d` : NULL 100% -> valeurs reelles apres J+2
+- `comp_vpoc_align_20_50/day_20` : CONSTANT 0 -> evaluable apres J+2 (dependait de composite_poc valide)
+- `dist_comp_20d_vpoc_atr` : CONSTANT -20 -> distance reelle
+
+### Validation pre-deploy
+
+- ✅ Tests pytest 18/18 PASS + 1 skip E2E (importorskip bug pre-existant non lie)
+- ✅ Replay 4 jours sequentiels NQ : daily_vpocs accumule correctement
+- ✅ Code-reviewer GO sec apres R1 (test E2E) + R2 (commentaire warning ligne 230)
+
+### Revert plan
+
+Si regression : revert commit. Restaure reset destructeur -> composite_poc NULL 100% retour au bug. Pas de migration data ni schema. Rollback trivial.
+
+### Deployed at YYYY-MM-DD HH:MM
+
+(a remplir apres deploy)
+
+### Suivi post-deploy
+
+- **J+0** : grep composite_poc_5d dans JSONL live = NULL acceptable (1er jour apres restart, pas encore d'archive)
+- **J+1** : `composite_poc_5d.notna()` count > 0 dans bars J+1 (premier archive VPOC J-1)
+- **J+5** : daily_vpocs_5d count = 4-5 dans logs internal pipeline (ou inspect via debug feature)
+- **J+30** : verif sanity range composite_poc_5d `between(close*0.5, close*2.0)` >= 99% (vs valeurs aberrantes cur_vpoc corrompues)
+
+### Liens
+
+- INCIDENT_LOG : 2026-06-15 entry #58
+- Memory : `feedback_validation_miss_pre_deploy.md`
+- Review agent : code-reviewer (GO-AVEC-RESERVES R1+R2 fixes -> GO sec)
+- Backlog : Fix B pickle persistance disque (IDEAS_BACKLOG)
+
+---
+
 ## 2026-06-15 19:00 — Fix delta_div_*_clean MIN_DELTA_SLOPE recalibration 100->8 (INCIDENT #57)
 
 **Categorie** : FIX (Python feature engineering)
@@ -116,9 +187,10 @@ Aucun consumer prod actif identifie. Verification grep :
 
 Si regression : revert commit (1 fichier code + tests). MIN_DELTA_SLOPE = 100.0 restaure le bug (fire rate ~0%). Rollback trivial.
 
-### Deployed at 2026-06-15 19:00 ET
+### Deployed at 2026-06-15 12:36 ET
 
-(a remplir apres deploy effectif)
+VPS deploy via SCP : `divergences_v2.py`. Restart `MIA-Sierra-Enricher-ES`.
+Commit local : `a049f36`.
 
 ### Suivi post-deploy
 

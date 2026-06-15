@@ -105,7 +105,8 @@ try:
         compute_market_profile_v5_features, FVGState
     )
     from CORE.market_profile_advanced import (
-        compute_market_profile_advanced_features, MarketProfileAdvancedState
+        compute_market_profile_advanced_features, MarketProfileAdvancedState,
+        LiquiditySweepState, JudasSwingState,
     )
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
@@ -121,7 +122,8 @@ except ImportError:
         compute_market_profile_v5_features, FVGState
     )
     from market_profile_advanced import (  # type: ignore
-        compute_market_profile_advanced_features, MarketProfileAdvancedState
+        compute_market_profile_advanced_features, MarketProfileAdvancedState,
+        LiquiditySweepState, JudasSwingState,
     )
     from eco_news_features import compute_eco_news_features
     from session_utils import get_trading_date_from_utc, utc_to_et
@@ -225,6 +227,10 @@ class SierraPipelineOrchestrator:
         #             Profile Overlap, Range Extension (calcul instantane).
         # State per-symbol (orchestrator instancie par symbol = isolation ES/NQ).
         self._fvg_state = FVGState()
+        # NOTE: NE PAS reinstancier ce state lors du cross-day reset.
+        # Cf fix INCIDENT #58 (15/06/2026) ligne ~1310 : composite_poc
+        # contient des deque rolling 5d/20d a vocation cross-day. Un reset
+        # complet detruit l'historique -> composite_poc_5d/20d NULL 100%.
         self._market_profile_advanced_state = MarketProfileAdvancedState()
 
         # Cross-day tracking
@@ -1303,11 +1309,22 @@ class SierraPipelineOrchestrator:
         self._gc_state = GameChangersState()
         # Phase A.4 (12/06 PM) : reset Market Profile + ICT/Wyckoff states
         # cross-day pour eviter faux signaux J+1 (FVG accumules, sweeps obsoletes,
-        # London open zombie). Composite POC gere son propre cross-day via
-        # _ts_to_trading_day mais on reset au cas ou pour safety.
+        # London open zombie).
         # Cf review code-reviewer Phase A.4 reserve #2.
         self._fvg_state = FVGState()
-        self._market_profile_advanced_state = MarketProfileAdvancedState()
+        # FIX INCIDENT #58 (15/06/2026 — code-reviewer GO) : NE PAS reinstancier
+        # MarketProfileAdvancedState complet car cela ecrase composite_poc.daily_vpocs_5d/20d
+        # (deque rolling vocation cross-day) -> archive VPOC J-1 jamais execute
+        # car state.current_day repart None apres reset -> composite_poc_5d/20d
+        # NULL 100% (15169 bars NQ 4j confirme empirique).
+        # Reset selectif : sweep + judas (events ephemeres day-scoped) = OK,
+        # composite_poc = PRESERVER (sa logique cross-day interne archive VPOC J-1
+        # lors du passage trading_day != state.current_day).
+        self._market_profile_advanced_state.sweep = LiquiditySweepState(
+            sweep_window_bars=5,
+        )
+        self._market_profile_advanced_state.judas = JudasSwingState()
+        # composite_poc.daily_vpocs_5d/20d/current_day/last_vpoc_today PRESERVES
         self._current_trading_date = trading_date
         return True
 
