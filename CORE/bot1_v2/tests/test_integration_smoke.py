@@ -133,6 +133,86 @@ def test_order_router_skip_non_tradable():
     assert "NOT_TRADABLE" in result.error_msg
 
 
+class _MockDTC:
+    """Mock DTC connector pour test signature legacy."""
+
+    def __init__(self):
+        self.calls = []
+
+    def send_market_order(
+        self, symbol, side, quantity, sl_price, tp_price,
+        trade_account, signal_ref_price=0, sl_ticks=0, tp_ticks=0,
+        tick_size=0.25, auto_reprice_threshold_ticks=5,
+    ):
+        self.calls.append({
+            "symbol": symbol, "side": side, "quantity": quantity,
+            "sl_price": sl_price, "tp_price": tp_price,
+            "trade_account": trade_account,
+            "signal_ref_price": signal_ref_price,
+            "sl_ticks": sl_ticks, "tp_ticks": tp_ticks,
+        })
+        # Retourne tuple legacy : (parent_cid, tp_cid, sl_cid, fill_price)
+        return ("PARENT_REAL_123", "TP_REAL_456", "SL_REAL_789", signal_ref_price)
+
+
+def test_order_router_prod_legacy_signature_long():
+    """Prod mode : adapte LONG -> side=1 et appelle send_market_order legacy."""
+    from CORE.bot1_v2.cluster import ClusterDecision
+
+    mock_dtc = _MockDTC()
+    cfg = Bot1V2Config(TRADE_ACCOUNT="Sim2")
+    router = OrderRouter(cfg=cfg, dry_run=False, dtc_connector=mock_dtc)
+    decision = ClusterDecision(
+        tradable=True,
+        signal_id="abc",
+        direction="LONG",
+        entry_price=7600.0,
+        sl_price=7596.0,
+        sl_ticks=16,
+        tp_price=7610.0,
+        tp_ticks=40,
+        n_micros=1,
+        symbol="ES",
+    )
+    result = router.send_bracket(decision)
+    assert result.success is True
+    assert result.dry_run is False
+    # Verifie signature legacy
+    assert len(mock_dtc.calls) == 1
+    call = mock_dtc.calls[0]
+    assert call["symbol"] == "ES"
+    assert call["side"] == 1  # LONG -> 1
+    assert call["quantity"] == 1
+    assert call["trade_account"] == "Sim2"  # PAS Sim3 default piege
+    assert call["signal_ref_price"] == 7600.0
+    assert call["sl_ticks"] == 16
+    assert call["tp_ticks"] == 40
+    # CIDs retournes par DTC remplacent les locaux
+    assert result.parent_cid == "PARENT_REAL_123"
+    assert result.tp_cid == "TP_REAL_456"
+    assert result.sl_cid == "SL_REAL_789"
+
+
+def test_order_router_prod_legacy_signature_short():
+    """SHORT -> side=2."""
+    from CORE.bot1_v2.cluster import ClusterDecision
+
+    mock_dtc = _MockDTC()
+    cfg = Bot1V2Config(TRADE_ACCOUNT="Sim2")
+    router = OrderRouter(cfg=cfg, dry_run=False, dtc_connector=mock_dtc)
+    decision = ClusterDecision(
+        tradable=True, signal_id="xyz",
+        direction="SHORT", entry_price=7600.0,
+        sl_price=7604.0, sl_ticks=16,
+        tp_price=7590.0, tp_ticks=40,
+        n_micros=1, symbol="ES",
+    )
+    result = router.send_bracket(decision)
+    assert result.success is True
+    assert mock_dtc.calls[0]["side"] == 2  # SHORT -> 2
+    assert mock_dtc.calls[0]["trade_account"] == "Sim2"
+
+
 def test_position_store_save_load_cycle():
     """Save -> Load -> donnees preservees."""
     with tempfile.NamedTemporaryFile(

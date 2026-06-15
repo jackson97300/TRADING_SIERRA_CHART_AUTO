@@ -93,8 +93,13 @@ class OrderRouter:
             )
 
         try:
-            # send_market_order : signature legacy BOT/dtc_connector.py
-            # On utilise compatible API si dispo
+            # send_market_order legacy signature (BOT/dtc_connector.py:268) :
+            #   send_market_order(symbol, side: int, quantity, sl_price, tp_price,
+            #                     trade_account, signal_ref_price=0,
+            #                     sl_ticks=0, tp_ticks=0, tick_size=0.25,
+            #                     auto_reprice_threshold_ticks=5) -> tuple
+            # Mapping direction str -> side int (1=BUY, 2=SELL)
+            side = 1 if decision.direction == "LONG" else 2
             send_fn = getattr(self.dtc, "send_market_order", None)
             if send_fn is None:
                 return OrderResult(
@@ -102,22 +107,46 @@ class OrderRouter:
                     error_msg="DTC_NO_SEND_MARKET_ORDER",
                     dry_run=False,
                 )
+            # tick_size par symbole
+            try:
+                from CORE.constants import get_tick_size
+            except ImportError:
+                from constants import get_tick_size  # type: ignore
+            tick = get_tick_size(decision.symbol)
+
             result = send_fn(
                 symbol=decision.symbol,
-                direction=decision.direction,
+                side=side,
                 quantity=decision.n_micros,
                 sl_price=decision.sl_price,
                 tp_price=decision.tp_price,
                 trade_account=self.cfg.TRADE_ACCOUNT,  # Sim2 explicite
-                parent_cid=parent_cid,
-                tp_cid=tp_cid,
-                sl_cid=sl_cid,
+                signal_ref_price=decision.entry_price,
+                sl_ticks=decision.sl_ticks,
+                tp_ticks=decision.tp_ticks,
+                tick_size=tick,
             )
-            success = bool(result.get("success", False)) if isinstance(result, dict) else bool(result)
-            fill_price = (
-                float(result.get("fill_price", 0.0)) if isinstance(result, dict)
-                else decision.entry_price
-            )
+            # Legacy retourne tuple : (parent_cid_real, tp_cid_real, sl_cid_real, fill_price)
+            # On respecte ses CIDs si retournes, sinon les notres
+            if isinstance(result, tuple) and len(result) >= 4:
+                parent_real, tp_real, sl_real, fill_price = result[:4]
+                if parent_real:
+                    parent_cid = parent_real
+                if tp_real:
+                    tp_cid = tp_real
+                if sl_real:
+                    sl_cid = sl_real
+                try:
+                    fill_price = float(fill_price) if fill_price else decision.entry_price
+                except (TypeError, ValueError):
+                    fill_price = decision.entry_price
+                success = bool(parent_cid)
+            elif isinstance(result, dict):
+                success = bool(result.get("success", False))
+                fill_price = float(result.get("fill_price", decision.entry_price))
+            else:
+                success = bool(result)
+                fill_price = decision.entry_price
             return OrderResult(
                 success=success,
                 parent_cid=parent_cid,
