@@ -2568,15 +2568,39 @@ class PaperTrader:
             return {}
 
     def _read_last_jsonl_bar(self, symbol):
-        """Lit la derniere ligne du JSONL DMP pour avoir bar complete (40+ features dist_*).
+        """Lit la derniere ligne du JSONL pour avoir bar complete (40+ features dist_*).
 
-        Necessaire car dashboard expose seulement un sous-ensemble des features.
-        SLTPEngine a besoin de tous les murs Tier 1/2/3 pour verdict fiable.
+        MIGRATION 15/06/2026 (Databento outage + nouvelle pipeline Sierra) :
+        - Source PREFEREE : DATA/live_enriched/sierra/{symbol}/*_sierra_enriched.jsonl
+          (613 fields, Phase A.2a + A.3 + BN extended + ctx_*)
+        - Fallback : DATA/{symbol}/*.jsonl (DMP brut 380 fields)
+          Necessaire pour MGC car sierra_live_io.SUPPORTED_SYMBOLS = ("ES", "NQ").
+
+        Audit empirique 15/06 : sierra_enriched contient TOUTES les features
+        critiques Bot 1 (compute_bias + regime_gate + SLTPEngine). 18 fields
+        absents dans sierra (dist_blind_*, dist_comp_20d/50d_*, ovn_*_lvl)
+        non utilises par mia_paper_trader.py (verifies grep).
         """
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DATA", symbol)
+        root = os.path.dirname(os.path.dirname(__file__))
+        # 1. Source PREFEREE : sierra_enriched (ES + NQ uniquement)
+        sierra_dir = os.path.join(root, "DATA", "live_enriched", "sierra", symbol)
+        try:
+            if os.path.isdir(sierra_dir):
+                files = sorted(
+                    (f for f in os.listdir(sierra_dir) if f.endswith("_sierra_enriched.jsonl")),
+                    key=lambda n: os.path.getmtime(os.path.join(sierra_dir, n)),
+                    reverse=True,
+                )
+                if files:
+                    bar = self._tail_jsonl(os.path.join(sierra_dir, files[0]))
+                    if bar:
+                        return bar
+        except (OSError, json.JSONDecodeError):
+            pass
+        # 2. Fallback DMP brut (MGC ou si sierra_enriched indisponible)
+        data_dir = os.path.join(root, "DATA", symbol)
         if not os.path.isdir(data_dir):
             return None
-        # Dernier JSONL par mtime
         try:
             files = sorted(
                 (f for f in os.listdir(data_dir) if f.endswith(".jsonl")),
@@ -2585,9 +2609,15 @@ class PaperTrader:
             )
             if not files:
                 return None
-            latest = os.path.join(data_dir, files[0])
-            # Lire derniere ligne (efficacement en scannant depuis la fin)
-            with open(latest, "rb") as f:
+            return self._tail_jsonl(os.path.join(data_dir, files[0]))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    @staticmethod
+    def _tail_jsonl(path):
+        """Helper : lit la derniere ligne JSON valide d'un .jsonl (scan reverse)."""
+        try:
+            with open(path, "rb") as f:
                 try:
                     f.seek(-2, os.SEEK_END)
                     while f.read(1) != b"\n":
