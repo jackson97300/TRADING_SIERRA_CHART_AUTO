@@ -368,5 +368,85 @@ def test_batch_missing_column_raises():
         compute_divergences_v2_features(df)
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Tests fix INCIDENT_LOG #57 — MIN_DELTA_SLOPE recalibration
+# ────────────────────────────────────────────────────────────────────────────
+
+def test_min_delta_slope_constant_value():
+    """Sentinel : MIN_DELTA_SLOPE doit etre 8.0 (calibration empirique 15/06).
+
+    Si quelqu'un change la valeur sans test fire rate empirique, ce test
+    flag la regression. Voir INCIDENT_LOG #57 pour contexte.
+    """
+    from CORE.divergences_v2 import MIN_DELTA_SLOPE
+
+    assert MIN_DELTA_SLOPE == 8.0, (
+        f"MIN_DELTA_SLOPE = {MIN_DELTA_SLOPE} != 8.0 attendu. "
+        f"Tout changement de cette constante doit passer un test fire rate "
+        f"empirique sur sierra_enriched JSONL (cible 5-40% clean/raw). "
+        f"Cf INCIDENT_LOG #57 + DOCS/AUDIT_DEAD_FEATURES_20260615.md."
+    )
+
+
+def test_min_delta_slope_fire_rate_guaranteed_divergence():
+    """Fix R1 code-reviewer : test fire rate avec divergence GARANTIE.
+
+    Le test precedent acceptait fire_rate=0% = exactement le bug que ce fix
+    corrige. Refactor : injecte une vraie divergence (price down + delta up)
+    sur 50 bars consecutives au milieu d'un sample stochastique, puis assert
+    fire rate >= 1.0% (au moins 1 declenchement sur 200 bars = preuve que
+    MIN_DELTA_SLOPE filtre actif mais pas bloquant).
+    """
+    import random
+    from CORE.divergences_v2 import DivergencesV2Calculator, MIN_DELTA_SLOPE
+
+    random.seed(42)
+    calc = DivergencesV2Calculator(slope_window=10, min_delta_slope=MIN_DELTA_SLOPE)
+
+    n_buy_clean = 0
+    n_sell_clean = 0
+    n_total = 0
+
+    # 50 bars warmup random
+    for i in range(50):
+        close = 100.0 + random.gauss(0, 1)
+        delta_bar = random.gauss(0, 5)
+        calc.update(close=close, delta_bar=delta_bar, atr=2.0)
+
+    # 50 bars divergence GARANTIE bullish : price descend, delta monte forte
+    # Pente delta_bar de -100 -> +400 sur 50 bars = slope ~10/bar > seuil 8.0
+    for i in range(50):
+        close = 95.0 - i * 0.5  # descend de 95 a 70
+        delta_bar = -100.0 + 10 * i  # monte de -100 a +400 (slope ~+10/bar)
+        result = calc.update(close=close, delta_bar=delta_bar, atr=2.0)
+        if result.get("delta_div_buy_clean", 0): n_buy_clean += 1
+        if result.get("delta_div_sell_clean", 0): n_sell_clean += 1
+        n_total += 1
+
+    # 100 bars cooldown random
+    for i in range(100):
+        close = 70.0 + random.gauss(0, 0.5)
+        delta_bar = random.gauss(0, 3)
+        result = calc.update(close=close, delta_bar=delta_bar, atr=2.0)
+        if result.get("delta_div_buy_clean", 0): n_buy_clean += 1
+        if result.get("delta_div_sell_clean", 0): n_sell_clean += 1
+        n_total += 1
+
+    fire_rate = (n_buy_clean + n_sell_clean) / n_total * 100
+    # Avec divergence garantie + seuil 8.0, on doit avoir > 1% fire rate
+    # (au moins quelques bars sur les 50 de divergence active).
+    # Anti regression : si MIN_DELTA_SLOPE remonte a 100, fire_rate retombe 0 -> assert echoue.
+    assert fire_rate >= 1.0, (
+        f"Fire rate clean {fire_rate:.1f}% < 1.0% sur sample avec divergence "
+        f"garantie. MIN_DELTA_SLOPE={MIN_DELTA_SLOPE} probablement trop haut "
+        f"(bug INCIDENT #57 reproduit)."
+    )
+    # Borne haute : ne doit pas tout passer
+    assert fire_rate < 50.0, (
+        f"Fire rate clean {fire_rate:.1f}% > 50% : MIN_DELTA_SLOPE trop bas, "
+        f"filtre bruit inefficace."
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--no-cov"])

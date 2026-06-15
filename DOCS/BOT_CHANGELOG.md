@@ -62,6 +62,80 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-15 19:00 — Fix delta_div_*_clean MIN_DELTA_SLOPE recalibration 100->8 (INCIDENT #57)
+
+**Categorie** : FIX (Python feature engineering)
+**Impact prod** : LIVE (sierra_enriched + dataset_builder V3)
+**Fichier(s)** :
+- `CORE/divergences_v2.py:162` (1 ligne + 10 LOC commentaires explicatifs)
+- `tests/test_divergences_v2.py` (+2 tests : sentinel constant + fire rate guaranteed divergence)
+**Schema** : sierra_enriched 613 fields inchange (recalibration filtre interne)
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES R1 fixe) + ml-trainer (GO-AVEC-RESERVES, pas de retraining V4 requis)
+
+### Quoi
+
+Recalibrer `MIN_DELTA_SLOPE` de 100.0 a 8.0. Phase 2.2 (commits 2eb7666/73f26ef/37aa59b du 12/06 PM) a migre la formule `delta_div_*_clean` de CUMMAX (semantique cumul moyens contrats) vers SLOPE (linregress 10-bars de delta_bar) **sans recalibrer le seuil**. Resultat empirique : fire rate `_clean` = 0.04% NQ / 0.13% ES = feature morte alors que INCIDENT #52 marquait RESOLU.
+
+Calibration empirique sur 4j NQ (15222 bars) + 5j ES (11814 bars) sierra_enriched : seuil 8.0 donne ratio clean/raw NQ 18.1% / ES 29.9% (cible semantique "filtre bruit" = 5-40%).
+
+### Pourquoi
+
+Pattern VALIDATION_MISS : INCIDENT #52 marquait RESOLU le fix Phase 2.2 mais validation testait coherence du dict (`test_phase22_delta_div_coherence`), **pas la semantique fire rate**. La feature etait silencieusement morte depuis 3 jours.
+
+### Impact attendu
+
+- Fire rate live `delta_div_buy_clean` NQ : 0.04% -> ~7.5% (+205x amelioration)
+- Fire rate live `delta_div_sell_clean` ES : 0.14% -> ~7.0% (+50x)
+- `delta_divergence_clean` reflechi en composite : aussi affecte
+- `n_delta_div_buy/sell_zones_active` (zones tracking dependent du `_clean`) : distribution changera
+- **Modeles V4 actuels (`v4_pure_20260524`) PAS affectes** : verification importance.csv confirme aucune feature `delta_div_*_clean` dans ranking ML. MDA=0 deja. Pas de retraining requis.
+
+### Validation pre-deploy
+
+- ✅ Tests pytest 21/21 PASS (incl. 2 nouveaux : sentinel constant + fire rate guaranteed divergence avec borne >= 1%)
+- ✅ Tests sierra_port parity 13/13 PASS (batch/live coherent)
+- ✅ Test empirique replay 4j NQ + 5j ES : ratio clean/raw 18.1% / 29.8% (target 5-40%)
+- ✅ Code-reviewer GO sec apres R1 (test fire rate ne reproduisait pas le bug)
+- ✅ ml-trainer GO : MDA=0 sur V4, pas de retraining requis
+
+### Consumers PROD ACTIFS (audit cross-codebase)
+
+Aucun consumer prod actif identifie. Verification grep :
+- `CORE/mia_paper_trader.py` : non
+- `CORE/databento_paper_trader_v2.py` : non
+- `BOT/*.py` : non
+- `bias_calculator.py`, `scenario_generator.py`, `narrative_engine.py`, `regime_engine*.py` : non
+
+### Consumers RESEARCH / FUTUR (TODO post-deploy)
+
+1. **`SIM4/research/narrative_engine_v1.py:153-154`** (Bot 4 research) : utilise `delta_div_buy_clean == 1` comme trigger PDH break. Fire rate × 200. **TODO** : backtest avant push Bot 4 Story-Driven en prod.
+2. **`CORE/strategies.py:119 DivOptimStrategy`** : filtre `delta_divergence_clean != 0`. Backtest historique "70j ES n=120 PF=1.61" cite dans docstring **INVALIDE** (epoque CUMMAX). **TODO** : rerun `CORE/backtest_div.py` + Lopez DSR sur 30j+ avant reactivation strategy.
+3. **Calibration walk-forward 30j+** : sample 9 jours = sample bias risk (cf `feedback_data_mining_trap.md`). **TODO** : refaire calibration sur 30j sierra_enriched, tester {6, 8, 10, 15, 20} et choisir par DSR fold-stability.
+
+### Revert plan
+
+Si regression : revert commit (1 fichier code + tests). MIN_DELTA_SLOPE = 100.0 restaure le bug (fire rate ~0%). Rollback trivial.
+
+### Deployed at 2026-06-15 19:00 ET
+
+(a remplir apres deploy effectif)
+
+### Suivi post-deploy
+
+- **J+0** : grep `delta_div_*_clean` distribution dans JSONL live sierra_enriched
+- **J+1** : verif fire rate empirique NQ + ES correspond aux targets 7-13%
+- **J+7** : bilan jour /bilan-session-jour — checker si Bot 1 paper decisions impactees indirectement (cascade via composite `delta_divergence_clean`)
+- **J+30** : refaire calibration walk-forward 30j (TODO research)
+
+### Liens
+
+- INCIDENT_LOG : 2026-06-15 entry #57
+- Memory : `feedback_validation_miss_pre_deploy.md` (8+ occurrences pattern source)
+- Review agent : code-reviewer (GO-AVEC-RESERVES R1 fixe) + ml-trainer (GO sec, pas de retraining V4)
+- TODO research : backtest_div + DivOptimStrategy rerun + narrative_engine_v1 Bot 4
+
+---
+
 ## 2026-06-15 18:30 — Fix cvd_day_dir bias bull permanent NQ (INCIDENT #59)
 
 **Categorie** : FIX (Python pipeline enricher)
@@ -113,9 +187,11 @@ Si regression :
 
 Aucune migration data ni schema bump. Rollback trivial.
 
-### Deployed at YYYY-MM-DD HH:MM
+### Deployed at 2026-06-15 12:16 ET
 
-(a remplir apres deploy)
+VPS deploy via SCP : cvd_session_override.py + enricher_chain.py + log_catalog.py.
+Restart `MIA-Sierra-Enricher-ES` (Multi-symbol ES+NQ) OK.
+Commit local : `905bbd9`.
 
 ### Suivi post-deploy
 

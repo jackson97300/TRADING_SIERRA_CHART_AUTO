@@ -131,7 +131,12 @@ Conventions :
   - Window slope : 10 bars (configurable)
   - Window context : 20 bars
   - Zone retention : 50 bars (configurable)
-  - MIN_DELTA_SLOPE : 100 contrats/bar (filtre bruit)
+  - MIN_DELTA_SLOPE : 8.0 slope-units/bar (filtre bruit, calibre INCIDENT #57)
+    Note : 100.0 etait LEGACY (= cumul moyens delta_bar ancienne semantique).
+    Phase 2.2 (12/06) a migre vers slope linregress 10b sans recalibrer.
+    Cible empirique : fire rate clean/raw 5-40% (filtre bruit). Resultat
+    calibration sur 4j NQ + 5j ES sierra_enriched : seuil 8.0 donne
+    NQ 18.1% / ES 29.9% (sweet spot cross-instrument).
 
 Garde-fou SIGNE (3 features SIGNEES) :
   - delta_div_strength : positif si bullish, negatif si bearish
@@ -158,8 +163,17 @@ SLOPE_WINDOW_BARS = 10
 CONTEXT_WINDOW_BARS = 20
 # Buffer zones actives (rolling)
 ZONE_RETENTION_BARS = 50
-# Filtre bruit delta slope (contrats/bar minimum)
-MIN_DELTA_SLOPE = 100.0
+# Filtre bruit delta slope (slope-units/bar minimum)
+# INCIDENT_LOG #57 fix (15/06/2026) : recalibration 100.0 -> 8.0
+# Bug : 100.0 etait LEGACY semantique CUMMAX (cumul moyens), pas SLOPE
+# linregress 10-bars introduite Phase 2.2 (12/06 commits 2eb7666, 73f26ef).
+# Distribution empirique slope_delta sur sierra_enriched 4j NQ + 5j ES :
+#   - max NQ = 109.7, max ES = 266.4
+#   - p99 NQ = 54.2, ES = 86
+#   - threshold 100 -> fire rate clean = 0.04-0.13% (effectivement mort)
+# Cible sémantique "filtre bruit" = fire rate clean/raw 5-40%.
+# Calibration : seuil 8.0 donne NQ 18.1% / ES 29.9% (sweet spot cross-instrument).
+MIN_DELTA_SLOPE = 8.0
 
 
 class DivergencesV2Calculator:
