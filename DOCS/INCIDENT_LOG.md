@@ -31,6 +31,112 @@
 
 ---
 
+### 2026-06-15 11:30 (60) - [VALIDATION_MISS] - dist_blind_nearest_up/dn re-injection promise inexistante - BN V5 Sim2 + Bot 3 Gold silencieusement degrades
+
+**Contexte** : Audit DEAD features post-migration Bot 1 vers sierra_enriched (commit `a201b15` 15/06 matin). Agent general-purpose investigation dispatch confirme `dist_blind_nearest_up/dn` NULL 100% sur 15169 bars NQ 4 jours + 11762 bars ES 5 jours.
+
+**Ce qui a mal tourne** :
+- `BOT/run_sierra_enricher.py:176-192` drop volontaire `_SIERRA_C_DEAD_FIELDS` valide Jackson 11/06 soir (valeurs aberrantes +86556 ticks)
+- Commentaire ligne 171-186 promet : "peuvent etre re-injectees par menthorq_backfill_injector ou load_mq_levels"
+- **Verification empirique** : grep cross-codebase Python streaming pipeline -> AUCUN de ces 2 modules n'est importe dans `enricher_chain.py`, `sierra_pipeline.py`, ni `run_sierra_enricher.py`
+- Promesse = vœu pieux, jamais codee
+- Consumers prod ACTIFS impactes :
+  - `CORE/bn_v5_engine.py:267-302` (PROD Sim2 BN V5) : 1 col support manquant sur 5, confluence filter degrade silencieusement
+  - `CORE/bot3_gold_level_definitions.py:30,36` (PROD Bot 3 Gold MGC) : 2 niveaux Tier 2 BLIND_SPOT_UP/DN morts sur 49 Gold
+
+**Cause racine** : Commentaire intentions sans code. Pas de monitoring post-drop pour verifier que les consumers ne sont pas casses. Pattern COMMENT_FALSE + VALIDATION_MISS combine.
+
+**Lecon** : Tout drop de feature avec note "sera re-injecte" DOIT inclure (a) verification cross-codebase consumers, (b) implementation effective dans pipeline streaming (pas juste commentaire), (c) test empirique J+1 NULL% < 50%. Jamais "TODO" en prod silencieux.
+
+**Trigger prevention** : Audit grep `_DEAD_FIELDS\|_DROP_FIELDS` + consumers cross-codebase apres tout drop feature. Si un consumer prod actif (BOT/* ou CORE/bot*_paper.py) consomme la feature droppee -> obligation re-injecter avant deploy drop.
+
+**Fix planned** : porter formule Python streaming dans `CORE/enricher_chain.py` (formule existe `menthorq_backfill_injector.py:321`). Effort 2-3h + code-reviewer + market-analyst review.
+
+**Reviewed** : general-purpose agent (audit empirique + grep consumers cross-codebase) + Claude orchestrateur cross-check.
+
+---
+
+### 2026-06-15 11:25 (59) - [VALIDATION_MISS] - cvd_day_dir NQ biais bull permanent pollue bias_calculator depuis indetermine
+
+**Contexte** : Audit DEAD features 15/06 sur 4 jours NQ + 5 jours ES. Agent general-purpose investigation revele `cvd_day_dir` = CONSTANT 1 sur 15169 bars NQ (top_freq 100%).
+
+**Ce qui a mal tourne** :
+- Code `CPP/MIA_REFACTORED/DUMPER/DMP_Transform.h:1302-1303` : `f.cvd_day_dir = Sign(f.cvd_day)` (formule correcte)
+- Empirique NQ 4 jours : `cvd_day` range strict [2751, 22249] -> jamais negatif
+- Empirique ES 5 jours : `cvd_day` range [-16747, +38519] -> distribution {+1: 89%, -1: 11%} (correct)
+- Probable cause : etude Sierra Chart Footprint chart 30 NQ avec mauvais "Reset on New Session" OU param different du chart 31 ES
+- Consequence CRITIQUE : `CORE/bias_calculator.py:357,378` PTS_CVD scoring -> **bias bull NQ permanent** sur le moteur de decision Bot 1
+
+**Cause racine** : Feature derivee d'une etude Sierra Chart config-dependent jamais audit cross-instrument apres deploy. Aucun monitoring de symetrie ES/NQ sur features sensibles.
+
+**Lecon** : Toute feature derivee de Footprint Bars Study (FPBS) ou similaire doit etre audit symetrie ES/NQ tous les 7 jours. Si distribution NQ vs ES diverge > 30% sur une feature partagee (Sign, ratio) -> alerte bug config SC.
+
+**Trigger prevention** : Ajouter monitoring auto `tools/audit_symmetry_es_nq.py` qui flag les features ou la distribution NQ vs ES differe > 30% sur 1000+ bars. Alert si ratio +1/0/-1 ES != NQ a +/- 15pp.
+
+**Fix planned** : (a) SSH VPS verifier params chart 30 NQ FPBS vs chart 31 ES, (b) si reset session mal configure -> corriger SC + reload, (c) si bug persistent -> fallback Python `cvd = buy_vol - sell_vol` cumule par session boundary ET-based.
+
+**Reviewed** : general-purpose agent (audit empirique 4j NQ + 5j ES, controle Sign formule) + cross-check Claude consumer bias_calculator.
+
+---
+
+### 2026-06-15 11:20 (58) - [COMMENT_FALSE + VALIDATION_MISS] - composite_poc_5d/20d cross-day reset destructeur (sierra_pipeline.py:1304)
+
+**Contexte** : Audit DEAD features 15/06 sur 15169 bars NQ 4 jours. Agent general-purpose dispatch revele `composite_poc_5d/20d` NULL 100% + cascade `comp_vpoc_align_*` CONSTANT 0 + `dist_comp_20d_vpoc_atr` CONSTANT -20.
+
+**Ce qui a mal tourne** :
+- `CORE/sierra_pipeline.py:1304-1310` (commit `941edd2` Phase A.4) :
+  ```python
+  self._market_profile_advanced_state = MarketProfileAdvancedState()
+  ```
+- Commentaire ligne 1304-1306 : "on reset au cas ou pour safety" -> FAUX, le reset CASSE la feature
+- `MarketProfileAdvancedState()` reinstancie `CompositePOCState()` -> `daily_vpocs_5d` et `daily_vpocs_20d` repartent VIDES chaque trading day
+- `market_profile_advanced.py:189-194` archive VPOC J-1 UNIQUEMENT lors `trading_day != state.current_day` transition
+- Mais `_maybe_cross_day_reset` ecrase le state AVANT que la transition soit detectee -> archive jamais executee
+- Action item J+1 13/06 du commit `941edd2` jamais coche
+
+**Cause racine** : Pattern COMMENT_FALSE (commentaire intention != effet code). Plus VALIDATION_MISS (J+1 action item ignore).
+
+**Lecon** : Tout reset cross-day d'un state qui contient un buffer rolling (deque, list, history) doit etre EXPLICITEMENT documente sub-state par sub-state. Reset complet d'un state = destruction historique. Distinguer "reset ephemere" (sweep, FVG bars-window) vs "reset historique" (composite_poc, ATR cumule).
+
+**Trigger prevention** : Avant reset cross-day d'un state, lister tous les sub-states + decider individuellement reset/preserve. Pour rolling buffers : PRESERVER. Pour ephemere : RESET. Documenter chaque decision avec comment "preserve because rolling cross-day" vs "reset because day-scoped only".
+
+**Fix planned** :
+- Fix A (15 LOC, 20 min) : reset uniquement `sweep` + `judas` sub-states, PRESERVER `composite_poc`
+- Fix B (30 LOC, 45 min, optionnel) : pickle disque `DATA/state/composite_poc_*.pkl` cross-restart nssm
+
+**Reviewed** : general-purpose agent (audit cross-day replay + lecture code source `sierra_pipeline.py` + `market_profile_advanced.py`).
+
+---
+
+### 2026-06-15 11:15 (57) - [VALIDATION_MISS] - delta_div_*_clean famille morte depuis 12/06 RESOLUTION #52 prematuree
+
+**Contexte** : Audit DEAD features 15/06 revele `delta_div_sell_clean` CONSTANT False + `delta_div_slope_buy/sell/clean_clean` CONSTANT 0 (NULL 77%) sur 15169 bars NQ depuis le deploy Phase 2.2/2.3/2.4 du 12/06 PM (commits `2eb7666`, `73f26ef`, `37aa59b`).
+
+**Ce qui a mal tourne** :
+- INCIDENT #52 marque RESOLU le 12/06 16:00 apres deploy + "valide empirique" -> mais validation empirique testait coherence du dict (`test_phase22_delta_div_coherence`), PAS la semantique du seuil
+- `CORE/divergences_v2.py:162` : `MIN_DELTA_SLOPE = 100.0` (docstring "100 contrats/bar")
+- Distribution empirique slope linregress 10-bars NQ 15/06 : median 2e-5, p99 0.016, max 0.053
+- **Seuil 100 jamais atteint** -> 0% fire rate `_clean` (vs 17-24% fire rate raw)
+- Le code Phase 2.2 a fait coexister 2 semantiques :
+  - CUMMAX historique : `delta_bar.cummax()` = valeur abs contrats ~100-10000
+  - SLOPE rolling 10b : ~0.001-0.05 (sans dim)
+- Seuil 100 valide pour CUMMAX, impossible pour SLOPE
+
+**Cause racine** : Test coherence dict != test semantique fire rate. Pas de test empirique post-deploy sur sample JSONL reel.
+
+**Lecon** : Apres tout fix d'un seuil ML/feature, test pytest DOIT inclure assert fire rate empirique sur sample reel (`fire_rate > 0.05` minimum). Test coherence dict est necessaire mais PAS suffisant.
+
+**Trigger prevention** : Avant marquer RESOLUTION dans INCIDENT_LOG, exiger 2 preuves : (a) test pytest fire rate empirique non-zero, (b) verif J+1 grep wc -l sur JSONL prod du nouveau code emit > 0.
+
+**Fix planned** :
+- `CORE/divergences_v2.py:162` : `MIN_DELTA_SLOPE = 0.005` (= ~p85 distribution NQ)
+- Test pytest etendu avec assertion fire rate `_clean / raw > 0.05`
+- Ouvrir CHANGELOG entry + INCIDENT_LOG RESOLUTION apres validation J+1
+
+**Reviewed** : general-purpose agent (analyse distribution slope 4j + lecture commits Phase 2.2 + verification statut empirique vs claim RESOLUTION #52).
+
+---
+
 ### 2026-06-13 11:30 (56) - [CONTEXT_MISS + recidive mai 2026] - Bug `==` strict mins_int dans phase_b_helpers cause open_type=UNKNOWN forever
 
 **Contexte** : Cross-check 4 agents 13/06 (general-purpose + trading-strategy-analyst + market-analyst + Plan) sur la dette technique Open Type. Probe live JSONL 12/06 NQ (3176 bars) : open_type=0 sur 100% des bars. Le fix C++ INCIDENT #54 hier soir (commit d0ad7b9) etait COSMETIQUE car le C++ DMP_OpenType est zombie (Python `game_changers_streaming` override systematique via `SIERRA_ZERO_NEVER_CALCULATED` whitelist).

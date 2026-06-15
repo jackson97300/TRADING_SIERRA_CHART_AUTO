@@ -42,6 +42,13 @@ try:
 except ImportError:
     LiveEnricherState = Any  # type alias fallback
 
+# Phase 5.0.A : proxy MenthorQ Sierra-native (11/06/2026).
+# Cf CORE/menthorq_v2_sierra_proxy.py docstring.
+try:
+    from menthorq_v2_sierra_proxy import inject_gamma_condition_proxy
+except ImportError:
+    from CORE.menthorq_v2_sierra_proxy import inject_gamma_condition_proxy
+
 # Logger fallback (si log_fn=None, no-op)
 def _default_log_fn(code: str, **kwargs) -> None:
     """No-op log_fn par defaut. Live injecte _emit_log de live_enricher.py."""
@@ -133,6 +140,18 @@ def compose_enriched_payload(
         for k, v in _sierra_bar.items():
             if k not in _protected_keys and k not in payload:
                 payload[k] = v
+
+        # INCIDENT_LOG #59 (15/06/2026) : override cvd_day casse en mode sierra.
+        # `fpbs_cvd_day` (sg18) = "Cumulative Sum - ALL" (pas reset session) ->
+        # cvd_day_dir CONSTANT +1 sur NQ (15169 bars 4j) -> bias_calculator
+        # pollue avec +PTS_CVD permanent. Fix Python : cumul delta_bar (sg0,
+        # par-bar correct) depuis open session ET-based (CME 18:00 boundary).
+        # Doit etre apres merge sierra mais avant tous engines downstream.
+        try:
+            from CORE.cvd_session_override import override_cvd_day_session
+            override_cvd_day_session(payload, state, symbol)
+        except Exception as exc:
+            log_fn("CVD_OVERRIDE_FAIL", error=str(exc)[:120], symbol=symbol)
 
     # Inject MQ snapshot (passthrough Phase 3a)
     if inputs["mq_levels"]:
@@ -256,6 +275,14 @@ def compose_enriched_payload(
         # bool_gex_flip_zone (rolling_features div_regime_proxy_ok consumer)
         # = inverse logique : 1 si flip (volatile), 0 si stable.
         # Resout `div_regime_proxy_ok` qui etait constante 0/1.
+        #
+        # Phase 5.0.A (11/06/2026) : si payload contient bool_gex_flip_zone
+        # Sierra natif (mode hybride Sierra+Databento) ET mq_gamma_condition
+        # absent (scraper down depuis 27/05), injecter proxy depuis flip_zone.
+        # Cf CORE/menthorq_v2_sierra_proxy.py.
+        if payload.get("mq_gamma_condition") is None and payload.get("bool_gex_flip_zone") is not None:
+            inject_gamma_condition_proxy(payload)
+
         gamma_cond = payload.get("mq_gamma_condition")
         if gamma_cond is not None:
             try:

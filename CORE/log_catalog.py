@@ -112,6 +112,10 @@ LOG_CODES = {
     "PARQUET_BUILD_FAIL":      (LogLevel.MAJEUR,   "data", "Parquet build echec : {err}"),
     "BAR_PROCESSING_ERROR":    (LogLevel.ALERTE,   "data", "Erreur processing bar {sym} : {err}"),
     "BAR_SKIPPED_KILL":        (LogLevel.ALERTE,   "data", "Bar {sym} skippe (kill-switch actif) : {reason}"),
+
+    # INCIDENT_LOG #59 (15/06/2026) — fix cvd_day_dir bias bull permanent NQ.
+    # cvd_session_override.py override cvd_day cassé (sg18=ALL pas reset session).
+    "CVD_OVERRIDE_FAIL":       (LogLevel.CRITIQUE, "events", "Override CVD session echoue pour {symbol} : {error}"),
     "FUNDED_FLATTEN":          (LogLevel.MAJEUR,   "risk", "Flatten prop firm force : {reason}"),
 
     "BOOT_START":              (LogLevel.INFO,     "events", "Boot V2 {component} v{version} pid={pid}"),

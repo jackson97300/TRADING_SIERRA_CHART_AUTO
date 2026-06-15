@@ -62,6 +62,159 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-15 18:30 — Fix cvd_day_dir bias bull permanent NQ (INCIDENT #59)
+
+**Categorie** : FIX (Python pipeline enricher)
+**Impact prod** : LIVE (sierra_enriched -> bias_calculator Bot 1 paper Sim2)
+**Fichier(s)** :
+- `CORE/cvd_session_override.py` (nouveau, 130 LOC)
+- `CORE/enricher_chain.py` (+8 LOC hook ligne 144-152)
+- `CORE/log_catalog.py` (+1 entry CVD_OVERRIDE_FAIL)
+- `tests/sierra_port/test_cvd_session_override.py` (nouveau, 15 tests)
+**Schema** : sierra_enriched 613 fields inchange (override interne sans nouveaux fields)
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES R1+R3 -> GO sec apres fix) + ml-trainer (GO, pas de retraining requis MDA=0 sur modeles V4)
+
+### Quoi
+
+Override Python de `cvd_day` et `cvd_day_dir` en mode sierra. Le sg18 FPBS lu par `DMP_Reader.h:831` est "Cumulative Sum Of Ask Volume Bid Volume Difference - ALL" (cumul depuis chargement chart, pas reset session) au lieu du sg9 "DELTA DAY" approprie. Resultat empirique : `cvd_day_dir = +1` CONSTANT (100% bars) sur NQ 4 jours (15169 bars) -> bias_calculator.py:380 ajoute systematiquement PTS_CVD=0.25 a score_bull -> bias bull NQ permanent.
+
+Fix : recalculer `cvd_day` Python via cumul `delta_bar` (sg0 DELTA, par-bar correct) depuis ouverture session CME (18:00 ET boundary via `zoneinfo.ZoneInfo("America/New_York")` pour DST automatique). State persistant par symbole dans `state.engine_states["cvd_session_override_{symbol}"]`.
+
+### Pourquoi
+
+Bot 1 paper Sim2 tradait NQ avec bias bull saturé. Commentaire `bias_calculator.py:370` mentionne deja "incident NQ LONG drift -$2010 sur 7 trades 100% LONG". Le fix Plan A1 du 08/06 (PTS_CVD 0.10 -> 0.25) aggravait au lieu de resoudre car cvd_day_dir n'etait jamais -1.
+
+Fix C++ requiert recompile + reload chart 30/31 = risque pollution (lessons.md "Never restart SC in session"). Decision Jackson : fix Python-side immediat, fix C++ en backlog.
+
+### Impact attendu
+
+- Distribution `cvd_day_dir` NQ : avant 100% +1, apres replay 4j 92.1% +1 / 7.9% -1 / 0.0% 0
+- Distribution ES : avant 94% +1, apres 85% +1 / 15% -1 (amelioration symetrie)
+- `bias_calculator.compute_bias()` : PTS_CVD=0.25 booste maintenant 92% bars (vs 100%) sur NQ, et peut deboost score_bear sur 8% (vs 0%) — discriminant ameliore
+- `delta_cvd_divergence` flag (`bias_calculator.py:395-400`) : actif seulement sur vraie divergence intra-bar vs cumul session (vs constant avant)
+- Consumers downstream impactes : `bias_calculator.py`, `regime_engine.py`, `regime_engine_v2.py`, `regime_engine_v6.py`, `narrative_engine.py`, `scenario_generator.py`, `bot3_context_analyzer.py`
+
+### Validation pre-deploy
+
+- ✅ Tests pytest 15/15 PASS (incl. test DST winter EST UTC-5 boundary)
+- ✅ Test empirique replay 4j NQ + 5j ES sierra_enriched.jsonl real data
+- ✅ Distribution post-fix coherente cross-instrument (NQ marche haussier 92%, ES mixte 85%)
+- ✅ Code-reviewer GO sec apres R1 (DST zoneinfo) + R3 (log_catalog entry)
+- ✅ ml-trainer GO : modeles V4 actuels ne consomment PAS cvd_day_dir (MDA=0, ignore par ML)
+- ✅ Pas de drift batch/live ML : modeles V4 utilisent cvd_session (raw cumul) deja DST-aware
+
+### Revert plan
+
+Si regression :
+1. Revert commit (1 git revert sufficient — 3 fichiers + tests)
+2. SCP fichiers reverts vers VPS
+3. Restart MIA-Sierra-Enricher-ES (nssm restart)
+4. Verif J+0 : cvd_day_dir distribution revient a 100% +1 (statu quo ante)
+
+Aucune migration data ni schema bump. Rollback trivial.
+
+### Deployed at YYYY-MM-DD HH:MM
+
+(a remplir apres deploy)
+
+### Suivi post-deploy
+
+- **J+0 (15/06 PM)** : tail `LOGS/events/events_*.jsonl` cherche `CVD_OVERRIDE_FAIL` (= 0 attendu). Verif distribution cvd_day_dir dans bar_log Bot 1.
+- **J+1 (16/06)** : `wc -l LOGS/events/events_*.jsonl | findstr CVD_OVERRIDE` — si CVD_OVERRIDE_FAIL > 0 -> investigation immediate. Grep bias_calculator decision logs : ratio score_bull/score_bear NQ.
+- **J+7 (22/06)** : bilan jour avec /bilan-session-jour : Bot 1 paper NQ + ES PnL distribution LONG/SHORT (avant fix 100% LONG, apres expected balance + naturelle directionnelle).
+- **J+30 (15/07)** : audit symetrie cvd_day_dir NQ vs ES sur full month. Si NQ reste > 85% +1 sur 30 jours = OK (marche haussier sustained). Si > 95% = re-investigation (peut-etre bug residuel).
+
+### Liens
+
+- INCIDENT_LOG : 2026-06-15 entry #59
+- Memory : `feedback_validation_miss_pre_deploy.md` (8+ occurrences pattern source)
+- Review agent : code-reviewer (GO-AVEC-RESERVES R1 zoneinfo + R3 log_catalog) -> GO sec ; ml-trainer (GO, pas de retraining V4)
+- Backlog : R4 restart-safety (project_4bots_persistance_chantier.md) + fix C++ sg9 vrai
+
+---
+
+## 2026-06-12 23:30 — Fix C++ DMP_OpenType cross-session reset ET-based (INCIDENT #54)
+
+**Categorie** : FIX (C++ DMP)
+**Impact prod** : LIVE (collecte features Sierra Chart)
+**Fichier(s)** : `CPP/MIA_REFACTORED/DUMPER/DMP_OpenType.h` (~50 LOC)
+**Commit** : d0ad7b9
+**Schema** : 3.7.22 inchange (interface open_type identique)
+**Reviewer(s) agent** : trading-strategy-analyst (diagnostic) + schema-auditor (review fix)
+
+### Quoi
+
+Fix bug cross-session leak `cached_ot` (Open Type Dalton) :
+- `sc.IsNewTradingDay()` ne triggere pas a 18:00 ET sur NQ continuous chart 24/5
+- 6/7 jours JSONL live NQ avaient open_type non-nul des Asia open J = echo J-1
+
+Solution : detection session_date_id ET timestamp-based (slot 88 PersistentFloat).
+Convention futures : h_et >= 18 -> next day. Reset propre a 18:00 ET exactement.
+
+### Pourquoi
+
+Phase B v4 scenario A2 Open Type Driven consume `open_type` comme trigger.
+Sans fix : leakee J-1 fausse 6/7 jours, scenario A2 inutilisable production.
+Egalement narrative_engine.py:_extract_market_structure utilise `open_type`
+comme info structurelle pour 11 autres scenarios.
+
+### Impact attendu
+
+- open_type = 0 entre 18:00 ET J et 10:30 ET J+1 (UNKNOWN propre pendant Asia/London)
+- open_type calcule a 10:30 ET J et persistant jusqu'a 18:00 ET J
+- Log Sierra Message Log : "[DMP_OpenType] RESET session (ET YYYY-MM-DD HH:MM)"
+- Aucun impact sur autres features (PDH, PDL, day_type)
+
+### Validation pre-deploy
+
+- [x] Tests mentaux 8/8 PASS (incluant fin mois 30/06->01/07 + fin annee 31/12->01/01)
+- [x] Schema-auditor GO (slot 88 libre, schema inchange, backward compat restart Sierra)
+- [x] Diagnostic trading-strategy-analyst (audit 7 jours JSONL NQ)
+- [x] INCIDENT_LOG #54 entree (categorie VALIDATION_MISS)
+
+### Reserves
+
+- Divergence DST pre-existante DMP_Reader vs DMP_OpenType (formules `dy>=8` vs
+  `(dy-wday)>=8`). Impact marginal 2-3j/an autour DST shifts. Hors scope ce fix,
+  a aligner dans correctif dedie.
+
+### Revert plan
+
+```bash
+git checkout HEAD~1 -- CPP/MIA_REFACTORED/DUMPER/DMP_OpenType.h
+scp CPP/MIA_REFACTORED/DUMPER/DMP_OpenType.h \
+    Administrator@212.28.179.199:"C:/SIERRA CHART TRADING/ACS_Source/"
+scp CPP/MIA_REFACTORED/DUMPER/DMP_OpenType.h \
+    Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CPP/MIA_REFACTORED/DUMPER/"
+# Jackson : recompile Sierra Chart + reload Charts 30/31
+```
+
+### Deployed at 2026-06-12 23:30 ET (SCP confirmed 2 folders, 45607 bytes identical)
+
+A FAIRE par Jackson :
+1. Sierra Chart : Analysis -> Build Custom Studies DLL (~5 sec)
+2. Reload Charts 30 + 31 (IMPORTANT : eviter bug OVN croissant)
+3. Surveiller premier RESET session log Sierra Message Log a 18:00 ET ce soir
+
+### Suivi post-deploy
+
+- J+1 (13/06) : grep JSONL nouveau jour pour confirmer open_type=0 pendant
+  Asia/London + recalcule a 10:30 ET. Commande :
+  ```bash
+  python -X utf8 -c "
+  import json
+  with open('DATA/live_enriched/NQ/20260613_NQ.jsonl') as f:
+      bars = [json.loads(l) for l in f]
+  for b in bars:
+      if b.get('mins_et') in [1080, 1200, 0, 600, 630]:
+          print(f\"mins_et={b['mins_et']} open_type={b.get('open_type')}\")
+  "
+  ```
+- J+7 : monitoring 7 jours pour confirmer reset stable + no regression J-1 leak
+- J+30 : monitoring final + integration Phase B.5 ScenarioTracker
+
+---
+
 ## 2026-06-12 14:00 — Phase B v3 narrative_engine + scenario_generator (Lot 1+2+3+4)
 
 **Categorie** : FEATURE (observation only - no auto-trade)
