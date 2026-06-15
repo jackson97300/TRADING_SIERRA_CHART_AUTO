@@ -311,10 +311,106 @@ def _build_offline_bot_status() -> dict:
 # Fix : filtrer par contract attendu, skip les lignes cross-symbol.
 # Cf audit code-reviewer 11/05/2026 + DOCS/INCIDENT_LOG.md.
 EXPECTED_CONTRACT = {
-    "ES": "ESM26-CME",
-    "NQ": "NQM26-CME",
-    # Note : update quarterly au roll-over CME (Jun/Sep/Dec/Mar)
+    # ROLLOVER 15/06/2026 : Jackson rollover Sierra Chart M26 -> U26
+    # (Jun 2026 -> Sep 2026). DMP brut + sierra_enriched ecrivent U26.
+    # Avant fix : filtre cross-symbol skip TOUTES bars -> banner={price:0}
+    # -> Bot 1 reçoit data vide -> heartbeat fallback 99999 + 0 trade.
+    "ES": "ESU26-CME",
+    "NQ": "NQU26-CME",
+    # 11/05 J2b — MGC integration foundation
+    # MGC = Micro Gold COMEX, contract front-month. Calendar Gold = bi-mensuel
+    # (jun, aug, oct, dec, feb, apr). M26 (juin) -> Q26 (aout) au rollover Gold.
+    # A reverifier quand Jackson rolloverra Sierra Chart MGC (FND ~ avant-dernier
+    # business day juin 2026).
+    "MGC": "MGCM26-COMEX",
+    # Note rollover : ES/NQ quarterly (Mar/Jun/Sep/Dec).
+    # MGC bi-mensuel (jun, aug, oct, dec, feb, apr) — cf CORE/constants.py.
 }
+
+
+def _read_live_cache_minimal(symbol: str) -> dict:
+    """11/05 J2b MGC : fallback LIVE_CACHE Databento pour symboles sans DMP JSONL.
+
+    Le DMP C++ est hardcoded ES/NQ binary (BACKLOG : refactor Input symbol string).
+    MGC n'a pas de DATA/MGC/*.jsonl mais a DATA/LIVE_CACHE/{sym}_v_0_last.json
+    alimente par service MIA-Live-OHLCV (databento_live_stream.py).
+
+    Retourne un bar dict minimal (OHLC + volume + ts) compatible builders qui
+    lisent via get_field/dist_to_price (champs absents -> 0 default, no crash).
+
+    11/05 J2c FIX B1 (code-reviewer) : ts retourne ms INT (pas ISO string).
+    Sans ce fix, banner.mgc.ts_ms = string ISO -> consommateurs Bot/frontend
+    qui font `now_ms - bar_ts_ms` lèvent TypeError (incident pattern 08/05).
+    Source unique : aligne sur convention DMP JSONL bars (ts = ms int).
+
+    11/05 J2c FIX I4 (code-reviewer) : utilise CORE/constants.get_databento_ticker
+    au lieu de hardcoder ticker_map. Anti-pattern V1 "TICK_SIZE duplique 5x".
+    """
+    try:
+        import os.path as _osp
+        import json as _json
+        from datetime import datetime as _dt
+        # Source unique resolution ticker (.c.0 ES/NQ, .v.0 MGC).
+        try:
+            from CORE.constants import get_databento_ticker
+            ticker_full = get_databento_ticker(symbol)  # "MGC.v.0", "ES.c.0", etc.
+        except (ImportError, KeyError, ValueError):
+            ticker_full = f"{symbol.upper()}.c.0"
+        # LIVE_CACHE filename = ticker avec dots remplaces par underscores + "_last"
+        ticker_filename = ticker_full.replace(".", "_") + "_last"
+        cache_path = _osp.join(
+            _osp.dirname(_osp.dirname(_osp.dirname(_osp.abspath(__file__)))),
+            "DATA", "LIVE_CACHE", f"{ticker_filename}.json"
+        )
+        if not _osp.exists(cache_path):
+            logger.debug("LIVE_CACHE absent pour %s : %s", symbol, cache_path)
+            return {}
+        with open(cache_path, "r", encoding="utf-8") as f:
+            live = _json.load(f)
+        # Convert ts_event_iso -> ts_ms int (compat DMP JSONL convention).
+        ts_iso = live.get("ts_event_iso", "")
+        ts_ms = 0
+        if ts_iso:
+            try:
+                _dt_obj = _dt.fromisoformat(ts_iso.replace("Z", "+00:00"))
+                ts_ms = int(_dt_obj.timestamp() * 1000)
+            except (ValueError, TypeError) as exc:
+                logger.warning("LIVE_CACHE ts parse fail %s: %s", symbol, exc)
+        # 11/05 J2c FIX I7 (code-reviewer round 2) : staleness check LIVE_CACHE.
+        # Si service MIA-Live-OHLCV down, le fichier reste mais ts vieillit.
+        # Sans check, banner MGC afficherait prix d'il y a 30+ min sans alerte.
+        # Seuil 5 min = generosite (Databento live latence cible 60s).
+        # Marque `_stale=True` pour que frontend puisse badger "data ancienne".
+        _is_stale = False
+        age_sec = 0.0
+        if ts_ms > 0:
+            try:
+                from datetime import timezone as _tz_utc
+                age_sec = (_dt.now(_tz_utc.utc).timestamp() * 1000 - ts_ms) / 1000
+                if age_sec > 300:  # 5 min seuil
+                    _is_stale = True
+                    logger.warning(
+                        "LIVE_CACHE %s stale : age=%.0fs > 300s (service MIA-Live-OHLCV down ?)",
+                        symbol, age_sec,
+                    )
+            except (ValueError, TypeError):
+                pass
+        # Adapter format LIVE_CACHE -> format bar_dict legacy (compat builders).
+        return {
+            "ts": ts_ms,                # INT ms (compat DMP JSONL bars)
+            "ts_event": ts_iso,         # ISO string (debug + V4 staleness check)
+            "open": live.get("open"),
+            "high": live.get("high"),
+            "low": live.get("low"),
+            "close": live.get("close"),
+            "volume": live.get("volume", 0),
+            "price": live.get("close"),  # alias utilise par builders
+            "symbol": symbol.upper(),
+            "_source": "LIVE_CACHE_DATABENTO",  # marker pour audit
+            "_stale": _is_stale,        # I7 : frontend peut badger "data ancienne"
+        }
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        return {}
 
 
 def read_last_bar(symbol: str) -> dict:
@@ -322,10 +418,15 @@ def read_last_bar(symbol: str) -> dict:
 
     FIX 11/05 (defense bug DMP C++ cross-symbol contamination) :
     Skip les lignes ou bar.contract != EXPECTED_CONTRACT[symbol].
+
+    11/05 J2b MGC : si DMP JSONL absent (cas MGC, DMP C++ hardcoded ES/NQ),
+    fallback automatique sur LIVE_CACHE Databento (websocket temps reel).
     """
     path = get_latest_jsonl(symbol)
     if not path:
-        return {}
+        # 11/05 J2b : fallback LIVE_CACHE pour symboles sans DMP JSONL (MGC).
+        # ES/NQ ne tombent JAMAIS dans ce fallback (DMP JSONL toujours present).
+        return _read_live_cache_minimal(symbol)
     expected = EXPECTED_CONTRACT.get(symbol.upper())
     try:
         with open(path, "rb") as f:
