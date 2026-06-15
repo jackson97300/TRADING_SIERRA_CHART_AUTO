@@ -369,3 +369,51 @@ Seulement APRÈS validation data-driven :
 
 *Ce document est la photo exacte de l'état au 01/03/2026.*
 *Toute feature du dumper non listée dans "utilisées" = feature morte côté bot.*
+
+---
+
+## Annexe 15/06/2026 — Features droppées path Sierra (INCIDENT #60)
+
+Cf `BOT/run_sierra_enricher.py:_SIERRA_C_DEAD_FIELDS` + INCIDENT_LOG #60.
+
+Suite à la suppression des charts 30/31 Sierra par Jackson (11/06/2026), 16
+features C++ DMP émettaient des valeurs aberrantes (+86556 ticks impossible)
+ou NULL silencieux. Drop volontaire path Sierra pour éviter pollution audits.
+
+### (A) DROP DEFINITIF — 14 features (aucun consumer prod actif)
+
+Grep cross-codebase 15/06 : pas d'import dans `CORE/mia_paper_trader.py`,
+`CORE/databento_paper_trader_v2.py`, `BOT/*.py`, `bias_calculator.py`,
+`scenario_generator.py`, `narrative_engine.py`.
+
+| Feature | Famille | Raison drop |
+|---|---|---|
+| `dist_comp_20d/50d_vpoc/vah/val/vwap` (10) | Market Structure | Chart 30/31 SC supprimé |
+| `dist_comp_20d/50d_vpoc_atr` (2) | Market Structure | Dérivée |
+| `comp_vpoc_align_20_50/day_20` (2) | Market Structure | Idem |
+| `inside_comp_20d/50d_va` (2) | Market Structure | Idem |
+| `ovn_high_lvl/low_lvl` (2) | IB/Overnight | Redondant avec `ovn_high/ovn_low` Python `prev_levels.py` |
+
+### (B) BACKLOG re-injection requise — 2 features (consumers prod actifs)
+
+| Feature | Consumer prod | Impact non-fix |
+|---|---|---|
+| `dist_blind_nearest_up` | `bn_v5_engine.py:267-302` (BN V5 Sim2) + `bot3_gold_level_definitions.py:30` (Bot 3 Gold MGC) | 1 col support manquant BN V5 + Tier 2 BLIND_SPOT mort Bot 3 |
+| `dist_blind_nearest_dn` | Idem | Tier 2 BLIND_SPOT_DN mort Bot 3 Gold |
+
+**TODO** (IDEAS_BACKLOG.md) : porter calcul Python streaming dans
+`CORE/enricher_chain.py` en chargeant `bl_levels` depuis
+`DATA/MENTHORQ/{date}_menthorq_complete.json` (parser
+`structured.bl_levels.resource.text_data`). Effort 1-2h + code-reviewer +
+market-analyst review. Date estimee : sprint dedie post bilan #60.
+
+### Commentaire VS realite (cleanup INCIDENT #60)
+
+AVANT fix #60, `run_sierra_enricher.py:171-186` promettait :
+> "ces features peuvent etre re-injectees par menthorq_backfill_injector
+> ou load_mq_levels (sources Python) avec BONNES valeurs"
+
+Verification empirique 15/06 : **AUCUN de ces 2 modules n'est importe** dans
+le pipeline streaming. Promesse = vœu pieux jamais code. Pattern
+VALIDATION_MISS classique (cf `feedback_validation_miss_pre_deploy.md`).
+Commentaire reecrit pour refleter realite + flag TODO backlog.

@@ -168,12 +168,38 @@ _FLOAT_ROUND_DECIMALS = 6  # Precision suffisante : < tick (0.25 NQ/ES, 0.10 MGC
 # Charts 30/31 Sierra supprimes -> 16 features C++ DMP DEAD (NULL ou aberrants).
 # Drop systematique du JSONL Sierra pour eviter pollution audits futurs +
 # confusion "C'EST QUOI ÇA ?" sur valeurs +86556 ticks / null silencieux.
-# IMPORTANT : ces features peuvent etre re-injectees par menthorq_backfill_injector
-# ou load_mq_levels (sources Python) avec BONNES valeurs. On ne drop QUE celles
-# emises par DMP C++ sur path Sierra. Path Databento intact.
 # Validation Jackson 11/06 soir : ES dist_comp_20d_vpoc=+86556 implied -14237,
 # NQ dist_comp_20d_vpoc=-89140 implied +51770 = impossible.
+#
+# ⚠️ FIX INCIDENT #60 (15/06/2026) : nettoyage commentaire trompeur.
+# Le commentaire AVANT-fix promettait une re-injection via menthorq_backfill_injector
+# OU load_mq_levels. Verification empirique cross-codebase 15/06 : AUCUN de ces
+# 2 modules n'est importe dans le pipeline streaming (`enricher_chain.py`,
+# `sierra_pipeline.py`, `run_sierra_enricher.py`). La promesse etait un vœu
+# pieux jamais code -> features restent NULL 100% dans sierra_enriched JSONL.
+#
+# Statut reel des 16 features droppees :
+#
+# (A) DROP DEFINITIF (14 features, aucun consumer prod actif) :
+#   - dist_comp_20d/50d_vpoc/vah/val/vwap/_atr (10) : aucun grep dans
+#     mia_paper_trader / databento_paper_trader_v2 / BOT/*.py / bias_calculator /
+#     scenario_generator / narrative_engine
+#   - comp_vpoc_align_20_50/day_20 (2) : idem aucun consumer
+#   - inside_comp_20d/50d_va (2) : idem aucun consumer
+#   - ovn_high/low_lvl (2) : redondants avec ovn_high/ovn_low Python (prev_levels.py)
+#
+# (B) RE-INJECTION REQUISE (2 features, consumers PROD ACTIFS identifies) :
+#   - dist_blind_nearest_up/dn : utilises par CORE/bn_v5_engine.py:267-302
+#     (BN V5 Sim2 paper) + CORE/bot3_gold_level_definitions.py:30,36 (Bot 3
+#     Gold MGC). PROD ACTIF -> degradation silencieuse (1 col support sur 5
+#     manquant BN V5 + 2 niveaux Tier 2 morts Bot 3 Gold).
+#     TODO IDEAS_BACKLOG : porter calcul Python streaming dans `enricher_chain.py`
+#     en chargeant `bl_levels` depuis `DATA/MENTHORQ/{date}_menthorq_complete.json`
+#     (parser `structured.bl_levels.resource.text_data`). Effort 1-2h + review.
+#
+# Cf DOCS/AUDIT_DEAD_FEATURES_20260615.md Bug #4/#7 + DOCS/INCIDENT_LOG.md #60.
 _SIERRA_C_DEAD_FIELDS = frozenset((
+    # (A) DROP DEFINITIF (aucun consumer prod actif)
     # dist_comp 20d/50d (10) + derivees (4)
     "dist_comp_20d_vpoc", "dist_comp_20d_vah", "dist_comp_20d_val",
     "dist_comp_20d_vwap", "dist_comp_20d_vpoc_atr",
@@ -181,14 +207,12 @@ _SIERRA_C_DEAD_FIELDS = frozenset((
     "dist_comp_50d_vwap", "dist_comp_50d_vpoc_atr",
     "comp_vpoc_align_20_50", "comp_vpoc_align_day_20",
     "inside_comp_20d_va", "inside_comp_50d_va",
-    # dist_blind nearest (NQ_COMPOSITE::MQ_BLIND chart 30 supprime)
-    # NB : si menthorq_backfill_injector emet ces 2 features apres,
-    # elles seront re-injectees avec BONNES valeurs (priorite Python).
-    "dist_blind_nearest_up", "dist_blind_nearest_dn",
-    # ovn_high/low_lvl natif Sierra (chart 30/31 OVN_HL supprime)
-    # NB : ovn_high/ovn_low Python (prev_levels.py) garde fonctionne -
-    # ces 2 features sont juste les versions natives SC redondantes.
+    # ovn natif Sierra (redondant avec ovn_high/ovn_low Python prev_levels.py)
     "ovn_high_lvl", "ovn_low_lvl",
+    # (B) BACKLOG re-injection requise (consumers prod actifs)
+    # dist_blind_nearest_up/dn (NQ_COMPOSITE::MQ_BLIND chart 30 supprime).
+    # Consumers : BN V5 Sim2 + Bot 3 Gold MGC. Re-injection Python TODO.
+    "dist_blind_nearest_up", "dist_blind_nearest_dn",
 ))
 
 

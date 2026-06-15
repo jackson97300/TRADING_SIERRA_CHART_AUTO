@@ -7,6 +7,36 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Idées en cours / proposées
 
+- **[BUG-4-DIST-BLIND 2026-06-15]** **Re-injection Python streaming `dist_blind_nearest_up/dn`** | 1-2h dev + review | MEDIUM | PROPOSED
+  - **Contexte** : Drop volontaire path Sierra (BOT/run_sierra_enricher.py) car charts 30/31 supprimes. Commentaire promet re-injection via `menthorq_backfill_injector` ou `load_mq_levels` mais ces 2 modules ne sont JAMAIS importes dans pipeline streaming. Verifie cross-codebase 15/06 (INCIDENT #60).
+  - **Consumers prod actifs** :
+    - `bn_v5_engine.py:267-302` (BN V5 Sim2 paper) — confluence filter degrade : 1 col support manquant sur 5
+    - `bot3_gold_level_definitions.py:30,36` (Bot 3 Gold MGC) — Tier 2 BLIND_SPOT_UP/DN morts
+  - **Action** : porter calcul Python streaming dans `CORE/enricher_chain.py`
+    1. Charger `DATA/MENTHORQ/{date}_menthorq_complete.json` au boot pipeline (1×/jour)
+    2. Parser `structured.bl_levels.resource.text_data` regex pour extraire 10 prix BL
+    3. Cache dans state.engine_states["mq_blind_{symbol}"] = list[float]
+    4. A chaque bar : `_nearest_above_below(blind_cache, close, tick_size)` -> `dist_blind_nearest_up/dn`
+  - **Trigger fix** : avant push BN V5 prod OR Bot 3 Gold MGC live (sinon impact paper silencieux acceptable temporaire)
+  - **Cross-ref** : INCIDENT #60 + DOCS/AUDIT_DEAD_FEATURES_20260615.md + DOCS/INVENTAIRE_DUMPER_VS_BOT.md annexe 15/06.
+
+- **[BUG-5-DIST-COLOR 2026-06-15]** **Activer Extension Lines COLOR UP/DN Sierra Chart NQ + ES** | 5 min config GUI | LOW | WAITING_JACKSON
+  - **Contexte** : `dist_color_up/dn_nearest_pct` NULL 99% NQ + 89% ES (10-12/06 = 100% NULL, 15/06 = 89% suggere reactivation partielle).
+  - **Cause** : etudes Sierra Chart "COLOR UP" + "COLOR DOWN" avec "Draw Extension Lines until End of Chart = NO" OR "Number of Bars to Calculate <= 20".
+  - **Action Jackson** :
+    - Sierra Chart VPS -> chart 30 NQ -> studies COLOR UP (study 26) + COLOR DOWN (study 27) -> Settings :
+      - "Draw Extension Lines until End of Chart = Yes"
+      - "Number of Bars to Calculate >= 1000"
+    - Idem chart 25 ES (studies 24 + 25)
+  - **Quand** : POST 16:00 ET (fin session US) ou AVANT 09:30 ET demain. NE PAS faire en session de trading (regle `feedback_never_restart_sc_in_session.md`).
+  - **Verif J+1** : grep NULL% `dist_color_*_nearest_pct` doit chuter < 60% (vs 99%).
+
+- **[BUG-6-BOOL-VA-CONFLUENCE 2026-06-15]** **Recalibrer seuil 10t -> 20-30t ou normaliser ATR** | 1 ligne C++ + recompile | LOW | BACKLOG_MINOR
+  - **Contexte** : `bool_va_confluence` CONSTANT 0 (15169 bars NQ + 11762 ES). Seuil C++ `DMP_Transform.h:1728` = |cur_vpoc - prev_vpoc| <= 10 ticks impossible a atteindre (diff median NQ ~400+ ticks).
+  - **Impact prod** : NUL (deja drop par `CORE/dataset_builder.py:150`, plus dans pool ML).
+  - **Priorite** : tres basse, fix decoratif. Faire avec prochain refactor C++ DMP.
+  - **Alternative** : `va_vpoc_drift_atr = |cur_vpoc - prev_vpoc| / atr_d` (normalise ATR, comparable cross-instrument).
+
 - **[SIERRA-5.0-MQ-PROXY 2026-06-11]** **REVERT proxy mq_gamma_condition quand API MenthorQ disponible** | 2-4h | HIGH | WAITING_API
   - **Contexte** : Phase 5.0.A deploy `CORE/menthorq_v2_sierra_proxy.py` proxy temporaire car scraper MenthorQ down (Cloudflare) + API publique pas encore dispo. Jackson sur liste d'attente early access.
   - **Limitation actuelle** : proxy `bool_gex_flip_zone (zone entre put_support et call_resistance)` est structurellement different de `net_gex > 0` (somme algebrique reelle). Approximation acceptable sur distribution 8 mois (52-58% top freq) mais regimes shift possible vs Databento historique.
