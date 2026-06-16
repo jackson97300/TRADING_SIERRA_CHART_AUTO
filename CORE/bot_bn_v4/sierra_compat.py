@@ -33,6 +33,40 @@ def _f(v) -> Optional[float]:
     return f
 
 
+def enrich_big_dominance(row: dict) -> dict:
+    """Calcule big_buy_dominance / big_sell_dominance dans row (in-place).
+
+    SOURCE UNIQUE 16/06 (Plan agent review R2) : factorisee depuis
+    enrich_sierra_bar_for_bn_v4 pour mutualisation avec DASHBOARD/api/sierra_ofa_compat.py
+    (widget Order Flow Avance). Anti-pattern : duplication formule entre bot et dashboard
+    -> divergence garantie. Source unique = ici.
+
+    Convention semantique (confirmee par Lopez de Prado / Kyle 1985) :
+      n_big_ask_* = ordres ASK liftes = market BUY agressif -> ask_buyer_dominance
+      n_big_bid_* = ordres BID hits = market SELL agressif -> bid_seller_dominance
+
+    Sources possibles (fallback en cascade) :
+      - n_big_ask_v2_t1 + n_big_bid_v2_t1 (v2 enriched, prioritaire)
+      - n_big_ask_t1 + n_big_bid_t1 (legacy fallback)
+
+    Si total_big = 0 (pas de big orders dans la barre) : valeur neutre 0.5
+    (PAS de signal, evite division par zero + faux signal directionnel).
+
+    Idempotent : skip si les 2 cles existent deja (setdefault).
+    """
+    if "big_buy_dominance" not in row or "big_sell_dominance" not in row:
+        n_ask = _f(row.get("n_big_ask_v2_t1")) or _f(row.get("n_big_ask_t1")) or 0.0
+        n_bid = _f(row.get("n_big_bid_v2_t1")) or _f(row.get("n_big_bid_t1")) or 0.0
+        total_big = n_ask + n_bid
+        if total_big > 0:
+            row.setdefault("big_buy_dominance", n_ask / total_big)
+            row.setdefault("big_sell_dominance", n_bid / total_big)
+        else:
+            row.setdefault("big_buy_dominance", 0.5)
+            row.setdefault("big_sell_dominance", 0.5)
+    return row
+
+
 def enrich_sierra_bar_for_bn_v4(row: dict) -> dict:
     """Reconstruit les 5 dist_*_pct manquants + big_buy/sell_dominance.
 
@@ -71,21 +105,8 @@ def enrich_sierra_bar_for_bn_v4(row: dict) -> dict:
         if vwap_w_sd2d is not None and "dist_vwap_w_sd2d_pct" not in row:
             row["dist_vwap_w_sd2d_pct"] = (vwap_w_sd2d - close) / close * 100.0
 
-    # 3. big_buy_dominance / big_sell_dominance
-    # Sources possibles (fallback en cascade) :
-    #   - n_big_ask_v2_t1 + n_big_bid_v2_t1 (v2 enriched)
-    #   - n_big_ask_t1 + n_big_bid_t1 (legacy)
-    if "big_buy_dominance" not in row or "big_sell_dominance" not in row:
-        n_ask = _f(row.get("n_big_ask_v2_t1")) or _f(row.get("n_big_ask_t1")) or 0.0
-        n_bid = _f(row.get("n_big_bid_v2_t1")) or _f(row.get("n_big_bid_t1")) or 0.0
-        total_big = n_ask + n_bid
-        if total_big > 0:
-            row.setdefault("big_buy_dominance", n_ask / total_big)
-            row.setdefault("big_sell_dominance", n_bid / total_big)
-        else:
-            # Pas de big orders : valeur neutre 0.5 (PAS de signal)
-            row.setdefault("big_buy_dominance", 0.5)
-            row.setdefault("big_sell_dominance", 0.5)
+    # 3. big_buy/sell_dominance : delegate a la fonction partagee
+    enrich_big_dominance(row)
 
     return row
 

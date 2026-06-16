@@ -14,6 +14,13 @@ try:
     from CORE.constants import get_tick_size as _get_tick_size_strict
 except ImportError:
     from constants import get_tick_size as _get_tick_size_strict  # fallback path
+
+# Logger V2 (R2 code-reviewer BUG #4 08/06) — emit CONSEIL_MTF_PERFECT_DOWNWEIGHT
+# pour audit J+7 impact suppression double-comptage MTF 4/4.
+try:
+    from CORE import logging_v2 as _v2log
+except Exception:
+    _v2log = None
 from DASHBOARD.api.readers import (
     DAY_TYPE_LABELS,
     OPEN_TYPE_LABELS,
@@ -1229,21 +1236,38 @@ def build_conseil_global(
         bear_pts += 1
     checks.append(f"Range: {pos:.0f}%")
 
-    # 5. MTF (poids 2 si 4/4, 1 si 3/4, 1 si 2/4 — fix 28/04 marche indecis)
-    # FIX 28/04 (Jackson "deploy toutes sessions Asia/Londres/US") :
-    # ancien seuil >= 3 trop strict marche neutral (NEUTRAL bias 40% bars 27/04 = 0 pts MTF).
-    # Nouveau seuil >= 2 donne 1 pt → permet bull_pts atteindre 4 (ACHAT PRUDENT eligible).
-    # 24/04 (PF 2.64) avait MTF >= 3 fréquemment, le fix ne casse pas cette journée.
-    # 27/04 marche indecis : 735 bars bull=3 deviendraient bull=4 → ~50 candidats post-filtres aval.
+    # 5. MTF (poids 1 max — fix BUG #4 anti double-comptage 08/06/2026)
+    # AVANT : poids 2 si 4/4, 1 si 2-3/4. Probleme : combine avec fix BUG #1
+    # (stabilizers MTF boost +0.25 score), un MTF 4/4 peut faire basculer bias
+    # de NEUTRAL a BULLISH (compte 2 pts via bias) ET etre re-compte 2 pts ici
+    # = 4 pts pour UN SEUL signal MTF. ACHAT PRUDENT (bull>=4) declenchait sur
+    # MTF 4/4 SEUL sans aucun autre signal de marche.
+    # APRES : MTF direct max 1 pt. Si MTF 4/4 a fait basculer bias → bias compte
+    # 2 pts (effet MTF deja reflete) + MTF direct 1 pt = 3 pts (vs 4 avant).
+    # Si bias est BULLISH SANS aide MTF (vwap_slope fort) + MTF 4/4 → 2+1=3 pts
+    # (confirmation MTF leger). ACHAT (5+) requiert maintenant au moins 1 autre
+    # signal independent (delta_dir, range_pos extreme, divergence) au-dela de
+    # bias+MTF. Casse les faux LONG NQ sur MTF 4/4 alignment de dead cat bounce.
     mtf_bulls = regime.get("mtf_bulls", 0)
     mtf_bears = regime.get("mtf_bears", 0)
     if mtf_bulls >= 2:
-        mtf_w = 2 if mtf_bulls == 4 else 1
-        bull_pts += mtf_w
+        bull_pts += 1
     if mtf_bears >= 2:
-        mtf_w = 2 if mtf_bears == 4 else 1
-        bear_pts += mtf_w
+        bear_pts += 1
     checks.append(f"MTF: {regime.get('mtf_verdict', 'N/A')}")
+
+    # R2 reviewer BUG #4 : emit log MTF 4/4 attenue pour audit J+7 (sans rate limit,
+    # MTF perfect est rare ~1-5% bars). Sans cet emit, regression silencieuse possible.
+    if (mtf_bulls == 4 or mtf_bears == 4) and _v2log:
+        try:
+            _v2log.emit(
+                "CONSEIL_MTF_PERFECT_DOWNWEIGHT",
+                sym=str(bar.get("sym", "?")).upper(),
+                mtf_bulls=mtf_bulls, mtf_bears=mtf_bears,
+                bull_pts=bull_pts, bear_pts=bear_pts,
+            )
+        except Exception:
+            pass  # fail-safe : logging ne doit jamais bloquer le pipeline
 
     # 6. Divergence forte (poids 2) — seuils alignes 80/20
     div_grade = regime.get("div_grade", "NONE")
@@ -1718,8 +1742,8 @@ def build_manual_indicators(bar: dict) -> dict:
 # ═══════════════════════════════════════════════════════════════
 
 
-def build_order_flow_advanced(bar: dict) -> dict:
-    """Indicateurs order flow avances issus du parquet V4 enriched.
+def build_order_flow_advanced(bar: dict, symbol: str = "ES") -> dict:
+    """Indicateurs order flow avances issus du parquet V4 enriched OU sierra_enriched.
 
     4 widgets bonus (cf demande Jackson 04/05) :
       H. Cluster acheteur/vendeur (distance + niveau touche)
@@ -1727,14 +1751,33 @@ def build_order_flow_advanced(bar: dict) -> dict:
       J. SMT divergence ES/NQ (inter-marche)
       K. Naked POC (distance + age max)
 
-    Toutes les distances V4 sont en pourcentage du prix (`*_pct`).
-    Pour affichage on garde le % brut, plus stable que conversion ticks
-    (pas besoin de connaitre tick_size cote dashboard).
+    MIGRATION 16/06 (Plan agent GO+4 reserves) :
+      Le parquet V4 Databento etait la source historique mais est stale depuis
+      annulation Databento (NQ 22h retard, MGC 5j). Detection auto : si la barre
+      n'a PAS `near_resistance_level` (= barre sierra_enriched native), on appelle
+      `enrich_sierra_for_ofa(bar, symbol)` qui calcule les 9 features OFA sur
+      place. Idempotent (setdefault). Reuse `enrich_big_dominance` factorise
+      depuis CORE.bot_bn_v4.sierra_compat (anti-duplication source unique).
+
+    Args:
+        bar    : barre dict (sierra_enriched JSONL OU parquet V4 row).
+        symbol : "ES"/"NQ"/"MGC" - obligatoire pour proximity symbol-aware (R1)
+                 + tick size (R3). Default "ES" fallback compat retro.
 
     Returns : dict prefixe `of_*` pour eviter collision avec mi_*.
     """
     if not bar:
         return {}
+
+    # Detection auto migration sierra_enriched (R3 Plan agent)
+    # Si la barre n'a PAS la feature V4 native, on enrichit via compat layer.
+    if "near_resistance_level" not in bar:
+        try:
+            from DASHBOARD.api.sierra_ofa_compat import enrich_sierra_for_ofa
+            enrich_sierra_for_ofa(bar, symbol)
+        except Exception:  # noqa: BLE001
+            # Defense : continue avec champs absents (badges OFF/--)
+            pass
 
     # ─── H. Cluster volumique @ niveau (REFACTOR 04/05 — features live) ──
     # Anciennes sources cluster_at_high/low sont mortes (ES 0.18% / NQ 0%) car

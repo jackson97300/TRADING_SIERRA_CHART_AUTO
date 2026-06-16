@@ -1230,7 +1230,9 @@ async def dashboard(request: Request):
             # 04/05 — Setups composites actifs (Phase 2 banner alerts)
             "active_setups": detect_active_setups(bar_enriched),
             # 04/05 — Order flow avance V4 (cluster/big/SMT/naked_poc)
-            "order_flow_advanced": build_order_flow_advanced(bar_enriched),
+            # 16/06 MIGRATION : signature (bar, symbol) pour proximity symbol-aware
+            # (R1 Plan agent) + detection auto sierra_enriched.
+            "order_flow_advanced": build_order_flow_advanced(bar_enriched, symbol),
         }
 
     response["es"] = _build_instrument(bar_es_enr, "ES")

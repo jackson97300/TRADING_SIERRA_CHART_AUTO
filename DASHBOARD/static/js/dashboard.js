@@ -970,22 +970,31 @@
             sDetail.textContent = "Δd " + (ofa.smt_delta_day != null ? ofa.smt_delta_day : 0);
         }
 
-        // K. Naked POC
+        // K. Naked POC (16/06 MIGRATION : tracking historique 5j non migre sierra,
+        // affichage "N/A" temporaire jusqu'a implementation Python state rolling).
         var nBadge = $("ofa-npoc-badge");
         var nDetail = $("ofa-npoc-detail");
         if (nBadge) {
-            var nMap = {
-                "MAGNET_STRONG": ["MAGNET++", "mi-badge-warn"],
-                "MAGNET_NEAR": ["MAGNET", "mi-badge-call"],
-                "PRESENT": ["PRESENT", "mi-badge-off"],
-                "OFF": ["OFF", "mi-badge-off"]
-            };
-            var pairN = nMap[ofa.npoc_signal] || nMap["OFF"];
-            nBadge.textContent = pairN[0];
-            nBadge.className = "mi-badge " + pairN[1];
+            if (ofa.npoc_unavailable === true) {
+                nBadge.textContent = "N/A";
+                nBadge.className = "mi-badge mi-badge-off";
+                nBadge.title = "Migration sierra : tracking POCs historique 5j non implemente. TBD Phase 6.";
+            } else {
+                var nMap = {
+                    "MAGNET_STRONG": ["MAGNET++", "mi-badge-warn"],
+                    "MAGNET_NEAR": ["MAGNET", "mi-badge-call"],
+                    "PRESENT": ["PRESENT", "mi-badge-off"],
+                    "OFF": ["OFF", "mi-badge-off"]
+                };
+                var pairN = nMap[ofa.npoc_signal] || nMap["OFF"];
+                nBadge.textContent = pairN[0];
+                nBadge.className = "mi-badge " + pairN[1];
+            }
         }
         if (nDetail) {
-            if (ofa.npoc_signal === "OFF") {
+            if (ofa.npoc_unavailable === true) {
+                nDetail.textContent = "migration TBD";
+            } else if (ofa.npoc_signal === "OFF") {
                 nDetail.textContent = "--";
             } else {
                 nDetail.textContent = (ofa.npoc_dist_pct != null ? ofa.npoc_dist_pct.toFixed(2) + "%" : "--")
@@ -4545,6 +4554,20 @@
         // Reset classes voyant
         el.classList.remove("ds-voyant-v4", "ds-voyant-dmp", "ds-voyant-frozen", "ds-voyant-init", "ds-voyant-na");
 
+        // 16/06 Jackson souverain : les 4 bots actifs consomment la MEME source
+        // canonique sierra_enriched JSONL (DATA/live_enriched/sierra/{SYM}/).
+        // Databento annule -> tous les bots paper sont sur Sierra Chart JSONL.
+        // Bot 1 (Mean Revert Sim1) + Bot 2 (Mirror v2 Sim2) + Bot 3 (BN V4 Sim3) + Bot 4 (Scenarios Sim4).
+        // 16/06 PM : check LIVE_ENRICHED AVANT le check !bot pour garantir affichage
+        // voyant meme si fetch bot data pas encore arrive (boot Bot BN V4).
+        if (which === "bot1" || which === "bot3v3" || which === "bot3v4" || which === "bot4") {
+            el.style.display = "inline-flex";
+            el.classList.add("ds-voyant-v4");
+            lbl.textContent = "LIVE_ENRICHED";
+            sub.textContent = "Sierra Chart JSONL ~60s lag";
+            return;
+        }
+
         var data = window.paperDataAll || {};
         var bot;
         if (which === "bot1") bot = data.bot1_dmp;
@@ -4555,19 +4578,6 @@
         else if (which === "bot4") bot = data.bot4;
         if (!bot) {
             el.style.display = "none";
-            return;
-        }
-
-        // 16/06 Jackson souverain : les 4 bots actifs consomment la MEME source
-        // canonique sierra_enriched JSONL (DATA/live_enriched/sierra/{SYM}/).
-        // Databento annule -> tous les bots paper sont sur Sierra Chart JSONL.
-        // Bot 1 (Mean Revert Sim1) + Bot 2 (Mirror v2 Sim2) + Bot 3 (BN V4 Sim3) + Bot 4 (Scenarios Sim4).
-        // 16/06 PM : ajout bot3v4 (Bot 3 BN V4) dans le LIVE_ENRICHED group.
-        if (which === "bot1" || which === "bot3v3" || which === "bot3v4" || which === "bot4") {
-            el.style.display = "inline-flex";
-            el.classList.add("ds-voyant-v4");
-            lbl.textContent = "LIVE_ENRICHED";
-            sub.textContent = "Sierra Chart JSONL ~60s lag";
             return;
         }
 
