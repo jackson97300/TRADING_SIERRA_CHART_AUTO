@@ -258,8 +258,10 @@ def _make_setup_long(name: str, entry: float, target: float, ctx: NarrativeConte
     else:
         if stop_level is not None:
             # stop_level fourni mais du mauvais cote (> entry) -> fallback ATR
-            # silencieux = anti-pattern VALIDATION_MISS. On trace.
-            _LOG.warning(
+            # silencieux = anti-pattern VALIDATION_MISS. On trace en DEBUG.
+            # FIX 16/06 : downgrade warning -> debug (defense anti-spam, le bug
+            # racine est cote condition d'entree scenario - cf VWAP SD2 Touch).
+            _LOG.debug(
                 "LONG '%s' : stop_level=%.2f rejete (> entry=%.2f), fallback ATR %s",
                 name, stop_level, entry, setup_type,
             )
@@ -306,7 +308,9 @@ def _make_setup_short(name: str, entry: float, target: float, ctx: NarrativeCont
         stop = stop_level + stop_buffer_atr * ctx.atr
     else:
         if stop_level is not None:
-            _LOG.warning(
+            # FIX 16/06 : downgrade warning -> debug (defense anti-spam, le bug
+            # racine est cote condition d'entree scenario - cf VWAP SD2 Touch).
+            _LOG.debug(
                 "SHORT '%s' : stop_level=%.2f rejete (< entry=%.2f), fallback ATR %s",
                 name, stop_level, entry, setup_type,
             )
@@ -1307,7 +1311,12 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
         )
 
     # SD2 plus frequent mais score plus bas (5% statistique)
+    # FIX 16/06 Bot 4 spam : borne sup ajoutee. Avant : close >= sd2u - 0.1*atr
+    # acceptait aussi close >> sd2u (breakout bullish, PAS un fade SHORT) =>
+    # stop_level=sd2u < entry=close => _make_setup_short rejette + log spam.
+    # Maintenant : prix DOIT etre proche du niveau par EN-DESSOUS (touche/fade).
     if ctx.vwap_d_sd2u is not None and ctx.close >= ctx.vwap_d_sd2u - 0.1 * ctx.atr \
+            and ctx.close <= ctx.vwap_d_sd2u \
             and (ctx.vwap_d_sd3u is None or ctx.close < ctx.vwap_d_sd3u - 0.1 * ctx.atr):
         sd_level = ctx.vwap_d_sd2u
         near_sup = _nearest_support(ctx)
@@ -1340,7 +1349,13 @@ def _scenario_vwap_sd_touch_reversal(ctx: NarrativeContext) -> Optional[Scenario
             setups=[setup],
         )
 
+    # FIX 16/06 Bot 4 spam (2119/2122 lignes 99.9% pollution log) : borne inf
+    # ajoutee. Avant : close <= sd2d + 0.1*atr acceptait aussi close << sd2d
+    # (breakdown bearish, PAS un bounce LONG) => stop_level=sd2d > entry=close
+    # => _make_setup_long rejette + log spam (2119 lignes/jour ES+NQ).
+    # Maintenant : prix DOIT etre proche du niveau par AU-DESSUS (touche/bounce).
     if ctx.vwap_d_sd2d is not None and ctx.close <= ctx.vwap_d_sd2d + 0.1 * ctx.atr \
+            and ctx.close >= ctx.vwap_d_sd2d \
             and (ctx.vwap_d_sd3d is None or ctx.close > ctx.vwap_d_sd3d + 0.1 * ctx.atr):
         sd_level = ctx.vwap_d_sd2d
         near_res = _nearest_resistance(ctx)
