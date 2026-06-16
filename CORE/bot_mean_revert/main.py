@@ -154,6 +154,24 @@ class BotMR:
 
         if self.store.has_position(sym):
             bot_log.emit("BOTMR_SKIP_HAS_POSITION", sym=sym)
+            # Update live tracking MFE/MAE/PnL unrealized pour visibility dashboard
+            try:
+                close_price = float(bar.get("close") or 0.0)
+                if close_price > 0:
+                    if sym == "ES":
+                        tick, usd_t = 0.25, 1.25
+                    elif sym == "NQ":
+                        tick, usd_t = 0.25, 0.50
+                    elif sym == "MGC":
+                        tick, usd_t = 0.10, 1.00
+                    else:
+                        tick, usd_t = 0.25, 1.25
+                    self.state_bridge.update_open_position_live(
+                        sym, current_price=close_price,
+                        tick_size=tick, usd_per_tick=usd_t,
+                    )
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"state_bridge update_open_position fail: {e}")
             return None
 
         # Evaluate signal (SignalEngine fait session + cooldown + regime + sizing)

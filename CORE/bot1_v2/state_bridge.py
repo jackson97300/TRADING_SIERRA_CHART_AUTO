@@ -156,6 +156,69 @@ class StateBridge:
         self.state["updated_iso"] = _now_iso()
         return self._save()
 
+    def update_open_position_live(self, symbol: str, *, current_price: float,
+                                    tick_size: float = 0.25,
+                                    usd_per_tick: float = 1.25) -> bool:
+        """Met a jour le tracking live de la position (current_price, MFE, MAE,
+        unrealized_pnl, bars_held) a chaque cycle.
+
+        Appele a chaque bar par main.py si position ouverte sur le symbole.
+        Permet au dashboard d'afficher en temps reel le PnL et le mouvement
+        adverse/favorable depuis l'entry.
+
+        Args:
+            symbol : ES / NQ / MGC
+            current_price : close de la derniere bar lue
+            tick_size : 0.25 ES/NQ, 0.10 MGC
+            usd_per_tick : 1.25 ES micro, 0.50 NQ micro, 1.00 MGC micro
+        """
+        pos = self.state.get("open_by_symbol", {}).get(symbol)
+        if pos is None or current_price <= 0:
+            return False
+
+        entry_price = float(pos.get("entry_price") or 0.0)
+        if entry_price <= 0 or tick_size <= 0:
+            return False
+
+        direction = pos.get("direction", "")
+        n_micros = int(pos.get("n_micros") or 1)
+
+        # Excursion en ticks (signed selon direction)
+        if direction == "LONG":
+            pnl_ticks = (current_price - entry_price) / tick_size
+        elif direction == "SHORT":
+            pnl_ticks = (entry_price - current_price) / tick_size
+        else:
+            return False
+
+        pnl_ticks = round(pnl_ticks, 1)
+        pnl_usd = round(pnl_ticks * usd_per_tick * n_micros, 2)
+
+        # MAE = max adverse (le pire moment defavorable, negatif)
+        # MFE = max favorable (le meilleur moment favorable, positif)
+        mae = float(pos.get("mae") or 0.0)
+        mfe = float(pos.get("mfe") or 0.0)
+        if pnl_ticks < mae:
+            mae = pnl_ticks
+        if pnl_ticks > mfe:
+            mfe = pnl_ticks
+
+        # bars_held : incremente d'1 si on passe a une nouvelle bar
+        # Approximation : tick chaque appel update (le bot appelle a chaque cycle
+        # avec la nouvelle bar lue). Plus precis = comparer bar_ts vs last.
+        bars_held = int(pos.get("bars_held") or 0) + 1
+
+        pos["current_price"] = current_price
+        pos["unrealized_pnl_ticks"] = pnl_ticks
+        pos["unrealized_pnl_usd"] = pnl_usd
+        pos["mae"] = round(mae, 1)
+        pos["mfe"] = round(mfe, 1)
+        pos["bars_held"] = bars_held
+
+        self.state["updated_ts"] = time.time()
+        self.state["updated_iso"] = _now_iso()
+        return self._save()
+
     def close_position(self, symbol: str, *, exit_price: float,
                         exit_reason: str = "EXIT", outcome: str = "EXIT",
                         pnl_ticks: float = 0.0, pnl_usd: float = 0.0) -> bool:
