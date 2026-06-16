@@ -261,6 +261,13 @@ LOG_CODES = {
     # 10/06 ULTRATHINK BN V5 Phase G+H — Regime veto + daily stop preventif
     "BN_V5_REGIME_VETO": (LogLevel.MAJEUR, "decisions", "BN V5 regime VETO : {sym} {pattern} {side} regime_favor={regime_favor} trend_score={trend_score} - reason={reason}"),
     "BN_V5_DAILY_STOP_PREVENTIF_VETO": (LogLevel.MAJEUR, "decisions", "BN V5 daily stop preventif VETO : {sym} {pattern} {side} pnl={pnl_session_usd} - risk={perte_max_potentielle_usd} = cumul_apres={cumul_apres_perte} < limite={limite_loss_usd} - reason={reason}"),
+    # 16/06 Gate confirmation INTERMARKET DIVERGENCE ES->NQ (Bot 1 continuation).
+    # Filtre >30% des trades -> logger JSONL dedie LOGS/intermarket_gate/ en plus.
+    # FAILSAFE distinct de DIVERGE (feed ES mort != ES aligne) — R2 review.
+    "BOT3_V3_ENTRY_VETO_INTERMARKET_DIVERGE": (LogLevel.MAJEUR, "decisions", "Bot 3 v3 VETO intermarket : {sym} {side} ES aligne (pas de divergence) es_dist={es_dist} p_low={p_low} p_high={p_high} level={level} signal_id={signal_id}"),
+    "BOT3_V3_ENTRY_VETO_INTERMARKET_FAILSAFE": (LogLevel.MAJEUR, "decisions", "Bot 3 v3 VETO intermarket FAILSAFE : {sym} {side} data ES indisponible/insuffisante buf={buf_len} (feed ES mort ?) level={level} signal_id={signal_id}"),
+    "BOT3_V3_ENTRY_PASS_INTERMARKET": (LogLevel.INFO, "decisions", "Bot 3 v3 PASS intermarket : {sym} {side} ES diverge es_dist={es_dist} p={p_low}/{p_high} level={level} signal_id={signal_id}"),
+    "BOT3_V3_INTERMARKET_GATE_ENABLED": (LogLevel.MAJEUR, "events", "Bot 3 v3 gate intermarket DIVERGENCE ACTIVE : leader=ES window={window} pct={pct} fail_safe_block={fail_safe} (opt-in MIA_BOT3_V3_INTERMARKET_GATE=1)"),
     "BN_V5_POSITIONS_RESTORED": (LogLevel.MAJEUR, "events", "BN V5 positions restored : n={n_positions} symbols={symbols}"),
     "BN_V5_CID_INDEX_REBUILT": (LogLevel.INFO, "events", "BN V5 cid_index rebuilt : n_cids={n_cids}"),
     "BN_V5_SIGNAL_COUNTER_RESTORED": (LogLevel.INFO, "events", "BN V5 signal counter restored : sym={sym} counter={counter}"),
@@ -1474,6 +1481,29 @@ LOG_CODES = {
     "BOTMR_GATE_INTERMARKET_BLOCK": (LogLevel.INFO,     "decisions", "BotMR intermarket block : {sym} {direction} reason={reason}"),
     "BOTMR_INTERMARKET_CONFIRM":    (LogLevel.INFO,     "decisions", "BotMR intermarket confirm : {sym} {direction} leader={reason}"),
     "BOTMR_INTERMARKET_LEADER_MISSING": (LogLevel.ALERTE, "decisions", "BotMR intermarket leader bar missing : {sym} leader={leader_sym}"),
+
+    # === BOT BN V4 (Sim3, 16/06/2026 reincarnation Bataille Navale V4 - Jackson souverain) ===
+    "BOTBN_BOOT":                   (LogLevel.INFO,     "events",    "BotBN boot : dry_run={dry_run} symbols={symbols} ta={trade_account} grade_min={grade_min}"),
+    "BOTBN_SHUTDOWN":               (LogLevel.INFO,     "events",    "BotBN shutdown clean"),
+    "BOTBN_STATE_LOAD":             (LogLevel.INFO,     "events",    "BotBN state load : {status}"),
+    "BOTBN_DAY_ROLLOVER":           (LogLevel.INFO,     "events",    "BotBN day rollover : {old_date} -> {new_date}"),
+    "BOTBN_HEARTBEAT":              (LogLevel.INFO,     "events",    "BotBN heartbeat : positions={n_positions} trades={n_trades_today} pnl=${pnl_today:.2f}"),
+    "BOTBN_BAR_STALE":              (LogLevel.ALERTE,   "events",    "BotBN bar stale : {sym} age={age_sec:.0f}s > {max_age}s"),
+    "BOTBN_LOOP_EXCEPTION":         (LogLevel.CRITIQUE, "events",    "BotBN loop exception : {err}"),
+    "BOTBN_FEATURE_DEGRADED":       (LogLevel.ALERTE,   "events",    "BotBN feature degraded : {sym} missing={features}"),
+    "BOTBN_DTC_CONNECTED":          (LogLevel.INFO,     "execution", "BotBN DTC connecte : client={client_name} ta={trade_account}"),
+    "BOTBN_DTC_FALLBACK_DRYRUN":    (LogLevel.MAJEUR,   "execution", "BotBN DTC echec -> fallback dry-run : {err}"),
+    "BOTBN_SKIP_HAS_POSITION":      (LogLevel.INFO,     "decisions", "BotBN skip {sym} : position deja ouverte"),
+    "BOTBN_GATE_SESSION_BLOCK":     (LogLevel.INFO,     "decisions", "BotBN skip {sym} : session {phase} non-tradee"),
+    "BOTBN_GATE_DAILY_BLOCK":       (LogLevel.MAJEUR,   "decisions", "BotBN daily limit : {sym} {reason}"),
+    "BOTBN_GATE_REGIME_BLOCK":      (LogLevel.INFO,     "decisions", "BotBN regime block : {sym} {direction} reason={reason}"),
+    "BOTBN_NOT_TRADABLE":           (LogLevel.INFO,     "decisions", "BotBN skip {sym} {direction} : {skip_reason} grade={grade}"),
+    "BOTBN_TRADABLE":               (LogLevel.INFO,     "decisions", "BotBN TRADABLE : {sym} {direction} grade={grade} @ {entry_price:.2f} SL {sl_ticks}t TP_pivot_dow"),
+    "BOTBN_TRADABLE_HYPOTHETICAL":  (LogLevel.INFO,     "decisions", "BotBN TRADABLE_HYPO : {sym} {direction} grade={grade} session={session_phase} (shadow log A/B ou London)"),
+    "BOTBN_ORDER_SENT":             (LogLevel.INFO,     "execution", "BotBN ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
+    "BOTBN_ORDER_FAIL":             (LogLevel.CRITIQUE, "execution", "BotBN ordre fail : {sym} {direction} err={err_msg}"),
+    "BOTBN_TRAIL_SL_UPDATE":        (LogLevel.INFO,     "execution", "BotBN trail SL update : {sym} {old_sl:.2f} -> {new_sl:.2f} pivot_low={pivot_low}"),
+    "BOTBN_TRADE_CLOSE":            (LogLevel.INFO,     "execution", "BotBN trade close : {sym} {direction} reason={reason} pnl_ticks={pnl_ticks} pnl_usd={pnl_usd:.2f}"),
 }
 
 
