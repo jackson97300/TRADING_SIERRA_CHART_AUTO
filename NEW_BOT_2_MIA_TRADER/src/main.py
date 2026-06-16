@@ -609,9 +609,26 @@ class Bot4Main:
                 tp_ticks_eff = _tp_t
                 _override_applied = True
             else:
+                # FIX 16/06 : raison precise du reject. Code log conserve pour
+                # compat retro audit. Avant : "SLTP_REJECT_SIDE" generique
+                # trompeur (signalait "mauvais cote" meme quand le vrai bug etait
+                # TP_TOO_TIGHT ou SL_OUT_OF_BOUNDS).
+                _reasons = []
+                if not _sl_ok:
+                    _reasons.append("sl_wrong_side")
+                if not _tp_ok:
+                    _reasons.append("tp_wrong_side")
+                if not _bounds_ok:
+                    if _sl_t < _SL_MIN_TICKS:
+                        _reasons.append(f"sl_too_tight({_sl_t:.1f}t<{_SL_MIN_TICKS})")
+                    elif _sl_t > _SL_MAX_TICKS:
+                        _reasons.append(f"sl_too_wide({_sl_t:.1f}t>{_SL_MAX_TICKS})")
+                    if _tp_t < 1.0:
+                        _reasons.append(f"tp_too_tight({_tp_t:.1f}t<1.0)")
                 emit_safe(self._log, "BOT4_SCENARIO_SLTP_REJECT_SIDE",
                           sym=symbol, scenario=decide_result.scenario_name,
-                          entry=entry_price, sl=_ssl, tp=_stp)
+                          entry=entry_price, sl=_ssl, tp=_stp,
+                          reasons=",".join(_reasons) or "unknown")
 
         n_micros = risk_event.sizing_decision.n_micros if risk_event.sizing_decision else 1
         # Contrat = celui du feed sierra (bar["contract"]) en priorite -> execute
