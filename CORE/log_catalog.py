@@ -1448,6 +1448,28 @@ LOG_CODES = {
     "SIERRA_ENRICHER_FILE_ROLLOVER":    (LogLevel.INFO,     "events", "Sierra enricher file rollover : sym={sym} {old_path} -> {new_path}"),
     "SIERRA_ENRICHER_WRITE_FAIL":       (LogLevel.CRITIQUE, "events", "Sierra enricher write FAIL : sym={sym} path={path} err={err}"),
     "SIERRA_ENRICHER_READER_FAIL":      (LogLevel.CRITIQUE, "events", "Sierra enricher reader FAIL : sym={sym} err={err}"),
+
+    # === BOT MEAN REVERT VWAP (Sim1, 16/06/2026, mean revert SD2/SD3 + regime asymetrique) ===
+    # Edge ES sweep v2 : PF 1.69 sur 70 trades / +$520 sur 4 jours. Config SD3 + RR 1.5 +
+    # US-only + slope_30>0 + skip London + skip pre-open 11:30-13:30 UTC. NQ dry-eval Asia.
+    "BOTMR_BOOT":                  (LogLevel.INFO,     "events",    "BotMR boot : dry_run={dry_run} symbols={symbols} ta={trade_account}"),
+    "BOTMR_SHUTDOWN":              (LogLevel.INFO,     "events",    "BotMR shutdown clean"),
+    "BOTMR_STATE_LOAD":            (LogLevel.INFO,     "events",    "BotMR state load : {status}"),
+    "BOTMR_DAY_ROLLOVER":          (LogLevel.INFO,     "events",    "BotMR day rollover : {old_date} -> {new_date}"),
+    "BOTMR_HEARTBEAT":             (LogLevel.INFO,     "events",    "BotMR heartbeat : positions={n_positions} trades={n_trades_today} pnl=${pnl_today:.2f}"),
+    "BOTMR_BAR_STALE":             (LogLevel.ALERTE,   "events",    "BotMR bar stale : {sym} age={age_sec:.0f}s > {max_age}s"),
+    "BOTMR_LOOP_EXCEPTION":        (LogLevel.CRITIQUE, "events",    "BotMR loop exception : {err}"),
+    "BOTMR_DTC_CONNECTED":         (LogLevel.INFO,     "execution", "BotMR DTC connecte : client={client_name} ta={trade_account}"),
+    "BOTMR_DTC_FALLBACK_DRYRUN":   (LogLevel.MAJEUR,   "execution", "BotMR DTC echec -> fallback dry-run : {err}"),
+    "BOTMR_SKIP_HAS_POSITION":     (LogLevel.INFO,     "decisions", "BotMR skip {sym} : position deja ouverte"),
+    "BOTMR_GATE_SESSION_BLOCK":    (LogLevel.INFO,     "decisions", "BotMR skip {sym} : session {phase} non-tradee"),
+    "BOTMR_GATE_DAILY_BLOCK":      (LogLevel.MAJEUR,   "decisions", "BotMR daily limit : {sym} {reason}"),
+    "BOTMR_GATE_REGIME_BLOCK":     (LogLevel.INFO,     "decisions", "BotMR regime block : {sym} {direction} reason={reason}"),
+    "BOTMR_NOT_TRADABLE":          (LogLevel.INFO,     "decisions", "BotMR skip {sym} {direction} : {skip_reason}"),
+    "BOTMR_TRADABLE":              (LogLevel.INFO,     "decisions", "BotMR TRADABLE : {sym} {direction} @ {entry_price:.2f} SL {sl_ticks}t TP {tp_ticks}t RR {rr_ratio:.1f}"),
+    "BOTMR_TRADABLE_HYPOTHETICAL": (LogLevel.INFO,     "decisions", "BotMR TRADABLE_HYPO : {sym} {direction} session={session_phase} (NQ dry-eval)"),
+    "BOTMR_ORDER_SENT":            (LogLevel.INFO,     "execution", "BotMR ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
+    "BOTMR_ORDER_FAIL":            (LogLevel.CRITIQUE, "execution", "BotMR ordre fail : {sym} {direction} err={err_msg}"),
 }
 
 
