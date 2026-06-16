@@ -128,30 +128,63 @@ class OrderRouter:
             )
 
             # Le DTC connector retourne tuple : (parent, tp, sl, fill)
-            # Si tp non envoye, le slot 2 sera vide / ignore.
+            # FIX 16/06 : reproduit bug Bot MR fix matin. JAMAIS bool(result)
+            # comme fallback - tuple non-vide != fill reussi = position fantome.
+            # Tuple len=3 (parent, tp, sl) sans fill = abort confirme cote DTC.
+            parent_real, sl_real, fill_price = None, None, 0.0
             if isinstance(result, tuple) and len(result) >= 4:
                 parent_real, _tp_real, sl_real, fill_price = result[:4]
-                if parent_real:
-                    parent_cid = parent_real
-                if sl_real:
-                    sl_cid = sl_real
-                try:
-                    fill_price = float(fill_price) if fill_price else entry_price
-                except (TypeError, ValueError):
-                    fill_price = entry_price
-                success = bool(parent_cid)
+            elif isinstance(result, tuple) and len(result) == 3:
+                # Detection abort DTC : tp_cid="" + sl_cid="" => echec parent fill
+                p, t, s = result[:3]
+                if not p or (not t and not s):
+                    return OrderResult(
+                        success=False,
+                        error_msg=f"DTC_PARENT_FILL_ABORT:tuple3_no_brackets",
+                        dry_run=False,
+                    )
+                parent_real, sl_real = p, s
             elif isinstance(result, dict):
-                success = bool(result.get("success", False))
-                fill_price = float(result.get("fill_price", entry_price))
+                fill_price = float(result.get("fill_price", 0.0))
+                parent_real = result.get("parent_cid")
+                sl_real = result.get("sl_cid")
             else:
-                success = bool(result)
-                fill_price = entry_price
+                # Type non reconnu = abort (anti-pattern bool(result))
+                return OrderResult(
+                    success=False,
+                    error_msg=f"DTC_UNKNOWN_RESULT_TYPE:{type(result).__name__}",
+                    dry_run=False,
+                )
+
+            if parent_real:
+                parent_cid = parent_real
+            if sl_real:
+                sl_cid = sl_real
+
+            # Verification fill_price reel via get_last_fill_price (fix Bot MR 16/06)
+            try:
+                fp = float(fill_price) if fill_price else 0.0
+            except (TypeError, ValueError):
+                fp = 0.0
+            if fp <= 0 and parent_cid and hasattr(self.dtc, "get_last_fill_price"):
+                try:
+                    fp = float(self.dtc.get_last_fill_price(parent_cid) or 0.0)
+                except Exception:  # noqa: BLE001
+                    fp = 0.0
+
+            # Success exige fill_price > 0 confirme (anti position fantome)
+            if fp <= 0:
+                return OrderResult(
+                    success=False,
+                    error_msg=f"DTC_NO_FILL_CONFIRMED:parent={parent_cid}",
+                    dry_run=False,
+                )
 
             return OrderResult(
-                success=success,
+                success=True,
                 parent_cid=parent_cid,
                 sl_cid=sl_cid,
-                fill_price=fill_price,
+                fill_price=fp,
                 dry_run=False,
             )
         except Exception as e:  # noqa: BLE001

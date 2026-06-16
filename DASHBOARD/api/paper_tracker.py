@@ -2460,64 +2460,67 @@ def get_bot3_v3_payload_legacy() -> dict:
 
 
 def get_bot3_v4_payload() -> dict:
-    """Endpoint Bot 3 v4 Data-driven (Sim3 NQ) pour dashboard.
+    """Endpoint slot Sim3 pour dashboard.
 
-    Active uniquement si ENV `MIA_BOT3_V4_ENABLED=1`.
+    REFACTOR 16/06/2026 Jackson souverain :
+      Le slot "Bot 3 v4 Data-driven Sim3" hebergeait historiquement le Bot 3 v4
+      Data-driven (mort 11/06, killed 16/06 matin). Sim3 est maintenant occupe
+      par **Bot 3 BN V4 (Bataille Navale V4)** :
+        - Strategie : reversal LONG post-baisse + 5 phases (trend baissier +
+          bottom zone + density clusters + edge buy + confirmation volume)
+        - Service VPS : MIA-Paper-BotBN-Sim3
+        - State : DATA/PAPER_TRADES/state_sim3.json (StateBridge sub-class)
+        - Grade A++ TRADE + SHADOW A/B observation
+        - NQ uniquement, US RTH only
+
+      Ce endpoint lit donc maintenant `state_sim3.json` (Bot BN V4).
+      L'endpoint conserve le nom `get_bot3_v4_payload` (et l'URL
+      `/api/paper_bot3_v4_state`) pour compat retro frontend, mais le label
+      affiche reflete la realite "Bot 3 BN V4".
     """
-    if os.environ.get("MIA_BOT3_V4_ENABLED", "0") != "1":
+    state_sim3_file = PAPER_DIR / "state_sim3.json"
+    bn_state = _safe_read_state(state_sim3_file)
+    if bn_state and bn_state.get("updated_ts"):
+        import time as _time
+        now_ts = _time.time()
+        try:
+            last_update = float(bn_state.get("updated_ts", 0))
+        except (TypeError, ValueError):
+            last_update = 0
+        paper_trader_alive = (now_ts - last_update) < 120  # heartbeat < 2 min
+        closed_today = bn_state.get("closed_today", []) or []
+        n_trades = len(closed_today)
+        n_wins = sum(1 for t in closed_today if (t.get("pnl_usd") or 0) > 0)
+        pnl_usd = sum(float(t.get("pnl_usd") or 0) for t in closed_today)
         return {
-            "state_file": "bot3_v4_logger_jsonl",
-            "state": None,
-            "available": False,
-            "msg": "Bot 3 v4 desactive (MIA_BOT3_V4_ENABLED != 1)",
-            "stats_7d": None,
+            "state_file": "state_sim3.json (Bot 3 BN V4)",
+            "state": bn_state,
+            "available": True,
+            "bot_label": "Bot 3 BN V4 Sim3",
+            "bot_description": "Bataille Navale V4 - reversal LONG post-baisse (5 phases) - A++ TRADE + SHADOW A/B - NQ US RTH",
+            "stats_today": {
+                "n_trades": n_trades,
+                "n_wins": n_wins,
+                "wr_pct": round(100.0 * n_wins / n_trades, 1) if n_trades > 0 else None,
+                "pnl_usd": round(pnl_usd, 2),
+            },
+            "stats_7d": None,  # Bot BN V4 vient de demarrer 16/06
             "stats_30d": None,
-            "paper_trader_alive": False,
+            "paper_trader_alive": paper_trader_alive,
+            "last_update_age_sec": int(now_ts - last_update) if last_update > 0 else None,
         }
-    today = _load_bot3_vN_today_state("v4")
-    stats_7d = compute_stats_period_bot3("v4", 7)
-    stats_30d = compute_stats_period_bot3("v4", 30)
-    # TP mode distribution (v4 specific)
-    tp_vpoc_count = 0
-    tp_r15_count = 0
-    for st in today.get("setup_stats", {}).values():
-        if st.get("tp_mode") == "VPOC":
-            tp_vpoc_count += st.get("n_trades", 0)
-        elif st.get("tp_mode") == "R15":
-            tp_r15_count += st.get("n_trades", 0)
-    return _clean_nan_inf({
-        "state_file": "bot3_v4_logger_jsonl",
-        "state": {
-            "ts_utc": today.get("last_heartbeat_ts"),
-            "mode": "PAPER_BOT3_V4",
-            "trade_account": os.environ.get("MIA_BOT3_V4_TRADE_ACCOUNT", "Sim3"),
-            "kill_switch_active": today.get("kill_switch_active"),
-            "cooldown_until": today.get("cooldown_until"),
-            "bar_source": {"global": "LIVE_ENRICHED_60s"},
-        },
-        "positions_with_countdown": today.get("positions_active", {}),
-        "setup_stats": today.get("setup_stats", {}),
-        "recent_entries": today.get("recent_entries", []),
-        "closed_today": today.get("closed_today", []),  # 24/05/2026 PM fix
-        "stats_today": today.get("stats_today", {}),
-        "stats_7d": stats_7d,
-        "stats_30d": stats_30d,
-        "tp_mode_distribution": {
-            "vpoc_magnet": tp_vpoc_count,
-            "r15_fallback": tp_r15_count,
-        },
-        "trading_window_utc": "00h-22h",
-        "mode": "PAPER_BOT3_V4",
-        "trade_account": os.environ.get("MIA_BOT3_V4_TRADE_ACCOUNT", "Sim3"),
-        "phase_paper": True,
-        "available": True,
-        "paper_trader_alive": today.get("paper_trader_alive", False),
-        "ts_utc": today.get("last_heartbeat_ts"),
-        "day_str": today.get("day_str"),
-        "has_paper_active": today.get("paper_trader_alive", False),
-        "bot_label": "Bot 3 v4 Data-driven",
-        "kill_switch_active": today.get("kill_switch_active"),
-    })
+    # Fallback : state_sim3.json absent ou stale -> Bot BN V4 pas demarre
+    return {
+        "state_file": "state_sim3.json (Bot 3 BN V4)",
+        "state": None,
+        "available": False,
+        "msg": "Bot 3 BN V4 Sim3 non actif (state_sim3.json absent ou stale)",
+        "bot_label": "Bot 3 BN V4 Sim3",
+        "stats_today": None,
+        "stats_7d": None,
+        "stats_30d": None,
+        "paper_trader_alive": False,
+    }
 
 
 def get_bot3_payload() -> dict:

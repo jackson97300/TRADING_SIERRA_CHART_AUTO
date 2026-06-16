@@ -4461,7 +4461,9 @@
 
         if (which === "bot1") {
             if (b1) { b1.classList.add("active"); b1.setAttribute("aria-selected", "true"); }
-            if (label) label.textContent = "DMP JSONL Sierra Chart · 262 features";
+            // 16/06 PM Renommage : BOT 1 v2 Mirror -> BOT 2 Mirror v2 (ordre par Sim#).
+            // Toggle id reste "bot1" pour zero refacto JS (paperDataAll.bot1_dmp).
+            if (label) label.textContent = "Bot 2 Mirror v2 Sim2 · Mirror multi-features 4 vetos + 7 stars · RTH only · MIA-Paper-Bot1V2";
             paperData = window.paperDataAll.bot1_dmp || {};
         } else if (which === "bot2") {
             if (b2) { b2.classList.add("active"); b2.setAttribute("aria-selected", "true"); }
@@ -4482,16 +4484,18 @@
             if (label) label.textContent = "Bot 3 MP (ARCHIVE) · 13 niveaux Tier 1/2/3 · Sim1 · LEGACY";
             paperData = window.paperDataAll.bot3_mp || {};
         } else if (which === "bot3v3") {
-            // 16/06 Jackson souverain : slot Sim1 = Bot Mean Revert (remplace
+            // 16/06 Jackson souverain : slot Sim1 = Bot 1 Mean Revert (remplace
             // bot3_v3 NQ Wyckoff + Bot 3 MP killed ce matin, 8 agents NOGO).
+            // 16/06 PM Renommage : ordre par Sim# (Bot 1 = Sim1, Bot 2 = Sim2, etc.)
             if (b3v3) { b3v3.classList.add("active"); b3v3.setAttribute("aria-selected", "true"); }
-            if (label) label.textContent = "Bot Mean Revert Sim1 · Mean Reversion VWAP SD2/SD3 + IntermarketGate ES leader · 24h ES + NQ";
+            if (label) label.textContent = "Bot 1 Mean Revert Sim1 · Mean Reversion VWAP SD2/SD3 + IntermarketGate ES leader · 24h ES + NQ";
             paperData = window.paperDataAll.bot3_v3 || {};
         } else if (which === "bot3v4") {
-            // 16/06 : Bot 3 v4 Data-driven Sim3 DESACTIVE (mort depuis 11/06,
-            // tue avec service MIA-DataBento-Paper-V2 ce matin). Slot disponible.
+            // 16/06 PM Jackson souverain : Sim3 reaffecte a Bot 3 BN V4 (Bataille
+            // Navale V4 reincarnation). Service MIA-Paper-BotBN-Sim3 Running.
+            // State : DATA/PAPER_TRADES/state_sim3.json. Mode A++ TRADE + SHADOW A/B.
             if (b3v4) { b3v4.classList.add("active"); b3v4.setAttribute("aria-selected", "true"); }
-            if (label) label.textContent = "Sim3 disponible · Slot vacant (Bot 3 v4 Data-driven killed 16/06 - reaffectation libre)";
+            if (label) label.textContent = "Bot 3 BN V4 Sim3 · Bataille Navale V4 reversal LONG post-baisse (5 phases) · A++ TRADE + SHADOW A/B · NQ US RTH";
             paperData = window.paperDataAll.bot3_v4 || {};
         } else if (which === "bot4") {
             if (b4) { b4.classList.add("active"); b4.setAttribute("aria-selected", "true"); }
@@ -4548,16 +4552,22 @@
         else if (which === "bot3") bot = data.bot3_mp;
         else if (which === "bot3v3") bot = data.bot3_v3;
         else if (which === "bot3v4") bot = data.bot3_v4;
+        else if (which === "bot4") bot = data.bot4;
         if (!bot) {
             el.style.display = "none";
             return;
         }
 
-        if (which === "bot1") {
+        // 16/06 Jackson souverain : les 4 bots actifs consomment la MEME source
+        // canonique sierra_enriched JSONL (DATA/live_enriched/sierra/{SYM}/).
+        // Databento annule -> tous les bots paper sont sur Sierra Chart JSONL.
+        // Bot 1 (Mean Revert Sim1) + Bot 2 (Mirror v2 Sim2) + Bot 3 (BN V4 Sim3) + Bot 4 (Scenarios Sim4).
+        // 16/06 PM : ajout bot3v4 (Bot 3 BN V4) dans le LIVE_ENRICHED group.
+        if (which === "bot1" || which === "bot3v3" || which === "bot3v4" || which === "bot4") {
             el.style.display = "inline-flex";
-            el.classList.add("ds-voyant-na");
-            lbl.textContent = "DMP NATIVE";
-            sub.textContent = "Sierra Chart (design)";
+            el.classList.add("ds-voyant-v4");
+            lbl.textContent = "LIVE_ENRICHED";
+            sub.textContent = "Sierra Chart JSONL ~60s lag";
             return;
         }
 
@@ -4568,15 +4578,6 @@
             lbl.textContent = "STATE FROZEN";
             var ageMin = bot.state_age_sec != null ? Math.round(bot.state_age_sec / 60) : "?";
             sub.textContent = "age=" + ageMin + "min (paper_trader freeze)";
-            return;
-        }
-
-        // Bot 3 v3 / v4 : source = JSONL live_enriched 60s (Databento upstream)
-        if (which === "bot3v3" || which === "bot3v4") {
-            el.style.display = "inline-flex";
-            el.classList.add("ds-voyant-v4");
-            lbl.textContent = "LIVE_ENRICHED";
-            sub.textContent = "Databento JSONL ~60s lag";
             return;
         }
 
@@ -5789,11 +5790,73 @@
                 signal_id: p.signal_id, level: p.level,
             };
         });
+        // 16/06 Jackson fix : Bot 4 closed_today utilise un schema different
+        // (side/ts_open/ts_close/exit_cause/pnl_usd) que renderPaperPage attend
+        // (direction/entry_time/exit_time/outcome/pnl_ticks/duration_sec).
+        // Mapper proprement pour eviter les "?" et "—" dans le tableau standard.
+        var USD_PER_TICK = { "ES": 1.25, "NQ": 0.50, "MGC": 1.00 };
+        var closedTodayMapped = (d.closed_today || []).map(function (c) {
+            var sym = c.symbol || c.sym || "ES";
+            var TICK = (sym === "MGC") ? 0.10 : 0.25;
+            var usdT = USD_PER_TICK[sym] || 1.25;
+            // Direction : map side -> direction (LONG/SHORT)
+            var direction = c.direction || c.side || null;
+            if (direction === "BUY") direction = "LONG";
+            else if (direction === "SELL") direction = "SHORT";
+            // Times : map ts_open/ts_close -> entry_time/exit_time + entry_ts/exit_ts
+            var entry_time = c.entry_time || c.ts_open || null;
+            var exit_time = c.exit_time || c.ts_close || null;
+            var entry_ts = c.entry_ts;
+            var exit_ts = c.exit_ts;
+            if (entry_ts == null && entry_time) {
+                try { entry_ts = new Date(entry_time).getTime() / 1000; } catch (e) {}
+            }
+            if (exit_ts == null && exit_time) {
+                try { exit_ts = new Date(exit_time).getTime() / 1000; } catch (e) {}
+            }
+            // duration_sec : calcule si manquant
+            var duration_sec = c.duration_sec;
+            if (duration_sec == null && entry_ts != null && exit_ts != null) {
+                duration_sec = exit_ts - entry_ts;
+            }
+            // pnl_ticks : calcule depuis pnl_usd / usd_per_tick si manquant
+            var pnl_usd = c.pnl_usd != null ? c.pnl_usd : (c.pnl || null);
+            var pnl_ticks = c.pnl_ticks;
+            if (pnl_ticks == null && pnl_usd != null) {
+                var n_micros = c.n_micros || c.qty || 1;
+                pnl_ticks = Math.round(pnl_usd / (usdT * n_micros) * 10) / 10;
+            }
+            // exit_price : calcule depuis entry + pnl_ticks selon direction si manquant
+            var exit_price = c.exit_price;
+            if (exit_price == null && c.entry_price != null && pnl_ticks != null) {
+                var sign = (direction === "LONG" || direction === "BUY") ? 1 : -1;
+                exit_price = c.entry_price + sign * pnl_ticks * TICK;
+            }
+            // outcome / exit_reason : map exit_cause
+            var outcome = c.outcome || c.exit_cause || "?";
+            var exit_reason = c.exit_reason || c.exit_cause || outcome;
+            // Preserve everything else
+            return Object.assign({}, c, {
+                symbol: sym,
+                direction: direction,
+                entry_time: entry_time,
+                entry_ts: entry_ts,
+                exit_time: exit_time,
+                exit_ts: exit_ts,
+                exit_price: exit_price,
+                pnl_ticks: pnl_ticks,
+                pnl_usd: pnl_usd,
+                duration_sec: duration_sec,
+                outcome: outcome,
+                exit_reason: exit_reason,
+            });
+        });
+
         var st = d.stats_today || {};
         return {
             state: {
                 open_by_symbol: openBySymbol,
-                closed_today: d.closed_today || [],
+                closed_today: closedTodayMapped,
                 stats_today: {
                     trades: st.n_trades_closed || 0,
                     pnl_usd: st.pnl_session_usd || 0,
@@ -6104,12 +6167,22 @@
         }
 
         // ── Card 6 : Signaux VETO recents (CRITIQUE P7.1 SAFE) ───────
-        var card6Veto = '<h4 class="bot4-veto-header">Pourquoi le bot ne trade pas ? (last 20 vetoes)</h4>';
+        // 16/06 Jackson : filtrer le bruit "scenario_await" (= bot attend un
+        // scenario, pas un vrai veto). Si tous les vetos = bruit, cacher
+        // entierement la section pour ne pas polluer l'interface.
+        var NOISE_VETO_CODES = ["scenario_await", "scenario_pending", "no_signal"];
+        var vetoes_real = (vetoes || []).filter(function (v) {
+            var code = (v.code || v.binding_gate || v.reason || "").toString().toLowerCase();
+            return NOISE_VETO_CODES.indexOf(code) === -1;
+        });
+        var card6Veto = "";
         var catCounts = { TIME: 0, RISK: 0, GATE: 0, VOLATILITY: 0, DATA: 0, OTHER: 0 };
-        if (vetoes.length === 0) {
-            card6Veto += '<div class="empty">Aucun veto recent (Bot 4 trade ou pas encore demarre)</div>';
+        if (vetoes_real.length === 0) {
+            // Aucun vrai veto -> section masquee (evite pollution scenario_await)
+            card6Veto = "";
         } else {
-            var rowsVeto = vetoes.slice(0, 20).map(function (v) {
+            card6Veto = '<h4 class="bot4-veto-header">Pourquoi le bot ne trade pas ? (last 20 vetoes filtres)</h4>';
+            var rowsVeto = vetoes_real.slice(0, 20).map(function (v) {
                 var ts = v.ts ? new Date(v.ts).toLocaleTimeString("fr-FR",
                     { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" }) + " UTC" : "?";
                 var cat = _vetoCategoryBot4(v.code || v.binding_gate || v.reason);
