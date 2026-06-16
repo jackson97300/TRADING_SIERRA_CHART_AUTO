@@ -112,11 +112,26 @@ class OrderRouter(Bot1V2OrderRouter):
                     tp_cid = tp_real
                 if sl_real:
                     sl_cid = sl_real
+                # Fix bug position fantome 16/06 : DTC retourne parent_cid meme
+                # quand bracket abort (parent NOT FILLED in 2s) avec fill_price=0.
+                # Le bot appelait open_position alors qu'aucun ordre n'etait actif
+                # sur Sim1 -> position fantome persistante. Fix : success EXIGE
+                # fill_price > 0 (= confirmation parent fill effectif).
+                fill_price_raw = fill_price
                 try:
-                    fill_price = float(fill_price) if fill_price else signal.entry_price
+                    fill_price = float(fill_price) if fill_price else 0.0
                 except (TypeError, ValueError):
-                    fill_price = signal.entry_price
-                success = bool(parent_cid)
+                    fill_price = 0.0
+                if fill_price <= 0 and parent_cid:
+                    return OrderResult(
+                        success=False,
+                        parent_cid=parent_cid,
+                        tp_cid=tp_cid, sl_cid=sl_cid,
+                        fill_price=0.0,
+                        error_msg=f"PARENT_NOT_FILLED_TIMEOUT (raw={fill_price_raw!r})",
+                        dry_run=False,
+                    )
+                success = bool(parent_cid) and fill_price > 0
             elif isinstance(result, dict):
                 success = bool(result.get("success", False))
                 fill_price = float(result.get("fill_price", signal.entry_price))
