@@ -1253,6 +1253,9 @@
                 fetchPaperTrades();
                 fetchPaperV2();  // 02/05 : Bot 2 V2 SetupEngine state.json
                 fetchPaperV3();  // 03/05 : Bot 3 MP Market Profile state.json
+                fetchPaperBot3V3();  // 24/05 : Bot 3 v3 Continuation NQ Sim1 JSONL
+                fetchPaperBot3V4();  // 24/05 : Bot 3 v4 Data-driven NQ Sim3 JSONL
+                fetchPaperBot4();    // 27/05 : Bot 4 Paper Sim4 Phase 7.1 SAFE (J12.5)
                 // Reset caches avec TTL
                 if (Date.now() - ctaLastLoad > 300000) { ctaLoaded = false; }
                 if (Date.now() - vpLastLoad > 60000) { vpLoaded = false; }
@@ -4190,6 +4193,43 @@
     function _isLong(d) { return d === 1 || d === "LONG"; }
     function _isShort(d) { return d === -1 || d === "SHORT"; }
 
+    // Specs contrat par instrument — 02/06 MINI standard ES/NQ, micro MGC.
+    // Source de verite : CORE/constants.py (TICK_SIZE / TICK_VALUE) +
+    // CORE/bot3_paper_common.py (mapping broker NQM26/ESM26 E-mini standard).
+    var TICK_SIZE_BY_SYM = { ES: 0.25, NQ: 0.25, MGC: 0.10 };
+    var TICK_VAL_BY_SYM = { ES: 12.50, NQ: 1.25, MGC: 1.00 };
+
+    // FIX 03/06 (review finding 1) : PnL flottant USD d'une position ouverte,
+    // en MINI standard. 3 surfaces l'utilisent (card Paper Trading, badge nav
+    // "Conseil Global", timeline event) — avant, 6718/7385 affichaient $0 faux
+    // car aucun bot3*.py ne stocke unrealized_pnl_usd (grep=0). Retourne null si
+    // incalculable -> afficher "—" plutot qu'un "$0" silencieux trompeur.
+    // ATTENTION : si un bot stocke un jour p.unrealized_pnl_usd, il DOIT etre en
+    // mini (sinon la branche prioritaire l'affiche tel quel sans re-correction).
+    function _computeUnrealizedUsd(p, sym) {
+        if (!p) return null;
+        var tick = TICK_SIZE_BY_SYM[sym];
+        var tickVal = TICK_VAL_BY_SYM[sym];
+        if (tick == null || tickVal == null) return null;  // symbole inconnu
+        if (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null) {
+            return p.unrealized_pnl_usd;  // deja en mini cote bot
+        }
+        var bannerPrice = null;
+        try {
+            var symLow = (sym || "").toLowerCase();
+            if (window.data && window.data.banner && window.data.banner[symLow]) {
+                bannerPrice = window.data.banner[symLow].price;
+            }
+        } catch (e) { /* ignore */ }
+        if (bannerPrice && p.entry_price) {
+            var sign = _isLong(p.direction) ? 1 : -1;
+            var nMicros = p.n_micros || 3;
+            var ticksPerContract = Math.round(((bannerPrice - p.entry_price) / tick) * sign);
+            return Math.round(ticksPerContract * tickVal * nMicros * 100) / 100;
+        }
+        return null;
+    }
+
     // ════════ SOUNDS (Paper Trading events — 24/04) ════════
     var _soundOpen = null, _soundTP = null, _soundSL = null;
     var _soundEnabled = localStorage.getItem("mia_sound_enabled") !== "off";  // default ON
@@ -4375,30 +4415,49 @@
         _updateSoundToggleUI();
     }
 
-    // Toggle bot affiche (29/04 — A/B testing dual bot ; 03/05 — extension Bot 3 MP)
-    if (typeof window.currentPaperBot === "undefined") window.currentPaperBot = "bot1";
-    if (typeof window.paperDataAll === "undefined") window.paperDataAll = { bot1_dmp: null, bot2_db: null, bot3_mp: null };
+    // Toggle bot affiche (29/04 — A/B testing dual bot ; 03/05 — Bot 3 MP ;
+    // 24/05 — Bot 3 v3 Continuation Sim1 + Bot 3 v4 Data-driven Sim3 = 5 modes ;
+    // 24/05 PM — Rebrand UI Jackson : Bot 1 = Continuation (interne bot3_v3),
+    // Bot 2 = BN V4 (interne bn_v4), Bot 3 = Data-driven (interne bot3_v4).
+    // Toggles "BOT 1 PAPER" (legacy MIA-Paper stopped) + "BOT 3 MP" (archive) masques.)
+    if (typeof window.currentPaperBot === "undefined") window.currentPaperBot = "bot3v3";
+    // Anti-stale : si selection precedente pointait sur un toggle masque, bascule
+    // auto vers bot3v3 (= "Bot 1 Continuation" UI). Pattern survit aux F5 utilisateur.
+    if (window.currentPaperBot === "bot3" || window.currentPaperBot === "bot1") {
+        window.currentPaperBot = "bot3v3";
+    }
+    if (typeof window.paperDataAll === "undefined") {
+        window.paperDataAll = {
+            bot1_dmp: null, bot2_db: null, bot3_mp: null,
+            bot3_v3: null, bot3_v4: null,  // 24/05 deploy paper TRADE direct
+            bot4: null,                     // J12 fix : init Bot 4 placeholder
+        };
+    }
 
     window.setPaperBot = function (which) {
         window.currentPaperBot = which;
         var b1 = document.getElementById("paper-bot-toggle-1");
         var b2 = document.getElementById("paper-bot-toggle-2");
         var b3 = document.getElementById("paper-bot-toggle-3");
+        var b3v3 = document.getElementById("paper-bot-toggle-3v3");
+        var b3v4 = document.getElementById("paper-bot-toggle-3v4");
+        var b4 = document.getElementById("paper-bot-toggle-bot4");
         var label = document.getElementById("paper-bot-active-label");
         // Reset tous
-        [b1, b2, b3].forEach(function (b) {
+        [b1, b2, b3, b3v3, b3v4, b4].forEach(function (b) {
             if (b) { b.classList.remove("active"); b.setAttribute("aria-selected", "false"); }
         });
-        // 05/05 : show/hide cards bot-specifiques selon selection (Jackson :
-        // les 2 tableaux Bot 2 V2 + Bot 3 MP sur la page accueil sont confus,
-        // chaque bot doit avoir SON tableau visible UNIQUEMENT dans son onglet).
-        // 06/05 REVERT Jackson : garder card v3 hidden hors onglet Bot 3.
-        // Position Bot 3 signalee par badge "1 OPEN" sur le bouton toggle
-        // (cf _updateBotToggleBadges + paper-bot-toggle-3-badge dans index.html).
+        // Show/hide cards selon selection (chaque bot a SA carte visible)
         var v2Card = document.getElementById("paper-v2-card");
         var v3Card = document.getElementById("paper-v3-card");
+        var v3v3Card = document.getElementById("paper-v3v3-card");
+        var v3v4Card = document.getElementById("paper-v3v4-card");
+        var bot4Card = document.getElementById("paper-bot4-card");
         if (v2Card) v2Card.style.display = (which === "bot2") ? "" : "none";
         if (v3Card) v3Card.style.display = (which === "bot3") ? "" : "none";
+        if (v3v3Card) v3v3Card.style.display = (which === "bot3v3") ? "" : "none";
+        if (v3v4Card) v3v4Card.style.display = (which === "bot3v4") ? "" : "none";
+        if (bot4Card) bot4Card.style.display = (which === "bot4") ? "" : "none";
 
         if (which === "bot1") {
             if (b1) { b1.classList.add("active"); b1.setAttribute("aria-selected", "true"); }
@@ -4406,16 +4465,57 @@
             paperData = window.paperDataAll.bot1_dmp || {};
         } else if (which === "bot2") {
             if (b2) { b2.classList.add("active"); b2.setAttribute("aria-selected", "true"); }
-            if (label) label.textContent = "Brain V6 · V4 enrichi 456 features · 21 blocs bias + 16 votes regime + 4 gates";
-            paperData = window.paperDataAll.bot2_db || {};
+            var bot2Data = window.paperDataAll.bot2_db || {};
+            // 04/06/2026 FIX Jackson : ajout reconnaissance BN V5 (BN V4 deprecate 23/05).
+            var isBNV5 = (bot2Data.bot_label === "Bot 2 BN V5") || (bot2Data.mode === "PAPER_BN_V5");
+            var isBN = isBNV5 || (bot2Data.bot_label === "Bot 2 BN V4") || (bot2Data.mode === "PAPER_BN_V4");
+            if (label) {
+                label.textContent = isBNV5
+                    ? "BN V5 - Bataille Navale Dow+Holy Grail+Fibo - Sim2 NQ+ES - paper_v2 embedded"
+                    : (isBN
+                        ? "BN V4 - Bataille Navale - JSONL live_enriched 60s - Mode dual A++ TRADE + A OBSERVE"
+                        : "Brain V6 - V4 enrichi 456 features - 21 blocs bias + 16 votes regime + 4 gates");
+            }
+            paperData = bot2Data;
         } else if (which === "bot3") {
             if (b3) { b3.classList.add("active"); b3.setAttribute("aria-selected", "true"); }
-            if (label) label.textContent = "Bot 3 MP · 13 niveaux Tier 1/2/3 · Sim1 Phase PAPER_FULL";
+            if (label) label.textContent = "Bot 3 MP (ARCHIVE) · 13 niveaux Tier 1/2/3 · Sim1 · LEGACY";
             paperData = window.paperDataAll.bot3_mp || {};
+        } else if (which === "bot3v3") {
+            // 16/06 Jackson souverain : slot Sim1 = Bot Mean Revert (remplace
+            // bot3_v3 NQ Wyckoff + Bot 3 MP killed ce matin, 8 agents NOGO).
+            if (b3v3) { b3v3.classList.add("active"); b3v3.setAttribute("aria-selected", "true"); }
+            if (label) label.textContent = "Bot Mean Revert Sim1 · Mean Reversion VWAP SD2/SD3 + IntermarketGate ES leader · 24h ES + NQ";
+            paperData = window.paperDataAll.bot3_v3 || {};
+        } else if (which === "bot3v4") {
+            // 16/06 : Bot 3 v4 Data-driven Sim3 DESACTIVE (mort depuis 11/06,
+            // tue avec service MIA-DataBento-Paper-V2 ce matin). Slot disponible.
+            if (b3v4) { b3v4.classList.add("active"); b3v4.setAttribute("aria-selected", "true"); }
+            if (label) label.textContent = "Sim3 disponible · Slot vacant (Bot 3 v4 Data-driven killed 16/06 - reaffectation libre)";
+            paperData = window.paperDataAll.bot3_v4 || {};
+        } else if (which === "bot4") {
+            if (b4) { b4.classList.add("active"); b4.setAttribute("aria-selected", "true"); }
+            if (label) label.textContent = "Bot 4 MIA Trader Sim4 · Scenarios Phase P7.2 AGGRESSIVE · 1 mini · Continuation NQ";
+            // J12 fix BUG #1+#2 review agent : normaliser payload Bot 4 vers schema
+            // attendu par renderPaperPage (state.open_by_symbol / state.stats_today).
+            paperData = (typeof _normalizeBot4ForPaperPage === "function")
+                ? _normalizeBot4ForPaperPage(window.paperDataAll && window.paperDataAll.bot4)
+                : ((window.paperDataAll && window.paperDataAll.bot4) || {});
         }
-        // 17/05 Jackson "voyant flux source" : mise a jour voyant selon bot actif
         _updateDataSourceVoyant(which);
-        if (currentPage === "paper") renderPaperPage();
+        if (currentPage === "paper") {
+            renderPaperPage();
+            // Re-render section dediee quand on bascule sur Bot 3 v3 / v4 / Bot 4
+            if (which === "bot3v3" && typeof renderPaperBot3V3Section === "function") {
+                renderPaperBot3V3Section();
+            }
+            if (which === "bot3v4" && typeof renderPaperBot3V4Section === "function") {
+                renderPaperBot3V4Section();
+            }
+            if (which === "bot4" && typeof renderPaperBot4Section === "function") {
+                renderPaperBot4Section();
+            }
+        }
     };
 
     // 17/05 Jackson "voyant flux source data" : indique si le bot tourne sur le
@@ -4442,15 +4542,17 @@
         el.classList.remove("ds-voyant-v4", "ds-voyant-dmp", "ds-voyant-frozen", "ds-voyant-init", "ds-voyant-na");
 
         var data = window.paperDataAll || {};
-        var bot = which === "bot1" ? data.bot1_dmp : (which === "bot2" ? data.bot2_db : data.bot3_mp);
+        var bot;
+        if (which === "bot1") bot = data.bot1_dmp;
+        else if (which === "bot2") bot = data.bot2_db;
+        else if (which === "bot3") bot = data.bot3_mp;
+        else if (which === "bot3v3") bot = data.bot3_v3;
+        else if (which === "bot3v4") bot = data.bot3_v4;
         if (!bot) {
             el.style.display = "none";
             return;
         }
 
-        // Bot 3 : pas de fallback DMP par design (skip cycle si stale). Affiche V4 ou FROZEN.
-        // Bot 2 V6 : peut faire fallback DMP -> on lit bot.bar_source.global + per_symbol
-        // Bot 1 : pas de pipeline V4 -> source = DMP_NATIVE (gris, design)
         if (which === "bot1") {
             el.style.display = "inline-flex";
             el.classList.add("ds-voyant-na");
@@ -4469,12 +4571,21 @@
             return;
         }
 
-        // Bot 3 : si alive, source = V4 (pas de fallback)
+        // Bot 3 v3 / v4 : source = JSONL live_enriched 60s (Databento upstream)
+        if (which === "bot3v3" || which === "bot3v4") {
+            el.style.display = "inline-flex";
+            el.classList.add("ds-voyant-v4");
+            lbl.textContent = "LIVE_ENRICHED";
+            sub.textContent = "Databento JSONL ~60s lag";
+            return;
+        }
+
+        // Bot 3 MP (legacy archive) : V4 parquet hybride
         if (which === "bot3") {
             el.style.display = "inline-flex";
             el.classList.add("ds-voyant-v4");
             lbl.textContent = "V4 ENRICHED";
-            sub.textContent = "Databento+DMP (parquet)";
+            sub.textContent = "Databento+DMP (parquet, legacy)";
             return;
         }
 
@@ -4501,13 +4612,30 @@
         } else {
             // Au moins un des 2 en fallback DMP
             el.classList.add("ds-voyant-dmp");
-            lbl.textContent = "DMP FALLBACK";
-            sub.textContent = subText + " (V4 stale)";
-            // R6 review 17/05 : desactiver animation pulse apres 1h continu DMP
-            // (alert fatigue Nielsen heuristic #1). Lit ts_per_symbol pour
-            // calculer duree depuis derniere maj. Si > 1h, ajoute classe
-            // .ds-voyant-no-animation qui override @keyframes pulse.
+            // FIX 19/05 PM (audit Bot 2 V6 agent reco) : afficher age V4 par sym
+            // pour rendre visible le degrade NQ silencieux. Si age > 2400s (40min)
+            // sur un symbole = flag CRITIQUE rouge (edge V6 mort sur ce sym).
             var nowSec = Date.now() / 1000;
+            var esAge = tsPerSym.ES ? Math.round((nowSec - tsPerSym.ES) / 60) : null;
+            var nqAge = tsPerSym.NQ ? Math.round((nowSec - tsPerSym.NQ) / 60) : null;
+            var ageStr = "";
+            if (esAge !== null || nqAge !== null) {
+                ageStr = " (V4 age ES=" + (esAge !== null ? esAge + "m" : "?") +
+                         " NQ=" + (nqAge !== null ? nqAge + "m" : "?") + ")";
+            }
+            // Seuil CRITIQUE : si une source > 40min en mode fallback = edge mort
+            var critAge = (esAge !== null && esAge > 40) || (nqAge !== null && nqAge > 40);
+            if (critAge) {
+                el.classList.add("ds-voyant-frozen");
+                lbl.textContent = "V4 DEAD ⚠";
+                sub.textContent = subText + ageStr;
+                el.title += " - CRITIQUE: V4 source > 40min, edge V6 votes/blocs perdus";
+            } else {
+                lbl.textContent = "DMP FALLBACK";
+                sub.textContent = subText + (ageStr || " (V4 stale)");
+            }
+            // R6 review 17/05 : desactiver animation pulse apres 1h continu DMP
+            // (alert fatigue Nielsen heuristic #1).
             var oldestTs = Math.min(tsPerSym.ES || nowSec, tsPerSym.NQ || nowSec);
             var ageMin = (nowSec - oldestTs) / 60;
             if (ageMin > 60) {
@@ -4518,7 +4646,7 @@
     }
 
     // Helper : count open positions pour un bot (gere les 2 conventions
-    // open_by_symbol pour Bot 1 DMP, active_positions pour Bot 2 DB)
+    // open_by_symbol pour Bot 1 Paper, active_positions pour Bot 2 DB)
     function _countBotOpen(botData) {
         if (!botData || !botData.state) return 0;
         var s = botData.state;
@@ -4527,12 +4655,12 @@
         return 0;
     }
 
-    // Met a jour les badges OPEN sur les boutons toggle Bot 1/Bot 2/Bot 3
+    // Met a jour les badges OPEN sur les boutons toggle Bot 1/Bot 2/Bot 3/Bot 3 v3/Bot 3 v4
     function _updateBotToggleBadges() {
         var data = window.paperDataAll || {};
         var n1 = _countBotOpen(data.bot1_dmp);
         var n2 = _countBotOpen(data.bot2_db);
-        // Bot 3 : compte positions actives via paperV3Data.positions_with_countdown
+        // Bot 3 MP : compte positions actives via paperV3Data.positions_with_countdown
         var n3 = 0;
         var v3 = window.paperV3Data || {};
         if (v3.positions_with_countdown) {
@@ -4540,9 +4668,29 @@
                 if (v3.positions_with_countdown[s]) n3++;
             });
         }
+        // Bot 3 v3 / v4 : count via paperBot3V3Data / paperBot3V4Data
+        var n3v3 = 0;
+        var v3v3 = window.paperBot3V3Data || {};
+        if (v3v3.positions_with_countdown) {
+            n3v3 = Object.keys(v3v3.positions_with_countdown).length;
+        }
+        var n3v4 = 0;
+        var v3v4 = window.paperBot3V4Data || {};
+        if (v3v4.positions_with_countdown) {
+            n3v4 = Object.keys(v3v4.positions_with_countdown).length;
+        }
+        // J12 Bot 4 count positions
+        var n4 = 0;
+        var v4 = window.paperBot4Data || {};
+        if (v4.positions_with_countdown) {
+            n4 = Object.keys(v4.positions_with_countdown).length;
+        }
         var b1 = document.getElementById("paper-bot-toggle-1-badge");
         var b2 = document.getElementById("paper-bot-toggle-2-badge");
         var b3 = document.getElementById("paper-bot-toggle-3-badge");
+        var b3v3 = document.getElementById("paper-bot-toggle-3v3-badge");
+        var b3v4 = document.getElementById("paper-bot-toggle-3v4-badge");
+        var b4 = document.getElementById("paper-bot-toggle-bot4-badge");
         if (b1) {
             if (n1 > 0) { b1.style.display = "inline-block"; b1.textContent = n1 + " OPEN"; }
             else { b1.style.display = "none"; }
@@ -4555,11 +4703,75 @@
             if (n3 > 0) { b3.style.display = "inline-block"; b3.textContent = n3 + " OPEN"; }
             else { b3.style.display = "none"; }
         }
+        if (b3v3) {
+            if (n3v3 > 0) { b3v3.style.display = "inline-block"; b3v3.textContent = n3v3 + " OPEN"; }
+            else { b3v3.style.display = "none"; }
+        }
+        if (b3v4) {
+            if (n3v4 > 0) { b3v4.style.display = "inline-block"; b3v4.textContent = n3v4 + " OPEN"; }
+            else { b3v4.style.display = "none"; }
+        }
+        if (b4) {
+            if (n4 > 0) { b4.style.display = "inline-block"; b4.textContent = n4 + " OPEN"; }
+            else { b4.style.display = "none"; }
+        }
         // FIX 30/04 (Jackson) : dots statut bot dans le toggle
         _updateBotStatusDot("paper-bot-toggle-1-status-dot", data.bot1_dmp);
         _updateBotStatusDot("paper-bot-toggle-2-status-dot", data.bot2_db);
-        // Bot 3 : utilise paperV3Data (state_age_sec via .state.ts_utc si dispo)
+        // Bot 3 MP : utilise paperV3Data (state_age_sec via .state.ts_utc si dispo)
         _updateBotStatusDot("paper-bot-toggle-3-status-dot", _bot3StatusEnvelope());
+        // Bot 3 v3 / v4 : envelope dedie (paperBot3V*Data)
+        _updateBotStatusDot("paper-bot-toggle-3v3-status-dot", _bot3vXStatusEnvelope("v3"));
+        _updateBotStatusDot("paper-bot-toggle-3v4-status-dot", _bot3vXStatusEnvelope("v4"));
+        // J12 2026-05-27 : Bot 4 MIA Trader Sim4 (Phase 7.1 SAFE COLLECT)
+        // Source : window.paperBot4Data (envelope dedie, payload Bot 4 logger V2 + Pydantic M6)
+        _updateBotStatusDot("paper-bot-toggle-bot4-status-dot", _bot4StatusEnvelope());
+    }
+
+    function _bot4StatusEnvelope() {
+        // J12 : convertit window.paperBot4Data en format _updateBotStatusDot.
+        // FIX bug Jackson 27/05 PM "point pas vert" : ne pas exiger available=true
+        // strict. Si payload existe avec ts_utc + state_age_sec frais (< 180s),
+        // c'est qu'au moins le service a tourne recemment -> dot doit refleter ca.
+        var src = window.paperBot4Data;
+        if (!src || typeof src !== "object") return null;
+        // Si l'endpoint retourne explicitement available=false (ENABLED=0)
+        // ET aucun heartbeat recent, on reste idle.
+        var ts = src.ts_utc || src.last_heartbeat_ts;
+        var ageSec = (typeof src.state_age_sec === "number") ? src.state_age_sec : null;
+        if (ageSec == null && ts) {
+            try { ageSec = (Date.now() - new Date(ts).getTime()) / 1000; }
+            catch (e) { ageSec = null; }
+        }
+        // Si available=false ET pas de ts -> idle
+        if (src.available === false && ageSec == null) return null;
+        var alive = (typeof src.paper_trader_alive === "boolean")
+            ? src.paper_trader_alive
+            : (ageSec != null && ageSec < 180);
+        return {
+            paper_trader_alive: alive,
+            state_age_sec: ageSec,
+            state: src.state || {},
+        };
+    }
+
+    function _bot3vXStatusEnvelope(version) {
+        var src = (version === "v3") ? window.paperBot3V3Data : window.paperBot3V4Data;
+        if (!src || !src.available) return null;
+        var ts = src.ts_utc;
+        var ageSec = null;
+        if (ts) {
+            try { ageSec = (Date.now() - new Date(ts).getTime()) / 1000; }
+            catch (e) { ageSec = null; }
+        }
+        // Bot 3 v3/v4 emit BAR_PROCESSED a chaque bar (heartbeat regulier) -> 120s seuil OK
+        return {
+            paper_trader_alive: (typeof src.paper_trader_alive === "boolean")
+                ? src.paper_trader_alive
+                : (ageSec != null && ageSec < 120),
+            state_age_sec: ageSec,
+            state: src.state || {},
+        };
     }
 
     function _bot3StatusEnvelope() {
@@ -4710,6 +4922,51 @@
         );
     }
 
+    // BN V4 setup stats (23/05/2026 Jackson) : table par GRADE_MODE (A++_TRADE
+    // + A_OBSERVE) au lieu de par SETUP_NAME (V2 SetupEngine). Mode dual
+    // permet de tracker perf comparative A vs A++ pendant 30 jours observation.
+    function _renderSetupStatsBNV4(stats) {
+        if (!stats || Object.keys(stats).length === 0) {
+            return '<div class="v2-stats-empty">Aucun setup BN V4 collecte ' +
+                '(en attente premiers setups A++/A pendant fenetres open ' +
+                'Asia/London/NY)</div>';
+        }
+        // Tri : A++_TRADE d'abord, puis A_OBSERVE, puis autres
+        var orderKeys = ["A++_TRADE", "A_TRADE", "A_OBSERVE", "B_TRADE", "B_OBSERVE", "C_TRADE", "C_OBSERVE"];
+        var sortedKeys = orderKeys.filter(function (k) { return k in stats; });
+        Object.keys(stats).forEach(function (k) {
+            if (sortedKeys.indexOf(k) === -1) sortedKeys.push(k);
+        });
+        var rows = '';
+        sortedKeys.forEach(function (key) {
+            var s = stats[key];
+            var pnlClass = (s.pnl_usd_total || 0) > 0 ? "v2-pos-pnl" : "v2-neg-pnl";
+            var modeBadge = s.mode === "OBSERVE"
+                ? '<span class="v2-badge v2-badge-observe">OBS</span>'
+                : '<span class="v2-badge v2-badge-trade">TRADE</span>';
+            var gradeBadge = s.grade === "A++"
+                ? '<span class="v2-badge v2-badge-aplusplus">A++</span>'
+                : '<span class="v2-badge v2-badge-a">' + (s.grade || "?") + '</span>';
+            rows += (
+                '<tr>' +
+                '<td>' + gradeBadge + ' ' + modeBadge + '</td>' +
+                '<td>' + (s.n_trades || 0) + '</td>' +
+                '<td>' + (s.n_wins || 0) + ' / ' + ((s.n_trades || 0) - (s.n_wins || 0)) + '</td>' +
+                '<td>' + (s.wr_pct != null ? s.wr_pct + '%' : "—") + '</td>' +
+                '<td>' + (s.pf != null ? s.pf : "—") + '</td>' +
+                '<td>' + (s.pnl_R_total != null ? s.pnl_R_total.toFixed(2) + 'R' : "—") + '</td>' +
+                '<td class="' + pnlClass + '">$' + (s.pnl_usd_total != null ? s.pnl_usd_total.toFixed(2) : "—") + '</td>' +
+                '</tr>'
+            );
+        });
+        return (
+            '<table class="v2-stats-table">' +
+            '<thead><tr><th>Grade / Mode</th><th>N trades</th><th>W / L</th>' +
+            '<th>WR</th><th>PF</th><th>PnL R</th><th>PnL USD</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>'
+        );
+    }
+
     function renderPaperV2Section() {
         var container = $("paper-v2-section");
         if (!container) return;
@@ -4720,13 +4977,25 @@
         }
         var positions = d.positions_with_countdown || {};
         var stats = d.setup_stats || {};
+        // Detection BN V5 (04/06) > BN V4 (23/05) > Legacy V2 selon bot_label backend
+        var isBNV5 = (d.bot_label === "Bot 2 BN V5") || (d.mode === "PAPER_BN_V5");
+        var isBNV4 = (d.bot_label === "Bot 2 BN V4") || (d.mode === "PAPER_BN_V4");
+        var botTitle = isBNV5
+            ? '🤖 Bot 2 BN V5 — Bataille Navale (Sim2)'
+            : (isBNV4
+                ? '🤖 Bot 2 BN V4 — Bataille Navale (Sim2)'
+                : '🤖 Bot 2 V2 — SetupEngine');
         var modeBadge = d.phase_1_free_run
             ? '<span class="v2-badge v2-badge-free">FREE_RUN Phase 1</span>'
             : '<span class="v2-badge v2-badge-risk">RISK_ON</span>';
+        var killBadge = d.kill_switch_active
+            ? '<span class="v2-badge v2-badge-kill">⚠️ KILL SWITCH</span>'
+            : '';
         container.innerHTML = (
             '<div class="v2-header">' +
-            '<h3>🤖 Bot 2 V2 — SetupEngine</h3>' +
+            '<h3>' + botTitle + '</h3>' +
             modeBadge +
+            killBadge +
             '<span class="v2-info">Trading window: ' + (d.trading_window_utc || "—") + ' UTC</span>' +
             '<span class="v2-info">Compte: ' + (d.trade_account || "—") + '</span>' +
             '</div>' +
@@ -4734,8 +5003,9 @@
             _renderPositionV2("NQ", positions.NQ) +
             _renderPositionV2("ES", positions.ES) +
             '</div>' +
-            '<h4>Reussite par setup (cumul session)</h4>' +
-            _renderSetupStatsV2(stats)
+            (isBNV4
+                ? '<h4>Reussite par grade (A++ TRADE + A OBSERVE)</h4>' + _renderSetupStatsBNV4(stats)
+                : '<h4>Reussite par setup (cumul session)</h4>' + _renderSetupStatsV2(stats))
         );
 
         // Demarrer le countdown timer si pas deja actif
@@ -4899,6 +5169,1047 @@
                 _paperV3Errors++;
                 if (_paperV3Errors < 5) console.warn("Paper V3 fetch error:", err);
             });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // BOT 3 v3 Continuation NQ Sim1 + Bot 3 v4 Data-driven NQ Sim3
+    // (deploye 24/05/2026, paper TRADE direct, JSONL bot3_vN_v1_*.jsonl)
+    // Source : LOGS/bot3_v3/*.jsonl  (Sim1) et LOGS/bot3_v4/*.jsonl (Sim3)
+    // ═══════════════════════════════════════════════════════════════
+    window.paperBot3V3Data = null;
+    window.paperBot3V4Data = null;
+    var _paperBot3V3Errors = 0;
+    var _paperBot3V4Errors = 0;
+
+    // Helper tick size symbol-aware (cf .claude/rules/tick-size-policy.md).
+    // Source unique CORE/constants.py:get_tick_size cote backend.
+    // Frontend miroir minimal : ES/NQ = 0.25, MGC = 0.10.
+    function _getTickSizeForSym(sym) {
+        if (sym === "MGC") return 0.10;
+        return 0.25;  // ES, NQ default
+    }
+
+    function _fetchPaperBot3Vx(version) {
+        var endpoint = (version === "v3")
+            ? "/api/paper_bot3_v3_state"
+            : "/api/paper_bot3_v4_state";
+        var paperDataKey = (version === "v3") ? "bot3_v3" : "bot3_v4";
+        var windowDataKey = (version === "v3") ? "paperBot3V3Data" : "paperBot3V4Data";
+        var toggleKey = (version === "v3") ? "bot3v3" : "bot3v4";
+        fetchWithAuth(API_BASE + endpoint, { method: "GET" })
+            .then(function (r) {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.json();
+            })
+            .then(function (d) {
+                if (version === "v3") _paperBot3V3Errors = 0;
+                else _paperBot3V4Errors = 0;
+                window[windowDataKey] = d;
+
+                // Normalize vers format Bot 1/2 pour renderPaperPage() (zone principale).
+                // Pattern aligne avec fetchPaperV3 (06/05 fix Jackson historique trades).
+                var positionsActive = d.positions_with_countdown || {};
+                var openBySymbol = {};
+                Object.keys(positionsActive).forEach(function (sym) {
+                    var p = positionsActive[sym];
+                    if (!p) return;
+                    // Tick size symbol-aware (cf .claude/rules/tick-size-policy.md).
+                    // Bot 3 v3/v4 = NQ-only paper actuel ; helper prepare extension MGC/ES.
+                    var TICK = _getTickSizeForSym(sym);
+                    var slTicks = (p.sl_price != null && p.entry_price != null && p.entry_price > 0)
+                        ? Math.round(Math.abs(p.sl_price - p.entry_price) / TICK) : (p.sl_ticks || null);
+                    var tpTicks = (p.tp_price != null && p.entry_price != null && p.entry_price > 0)
+                        ? Math.round(Math.abs(p.tp_price - p.entry_price) / TICK) : null;
+                    openBySymbol[sym] = {
+                        direction: p.side,
+                        entry_price: p.entry_price,
+                        sl_price: p.sl_price,
+                        tp_price: p.tp_price,
+                        sl_ticks: slTicks,
+                        tp_ticks: tpTicks,
+                        rr_ratio: (slTicks && tpTicks && slTicks > 0) ? (tpTicks / slTicks) : null,
+                        n_micros: p.qty || 1,
+                        entry_time: p.ts_open,
+                        signal_id: p.signal_id,
+                        level: p.level,
+                        tp_mode: p.tp_mode || null,  // v4 specific
+                    };
+                });
+
+                var stateAge = null;
+                if (d.ts_utc) {
+                    try { stateAge = Math.round((Date.now() - new Date(d.ts_utc).getTime()) / 1000); }
+                    catch (e) { /* ignore */ }
+                }
+
+                // stats_today JSONL -> mapping vers schema dashboard (trades / pnl_usd / wr)
+                var st = d.stats_today || {};
+                var nClosed = st.n_trades_closed || 0;
+                var pnlSession = st.pnl_session_usd || 0;
+                // FIX code-reviewer Q-D 24/05 : utiliser le total scorable (n_trades sum
+                // dans setup_stats, exclut TIMEOUT/MANUAL pnl_R=0) plutot que nClosed
+                // (qui inclut tous les closes) — sinon WR session diverge du WR par level.
+                // 25/05 fix code-reviewer Bug H5 : agreger wins/losses depuis setup_stats
+                // car payload backend les expose au niveau setup_stats[level], pas top-level.
+                var wrToday = 0;
+                var totalWinsAll = 0, totalLossesAll = 0;
+                Object.values(d.setup_stats || {}).forEach(function (s) {
+                    totalWinsAll += (s.n_wins || 0);
+                    totalLossesAll += (s.n_losses || 0);
+                });
+                if (nClosed > 0) {
+                    var totalTrades = 0;
+                    Object.values(d.setup_stats || {}).forEach(function (s) {
+                        totalTrades += (s.n_trades || 0);
+                    });
+                    wrToday = totalTrades > 0 ? Math.round(100.0 * totalWinsAll / totalTrades) : 0;
+                }
+                // 25/05 fix Bug pnl_ticks : agreger depuis closed_today
+                var pnlTicksTotal = 0;
+                (d.closed_today || []).forEach(function (c) {
+                    pnlTicksTotal += (c.pnl_ticks || 0);
+                });
+                // PF session = sum(gains_R) / |sum(losses_R)| depuis setup_stats
+                var pfSession = null;
+                var gainsR = 0, lossesR = 0;
+                Object.values(d.setup_stats || {}).forEach(function (s) {
+                    var v = (s.pnl_R_total || 0);
+                    if (v > 0) gainsR += v;
+                    else lossesR += Math.abs(v);
+                });
+                if (lossesR > 0.01) pfSession = Math.round(100.0 * gainsR / lossesR) / 100.0;
+                var statsTodayNorm = {
+                    trades: nClosed,
+                    pnl_usd: pnlSession,
+                    pnl_ticks: pnlTicksTotal,
+                    wr: wrToday,
+                    wins: totalWinsAll,
+                    losses: totalLossesAll,
+                    pf: pfSession,
+                    n_entries: st.n_entries || 0,
+                    n_touches: st.n_touches || 0,
+                    n_state_transitions: st.n_state_transitions || 0,
+                    pnl_R: st.pnl_session_R || 0,
+                    n_sl_consec: st.n_sl_consec || 0,
+                };
+
+                // 24/05/2026 PM fix Jackson : closed_today maintenant fourni par
+                // backend get_bot3_v*_payload (au lieu de [] hardcode qui masquait
+                // les trades fermes dans le rendu "FERMES AUJOURD'HUI").
+                // 25/05/2026 PM fix Jackson "ON A PAS TOUT LES INFOS" : ajouter aliases
+                // direction/exit_reason/exit_time pour matcher le rendu HTML legacy
+                // (Bot 3 MP utilisait ces noms, Bot 3 v3/v4 backend utilise side/reason/ts_close).
+                // Calculer pnl_ticks + duration_sec si backend renvoie null (cf Fix 2 code-reviewer).
+                var TICK_SIZE_BY_SYM = { NQ: 0.25, ES: 0.25, MGC: 0.10 };
+                var closedTodayList = (d.closed_today || []).map(function (c) {
+                    var sym = c.symbol || c.sym || "NQ";
+                    var tickSize = TICK_SIZE_BY_SYM[sym] || 0.25;
+                    var ts_close = c.ts_close || c.exit_time;
+                    var ts_open = c.ts_open;
+                    // Calcul pnl_ticks si null (backend Bot 3 v3/v4 ne le calcule pas)
+                    var pnlTicks = c.pnl_ticks;
+                    if ((pnlTicks == null || isNaN(pnlTicks)) && c.entry_price && c.exit_price) {
+                        var direction = (c.side === "LONG" || c.side === "BUY") ? 1 : -1;
+                        pnlTicks = Math.round(direction * (c.exit_price - c.entry_price) / tickSize);
+                    }
+                    // Calcul duration_sec si null (depuis ts_open/ts_close ISO)
+                    var durationSec = c.duration_sec;
+                    if ((durationSec == null || isNaN(durationSec)) && ts_open && ts_close) {
+                        try {
+                            durationSec = Math.round((new Date(ts_close).getTime() - new Date(ts_open).getTime()) / 1000);
+                        } catch (e) { /* ignore */ }
+                    }
+                    var reason = c.reason || c.exit_cause || c.exit_reason;
+                    return {
+                        ts_close: ts_close,
+                        ts_open: ts_open,
+                        exit_time: ts_close,         // alias pour rendu legacy
+                        signal_id: c.signal_id,
+                        symbol: sym,
+                        sym: sym,
+                        side: c.side,
+                        direction: c.side,           // alias pour rendu legacy
+                        level: c.level,
+                        entry_price: c.entry_price,
+                        exit_price: c.exit_price,
+                        reason: reason,
+                        exit_reason: reason,         // alias pour rendu legacy
+                        exit_cause: reason,
+                        pnl_ticks: pnlTicks,
+                        pnl_usd: c.pnl_usd,
+                        pnl_R: c.pnl_R,
+                        pnl_known: c.pnl_known !== false,
+                        duration_sec: durationSec,
+                        duration_s: durationSec,
+                        tp_mode: c.tp_mode,
+                    };
+                });
+                var botNormalized = {
+                    state: {
+                        open_by_symbol: openBySymbol,
+                        closed_today: closedTodayList,
+                        stats_today: statsTodayNorm,
+                        trade_account: d.trade_account || (version === "v3" ? "Sim1" : "Sim3"),
+                    },
+                    stats_7d: d.stats_7d,
+                    stats_30d: d.stats_30d,
+                    paper_trader_alive: (typeof d.paper_trader_alive === "boolean")
+                        ? d.paper_trader_alive
+                        : (stateAge != null && stateAge < 120),
+                    state_age_sec: (typeof d.state_age_sec === "number") ? d.state_age_sec : stateAge,
+                    bot_label: d.bot_label || ("Bot 3 " + version),
+                    bar_source: { global: "LIVE_ENRICHED_60s" },
+                };
+                if (typeof window.paperDataAll === "undefined") {
+                    window.paperDataAll = {
+                        bot1_dmp: null, bot2_db: null, bot3_mp: null,
+                        bot3_v3: null, bot3_v4: null,
+                    };
+                }
+                window.paperDataAll[paperDataKey] = botNormalized;
+
+                if (window.currentPaperBot === toggleKey) {
+                    paperData = botNormalized;
+                    if (currentPage === "paper") renderPaperPage();
+                }
+                if (typeof _updateDataSourceVoyant === "function"
+                    && window.currentPaperBot === toggleKey) {
+                    _updateDataSourceVoyant(toggleKey);
+                }
+                if (currentPage === "paper") {
+                    if (version === "v3") renderPaperBot3V3Section();
+                    else renderPaperBot3V4Section();
+                }
+            })
+            .catch(function (err) {
+                if (version === "v3") {
+                    _paperBot3V3Errors++;
+                    if (_paperBot3V3Errors < 5) console.warn("Paper Bot 3 v3 fetch error:", err);
+                } else {
+                    _paperBot3V4Errors++;
+                    if (_paperBot3V4Errors < 5) console.warn("Paper Bot 3 v4 fetch error:", err);
+                }
+            });
+    }
+
+    function fetchPaperBot3V3() { _fetchPaperBot3Vx("v3"); }
+    function fetchPaperBot3V4() { _fetchPaperBot3Vx("v4"); }
+
+    // Helper : rendu position active v3/v4 (1 carte par symbol)
+    function _renderPositionBot3Vx(sym, pos, version) {
+        if (!pos) {
+            return '<div class="v3v3-pos v3v3-pos-empty"><strong>' + sym + '</strong> : aucune position</div>';
+        }
+        var tsOpen = pos.ts_open ? new Date(pos.ts_open).toLocaleTimeString("fr-FR",
+            { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" }) + " UTC" : "?";
+        var tpModeLine = "";
+        if (version === "v4" && pos.tp_mode) {
+            var tpClass = pos.tp_mode === "VPOC" ? "v3v4-tpmode-vpoc" : "v3v4-tpmode-r15";
+            tpModeLine = '<div class="v3v3-pos-row"><span>TP mode:</span>' +
+                '<strong class="' + tpClass + '">' + pos.tp_mode +
+                (pos.vpoc_value != null ? ' (' + pos.vpoc_value + ')' : '') + '</strong></div>';
+        }
+        return (
+            '<div class="v3v3-pos v3v3-pos-active" data-sym="' + sym + '">' +
+            '<div class="v3v3-pos-header"><strong>' + sym + ' ' + (pos.side || "?") + '</strong>' +
+            '<span class="v3v3-level-badge">' + (pos.level || "?") + '</span></div>' +
+            '<div class="v3v3-pos-row"><span>Entry:</span><strong>' + (pos.entry_price != null ? pos.entry_price : "?") +
+            ' x' + (pos.qty || 1) + '</strong></div>' +
+            '<div class="v3v3-pos-row"><span>SL:</span><strong>' + (pos.sl_price != null ? pos.sl_price : "—") +
+            (pos.sl_ticks != null ? ' (' + pos.sl_ticks + 't)' : '') + '</strong></div>' +
+            '<div class="v3v3-pos-row"><span>TP:</span><strong>' + (pos.tp_price != null ? pos.tp_price : "—") + '</strong></div>' +
+            tpModeLine +
+            '<div class="v3v3-pos-row"><span>Ouverte:</span><strong>' + tsOpen + '</strong></div>' +
+            '<div class="v3v3-pos-row v3v3-signal-id"><span>ID:</span><strong>' + (pos.signal_id || "?") + '</strong></div>' +
+            '</div>'
+        );
+    }
+
+    // Helper : rendu table setup_stats par level (v3) ou level_tpmode (v4)
+    function _renderSetupStatsBot3Vx(stats, version) {
+        if (!stats || Object.keys(stats).length === 0) {
+            return '<div class="v3v3-stats-empty">Aucun trade ferme aujourd\'hui (en attente premiers triggers)</div>';
+        }
+        // Tri descendant par n_trades pour mettre en haut les levels actifs
+        var keys = Object.keys(stats).sort(function (a, b) {
+            return (stats[b].n_trades || 0) - (stats[a].n_trades || 0);
+        });
+        var rows = keys.map(function (k) {
+            var s = stats[k];
+            var pnlClass = (s.pnl_usd_total || 0) > 0 ? "v2-pos-pnl" : "v2-neg-pnl";
+            var levelLabel = s.level || k;
+            var tpModeCol = (version === "v4")
+                ? '<td><span class="v3v4-tpmode-tag v3v4-tpmode-' +
+                  (s.tp_mode === "VPOC" ? "vpoc" : "r15") + '">' + (s.tp_mode || "?") + '</span></td>'
+                : '';
+            return (
+                '<tr>' +
+                '<td>' + levelLabel + '</td>' +
+                tpModeCol +
+                '<td>' + (s.n_trades || 0) + '</td>' +
+                '<td>' + (s.n_wins || 0) + ' / ' + (s.n_losses || 0) + '</td>' +
+                '<td>' + (s.wr_pct != null ? s.wr_pct + '%' : '—') + '</td>' +
+                '<td>' + (s.pf != null ? s.pf : '—') + '</td>' +
+                '<td>' + (s.pnl_R_total != null ? s.pnl_R_total.toFixed(2) + 'R' : '—') + '</td>' +
+                '<td class="' + pnlClass + '">$' + (s.pnl_usd_total != null ? s.pnl_usd_total.toFixed(2) : '—') + '</td>' +
+                '</tr>'
+            );
+        }).join('');
+        var tpModeHeader = (version === "v4") ? '<th>TP mode</th>' : '';
+        return (
+            '<table class="v2-stats-table">' +
+            '<thead><tr><th>Niveau</th>' + tpModeHeader +
+            '<th>N</th><th>W / L</th><th>WR</th><th>PF</th><th>PnL R</th><th>PnL USD</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>'
+        );
+    }
+
+    // Helper : rendu table recent_entries (last 20 ENTRY_SIGNAL events)
+    function _renderRecentEntriesBot3Vx(entries) {
+        if (!entries || entries.length === 0) {
+            return '<div class="v3v3-stats-empty">Aucun signal d\'entree aujourd\'hui</div>';
+        }
+        var sorted = entries.slice().reverse();
+        var rows = sorted.map(function (e) {
+            var ts = e.ts ? new Date(e.ts).toLocaleTimeString("fr-FR",
+                { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" }) + " UTC" : "?";
+            var execBadge = e.executed
+                ? '<span class="v2-badge v2-badge-trade">TRADE</span>'
+                : '<span class="v2-badge v2-badge-observe">VETO</span>';
+            var veto = e.veto_reason || (e.executed ? "—" : "?");
+            return (
+                '<tr>' +
+                '<td>' + ts + '</td>' +
+                '<td><strong>' + (e.symbol || "?") + '</strong></td>' +
+                '<td>' + (e.side || "?") + '</td>' +
+                '<td>' + (e.level || "?") + '</td>' +
+                '<td>' + (e.entry_price != null ? e.entry_price : "?") + '</td>' +
+                '<td>' + (e.sl_price != null ? e.sl_price : "—") + '</td>' +
+                '<td>' + (e.tp_price != null ? e.tp_price : "—") + '</td>' +
+                '<td>' + execBadge + '</td>' +
+                '<td>' + veto + '</td>' +
+                '</tr>'
+            );
+        }).join('');
+        return (
+            '<table class="v2-stats-table">' +
+            '<thead><tr><th>Heure</th><th>Sym</th><th>Side</th><th>Niveau</th>' +
+            '<th>Entry</th><th>SL</th><th>TP</th><th>Exec</th><th>Veto reason</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>'
+        );
+    }
+
+    // Renderer specifique paper-v3v3-section (Bot 3 v3 Continuation Sim1)
+    function renderPaperBot3V3Section() {
+        var container = $("paper-v3v3-section");
+        if (!container) return;
+        var d = window.paperBot3V3Data || {};
+        if (!d.available) {
+            container.innerHTML = '<div class="v3v3-banner v3v3-banner-down">Bot 3 v3 desactive (MIA_BOT3_V3_ENABLED=0) ou JSONL absent</div>';
+            return;
+        }
+        var positions = d.positions_with_countdown || {};
+        var stats = d.setup_stats || {};
+        var entries = d.recent_entries || [];
+        var st = d.stats_today || {};
+
+        var ageSec = d.state_age_sec;
+        if (ageSec == null && d.ts_utc) {
+            try { ageSec = Math.round((Date.now() - new Date(d.ts_utc).getTime()) / 1000); }
+            catch (e) { /* ignore */ }
+        }
+        var staleBanner = "";
+        if (d.paper_trader_alive === false || (ageSec != null && ageSec > 300)) {
+            staleBanner = '<div class="v2-banner v2-banner-down">⚠ STATE FROZEN — age='
+                + (ageSec != null ? Math.round(ageSec) + 's' : '?')
+                + ' (paper_trader freeze, ouvrir LOGS/bot3_v3/)</div>';
+        } else if (ageSec != null && ageSec > 60) {
+            staleBanner = '<div class="v2-banner">⚠ State age ' + Math.round(ageSec) + 's > 60s (pipeline lag)</div>';
+        }
+
+        var killBadge = d.kill_switch_active
+            ? '<span class="v2-badge v2-badge-kill">⚠️ KILL SWITCH</span>'
+            : '';
+        var modeBadge = '<span class="v2-badge v2-badge-trade">PAPER TRADE</span>';
+
+        var counters = (
+            '<div class="v3-counters">' +
+            '<span class="v3-counter">Touches: <strong>' + (st.n_touches || 0) + '</strong></span>' +
+            '<span class="v3-counter">Transitions: <strong>' + (st.n_state_transitions || 0) + '</strong></span>' +
+            '<span class="v3-counter v3-counter-go">Entries: <strong>' + (st.n_entries || 0) + '</strong></span>' +
+            '<span class="v3-counter">Opens: <strong>' + (st.n_trades_opened || 0) + '</strong></span>' +
+            '<span class="v3-counter">Closes: <strong>' + (st.n_trades_closed || 0) + '</strong></span>' +
+            '<span class="v3-counter v3-counter-veto">SL consec: <strong>' + (st.n_sl_consec || 0) + '</strong></span>' +
+            '</div>'
+        );
+
+        var pnlSession = st.pnl_session_usd || 0;
+        var pnlR = st.pnl_session_R || 0;
+        var pnlClass = pnlSession >= 0 ? "v2-pos-pnl" : "v2-neg-pnl";
+
+        container.innerHTML = (
+            staleBanner +
+            '<div class="v2-header">' +
+            '<h3>🔄 Bot 3 v3 — Continuation NQ (Sim1)</h3>' +
+            modeBadge +
+            killBadge +
+            '<span class="v2-info">Backtest: PF 1.045 · WR 43% · n=1611</span>' +
+            '<span class="v2-info">Window: ' + (d.trading_window_utc || "—") + ' UTC</span>' +
+            '<span class="v2-info">Compte: ' + (d.trade_account || "Sim1") + '</span>' +
+            '<span class="v2-info ' + pnlClass + '">PnL session: $' + pnlSession.toFixed(2) +
+            ' (' + pnlR.toFixed(2) + 'R)</span>' +
+            '</div>' +
+            counters +
+            '<div class="v2-positions-grid">' +
+            (Object.keys(positions).length === 0
+                ? '<div class="v3v3-pos v3v3-pos-empty"><strong>NQ</strong> : aucune position ouverte</div>'
+                : Object.keys(positions).map(function (s) {
+                    return _renderPositionBot3Vx(s, positions[s], "v3");
+                }).join('')) +
+            '</div>' +
+            '<h4>Stats par niveau (cumul session)</h4>' +
+            _renderSetupStatsBot3Vx(stats, "v3") +
+            '<h4>Signaux d\'entree recents (max 20, ordre antichrono)</h4>' +
+            _renderRecentEntriesBot3Vx(entries)
+        );
+    }
+
+    // Renderer specifique paper-v3v4-section (Bot 3 v4 Data-driven Sim3)
+    function renderPaperBot3V4Section() {
+        var container = $("paper-v3v4-section");
+        if (!container) return;
+        var d = window.paperBot3V4Data || {};
+        if (!d.available) {
+            container.innerHTML = '<div class="v3v4-banner v3v4-banner-down">Bot 3 v4 desactive (MIA_BOT3_V4_ENABLED=0) ou JSONL absent</div>';
+            return;
+        }
+        var positions = d.positions_with_countdown || {};
+        var stats = d.setup_stats || {};
+        var entries = d.recent_entries || [];
+        var st = d.stats_today || {};
+        var tpDist = d.tp_mode_distribution || { vpoc_magnet: 0, r15_fallback: 0 };
+
+        var ageSec = d.state_age_sec;
+        if (ageSec == null && d.ts_utc) {
+            try { ageSec = Math.round((Date.now() - new Date(d.ts_utc).getTime()) / 1000); }
+            catch (e) { /* ignore */ }
+        }
+        var staleBanner = "";
+        if (d.paper_trader_alive === false || (ageSec != null && ageSec > 300)) {
+            staleBanner = '<div class="v2-banner v2-banner-down">⚠ STATE FROZEN — age='
+                + (ageSec != null ? Math.round(ageSec) + 's' : '?')
+                + ' (paper_trader freeze, ouvrir LOGS/bot3_v4/)</div>';
+        } else if (ageSec != null && ageSec > 60) {
+            staleBanner = '<div class="v2-banner">⚠ State age ' + Math.round(ageSec) + 's > 60s (pipeline lag)</div>';
+        }
+
+        var killBadge = d.kill_switch_active
+            ? '<span class="v2-badge v2-badge-kill">⚠️ KILL SWITCH</span>'
+            : '';
+        var modeBadge = '<span class="v2-badge v2-badge-trade">PAPER TRADE</span>';
+
+        var counters = (
+            '<div class="v3-counters">' +
+            '<span class="v3-counter">Touches: <strong>' + (st.n_touches || 0) + '</strong></span>' +
+            '<span class="v3-counter v3-counter-go">Entries: <strong>' + (st.n_entries || 0) + '</strong></span>' +
+            '<span class="v3-counter">Opens: <strong>' + (st.n_trades_opened || 0) + '</strong></span>' +
+            '<span class="v3-counter">Closes: <strong>' + (st.n_trades_closed || 0) + '</strong></span>' +
+            '<span class="v3-counter v3-counter-veto">SL consec: <strong>' + (st.n_sl_consec || 0) + '</strong></span>' +
+            '</div>'
+        );
+
+        var pnlSession = st.pnl_session_usd || 0;
+        var pnlR = st.pnl_session_R || 0;
+        var pnlClass = pnlSession >= 0 ? "v2-pos-pnl" : "v2-neg-pnl";
+
+        // TP mode distribution box (v4 specific)
+        var totalTp = (tpDist.vpoc_magnet || 0) + (tpDist.r15_fallback || 0);
+        var vpocPct = totalTp > 0 ? Math.round(100 * tpDist.vpoc_magnet / totalTp) : 0;
+        var r15Pct = totalTp > 0 ? Math.round(100 * tpDist.r15_fallback / totalTp) : 0;
+        var tpModeBox = (
+            '<div class="v3v4-tpmode-box">' +
+            '<span class="v3v4-tpmode-label">TP mode distribution :</span> ' +
+            '<span class="v3v4-tpmode-vpoc">VPOC magnet ' + tpDist.vpoc_magnet + ' (' + vpocPct + '%)</span>' +
+            ' · ' +
+            '<span class="v3v4-tpmode-r15">R1.5 fallback ' + tpDist.r15_fallback + ' (' + r15Pct + '%)</span>' +
+            '</div>'
+        );
+
+        container.innerHTML = (
+            staleBanner +
+            '<div class="v2-header">' +
+            '<h3>🎯 Bot 3 v4 — Data-driven NQ (Sim3)</h3>' +
+            modeBadge +
+            killBadge +
+            '<span class="v2-info">Backtest: PF 1.033 · WR 30% · n=1110</span>' +
+            '<span class="v2-info">Window: ' + (d.trading_window_utc || "—") + ' UTC</span>' +
+            '<span class="v2-info">Compte: ' + (d.trade_account || "Sim3") + '</span>' +
+            '<span class="v2-info ' + pnlClass + '">PnL session: $' + pnlSession.toFixed(2) +
+            ' (' + pnlR.toFixed(2) + 'R)</span>' +
+            '</div>' +
+            counters +
+            tpModeBox +
+            '<div class="v2-positions-grid">' +
+            (Object.keys(positions).length === 0
+                ? '<div class="v3v3-pos v3v3-pos-empty"><strong>NQ</strong> : aucune position ouverte</div>'
+                : Object.keys(positions).map(function (s) {
+                    return _renderPositionBot3Vx(s, positions[s], "v4");
+                }).join('')) +
+            '</div>' +
+            '<h4>Stats par niveau × TP mode (cumul session)</h4>' +
+            _renderSetupStatsBot3Vx(stats, "v4") +
+            '<h4>Signaux d\'entree recents (max 20, ordre antichrono)</h4>' +
+            _renderRecentEntriesBot3Vx(entries)
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // BOT 4 — Paper Sim4 (J12.5 frontend renderer, deploye 27/05/2026)
+    // Phase 7.1 SAFE COLLECT : 1 micro paper, focus visibilite vetoes
+    // Source : /api/paper_bot4_state (agrege Telemetry M6 + Logger V2)
+    // ═══════════════════════════════════════════════════════════════
+    window.paperBot4Data = null;
+    var _paperBot4Errors = 0;
+
+    // Helper escape HTML : evite XSS sur fields user-controlled
+    // (reason, code, level). Garde minimaliste car contenu Bot 4 est
+    // interne mais regle awesome-security.md exige escaping output.
+    function _escapeHtmlBot4(v) {
+        if (v == null) return "";
+        return String(v)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    // Helper : determine la categorie d'un code veto pour badging couleur
+    function _vetoCategoryBot4(code) {
+        if (!code) return "OTHER";
+        var c = String(code).toUpperCase();
+        if (c.indexOf("TIME") !== -1 || c.indexOf("WINDOW") !== -1
+            || c.indexOf("WEEKEND") !== -1 || c.indexOf("COOLDOWN") !== -1) return "TIME";
+        if (c.indexOf("RISK") !== -1 || c.indexOf("KILL_SWITCH") !== -1
+            || c.indexOf("DAILY") !== -1 || c.indexOf("MAX_TRADES") !== -1
+            || c.indexOf("POSITION_ALREADY") !== -1) return "RISK";
+        if (c.indexOf("GATE") !== -1 || c.indexOf("GAMMA") !== -1
+            || c.indexOf("MENTHORQ") !== -1) return "GATE";
+        if (c.indexOf("VOL") !== -1 || c.indexOf("ATR") !== -1
+            || c.indexOf("VIX") !== -1) return "VOLATILITY";
+        if (c.indexOf("DATA") !== -1 || c.indexOf("QUALITY") !== -1
+            || c.indexOf("DQ") !== -1) return "DATA";
+        return "OTHER";
+    }
+
+    // Helper : rendu d'une position active Bot 4 (1 carte par symbol).
+    // Schema attendu : signal_id, side, entry_price, sl_price, tp_price,
+    // sl_ticks, qty, ts_open, countdown_sec.
+    function _renderPositionBot4(sym, pos) {
+        if (!pos) {
+            return '<div class="v3v3-pos v3v3-pos-empty"><strong>'
+                + _escapeHtmlBot4(sym) + '</strong> : aucune position</div>';
+        }
+        var tsOpen = pos.ts_open ? new Date(pos.ts_open).toLocaleTimeString("fr-FR",
+            { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" }) + " UTC" : "?";
+        var countdown = "";
+        if (pos.countdown_sec != null) {
+            countdown = '<div class="v3v3-pos-row"><span>Countdown:</span><strong>'
+                + Math.round(pos.countdown_sec) + 's</strong></div>';
+        }
+        return (
+            '<div class="v3v3-pos v3v3-pos-active" data-sym="' + _escapeHtmlBot4(sym) + '">' +
+            '<div class="v3v3-pos-header"><strong>' + _escapeHtmlBot4(sym) + ' '
+            + _escapeHtmlBot4(pos.side || "?") + '</strong>' +
+            '<span class="v3v3-level-badge">' + _escapeHtmlBot4(pos.level || "?") + '</span></div>' +
+            '<div class="v3v3-pos-row"><span>Entry:</span><strong>'
+            + (pos.entry_price != null ? pos.entry_price : "?") + ' x' + (pos.qty || 1) + '</strong></div>' +
+            '<div class="v3v3-pos-row"><span>SL:</span><strong>'
+            + (pos.sl_price != null ? pos.sl_price : "—")
+            + (pos.sl_ticks != null ? ' (' + pos.sl_ticks + 't)' : '') + '</strong></div>' +
+            '<div class="v3v3-pos-row"><span>TP:</span><strong>'
+            + (pos.tp_price != null ? pos.tp_price : "—") + '</strong></div>' +
+            '<div class="v3v3-pos-row"><span>Ouverte:</span><strong>' + tsOpen + '</strong></div>' +
+            countdown +
+            '<div class="v3v3-pos-row v3v3-signal-id"><span>ID:</span><strong>'
+            + _escapeHtmlBot4(pos.signal_id || "?") + '</strong></div>' +
+            '</div>'
+        );
+    }
+
+    // Helper : calcule breakdowns multidim (Card 8) sur closed_today
+    function _computeBreakdownsBot4(closedToday) {
+        var out = {
+            direction: { LONG: 0, SHORT: 0, LONG_wins: 0, SHORT_wins: 0 },
+            symbol: {}, session: {}, exit: {},
+        };
+        (closedToday || []).forEach(function (c) {
+            var side = (c.side || c.direction || "").toUpperCase();
+            var sideKey = (side === "LONG" || side === "BUY") ? "LONG"
+                        : (side === "SHORT" || side === "SELL") ? "SHORT" : null;
+            if (sideKey) {
+                out.direction[sideKey] = (out.direction[sideKey] || 0) + 1;
+                if ((c.pnl_R || c.pnl_usd || 0) > 0) {
+                    out.direction[sideKey + "_wins"] = (out.direction[sideKey + "_wins"] || 0) + 1;
+                }
+            }
+            var sym = c.symbol || c.sym || "?";
+            out.symbol[sym] = (out.symbol[sym] || 0) + 1;
+            var sess = c.session_label_entry || c.session || "?";
+            out.session[sess] = (out.session[sess] || 0) + 1;
+            var cause = c.exit_cause || c.reason || c.exit_reason || "?";
+            out.exit[cause] = (out.exit[cause] || 0) + 1;
+        });
+        return out;
+    }
+
+    // J12 fix BUG #2 review agent (27/05 PM) : payload Bot 4 met fields au
+    // TOP-LEVEL (positions_with_countdown, stats_today, closed_today) alors que
+    // renderPaperPage attend state.open_by_symbol / state.stats_today / state.closed_today.
+    // Sans cette normalisation, la zone CENTRALE paper page reste sur l'ancien bot.
+    function _normalizeBot4ForPaperPage(d) {
+        if (!d || !d.available) return {};
+        var positionsRaw = d.positions_with_countdown || {};
+        var openBySymbol = {};
+        Object.keys(positionsRaw).forEach(function (sym) {
+            var p = positionsRaw[sym]; if (!p) return;
+            var TICK = (typeof _getTickSizeForSym === "function")
+                ? _getTickSizeForSym(sym)
+                : (sym === "MGC" ? 0.10 : 0.25);
+            var slTicks = (p.sl_price && p.entry_price)
+                ? Math.round(Math.abs(p.sl_price - p.entry_price) / TICK) : null;
+            var tpTicks = (p.tp_price && p.entry_price)
+                ? Math.round(Math.abs(p.tp_price - p.entry_price) / TICK) : null;
+            openBySymbol[sym] = {
+                direction: p.side, entry_price: p.entry_price,
+                sl_price: p.sl_price, tp_price: p.tp_price,
+                sl_ticks: slTicks, tp_ticks: tpTicks,
+                rr_ratio: (slTicks && tpTicks) ? tpTicks / slTicks : null,
+                n_micros: p.qty || 1, entry_time: p.ts_open,
+                signal_id: p.signal_id, level: p.level,
+            };
+        });
+        var st = d.stats_today || {};
+        return {
+            state: {
+                open_by_symbol: openBySymbol,
+                closed_today: d.closed_today || [],
+                stats_today: {
+                    trades: st.n_trades_closed || 0,
+                    pnl_usd: st.pnl_session_usd || 0,
+                    pnl_ticks: 0, wr: 0, wins: 0, losses: 0, pf: null,
+                },
+                trade_account: d.trade_account || "Sim4",
+                ts_utc: d.ts_utc,
+            },
+            stats_7d: d.stats_7d, stats_30d: d.stats_30d,
+            paper_trader_alive: d.paper_trader_alive,
+            state_age_sec: d.state_age_sec,
+            bot_label: d.bot_label || "Bot 4 MIA Trader",
+            bar_source: { global: (d.bar_source && d.bar_source.global) || d.bar_source || "UNKNOWN" },
+            ts_utc: d.ts_utc,
+        };
+    }
+
+    // fetch Bot 4 state (calque _fetchPaperBot3Vx) — stocke dans
+    // window.paperBot4Data + declenche render si onglet courant.
+    function fetchPaperBot4() {
+        fetchWithAuth(API_BASE + "/api/paper_bot4_state", { method: "GET" })
+            .then(function (r) {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.json();
+            })
+            .then(function (d) {
+                _paperBot4Errors = 0;
+                window.paperBot4Data = d || {};
+                // Merge dans paperDataAll global
+                if (typeof window.paperDataAll === "undefined") {
+                    window.paperDataAll = {
+                        bot1_dmp: null, bot2_db: null, bot3_mp: null,
+                        bot3_v3: null, bot3_v4: null, bot4: null,
+                    };
+                }
+                window.paperDataAll.bot4 = window.paperBot4Data;
+                // J12 fix BUG #1 review agent : aligner pattern fetchPaperBot3Vx.
+                // Reassigner paperData ET appeler renderPaperPage pour rafraichir
+                // la zone centrale (paper-open-positions / paper-stats-today / etc.)
+                if (window.currentPaperBot === "bot4") {
+                    paperData = _normalizeBot4ForPaperPage(window.paperBot4Data);
+                    if (currentPage === "paper") {
+                        renderPaperPage();
+                        renderPaperBot4Section();
+                    }
+                }
+                // FIX bouton gris (Jackson 27/05 PM) : refresh status dot directement
+                // depuis fetchPaperBot4 SANS attendre cycle fetchPaperTrades.
+                // _updateBotToggleBadges() update aussi badges OPEN + dots autres bots
+                // mais c'est inoffensif (idempotent).
+                if (typeof _updateBotToggleBadges === "function") {
+                    _updateBotToggleBadges();
+                }
+                if (typeof _updateDataSourceVoyant === "function"
+                    && window.currentPaperBot === "bot4") {
+                    _updateDataSourceVoyant("bot4");
+                }
+            })
+            .catch(function (err) {
+                _paperBot4Errors++;
+                if (_paperBot4Errors < 5) console.warn("Paper Bot 4 fetch error:", err);
+            });
+    }
+
+    // Renderer specifique paper-bot4-section (Bot 4 Paper Sim4 — Phase 7.1 SAFE)
+    // 8 cards : Header / Stats today / Positions / Prop firm / Closed today /
+    //           Vetoes (CRITIQUE P7.1) / Setup stats (placeholder P7.2) /
+    //           Breakdowns multidim.
+    function renderPaperBot4Section() {
+        var container = $("paper-bot4-section");
+        if (!container) return;
+        try {
+            _renderPaperBot4SectionInner(container);
+        } catch (err) {
+            // Defensive : afficher l'erreur dans le container plutot que crash silencieux
+            // qui rend la page instable (Jackson 27/05 bug : "page ne s'affiche pas")
+            console.error("[Bot4 render error]", err);
+            container.innerHTML = (
+                '<div class="v3v4-banner v3v4-banner-down" style="text-align:left;padding:16px;">'
+                + '<strong>ERREUR RENDU BOT 4</strong><br>'
+                + '<code style="font-size:0.8rem;color:#ff5252;">'
+                + String(err.message || err).replace(/[<>]/g, '')
+                + '</code><br><br>'
+                + '<small>Stack : <pre style="font-size:0.7rem;white-space:pre-wrap;">'
+                + String(err.stack || '').substr(0, 1000).replace(/[<>]/g, '')
+                + '</pre></small>'
+                + '<br><small>Ouvre F12 Console pour details.</small>'
+                + '</div>'
+            );
+        }
+    }
+
+    function _renderPaperBot4SectionInner(container) {
+        var d = window.paperBot4Data || {};
+        if (!d.available) {
+            container.innerHTML = '<div class="v3v4-banner v3v4-banner-down">'
+                + 'Bot 4 desactive (MIA_BOT4_ENABLED=0) ou JSONL absent</div>';
+            return;
+        }
+
+        // Defensive defaults — pattern R8/T3 plan V2
+        var positions = d.positions_with_countdown || {};
+        var closedToday = d.closed_today || [];
+        var vetoes = Array.isArray(d.recent_signals_veto) ? d.recent_signals_veto : [];
+        var setupStats = d.setup_stats || {};
+        var st = d.stats_today || {};
+        var phase = d.phase || "?";
+        var barSource = (d.bar_source && (d.bar_source.global || d.bar_source)) || "?";
+        var propFirm = d.prop_firm_metrics || null;
+
+        // ── Staleness (reuse pattern bot3_v4)
+        var ageSec = d.state_age_sec;
+        if (ageSec == null && d.last_heartbeat_ts) {
+            try { ageSec = Math.round((Date.now() - new Date(d.last_heartbeat_ts).getTime()) / 1000); }
+            catch (e) { /* ignore */ }
+        }
+        if (ageSec == null && d.ts_utc) {
+            try { ageSec = Math.round((Date.now() - new Date(d.ts_utc).getTime()) / 1000); }
+            catch (e) { /* ignore */ }
+        }
+        var staleBanner = "";
+        if (d.paper_trader_alive === false || (ageSec != null && ageSec > 120)) {
+            staleBanner = '<div class="v2-banner v2-banner-down">⚠ STATE FROZEN — age='
+                + (ageSec != null ? Math.round(ageSec) + 's' : '?')
+                + ' (Bot 4 freeze, ouvrir LOGS/events/events_*_bot4.jsonl)</div>';
+        } else if (ageSec != null && ageSec > 60) {
+            staleBanner = '<div class="v2-banner">⚠ Heartbeat age '
+                + Math.round(ageSec) + 's > 60s (pipeline lag)</div>';
+        }
+
+        // ── Card 1 : Header ──────────────────────────────────────────
+        // Phase badge (vert P7.1, orange P7.2)
+        var phaseClass = (String(phase).indexOf("P7.1") !== -1) ? "v2-badge-trade"
+                       : (String(phase).indexOf("P7.2") !== -1) ? "v2-badge-observe"
+                       : "v2-badge";
+        var phaseBadge = '<span class="v2-badge ' + phaseClass + '">'
+            + _escapeHtmlBot4(phase) + '</span>';
+
+        // Service status (lu depuis window.servicesStatus['4'] si dispo)
+        var svcState = "Unknown";
+        var svcStateClass = "v2-badge";
+        if (window.servicesStatus && window.servicesStatus["4"]) {
+            svcState = window.servicesStatus["4"].state || "Unknown";
+            if (svcState === "RUNNING") { svcStateClass = "v2-badge-trade"; }
+            else if (svcState === "STOPPED") { svcStateClass = "v2-badge-kill"; }
+        }
+        var svcBadge = '<span class="v2-badge ' + svcStateClass + '">SVC: '
+            + _escapeHtmlBot4(svcState) + '</span>';
+
+        // Heartbeat age badge (vert <60s, orange 60-120s, rouge >120s)
+        var hbClass = (ageSec == null) ? "v2-badge"
+                    : (ageSec < 60) ? "v2-badge-trade"
+                    : (ageSec < 120) ? "v2-badge-observe"
+                    : "v2-badge-kill";
+        var hbBadge = '<span class="v2-badge ' + hbClass + '">HB: '
+            + (ageSec != null ? Math.round(ageSec) + 's' : '?') + '</span>';
+
+        // Kill switch badge
+        var killBadge = d.kill_switch_active
+            ? '<span class="v2-badge v2-badge-kill">⚠️ KILL SWITCH</span>' : '';
+
+        // Bar source badge (vert LIVE_ENRICHED_60s, ROUGE sinon — R8)
+        var barClass = (barSource === "LIVE_ENRICHED_60s" || barSource === "V4")
+            ? "v2-badge-trade" : "v2-badge-kill";
+        var barBadge = '<span class="v2-badge ' + barClass + '">'
+            + _escapeHtmlBot4(barSource) + '</span>';
+
+        // Dry run badge (T3 fix)
+        var dryBadge = (d.dry_run === true)
+            ? '<span class="v2-badge v2-badge-observe">DRY_RUN</span>' : '';
+
+        var card1Header = (
+            '<div class="v2-header">' +
+            '<h3>🎯 Bot 4 — Paper Sim4 (Phase ' + _escapeHtmlBot4(phase) + ' — 1 mini)</h3>' +
+            phaseBadge + svcBadge + hbBadge + killBadge + barBadge + dryBadge +
+            '</div>'
+        );
+
+        // ── Card 2 : Stats today (4 big boxes prop-firm) ─────────────
+        // Defensive : Number() au cas ou JSON serialise int/string mixte
+        var nTrades = Number(st.n_trades_closed || st.trades || 0) || 0;
+        var pnlUsd = Number(st.pnl_session_usd || st.pnl_usd || 0) || 0;
+        var pnlClass = pnlUsd >= 0 ? "v2-pos-pnl" : "v2-neg-pnl";
+        // WR & PF computed depuis setup_stats si dispo
+        var totalWins = 0, totalLosses = 0;
+        Object.values(setupStats).forEach(function (s) {
+            totalWins += (s.n_wins || 0);
+            totalLosses += (s.n_losses || 0);
+        });
+        var wrPct = (totalWins + totalLosses) > 0
+            ? Math.round(100.0 * totalWins / (totalWins + totalLosses)) : 0;
+        var gainsR = 0, lossesR = 0;
+        Object.values(setupStats).forEach(function (s) {
+            var v = s.pnl_R_total || 0;
+            if (v > 0) gainsR += v; else lossesR += Math.abs(v);
+        });
+        var pfSession = lossesR > 0.01 ? (Math.round(100.0 * gainsR / lossesR) / 100.0) : null;
+        var pnlUsdSafe = isNaN(pnlUsd) ? 0 : pnlUsd;
+        var card2Stats = (
+            '<div class="bot4-big-boxes">' +
+            '<div class="bot4-box"><div class="bot4-box-label">N trades</div>' +
+            '<div class="bot4-box-value">' + nTrades + '</div></div>' +
+            '<div class="bot4-box"><div class="bot4-box-label">PnL USD</div>' +
+            '<div class="bot4-box-value ' + pnlClass + '">$' + pnlUsdSafe.toFixed(2) + '</div></div>' +
+            '<div class="bot4-box"><div class="bot4-box-label">WR %</div>' +
+            '<div class="bot4-box-value">' + wrPct + '%</div></div>' +
+            '<div class="bot4-box"><div class="bot4-box-label">PF</div>' +
+            '<div class="bot4-box-value">' + (pfSession != null && !isNaN(pfSession) ? pfSession.toFixed(2) : '—') + '</div></div>' +
+            '</div>' +
+            '<div class="bot4-substats">' +
+            'Signaux vus : <strong>' + (st.n_signals_seen || 0) + '</strong> | ' +
+            'passes : <strong>' + (st.n_passed || st.n_entries || 0) + '</strong> | ' +
+            'vetos : <strong>' + (st.n_veto || vetoes.length || 0) + '</strong> | ' +
+            'SL consec : <strong>' + (st.n_sl_consec || 0) + '</strong>' +
+            '</div>'
+        );
+
+        // ── Card 3 : Positions ouvertes ──────────────────────────────
+        var card3Positions = '<h4>Positions ouvertes</h4>';
+        if (Object.keys(positions).length === 0) {
+            card3Positions += '<div class="empty">Aucune position ouverte</div>';
+        } else {
+            card3Positions += '<div class="v2-positions-grid">'
+                + Object.keys(positions).map(function (s) {
+                    return _renderPositionBot4(s, positions[s]);
+                }).join('')
+                + '</div>';
+        }
+
+        // ── Card 4 : Prop firm risk ──────────────────────────────────
+        var card4PropFirm = '<h4>Prop firm risk (Topstep / Apex style)</h4>';
+        if (!propFirm) {
+            card4PropFirm += '<div class="info-box">'
+                + 'Disponible apres BOT4_BOOT_READY (metrics prop firm non publiees)'
+                + '</div>';
+        } else {
+            // Defensive Number() coercion (JSON mixte)
+            var dllLimit = propFirm.daily_loss_limit_usd != null ? Number(propFirm.daily_loss_limit_usd) : null;
+            var pnlToday = propFirm.pnl_today_usd != null ? Number(propFirm.pnl_today_usd) : null;
+            var dllRemaining = (dllLimit != null && pnlToday != null && !isNaN(dllLimit) && !isNaN(pnlToday))
+                ? (dllLimit - Math.abs(Math.min(pnlToday, 0))) : null;
+            var dllPct = (dllLimit > 0 && dllRemaining != null)
+                ? Math.max(0, Math.min(100, Math.round(100 * dllRemaining / dllLimit)))
+                : 0;
+            var trailHigh = propFirm.trailing_dd_highwater_usd != null
+                ? Number(propFirm.trailing_dd_highwater_usd) : null;
+            var trailCushion = propFirm.trailing_dd_cushion_usd != null
+                ? Number(propFirm.trailing_dd_cushion_usd) : null;
+            card4PropFirm += (
+                '<div class="bot4-propfirm">' +
+                '<div class="bot4-propfirm-row">' +
+                '<span>Distance to DLL :</span> ' +
+                '<strong>' + (dllRemaining != null && !isNaN(dllRemaining) ? '$' + dllRemaining.toFixed(2) : '—') + ' remaining</strong>' +
+                '<div class="bot4-progress"><div class="bot4-progress-bar" style="width:'
+                + dllPct + '%;background:' + (dllPct > 50 ? '#2e7d32' : dllPct > 20 ? '#f9a825' : '#c62828')
+                + '"></div></div>' +
+                '</div>' +
+                '<div class="bot4-propfirm-row">' +
+                '<span>Trailing DD highwater :</span> ' +
+                '<strong>' + (trailHigh != null && !isNaN(trailHigh) ? '$' + trailHigh.toFixed(2) : '—')
+                + ' high - ' + (trailCushion != null && !isNaN(trailCushion) ? '$' + trailCushion.toFixed(2) : '—')
+                + ' cushion</strong>' +
+                '</div>' +
+                '<div class="bot4-propfirm-row">' +
+                '<span>Consistency rule :</span> ' +
+                '<strong>' + (propFirm.consistency_rule != null ? _escapeHtmlBot4(propFirm.consistency_rule) : '—') + '</strong>' +
+                '</div>' +
+                '</div>'
+            );
+        }
+
+        // ── Card 5 : Trades fermes today ─────────────────────────────
+        var card5Closed = '<h4>Trades fermes today</h4>';
+        if (closedToday.length === 0) {
+            card5Closed += '<div class="empty">Aucun trade ferme aujourd\'hui</div>';
+        } else {
+            var rowsClosed = closedToday.slice().reverse().map(function (c) {
+                var ts = c.ts_close ? new Date(c.ts_close).toLocaleTimeString("fr-FR",
+                    { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC" : "?";
+                // Defensive : Number() pour proteger toFixed (JSON string mixte)
+                var pnlUsdC = Number(c.pnl_usd != null ? c.pnl_usd : 0) || 0;
+                var pnlRC = c.pnl_R != null ? Number(c.pnl_R) : null;
+                var pnlClassC = pnlUsdC >= 0 ? "v2-pos-pnl" : "v2-neg-pnl";
+                var dur = c.duration_sec != null ? Math.round(c.duration_sec) + 's' : '—';
+                return (
+                    '<tr>' +
+                    '<td>' + ts + '</td>' +
+                    '<td><strong>' + _escapeHtmlBot4(c.symbol || c.sym || "?") + '</strong></td>' +
+                    '<td>' + _escapeHtmlBot4(c.side || "?") + '</td>' +
+                    '<td>' + _escapeHtmlBot4(c.level || "?") + '</td>' +
+                    '<td>' + (c.entry_price != null ? c.entry_price : "?") + '</td>' +
+                    '<td>' + (c.exit_price != null ? c.exit_price : "?") + '</td>' +
+                    '<td>' + (c.sl_ticks != null ? c.sl_ticks : "—") + '</td>' +
+                    '<td>' + _escapeHtmlBot4(c.exit_cause || c.reason || "?") + '</td>' +
+                    '<td>' + (pnlRC != null && !isNaN(pnlRC) ? pnlRC.toFixed(2) + 'R' : '—') + '</td>' +
+                    '<td class="' + pnlClassC + '">$' + pnlUsdC.toFixed(2) + '</td>' +
+                    '<td>' + dur + '</td>' +
+                    '</tr>'
+                );
+            }).join('');
+            card5Closed += (
+                '<table class="v2-stats-table">' +
+                '<thead><tr><th>Heure</th><th>Sym</th><th>Side</th><th>Niveau</th>' +
+                '<th>Entry</th><th>Exit</th><th>SL ticks</th><th>Cause</th>' +
+                '<th>PnL R</th><th>PnL USD</th><th>Duree</th></tr></thead>' +
+                '<tbody>' + rowsClosed + '</tbody></table>'
+            );
+        }
+
+        // ── Card 6 : Signaux VETO recents (CRITIQUE P7.1 SAFE) ───────
+        var card6Veto = '<h4 class="bot4-veto-header">Pourquoi le bot ne trade pas ? (last 20 vetoes)</h4>';
+        var catCounts = { TIME: 0, RISK: 0, GATE: 0, VOLATILITY: 0, DATA: 0, OTHER: 0 };
+        if (vetoes.length === 0) {
+            card6Veto += '<div class="empty">Aucun veto recent (Bot 4 trade ou pas encore demarre)</div>';
+        } else {
+            var rowsVeto = vetoes.slice(0, 20).map(function (v) {
+                var ts = v.ts ? new Date(v.ts).toLocaleTimeString("fr-FR",
+                    { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" }) + " UTC" : "?";
+                var cat = _vetoCategoryBot4(v.code || v.binding_gate || v.reason);
+                catCounts[cat] = (catCounts[cat] || 0) + 1;
+                var catClass = "bot4-veto-cat-" + cat.toLowerCase();
+                return (
+                    '<tr>' +
+                    '<td>' + ts + '</td>' +
+                    '<td><strong>' + _escapeHtmlBot4(v.symbol || v.sym || "?") + '</strong></td>' +
+                    '<td>' + _escapeHtmlBot4(v.level || "?") + '</td>' +
+                    '<td>' + _escapeHtmlBot4(v.side || "?") + '</td>' +
+                    '<td><span class="bot4-veto-badge ' + catClass + '">'
+                    + _escapeHtmlBot4(v.code || v.binding_gate || "?") + '</span></td>' +
+                    '<td>' + _escapeHtmlBot4(v.reason || "—") + '</td>' +
+                    '</tr>'
+                );
+            }).join('');
+            card6Veto += (
+                '<table class="v2-stats-table">' +
+                '<thead><tr><th>Heure</th><th>Sym</th><th>Niveau</th><th>Side</th>' +
+                '<th>Code</th><th>Raison</th></tr></thead>' +
+                '<tbody>' + rowsVeto + '</tbody></table>'
+            );
+            card6Veto += (
+                '<div class="bot4-veto-footer">' +
+                'TIME: <strong>' + catCounts.TIME + '</strong> | ' +
+                'RISK: <strong>' + catCounts.RISK + '</strong> | ' +
+                'GATE: <strong>' + catCounts.GATE + '</strong> | ' +
+                'VOLATILITY: <strong>' + catCounts.VOLATILITY + '</strong> | ' +
+                'DATA: <strong>' + catCounts.DATA + '</strong> | ' +
+                'OTHER: <strong>' + catCounts.OTHER + '</strong>' +
+                '</div>'
+            );
+        }
+
+        // ── Card 7 : Setup stats par tier/level (P0.3 OFF P7.1) ──────
+        var card7Setup = '<h4>Setup Stats par Tier / Level</h4>';
+        var setupKeys = Object.keys(setupStats);
+        if (setupKeys.length === 0 || d.setup_stats_info) {
+            card7Setup += (
+                '<div class="info-box">' +
+                '📊 Disponible Phase 7.2 (PAPER AGGRESSIVE) — setups structurels via ' +
+                'SLTPDecision.sl_wall_tier. En P7.1 SAFE COLLECT, 1 mini / 1 setup default ' +
+                '— pas de breakdown pertinent.' +
+                '</div>'
+            );
+        } else {
+            // Cas rare P7.1 ou setup_stats non vide : reuse helper bot3_v4
+            card7Setup += _renderSetupStatsBot3Vx(setupStats, "v4");
+        }
+
+        // ── Card 8 : Breakdowns multidim ─────────────────────────────
+        var br = _computeBreakdownsBot4(closedToday);
+        function _renderDimBot4(label, dict) {
+            var parts = Object.keys(dict).map(function (k) {
+                return _escapeHtmlBot4(k) + ' (' + dict[k] + ')';
+            });
+            return '<div class="bot4-breakdown-line"><strong>' + label + ' :</strong> '
+                + (parts.length > 0 ? parts.join(' | ') : '—') + '</div>';
+        }
+        // Direction avec WR
+        var dirLong = br.direction.LONG || 0;
+        var dirShort = br.direction.SHORT || 0;
+        var dirLongWR = dirLong > 0 ? Math.round(100.0 * (br.direction.LONG_wins || 0) / dirLong) : 0;
+        var dirShortWR = dirShort > 0 ? Math.round(100.0 * (br.direction.SHORT_wins || 0) / dirShort) : 0;
+        var dirLine = '<div class="bot4-breakdown-line"><strong>By direction :</strong> '
+            + 'LONG (' + dirLong + ' trades, WR ' + dirLongWR + '%) | '
+            + 'SHORT (' + dirShort + ' trades, WR ' + dirShortWR + '%)</div>';
+        var card8Breakdown = (
+            '<h4>Breakdowns multidim</h4>' +
+            '<div class="bot4-breakdowns">' +
+            dirLine +
+            _renderDimBot4("By symbol", br.symbol) +
+            _renderDimBot4("By session", br.session) +
+            _renderDimBot4("By exit cause", br.exit) +
+            '</div>'
+        );
+
+        // ── Footer ───────────────────────────────────────────────────
+        var refreshAgo = ageSec != null ? Math.round(ageSec) + 's' : '?';
+        var footer = (
+            '<div class="bot4-footer">' +
+            'Last refresh : <strong>' + refreshAgo + ' ago</strong> | ' +
+            'Onglet courant : <strong>bot4</strong>' +
+            '</div>'
+        );
+
+        // ── Assembly final
+        container.innerHTML = (
+            staleBanner +
+            card1Header +
+            card2Stats +
+            card3Positions +
+            card4PropFirm +
+            card5Closed +
+            card6Veto +
+            card7Setup +
+            card8Breakdown +
+            footer
+        );
     }
 
     function _renderPositionV3(sym, pos) {
@@ -5330,10 +6641,16 @@
                 // -> next tick fetchPaperV3 re-set -> "5 trades -$60"
                 // -> oscillation visible UI permanente.
                 var prev_bot3 = (window.paperDataAll && window.paperDataAll.bot3_mp) || null;
+                var prev_bot3_v3 = (window.paperDataAll && window.paperDataAll.bot3_v3) || null;
+                var prev_bot3_v4 = (window.paperDataAll && window.paperDataAll.bot3_v4) || null;
+                var prev_bot4 = (window.paperDataAll && window.paperDataAll.bot4) || null;
                 window.paperDataAll = {
                     bot1_dmp: d.bot1_dmp || null,
                     bot2_db: d.bot2_db || null,
-                    bot3_mp: prev_bot3,  // preserve dernier fetch fetchPaperV3
+                    bot3_mp: prev_bot3,        // preserve dernier fetch fetchPaperV3
+                    bot3_v3: prev_bot3_v3,     // preserve dernier fetch fetchPaperBot3V3
+                    bot3_v4: prev_bot3_v4,     // preserve dernier fetch fetchPaperBot3V4
+                    bot4: prev_bot4,           // 27/05 J12.5 : preserve dernier fetch fetchPaperBot4
                 };
                 // FIX 30/04 (Jackson "ON AURAIS DU A VOIR UN TIMER") : stocker
                 // eco_status partage par les 2 bots pour afficher "Bot reprend
@@ -5344,8 +6661,13 @@
                 // PAS bot3 data (seul fetchPaperV3 le fait). Si on reset paperData ici,
                 // pendant les 200-500ms entre les 2 fetches paperData={} -> "0 trades $0"
                 // puis bascule. Bot 2 stable car bot2_db retourne par cet endpoint direct.
-                if (window.currentPaperBot === "bot3") {
-                    // Bot 3 gere par fetchPaperV3 cycle separe — skip update ici
+                if (window.currentPaperBot === "bot3"
+                    || window.currentPaperBot === "bot3v3"
+                    || window.currentPaperBot === "bot3v4"
+                    || window.currentPaperBot === "bot4") {
+                    // Bot 3 MP / v3 / v4 / Bot 4 geres par fetchPaperV3 / fetchPaperBot3V3
+                    // fetchPaperBot3V4 / fetchPaperBot4 — cycles separes, skip update ici
+                    // pour eviter oscillation 200-500ms entre les 2 fetches (FIX 08/05).
                     _updateBotToggleBadges();
                     _updateDataSourceVoyant(window.currentPaperBot);  // 17/05 voyant Jackson
                     return;
@@ -5441,7 +6763,8 @@
             if (hasOpen) {
                 var sym = openKeys[0];
                 var pos = openBySymbol[sym];
-                var unrealized = (pos.unrealized_pnl_usd !== undefined && pos.unrealized_pnl_usd !== null) ? pos.unrealized_pnl_usd : 0;
+                var unrealizedRaw = _computeUnrealizedUsd(pos, sym);
+                var unrealized = unrealizedRaw != null ? unrealizedRaw : 0;
                 var positive = unrealized >= 0;
                 var dir = _isLong(pos.direction) ? 'BUY' : 'SELL';
                 badge.style.display = 'inline-block';
@@ -5460,6 +6783,151 @@
                 badge.style.display = 'none';
             }
         }
+    }
+
+    // ════════ FLATTEN PER-TRADE BUTTONS (owner only) ════════
+    // Ajout 2026-05-19 v2 : bouton "🔻 FLATTEN ES/NQ/MGC" dans CHAQUE card
+    // position ouverte (vs ancienne carte separee au-dessus). Permet flatten
+    // granulaire par trade (ES sans NQ, NQ sans ES, etc.).
+    //
+    // Architecture :
+    //   - Bouton inline render dans renderPaperPage (HTML template)
+    //   - Bind via _bindFlattenTradeButtons() apres innerHTML
+    //   - Owner-only (isOwner() check serveur ET client)
+    //   - Endpoint : POST /api/admin/bot/{bot_id}/flatten/{symbol}
+
+    function _currentUserIsOwner() {
+        return typeof isOwner === "function" && isOwner();
+    }
+
+    // ════════ PNL MICRO VIRTUEL (Jackson directive 03/06 06:55) ════════
+    // Calcule un PnL projete "comme si 1 ES E-mini + 3 MNQ Micros" pour info.
+    // Broker reality = 1 NQ E-mini ($5/tick) + 1 ES E-mini ($12.50/tick).
+    // Vue projetee = 3 MNQ Micros NQ ($1.50/tick total) + 1 ES E-mini ($12.50 inchange).
+    // Ratios :
+    //   NQ : 3 micros / 1 E-mini = 3 * 0.50 / 5.00 = 0.30
+    //   ES : 1 E-mini / 1 E-mini = 1.00 (inchange, Jackson "1 MI ES")
+    //   MGC : 1 micro / 1 micro = 1.00
+    var _PNL_MICRO_RATIOS = { "NQ": 0.30, "ES": 1.00, "MGC": 1.00 };
+
+    function _computePnlMicroVirtuel(closedTrades, openPositions) {
+        var total = 0;
+        (closedTrades || []).forEach(function (t) {
+            var sym = t.sym || t.symbol || "NQ";
+            var pnl = parseFloat(t.pnl_usd || 0) || 0;
+            total += pnl * (_PNL_MICRO_RATIOS[sym] || 1.00);
+        });
+        if (openPositions && typeof openPositions === "object") {
+            Object.keys(openPositions).forEach(function (sym) {
+                var pos = openPositions[sym];
+                if (pos) {
+                    var pnlFloat = parseFloat(pos.pnl_usd || pos.pnl_usd_floating || 0) || 0;
+                    total += pnlFloat * (_PNL_MICRO_RATIOS[sym] || 1.00);
+                }
+            });
+        }
+        return total;
+    }
+
+    function _formatPnlMicroVirtuelHtml(pnlMicro) {
+        var sign = pnlMicro >= 0 ? '+$' : '-$';
+        return '<div class="pnl-micro-virtuel" style="grid-column:1/-1;text-align:right;font-size:0.7rem;color:var(--text-disabled);padding:4px 8px 2px;font-style:italic;">' +
+            'PnL projete (1 ES E-mini + 3 MNQ Micros) : <strong>' + sign + Math.abs(pnlMicro).toFixed(2) + '</strong>' +
+            '</div>';
+    }
+
+    function _currentBotIdForApi() {
+        // window.currentPaperBot = "bot1" | "bot2" | "bot3" | "bot4" -> "1"/"2"/"3"/"4"
+        // 03/06 FIX P1.review round 2 BUG NOUVEAU #2 : ajout "bot4"->"4".
+        // Avant : Jackson click FLATTEN sur card Bot 4 -> "1" par defaut -> ferme Bot 1 Sim1 !
+        var b = window.currentPaperBot || "bot1";
+        if (b === "bot1") return "1";
+        if (b === "bot2") return "2";
+        if (b === "bot3") return "3";
+        if (b === "bot4") return "4";
+        return "1";
+    }
+
+    function _bindFlattenTradeButtons() {
+        var buttons = document.querySelectorAll(".btn-flatten-trade");
+        buttons.forEach(function (btn) {
+            if (btn.dataset.bound === "1") return;
+            btn.dataset.bound = "1";
+            btn.addEventListener("click", function () {
+                var botId = btn.getAttribute("data-flatten-bot");
+                var sym = btn.getAttribute("data-flatten-sym");
+                var dir = btn.getAttribute("data-flatten-dir");
+                var msg = "FLATTEN " + sym + " " + dir + " (Bot " + botId + ")\n\n" +
+                    "Action :\n" +
+                    " - Cancel les working orders SL/TP de " + sym + "\n" +
+                    " - Market close cette position " + sym + " (opposite side)\n" +
+                    " - Type 209 SUBMIT_FLATTEN " + sym + " (defense)\n" +
+                    " - Les AUTRES positions du compte ne sont PAS touchees\n\n" +
+                    "Action IRREVERSIBLE. Confirmer ?";
+                if (!window.confirm(msg)) return;
+                _executeFlattenTrade(botId, sym, btn);
+            });
+        });
+    }
+
+    function _executeFlattenTrade(botId, sym, btnEl) {
+        var originalText = btnEl.innerHTML;
+        btnEl.disabled = true;
+        btnEl.innerHTML = "⏳ FLATTEN " + sym + "...";
+
+        var headers = { "Content-Type": "application/json" };
+        var token = (window.MIA_AUTH && window.MIA_AUTH.token) || localStorage.getItem("mia_token");
+        if (token) headers["Authorization"] = "Bearer " + token;
+
+        fetch("/api/admin/bot/" + botId + "/flatten/" + sym, {
+            method: "POST",
+            headers: headers,
+        })
+            .then(function (r) { return r.json().then(function (j) { return { status: r.status, body: j }; }); })
+            .then(function (resp) {
+                btnEl.disabled = false;
+                if (resp.status !== 200) {
+                    btnEl.innerHTML = "❌ ERROR";
+                    btnEl.style.background = "#5a0d0d";
+                    window.alert("Flatten " + sym + " ECHEC :\n\nHTTP " + resp.status + "\n" + (resp.body.error || JSON.stringify(resp.body)));
+                    setTimeout(function () { btnEl.innerHTML = originalText; btnEl.style.background = "#3a1a1a"; }, 5000);
+                    return;
+                }
+                var body = resp.body;
+                // Extraire le resultat du symbole specifique (1er bot dans results)
+                var resultText = "";
+                if (body.results) {
+                    Object.keys(body.results).forEach(function (botKey) {
+                        var botRes = body.results[botKey];
+                        if (botRes.symbols && botRes.symbols[sym]) {
+                            var s = botRes.symbols[sym];
+                            resultText = sym + " : qty_init=" + s.qty_init + " → qty_final=" + s.qty_final +
+                                " · working_canceled=" + s.working_canceled + " · " + s.status;
+                        }
+                    });
+                }
+                if (body.status === "OK") {
+                    btnEl.innerHTML = "✅ " + sym + " FLAT";
+                    btnEl.style.background = "#0d3a1a";
+                    btnEl.style.color = "#80ff80";
+                    btnEl.style.borderColor = "#52ff80";
+                    if (resultText) window.console.log("[FLATTEN " + sym + "] " + resultText);
+                } else {
+                    btnEl.innerHTML = "❌ " + sym + " FAIL";
+                    btnEl.style.background = "#5a0d0d";
+                    window.alert("Flatten " + sym + " resultat partiel :\n\n" + (resultText || JSON.stringify(body)) +
+                                 "\n\nVerifier broker Sierra Chart Trade Activity Log.");
+                }
+                // Pas de revert auto : la card se regenere au prochain fetch (5s) avec
+                // l'etat actualise (position closed = card disparait).
+            })
+            .catch(function (e) {
+                btnEl.disabled = false;
+                btnEl.innerHTML = "❌ NET ERR";
+                btnEl.style.background = "#5a0d0d";
+                window.alert("Flatten " + sym + " erreur reseau :\n" + e.message);
+                setTimeout(function () { btnEl.innerHTML = originalText; btnEl.style.background = "#3a1a1a"; }, 5000);
+            });
     }
 
     function renderPaperPage() {
@@ -5497,12 +6965,37 @@
             } else {
                 statusEl.innerHTML = '<span style="color:var(--text-disabled);">Aucune donnee (trader jamais demarre)</span>';
             }
+            // 26/05/2026 Jackson : jauge etat moteur Bot 2 BN V4 (WARMUP/ANALYZING/IN_TRADE)
+            var engineStatus = (state && state.engine_status) || null;
+            if (engineStatus && (engineStatus.status === "WARMUP" || engineStatus.status === "ANALYZING" || engineStatus.status === "IN_TRADE" || engineStatus.status === "OFFLINE")) {
+                var statusColor = "#9E9E9E";
+                var statusIcon = "●";
+                if (engineStatus.status === "ANALYZING") { statusColor = "#42A5F5"; statusIcon = "⚙"; }
+                else if (engineStatus.status === "WARMUP") { statusColor = "#FF8C00"; statusIcon = "⏳"; }
+                else if (engineStatus.status === "IN_TRADE") { statusColor = "#00C853"; statusIcon = "▶"; }
+                else if (engineStatus.status === "OFFLINE") { statusColor = "#D50000"; statusIcon = "✕"; }
+                var barNq = engineStatus.bars_buffer_nq || 0;
+                var barEs = engineStatus.bars_buffer_es || 0;
+                var minReq = engineStatus.trend_lookback_required || 240;
+                var pctNq = Math.min(100, engineStatus.pct_warmup_nq || 0);
+                var pctEs = Math.min(100, engineStatus.pct_warmup_es || 0);
+                var avgPct = Math.round((pctNq + pctEs) / 2);
+                var jaugeHtml = '<div style="margin-top:6px;padding:6px 10px;background:rgba(255,255,255,0.02);border:1px solid ' + statusColor + ';border-radius:6px;font-size:0.8125rem;">' +
+                    '<span style="color:' + statusColor + ';font-weight:700;">' + statusIcon + ' ' + engineStatus.label + '</span>' +
+                    ' <span style="color:var(--text-secondary);">·</span> ' +
+                    '<span title="' + (engineStatus.details || '') + '">NQ <strong>' + barNq + '</strong>/' + minReq + ' bars · ES <strong>' + barEs + '</strong>/' + minReq + ' bars</span>' +
+                    '<div style="margin-top:4px;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;">' +
+                    '<div style="height:100%;width:' + avgPct + '%;background:' + statusColor + ';transition:width 0.3s;"></div>' +
+                    '</div>' +
+                    '</div>';
+                statusEl.innerHTML = statusEl.innerHTML + jaugeHtml;
+            }
         }
 
-        // ── Positions ouvertes
+        // ── Positions ouvertes (FLATTEN buttons sont injectes inline dans chaque card)
         // FIX 30/04 v2 (Jackson "ON A UN TRADE MAIS ON ARRIVE PAS A SUIVRE EVOLUTION") :
         // supporter les 2 formats state.json :
-        //   Bot 1 DMP   : `open_by_symbol[sym]` avec `entry_price`, `direction`, `sl_ticks`, `rr_ratio`...
+        //   Bot 1 Paper   : `open_by_symbol[sym]` avec `entry_price`, `direction`, `sl_ticks`, `rr_ratio`...
         //   Bot 2 DB    : `active_positions[sym]` avec `entry`, `side`, `unrealized_pnl_usd` (post-fix metrics)
         // Normalise via adapter avant render. Sans ce fix, Bot 2 affichait
         // "Aucune position ouverte" malgre le badge "1 OPEN" dans la nav.
@@ -5575,8 +7068,16 @@
                     // → state.current_price est PLUS FRAIS que banner pour les 2 bots.
                     // → utiliser unrealized_pnl_usd state.json par defaut (calcule par
                     //   le bot avec sa propre source live, deja correct).
-                    var TICK = 0.25;
-                    var TICK_VAL = (sym === "ES") ? 1.25 : 0.50;
+                    // FIX 03/06 (Jackson "27 TICK 13 USD ETRANGE") : valeurs MICRO
+                    // hardcodees (ES 1.25 / NQ 0.50) sous-estimaient le PnL flottant
+                    // x10 (ES) / x2.5 (NQ). Le backend a migre MINI standard le 02/06
+                    // (cf CORE/constants.py TICK_VALUE + CORE/bot3_paper_common.py
+                    // mapping broker NQM26/ESM26 E-mini standard). Le PnL realise close
+                    // etait deja correct en mini ; seul cet affichage live restait micro.
+                    // MGC = vrai micro (tick 0.10, $1.00). Mapping module-level
+                    // TICK_*_BY_SYM (partage avec _computeUnrealizedUsd).
+                    var TICK = TICK_SIZE_BY_SYM[sym] || 0.25;
+                    var TICK_VAL = TICK_VAL_BY_SYM[sym] || 1.25;
                     var nMicros = p.n_micros || 3;
                     var unrealized, unrealizedTicks, livePriceUsed;
                     // SOURCE PRIORITAIRE : state.json (calculs faits cote bot avec live source)
@@ -5625,7 +7126,7 @@
                         '</div>' +
                         '<div style="font-size:0.8125rem;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;">' +
                         '<div>Entry : <strong>' + fmtPrice(p.entry_price) + '</strong></div>' +
-                        '<div>Taille : <strong>' + (p.n_micros || 3) + ' micros</strong></div>' +
+                        '<div>Taille : <strong>' + (p.n_micros || 3) + ' contrats</strong></div>' +
                         '<div>SL : <strong style="color:var(--red);">' + fmtPrice(p.sl_price) + '</strong>' + (p.sl_ticks ? ' (' + p.sl_ticks + 't)' : '') + '</div>' +
                         '<div>TP : <strong style="color:var(--green);">' + fmtPrice(p.tp_price) + '</strong>' + (p.tp_ticks ? ' (' + p.tp_ticks + 't)' : '') + '</div>' +
                         (livePriceUsed ? '<div style="grid-column:1/-1;color:var(--text-secondary);">Prix live : <strong>' + fmtPrice(livePriceUsed) + '</strong>' + staleWarning + '</div>' : '') +
@@ -5641,9 +7142,24 @@
                         (p.entry_time ? '<div style="grid-column:1/-1;color:var(--orange,#ff9800);font-size:0.85rem;margin-top:4px;">⏱ Timeout dans : <strong class="paper-countdown" data-paper-countdown="1" data-ts-open="' + p.entry_time + '" data-timeout-min="' + (p.timeout_min || 30) + '">--:--</strong></div>' : '') +
                         (p.entry_time ? '<div style="grid-column:1/-1;color:var(--text-disabled);font-size:0.75rem;margin-top:2px;">Ouvert : ' + p.entry_time + '</div>' : '') +
                         '</div>' +
+                        // ════ BOUTON FLATTEN per-trade (owner only) ════════════
+                        // Affiche un bouton "🔻 FLATTEN" au bas de la card pour
+                        // fermer cette position individuelle (sans toucher aux autres).
+                        // Ajout 2026-05-19 suite demande Jackson "trade en cours
+                        // rectangle spawn et dans ce rectangle le bouton". Permet
+                        // ES sans NQ / NQ sans ES.
+                        (_currentUserIsOwner() ? (
+                            '<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,82,82,0.15);display:flex;justify-content:flex-end;">' +
+                            '<button class="btn-flatten-trade" data-flatten-bot="' + _currentBotIdForApi() + '" data-flatten-sym="' + sym + '" data-flatten-dir="' + dir + '"' +
+                            ' style="padding:6px 12px;background:#3a1a1a;color:#ff8080;border:1px solid #ff5252;border-radius:6px;font-weight:600;cursor:pointer;font-size:0.8rem;">' +
+                            '🔻 FLATTEN ' + sym + ' ' + dir +
+                            '</button>' +
+                            '</div>'
+                        ) : '') +
                         '</div>';
                 });
                 openEl.innerHTML = html;
+                _bindFlattenTradeButtons();
             }
         }
 
@@ -5658,6 +7174,9 @@
                 _paperStatBox('Win Rate', (st.wr || 0) + '%', (st.wins || 0) + 'W / ' + (st.losses || 0) + 'L') +
                 _paperStatBox('Profit Factor', (st.pf !== null && st.pf !== undefined) ? st.pf : '—', '') +
                 _paperStatBox('PnL', (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2), (st.pnl_ticks || 0) + ' ticks', pnlColor);
+            // 03/06 Jackson : PnL secondaire discret "comme si 1 ES + 3 MNQ" pour vue prop firm Micro
+            var pnlMicro = _computePnlMicroVirtuel(state.closed_today, state.open_by_symbol);
+            statsEl.innerHTML += _formatPnlMicroVirtuelHtml(pnlMicro);
         }
 
         // ── Closed today
@@ -5953,7 +7472,8 @@
                     var p = pState.open_by_symbol[sym];
                     var dir = _isLong(p.direction) ? 'BUY' : 'SELL';
                     var color = _isLong(p.direction) ? 'var(--green)' : 'var(--red)';
-                    var upnl = (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null) ? p.unrealized_pnl_usd : 0;
+                    var upnlRaw = _computeUnrealizedUsd(p, sym);
+                    var upnl = upnlRaw != null ? upnlRaw : 0;
                     var timeStr = p.entry_time ? p.entry_time.substring(11, 19) : '--';
                     events.push({
                         ts: p.entry_ts || 0,
@@ -7314,11 +8834,14 @@
             fetch("/api/data_freshness").then(function (r) { return r.json(); }).then(function (data) {
                 var el = $("banner-data-freshness");
                 if (!el || !data || !data.worst_status) return;
+                // 18/05 fix Jackson : MARKET_CLOSED gris pendant weekend/maintenance
+                // (au lieu DOWN rouge alarmant faux positif)
                 var statusMap = {
-                    "OK":     { emoji: "🟢", color: "#00C853", label: "LIVE" },
-                    "WARN":   { emoji: "🟠", color: "#FF8C00", label: "STALE" },
-                    "CRIT":   { emoji: "🔴", color: "#D50000", label: "DOWN" },
-                    "ABSENT": { emoji: "⚫", color: "#616161", label: "ABS" }
+                    "OK":            { emoji: "🟢", color: "#00C853", label: "LIVE" },
+                    "WARN":          { emoji: "🟠", color: "#FF8C00", label: "STALE" },
+                    "CRIT":          { emoji: "🔴", color: "#D50000", label: "DOWN" },
+                    "ABSENT":        { emoji: "⚫", color: "#616161", label: "ABS" },
+                    "MARKET_CLOSED": { emoji: "⚪", color: "#9E9E9E", label: "CLOSED" }
                 };
                 var conf = statusMap[data.worst_status] || statusMap["ABSENT"];
                 // Trouver la pire source LIVE (exclure historical pipeline) pour afficher son age
@@ -7336,10 +8859,18 @@
                     else if (a < 3600) ageDisplay = (a / 60).toFixed(1) + "m";
                     else ageDisplay = (a / 3600).toFixed(1) + "h";
                 }
-                el.textContent = conf.emoji + " " + conf.label + " " + ageDisplay;
+                // Si MARKET_CLOSED, n'affiche pas l'age (sans pertinence quand marche ferme)
+                if (data.worst_status === "MARKET_CLOSED") {
+                    el.textContent = conf.emoji + " " + conf.label;
+                } else {
+                    el.textContent = conf.emoji + " " + conf.label + " " + ageDisplay;
+                }
                 el.style.color = conf.color;
                 // Tooltip detaille toutes les sources
                 var tooltip = "Fraicheur donnees:\n";
+                if (data.market_open === false) {
+                    tooltip += "[MARCHE FERME] CME futures (weekend ou maintenance 17h-18h ET)\n";
+                }
                 (data.sources || []).forEach(function (s) {
                     var ageStr = s.age_sec !== null ? s.age_sec + "s" : "n/a";
                     tooltip += "\n[" + s.status + "] " + s.name + " : " + ageStr + " (" + (s.details || "") + ")";
@@ -7426,6 +8957,71 @@
         updateBotsHealthBadge();
         setInterval(updateBotsHealthBadge, 15000);
 
+        // Modal custom controle bots (remplace alert natif, ajoute bouton COPIER).
+        // 24/05/2026 PM Jackson directive : "bouton copier comme sa je pourais facilement
+        // te copier les logs". Implementation : overlay + textarea readonly + 2 boutons.
+        function _showHealthModal(text) {
+            // Cleanup ancien modal si existe (anti-stack)
+            var old = document.getElementById("health-modal-overlay");
+            if (old) old.remove();
+            var overlay = document.createElement("div");
+            overlay.id = "health-modal-overlay";
+            overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(2px);";
+            var modal = document.createElement("div");
+            modal.style.cssText = "background:#0D1321;border:1px solid rgba(0,180,220,0.3);border-radius:10px;padding:20px;max-width:90vw;max-height:85vh;display:flex;flex-direction:column;gap:12px;box-shadow:0 0 40px rgba(0,180,220,0.2);";
+            var title = document.createElement("div");
+            title.style.cssText = "font-size:0.9rem;font-weight:700;color:#00B4DC;letter-spacing:0.5px;";
+            title.textContent = "dashboard.mia-ia-system.com indique";
+            var textarea = document.createElement("textarea");
+            textarea.readOnly = true;
+            textarea.value = text;
+            textarea.style.cssText = "min-width:480px;width:60vw;min-height:180px;max-height:55vh;padding:12px;background:#0a0e17;color:#e2e8f0;border:1px solid rgba(255,255,255,0.08);border-radius:6px;font-family:Consolas,Courier,monospace;font-size:0.78rem;line-height:1.4;resize:vertical;white-space:pre;";
+            var btnRow = document.createElement("div");
+            btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;";
+            var btnCopy = document.createElement("button");
+            btnCopy.textContent = "COPIER";
+            btnCopy.style.cssText = "padding:8px 18px;background:rgba(255,167,38,0.15);color:#ffa726;border:1px solid #ff9800;border-radius:6px;font-weight:600;font-size:0.8rem;cursor:pointer;";
+            btnCopy.onclick = function () {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(function () {
+                        btnCopy.textContent = "COPIE !";
+                        btnCopy.style.background = "rgba(76,175,80,0.2)";
+                        btnCopy.style.color = "#4caf50";
+                        btnCopy.style.borderColor = "#4caf50";
+                        setTimeout(function () {
+                            btnCopy.textContent = "COPIER";
+                            btnCopy.style.background = "rgba(255,167,38,0.15)";
+                            btnCopy.style.color = "#ffa726";
+                            btnCopy.style.borderColor = "#ff9800";
+                        }, 2000);
+                    });
+                } else {
+                    // Fallback navigateurs anciens
+                    textarea.select();
+                    document.execCommand("copy");
+                    btnCopy.textContent = "COPIE (fallback)";
+                }
+            };
+            var btnOk = document.createElement("button");
+            btnOk.textContent = "OK";
+            btnOk.style.cssText = "padding:8px 28px;background:#00B4DC;color:#0a0e17;border:none;border-radius:6px;font-weight:700;font-size:0.8rem;cursor:pointer;";
+            btnOk.onclick = function () { overlay.remove(); };
+            btnRow.appendChild(btnCopy);
+            btnRow.appendChild(btnOk);
+            modal.appendChild(title);
+            modal.appendChild(textarea);
+            modal.appendChild(btnRow);
+            overlay.appendChild(modal);
+            // Click overlay = close (mais pas modal click)
+            overlay.onclick = function (e) { if (e.target === overlay) overlay.remove(); };
+            // Escape key = close
+            var escHandler = function (e) {
+                if (e.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", escHandler); }
+            };
+            document.addEventListener("keydown", escHandler);
+            document.body.appendChild(overlay);
+        }
+
         // Click handler bouton bots = run manual + popup resume
         var _botsHealthBtn = $("banner-bots-health");
         if (_botsHealthBtn) {
@@ -7451,10 +9047,10 @@
                     if (lines.length === 4) {
                         lines.push("Aucun probleme detecte. Tous OK.");
                     }
-                    alert(lines.join("\n"));
+                    _showHealthModal(lines.join("\n"));
                     updateBotsHealthBadge();
                 }).catch(function (err) {
-                    alert("Erreur: " + err.message);
+                    _showHealthModal("Erreur: " + err.message);
                     updateBotsHealthBadge();
                 });
             });
@@ -7716,7 +9312,7 @@
         var html = '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:rgba(255,255,255,0.02);border-radius:8px;overflow:hidden;">';
         html += '<thead><tr style="background:rgba(33,150,243,0.1);">';
         html += '<th style="padding:8px 12px;text-align:left;color:#42a5f5;font-size:0.8125rem;">' + title + '</th>';
-        html += '<th style="padding:8px 12px;text-align:right;color:#42a5f5;font-size:0.8125rem;">Bot 1 DMP</th>';
+        html += '<th style="padding:8px 12px;text-align:right;color:#42a5f5;font-size:0.8125rem;">Bot 1 Paper</th>';
         html += '<th style="padding:8px 12px;text-align:right;color:#42a5f5;font-size:0.8125rem;">Bot 2 V6</th>';
         html += '</tr></thead><tbody>';
         html += _row("N trades", b1.n, b2.n);
@@ -7773,7 +9369,7 @@
         // Streaks + slippage
         html += '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;background:rgba(255,255,255,0.02);border-radius:8px;overflow:hidden;">';
         html += '<thead><tr style="background:rgba(33,150,243,0.1);"><th style="padding:8px 12px;text-align:left;color:#42a5f5;">Anomalies</th>' +
-                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 1 DMP</th>' +
+                '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 1 Paper</th>' +
                 '<th style="padding:8px 12px;text-align:right;color:#42a5f5;">Bot 2 V6</th></tr></thead><tbody>';
         html += _row("Max SL streak", b1.max_loss_streak, b2.max_loss_streak);
         html += _row("Slippage entry avg", b1.slip_entry_avg, b2.slip_entry_avg);
@@ -7860,7 +9456,7 @@
         // FIX 29/04 soir : init aussi compare bots (meme section admin)
         initCompareBots();
 
-        ["1", "2", "3"].forEach(function (botId) {
+        ["1", "2", "3", "4"].forEach(function (botId) {
             ["start", "stop", "restart"].forEach(function (action) {
                 var btn = $("btn-svc-" + botId + "-" + action);
                 if (btn && !btn._bound) {
@@ -7881,24 +9477,33 @@
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 if (!d || !d.services) return;
-                ["1", "2", "3"].forEach(function (botId) {
+                ["1", "2", "3", "4"].forEach(function (botId) {
                     var svc = d.services[botId];
                     var el = $("svc-state-" + botId);
                     if (!el || !svc) return;
                     var state = svc.state;
                     // FIX 30/04 (Jackson) : "RUNNING" pas parlant en francais → "ACTIF"
+                    // 24/05 PM : ajout "DISABLED" (service paper_v2 RUNNING mais ENV bot off)
                     if (state === "RUNNING") {
                         el.className = "badge badge-green";
                         el.textContent = "ACTIF";
+                        el.title = svc.service_name + " RUNNING - bot ENABLED (" + (svc.env_var || "") + "=" + (svc.env_value || "") + ")";
                     } else if (state === "PAUSE") {
                         el.className = "badge badge-yellow";
                         el.textContent = "EN PAUSE";
+                        el.title = "STOP.flag kill switch global actif";
+                    } else if (state === "DISABLED") {
+                        el.className = "badge badge-gray";
+                        el.textContent = "DESACTIVE";
+                        el.title = svc.service_name + " RUNNING mais ENV bot off (" + (svc.env_var || "?") + "=" + (svc.env_value || "0") + ") - retirer le flag puis Restart pour activer";
                     } else if (state === "STOPPED") {
                         el.className = "badge badge-red";
                         el.textContent = "ARRETE";
+                        el.title = svc.service_name + " STOPPED (le service Windows ne tourne pas)";
                     } else {
                         el.className = "badge badge-gray";
                         el.textContent = "INCONNU";
+                        el.title = "Etat indetermine : " + (svc.status || "?");
                     }
                 });
             })
