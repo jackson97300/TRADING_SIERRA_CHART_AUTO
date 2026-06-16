@@ -1470,6 +1470,10 @@ LOG_CODES = {
     "BOTMR_TRADABLE_HYPOTHETICAL": (LogLevel.INFO,     "decisions", "BotMR TRADABLE_HYPO : {sym} {direction} session={session_phase} (NQ dry-eval)"),
     "BOTMR_ORDER_SENT":            (LogLevel.INFO,     "execution", "BotMR ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
     "BOTMR_ORDER_FAIL":            (LogLevel.CRITIQUE, "execution", "BotMR ordre fail : {sym} {direction} err={err_msg}"),
+    # 🆕 16/06/2026 IntermarketGate (NQ activation live avec confirmation ES leader)
+    "BOTMR_GATE_INTERMARKET_BLOCK": (LogLevel.INFO,     "decisions", "BotMR intermarket block : {sym} {direction} reason={reason}"),
+    "BOTMR_INTERMARKET_CONFIRM":    (LogLevel.INFO,     "decisions", "BotMR intermarket confirm : {sym} {direction} leader={reason}"),
+    "BOTMR_INTERMARKET_LEADER_MISSING": (LogLevel.ALERTE, "decisions", "BotMR intermarket leader bar missing : {sym} leader={leader_sym}"),
 }
 
 

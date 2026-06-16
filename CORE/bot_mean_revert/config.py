@@ -134,7 +134,24 @@ class BotMRConfig:
     # ============================================================
     # DRY-EVALUATE NQ (audit empirique sans execution)
     # ============================================================
-    DRY_EVAL_NQ: bool = _env_bool("DRY_EVAL_NQ", True)
+    # 16/06/2026 : NQ trade LIVE avec IntermarketGate active (decision Jackson souveraine).
+    # Backtest 4j REJETE comme oracle (sample trop petit + ne capture pas le setup pro
+    # de Jackson observe en manuel meme journee). Paper = test live = pas de risque.
+    # Observation 14j sur Sim1 = vraie validation.
+    DRY_EVAL_NQ: bool = _env_bool("DRY_EVAL_NQ", False)
+
+    # ============================================================
+    # INTERMARKET GATE (ES leader pour NQ - Jackson 16/06/2026)
+    # ============================================================
+    # Methodologie : NQ LONG seulement si ES touche niveau structurel
+    # (VWAP_W principal) + bias bar coherent (vert pour LONG, rouge pour SHORT).
+    # Souveraine Jackson 16/06 : ACTIVE par defaut. Backtest 4j ne fait pas autorite
+    # sur ce setup intermarket. Paper live = test reel sans risque financier.
+    INTERMARKET_GATE_ENABLED: bool = _env_bool("INTERMARKET_GATE", True)
+    # Mapping trade_sym -> leader_sym (NQ utilise ES, MGC pas de leader)
+    INTERMARKET_LEADER_BY_SYM: dict = field(default_factory=lambda: {"NQ": "ES"})
+    # Proximity threshold % au niveau leader (0.10 = 0.1% de distance)
+    INTERMARKET_LEVEL_PROXIMITY_PCT: float = _env_float("INTERMARKET_PROXIMITY_PCT", 0.10)
 
     # ============================================================
     # HELPERS
@@ -204,5 +221,8 @@ class BotMRConfig:
             SIERRA_ENRICHED_DIR_TEMPLATE=os.environ.get(
                 "BOTMR_SIERRA_DIR", "DATA/live_enriched/sierra/{symbol}",
             ),
-            DRY_EVAL_NQ=_env_bool("DRY_EVAL_NQ", True),
+            DRY_EVAL_NQ=_env_bool("DRY_EVAL_NQ", False),
+            INTERMARKET_GATE_ENABLED=_env_bool("INTERMARKET_GATE", True),
+            INTERMARKET_LEADER_BY_SYM={"NQ": "ES"},
+            INTERMARKET_LEVEL_PROXIMITY_PCT=_env_float("INTERMARKET_PROXIMITY_PCT", 0.10),
         )

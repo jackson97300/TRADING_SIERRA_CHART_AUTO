@@ -103,6 +103,29 @@ class SierraDataSource:
         self.last_ts_seen = bar_ts
         return bar
 
+    def peek_last_bar(self) -> Optional[dict]:
+        """Snapshot read-only de la derniere bar SANS modifier last_ts_seen.
+
+        Usage : Bot MR IntermarketGate qui doit lire la bar du LEADER (ES) depuis
+        une autre instance SierraDataSource sans consumer son curseur dedup.
+        Sans cette methode, lire la bar ES via read_last_bar() avancerait
+        last_ts_seen et bloquerait les futures lectures legitimes du leader.
+
+        Returns:
+            La derniere bar (meme si deja vue), None si fichier absent/vide/invalide.
+
+        Side effects : AUCUN sur last_ts_seen (rollback systematique).
+        """
+        saved = self.last_ts_seen
+        # Force re-lecture en bypassant le dedup
+        self.last_ts_seen = None
+        try:
+            bar = self.read_last_bar()
+        finally:
+            # Restore l'etat precedent quel que soit le resultat
+            self.last_ts_seen = saved
+        return bar
+
     def is_fresh(self, bar: dict) -> tuple[bool, float]:
         """Verifie si la bar est fraiche (age <= DMP_BAR_MAX_AGE_SEC).
 

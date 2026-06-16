@@ -29,6 +29,7 @@ from CORE.bot1_v2.gates.daily_limits import DailyLimitsGate
 from CORE.bot1_v2.state.position_store import PositionStore
 from CORE.bot_mean_revert.config import BotMRConfig
 from CORE.bot_mean_revert.execution.order_router import OrderRouter
+from CORE.bot_mean_revert.gates.intermarket import IntermarketGate
 from CORE.bot_mean_revert.logger import bot_log, log_decision_jsonl
 from CORE.bot_mean_revert.signal_engine import SignalEngine, SignalResult
 from CORE.bot_mean_revert.state_bridge import BotMRStateBridge
@@ -71,12 +72,25 @@ class BotMR:
         # Per-symbol engines / data sources
         self.engines: dict[str, SignalEngine] = {}
         self.data_sources: dict[str, SierraDataSource] = {}
+        from CORE.bot1_v2.config import Bot1V2Config
+        ds_cfg = Bot1V2Config.from_env()
         for sym in self.symbols:
             self.engines[sym] = SignalEngine(symbol=sym, cfg=self.cfg)
             # Reuse SierraDataSource avec Bot1V2Config (compatible : meme DMP_BAR_MAX_AGE_SEC + dir).
-            from CORE.bot1_v2.config import Bot1V2Config
-            ds_cfg = Bot1V2Config.from_env()
             self.data_sources[sym] = SierraDataSource(symbol=sym, cfg=ds_cfg)
+
+        # Intermarket gate (Jackson 16/06) : NQ utilise ES leader.
+        # On s'assure que tous les leaders requis sont presents comme data sources
+        # (sinon on les ajoute en peek-only - pas dans self.symbols)
+        self.intermarket_gate = IntermarketGate(self.cfg)
+        if self.cfg.INTERMARKET_GATE_ENABLED:
+            for sym in self.symbols:
+                leader = self.cfg.INTERMARKET_LEADER_BY_SYM.get(sym)
+                if leader and leader not in self.data_sources:
+                    self.log.info(
+                        f"IntermarketGate : ajout data source leader '{leader}' (peek-only) pour '{sym}'"
+                    )
+                    self.data_sources[leader] = SierraDataSource(symbol=leader, cfg=ds_cfg)
 
         # Daily limits gate (reuse bot1_v2). Bot1V2Config attendu, mais on bridge
         # via un adapter minimal (seuls 3 champs lus : MAX_TRADES_PER_DAY +
@@ -160,6 +174,43 @@ class BotMR:
                 hypothetical=is_dry_eval,
             )
             return None
+
+        # 🆕 Intermarket gate (Jackson 16/06) : confirmation leader (ES pour NQ).
+        # Si pas de leader configure pour ce sym -> transparent.
+        leader_sym = self.intermarket_gate.leader_for(sym)
+        if leader_sym is not None:
+            leader_ds = self.data_sources.get(leader_sym)
+            leader_bar = leader_ds.peek_last_bar() if leader_ds is not None else None
+            if leader_bar is None:
+                bot_log.emit(
+                    "BOTMR_INTERMARKET_LEADER_MISSING",
+                    sym=sym,
+                    leader_sym=leader_sym,
+                )
+            inter_verdict = self.intermarket_gate.confirm(sym, signal_result.direction, leader_bar)
+            if not inter_verdict.allowed:
+                self.log.info(
+                    f"{sym} INTERMARKET BLOCK {signal_result.direction} : {inter_verdict.reason}"
+                )
+                bot_log.emit(
+                    "BOTMR_GATE_INTERMARKET_BLOCK",
+                    sym=sym,
+                    direction=signal_result.direction,
+                    reason=inter_verdict.reason,
+                )
+                log_decision_jsonl(
+                    bar_ts=bar_ts, symbol=sym, signal=signal_result,
+                    executed=False,
+                    order_error=f"INTERMARKET_BLOCK:{inter_verdict.reason}",
+                    session_phase=session_phase, hypothetical=is_dry_eval,
+                )
+                return None
+            bot_log.emit(
+                "BOTMR_INTERMARKET_CONFIRM",
+                sym=sym,
+                direction=signal_result.direction,
+                reason=inter_verdict.reason,
+            )
 
         # Daily limits (bloque uniquement les trades REELS)
         daily = self.daily_gate.check_allow_entry()
