@@ -41,6 +41,7 @@ from CORE.bot1_v2.gates.daily_limits import DailyLimitsGate
 from CORE.bot1_v2.gates.session import SessionGate
 from CORE.bot1_v2.logger import bot_log, log_decision_jsonl
 from CORE.bot1_v2.state.position_store import PositionStore
+from CORE.bot1_v2.state_bridge import StateBridge
 
 
 def _setup_logging(verbose: bool = False):
@@ -104,6 +105,12 @@ class Bot1V2:
             cfg=self.cfg, dry_run=dry_run, dtc_connector=dtc_connector,
         )
 
+        # State bridge dashboard (DATA/PAPER_TRADES/state.json).
+        # Sans bridge, le dashboard restait fige sur le dernier trade legacy
+        # mia_paper_trader (15/06 -$967). Maintenant Bot 1 v2 maintient le
+        # heartbeat updated_ts + open_by_symbol + day rotation.
+        self.state_bridge = StateBridge()
+
         self._running = False
         self._last_heartbeat_ts = 0.0
 
@@ -112,13 +119,18 @@ class Bot1V2:
         self._running = False
 
     def _rotate_day_if_needed(self):
-        """Rollover daily limits si nouveau jour."""
+        """Rollover daily limits + state.json dashboard si nouveau jour."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         old_date = self.daily_gate.state.date_str
         if old_date != today:
             self.log.info(f"Day rollover: {old_date} -> {today}")
             bot_log.emit("BOT1V2_DAY_ROLLOVER", old_date=old_date, new_date=today)
             self.daily_gate.reset_for_new_day(today)
+            # Bridge dashboard : reset closed_today + date (archive l'ancien)
+            try:
+                self.state_bridge.rotate_day(today.replace("-", ""))
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"state_bridge rotate_day fail: {e}")
 
     def _process_symbol(self, sym: str) -> Optional[ClusterDecision]:
         """Process une iteration pour un symbole.
@@ -300,6 +312,22 @@ class Bot1V2:
         })
         self.clusters[sym].register_trade(decision.signal_id)
         self.store.save()
+        # Bridge dashboard : ajoute open_by_symbol pour visibility instantanee
+        try:
+            self.state_bridge.open_position(
+                sym,
+                direction=decision.direction,
+                entry_price=order_result.fill_price,
+                sl_price=decision.sl_price,
+                tp_price=decision.tp_price,
+                sl_ticks=decision.sl_ticks,
+                tp_ticks=decision.tp_ticks,
+                signal_id=decision.signal_id,
+                sl_wall=decision.sl_wall,
+                n_micros=decision.n_micros,
+            )
+        except Exception as e:  # noqa: BLE001
+            self.log.warning(f"state_bridge open_position fail: {e}")
         return decision
 
     def _heartbeat(self):
@@ -319,6 +347,11 @@ class Bot1V2:
                 n_trades_today=n_trades,
                 pnl_today=pnl,
             )
+            # Bridge dashboard : update updated_ts pour "Trader UP" visible
+            try:
+                self.state_bridge.heartbeat()
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"state_bridge heartbeat fail: {e}")
             self._last_heartbeat_ts = now
 
     def run(self):
