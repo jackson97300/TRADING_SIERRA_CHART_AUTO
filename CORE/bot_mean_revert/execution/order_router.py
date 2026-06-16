@@ -104,40 +104,51 @@ class OrderRouter(Bot1V2OrderRouter):
                 tp_ticks=signal.tp_ticks,
                 tick_size=tick,
             )
-            if isinstance(result, tuple) and len(result) >= 4:
-                parent_real, tp_real, sl_real, fill_price = result[:4]
+            # Fix 16/06 bug #1 : legacy send_market_order retourne tuple len=3
+            # (parent_id, tp_cid, sl_cid). Mon premier patch testait len>=4 -> JAMAIS
+            # pris, branche `else success = bool(result)` toujours True avec tuple
+            # non vide -> position fantome systematique sur abort DTC.
+            # Fix : gerer tuple len>=3 + recuperer fill_price via get_last_fill_price().
+            # Si tp_cid="" ET sl_cid="" -> signal d'abort (l. 545 dtc_connector.py).
+            if isinstance(result, tuple) and len(result) >= 3:
+                parent_real = result[0]
+                tp_real = result[1] if len(result) > 1 else ""
+                sl_real = result[2] if len(result) > 2 else ""
                 if parent_real:
                     parent_cid = parent_real
                 if tp_real:
                     tp_cid = tp_real
                 if sl_real:
                     sl_cid = sl_real
-                # Fix bug position fantome 16/06 : DTC retourne parent_cid meme
-                # quand bracket abort (parent NOT FILLED in 2s) avec fill_price=0.
-                # Le bot appelait open_position alors qu'aucun ordre n'etait actif
-                # sur Sim1 -> position fantome persistante. Fix : success EXIGE
-                # fill_price > 0 (= confirmation parent fill effectif).
-                fill_price_raw = fill_price
+                # Recupere fill_price reel depuis _last_fill_prices du DTC connector
+                fill_price = 0.0
                 try:
-                    fill_price = float(fill_price) if fill_price else 0.0
+                    getter = getattr(self.dtc, "get_last_fill_price", None)
+                    if getter is not None and parent_cid:
+                        fill_price = float(getter(parent_cid) or 0.0)
                 except (TypeError, ValueError):
                     fill_price = 0.0
-                if fill_price <= 0 and parent_cid:
+                # Detection abort : tp_cid="" ET sl_cid="" (signal legacy abort, l.545)
+                abort_signal = (tp_real == "" and sl_real == "")
+                if abort_signal or fill_price <= 0:
                     return OrderResult(
                         success=False,
                         parent_cid=parent_cid,
                         tp_cid=tp_cid, sl_cid=sl_cid,
                         fill_price=0.0,
-                        error_msg=f"PARENT_NOT_FILLED_TIMEOUT (raw={fill_price_raw!r})",
+                        error_msg=f"PARENT_NOT_FILLED_TIMEOUT (abort={abort_signal}, fill={fill_price})",
                         dry_run=False,
                     )
-                success = bool(parent_cid) and fill_price > 0
+                success = True
             elif isinstance(result, dict):
                 success = bool(result.get("success", False))
-                fill_price = float(result.get("fill_price", signal.entry_price))
+                fill_price = float(result.get("fill_price", 0.0))
+                if fill_price <= 0:
+                    success = False
             else:
-                success = bool(result)
-                fill_price = signal.entry_price
+                # Cas degradede : on n'a pas pu confirmer un fill, fail-closed
+                success = False
+                fill_price = 0.0
             return OrderResult(
                 success=success,
                 parent_cid=parent_cid,

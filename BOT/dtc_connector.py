@@ -90,6 +90,18 @@ SL_LIMIT_TICK_SIZES = {
 }
 STOP_LIMIT = 4
 
+# 16/06 FIX bug timeout 2s (3 PARENT_FILL_TIMEOUT Bot MR ce matin malgre fill OK
+# arrive 1s apres abort, cf VPS logs execution_20260616 13:46/13:57/14:19).
+# Cause : 2s trop court empiriquement quand `_recv_loop` traite simultanement
+# heartbeats, market data, position updates pour 4 bots multiplexes sur 1 socket.
+# Spec DTC : pas de borne sup pour fill MARKET (depend liquidite/queue broker).
+# Latences observees Sim1 (cf orphan-prevention.md) : 218-326ms en cas normal,
+# mais bursts >2s observes sous charge. 10s = marge confortable sans bloquer
+# longtemps en cas de DTC down (la deconnexion est detectee independamment par
+# _keepalive + _recv_loop, donc on ne risque pas de freeze indefini si SC mort).
+# Configurable via env var pour deploy progressif si besoin.
+PARENT_FILL_TIMEOUT_SEC = float(os.environ.get("MIA_DTC_PARENT_FILL_TIMEOUT_SEC", "10.0"))
+
 
 @dataclass
 class OrderFill:
@@ -329,14 +341,18 @@ class DTCConnector:
             tp_cid = f"MIA_TP_{uuid.uuid4().hex[:8]}"
             sl_cid = f"MIA_SL_{uuid.uuid4().hex[:8]}"
 
-            # P0-6 : attendre que le parent soit Filled (status=7) avec timeout 2s
-            if not parent_event.wait(timeout=2.0):
-                logger.warning(f"[DTC] Parent {parent_id} NOT FILLED in 2s — abort bracket")
+            # P0-6 : attendre que le parent soit Filled (status=7).
+            # 16/06 FIX : timeout passe de 2s a PARENT_FILL_TIMEOUT_SEC (10s default).
+            # 3 PARENT_FILL_TIMEOUT Bot MR ce matin (Sim1 ES RTH liquide) avec fill OK
+            # arrive 1s apres l'abort -> 2s = trop court empirique. Cf module-level const.
+            _parent_timeout = PARENT_FILL_TIMEOUT_SEC
+            if not parent_event.wait(timeout=_parent_timeout):
+                logger.warning(f"[DTC] Parent {parent_id} NOT FILLED in {_parent_timeout}s — abort bracket")
                 # Fix audit logs V2 22/04 : emit PARENT_FILL_TIMEOUT (avant silencieux)
                 if _v2log:
                     try:
                         _v2log.emit("PARENT_FILL_TIMEOUT",
-                                    order_id=parent_id, timeout=2.0)
+                                    order_id=parent_id, timeout=_parent_timeout)
                     except Exception:
                         pass
                 self._parent_fill_events.pop(parent_id, None)
