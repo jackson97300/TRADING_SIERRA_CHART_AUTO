@@ -85,10 +85,44 @@ SL_LIMIT_OFFSET_TICKS = int(os.environ.get("MIA_DTC_SL_LIMIT_OFFSET_TICKS", "10"
 # Tick sizes par symbole (cf CORE/constants.py policy + bot3_config.py)
 SL_LIMIT_TICK_SIZES = {
     "NQM26-CME": 0.25, "MNQM26-CME": 0.25,
+    "NQU26-CME": 0.25, "MNQU26-CME": 0.25,  # 16/06 rollover ajout
     "ESM26-CME": 0.25, "MESM26-CME": 0.25,
+    "ESU26-CME": 0.25, "MESU26-CME": 0.25,  # 16/06 rollover ajout
     "MGCM26-CMECOMEX": 0.10, "GCM26-CMECOMEX": 0.10,
+    "MGCQ26-CMECOMEX": 0.10, "GCQ26-CMECOMEX": 0.10,  # MGC rollover Q26 (aout)
 }
 STOP_LIMIT = 4
+
+# 17/06 FIX CRITIQUE rollover M->U : 3 bots (Bot MR, Bot 1 v2, Bot BN V4)
+# envoient symbol RAW ("NQ" / "ES" / "MGC") au lieu du contract complet.
+# Sierra Chart rejette/route mal -> 8 PARENT_FILL_TIMEOUT observe 22:05-22:33 UTC
+# 16/06 + risque positions fantomes naked (sans bracket).
+# Source mapping aligne avec NEW_BOT_2_MIA_TRADER/src/main.py:_symbol_to_contract
+# (Bot 4 deja fixe 16/06 NQM->NQU). Source unique pour TOUS les bots.
+SYMBOL_TO_CONTRACT = {
+    "NQ": "NQU26-CME",          # E-mini NQ septembre 2026 (quarterly, rollover juin)
+    "ES": "ESU26-CME",          # E-mini ES septembre 2026 (quarterly, rollover juin)
+    "MGC": "MGCQ26-CMECOMEX",   # Gold micro aout 2026 (rollover mensuel, M juin -> Q aout)
+    # Si symbol contient deja un mois (M26/U26/Q26/etc), passthrough no-op
+}
+
+
+def _to_contract(symbol: str) -> str:
+    """Mappe un symbole brut ("NQ") vers son contract Sierra complet ("NQU26-CME").
+
+    Idempotent : si le symbole est deja un contract complet (contient un mois),
+    retourne tel quel. Inconnu = retourne brut (defense backward-compat).
+
+    Fix 17/06 : avant ce fix, dtc_connector envoyait "Symbol": "NQ" brut a Sierra
+    -> ordre fill apres timeout 10s = naked position. Ce fix garantit que TOUT
+    appel send_market_order map vers le contract Sierra correct au point d'entree
+    unique (point unique de verite, anti-duplication entre 3 bots).
+    """
+    s = symbol.strip().upper()
+    if s in SYMBOL_TO_CONTRACT:
+        return SYMBOL_TO_CONTRACT[s]
+    # Deja un contract complet (contient -CME ou -CMECOMEX) ou symbol non mappable
+    return symbol
 
 # 16/06 FIX bug timeout 2s (3 PARENT_FILL_TIMEOUT Bot MR ce matin malgre fill OK
 # arrive 1s apres abort, cf VPS logs execution_20260616 13:46/13:57/14:19).
@@ -311,6 +345,15 @@ class DTCConnector:
         """
         if not self.connected:
             return ("", "", "")
+
+        # FIX 17/06 ROLLOVER M->U : mapping symbol RAW -> contract complet.
+        # 3 bots (MR, 1v2, BN V4) envoient "NQ" au lieu de "NQU26-CME". Sierra
+        # accepte mais fill arrive APRES timeout 10s -> position fantome naked.
+        # Idempotent : si deja contract complet, no-op.
+        original_symbol = symbol
+        symbol = _to_contract(symbol)
+        if symbol != original_symbol:
+            logger.info(f"Symbol mapped: '{original_symbol}' -> '{symbol}' (rollover M->U)")
 
         parent_id = f"MIA_P_{uuid.uuid4().hex[:8]}"
         child_side = SELL if side == BUY else BUY
