@@ -1258,6 +1258,10 @@ LOG_CODES = {
 
     # SLTP M3 (1 code - exception only, SLTPEvent Pydantic capture reject_reason)
     "BOT4_SLTP_ADAPTER_ERROR":      (LogLevel.CRITIQUE, "events", "Bot4 SLTP adapter ERROR : sym={sym} dir={direction} err={err}"),
+    # BUG SILENCIEUX 17/06 (Jackson) : 15 decisions Risk ALLOW depuis hier soir mais 0 trade
+    # car SLTPEngine retournait valid=False sans aucun log. Cause = sl_wall introuvable OR
+    # sl_usd > budget OR R:R < min_rr. Ce code rend la cause visible pour diagnostiquer.
+    "BOT4_SLTP_VALID_FALSE":        (LogLevel.MAJEUR,   "events", "Bot4 SLTP reject silencieux : sym={sym} dir={direction} reason={reject_reason} score={score} conv={conviction}"),
 
     # Execution M5 (14 codes - IO transitions DTC)
     "BOT4_EXEC_BRACKET_SENT":       (LogLevel.INFO,     "execution", "Bot4 exec bracket sent : sym={sym} side={side} qty={qty} parent={parent_id} tp_cid={tp_cid} sl_cid={sl_cid} signal_ref={signal_ref_price}"),

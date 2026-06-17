@@ -552,6 +552,20 @@ class Bot4Main:
         if not sltp_decision.valid:
             summary["blocking_gate"] = "sltp_reject"
             summary["blocking_reason"] = sltp_decision.reject_reason
+            # FIX 17/06 BUG SILENCIEUX : Bot 4 a 15 decisions ACHAT/VENTE
+            # passees Risk ALLOW depuis hier soir mais 0 trade execute, car
+            # SLTPEngine rejette ici sans aucun log -> impossible de diagnostiquer
+            # la cause (sl_wall introuvable / SL > budget / RR < min_rr).
+            # Ajout emit_safe MAJEUR pour rendre la cause visible.
+            try:
+                emit_safe(self._log, "BOT4_SLTP_VALID_FALSE",
+                          sym=symbol,
+                          direction=decide_result.direction,
+                          reject_reason=sltp_decision.reject_reason or "unknown",
+                          score=decide_result.score_total,
+                          conviction=decide_result.conviction)
+            except Exception:
+                pass
             return summary
 
         entry_price = float(read_result.bar.get("close", 0.0))

@@ -103,16 +103,16 @@ class BotMRConfig:
     # ============================================================
     # SESSIONS (par-symbol asymetrique)
     # ============================================================
-    # ES : US only (sweep best)
+    # 17/06 Jackson : TOUTES sessions pour commencer (Asia + London + US)
+    # Override env BOTMR_TRADABLE_SESSIONS_ES / NQ si besoin restriction future
     TRADABLE_SESSIONS_ES: tuple = field(
-        default_factory=lambda: _env_tuple("TRADABLE_SESSIONS_ES", ("US",))
+        default_factory=lambda: _env_tuple("TRADABLE_SESSIONS_ES", ("ASIA", "LONDON", "US"))
     )
-    # NQ : Asia only en dry-eval (Jackson 16/06 audit empirique)
     TRADABLE_SESSIONS_NQ: tuple = field(
-        default_factory=lambda: _env_tuple("TRADABLE_SESSIONS_NQ", ("ASIA",))
+        default_factory=lambda: _env_tuple("TRADABLE_SESSIONS_NQ", ("ASIA", "LONDON", "US"))
     )
-    # Skip pre-open US 11:30-13:30 UTC (bruit)
-    SKIP_PREOPEN_US: bool = _env_bool("SKIP_PREOPEN_US", True)
+    # Skip pre-open US 11:30-13:30 UTC : DESACTIVE 17/06 (toutes sessions ouvertes)
+    SKIP_PREOPEN_US: bool = _env_bool("SKIP_PREOPEN_US", False)
 
     # ============================================================
     # DAILY LIMITS Mark Douglas

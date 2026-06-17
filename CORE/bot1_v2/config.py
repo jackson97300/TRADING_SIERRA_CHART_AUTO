@@ -158,7 +158,8 @@ class Bot1V2Config:
     # ============================================================
     # SESSIONS & EXEC
     # ============================================================
-    TRADABLE_SESSIONS: tuple = field(default_factory=lambda: ("US", "us_cash"))
+    # 17/06 Jackson : TOUTES sessions pour commencer (Asia + London + US + us_cash)
+    TRADABLE_SESSIONS: tuple = field(default_factory=lambda: ("US", "us_cash", "ASIA", "LONDON"))
     EOD_LOCKOUT_MINUTES: int = _env_int("EOD_LOCKOUT_MINUTES", 10)
     NEWS_LOCKOUT_BEFORE_MIN: int = _env_int("NEWS_LOCKOUT_BEFORE_MIN", 5)
     NEWS_LOCKOUT_AFTER_MIN: int = _env_int("NEWS_LOCKOUT_AFTER_MIN", 5)

@@ -97,10 +97,10 @@ class BotBNV4Config:
     MIN_RISK_TICKS: int = field(default_factory=lambda: _env_int("MIN_RISK_TICKS", 4))
 
     # ============================================================
-    # SESSIONS (Phase C-D strict + shadow log Jackson 16/06)
+    # SESSIONS (17/06 Jackson : toutes sessions pour commencer)
     # ============================================================
-    TRADABLE_SESSIONS_NQ: tuple = field(default_factory=lambda: ("US",))
-    TRADABLE_SESSIONS_ES: tuple = field(default_factory=lambda: ("US",))
+    TRADABLE_SESSIONS_NQ: tuple = field(default_factory=lambda: ("ASIA", "LONDON", "US"))
+    TRADABLE_SESSIONS_ES: tuple = field(default_factory=lambda: ("ASIA", "LONDON", "US"))
     # Shadow log : evalue A/B grades + London en hypothetical (audit empirique)
     SHADOW_LOG_GRADES_AB: bool = field(default_factory=lambda: _env_bool("SHADOW_LOG_GRADES_AB", True))
     SHADOW_LOG_LONDON: bool = field(default_factory=lambda: _env_bool("SHADOW_LOG_LONDON", True))
