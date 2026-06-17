@@ -85,7 +85,7 @@ class SessionGate:
                     )
             return SessionVerdict(allowed=True, session_phase="US_RTH")
 
-        # Hors US : skip
+        # Hors US : determiner phase
         phase = "?"
         if session_id == "ASIA":
             phase = "ASIA"
@@ -93,6 +93,12 @@ class SessionGate:
             phase = "LONDON"
         elif session_id == "US_AFTER":
             phase = "POST_RTH"
+        # FIX 17/06 Jackson : check si phase est dans TRADABLE_SESSIONS configure.
+        # Avant ce fix : SessionGate HARDCODE "US uniquement" + ignore cfg.TRADABLE_SESSIONS
+        # -> ASIA/LONDON toujours rejetes meme si configures. Bug silencieux qui empechait
+        # de tester en hors-RTH (audit empirique 17/06 matin Londres : 0 trade).
+        if phase in self.cfg.TRADABLE_SESSIONS:
+            return SessionVerdict(allowed=True, session_phase=phase)
         return SessionVerdict(
             allowed=False,
             skip_reason=f"SESSION_NOT_TRADABLE:{phase}",

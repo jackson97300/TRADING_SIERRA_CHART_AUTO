@@ -210,9 +210,13 @@ class BotMRConfig:
             REGIME_FILTER_MODE_NQ=os.environ.get("BOTMR_REGIME_FILTER_MODE_NQ", "contrarian_nq"),
             VIX_MIN_FOR_SHORT=_env_float("VIX_MIN_FOR_SHORT", 20.0),
             NQ_TREND_DAY_MAX=_env_float("NQ_TREND_DAY_MAX", 0.65),
-            TRADABLE_SESSIONS_ES=_env_tuple("TRADABLE_SESSIONS_ES", ("US",)),
-            TRADABLE_SESSIONS_NQ=_env_tuple("TRADABLE_SESSIONS_NQ", ("ASIA",)),
-            SKIP_PREOPEN_US=_env_bool("SKIP_PREOPEN_US", True),
+            # 17/06 Jackson : TOUTES sessions ouvertes (aligne avec defaults field).
+            # Bug detecte : from_env() avait HARDCODE old defaults ("US",)/("ASIA",)
+            # alors que les field default_factory etaient deja modifies. Le bot
+            # charge BotMRConfig.from_env() qui ecrasait silencieusement les nouveaux defaults.
+            TRADABLE_SESSIONS_ES=_env_tuple("TRADABLE_SESSIONS_ES", ("ASIA", "LONDON", "US")),
+            TRADABLE_SESSIONS_NQ=_env_tuple("TRADABLE_SESSIONS_NQ", ("ASIA", "LONDON", "US")),
+            SKIP_PREOPEN_US=_env_bool("SKIP_PREOPEN_US", False),
             MAX_TRADES_PER_DAY=_env_int("MAX_TRADES_PER_DAY", 5),
             DAILY_STOP_LOSS_USD=_env_float("DAILY_STOP_LOSS_USD", -200.0),
             DAILY_STOP_WIN_USD=_env_float("DAILY_STOP_WIN_USD", 150.0),
