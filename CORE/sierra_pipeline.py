@@ -1257,6 +1257,49 @@ class SierraPipelineOrchestrator:
                 except Exception:  # noqa: BLE001
                     pass
 
+        # ─── INCIDENT #74 (18/06/2026) - Gamma veto (SSoT CORE module) ───
+        # Root cause -$967 Bot 1 v2 : gamma_block_long/short ABSENTS du bar
+        # enriched -> veto silencieux dans dashboard_mirror.py:339.
+        # Fix : derive gamma_block_long/short directement dans le pipeline live.
+        # SSoT : CORE/gamma_veto_engine.py (meme module utilise par dashboard).
+        try:
+            from CORE.gamma_veto_engine import compute_gamma_verdict
+            verdict = compute_gamma_verdict(enriched)
+            enriched["gamma_block_long"] = verdict.block_long
+            enriched["gamma_block_short"] = verdict.block_short
+            enriched["gamma_threshold_ticks"] = verdict.threshold_ticks
+            # reasons : tuple -> string "|" join (compat audit JSONL grep)
+            enriched["gamma_block_reasons_long"] = "|".join(verdict.reasons_long)
+            enriched["gamma_block_reasons_short"] = "|".join(verdict.reasons_short)
+            if self._log_event is not None and (verdict.block_long or verdict.block_short):
+                try:
+                    if verdict.block_long:
+                        self._log_event(
+                            "ENRICHER_GAMMA_BLOCK_LONG",
+                            sym=self.symbol,
+                            reasons=",".join(verdict.reasons_long),
+                            threshold=verdict.threshold_ticks,
+                        )
+                    if verdict.block_short:
+                        self._log_event(
+                            "ENRICHER_GAMMA_BLOCK_SHORT",
+                            sym=self.symbol,
+                            reasons=",".join(verdict.reasons_short),
+                            threshold=verdict.threshold_ticks,
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as _e:  # noqa: BLE001
+            # Defense : pas de crash sur gamma veto (regression possible si module casse)
+            if self._log_event is not None:
+                try:
+                    self._log_event(
+                        "ENRICHER_GAMMA_VETO_FAIL",
+                        sym=self.symbol, err=str(_e)[:200],
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+
         return enriched
 
     def set_partner_bar(self, partner_bar: Optional[dict]) -> None:

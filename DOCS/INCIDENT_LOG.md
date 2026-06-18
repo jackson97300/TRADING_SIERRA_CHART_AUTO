@@ -31,6 +31,16 @@
 
 ---
 
+### 2026-06-18 (74) - [VALIDATION_MISS] - gamma_block_long/short ABSENTS bar enriched live + bug B silencieux convention dist_mq_put signed (root cause -$967 Bot 1 v2)
+
+**Contexte** : Bot 1 v2 (Sim2 "Bot 2 Mirror v2") consume `bar.get("gamma_block_long/short")` dans `dashboard_mirror.py:339-358` pour veto MenthorQ. Root cause documentee dans le code : "trade -$967 : gamma_block_short=True dans snapshot, ignored". Verification empirique 18/06 : ces fields **ABSENTS** du bar enriched (613 cols verifies, 0 match).
+**Ce qui a mal tourne** : (1) pipeline enricher live (`run_sierra_enricher.py` -> `sierra_pipeline.py`) ne calculait JAMAIS `gamma_block_long/short`. (2) Lors du refactor, decouverte d'un BUG B silencieux dans la formule existante `DASHBOARD/api/builders.py:1097` : `0 < put_dist <= threshold` ne fire JAMAIS car convention `dist_mq_put < 0` (wall en-dessous). Le put veto etait DOUBLEMENT casse - absent du pipeline + formule buggee meme en dashboard.
+**Cause racine** : feature manquante non detectee depuis l'origine (pas de test integration verifiant presence des fields requis par downstream consumers). Bug B silencieux car la branche put veto n'avait jamais ete testee end-to-end avec convention signed reelle.
+**Lecon** : avant tout deploy d'un consumer qui lit `bar.get("X")` avec fallback silencieux (`_as_bool` default False), VERIFIER empirique que `X` est present dans 100% des bars enriched. Sinon = veto silencieux GARANTI.
+**Trigger prevention** : pour toute nouvelle feature consommee par un bot via `bar.get("X")`, ajouter test integration `assert X in enriched_bar` pour 1 bar live recent. Aussi : eviter `_as_bool` avec default False (preferer `if X not in bar: raise KeyError` ou logging warning).
+**Fix applique** : Module SSoT `CORE/gamma_veto_engine.py` (extraction de la formule + fix Bug B convention signed). Integration `sierra_pipeline.py` apres autres enrichments. `DASHBOARD/api/builders.py:_gamma_gate_check` delegue au module CORE (parite bit-for-bit dashboard/bot/pipeline, 17/17 tests dashboard non-regression PASS). Tests pyramide 34/34 PASS dont L4 regression scenario -$967 : `bar_at_exit.bool_gex_flip_zone=1` + `dist_mq_put=-1733` -> `verdict.block_short=True` reason `GEX_FLIP_ZONE` = **PROUVE empirique le veto AURAIT BLOQUE le trade**. Verif live post-deploy : `gamma_block_long/short=True`, reason `GEX_FLIP_ZONE`, threshold `63.2t` emerge dans nouveaux bars enriched (bar 19:38 UTC).
+**Reviewed** : code-reviewer (OPTION C SSoT, GO-AVEC-RESERVES R1/R2 appliquees) + Claude empirique (DATA/_AUDIT/trades_20260615.jsonl) 18/06.
+
 ### 2026-06-18 (73) - [VALIDATION_MISS] - cvd_day/delta_day/dirs : audit empirique corrige par Jackson mentor mode + fix Python override etendu
 
 **Contexte** : Verification fiabilite cvd_day_dir / delta_day_dir signal directionnel. Audit initial Claude proposait Option D (retirer Python override cvd_session pour laisser passer C++ RTH-filter) = FAUSSE solution. Jackson mentor mode rectifie : (1) Bug 5 mal cadre - delta_bar == cvd_bar_delta = MEME metrique source, divergence vient de baselines reset cassees ; (2) Test #3 contradiction - cvd_day raw NE RESET PAS 18:00 ET CME, contrairement a ce que je disais ; (3) Option D casse bot3 (C++ cvd_session = INVALID hors RTH).

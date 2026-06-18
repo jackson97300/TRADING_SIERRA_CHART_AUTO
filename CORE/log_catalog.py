@@ -1380,6 +1380,15 @@ LOG_CODES = {
     "SIERRA_PORT_MARKET_PROFILE_V5_FAIL":    (LogLevel.MAJEUR, "events", "Sierra port market_profile_v5 FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_MARKET_PROFILE_ADV_OK":     (LogLevel.INFO,   "events", "Sierra port market_profile_advanced OK : sym={sym}"),
     "SIERRA_PORT_MARKET_PROFILE_ADV_FAIL":   (LogLevel.MAJEUR, "events", "Sierra port market_profile_advanced FAIL : sym={sym} err={err}"),
+
+    # INCIDENT #74 (18/06/2026) Gamma veto enricher (SSoT CORE/gamma_veto_engine).
+    # Fix root cause -$967 Bot 1 v2 + Bug B convention dist_mq_put signed.
+    "ENRICHER_GAMMA_BLOCK_LONG": (LogLevel.INFO, "events",
+        "{sym} gamma block LONG : reasons={reasons} threshold={threshold}t"),
+    "ENRICHER_GAMMA_BLOCK_SHORT": (LogLevel.INFO, "events",
+        "{sym} gamma block SHORT : reasons={reasons} threshold={threshold}t"),
+    "ENRICHER_GAMMA_VETO_FAIL": (LogLevel.MAJEUR, "events",
+        "Enricher gamma veto FAIL : sym={sym} err={err}"),
     # NB downgrade ALERTE -> INFO post-review (MH2 11/06) : tant que multi-symbol
     # caller pas code, partner_bar=None par defaut -> pas d'emit. Mais si caller
     # appelle set_partner_bar avec un bar tres vieux par accident, l'INFO suffit

@@ -1042,18 +1042,9 @@ def _gamma_gate_check(
 ) -> Tuple[bool, bool, List[str]]:
     """Check gamma gate : renvoie (block_long, block_short, warnings).
 
-    Logique :
-      - block_long  = True si le prix est proche d'un call wall MQ
-        ou dans une zone GEX flip. Signal : ne pas recommander LONG.
-      - block_short = True idem pour put support.
-      - warnings = liste de strings explicatifs a afficher au user.
-
-    Gestion de la sentinelle 0.0 ambigue (DMP retourne 0.0 quand mur
-    absent OU quand prix pile sur le mur) :
-      - On considere `0 < dist < threshold` comme "mur proche mais pas dessus"
-      - On considere `dist == 0` avec un prix absolu pour le mur
-        (`call_wall_price` / `put_wall_price`) non null comme "pile dessus"
-        → block = True (cas le plus critique, ne JAMAIS passer a cote).
+    REFACTOR INCIDENT #74 (18/06/2026) : delegation vers SSoT CORE/gamma_veto_engine.
+    Source unique de verite pour dashboard + sierra_pipeline + Bot 1 v2.
+    Inclut fix Bug B (convention dist_mq_put < 0 signed).
 
     Args:
         bar     : barre JSONL courante (pour lire ATR)
@@ -1063,53 +1054,8 @@ def _gamma_gate_check(
     Returns:
         (block_long, block_short, warnings)
     """
-    if not options:
-        return False, False, []
-
-    # Seuil adaptatif proportionnel a l'ATR, borne [10, 80]
-    atr = get_field(bar, "atr", _GAMMA_DEFAULT_ATR) or _GAMMA_DEFAULT_ATR
-    threshold = max(
-        _GAMMA_THRESHOLD_MIN_TICKS,
-        min(_GAMMA_THRESHOLD_MAX_TICKS, atr * _GAMMA_THRESHOLD_ATR_RATIO),
-    )
-
-    block_long = False
-    block_short = False
-    warnings: List[str] = []
-
-    call_dist = options.get("dist_mq_call", 0.0) or 0.0
-    put_dist = options.get("dist_mq_put", 0.0) or 0.0
-    call_wall_price = options.get("call_wall_price")
-    put_wall_price = options.get("put_wall_price")
-    gex_flip = options.get("gex_flip_zone", 0)
-
-    # Call wall : proche (dist > 0) OU pile dessus (dist == 0 + prix absolu present)
-    call_near = 0 < call_dist <= threshold
-    call_on = call_dist == 0.0 and call_wall_price is not None
-    if call_near or call_on:
-        block_long = True
-        if call_on:
-            warnings.append("GAMMA: prix PILE sur CALL WALL MQ")
-        else:
-            warnings.append(f"GAMMA: CALL WALL a {call_dist:.0f}t (seuil {threshold:.0f}t)")
-
-    # Put support : idem symetrique
-    put_near = 0 < put_dist <= threshold
-    put_on = put_dist == 0.0 and put_wall_price is not None
-    if put_near or put_on:
-        block_short = True
-        if put_on:
-            warnings.append("GAMMA: prix PILE sur PUT SUPPORT MQ")
-        else:
-            warnings.append(f"GAMMA: PUT SUPPORT a {put_dist:.0f}t (seuil {threshold:.0f}t)")
-
-    # GEX flip zone = regime dealer instable, bloque les deux cotes
-    if gex_flip:
-        block_long = True
-        block_short = True
-        warnings.append("GAMMA: GEX FLIP ZONE — regime dealer instable")
-
-    return block_long, block_short, warnings
+    from CORE.gamma_veto_engine import gamma_gate_check_legacy
+    return gamma_gate_check_legacy(bar, options)
 
 
 # ═══════════════════════════════════════════════════════════════
