@@ -117,17 +117,37 @@ def test_session_id_winter_dst_boundary():
 def test_override_first_bar_creates_state():
     state = FakeState()
     ts = _ts_ms_et(2026, 6, 15, 19, 0)  # 19:00 ET = session 16/06
-    payload = {"ts": ts, "delta_bar": 100, "cvd_day": 99999, "cvd_day_dir": 1}
+    payload = {"ts": ts, "delta_bar": 100, "cvd_day": 99999, "cvd_day_dir": 1,
+               "delta_day": 88888, "delta_day_dir": -1}
 
     out = override_cvd_day_session(payload, state, "NQ")
 
     assert out["cvd_day"] == 100.0
     assert out["cvd_day_dir"] == 1
+    # Fix #73 (18/06) : delta_day + delta_day_dir aussi override
+    assert out["delta_day"] == 100.0
+    assert out["delta_day_dir"] == 1
     # State stocke
     s = state.engine_states["cvd_session_override_NQ"]
     assert s.session_id == "2026-06-16"
     assert s.cvd_cumul == 100.0
     assert s.n_bars_session == 1
+
+
+def test_override_delta_day_equals_cvd_day_fix_73():
+    """Fix #73 : apres override, delta_day == cvd_day TOUJOURS (meme metrique source)."""
+    state = FakeState()
+    ts1 = _ts_ms_et(2026, 6, 15, 19, 0)
+    ts2 = _ts_ms_et(2026, 6, 15, 19, 1)
+
+    override_cvd_day_session({"ts": ts1, "delta_bar": 50}, state, "NQ")
+    p = override_cvd_day_session({"ts": ts2, "delta_bar": -120}, state, "NQ")
+
+    # Equivalence parfaite (vrai fix Jackson mentor mode 18/06)
+    assert p["cvd_day"] == -70.0
+    assert p["delta_day"] == p["cvd_day"]
+    assert p["cvd_day_dir"] == p["delta_day_dir"]
+    assert p["cvd_day_dir"] == -1
 
 
 def test_override_cumul_same_session():
@@ -241,3 +261,48 @@ def test_override_distribution_realiste():
     assert signs[-1] / total > 0.01, f"Pas assez de -1 : {signs}"
     # Pas TOUS positifs (= bug reproduit)
     assert signs[1] != total, "Bug reproduit : 100% +1"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# REGRESSION 18/06 : clobber cvd_day par phase_b + reset cross-session
+# (INCIDENT_LOG #66 — add_cvd_momentum_streaming ecrasait cvd_day et ne resettait
+#  jamais quand session_date_trading absent du payload en live Sierra)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _ts_et(y, mo, d, h, mi):
+    try:
+        from zoneinfo import ZoneInfo
+        ny = ZoneInfo("America/New_York")
+    except ImportError:  # pragma: no cover
+        ny = None
+    dt = datetime(y, mo, d, h, mi, tzinfo=ny) if ny else datetime(y, mo, d, h, mi, tzinfo=timezone.utc)
+    return int(dt.astimezone(timezone.utc).timestamp() * 1000)
+
+
+def test_cvd_momentum_resets_via_ts_when_session_date_absent():
+    """Fix #66 : sans session_date_trading, reset doit fire a 18:00 ET via ts."""
+    from CORE.phase_b_rolling_inputs_streaming import (
+        add_cvd_momentum_streaming, CVDMomentumState,
+    )
+    st = CVDMomentumState()
+    seq = [
+        (_ts_et(2026, 6, 17, 16, 58), 100, 100),
+        (_ts_et(2026, 6, 17, 16, 59), 50, 150),
+        (_ts_et(2026, 6, 17, 18, 0), -30, -30),   # reset CME 18:00 ET
+        (_ts_et(2026, 6, 17, 18, 1), -20, -50),
+    ]
+    for ts, delta, expected in seq:
+        out = add_cvd_momentum_streaming({"delta_bar": delta, "ts": ts}, st)
+        assert out["cvd_day"] == expected, f"ts={ts} cvd_day={out['cvd_day']} != {expected}"
+
+
+def test_cvd_momentum_uses_session_date_when_present():
+    """Parite : si session_date_trading present, on l'utilise (pas le fallback ts)."""
+    from CORE.phase_b_rolling_inputs_streaming import (
+        add_cvd_momentum_streaming, CVDMomentumState,
+    )
+    st = CVDMomentumState()
+    o1 = add_cvd_momentum_streaming({"delta_bar": 100, "session_date_trading": "D1"}, st)
+    o2 = add_cvd_momentum_streaming({"delta_bar": 50, "session_date_trading": "D1"}, st)
+    o3 = add_cvd_momentum_streaming({"delta_bar": -30, "session_date_trading": "D2"}, st)
+    assert (o1["cvd_day"], o2["cvd_day"], o3["cvd_day"]) == (100, 150, -30)

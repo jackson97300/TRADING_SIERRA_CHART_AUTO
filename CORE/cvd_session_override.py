@@ -1,4 +1,4 @@
-"""cvd_session_override.py - Override Python cvd_day cassé en mode sierra.
+"""cvd_session_override.py - Override Python cvd_day + delta_day casses en mode sierra.
 
 # Contexte
 
@@ -9,12 +9,19 @@ session. Resultat empirique 4 jours NQ : `cvd_day_dir` = CONSTANT +1 (100% bars)
 -> bias_calculator.py:380 ajoute systematiquement PTS_CVD=0.25 a score_bull
 -> bias bull NQ permanent + flag delta_cvd_divergence pollue.
 
+INCIDENT_LOG #73 (18/06/2026) : Extension a `delta_day` (sg9) + `delta_day_dir`.
+Empirique 18/06 sample : delta_bar == cvd_bar_delta (99%) = MEME metrique source.
+sg9 (delta_day) et sg18 (cvd_day) divergent par baselines de reset cassees
+(sg18 jamais reset, sg9 reset partiel ailleurs - convergent vers minuit ET).
+Solution : meme cumul session-ET-based propre depuis delta_bar pour les 4 fields.
+
 # Solution
 
 Recalcul cvd_day depuis `delta_bar` (= sg0 DELTA, par-bar, correct), cumule
 depuis ouverture session CME (18:00 ET = boundary continuous futures).
 
-Override `payload["cvd_day"]` et `payload["cvd_day_dir"]` en mode sierra.
+Override `payload["cvd_day"]`, `payload["cvd_day_dir"]`, `payload["delta_day"]`,
+`payload["delta_day_dir"]` en mode sierra.
 Consumers downstream (bias_calculator, regime_engine, scenario_generator,
 narrative_engine) voient automatiquement la version corrigee.
 
@@ -121,7 +128,8 @@ def _sign(x: float) -> int:
 # ════════════════════════════════════════════════════════════════════════════
 
 def override_cvd_day_session(payload: dict, state, symbol: str) -> dict:
-    """Override `cvd_day` et `cvd_day_dir` avec cumul session-ET-based propre.
+    """Override `cvd_day`, `cvd_day_dir`, `delta_day`, `delta_day_dir` avec cumul
+    session-ET-based propre.
 
     Args:
         payload : dict bar enriched (contient `ts`, `delta_bar`)
@@ -129,7 +137,8 @@ def override_cvd_day_session(payload: dict, state, symbol: str) -> dict:
         symbol  : "NQ" / "ES" / "MGC"
 
     Returns:
-        payload muté (cvd_day + cvd_day_dir overrides). Idempotent.
+        payload muté (cvd_day + cvd_day_dir + delta_day + delta_day_dir overrides).
+        Idempotent.
     """
     ts_ms = payload.get("ts")
     delta_bar = payload.get("delta_bar")
@@ -158,8 +167,14 @@ def override_cvd_day_session(payload: dict, state, symbol: str) -> dict:
         return payload  # delta_bar invalide, skip
     s.n_bars_session += 1
 
-    # Override fields casses (sg18 ALL bug)
+    # Override fields casses (sg18 ALL bug, sg9 reset partiel bug).
+    # Source unique : cumul session-ET-based propre depuis delta_bar.
+    # Empirique 18/06 : delta_bar == cvd_bar_delta = MEME metrique source.
+    # Fix #73 (18/06) : etendre override a delta_day + delta_day_dir.
+    sign = _sign(s.cvd_cumul)
     payload["cvd_day"] = s.cvd_cumul
-    payload["cvd_day_dir"] = _sign(s.cvd_cumul)
+    payload["cvd_day_dir"] = sign
+    payload["delta_day"] = s.cvd_cumul
+    payload["delta_day_dir"] = sign
 
     return payload

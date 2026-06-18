@@ -31,6 +31,16 @@
 
 ---
 
+### 2026-06-18 (73) - [VALIDATION_MISS] - cvd_day/delta_day/dirs : audit empirique corrige par Jackson mentor mode + fix Python override etendu
+
+**Contexte** : Verification fiabilite cvd_day_dir / delta_day_dir signal directionnel. Audit initial Claude proposait Option D (retirer Python override cvd_session pour laisser passer C++ RTH-filter) = FAUSSE solution. Jackson mentor mode rectifie : (1) Bug 5 mal cadre - delta_bar == cvd_bar_delta = MEME metrique source, divergence vient de baselines reset cassees ; (2) Test #3 contradiction - cvd_day raw NE RESET PAS 18:00 ET CME, contrairement a ce que je disais ; (3) Option D casse bot3 (C++ cvd_session = INVALID hors RTH).
+**Ce qui a mal tourne** : sg9 (delta_day) reset partiel ailleurs + sg18 (cvd_day) jamais reset = passthrough C++ buggue. Bias_calculator commentaire L388 FAUX ("delta_day_dir = INTRA-BAR" alors que c'est cumul). dataset_builder.py:415-416 inclut delta_day (volume absolu = viole data-quality.md) + cvd_day_dir (derive d'absolu) en FEATURES_DMP ML.
+**Cause racine** : 2 cumuls passthrough C++ avec baselines de reset cassees, mais 1 seule metrique source (delta_bar). Le Python override `cvd_session_override.py` corrigeait deja cvd_day + cvd_day_dir (fix #59) mais N'AVAIT PAS ete etendu a delta_day + delta_day_dir. **PIRE** : empirique post-deploy revele que `cvd_session_override.py` etait **DORMANT depuis le 15/06** car appele uniquement via `enricher_chain.py` alors que le pipeline ACTIF live = `BOT/run_sierra_enricher.py` → `CORE/sierra_pipeline.py` (qui ne passe PAS par enricher_chain). Donc le fix #59 n'agissait PAS sur les bars live depuis 3 jours. Fix #73 corrige ca via override INLINE dans sierra_pipeline.py:639+ (verifie empirique live 18:30 UTC : cvd_day==delta_day==cvd_session, override actif).
+**Lecon** : avant de proposer "retirer un override pour laisser passer la source C++", verifier que la source C++ EST valide pour les bars consommees (Test #1 disait deja "C++ cvd_session = NULL hors RTH" = contradiction interne audit). Tester reset empiriquement bar par bar AVANT tout fix d'architecture.
+**Trigger prevention** : pour toute correction feature C++ passthrough, (1) verifier baseline reset comportement empiriquement, (2) verifier que la source amont (sg N) est VALIDE pour tous consommateurs, (3) preferer extension override Python existant (cvd_session_override.py = pattern propre) plutot que refactor C++ ou retrait override.
+**Fix applique** : cvd_session_override.py etendu (delta_day + delta_day_dir = meme cumul que cvd_day) + bias_calculator:388 commentaire corrige + dataset_builder:415-416 move delta_day + cvd_day_dir vers PROHIBITED_FEATURES. Tests 18/18 PASS dont test_override_delta_day_equals_cvd_day_fix_73.
+**Reviewed** : Jackson mentor mode (corrections audit initial) + Claude empirique (test propre 1036 bars 18/06) 18/06.
+
 ### 2026-06-18 (72) - [VALIDATION_MISS] - Confluence radius en ticks fonctionnellement asymetrique ES/NQ (echelle prix 4x)
 
 **Contexte** : Phase 2 18/06, recalibrage confluence filter Bot MR. Defauts ES=100t, NQ=250t calibres sur "distances observees live".

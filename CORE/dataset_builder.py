@@ -412,8 +412,18 @@ FEATURES_DMP: List[str] = [
     "dist_prev_vwap_sd1u", "dist_vwap_d_sd1u",
     "dist_vwap_d_sd3u", "dist_vwap_d_sd3d",  # Schema 3.7.2
     # --- Delta / CVD / Volume ---
-    "delta_bar", "delta_bar_vol_norm", "delta_pct", "delta_day",
-    "cvd_bar_delta", "cvd_day_dir", "ask_bid_imbalance",
+    # Fix #73 (18/06) : delta_day et cvd_day_dir RETIRES (etaient ML features).
+    # Empirique 18/06 : delta_bar == cvd_bar_delta = MEME metrique source.
+    # delta_day (sg9) et cvd_day (sg18) sont cumuls C++ avec baselines reset
+    # cassees. Apres override Python (cvd_session_override.py), delta_day == cvd_day
+    # = volume absolu cumul session = VIOLE data-quality.md (fuite instrument +
+    # fuite volatility). cvd_day_dir = sign(volume cumul) = derive d'absolu.
+    # Reserve Q4 : aucun modele LightGBM actuellement en LIVE inference (cf
+    # CLAUDE.md Phase 1 collecte). Risque ACTUEL train/serve skew = NUL.
+    # Si datasets ML deja produits avec ces features : prochains rebuilds doivent
+    # les re-exclure (cf incident #73).
+    "delta_bar", "delta_bar_vol_norm", "delta_pct",
+    "cvd_bar_delta", "ask_bid_imbalance",
     "ask_pct", "bid_pct", "buy_sell_ratio",
     "rvol", "rvol_absorb_buy", "momentum_5b", "diag_imbalance",
     # --- Big Orders ---

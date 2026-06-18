@@ -637,7 +637,23 @@ class SierraPipelineOrchestrator:
         if delta_bar is not None:
             try:
                 self._cvd_session_running += float(delta_bar)
-                enriched["cvd_session"] = round(self._cvd_session_running, 2)
+                cvd_val = round(self._cvd_session_running, 2)
+                enriched["cvd_session"] = cvd_val
+                # Fix #73 (18/06) override INLINE : sierra_pipeline.py est le pipeline
+                # ACTIF live (BOT/run_sierra_enricher.py), pas enricher_chain.py.
+                # cvd_session_override.py module etait DORMANT depuis fix #59 (15/06).
+                # Override sg18 (cvd_day jamais reset) + sg9 (delta_day reset partiel).
+                # Source unique : delta_bar (= cvd_bar_delta, 99% equiv).
+                if abs(self._cvd_session_running) < 1e-9:
+                    cvd_sign = 0
+                elif self._cvd_session_running > 0:
+                    cvd_sign = 1
+                else:
+                    cvd_sign = -1
+                enriched["cvd_day"] = cvd_val
+                enriched["cvd_day_dir"] = cvd_sign
+                enriched["delta_day"] = cvd_val
+                enriched["delta_day_dir"] = cvd_sign
             except (TypeError, ValueError):
                 pass
 

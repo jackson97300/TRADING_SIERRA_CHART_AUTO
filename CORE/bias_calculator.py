@@ -385,13 +385,17 @@ def compute_bias(bar: Dict[str, Any]) -> BiasResult:
         result.reasons_bear.append("CVD: DISTRIBUTION")
 
     # 🆕 Plan A1 — Detection divergence delta vs cvd (signal de qualite degradee)
-    # delta_day_dir = orderflow INTRA-BAR (achats agressifs ce moment)
-    # cvd_day_dir   = orderflow CUMULATIF session (distribution/accumulation totale)
-    # Conflit (delta+1 vs cvd-1) = pattern classique de retournement en analyse
-    # orderflow : le marche tente d'absorber les flux entrants — signal a traiter
-    # comme degrade. Pas de modification du score ici (le delta est deja compte
-    # dans BLOC 2 et le cvd dans BLOC 5 — ils s'auto-attenuent), juste un flag
-    # observable par les consommateurs aval (gate, dashboard, audit).
+    # ⚠️ NOTE INCIDENT #73 (18/06/2026 mentor mode Jackson) :
+    #   Commentaire historique FAUX : delta_day_dir N'EST PAS intra-bar.
+    #   Empirique 18/06 : delta_bar == cvd_bar_delta (MEME metrique source).
+    #   delta_day (sg9) et cvd_day (sg18) sont 2 cumuls C++ passthrough avec
+    #   baselines de reset cassees (sg18 jamais reset, sg9 reset partiel ailleurs).
+    #   APRES override cvd_session_override.py (fix #73) :
+    #     delta_day == cvd_day == cumul session-ET-based depuis delta_bar
+    #     -> delta_day_dir == cvd_day_dir TOUJOURS
+    #     -> divergence IMPOSSIBLE, ce code est DORMANT.
+    #   Conserve pour future re-activation si sources distinctes restorees
+    #   (ex: delta_bar par-bar vs cvd cumul session). Pour l'instant : no-op.
     if delta_day_dir != 0 and cvd_dir != 0 and delta_day_dir != cvd_dir:
         result.delta_cvd_divergence = True
         result.reasons_neutral.append(
