@@ -63,6 +63,14 @@ class GammaVetoConfig:
       - min 10t / max 80t = bornes empiriques builders.py (validees code-reviewer 13/04)
       - ratio 0.5 * ATR = demi range typique d'une barre 1min
       - default_atr 100t = fallback si ATR absent (ES typique 100-150t)
+
+    DEFAULT enable_gex_flip = False (decouverte empirique 18/06) :
+      Distribution `bool_gex_flip_zone` sur 5j ES : 0% (10/06), 50%, 82%, 90%,
+      99.97%, 100% (18/06). Moyenne ~70%+ bars en flip = veto bloque tous les
+      trades meme gagnants (verif 6 trades Bot MR : 3 WIN + 3 LOSS tous bloques).
+      Pas de discrimination qualite. SOFT mode par defaut (just les walls).
+      Bot 1 v2 (mode strict recherche par autopsy) peut activer via env :
+        BOT1V2_GAMMA_GEX_FLIP_ENABLED=1
     """
     enabled: bool = True
     threshold_min_ticks: float = 10.0
@@ -71,7 +79,7 @@ class GammaVetoConfig:
     default_atr_ticks: float = 100.0
     enable_call_wall: bool = True
     enable_put_wall: bool = True
-    enable_gex_flip: bool = True
+    enable_gex_flip: bool = False  # SOFT par defaut (cf decouverte 18/06)
 
 
 # ════════════════════════════════════════════════════════════════════════════
