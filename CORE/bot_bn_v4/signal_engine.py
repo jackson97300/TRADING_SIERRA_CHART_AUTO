@@ -95,6 +95,105 @@ class SignalEngine:
     def n_bars(self) -> int:
         return len(self._buf)
 
+    def warmup_from_disk(self, target: Optional[int] = None) -> int:
+        """Pre-rempli le buffer rolling depuis les JSONL sierra_enriched existants.
+
+        FIX 17/06 (ULTRATHINK) : evite les 4h de WARMUP_x/240 a chaque restart.
+        Lecture seule des JSONL deja persistes par le pipeline DMP. Source unique
+        de verite. Pas de fichier de buffer dedie.
+
+        Args:
+            target: nombre de bars desirees (default = trend_long_lookback = 240).
+
+        Returns:
+            Nombre de bars chargees (peut etre 0 si dossier vide ou erreur).
+            Apres ce call, self.is_ready() devrait etre True si target atteint.
+
+        Robust :
+            - Dossier inexistant / fichiers illisibles → retourne 0, pas d'exception
+            - Bars corrompues → skip + warning, continue
+            - Idempotent : peut etre rappele sans danger
+        """
+        n_target = target if target is not None else self._params.trend_long_lookback
+        if n_target <= 0:
+            return 0
+        try:
+            from CORE.bot_bn_v4.bar_history_loader import load_recent_bars
+            bars = load_recent_bars(self.symbol, n_target)
+        except Exception as e:  # noqa: BLE001
+            # Fail-soft : pas de silent fallback (regle souveraine
+            # critical-tasks-review.md section D). Emit via log_fn pour
+            # que l'erreur arrive dans LOGS/events au lieu de logging.warning.
+            if self.log_fn is not None:
+                try:
+                    self.log_fn(
+                        "BOTBN_WARMUP_PRELOAD",
+                        sym=self.symbol, n_loaded=0, target=n_target,
+                        is_ready=False, err=str(e)[:200],
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            return 0
+        if not bars:
+            return 0
+        # Enrich + append chaque bar (meme pipeline que on_bar)
+        for raw_bar in bars:
+            enriched = enrich_sierra_bar_for_bn_v4(dict(raw_bar))
+            self._buf.append(enriched)
+        return len(bars)
+
+    def last_bar_ts(self) -> Optional[str]:
+        """Retourne le ts_event de la derniere bar dans le buffer (post-warmup).
+
+        Utile pour aligner SierraDataSource.last_ts_seen et eviter double-consommation.
+        """
+        if not self._buf:
+            return None
+        last = self._buf[-1]
+        return last.get("ts_event") or last.get("ts")
+
+    def last_bar_ts_ms(self) -> Optional[int]:
+        """Retourne le ts en millisecondes (int) de la derniere bar du buffer.
+
+        FIX 17/06 review I2 : privilegier `bar["ts"]` (int ms natif du JSONL)
+        sur conversion `ts_event` iso → reconversion. Reduit divergence avec
+        SierraDataSource.last_ts_seen (qui compare des int ms).
+
+        Returns:
+            int ms si dispo, None sinon.
+        """
+        if not self._buf:
+            return None
+        last = self._buf[-1]
+        ts = last.get("ts")
+        # Cas 1 : ts int ms deja present (cas standard JSONL sierra_enriched)
+        if isinstance(ts, int):
+            return ts
+        if isinstance(ts, float):
+            return int(ts)
+        if isinstance(ts, str):
+            try:
+                return int(ts)
+            except (TypeError, ValueError):
+                pass
+        # Cas 2 : fallback sur ts_event (str iso, pd.Timestamp ou datetime)
+        ts_ev = last.get("ts_event")
+        if ts_ev is None:
+            return None
+        if isinstance(ts_ev, str):
+            try:
+                from datetime import datetime as _dt
+                return int(
+                    _dt.fromisoformat(ts_ev.replace("Z", "+00:00")).timestamp() * 1000
+                )
+            except Exception:  # noqa: BLE001
+                return None
+        # pd.Timestamp / datetime : utiliser .timestamp() si dispo
+        try:
+            return int(ts_ev.timestamp() * 1000)
+        except Exception:  # noqa: BLE001
+            return None
+
     def on_bar(self, raw_bar: dict) -> SignalDecision:
         """Ingere une nouvelle bar et evalue setup.
 

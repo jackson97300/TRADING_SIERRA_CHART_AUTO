@@ -116,3 +116,130 @@ def test_signal_decision_default():
     assert dec.tradable is False
     assert dec.direction is None
     assert dec.hypothetical is False
+
+
+# ============================================================
+# Tests warmup_from_disk (FIX 17/06 ULTRATHINK - persistant)
+# ============================================================
+
+
+def test_warmup_from_disk_populates_buffer(tmp_path, monkeypatch):
+    """Fixture JSONL 300 bars, warmup_from_disk() -> is_ready=True."""
+    import json
+    # Build a synthetic JSONL with 300 bars
+    sym_dir = tmp_path / "NQ"
+    sym_dir.mkdir(parents=True)
+    path = sym_dir / "20260617_NQ_sierra_enriched.jsonl"
+    with path.open("w", encoding="utf-8") as fh:
+        for i in range(300):
+            bar = _minimal_bar(i)
+            # Sanitize ts_event to ISO string (json-serializable)
+            bar["ts_event"] = bar["ts_event"].isoformat()
+            fh.write(json.dumps(bar) + "\n")
+    # Patch the resolver
+    import CORE.bot_bn_v4.bar_history_loader as loader
+    monkeypatch.setattr(loader, "_data_root", lambda: tmp_path)
+
+    cfg = BotBNV4Config.from_env()
+    eng = SignalEngine(symbol="NQ", cfg=cfg)
+    n_loaded = eng.warmup_from_disk()
+    # On demande trend_long_lookback=240 par defaut
+    assert n_loaded == 240
+    assert eng.is_ready() is True
+    assert eng.n_bars() == 240
+    # last_bar_ts() doit etre coherent
+    assert eng.last_bar_ts() is not None
+
+
+def test_warmup_from_disk_empty_dir_does_not_crash(tmp_path, monkeypatch):
+    """Aucun JSONL -> n_loaded=0, is_ready=False, pas d'exception."""
+    import CORE.bot_bn_v4.bar_history_loader as loader
+    monkeypatch.setattr(loader, "_data_root", lambda: tmp_path)
+
+    cfg = BotBNV4Config.from_env()
+    eng = SignalEngine(symbol="NQ", cfg=cfg)
+    n_loaded = eng.warmup_from_disk()
+    assert n_loaded == 0
+    assert eng.is_ready() is False
+    assert eng.last_bar_ts() is None
+
+
+def test_warmup_from_disk_idempotent(tmp_path, monkeypatch):
+    """Review I3 (renforce 2eme passage) : 2 appels successifs warmup_from_disk
+    avec target>SIGNAL_ROLLING_WINDOW_BARS/2 → deque plafonne strict + idempotence ts."""
+    import json
+    sym_dir = tmp_path / "NQ"
+    sym_dir.mkdir(parents=True)
+    path = sym_dir / "20260617_NQ_sierra_enriched.jsonl"
+    # 300 bars dispo, on demande 300 deux fois = 600 appends > maxlen=500
+    with path.open("w", encoding="utf-8") as fh:
+        for i in range(300):
+            bar = _minimal_bar(i)
+            bar["ts_event"] = bar["ts_event"].isoformat()
+            fh.write(json.dumps(bar) + "\n")
+    import CORE.bot_bn_v4.bar_history_loader as loader
+    monkeypatch.setattr(loader, "_data_root", lambda: tmp_path)
+
+    cfg = BotBNV4Config.from_env()
+    eng = SignalEngine(symbol="NQ", cfg=cfg)
+    eng.warmup_from_disk(target=300)
+    ts_after_1 = eng.last_bar_ts_ms()
+    eng.warmup_from_disk(target=300)
+    ts_after_2 = eng.last_bar_ts_ms()
+    # 1. deque plafonne strictement a maxlen (pas seulement <=)
+    assert eng.n_bars() == cfg.SIGNAL_ROLLING_WINDOW_BARS
+    # 2. Idempotence chronologique : la derniere bar reste la meme
+    assert ts_after_1 == ts_after_2
+    assert ts_after_1 is not None
+
+
+def test_last_bar_ts_ms_uses_int_ts_natif(tmp_path, monkeypatch):
+    """Review I2 : last_bar_ts_ms() privilegie bar['ts'] (int ms) sur ts_event iso."""
+    import json
+    sym_dir = tmp_path / "NQ"
+    sym_dir.mkdir(parents=True)
+    path = sym_dir / "20260617_NQ_sierra_enriched.jsonl"
+    # Bars avec ts int ms ET ts_event iso (cas reel JSONL sierra_enriched)
+    target_ts_ms = 1781481600000
+    with path.open("w", encoding="utf-8") as fh:
+        for i in range(5):
+            bar = _minimal_bar(i)
+            bar["ts"] = target_ts_ms + i * 60_000
+            bar["ts_event"] = bar["ts_event"].isoformat()
+            fh.write(json.dumps(bar) + "\n")
+    import CORE.bot_bn_v4.bar_history_loader as loader
+    monkeypatch.setattr(loader, "_data_root", lambda: tmp_path)
+
+    cfg = BotBNV4Config.from_env()
+    eng = SignalEngine(symbol="NQ", cfg=cfg)
+    eng.warmup_from_disk()
+    # Last bar ts ms doit etre le ts int natif de la 5e bar (index 4)
+    expected = target_ts_ms + 4 * 60_000
+    assert eng.last_bar_ts_ms() == expected
+
+
+def test_warmup_from_disk_preserves_chronological_order(tmp_path, monkeypatch):
+    """Apres warmup, last_bar_ts() = ts de la derniere bar chronologique."""
+    import json
+    sym_dir = tmp_path / "NQ"
+    sym_dir.mkdir(parents=True)
+    path = sym_dir / "20260617_NQ_sierra_enriched.jsonl"
+    with path.open("w", encoding="utf-8") as fh:
+        for i in range(250):
+            bar = _minimal_bar(i)
+            bar["ts_event"] = bar["ts_event"].isoformat()
+            fh.write(json.dumps(bar) + "\n")
+    import CORE.bot_bn_v4.bar_history_loader as loader
+    monkeypatch.setattr(loader, "_data_root", lambda: tmp_path)
+
+    cfg = BotBNV4Config.from_env()
+    eng = SignalEngine(symbol="NQ", cfg=cfg)
+    n_loaded = eng.warmup_from_disk()
+    # 250 bars dispo, target par defaut = 240, on charge 240
+    assert n_loaded == 240
+    # last_bar_ts = bar index 249 (la plus recente)
+    last_ts = eng.last_bar_ts()
+    assert last_ts is not None
+    # Doit etre l'iso de la bar 249 (la derniere)
+    bar_249 = _minimal_bar(249)
+    assert last_ts == bar_249["ts_event"].isoformat()

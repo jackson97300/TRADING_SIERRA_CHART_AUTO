@@ -1452,6 +1452,37 @@ LOG_CODES = {
     "BOT1V2_ORDER_SENT":            (LogLevel.INFO,     "execution", "Bot1V2 ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
     "BOT1V2_ORDER_FAIL":            (LogLevel.CRITIQUE, "execution", "Bot1V2 ordre fail : {sym} {direction} err={err_msg}"),
 
+    # === DtcFillListener (17/06/2026 fix paper_tracker desync) ===
+    # Ferme positions sur ORDER_UPDATE Type 301 status=7. Sans ces logs,
+    # impossible d'auditer J+1 que le listener fonctionne reellement en prod.
+    # DEPRECATED (post review B 17/06 soir) : BOT1V2_FILL_LISTENER_WIRED reste
+    # emis par Bot 1 v2 SEULEMENT. Bot MR et Bot BN V4 emettent uniquement
+    # MIA_FILL_LISTENER_WIRED + ctx.bot. Migration complete prevue 2026-07-17.
+    "BOT1V2_FILL_LISTENER_WIRED":   (LogLevel.INFO,     "events",    "Bot1V2 fill listener cable : ta={trade_account}"),
+    "BOT1V2_DTC_FILL_TP":           (LogLevel.MAJEUR,   "execution", "Bot1V2 fill TP : {sym} {direction} entry={entry_price:.2f} exit={exit_price:.2f} {pnl_ticks:.1f}t ${pnl_usd:.2f} sig={signal_id} cid={cid}"),
+    "BOT1V2_DTC_FILL_SL":           (LogLevel.MAJEUR,   "execution", "Bot1V2 fill SL : {sym} {direction} entry={entry_price:.2f} exit={exit_price:.2f} {pnl_ticks:.1f}t ${pnl_usd:.2f} sig={signal_id} cid={cid}"),
+    "BOT1V2_FILL_LISTENER_EXCEPTION": (LogLevel.CRITIQUE, "events",  "Bot1V2 fill listener exception : {err}"),
+    "BOT1V2_FILL_PRICE_INVALID":    (LogLevel.ALERTE,   "execution", "Bot1V2 fill price invalid : {sym} kind={kind} status={msg_status} last={last_fill_price} avg={avg_fill_price} sig={signal_id} cid={cid}"),
+    "BOT1V2_STATE_BRIDGE_CLOSE_EXCEPTION": (LogLevel.ALERTE, "events", "Bot1V2 state_bridge.close_position exception : {sym} {err}"),
+    "BOT1V2_ON_CLOSE_CALLBACK_EXCEPTION":  (LogLevel.ALERTE, "events", "Bot1V2 on_close_callback exception : {sym} {err}"),
+    "BOT1V2_FILL_CLOSE":            (LogLevel.MAJEUR,   "decisions", "Bot1V2 fill close : {sym} ${pnl_usd:.2f} trades_today={trades_today} cumul=${cumul_pnl:.2f}"),
+    "BOT1V2_FILL_SL_CID_UPDATED":   (LogLevel.INFO,     "execution", "Bot1V2 fill SL CID updated (trailing) : {sym} old={old_sl_cid} new={new_sl_cid} sig={signal_id}"),
+
+    # === DtcFillListener AUDIT GENERIC (17/06/2026 evening — etape B alias) ===
+    # Codes generiques cross-bot pour audit J+1 simple : grep MIA_FILL_* recupere
+    # les events des 3 bots (Sim1/Sim2/Sim3). Distinguer via ctx.trade_account.
+    # Les codes BOT1V2_* ci-dessus restent emis EN PARALLELE pour compat historique
+    # + audit cible Bot 1 v2 specifiquement. Migration complete vers MIA_* prevue J+30
+    # apres validation empirique audit.
+    "MIA_FILL_LISTENER_WIRED":      (LogLevel.INFO,     "events",    "MIA fill listener cable : ta={trade_account} bot={bot}"),
+    "MIA_DTC_FILL_TP":              (LogLevel.MAJEUR,   "execution", "MIA fill TP : {bot} {sym} {direction} entry={entry_price:.2f} exit={exit_price:.2f} {pnl_ticks:.1f}t ${pnl_usd:.2f} sig={signal_id} cid={cid}"),
+    "MIA_DTC_FILL_SL":              (LogLevel.MAJEUR,   "execution", "MIA fill SL : {bot} {sym} {direction} entry={entry_price:.2f} exit={exit_price:.2f} {pnl_ticks:.1f}t ${pnl_usd:.2f} sig={signal_id} cid={cid}"),
+    "MIA_FILL_LISTENER_EXCEPTION":  (LogLevel.CRITIQUE, "events",    "MIA fill listener exception : bot={bot} {err}"),
+    "MIA_FILL_PRICE_INVALID":       (LogLevel.ALERTE,   "execution", "MIA fill price invalid : {bot} {sym} kind={kind} status={msg_status} last={last_fill_price} avg={avg_fill_price} sig={signal_id} cid={cid}"),
+    "MIA_FILL_SL_CID_UPDATED":      (LogLevel.INFO,     "execution", "MIA fill SL CID updated (trailing) : {bot} {sym} old={old_sl_cid} new={new_sl_cid} sig={signal_id}"),
+    "MIA_FILL_STATE_BRIDGE_EXCEPTION": (LogLevel.ALERTE, "events",  "MIA fill state_bridge.close exception : {bot} {sym} {err}"),
+    "MIA_FILL_ON_CLOSE_CALLBACK_EXCEPTION": (LogLevel.ALERTE, "events", "MIA fill on_close_callback exception : {bot} {sym} {err}"),
+
     # === SIERRA ENRICHER fonctionnel (16/06/2026 audit logs - decouverte gel 22:01 UTC) ===
     # Le sierra_enricher emettait 9 SIERRA_PORT_*_OK par bar = 5000 INFO/jour de noise
     # mais ZERO event fonctionnel (NO_NEW_BARS, ROLLOVER, STALE) -> gel 57 min invisible.
@@ -1493,6 +1524,11 @@ LOG_CODES = {
     "BOTBN_BOOT":                   (LogLevel.INFO,     "events",    "BotBN boot : dry_run={dry_run} symbols={symbols} ta={trade_account} grade_min={grade_min}"),
     "BOTBN_SHUTDOWN":               (LogLevel.INFO,     "events",    "BotBN shutdown clean"),
     "BOTBN_STATE_LOAD":             (LogLevel.INFO,     "events",    "BotBN state load : {status}"),
+    # FIX 17/06 ULTRATHINK : warmup persistant via lecture JSONL sierra_enriched.
+    # Evite WARMUP_x/240 4h apres chaque restart.
+    "BOTBN_WARMUP_PRELOAD":         (LogLevel.INFO,     "events",    "BotBN warmup preload : sym={sym} n_loaded={n_loaded} target={target} is_ready={is_ready}"),
+    # FIX 17/06 zero-dette : trailing SL cancel-replace echec = position nue alert MAJEUR
+    "BOTBN_TRAILING_SL_REPLACE_FAIL": (LogLevel.MAJEUR, "execution", "BotBN trailing SL replace FAIL : sym={sym} old_sl={old_sl_cid} new_sl_price={new_sl_price} sig={signal_id} - position NUE !"),
     "BOTBN_DAY_ROLLOVER":           (LogLevel.INFO,     "events",    "BotBN day rollover : {old_date} -> {new_date}"),
     "BOTBN_HEARTBEAT":              (LogLevel.INFO,     "events",    "BotBN heartbeat : positions={n_positions} trades={n_trades_today} pnl=${pnl_today:.2f}"),
     "BOTBN_BAR_STALE":              (LogLevel.ALERTE,   "events",    "BotBN bar stale : {sym} age={age_sec:.0f}s > {max_age}s"),

@@ -201,39 +201,82 @@ class OrderRouter:
         new_sl_price: float,
         direction: str,
         n_micros: int = 1,
-    ) -> bool:
+        parent_cid_link: str = "",
+    ) -> str:
         """Cancel-replace SL pour trailing Dow pivots.
 
-        Dry-run : log only.
-        Prod : cancel le SL existant + send new SL STOP.
+        FIX 17/06 Jackson zero-dette : retourne maintenant le NOUVEAU sl_cid
+        (au lieu de bool). Caller (bot_bn_v4/main.py) doit utiliser ce CID pour
+        update fill_listener._cid_index + pos["sl_cid"] dans le store.
+
+        Avant ce fix : `send_stop_order` n'existait pas, `replace_sl` cancellait
+        seulement → position NUE pendant trailing → perte non bornee (bug latent
+        non manifeste car BN V4 grade A++ = 0 trades en 5j paper).
+
+        Dry-run : retourne un CID synthetique pour traceability tests.
+        Prod : cancel ancien + send new STOP via dtc.send_stop_order.
+
+        Args:
+            symbol, sl_cid, new_sl_price, direction, n_micros : signature standard.
+            parent_cid_link : optionnel pour traceability log.
+
+        Returns:
+            new_sl_cid : nouveau ClientOrderID si succes complet (cancel + send OK).
+            Chaine vide si :
+              - dtc indisponible (None)
+              - cancel_order absent (legacy DTC)
+              - send_stop_order absent (legacy DTC sans patch 17/06)
+              - exception cancel ou send
+            Le caller doit ABSOLUMENT verifier le retour. Si vide :
+              - Soit position nue (cancel OK, send fail) → ALERT MAJEUR
+              - Soit operation no-op (dtc down) → degradé acceptable
         """
-        if self.dry_run or self.dtc is None:
-            return True
+        if self.dry_run:
+            # Synthetic CID for tests + dry-run traceability
+            import uuid as _uuid
+            return f"BOTBN_TRAIL_SL_{_uuid.uuid4().hex[:8]}"
+        if self.dtc is None:
+            return ""
 
         cancel_fn = getattr(self.dtc, "cancel_order", None)
         send_fn = getattr(self.dtc, "send_stop_order", None)
         if cancel_fn is None:
-            return False
+            return ""
+        # 1. Cancel ancien SL — FIX 17/06 review R1 BLOQUANT : require_sid=True.
+        # Sans ce flag, SC ignore silencieusement le cancel si SID pas encore
+        # propage (race ~200ms post-fill ORDER_UPDATE) → on envoie nouveau SL
+        # → 2 SL actifs sur position 1 micro → orphan garanti.
+        # Avec require_sid=True : si SID absent, cancel echoue → on return "" →
+        # send_stop_order NON appele → ancien SL reste actif (protection legacy
+        # preservee, plus protectrice que le nouveau dans le pire cas).
         try:
-            cancel_fn(sl_cid, trade_account=self.cfg.TRADE_ACCOUNT)
+            cancel_ok = cancel_fn(
+                sl_cid, trade_account=self.cfg.TRADE_ACCOUNT, require_sid=True,
+            )
+            if not cancel_ok:
+                # SID pas dispo → SC ignorerait. Ancien SL reste actif.
+                # Caller distingue ce mode via emit dedie (cf main.py).
+                return ""
         except Exception:
-            return False
+            return ""
+        # 2. Send nouveau SL via send_stop_order (ajoute dans le meme PR)
         if send_fn is None:
-            # Pas de send_stop_order : best-effort cancel seul
-            return True
+            # Legacy DTC sans patch 17/06 : position nue ! Caller doit alert.
+            return ""
         try:
-            # Cote oppose SL = oppose direction
-            side = 2 if direction == "long" else 1  # SELL si LONG / BUY si SHORT
-            send_fn(
+            # Cote oppose SL = oppose direction (SELL pour LONG, BUY pour SHORT)
+            side = 2 if direction == "long" else 1
+            new_sl_cid = send_fn(
                 symbol=symbol,
                 side=side,
                 quantity=n_micros,
                 stop_price=new_sl_price,
                 trade_account=self.cfg.TRADE_ACCOUNT,
+                parent_cid_link=parent_cid_link,
             )
-            return True
+            return new_sl_cid or ""
         except Exception:
-            return False
+            return ""
 
     def cancel_brackets(self, parent_cid: str, sl_cid: str) -> bool:
         """Cancel les 2 ordres (parent + SL). Utilise pour close manual."""

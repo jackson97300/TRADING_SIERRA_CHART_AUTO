@@ -107,8 +107,41 @@ class BotMR:
         # State bridge dashboard (state_sim1.json)
         self.state_bridge = BotMRStateBridge()
 
+        # FIX 17/06 Jackson : DtcFillListener (shared Bot 1 v2) ferme positions
+        # sur ORDER_UPDATE Type 301 status=7. Sans ce fix, dashboard reste OPEN
+        # apres TP/SL fill indefiniment (meme bug que Bot 1 v2 trade 17:01).
+        # Note duck-typing : listener utilise seulement cfg.TRADE_ACCOUNT.
+        from CORE.bot1_v2.dtc_fill_listener import DtcFillListener
+        if dtc_connector is not None:
+            self.fill_listener = DtcFillListener(
+                cfg=self.cfg, store=self.store, state_bridge=self.state_bridge,
+                on_close_callback=self._on_fill_close,
+                bot_id="bot_mr",
+            )
+            try:
+                dtc_connector.on_order_update = self.fill_listener.handle_order_update
+                # B review R1 : retire emit BOT1V2_FILL_LISTENER_WIRED (legacy
+                # specifique Bot 1 v2). Bot MR emit UNIQUEMENT le code generique.
+                from CORE.bot1_v2.logger import bot_log as _bot1v2_log
+                _bot1v2_log.emit(
+                    "MIA_FILL_LISTENER_WIRED",
+                    trade_account=self.cfg.TRADE_ACCOUNT,
+                    bot="bot_mr",
+                )
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"dtc.on_order_update wire fail: {e}")
+        else:
+            self.fill_listener = None
+
         self._running = False
         self._last_heartbeat_ts = 0.0
+
+    def _on_fill_close(self, sym: str, pnl_usd: float) -> None:
+        """Callback DtcFillListener post-close : maj daily_gate."""
+        try:
+            self.daily_gate.update_after_trade(pnl_usd)
+        except Exception as e:  # noqa: BLE001
+            self.log.error(f"daily_gate.update_after_trade fail: {e}")
 
     def _daily_cfg_adapter(self):
         """Adapter minimal pour passer cfg Bot MR a DailyLimitsGate (qui attend
@@ -328,6 +361,24 @@ class BotMR:
         })
         self.engines[sym].register_trade(signal_result.signal_id)
         self.store.save()
+        # FIX 17/06 : register CIDs DTC reels avant state_bridge open (anti-race)
+        if self.fill_listener is not None:
+            try:
+                self.fill_listener.register_bracket(
+                    sym=sym, signal_id=signal_result.signal_id,
+                    direction=signal_result.direction,
+                    entry_price=order_result.fill_price,
+                    sl_price=signal_result.sl_price,
+                    tp_price=signal_result.tp_price,
+                    sl_ticks=signal_result.sl_ticks,
+                    tp_ticks=signal_result.tp_ticks,
+                    n_micros=self.cfg.N_MICROS_DEFAULT,
+                    parent_cid=order_result.parent_cid,
+                    tp_cid=order_result.tp_cid,
+                    sl_cid=order_result.sl_cid,
+                )
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"fill_listener register fail: {e}")
         try:
             self.state_bridge.open_position(
                 sym,

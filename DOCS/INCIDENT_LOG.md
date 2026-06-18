@@ -31,6 +31,32 @@
 
 ---
 
+### 2026-06-17 (63) - [DEPLOY_UNSAFE] - Fix Bot MR + Bot BN V4 listener sans review prealable
+
+**Contexte** : 17/06 ~23h UTC (T-25 min Asia). Apres deploy Bot 1 v2 listener avec review code-reviewer GO, j'ai wire le meme listener sur Bot MR Sim1 et Bot BN V4 Sim3 SANS dispatcher code-reviewer (motivation : urgence Asia).
+
+**Ce qui a mal tourne** : a posteriori, l'agent code-reviewer a detecte 1 BLOQUANT reel : `signal_id BN V4 = f"BOTBN_{sym}_{int(time.time())}"` evalue 3 fois separement → desync possible sur rollover seconde → `_cid_index` cleanup ne match plus → fuite memoire mineure + close fantome possible.
+
+**Fix applique** : extraire `signal_id_bn` en variable locale UNE FOIS avant les 3 usages. Deploye + restart confirme.
+
+**Lecon** : meme sous pression (Asia open imminent), critical-tasks-review.md critere 1 (Trading/Risk) reste OBLIGATOIRE. Le review se fait en 2 min. Le fix au pire prend 5 min. Total : 7 min pour eliminer un bug silencieux.
+
+**Trigger prevention** : avant tout wire/modif Trading sur >1 bot, dispatcher code-reviewer meme si copie d'un pattern deja valide. Le contexte differe (signal_id BN V4 != signal_id Bot 1 v2).
+
+### 2026-06-17 (62) - [VALIDATION_MISS] - paper_tracker desync 2h sans listener ORDER_UPDATE
+
+**Contexte** : 17/06 17:01-17:02 UTC, Bot 1 v2 envoie 1er trade ES SHORT (Sim2). DTC bracket OK, TP fillee @ 7578.25 = +9t = +$11.25. MAIS dashboard MIA reste OPEN avec MFE +263t (faux PnL +$193) pendant 2h+ (Jackson detecte visuellement).
+
+**Cause racine 2 niveaux** :
+1. `order_router.py:131` `len(result) >= 4` jamais match (tuple = 3 elements) → CIDs generic `BOT1V2_*` conserves au lieu vrais `MIA_*`
+2. Aucun listener ORDER_UPDATE cote Bot 1 v2 (le docstring state_bridge.py:227 admettait "Tier 2 listener DTC futur"). Bug identique latent sur Bot MR + Bot BN V4 (`close_position` jamais appele non plus).
+
+**Fix** : (a) order_router.py `len(result) >= 3` + utilise vrais CIDs + `get_last_fill_price()` ; (b) nouveau module `CORE/bot1_v2/dtc_fill_listener.py` (290 LOC) avec `_cid_index` + lock + GUARD fill_price<=0 + filtre TradeAccount + idempotence + recovery boot + 20 tests verts ; (c) wire Bot 1 v2 + MR + BN V4. Deploye + WIRED confirme empiriquement 3 comptes (Sim1, Sim2, Sim3).
+
+**Lecon** : ne JAMAIS deployer un bot avec docstring "TODO listener futur" en prod. Le bug se manifeste au 1er fill, indetectable jusqu'a un trade reel. 2h pour reagir + fix + reviews + deploy.
+
+**Trigger prevention** : grep `TODO|FUTURE|FUTUR` dans tous les modules cycle de vie ordre AVANT deploy paper. Si trouve sur path TP/SL/cancel → bug latent.
+
 ### 2026-06-16 (61) - [VALIDATION_MISS] - sur-diagnostic ES BN : alias bn_long_up corrige attrape par tests (fix reverte)
 
 **Contexte** : Investigation sous-regime scenarios ES (moteur narratif Bot 4). ES = 108 scenarios filtres vs NQ 537. BN Fired fire 73x NQ vs 6x ES.

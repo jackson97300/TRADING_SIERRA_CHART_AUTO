@@ -126,21 +126,45 @@ class OrderRouter:
                 tp_ticks=decision.tp_ticks,
                 tick_size=tick,
             )
-            # Legacy retourne tuple : (parent_cid_real, tp_cid_real, sl_cid_real, fill_price)
-            # On respecte ses CIDs si retournes, sinon les notres
-            if isinstance(result, tuple) and len(result) >= 4:
-                parent_real, tp_real, sl_real, fill_price = result[:4]
+            # FIX 17/06 (Jackson) : send_market_order legacy retourne tuple
+            #   (parent_cid_real, tp_cid_real, sl_cid_real) — 3 elements.
+            # AVANT ce fix : condition len(result) >= 4 jamais match → on tombait
+            # dans le else final, success = bool(tuple_non_vide) = True meme si
+            # send_market_order avait retourne ("", "", "") en abort. Et surtout
+            # parent_cid / tp_cid / sl_cid restaient les CIDs GENERIC `BOT1V2_*`
+            # generes par self._make_cid() au lieu des vrais CIDs `MIA_*` envoyes
+            # par send_market_order. Resultat : paper_tracker ne detectait jamais
+            # les TP/SL fills (CIDs mismatch DTC connector → Bot 1 v2 store).
+            # Backward compat : on garde tolerance >= 4 si signature legacy evolue.
+            # fill_price recupere via get_last_fill_price() (12/05 FIX persistance).
+            if isinstance(result, tuple) and len(result) >= 3:
+                parent_real = result[0] if result[0] else ""
+                tp_real = result[1] if result[1] else ""
+                sl_real = result[2] if result[2] else ""
                 if parent_real:
                     parent_cid = parent_real
                 if tp_real:
                     tp_cid = tp_real
                 if sl_real:
                     sl_cid = sl_real
-                try:
-                    fill_price = float(fill_price) if fill_price else decision.entry_price
-                except (TypeError, ValueError):
+                # fill_price : si 4eme element (legacy futur), sinon get_last_fill_price
+                if len(result) >= 4 and result[3]:
+                    try:
+                        fill_price = float(result[3])
+                    except (TypeError, ValueError):
+                        fill_price = decision.entry_price
+                else:
                     fill_price = decision.entry_price
-                success = bool(parent_cid)
+                    get_fill_fn = getattr(self.dtc, "get_last_fill_price", None)
+                    if get_fill_fn is not None and parent_real:
+                        try:
+                            fp = get_fill_fn(parent_real)
+                            if fp and float(fp) > 0:
+                                fill_price = float(fp)
+                        except Exception:  # noqa: BLE001
+                            pass
+                # success = parent_real non vide (abort = ("", "", "") → False)
+                success = bool(parent_real)
             elif isinstance(result, dict):
                 success = bool(result.get("success", False))
                 fill_price = float(result.get("fill_price", decision.entry_price))

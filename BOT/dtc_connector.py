@@ -587,6 +587,103 @@ class DTCConnector:
 
         return (parent_id, "", "")
 
+    def send_stop_order(self, symbol: str, side: int, quantity: int,
+                          stop_price: float, trade_account: str,
+                          parent_cid_link: str = "") -> str:
+        """Envoie un STOP order solo (sans bracket) — utilise pour trailing SL.
+
+        Fix 17/06 (Jackson zero-dette) : avant ce fix, OrderRouter.replace_sl
+        cancellait l'ancien SL mais ne pouvait PAS envoyer le nouveau (cette
+        methode n'existait pas) → position NUE pendant trailing → perte
+        non bornee. Bug latent BN V4 paper (0 trades depuis paper).
+
+        Le STOP envoye utilise le meme pattern que le SL initial dans
+        send_market_order (Price1 + Price2=0.0 + StopPrice belt-and-suspenders).
+        Respecte SL_LIMIT_MODE (OFF/SHADOW/ON) pour coherence avec SL initial.
+
+        Args:
+            symbol: futures contract (sera mappe via _to_contract si raw).
+            side: 1=BUY ou 2=SELL. Pour SL trailing : oppose direction position
+                (SELL pour LONG, BUY pour SHORT).
+            quantity: nombre contrats.
+            stop_price: prix trigger STOP.
+            trade_account: compte (Sim1/Sim2/Sim3, jamais default H6).
+            parent_cid_link: optionnel — CID du parent pour traceability log.
+
+        Returns:
+            sl_cid: ClientOrderID du nouveau SL. Chaine vide si echec
+            (connection down, mapping symbole impossible).
+        """
+        if not self.connected:
+            return ""
+
+        # Rollover mapping (cf send_market_order ligne 354)
+        original_symbol = symbol
+        symbol = _to_contract(symbol)
+        if symbol != original_symbol:
+            logger.info(f"send_stop_order: symbol mapped '{original_symbol}' -> '{symbol}'")
+
+        sl_cid = f"MIA_TRAIL_SL_{uuid.uuid4().hex[:8]}"
+
+        # H6 pre-register trade_account (anti-orphan)
+        self._order_trade_accounts[sl_cid] = trade_account
+
+        # Pattern SL initial (lignes 515-545) : STOP MARKET ou STOP_LIMIT
+        _sl_tick_size = SL_LIMIT_TICK_SIZES.get(symbol, 0.25)
+        if side == 2:  # SELL = SL pour LONG : limit en dessous stop
+            _sl_limit_price = float(stop_price) - (SL_LIMIT_OFFSET_TICKS * _sl_tick_size)
+        else:  # BUY = SL pour SHORT : limit au-dessus stop
+            _sl_limit_price = float(stop_price) + (SL_LIMIT_OFFSET_TICKS * _sl_tick_size)
+
+        _payload = {
+            "Type": DTC_MARKET_ORDER,
+            "Symbol": symbol,
+            "ClientOrderID": sl_cid,
+            "BuySell": side,
+            "Quantity": int(quantity),
+            "Price1": float(stop_price),       # SPEC : trigger price STOP
+            "Price2": 0.0,                      # Default explicite
+            "StopPrice": float(stop_price),    # Defensif compat (pattern V1)
+            "TimeInForce": 0,
+            "TradeAccount": trade_account,
+            "IsAutomatedOrder": 1,
+            "OpenCloseTrade": 2,
+        }
+        if SL_LIMIT_MODE == "ON":
+            _payload["OrderType"] = STOP_LIMIT
+            _payload["Price1"] = float(stop_price)
+            _payload["Price2"] = round(_sl_limit_price, 4)
+            _sl_mode_emit = "STOP_LIMIT_ACTIVE"
+        else:
+            _payload["OrderType"] = STOP
+            _sl_mode_emit = "STOP_MARKET_DEFAULT" if SL_LIMIT_MODE == "OFF" else "STOP_MARKET_SHADOW"
+
+        try:
+            self._send(_payload)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"send_stop_order send fail: {e}")
+            self._order_trade_accounts.pop(sl_cid, None)
+            return ""
+
+        # LOG TRACEABILITY (meme code que SL initial pour audit grep cross-bot)
+        if _v2log:
+            try:
+                _v2log.emit("SL_STOP_PATCHED_V1",
+                            kind="sl_trailing",
+                            sl_cid=sl_cid,
+                            sl_price=float(stop_price),
+                            trade_account=trade_account,
+                            sl_limit_mode=SL_LIMIT_MODE,
+                            sl_limit_price=round(_sl_limit_price, 4),
+                            sl_limit_offset_ticks=SL_LIMIT_OFFSET_TICKS,
+                            order_type_emit=_sl_mode_emit,
+                            parent_cid_link=parent_cid_link[:20])
+            except Exception:
+                pass
+
+        logger.info(f"Stop trailing sent: sl_cid={sl_cid} @ {stop_price} (ta={trade_account})")
+        return sl_cid
+
     def get_last_fill_price(self, parent_id: str) -> float:
         """Retourne le fill_price reel broker (AverageFillPrice DTC) du parent ORDER.
 

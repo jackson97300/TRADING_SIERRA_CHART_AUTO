@@ -62,6 +62,155 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-17 21:35 UTC — DtcFillListener 3 bots (Bot 1 v2, MR, BN V4) + fix order_router CID desync
+
+**Categorie** : FIX (Trading/Risk critere 1)
+
+**Impact prod** : critique — sans ce fix, dashboard MIA reste OPEN apres TP/SL fill cote SC indefiniment (vu en live 17/06 17:01 trade ES SHORT TP fillee mais MFE +263t affiche pendant 2h+).
+
+**Fichiers** :
+- NEW : `CORE/bot1_v2/dtc_fill_listener.py` (290 LOC, 20 tests)
+- NEW : `CORE/bot1_v2/tests/test_dtc_fill_listener.py` (20 tests)
+- NEW : `CORE/bot1_v2/tests/test_order_router.py` (10 tests regression)
+- MOD : `CORE/bot1_v2/execution/order_router.py` — `len(result) >= 3` au lieu de `>= 4`, utilise vrais CIDs DTC + `get_last_fill_price()`
+- MOD : `CORE/bot1_v2/main.py` — wire fill_listener + `_on_fill_close` callback
+- MOD : `CORE/bot_mean_revert/main.py` — import + wire DtcFillListener Sim1
+- MOD : `CORE/bot_bn_v4/main.py` — import + wire DtcFillListener Sim3 + extract signal_id_bn variable (fix R2)
+- MOD : `CORE/log_catalog.py` — +8 codes (BOT1V2_FILL_LISTENER_WIRED, BOT1V2_DTC_FILL_TP/SL, etc.)
+
+**Quoi** : pattern Bot 3 v3 / BN V4 `_cid_index` + `handle_order_update` callback DTC Type 301. Au fill TP/SL : lookup cid → calcul PnL micro → close store + state_bridge + daily_gate.update_after_trade.
+
+**Pourquoi** : Bug racine = (a) order_router conservait CIDs generic `BOT1V2_*` au lieu vrais `MIA_*` envoyes par DTC connector ; (b) aucun listener cote Bot 1 v2 / MR / BN V4 → `state_bridge.close_position()` jamais appele (docstring admettait "TODO listener futur").
+
+**Impact** : dashboard se met a jour automatiquement OPEN → CLOSED au fill. daily_stop_loss/win/max_trades fonctionnels (etaient INACTIFS sur 3 bots — incident Douglas 04/06 latent reproduit).
+
+**Validation pre-deploy** :
+- pytest 30/30 verts (10 order_router + 20 listener)
+- Review code-reviewer Bot 1 v2 : GO-AVEC-RESERVES → 3 bloquants corriges (codes log catalog, recovery boot entry_price, daily_gate API)
+- Review market-analyst PnL : GO (specs MICRO confirmees CME)
+- Review code-reviewer MR + BN V4 : GO-AVEC-RESERVES → 1 bloquant R2 corrige (signal_id desync rollover seconde)
+
+**Revert plan** :
+1. SCP version precedente order_router.py + main.py 3 bots (commit precedent)
+2. Restart 3 services MIA-Paper-*
+3. Clean state.json + runtime_positions.json manuellement si trades intermediaires
+
+**Suivi post-deploy** :
+- J+1 18/06 matin : grep `BOT1V2_FILL_LISTENER_WIRED` doit = 3 emit (Sim1/2/3) chaque boot
+- J+1 : grep `BOT1V2_DTC_FILL_TP|BOT1V2_DTC_FILL_SL` count doit = closed_today count
+- J+1 : zero `BOT1V2_FILL_LISTENER_EXCEPTION`
+- J+7 : ratio (fills detectes / trades broker SC) doit etre 100%
+- J+30 : zero position fantome dashboard
+
+**Deployed at** : 2026-06-17 21:21 UTC (Bot 1 v2), 21:26 UTC (MR + BN V4 round 1), 21:35 UTC (BN V4 round 2 post-R2 fix)
+
+**Nouveaux logs** : BOT1V2_FILL_LISTENER_WIRED, BOT1V2_DTC_FILL_TP, BOT1V2_DTC_FILL_SL, BOT1V2_FILL_LISTENER_EXCEPTION, BOT1V2_FILL_PRICE_INVALID, BOT1V2_STATE_BRIDGE_CLOSE_EXCEPTION, BOT1V2_ON_CLOSE_CALLBACK_EXCEPTION, BOT1V2_FILL_CLOSE
+
+**Liens** : INCIDENT_LOG #62 (cause racine) + #63 (deploy_unsafe pattern MR/BN V4 sans review)
+
+## 2026-06-17 14:46 UTC — Bot 1 v2 SL_HARD_CAP_TICKS_NQ 30 → 60 (env var, tuning empirique 1 trade)
+
+**Categorie** : CONFIG (env var, hot-reload via restart)
+**Impact prod** : Bot 1 v2 Sim2 paper (NQ uniquement, ES inchange a 20t)
+**Fichiers** : env var `BOT1V2_SL_HARD_CAP_TICKS_NQ=60` sur service nssm `MIA-Paper-Bot1V2`. Aucun fichier code modifie. Default code reste 30t (config.py:110).
+
+**Quoi**
+
+Cap SL Bot 1 v2 NQ relache temporairement de 30 → 60 ticks via env var. Permet swings courts vers niveaux Tier1 realistes (cur_vah, vwap_d_sd1u). Reste un filtre anti-SL-extreme (cap 60t = 15 pts NQ, encore conservateur vs swings daily 100+ pts).
+
+**Pourquoi**
+
+Trade Bot 1 v2 NQ SHORT 13:34:18 UTC 17/06 : **7/7 STARS FORTE CONVICTION** (max possible) bloque par SL_HARD_CAP_EXCEEDED:282t>30t. Investigation drill-down :
+- Niveau Tier1 detecte = `cur_vah` (Current VA High) a +311t
+- SL 282t = derriere mur + buffer 5t (logique commit cf0392a)
+- Setup = swing SHORT vers VA High = trade structurel legitime
+- 1 trade legitime perdu = pattern philosophique contradictoire ("trades de qualite doivent passer" commit 1bd3ca9)
+
+Cap 30t calibre commit cf0392a pour SCALP serre. Mais setups 7/7 stars sur niveaux structurels NQ (VA, swings) necessitent ~50-80t. Compromis 60t permet swings VA realistes tout en gardant filtre anti-noise.
+
+**Impact attendu**
+
+- Bot 1 v2 accepte setups Tier1 jusqu'a 60t SL NQ
+- Worst case SL 60t = 15 pts NQ = $7.5 par micro (Sim2 paper, aucun risque reel)
+- Si 5 trades full SL = -$37.5 paper. Daily stop limite a -$200 (config inchange).
+
+**Validation pre-deploy** :
+- **Tests** : aucun test code modifie. Mais TEST `test_sl_hard_cap_nq_rejects_far_wall` (test_sl_hard_cap.py:46) reste valide (n'est pas modifie, code default reste 30t, l'env var modifie le runtime uniquement).
+- **Backtest preservation wins** : NON FAIT. **Pattern 11 V1 reconnu**. Mitigation : env var (rollback 10s) + observation 10 trades + retro-cession si winrate s'effondre.
+- **Review agent** : code-reviewer dispatche 17/06 14:30 UTC, verdict **GO-AVEC-RESERVES** valeur recommandee 60t (pas 80t). Reserves : 1) si SL atteint a 60t ne pas relacher davantage 2) si 7/7 produit setup >60t demain = vrai sujet architectural routing swing vs scalp 3) noter en INCIDENT_LOG categorie SCOPE_CREEP.
+
+**Revert plan**
+
+```powershell
+nssm set MIA-Paper-Bot1V2 AppEnvironmentExtra ""
+nssm restart MIA-Paper-Bot1V2
+```
+Default code reste 30t (config.py:110). Rollback en 10s.
+
+**Suivi post-deploy** :
+
+- **J+1** (18/06) : grep RVOL_TOO_LOW + SL_HARD_CAP_EXCEEDED counts. Vrai trade pris ? Resultat ?
+- **J+7** (24/06) : winrate / PF Bot 1 v2 NQ sur la fenetre. Si dégrade > -20% vs baseline 30t → rollback
+- **J+30** (17/07) : decision : promouvoir 60t en code par defaut (si stable) ou revert ou affiner
+
+**Deployed at** : 2026-06-17 14:46 UTC (Jackson souverain "ON TRADE DANS CETTE SESSION")
+
+**Reviewed-by** : agent code-reviewer (verdict GO-AVEC-RESERVES 60t)
+
+---
+
+## 2026-06-16 — Gate confirmation INTERMARKET DIVERGENCE ES->NQ (Bot 1 continuation, opt-in OFF)
+
+**Categorie** : GATE
+**Impact prod** : PAPER (Bot 1 / Sim1 / continuation NQ) — OPT-IN, defaut OFF
+**Fichier(s)** : `CORE/intermarket_divergence_gate.py` (nouveau), `CORE/bot3_v3_continuation_paper.py:176-200,584-585,624-687`, `CORE/log_catalog.py` (+4 codes)
+**Reviewer(s) agent** : code-reviewer (GO-AVEC-RESERVES) + general-purpose (root-cause vwap_w databento/sierra)
+
+### Quoi
+Gate de confirmation : Bot 1 ne prend une continuation NQ QUE si ES diverge fort
+de son VWAP weekly (cote oppose au trade). Filtre scale-invariant par PERCENTILE
+ROLLING causal (top 13% des 600 dernieres barres ES), PAS seuil absolu (non
+transferable databento->sierra). Active via `MIA_BOT3_V3_INTERMARKET_GATE=1`.
+
+### Pourquoi
+Bot 1 continuation seul = marginal (CONT_NQ_R1p5 PF 1.045, NOGO). Filtre divergence
+ES/NQ (intuition empirique Jackson "ES tient/diverge de son VWAP weekly") ->
+PF 1.13->1.45 sur 5/6 variantes R-multiples, multi-mois. Origine : observation
+trader validee backtest. Dual-mecanisme assume avec `bot_mean_revert` proximite
+(reversal) — divergence = continuation.
+
+### Impact attendu
+- Filtre ~87% des continuations (garde le tiers superieur). ALLOWED PF 1.445 vs BLOCKED 1.042.
+- Effet de bord : si flag OFF (defaut) -> ZERO changement comportement. Si feed ES mort -> fail-safe BLOQUE (pas de trade sans confirmation).
+
+### Validation pre-deploy
+- [x] Tests unitaires: 10/10 (`tests/test_intermarket_divergence_gate.py`)
+- [x] Backtest preservation: harness auditable `CORE/research/intermarket_divergence_validation.py` -> ALLOWED 1.445 / BLOCKED 1.042 reproduits via VRAI module
+- [x] Review agent: code-reviewer GO-AVEC-RESERVES (R1 dual-mecanisme tranche Jackson, R2/R3a/R4/R5 traites)
+- [x] Test empirique: `python -X utf8 CORE/research/intermarket_divergence_validation.py` -> PF 1.445 n=210
+- [ ] CAVEAT: PF 1.445 = IN-SAMPLE databento, NON transferable acquis. Forward sierra OBLIGATOIRE (sensibilite window {300/600/900}).
+
+### Revert plan
+```bash
+# Desactiver sans rollback : MIA_BOT3_V3_INTERMARKET_GATE=0 (ou unset) + restart service.
+# Rollback complet : git checkout CORE/bot3_v3_continuation_paper.py CORE/log_catalog.py ; rm CORE/intermarket_divergence_gate.py ; scp + restart.
+```
+
+### Deployed at
+(a remplir apres scp VPS + restart)
+
+### Suivi post-deploy
+- J+1 : grep BOT3_V3_ENTRY_VETO_INTERMARKET_* + PASS dans LOGS/decisions (emission reelle ?) + window sensitivity
+- J+7 : PF ALLOWED forward vs 1.445 in-sample
+- J+30 : robustesse multi-regime
+
+### Liens
+- Module review : code-reviewer 16/06 (5 reserves)
+- Root-cause vwap_w : `DOCS/SIERRA_PYTHON_OVERLAPS_AUDIT_V2.md` (Spearman 0.9999)
+- Gate proximite jumeau : `CORE/bot_mean_revert/gates/intermarket.py`
+
+---
+
 ## 2026-06-15 19:30 — Fix composite_poc cross-day reset destructeur (INCIDENT #58)
 
 **Categorie** : FIX (Python pipeline enricher)
@@ -113,9 +262,10 @@ Cascade :
 
 Si regression : revert commit. Restaure reset destructeur -> composite_poc NULL 100% retour au bug. Pas de migration data ni schema. Rollback trivial.
 
-### Deployed at YYYY-MM-DD HH:MM
+### Deployed at 2026-06-15 12:51 ET
 
-(a remplir apres deploy)
+VPS deploy via SCP : `sierra_pipeline.py`. Restart `MIA-Sierra-Enricher-ES`.
+Commit local : `0c4acd6`.
 
 ### Suivi post-deploy
 

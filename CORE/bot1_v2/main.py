@@ -36,6 +36,7 @@ from typing import Optional
 from CORE.bot1_v2.cluster import ClusterEngine, ClusterDecision
 from CORE.bot1_v2.config import Bot1V2Config
 from CORE.bot1_v2.data_source import SierraDataSource
+from CORE.bot1_v2.dtc_fill_listener import DtcFillListener
 from CORE.bot1_v2.execution.order_router import OrderRouter
 from CORE.bot1_v2.gates.daily_limits import DailyLimitsGate
 from CORE.bot1_v2.gates.session import SessionGate
@@ -111,8 +112,61 @@ class Bot1V2:
         # heartbeat updated_ts + open_by_symbol + day rotation.
         self.state_bridge = StateBridge()
 
+        # FIX 17/06 Jackson : DtcFillListener ferme positions sur ORDER_UPDATE
+        # Type 301 status=7 (TP/SL fill). Avant ce fix, le dashboard restait
+        # OPEN avec MFE/PnL faux indefiniment apres cloture broker. Pattern
+        # repris de Bot 3 v3 + BN V4. Branche sur dtc.on_order_update.
+        # Callback on_close declenche daily_gate.register_close pour MAJ stats.
+        if dtc_connector is not None:
+            self.fill_listener = DtcFillListener(
+                cfg=self.cfg, store=self.store, state_bridge=self.state_bridge,
+                on_close_callback=self._on_fill_close,
+                bot_id="bot1v2",
+            )
+            try:
+                dtc_connector.on_order_update = self.fill_listener.handle_order_update
+                bot_log.emit(
+                    "BOT1V2_FILL_LISTENER_WIRED",
+                    trade_account=self.cfg.TRADE_ACCOUNT,
+                )
+                # B (17/06 evening) : emit alias MIA_FILL_LISTENER_WIRED pour audit cross-bot
+                try:
+                    bot_log.emit(
+                        "MIA_FILL_LISTENER_WIRED",
+                        trade_account=self.cfg.TRADE_ACCOUNT,
+                        bot="bot1v2",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"dtc.on_order_update wire fail: {e}")
+        else:
+            self.fill_listener = None
+
         self._running = False
         self._last_heartbeat_ts = 0.0
+
+    def _on_fill_close(self, sym: str, pnl_usd: float) -> None:
+        """Callback DtcFillListener apres close TP/SL.
+
+        Tient le daily_gate a jour (decompte trades + cumul PnL).
+        CRITIQUE : sans ce maj, daily_stop_loss/win/max_trades ne se declenchent
+        jamais → reproduit incident Douglas 04/06 (perte sans stop). Cf
+        `feedback_douglas_consistency_principles.md`.
+        """
+        try:
+            self.daily_gate.update_after_trade(pnl_usd)
+        except Exception as e:  # noqa: BLE001
+            self.log.error(f"daily_gate.update_after_trade fail: {e}")
+        try:
+            bot_log.emit(
+                "BOT1V2_FILL_CLOSE",
+                sym=sym, pnl_usd=round(float(pnl_usd), 2),
+                trades_today=self.daily_gate.state.n_trades_today,
+                cumul_pnl=round(self.daily_gate.state.cumul_pnl_usd, 2),
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def stop(self, *_):
         self.log.info("Stop signal received, gracefull shutdown...")
@@ -331,6 +385,26 @@ class Bot1V2:
         })
         self.clusters[sym].register_trade(decision.signal_id)
         self.store.save()
+        # FIX 17/06 review code-reviewer angle mort 7 : register_bracket AVANT
+        # state_bridge.open_position pour eviter fenetre course si TP fill
+        # ultra-rapide entre les 2 (rare mais documente en gap-through).
+        if self.fill_listener is not None:
+            try:
+                self.fill_listener.register_bracket(
+                    sym=sym, signal_id=decision.signal_id,
+                    direction=decision.direction,
+                    entry_price=order_result.fill_price,
+                    sl_price=decision.sl_price,
+                    tp_price=decision.tp_price,
+                    sl_ticks=decision.sl_ticks,
+                    tp_ticks=decision.tp_ticks,
+                    n_micros=decision.n_micros,
+                    parent_cid=order_result.parent_cid,
+                    tp_cid=order_result.tp_cid,
+                    sl_cid=order_result.sl_cid,
+                )
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"fill_listener register fail: {e}")
         # Bridge dashboard : ajoute open_by_symbol pour visibility instantanee
         try:
             self.state_bridge.open_position(

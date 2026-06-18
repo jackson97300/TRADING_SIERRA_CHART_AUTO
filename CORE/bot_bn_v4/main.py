@@ -116,6 +116,42 @@ class BotBNV4:
             self.trails[sym] = TrailingManager(symbol=sym, cfg=self.cfg)
             self.data_sources[sym] = SierraDataSource(symbol=sym, cfg=self.bot1v2_cfg)
 
+            # FIX 17/06 ULTRATHINK : warmup persistant via lecture JSONL sierra_enriched
+            # Evite les 4h de WARMUP_x/240 a chaque restart. Source unique = JSONL deja
+            # persiste par le pipeline DMP. Pas de fichier de buffer dedie.
+            # Review B1 : target = trend_long_lookback (240), pas rolling window (500).
+            warmup_target = self.signals[sym]._params.trend_long_lookback
+            try:
+                n_loaded = self.signals[sym].warmup_from_disk(target=warmup_target)
+            except Exception as e:  # noqa: BLE001
+                n_loaded = 0
+                try:
+                    bot_log.emit(
+                        "BOTBN_WARMUP_PRELOAD",
+                        sym=sym, n_loaded=0, target=warmup_target,
+                        is_ready=False, err=str(e)[:200],
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                try:
+                    bot_log.emit(
+                        "BOTBN_WARMUP_PRELOAD",
+                        sym=sym, n_loaded=n_loaded,
+                        target=warmup_target,
+                        is_ready=self.signals[sym].is_ready(),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                # Aligner SierraDataSource.last_ts_seen pour eviter double-consommation
+                # de la derniere bar deja chargee dans le buffer.
+                # Review I2 : utiliser last_bar_ts_ms() (privilegie bar["ts"] int natif)
+                # plutot que double conversion iso → ms.
+                if n_loaded > 0:
+                    last_ts_ms = self.signals[sym].last_bar_ts_ms()
+                    if last_ts_ms is not None:
+                        self.data_sources[sym].last_ts_seen = last_ts_ms
+
         # Gates : session + daily limits (reuse Bot 1 v2), regime (BN V4 dedie)
         self.session_gate = SessionGate(self.bot1v2_cfg)
         self.daily_gate = DailyLimitsGate(self.bot1v2_cfg)
@@ -137,8 +173,42 @@ class BotBNV4:
         # State bridge dashboard dedie Sim3
         self.state_bridge = BotBNStateBridge()
 
+        # FIX 17/06 Jackson : DtcFillListener (shared Bot 1 v2) ferme positions
+        # sur ORDER_UPDATE Type 301 status=7. Sans ce fix, dashboard reste OPEN
+        # apres SL fill indefiniment. NB : BN V4 fait trailing SL → seul le SL
+        # INITIAL est detecte par le listener (le cancel-replace post-trailing
+        # change le sl_cid sans rappel a register_bracket = BACKLOG).
+        from CORE.bot1_v2.dtc_fill_listener import DtcFillListener
+        if dtc_connector is not None:
+            self.fill_listener = DtcFillListener(
+                cfg=self.cfg, store=self.store, state_bridge=self.state_bridge,
+                on_close_callback=self._on_fill_close,
+                bot_id="bot_bn_v4",
+            )
+            try:
+                dtc_connector.on_order_update = self.fill_listener.handle_order_update
+                # B review R1 : retire emit BOT1V2_FILL_LISTENER_WIRED (legacy
+                # specifique Bot 1 v2). Bot BN V4 emit UNIQUEMENT le code generique.
+                from CORE.bot1_v2.logger import bot_log as _bot1v2_log
+                _bot1v2_log.emit(
+                    "MIA_FILL_LISTENER_WIRED",
+                    trade_account=self.cfg.TRADE_ACCOUNT,
+                    bot="bot_bn_v4",
+                )
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"dtc.on_order_update wire fail: {e}")
+        else:
+            self.fill_listener = None
+
         self._running = False
         self._last_heartbeat_ts = 0.0
+
+    def _on_fill_close(self, sym: str, pnl_usd: float) -> None:
+        """Callback DtcFillListener post-close : maj daily_gate."""
+        try:
+            self.daily_gate.update_after_trade(pnl_usd)
+        except Exception as e:  # noqa: BLE001
+            self.log.error(f"daily_gate.update_after_trade fail: {e}")
 
     def stop(self, *_):
         self.log.info("Stop signal received, graceful shutdown...")
@@ -179,17 +249,47 @@ class BotBNV4:
                         )
                     except Exception:
                         pass
+                    old_sl_cid = pos.get("sl_cid", "")
                     pos["sl_price"] = upd.new_sl
                     pos["sl_pivots"] = trail.n_pivots()
-                    self.store.save()
-                    # Cancel-replace SL cote broker
-                    self.router.replace_sl(
+                    # Cancel-replace SL cote broker. FIX 17/06 Jackson zero-dette :
+                    # replace_sl retourne maintenant le NOUVEAU sl_cid (avant : bool).
+                    new_sl_cid = self.router.replace_sl(
                         symbol=sym,
-                        sl_cid=pos.get("sl_cid", ""),
+                        sl_cid=old_sl_cid,
                         new_sl_price=upd.new_sl,
                         direction=pos.get("direction", "long"),
                         n_micros=pos.get("n_micros", 1),
+                        parent_cid_link=pos.get("parent_cid", ""),
                     )
+                    if new_sl_cid:
+                        # Update store + propagate au listener (sinon fill du
+                        # nouveau SL = pas detecte → dashboard reste OPEN).
+                        pos["sl_cid"] = new_sl_cid
+                        self.store.save()
+                        if self.fill_listener is not None:
+                            try:
+                                self.fill_listener.update_sl_cid(
+                                    sym=sym,
+                                    old_sl_cid=old_sl_cid,
+                                    new_sl_cid=new_sl_cid,
+                                )
+                            except Exception as e:  # noqa: BLE001
+                                self.log.warning(f"fill_listener.update_sl_cid fail: {e}")
+                    else:
+                        # Echec cancel ou send → position NUE ! Alert MAJEUR.
+                        # On save quand meme (sl_price mis a jour memoire) mais
+                        # le SL n'est plus actif cote broker → operateur doit close.
+                        self.store.save()
+                        try:
+                            bot_log.emit(
+                                "BOTBN_TRAILING_SL_REPLACE_FAIL",
+                                sym=sym, old_sl_cid=old_sl_cid[:20],
+                                new_sl_price=upd.new_sl,
+                                signal_id=pos.get("signal_id", ""),
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
             # TODO Tier 2 : si is_timeout -> close position automatique
             # (necessite listener ORDER_UPDATE DTC ou close ordre manuel)
 
@@ -416,10 +516,15 @@ class BotBNV4:
         if start_err:
             self.log.warning(f"{sym} trailing start: {start_err}")
 
+        # FIX 17/06 review code-reviewer R2 : extraire signal_id UNE FOIS pour
+        # eviter desync sur rollover seconde (3 appels f"BOTBN_..._{time.time()}"
+        # peuvent produire 3 IDs differents si la seconde change entre les calls).
+        signal_id_bn = f"BOTBN_{sym}_{int(time.time())}"
+        direction_upper = (decision.direction or "long").upper()
         # Persist position
         self.store.open_position(sym, {
-            "signal_id": f"BOTBN_{sym}_{int(time.time())}",
-            "direction": (decision.direction or "long").upper(),
+            "signal_id": signal_id_bn,
+            "direction": direction_upper,
             "entry_price": order_result.fill_price,
             "entry_ts": int(time.time() * 1000),
             "sl_price": sl_price,
@@ -432,17 +537,37 @@ class BotBNV4:
             "sl_pivots": 0,
         })
         self.store.save()
+        # FIX 17/06 : register CIDs DTC reels avant state_bridge open (anti-race)
+        # BN V4 : pas de TP fixe, donc tp_cid sera "". Seul le SL initial sera
+        # detecte. Post-trailing cancel-replace, le nouveau sl_cid n'est PAS
+        # connu par le listener (BACKLOG : ajouter update_sl_cid au trailing).
+        if self.fill_listener is not None:
+            try:
+                self.fill_listener.register_bracket(
+                    sym=sym,
+                    signal_id=signal_id_bn,
+                    direction=direction_upper,
+                    entry_price=order_result.fill_price,
+                    sl_price=sl_price, tp_price=0.0,
+                    sl_ticks=sl_ticks, tp_ticks=0,
+                    n_micros=self.cfg.N_MICROS_DEFAULT,
+                    parent_cid=order_result.parent_cid,
+                    tp_cid="",
+                    sl_cid=order_result.sl_cid,
+                )
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"fill_listener register fail: {e}")
         # Bridge dashboard
         try:
             self.state_bridge.open_position(
                 sym,
-                direction=(decision.direction or "long").upper(),
+                direction=direction_upper,
                 entry_price=order_result.fill_price,
                 sl_price=sl_price,
                 tp_price=0.0,  # BN V4 : pas de TP fixe
                 sl_ticks=sl_ticks,
                 tp_ticks=0,
-                signal_id=f"BOTBN_{sym}_{int(time.time())}",
+                signal_id=signal_id_bn,
                 sl_wall=f"BN_V4_{decision.grade}",
                 n_micros=self.cfg.N_MICROS_DEFAULT,
             )

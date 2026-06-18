@@ -41,6 +41,7 @@ def test_env_override():
 
 
 def test_tradable_sessions_helper():
+    """Sessions etendues 17/06 : ASIA+LONDON+US (cf bot_config.py session config)."""
     cfg = BotBNV4Config.from_env()
-    assert cfg.tradable_sessions_for("NQ") == ("US",)
-    assert cfg.tradable_sessions_for("ES") == ("US",)
+    assert cfg.tradable_sessions_for("NQ") == ("ASIA", "LONDON", "US")
+    assert cfg.tradable_sessions_for("ES") == ("ASIA", "LONDON", "US")
