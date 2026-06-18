@@ -238,22 +238,31 @@ def add_phase_d_pvwap_streaming(row: dict, state: PVWAPStreamState) -> dict:
 
     close_f = float(close)
 
-    # NOTE convention : (close - pvwap) / close * 100
-    # = positif si close > pvwap (close au-dessus du niveau)
-    # = negatif si close < pvwap (close en-dessous du niveau)
-    # Coherent avec dist_vwap_d_pct convention compliant DMP C++
+    # FIX INCIDENT #75 (18/06/2026) — CONVENTION DE SIGNE DMP C++ :
+    #   DMP_F3_DistNormalisees.h:101 `DMP_CalcDistPct(close, level)`
+    #     = (level - close) / close * 100
+    #   POSITIF si level > close (niveau AU-DESSUS du prix)
+    #   NEGATIF si level < close (niveau EN-DESSOUS du prix)
+    # Coherent avec :
+    #   - dist_vwap_d_pct Sierra natif DMP (verifie DMP_F3_DistNormalisees.h:153)
+    #   - Bot 3 v3 fallback `bot3_v3_sierra_reader.py:747` :
+    #     dist_pvwap_pct = (prev_vwap - close) / close * 100
+    #   - Bot 2 BN V4 + Bot 3 Tier 1 consumers downstream
+    # BUG ANTERIEUR (24/05 -> 18/06) : formule inverse (close - level)
+    # qui aurait inverse le signal directionnel pour 5 consumers prod si
+    # le module avait ete wire-up. Bug latent decouvert au wirage 18/06.
     if _is_valid_float(pvwap):
-        out["dist_pvwap_pct"] = (close_f - float(pvwap)) / close_f * 100
+        out["dist_pvwap_pct"] = (float(pvwap) - close_f) / close_f * 100
     else:
         out["dist_pvwap_pct"] = np.nan
 
     if _is_valid_float(pvwap_sd1u):
-        out["dist_pvwap_sd1u_pct"] = (close_f - float(pvwap_sd1u)) / close_f * 100
+        out["dist_pvwap_sd1u_pct"] = (float(pvwap_sd1u) - close_f) / close_f * 100
     else:
         out["dist_pvwap_sd1u_pct"] = np.nan
 
     if _is_valid_float(pvwap_sd1d):
-        out["dist_pvwap_sd1d_pct"] = (close_f - float(pvwap_sd1d)) / close_f * 100
+        out["dist_pvwap_sd1d_pct"] = (float(pvwap_sd1d) - close_f) / close_f * 100
     else:
         out["dist_pvwap_sd1d_pct"] = np.nan
 

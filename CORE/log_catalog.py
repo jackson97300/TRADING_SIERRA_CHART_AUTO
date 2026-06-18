@@ -1360,6 +1360,9 @@ LOG_CODES = {
     "SIERRA_PORT_GAME_CHANGERS_OK":          (LogLevel.INFO,   "events", "Sierra port game_changers OK : sym={sym}"),
     "SIERRA_PORT_GAME_CHANGERS_FAIL":        (LogLevel.MAJEUR, "events", "Sierra port game_changers FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_GAME_CHANGERS_DEGRADED":    (LogLevel.ALERTE, "events", "Sierra port game_changers DEGRADED : sym={sym} reason={reason}"),
+    # Phase D Bloc 1 PVWAP (INCIDENT #75 18/06/2026)
+    "SIERRA_PORT_PVWAP_OK":                  (LogLevel.INFO,   "events", "Sierra port PVWAP OK : sym={sym}"),
+    "SIERRA_PORT_PVWAP_FAIL":                (LogLevel.MAJEUR, "events", "Sierra port PVWAP FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_RVOL_OK":                   (LogLevel.INFO,   "events", "Sierra port rvol OK : sym={sym}"),
     "SIERRA_PORT_RVOL_FAIL":                 (LogLevel.MAJEUR, "events", "Sierra port rvol FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_RVOL_DEGRADED":             (LogLevel.ALERTE, "events", "Sierra port rvol DEGRADED : sym={sym} reason={reason}"),

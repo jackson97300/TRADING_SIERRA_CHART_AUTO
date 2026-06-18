@@ -39,6 +39,7 @@ Auteur : MIA Trading V2 (Phase 4.1 Sierra Migration)
 """
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -108,6 +109,12 @@ try:
         compute_market_profile_advanced_features, MarketProfileAdvancedState,
         LiquiditySweepState, JudasSwingState,
     )
+    # Phase D Bloc 1 - PVWAP streaming (INCIDENT #75 18/06 — audit dead features)
+    # Module deja code mais JAMAIS wire-up live. 3 distances dist_pvwap_*_pct
+    # consommees par Bot 2 BN V4 + Bot 3 v3 + Bot 3 Tier 1 = absentes en live.
+    from CORE.phase_d_pvwap_streaming import (
+        add_phase_d_pvwap_streaming, make_pvwap_stream_state,
+    )
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -124,6 +131,10 @@ except ImportError:
     from market_profile_advanced import (  # type: ignore
         compute_market_profile_advanced_features, MarketProfileAdvancedState,
         LiquiditySweepState, JudasSwingState,
+    )
+    # Phase D Bloc 1 - PVWAP streaming (INCIDENT #75 18/06)
+    from phase_d_pvwap_streaming import (  # type: ignore
+        add_phase_d_pvwap_streaming, make_pvwap_stream_state,
     )
     from eco_news_features import compute_eco_news_features
     from session_utils import get_trading_date_from_utc, utc_to_et
@@ -316,6 +327,15 @@ class SierraPipelineOrchestrator:
         # ib_high/low + sess_high/low + close + price_1030 + pdh/pdl
         # Apres aliases _lvl + chain phase_b_helpers, tous dispos.
         self._gc_state = GameChangersState()
+        # Phase D Bloc 1 - PVWAP streaming (INCIDENT #75 18/06 - audit dead features)
+        # Inputs requis : session_date_trading (phase_b_helpers) + vwap_d/sd1u/sd1d
+        # (Sierra natif). 6 features emit : pvwap, pvwap_sd1u, pvwap_sd1d (helpers),
+        # dist_pvwap_pct, dist_pvwap_sd1u_pct, dist_pvwap_sd1d_pct (ML-usable).
+        # Consumers actifs des 3 distances : bn_v4_engine, bot3_v3_continuation,
+        # bot3_level_definitions Tier 1 (toutes ABSENTES live = degradation silencieuse).
+        # NE PAS reinstancier au cross-day reset : vocation EOD broadcast J-1 sur J
+        # (cf pattern composite_poc, INCIDENT #58).
+        self._pvwap_stream_state = make_pvwap_stream_state()
 
         # Stats orchestrateur (debug + monitoring)
         self._bars_processed: int = 0
@@ -1028,6 +1048,70 @@ class SierraPipelineOrchestrator:
                 except Exception:  # noqa: BLE001
                     pass
 
+        # ─── Phase D Bloc 1 - PVWAP streaming (6 features) ──────────────────
+        # INCIDENT #75 (18/06/2026) : audit dead features revele 9 features
+        # Phase D Dalton 100% NULL ES+NQ depuis le debut. Module
+        # phase_d_pvwap_streaming existait mais JAMAIS wire-up. 5 consumers prod
+        # actifs degrades silencieusement (Bot 2 BN V4, Bot 3 v3, Bot 3 Tier 1).
+        #
+        # FEATURE FLAG (R3 code-reviewer 18/06) : MIA_PVWAP_WIRE_ENABLED
+        # defaut = "1" (active). Set "0" pour rollback rapide si Bot 2 BN V4
+        # / Bot 3 v3 paper Sim2/Sim3 se mettent a sur-trader avec les
+        # nouvelles features dist_pvwap_*_pct non-NaN.
+        #
+        # FIX R1 code-reviewer (18/06) : NE PAS utiliser `set - set` filter
+        # (place les 3 helpers pvwap dans `enriched` au bar 1 puis exclus
+        # les 6 keys = wirage placebo). Passer la liste EXPLICITE des 6 keys
+        # a `_safe_update` qui gere lui-meme la politique :
+        #   - dist_pvwap_*_pct absent Sierra : ecrit Python (NaN ou valeur)
+        #   - pvwap/pvwap_sd1u/pvwap_sd1d Sierra existe :
+        #       * Python NaN (cold-start) -> garde Sierra (preservation)
+        #       * Python non-NaN (apres prev session vue) -> OVERRIDE Sierra
+        #         buggue (variable intra-session 15/06 ES verifie empirique)
+        #         par Python correct (constant EOD broadcast)
+        # Cf phase_d_pvwap_streaming:138-260 retourne TOUJOURS les 6 keys.
+        #
+        # DEROGATION_POLICY_SIERRA_PRESERVE (Q1 code-reviewer review #2 18/06) :
+        # `_safe_update` docstring L429-434 stipule "preserve Sierra natif non-NaN".
+        # ICI on DEROGE : `pvwap/sd1u/sd1d` Sierra est buggue (verifie empirique
+        # 15/06 ES : 3 valeurs distinct intra-session 7395/7466/7612 au lieu de
+        # constant EOD J-1). Override Python non-NaN est INTENTIONNEL + correct.
+        # Si Python NaN (cold-start session 1), fallback Sierra accepte
+        # (degradation gracieuse, 1 jour warmup). Pattern asymetrique documente
+        # ici pour eviter qu'un futur dev "corrige" cette derogation par erreur.
+        _pvwap_keys = (
+            "pvwap", "pvwap_sd1u", "pvwap_sd1d",
+            "dist_pvwap_pct", "dist_pvwap_sd1u_pct", "dist_pvwap_sd1d_pct",
+        )
+        if os.environ.get("MIA_PVWAP_WIRE_ENABLED", "1") == "1":
+            try:
+                _pvwap_in = dict(enriched)
+                # FIX symbol injection : seed lookup PVWAPStreamState lit
+                # row["symbol"] mais enriched n'a pas ce champ (sierra_pipeline
+                # isole par symbole via self.symbol). Injection necessaire
+                # pour bootstrap seed file DATA/state/pvwap_seed.json si present.
+                _pvwap_in.setdefault("symbol", self.symbol)
+                _pvwap_out = add_phase_d_pvwap_streaming(
+                    _pvwap_in, self._pvwap_stream_state)
+                self._safe_update(
+                    enriched,
+                    {k: _pvwap_out[k] for k in _pvwap_keys
+                     if k in _pvwap_out},
+                )
+                if self._log_event is not None:
+                    try:
+                        self._log_event("SIERRA_PORT_PVWAP_OK",
+                                         sym=self.symbol)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception as _e:  # noqa: BLE001
+                if self._log_event is not None:
+                    try:
+                        self._log_event("SIERRA_PORT_PVWAP_FAIL",
+                                         sym=self.symbol, err=str(_e)[:200])
+                    except Exception:  # noqa: BLE001
+                        pass
+
         # ─── Phase 1 Group D - intermarket (10 features cross-sym ES/NQ) ────
         # Sierra DMP n'emet AUCUNE feature im_* native (0/10).
         # Caller (live_pipeline) doit appeler set_partner_bar(bar) AVANT
@@ -1397,6 +1481,12 @@ class SierraPipelineOrchestrator:
         )
         self._market_profile_advanced_state.judas = JudasSwingState()
         # composite_poc.daily_vpocs_5d/20d/current_day/last_vpoc_today PRESERVES
+        # Phase D Bloc 1 PVWAP (INCIDENT #75 18/06) : NE PAS reinstancier
+        # self._pvwap_stream_state. Vocation EOD broadcast J-1 sur J :
+        # prev_session_eod_vwap_d doit traverser le cross-day boundary
+        # (sinon dist_pvwap_*_pct = NaN sur la nouvelle session entiere).
+        # Le module gere lui-meme la transition session via comparaison
+        # current_session_date vs sess_date_str (cf phase_d_pvwap_streaming:199-209).
         self._current_trading_date = trading_date
         return True
 
