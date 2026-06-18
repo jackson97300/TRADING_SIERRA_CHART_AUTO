@@ -69,13 +69,56 @@ class BotMR:
         self.log.info(f"State load: {state_status}")
         bot_log.emit("BOTMR_STATE_LOAD", status=state_status)
 
+        # Persiste config active pour consumers externes (dashboard countdown).
+        # Source unique de verite : evite la decorrelation env vars cross-process nssm.
+        self.store.set_meta_config(
+            cooldown_minutes=self.cfg.COOLDOWN_BARS,
+            max_hold_minutes=self.cfg.MAX_HOLD_MINUTES,
+        )
+        self.store.save()
+
         # Per-symbol engines / data sources
         self.engines: dict[str, SignalEngine] = {}
         self.data_sources: dict[str, SierraDataSource] = {}
         from CORE.bot1_v2.config import Bot1V2Config
         ds_cfg = Bot1V2Config.from_env()
+        # R1 code-reviewer 18/06 : callback emit pour ISO corrompu
+        # (fail-open visible, anti silent fallback 19/04 meta-labeler).
+        def _emit_iso_corrupted(sym: str, iso: str) -> None:
+            try:
+                bot_log.emit("BOTMR_COOLDOWN_ISO_CORRUPTED", sym=sym, iso=iso or "")
+            except Exception as exc:  # noqa: BLE001
+                # Safe-fail : un fail emit ne doit jamais propager dans la
+                # decision de trading. On log via logger Python en derniere ligne.
+                self.log.warning(f"emit BOTMR_COOLDOWN_ISO_CORRUPTED fail: {exc}")
+
+        # Phase 3 18/06 : RegimeClassifier vote majoritaire 3 signaux.
+        # Instance unique partagee entre tous les SignalEngine (stateless safe).
+        # Bypass possible via cfg.REGIME_CLASSIFIER_ENABLED=False (kill-switch).
+        from CORE.bot_mean_revert.gates.regime_classifier import RegimeClassifier
+        self.regime_classifier = RegimeClassifier(self.cfg)
+
+        # Phase 3 18/06 (alternative) : RegimeScorer score continu pondere.
+        # Approche complementaire au classifier binaire vote majoritaire.
+        # Capture la non-monotonie observee dans calibration empirique deciles
+        # slope_30 -> EV (vote binaire perd l'info, score pondere la garde).
+        # Stateless safe (cfg en read-only) -> 1 instance partagee.
+        # Kill-switch : cfg.REGIME_SCORER_ENABLED=False.
+        from CORE.bot_mean_revert.gates.regime_scorer import RegimeScorer
+        self.regime_scorer = RegimeScorer(self.cfg)
+
         for sym in self.symbols:
-            self.engines[sym] = SignalEngine(symbol=sym, cfg=self.cfg)
+            # store passe au SignalEngine pour cooldown time-based persistant
+            # (fix bug 18/06 : restart ne bypass plus le cooldown).
+            self.engines[sym] = SignalEngine(
+                symbol=sym,
+                cfg=self.cfg,
+                traded_signal_ids=self.store.traded_signal_ids,
+                store=self.store,
+                on_corrupted_state=_emit_iso_corrupted,
+                regime_classifier=self.regime_classifier,
+                regime_scorer=self.regime_scorer,
+            )
             # Reuse SierraDataSource avec Bot1V2Config (compatible : meme DMP_BAR_MAX_AGE_SEC + dir).
             self.data_sources[sym] = SierraDataSource(symbol=sym, cfg=ds_cfg)
 
@@ -135,13 +178,262 @@ class BotMR:
 
         self._running = False
         self._last_heartbeat_ts = 0.0
+        # FIX 18/06 BOUCLE INFINIE MAX_HOLD : tracker le dernier force_close
+        # par symbole pour eviter ressayer dans la fenetre cooldown (fill listener
+        # peut prendre >1min a confirmer status=7 sur Sim slow). Reference incident
+        # 18/06 : 9 close markets en 8 min sur meme position = cumul SHORTs sans SL/TP.
+        self._last_max_hold_close_ts_by_sym: dict[str, float] = {}
+        # FIX 18/06 BOOT WARMUP : ne pas declencher MAX_HOLD dans les N secondes
+        # apres boot. Permet au DtcFillListener de detecter d'eventuels fills
+        # orphelins via ORDER_UPDATE avant qu'on envoie un nouveau close market.
+        self._boot_ts = time.time()
 
-    def _on_fill_close(self, sym: str, pnl_usd: float) -> None:
-        """Callback DtcFillListener post-close : maj daily_gate."""
+    def _on_fill_close(
+        self, sym: str, pnl_usd: float, exit_reason: str = "UNKNOWN",
+    ) -> None:
+        """Callback DtcFillListener post-close : maj daily_gate + circuit breaker.
+
+        Circuit breaker (18/06) : track N SL consecutives par symbole, halt trading
+        si threshold atteint, reset au prochain TP. Reference carnage 18/06 (-$1025
+        broker E-mini sur 4 SL LONG ES sans halt = pas d'auto-correction).
+
+        Convention exit_reason (RESERVE #4 fix 18/06) :
+          - "TIMEOUT" : MAX_HOLD force close. PnL peut etre legerement negatif
+            (slippage market close) mais c'est une sortie TEMPORELLE, pas une SL
+            signal-driven. NE PAS polluer circuit breaker SL consec (sinon halt
+            60min sur 3 timeouts d'affilee = halt injustifie).
+          - "TP" : signal-driven win (pnl >= 0) -> reset compteur SL consec.
+          - "SL" : signal-driven loss (pnl < 0) -> increment compteur SL consec.
+          - "UNKNOWN" : signature ancienne (2 args), fallback sur convention pnl-based
+            (>=0 = reset, <0 = increment).
+
+        Args:
+            sym: symbole ("ES", "NQ", "MGC")
+            pnl_usd: PnL en USD du trade ferme.
+            exit_reason: "TP" / "SL" / "TIMEOUT" / "UNKNOWN" (default backward compat).
+        """
         try:
             self.daily_gate.update_after_trade(pnl_usd)
         except Exception as e:  # noqa: BLE001
             self.log.error(f"daily_gate.update_after_trade fail: {e}")
+
+        # RESERVE #4 fix 18/06 : MAX_HOLD timeout ne pollue PAS le circuit breaker.
+        # Sortie temporelle != SL signal-driven. Cleanup tracker anti-boucle ici
+        # car aucune logique SL consec a appliquer.
+        if exit_reason == "TIMEOUT":
+            bot_log.emit(
+                "BOTMR_TIMEOUT_NO_SL_CONSEC_IMPACT",
+                sym=sym, pnl_usd=round(pnl_usd, 2),
+            )
+            # Cleanup tracker anti-boucle in-memory (pos deja supprime par close_position)
+            self._last_max_hold_close_ts_by_sym.pop(sym, None)
+            return
+
+        # Circuit breaker : track SL consecutives par symbole
+        if self.cfg.CIRCUIT_BREAKER_ENABLED:
+            try:
+                if pnl_usd < 0:  # SL hit
+                    n_consec = self.store.increment_sl_consec(sym)
+                    bot_log.emit(
+                        "BOTMR_SL_CONSEC_INCREMENTED",
+                        sym=sym, n_consec=n_consec, pnl_usd=round(pnl_usd, 2),
+                    )
+                    if n_consec >= self.cfg.SL_CONSEC_HALT_THRESHOLD:
+                        halt_until_ts = time.time() + (
+                            self.cfg.HALT_DURATION_MINUTES * 60
+                        )
+                        self.store.set_halt_until_ts(sym, halt_until_ts)
+                        halt_iso = datetime.fromtimestamp(
+                            halt_until_ts, tz=timezone.utc,
+                        ).isoformat()
+                        self.log.warning(
+                            f"{sym} CIRCUIT BREAKER HALT: {n_consec} SL consec, "
+                            f"halt until {halt_iso}"
+                        )
+                        bot_log.emit(
+                            "BOTMR_CIRCUIT_BREAKER_HALT_TRIGGERED",
+                            sym=sym, n_consec=n_consec,
+                            halt_minutes=self.cfg.HALT_DURATION_MINUTES,
+                        )
+                else:  # TP hit (pnl_usd >= 0 traite comme reset, conservateur)
+                    cur = self.store.get_n_sl_consec(sym)
+                    if cur > 0:
+                        self.store.reset_sl_consec(sym)
+                        bot_log.emit(
+                            "BOTMR_SL_CONSEC_RESET",
+                            sym=sym, was=cur, reason="TP",
+                        )
+                # Persist immediat apres mutation (atomique store.save).
+                try:
+                    self.store.save()
+                except Exception as e:  # noqa: BLE001
+                    self.log.warning(
+                        f"store.save fail after circuit breaker update: {e}"
+                    )
+            except Exception as e:  # noqa: BLE001
+                # Defense : un fail circuit breaker ne doit pas casser le close trade.
+                self.log.error(f"circuit_breaker update fail: {e}")
+
+        # Cleanup tracker anti-boucle in-memory pour TP/SL legitime aussi.
+        # Si une position avait deja eu un timeout retry partiel mais finit par
+        # toucher SL/TP, on doit nettoyer le tracker sinon le prochain trade
+        # voit un last_max_hold_close_ts fantome (pas critique mais propre).
+        self._last_max_hold_close_ts_by_sym.pop(sym, None)
+
+    def _force_close_timeout(self, sym: str, pos: dict, elapsed_min: float) -> None:
+        """Force close a market d'une position ouverte depuis > MAX_HOLD_MINUTES.
+
+        Lopez AFML Ch.3 triple barrier : la 3e barriere temporelle (max hold)
+        force la sortie si ni TP ni SL n'ont fire avant. Standard pro MR intraday.
+
+        Sequence anti-orphan (cf .claude/rules/orphan-prevention.md) :
+          1. Cancel TP via cancel_order(cid, trade_account=Sim1)
+          2. Cancel SL idem
+          3. Wait 1s propagation
+          4. MARKET CLOSE Type 208 OpenCloseTrade=2 (send_close_market connector)
+          5. Wait 2s pour fill
+          6. SUBMIT_FLATTEN_POSITION_ORDER (Type 209) bouclier defense
+          7. Cleanup LOCAL minimal : le DtcFillListener fera close_position complet
+             sur ORDER_UPDATE status=7 du MARKET CLOSE (anti double-close).
+
+        Args:
+            sym : symbole brut ("ES" / "NQ" / "MGC")
+            pos : dict position depuis self.store.positions[sym]
+            elapsed_min : duree d'ouverture (minutes)
+        """
+        direction = pos.get("direction")
+        tp_cid = pos.get("tp_cid")
+        sl_cid = pos.get("sl_cid")
+        n_micros = pos.get("n_micros", 1)
+        entry_price = pos.get("entry_price", 0.0)
+
+        self.log.warning(
+            f"{sym} MAX_HOLD timeout: {elapsed_min:.1f}min >= {self.cfg.MAX_HOLD_MINUTES}min, "
+            f"force close at market (entry={entry_price}, dir={direction})"
+        )
+        bot_log.emit(
+            "BOTMR_TIMEOUT_CLOSE_START",
+            sym=sym, direction=direction, elapsed_min=round(elapsed_min, 1),
+            max_hold_min=self.cfg.MAX_HOLD_MINUTES,
+            entry_price=entry_price, n_micros=n_micros,
+        )
+
+        if self.router is None or getattr(self.router, "dtc", None) is None:
+            # Pas de DTC -> pas de close possible, alerte critique orphan risk
+            bot_log.emit(
+                "BOTMR_TIMEOUT_DTC_DOWN_ORPHAN_RISK",
+                sym=sym, direction=direction,
+            )
+            return
+
+        dtc = self.router.dtc
+        ta = self.cfg.TRADE_ACCOUNT
+
+        # Step 1-2 : cancel TP + SL (trade_account explicite, regle orphan-prevention)
+        for label, cid in [("TP", tp_cid), ("SL", sl_cid)]:
+            if not cid:
+                continue
+            try:
+                ok = dtc.cancel_order(cid, trade_account=ta)
+                if not ok:
+                    bot_log.emit(
+                        "BOTMR_TIMEOUT_CANCEL_FAIL",
+                        sym=sym, leg=label, cid=cid,
+                    )
+            except Exception as e:  # noqa: BLE001
+                bot_log.emit(
+                    "BOTMR_TIMEOUT_CANCEL_EXCEPTION",
+                    sym=sym, leg=label, cid=cid, err=str(e)[:200],
+                )
+
+        # Step 3 : wait propagation cancels (cf orphan-prevention.md latences mesurees)
+        time.sleep(1.0)
+
+        # Step 4 : MARKET CLOSE (opposite side, OpenCloseTrade=2 dans send_close_market).
+        # Mapping symbole -> contract Sierra (source unique : BOT/dtc_connector.SYMBOL_TO_CONTRACT).
+        # Le connector send_close_market envoie Symbol brut, donc on doit passer le
+        # contract complet ici (pas comme send_market_order qui fait _to_contract).
+        contract = pos.get("contract") or self._sym_to_contract(sym)
+        # LONG -> SELL (2) pour fermer ; SHORT -> BUY (1)
+        close_side = 2 if direction == "LONG" else 1
+        try:
+            close_cid = dtc.send_close_market(
+                symbol=contract,
+                side=close_side,
+                quantity=abs(int(n_micros)),
+                trade_account=ta,
+            )
+            bot_log.emit(
+                "BOTMR_TIMEOUT_MARKET_CLOSE_SENT",
+                sym=sym, side=("SELL" if close_side == 2 else "BUY"),
+                qty=abs(int(n_micros)), cid=close_cid or "",
+                ok=bool(close_cid),
+            )
+            # RESERVE #1 fix 18/06 : register close_cid dans DtcFillListener.
+            # Sans ca, le fill du close market (ORDER_UPDATE status=7 ClientOrderID=
+            # close_cid) arrive avec un CID inconnu -> listener retourne sans
+            # cleanup -> position reste OPEN -> MAX_HOLD re-declenche -> boucle
+            # infinie (carnage 18/06 = 9 closes en 8 min cumul SHORTs).
+            # Convention kind="timeout" -> exit_reason="TIMEOUT" propage au callback.
+            if close_cid and self.fill_listener is not None:
+                try:
+                    self.fill_listener.register_close_cid(sym, close_cid, pos)
+                except Exception as e:  # noqa: BLE001
+                    bot_log.emit(
+                        "BOTMR_TIMEOUT_REGISTER_CLOSE_CID_FAIL",
+                        sym=sym, cid=close_cid, err=str(e)[:200],
+                    )
+        except Exception as e:  # noqa: BLE001
+            bot_log.emit(
+                "BOTMR_TIMEOUT_MARKET_CLOSE_EXCEPTION",
+                sym=sym, err=str(e)[:200],
+            )
+
+        # Step 5 : wait fill MARKET CLOSE
+        time.sleep(2.0)
+
+        # Step 6 : Type 209 flatten defense (inoffensif si deja flat)
+        # ClientOrderID OBLIGATOIRE (cf orphan-prevention.md : SC rejette
+        # silencieusement Type 209/210 sans CID).
+        flatten_cid = f"BOTMR_TIMEOUT_FLUSH_{sym[:2]}_{int(time.time()) % 100000}"
+        try:
+            dtc._send({
+                "Type": 209,
+                "ClientOrderID": flatten_cid,
+                "Symbol": contract,
+                "TradeAccount": ta,
+                "Exchange": "CME",
+                "IsAutomatedOrder": 1,
+            })
+            bot_log.emit("BOTMR_TIMEOUT_FLATTEN_SENT", sym=sym, cid=flatten_cid)
+        except Exception as e:  # noqa: BLE001
+            bot_log.emit("BOTMR_TIMEOUT_FLATTEN_EXCEPTION", sym=sym, err=str(e)[:200])
+
+        # Step 7 : on NE SUPPRIME PAS la position du store ici.
+        # Le DtcFillListener sur ORDER_UPDATE status=7 du MARKET CLOSE fera le
+        # close_position complet (store + state_bridge + daily_gate). Faire un
+        # double cleanup ici = double comptage PnL + race condition.
+        bot_log.emit("BOTMR_TIMEOUT_CLOSE_DONE", sym=sym)
+
+    @staticmethod
+    def _sym_to_contract(sym: str) -> str:
+        """Map symbole brut -> contract Sierra complet.
+
+        Source unique : BOT/dtc_connector.py:SYMBOL_TO_CONTRACT (16/06 rollover U26).
+        Fallback hardcode ici si import echoue (defense). NE PAS divergeur la
+        source de verite : si rollover change, modifier dtc_connector.py.
+        """
+        try:
+            from BOT.dtc_connector import SYMBOL_TO_CONTRACT
+            return SYMBOL_TO_CONTRACT.get(sym.upper(), sym)
+        except Exception:  # noqa: BLE001
+            # Fallback hardcode (aligne avec dtc_connector.py:112-117 au 16/06/2026)
+            fallback = {
+                "ES": "ESU26-CME",
+                "NQ": "NQU26-CME",
+                "MGC": "MGCQ26-CMECOMEX",
+            }
+            return fallback.get(sym.upper(), sym)
 
     def _daily_cfg_adapter(self):
         """Adapter minimal pour passer cfg Bot MR a DailyLimitsGate (qui attend
@@ -186,6 +478,92 @@ class BotMR:
             return None
 
         if self.store.has_position(sym):
+            # Check MAX_HOLD timeout (Lopez AFML Ch.3 triple barrier).
+            # Si position ouverte depuis >= MAX_HOLD_MINUTES sans toucher TP/SL,
+            # force close a market. Standard pro MR intraday 1-min.
+            # FIX 18/06 ANTI-BOUCLE :
+            #  (1) BOOT_WARMUP : skip dans les N sec apres boot (laisse temps
+            #      DtcFillListener de detecter fills orphelins via ORDER_UPDATE).
+            #  (2) RETRY_COOLDOWN : skip si dernier close envoye il y a < N sec.
+            # Sans ces guards, bug 18/06 = 9 close markets en 8 min sur meme
+            # position = cumul SHORTs sans SL/TP (carnage).
+            pos = self.store.positions.get(sym)
+            if pos is not None:
+                now_ts = time.time()
+                # Guard 1 : boot warmup
+                if (now_ts - self._boot_ts) < self.cfg.MAX_HOLD_BOOT_WARMUP_SEC:
+                    bot_log.emit(
+                        "BOTMR_MAX_HOLD_BOOT_WARMUP_SKIP",
+                        sym=sym,
+                        age_sec=round(now_ts - self._boot_ts, 1),
+                        warmup_sec=self.cfg.MAX_HOLD_BOOT_WARMUP_SEC,
+                    )
+                else:
+                    entry_ts_ms = pos.get("entry_ts", 0)
+                    if entry_ts_ms > 0:
+                        elapsed_min = (now_ts * 1000 - entry_ts_ms) / 60_000.0
+                        if elapsed_min >= self.cfg.MAX_HOLD_MINUTES:
+                            # Guard 3 RESERVE #3 : max retries halt (defense pathologique).
+                            # Si N timeouts envoyes mais position toujours OPEN (DTC down,
+                            # Sim refuse, sequence cancel+close orpheline) -> halt symbole,
+                            # intervention manuelle requise. Sans ce plafond, une position
+                            # bloquee declenche des closes infinis toute la session.
+                            n_timeouts = int(pos.get("n_max_hold_timeouts", 0))
+                            if n_timeouts >= self.cfg.MAX_HOLD_MAX_RETRIES:
+                                if not pos.get("halted_by_max_hold", False):
+                                    pos["halted_by_max_hold"] = True
+                                    try:
+                                        self.store.save()
+                                    except Exception as e:  # noqa: BLE001
+                                        self.log.warning(
+                                            f"store.save fail after halt set: {e}"
+                                        )
+                                    self.log.critical(
+                                        f"{sym} MAX_HOLD MAX RETRIES EXHAUSTED: "
+                                        f"{n_timeouts} timeouts envoyes mais position "
+                                        f"TOUJOURS OPEN. Position halted. "
+                                        f"INTERVENTION MANUELLE REQUISE."
+                                    )
+                                    bot_log.emit(
+                                        "BOTMR_MAX_HOLD_RETRIES_EXHAUSTED_HALT",
+                                        sym=sym, n_timeouts=n_timeouts,
+                                        max_retries=self.cfg.MAX_HOLD_MAX_RETRIES,
+                                    )
+                                # Halt persistant : pas de close, operateur doit Flatten.
+                                bot_log.emit("BOTMR_SKIP_HAS_POSITION", sym=sym)
+                                return None
+
+                            # Guard 2 : retry cooldown anti-boucle.
+                            # RESERVE #2 fix 18/06 : last_close_ts persiste dans pos (cross-restart).
+                            # In-memory dict reste comme fallback degrade (cas pos absent au restart).
+                            last_close_ts = (
+                                float(pos.get("last_max_hold_close_ts", 0.0))
+                                or self._last_max_hold_close_ts_by_sym.get(sym, 0.0)
+                            )
+                            if last_close_ts > 0 and (now_ts - last_close_ts) < self.cfg.MAX_HOLD_RETRY_COOLDOWN_SEC:
+                                bot_log.emit(
+                                    "BOTMR_MAX_HOLD_RETRY_COOLDOWN_SKIP",
+                                    sym=sym,
+                                    secs_since_last=round(now_ts - last_close_ts, 1),
+                                    cooldown_sec=self.cfg.MAX_HOLD_RETRY_COOLDOWN_SEC,
+                                )
+                            else:
+                                self._force_close_timeout(sym, pos, elapsed_min)
+                                # In-memory tracker (fallback).
+                                self._last_max_hold_close_ts_by_sym[sym] = now_ts
+                                # RESERVE #2 : persister dans pos pour cross-restart.
+                                # Le bot peut crasher entre 2 retries -> sans persistance,
+                                # n_max_hold_timeouts repart de 0 au reboot -> bypass plafond.
+                                pos["last_max_hold_close_ts"] = now_ts
+                                pos["n_max_hold_timeouts"] = int(pos.get("n_max_hold_timeouts", 0)) + 1
+                                try:
+                                    self.store.save()
+                                except Exception as e:  # noqa: BLE001
+                                    self.log.warning(
+                                        f"store.save fail after force_close persist: {e}"
+                                    )
+                                return None  # position fermee (cleanup via fill listener)
+
             bot_log.emit("BOTMR_SKIP_HAS_POSITION", sym=sym)
             # Update live tracking MFE/MAE/PnL unrealized pour visibility dashboard
             try:
@@ -219,6 +597,197 @@ class BotMR:
                 direction=signal_result.direction or "?",
                 skip_reason=signal_result.skip_reason,
             )
+            # Emit code dedie pour anti-clustering (tracabilite J+1 grep).
+            # Format skip_reason : "REENTRY_TOO_CLOSE:3t<20t last=7547.25"
+            if signal_result.skip_reason.startswith("REENTRY_TOO_CLOSE"):
+                try:
+                    # Parse robust : "REENTRY_TOO_CLOSE:{dist}t<{min}t last={price}"
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    left, right = payload.split("<", 1)
+                    dist_ticks = left.replace("t", "").strip()
+                    parts = right.split(" ", 1)
+                    min_ticks = parts[0].replace("t", "").strip()
+                    last_price = parts[1].split("=", 1)[1] if len(parts) > 1 else "?"
+                except (IndexError, ValueError):
+                    dist_ticks, min_ticks, last_price = "?", "?", "?"
+                bot_log.emit(
+                    "BOTMR_NO_REENTRY_TOO_CLOSE",
+                    sym=sym,
+                    direction=signal_result.direction or "?",
+                    dist_ticks=dist_ticks,
+                    min_ticks=min_ticks,
+                    last_price=last_price,
+                )
+            # 🆕 18/06 Regime hard filter blocks (anti catch falling knife).
+            # Format skip_reason :
+            #   "REGIME_BEARISH_TREND:slope_30=-2.30<-1.5"
+            #   "REGIME_BULLISH_TREND:slope_30=2.50>1.5"
+            #   "REGIME_VIX_PANIC:18.5%>15.0"
+            #   "REGIME_VIX_PANIC_ABS:32.1>=30.0"
+            elif signal_result.skip_reason.startswith("REGIME_BEARISH_TREND"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    slope_str, thr_str = payload.split("<", 1)
+                    slope_val = slope_str.split("=", 1)[1].strip()
+                    thr_val = thr_str.strip()
+                except (IndexError, ValueError):
+                    slope_val, thr_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_REGIME_BEARISH_BLOCK",
+                    sym=sym, slope_30=slope_val, threshold=thr_val,
+                )
+            elif signal_result.skip_reason.startswith("REGIME_BULLISH_TREND"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    slope_str, thr_str = payload.split(">", 1)
+                    slope_val = slope_str.split("=", 1)[1].strip()
+                    thr_val = thr_str.strip()
+                except (IndexError, ValueError):
+                    slope_val, thr_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_REGIME_BULLISH_BLOCK",
+                    sym=sym, slope_30=slope_val, threshold=thr_val,
+                )
+            elif signal_result.skip_reason.startswith("REGIME_VIX_PANIC"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    # Format pct : "18.5%>15.0" ; format abs : "32.1>=30.0"
+                    sep = ">=" if ">=" in payload else ">"
+                    left, right = payload.split(sep, 1)
+                    vix_val = left.replace("%", "").strip()
+                    thr_val = right.strip()
+                except (IndexError, ValueError):
+                    vix_val, thr_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_REGIME_VIX_PANIC_BLOCK",
+                    sym=sym, vix_change_pct=vix_val, threshold=thr_val,
+                )
+            # 18/06 Regime scorer continu (alternative score pondere multi-features).
+            # Format skip_reason : "REGIME_SCORE_BLOCKED:{regime}_blocks_{direction} "
+            #                      "score={score} features={features_dict}"
+            elif signal_result.skip_reason.startswith("REGIME_SCORE_BLOCKED"):
+                try:
+                    # Parse minimal robust : on extrait regime + score, features
+                    # restent dans skip_reason brut (deja stocke via log_decision_jsonl).
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    # payload = "TREND_DOWN_STRONG_blocks_LONG score=-72.0 features=..."
+                    head, _sep, rest = payload.partition(" ")
+                    regime_val = head.split("_blocks_", 1)[0]
+                    score_token = rest.split(" ", 1)[0] if rest else ""
+                    score_val = score_token.replace("score=", "").strip() or "?"
+                    features_part = rest.split("features=", 1)[1] if "features=" in rest else "?"
+                except (IndexError, ValueError):
+                    regime_val, score_val, features_part = "?", "?", "?"
+                bot_log.emit(
+                    "BOTMR_REGIME_SCORE_BLOCK",
+                    sym=sym,
+                    direction=signal_result.direction or "?",
+                    regime=regime_val,
+                    score=score_val,
+                    features=features_part[:200],
+                )
+            # 🆕 18/06 Confluence filter (anti entry isolee dans le vide).
+            # Format skip_reason : "NO_CONFLUENCE:{n}<{min}_levels_in_{rad}t"
+            elif signal_result.skip_reason.startswith("NO_CONFLUENCE"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    # payload = "1<2_levels_in_10t"
+                    left, right = payload.split("<", 1)
+                    n_levels_val = left.strip()
+                    # right = "2_levels_in_10t"
+                    min_part, _sep, rad_part = right.partition("_levels_in_")
+                    min_levels_val = min_part.strip()
+                    radius_ticks_val = rad_part.replace("t", "").strip()
+                except (IndexError, ValueError):
+                    n_levels_val, min_levels_val, radius_ticks_val = "?", "?", "?"
+                bot_log.emit(
+                    "BOTMR_NO_CONFLUENCE_BLOCK",
+                    sym=sym,
+                    direction=signal_result.direction or "?",
+                    n_levels=n_levels_val,
+                    min_levels=min_levels_val,
+                    radius_ticks=radius_ticks_val,
+                )
+            # 🆕 18/06 Phase 4 Orderflow / Anti-top / Momentum cap.
+            # 7 codes emit selon prefixe skip_reason.
+            elif signal_result.skip_reason.startswith("ORDERFLOW_NO_DATA"):
+                bot_log.emit(
+                    "BOTMR_ORDERFLOW_NO_DATA_BLOCK",
+                    sym=sym,
+                    direction=signal_result.direction or "?",
+                )
+            elif signal_result.skip_reason.startswith("ORDERFLOW_NO_BUYERS_LONG"):
+                # Format : "ORDERFLOW_NO_BUYERS_LONG:delta={d} rvol_z={r}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    delta_val = payload.split("delta=", 1)[1].split(" ", 1)[0]
+                    rvol_val = payload.split("rvol_z=", 1)[1].strip()
+                except (IndexError, ValueError):
+                    delta_val, rvol_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_ORDERFLOW_NO_BUYERS_BLOCK",
+                    sym=sym, delta=delta_val, rvol_z=rvol_val,
+                )
+            elif signal_result.skip_reason.startswith("ORDERFLOW_NO_SELLERS_SHORT"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    delta_val = payload.split("delta=", 1)[1].split(" ", 1)[0]
+                    rvol_val = payload.split("rvol_z=", 1)[1].strip()
+                except (IndexError, ValueError):
+                    delta_val, rvol_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_ORDERFLOW_NO_SELLERS_BLOCK",
+                    sym=sym, delta=delta_val, rvol_z=rvol_val,
+                )
+            elif signal_result.skip_reason.startswith("ANTI_TOP_LONG"):
+                # Format : "ANTI_TOP_LONG:bs_high={n} dist_1d_max={d}t"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    bs_val = payload.split("bs_high=", 1)[1].split(" ", 1)[0]
+                    dist_val = payload.split("dist_1d_max=", 1)[1].replace("t", "").strip()
+                except (IndexError, ValueError):
+                    bs_val, dist_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_ANTI_TOP_LONG_BLOCK",
+                    sym=sym, bs_high=bs_val, dist_hod=dist_val,
+                )
+            elif signal_result.skip_reason.startswith("ANTI_BOTTOM_SHORT"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    bs_val = payload.split("bs_low=", 1)[1].split(" ", 1)[0]
+                    dist_val = payload.split("dist_1d_min=", 1)[1].replace("t", "").strip()
+                except (IndexError, ValueError):
+                    bs_val, dist_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_ANTI_BOTTOM_SHORT_BLOCK",
+                    sym=sym, bs_low=bs_val, dist_lod=dist_val,
+                )
+            elif signal_result.skip_reason.startswith("MOMENTUM_CAP_LONG"):
+                # Format : "MOMENTUM_CAP_LONG:slope_10={s}>{thr}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    slope_val, thr_val = payload.split(">", 1)
+                    slope_val = slope_val.replace("slope_10=", "").strip()
+                    thr_val = thr_val.strip()
+                except (IndexError, ValueError):
+                    slope_val, thr_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_MOMENTUM_CAP_LONG_BLOCK",
+                    sym=sym, slope_10=slope_val, threshold=thr_val,
+                )
+            elif signal_result.skip_reason.startswith("MOMENTUM_CAP_SHORT"):
+                # Format : "MOMENTUM_CAP_SHORT:slope_10={s}<-{thr}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    slope_val, thr_val = payload.split("<-", 1)
+                    slope_val = slope_val.replace("slope_10=", "").strip()
+                    thr_val = thr_val.strip()
+                except (IndexError, ValueError):
+                    slope_val, thr_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_MOMENTUM_CAP_SHORT_BLOCK",
+                    sym=sym, slope_10=slope_val, threshold=thr_val,
+                )
             log_decision_jsonl(
                 bar_ts=bar_ts, symbol=sym, signal=signal_result,
                 executed=False, session_phase=session_phase,
@@ -293,7 +862,12 @@ class BotMR:
                 executed=False, session_phase=session_phase, hypothetical=True,
             )
             # On register quand meme le trade pour respecter le cooldown
-            self.engines[sym].register_trade(signal_result.signal_id)
+            # + anti-clustering (entry_price = signal planifie pour dry-eval)
+            self.engines[sym].register_trade(
+                signal_result.signal_id,
+                direction=signal_result.direction,
+                entry_price=signal_result.entry_price,
+            )
             return None
 
         # TRADABLE + execution REELLE
@@ -343,7 +917,17 @@ class BotMR:
             session_phase=session_phase, hypothetical=False,
         )
 
-        # Persist position
+        # FIX R2 code-reviewer 18/06 : register_trade AVANT open_position pour
+        # garantir que last_trade_ts est dans l'objet store quand save() persiste.
+        # Sinon : crash entre register_trade et save -> last_trade_ts en memoire
+        # mais NON persiste -> restart bypass cooldown (le bug qu'on veut fix).
+        # Avec ce reorder, le save() unique en fin de bloc atomise les 2 mutations.
+        # 18/06 ajout : direction + entry_price (= fill reel) pour NO_REENTRY anti-clustering.
+        self.engines[sym].register_trade(
+            signal_result.signal_id,
+            direction=signal_result.direction,
+            entry_price=order_result.fill_price,
+        )
         self.store.open_position(sym, {
             "signal_id": signal_result.signal_id,
             "direction": signal_result.direction,
@@ -359,7 +943,6 @@ class BotMR:
             "sl_cid": order_result.sl_cid,
             "dry_run": self.dry_run,
         })
-        self.engines[sym].register_trade(signal_result.signal_id)
         self.store.save()
         # FIX 17/06 : register CIDs DTC reels avant state_bridge open (anti-race)
         if self.fill_listener is not None:

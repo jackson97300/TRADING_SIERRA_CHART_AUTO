@@ -1511,6 +1511,58 @@ LOG_CODES = {
     "BOTMR_GATE_DAILY_BLOCK":      (LogLevel.MAJEUR,   "risk",      "BotMR daily limit : {sym} {reason}"),
     "BOTMR_GATE_REGIME_BLOCK":     (LogLevel.INFO,     "risk",      "BotMR regime block : {sym} {direction} reason={reason}"),
     "BOTMR_NOT_TRADABLE":          (LogLevel.INFO,     "decisions", "BotMR skip {sym} {direction} : {skip_reason}"),
+    # 🆕 18/06/2026 Anti-clustering spatial : skip entry trop proche du dernier
+    # entry meme direction. 3e garde-fou (avec COOLDOWN_BARS + MAX_HOLD_MINUTES).
+    # Pattern observe 18/06 : 5 LONGs ES dans 13 ticks = -$237.50 sur entry over-tradee.
+    "BOTMR_NO_REENTRY_TOO_CLOSE":  (LogLevel.INFO,     "decisions",
+        "BotMR {sym} {direction} skip - reentry trop proche : {dist_ticks}t < {min_ticks}t (last_entry={last_price})"),
+    # FIX R1 code-reviewer 18/06 : cooldown ISO corrompu = fail-open visible
+    # (anti silent fallback 19/04 meta-labeler). SignalEngine appelle callback,
+    # main.py route vers bot_log.emit pour tracer dans decisions/.
+    "BOTMR_COOLDOWN_ISO_CORRUPTED": (LogLevel.MAJEUR,   "decisions",
+        "BotMR cooldown ISO corrompu pour {sym}: {iso} - bypass cooldown (fail-open)"),
+    # 🆕 18/06/2026 Regime hard filter (anti catch falling knife).
+    # Calibre carnage 18/06 -$1025 broker E-mini sur 4 LONGs ES en descente 7568->7533.
+    # Garde-fou ABSOLU en complement du mode regime existant (trend_align_es/contrarian_nq).
+    "BOTMR_REGIME_BEARISH_BLOCK": (LogLevel.INFO,     "decisions",
+        "BotMR {sym} LONG bloque - regime bearish : slope_30={slope_30} < {threshold}"),
+    "BOTMR_REGIME_BULLISH_BLOCK": (LogLevel.INFO,     "decisions",
+        "BotMR {sym} SHORT bloque - regime bullish : slope_30={slope_30} > {threshold}"),
+    "BOTMR_REGIME_VIX_PANIC_BLOCK": (LogLevel.MAJEUR,  "decisions",
+        "BotMR {sym} bloque - VIX panic : change={vix_change_pct}% > {threshold}"),
+    # 🆕 18/06/2026 Confluence niveau MenthorQ (anti entry isolee).
+    # Calibre carnage 18/06 : 4 LONGs ES dans le vide entre 2 niveaux = -$1025 broker.
+    # Garde-fou : require N levels structurels (HVL/GEX/VWAP SD) dans rayon X ticks.
+    "BOTMR_NO_CONFLUENCE_BLOCK": (LogLevel.INFO,     "decisions",
+        "BotMR {sym} {direction} skip - niveau confluence insuffisant : {n_levels} levels dans {radius_ticks}t (min={min_levels})"),
+    # 🆕 18/06/2026 Phase 3 Regime classifier vote majoritaire 3 signaux
+    # (slope/swing/panic). Sortie REGIME_CLASSIFIER_BLOCKED:{regime}_blocks_{direction}.
+    # PANIC=regime extreme bloque tout, TREND_DOWN bloque LONG, TREND_UP bloque SHORT.
+    "BOTMR_REGIME_CLASSIFIER_BLOCK": (LogLevel.INFO,     "decisions",
+        "BotMR {sym} {direction} skip - regime classifier {regime} (votes={votes})"),
+    # 18/06/2026 Phase 3 Regime scorer continu (alternative score pondere).
+    # Capture non-monotonie deciles slope_30 -> EV. Score [-100, +100] -> 5 regimes.
+    # Bloque uniquement TREND_*_STRONG + PANIC. TREND_*_WEAK et RANGE autorises.
+    "BOTMR_REGIME_SCORE_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR {sym} {direction} skip - regime score {regime} (score={score} features={features})"),
+    # 🆕 18/06/2026 Phase 4 Orderflow confirmation + Anti-top + Momentum cap.
+    # Calibration empirique 6 trades 18/06 : LOSS 3/3 partagent delta_bar negatif +
+    # slope_10 surchauffe + proche HH frais. Variable la + discriminante = delta_bar
+    # (ecart WIN-LOSS = +210). 3 filtres en cascade AVANT regime_classifier.
+    "BOTMR_ORDERFLOW_NO_DATA_BLOCK": (LogLevel.MAJEUR, "decisions",
+        "BotMR {sym} {direction} skip - delta_bar absent (fail-loud orderflow)"),
+    "BOTMR_ORDERFLOW_NO_BUYERS_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR {sym} LONG skip - pas d'acheteurs : delta={delta} rvol_z={rvol_z}"),
+    "BOTMR_ORDERFLOW_NO_SELLERS_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR {sym} SHORT skip - pas de vendeurs : delta={delta} rvol_z={rvol_z}"),
+    "BOTMR_ANTI_TOP_LONG_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR {sym} LONG skip - pres swing high frais : bs_high={bs_high} dist_HOD={dist_hod}t"),
+    "BOTMR_ANTI_BOTTOM_SHORT_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR {sym} SHORT skip - pres swing low frais : bs_low={bs_low} dist_LOD={dist_lod}t"),
+    "BOTMR_MOMENTUM_CAP_LONG_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR {sym} LONG skip - momentum surchauffe : slope_10={slope_10} > {threshold}"),
+    "BOTMR_MOMENTUM_CAP_SHORT_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR {sym} SHORT skip - momentum surchauffe : slope_10={slope_10} < -{threshold}"),
     "BOTMR_TRADABLE":              (LogLevel.INFO,     "decisions", "BotMR TRADABLE : {sym} {direction} @ {entry_price:.2f} SL {sl_ticks}t TP {tp_ticks}t RR {rr_ratio:.1f}"),
     "BOTMR_TRADABLE_HYPOTHETICAL": (LogLevel.INFO,     "decisions", "BotMR TRADABLE_HYPO : {sym} {direction} session={session_phase} (NQ dry-eval)"),
     "BOTMR_ORDER_SENT":            (LogLevel.INFO,     "execution", "BotMR ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
@@ -1519,6 +1571,59 @@ LOG_CODES = {
     "BOTMR_GATE_INTERMARKET_BLOCK": (LogLevel.INFO,     "risk",      "BotMR intermarket block : {sym} {direction} reason={reason}"),
     "BOTMR_INTERMARKET_CONFIRM":    (LogLevel.INFO,     "decisions", "BotMR intermarket confirm : {sym} {direction} leader={reason}"),
     "BOTMR_INTERMARKET_LEADER_MISSING": (LogLevel.ALERTE, "decisions", "BotMR intermarket leader bar missing : {sym} leader={leader_sym}"),
+    # 🆕 18/06/2026 MAX_HOLD 30 min hard timeout (Lopez AFML Ch.3 triple barrier).
+    # Si position ouverte >= MAX_HOLD_MINUTES sans toucher TP/SL, force close market.
+    # Sequence anti-orphan : cancel TP/SL + wait 1s + send_close_market + wait 2s + Type 209 flatten.
+    "BOTMR_TIMEOUT_CLOSE_START": (LogLevel.MAJEUR, "execution",
+        "BotMR {sym} MAX_HOLD timeout: {elapsed_min}min >= {max_hold_min}min, force close (dir={direction}, entry={entry_price}, qty={n_micros})"),
+    "BOTMR_TIMEOUT_DTC_DOWN_ORPHAN_RISK": (LogLevel.CRITIQUE, "execution",
+        "BotMR {sym} MAX_HOLD timeout mais DTC down - ORPHAN RISK direction={direction}"),
+    "BOTMR_TIMEOUT_CANCEL_FAIL": (LogLevel.MAJEUR, "execution",
+        "BotMR {sym} timeout cancel {leg} failed cid={cid}"),
+    "BOTMR_TIMEOUT_CANCEL_EXCEPTION": (LogLevel.MAJEUR, "execution",
+        "BotMR {sym} timeout cancel {leg} exception cid={cid} err={err}"),
+    "BOTMR_TIMEOUT_MARKET_CLOSE_SENT": (LogLevel.MAJEUR, "execution",
+        "BotMR {sym} timeout market close sent side={side} qty={qty} cid={cid} ok={ok}"),
+    "BOTMR_TIMEOUT_MARKET_CLOSE_EXCEPTION": (LogLevel.CRITIQUE, "execution",
+        "BotMR {sym} timeout market close exception err={err}"),
+    "BOTMR_TIMEOUT_FLATTEN_SENT": (LogLevel.INFO, "execution",
+        "BotMR {sym} timeout flatten Type 209 sent cid={cid}"),
+    "BOTMR_TIMEOUT_FLATTEN_EXCEPTION": (LogLevel.MAJEUR, "execution",
+        "BotMR {sym} timeout flatten exception err={err}"),
+    "BOTMR_TIMEOUT_CLOSE_DONE": (LogLevel.INFO, "execution",
+        "BotMR {sym} timeout close sequence complete"),
+
+    # 🆕 18/06/2026 ANTI-BOUCLE MAX_HOLD (incident 9 close markets cumules).
+    # Boot warmup : laisse temps DtcFillListener detecter fills orphelins (60s).
+    # Retry cooldown : empeche re-declenchement MAX_HOLD < 120s apres close envoye.
+    "BOTMR_MAX_HOLD_BOOT_WARMUP_SKIP": (LogLevel.INFO, "execution",
+        "BotMR {sym} MAX_HOLD skip boot warmup : {age_sec}s < {warmup_sec}s"),
+    "BOTMR_MAX_HOLD_RETRY_COOLDOWN_SKIP": (LogLevel.INFO, "execution",
+        "BotMR {sym} MAX_HOLD skip retry cooldown : {secs_since_last}s < {cooldown_sec}s"),
+    # 🆕 18/06/2026 RESERVE #4 code-reviewer : exit_reason=TIMEOUT n'increment pas
+    # le circuit breaker SL consec (sortie temporelle != SL signal-driven).
+    "BOTMR_TIMEOUT_NO_SL_CONSEC_IMPACT": (LogLevel.INFO, "decisions",
+        "BotMR {sym} MAX_HOLD close (pnl={pnl_usd}) : pas d'increment SL consec (exit=TIMEOUT)"),
+    # 🆕 18/06/2026 RESERVE #3 code-reviewer : plafond retries MAX_HOLD.
+    # Apres N timeouts sans confirmation fill, halt symbole + intervention manuelle.
+    "BOTMR_MAX_HOLD_RETRIES_EXHAUSTED_HALT": (LogLevel.CRITIQUE, "execution",
+        "BotMR {sym} MAX_HOLD epuise apres {n_timeouts}/{max_retries} essais - POSITION HALTED, intervention manuelle"),
+    # 🆕 18/06/2026 RESERVE #1 code-reviewer : echec register close_cid (degraded).
+    "BOTMR_TIMEOUT_REGISTER_CLOSE_CID_FAIL": (LogLevel.MAJEUR, "execution",
+        "BotMR {sym} fail register close_cid {cid} dans fill listener : {err}"),
+
+    # 🆕 18/06/2026 CIRCUIT BREAKER N SL consecutives (anti-stubbornness).
+    # Carnage 18/06 : -$1025 broker E-mini sur 4 SL LONG ES sans halt.
+    # Halt PAR SYMBOLE apres N SL consec (default 3), duree configurable (default 60min).
+    # Reset compteur au prochain TP. Persiste cross-restart via PositionStore.
+    "BOTMR_SL_CONSEC_INCREMENTED": (LogLevel.INFO, "decisions",
+        "BotMR {sym} SL consec incremented to {n_consec} (pnl={pnl_usd})"),
+    "BOTMR_SL_CONSEC_RESET": (LogLevel.INFO, "decisions",
+        "BotMR {sym} SL consec reset (was={was}, reason={reason})"),
+    "BOTMR_CIRCUIT_BREAKER_HALT_TRIGGERED": (LogLevel.CRITIQUE, "decisions",
+        "BotMR {sym} CIRCUIT BREAKER TRIGGERED: {n_consec} SL consec, halt {halt_minutes}min"),
+    "BOTMR_CIRCUIT_BREAKER_HALT_ACTIVE": (LogLevel.MAJEUR, "decisions",
+        "BotMR {sym} halt actif {remaining}s restantes"),
 
     # === BOT BN V4 (Sim3, 16/06/2026 reincarnation Bataille Navale V4 - Jackson souverain) ===
     "BOTBN_BOOT":                   (LogLevel.INFO,     "events",    "BotBN boot : dry_run={dry_run} symbols={symbols} ta={trade_account} grade_min={grade_min}"),
@@ -1546,6 +1651,9 @@ LOG_CODES = {
     "BOTBN_TRADABLE_HYPOTHETICAL":  (LogLevel.INFO,     "decisions", "BotBN TRADABLE_HYPO : {sym} {direction} grade={grade} session={session_phase} (shadow log A/B ou London)"),
     "BOTBN_ORDER_SENT":             (LogLevel.INFO,     "execution", "BotBN ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
     "BOTBN_ORDER_FAIL":             (LogLevel.CRITIQUE, "execution", "BotBN ordre fail : {sym} {direction} err={err_msg}"),
+    "BOTBN_POSITION_NAKED":         (LogLevel.CRITIQUE, "execution", "BotBN position NUE (fill OK, SL non pose) : {sym} {direction} fill={fill_price:.2f} parent={parent_cid} -> close auto requis"),
+    "BOTBN_DAILY_STATE_LOAD":       (LogLevel.INFO,     "events",    "BotBN daily state load : n_trades={n_trades} pnl=${pnl:.2f} date={date}"),
+    "MARKET_STOP_ONLY_NAKED":       (LogLevel.CRITIQUE, "execution", "MARKET+SL : fill OK mais SL non pose, position NUE : parent={parent_id} fill={fill_price:.2f} sl={sl_price:.2f}"),
     "BOTBN_TRAIL_SL_UPDATE":        (LogLevel.INFO,     "execution", "BotBN trail SL update : {sym} {old_sl:.2f} -> {new_sl:.2f} pivot_low={pivot_low}"),
     "BOTBN_TRADE_CLOSE":            (LogLevel.INFO,     "execution", "BotBN trade close : {sym} {direction} reason={reason} pnl_ticks={pnl_ticks} pnl_usd={pnl_usd:.2f}"),
 }

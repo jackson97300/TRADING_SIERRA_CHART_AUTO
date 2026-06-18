@@ -5219,31 +5219,43 @@
 
                 // Normalize vers format Bot 1/2 pour renderPaperPage() (zone principale).
                 // Pattern aligne avec fetchPaperV3 (06/05 fix Jackson historique trades).
-                var positionsActive = d.positions_with_countdown || {};
+                // FIX 18/06 Jackson : detect schema dual Bot 3 v3 Wyckoff (positions_with_countdown)
+                // vs Bot MR/StateBridge (d.state.open_by_symbol). Frontend fabriquait state
+                // depuis format Wyckoff exclusivement, ignorait d.state Bot MR.
+                var hasStateBlock = d.state && typeof d.state === "object";
+                var positionsActive = d.positions_with_countdown
+                    || (hasStateBlock ? d.state.open_by_symbol : null)
+                    || {};
                 var openBySymbol = {};
                 Object.keys(positionsActive).forEach(function (sym) {
                     var p = positionsActive[sym];
                     if (!p) return;
-                    // Tick size symbol-aware (cf .claude/rules/tick-size-policy.md).
-                    // Bot 3 v3/v4 = NQ-only paper actuel ; helper prepare extension MGC/ES.
                     var TICK = _getTickSizeForSym(sym);
                     var slTicks = (p.sl_price != null && p.entry_price != null && p.entry_price > 0)
                         ? Math.round(Math.abs(p.sl_price - p.entry_price) / TICK) : (p.sl_ticks || null);
                     var tpTicks = (p.tp_price != null && p.entry_price != null && p.entry_price > 0)
-                        ? Math.round(Math.abs(p.tp_price - p.entry_price) / TICK) : null;
+                        ? Math.round(Math.abs(p.tp_price - p.entry_price) / TICK) : (p.tp_ticks || null);
                     openBySymbol[sym] = {
-                        direction: p.side,
+                        // Schema dual : Bot 3 v3 utilise side/ts_open, Bot MR utilise direction/entry_time
+                        direction: p.side || p.direction,
                         entry_price: p.entry_price,
                         sl_price: p.sl_price,
                         tp_price: p.tp_price,
                         sl_ticks: slTicks,
                         tp_ticks: tpTicks,
                         rr_ratio: (slTicks && tpTicks && slTicks > 0) ? (tpTicks / slTicks) : null,
-                        n_micros: p.qty || 1,
-                        entry_time: p.ts_open,
+                        n_micros: p.qty || p.n_micros || 1,
+                        entry_time: p.ts_open || p.entry_time,
                         signal_id: p.signal_id,
                         level: p.level,
-                        tp_mode: p.tp_mode || null,  // v4 specific
+                        tp_mode: p.tp_mode || null,
+                        // Bot MR additionals (Mean Revert) :
+                        sl_wall: p.sl_wall,
+                        current_price: p.current_price,
+                        unrealized_pnl_ticks: p.unrealized_pnl_ticks,
+                        unrealized_pnl_usd: p.unrealized_pnl_usd,
+                        mfe: p.mfe, mae: p.mae,
+                        bars_held: p.bars_held,
                     };
                 });
 
@@ -5254,30 +5266,37 @@
                 }
 
                 // stats_today JSONL -> mapping vers schema dashboard (trades / pnl_usd / wr)
+                // FIX 18/06 dual schema : Bot 3 v3 expose n_trades_closed/pnl_session_usd,
+                // Bot MR expose n_trades/pnl_usd directement.
                 var st = d.stats_today || {};
-                var nClosed = st.n_trades_closed || 0;
-                var pnlSession = st.pnl_session_usd || 0;
-                // FIX code-reviewer Q-D 24/05 : utiliser le total scorable (n_trades sum
-                // dans setup_stats, exclut TIMEOUT/MANUAL pnl_R=0) plutot que nClosed
-                // (qui inclut tous les closes) — sinon WR session diverge du WR par level.
-                // 25/05 fix code-reviewer Bug H5 : agreger wins/losses depuis setup_stats
-                // car payload backend les expose au niveau setup_stats[level], pas top-level.
+                var nClosed = st.n_trades_closed || st.n_trades || 0;
+                var pnlSession = st.pnl_session_usd || st.pnl_usd || 0;
                 var wrToday = 0;
                 var totalWinsAll = 0, totalLossesAll = 0;
                 Object.values(d.setup_stats || {}).forEach(function (s) {
                     totalWinsAll += (s.n_wins || 0);
                     totalLossesAll += (s.n_losses || 0);
                 });
-                if (nClosed > 0) {
+                // Bot MR : utilise st.n_wins + st.wr_pct directs si setup_stats vide
+                var hasSetupStats = d.setup_stats && Object.keys(d.setup_stats).length > 0;
+                if (!hasSetupStats && st.n_wins != null) {
+                    totalWinsAll = st.n_wins;
+                    totalLossesAll = Math.max(0, nClosed - st.n_wins);
+                    wrToday = st.wr_pct != null ? Math.round(st.wr_pct) :
+                              (nClosed > 0 ? Math.round(100.0 * totalWinsAll / nClosed) : 0);
+                } else if (nClosed > 0) {
                     var totalTrades = 0;
                     Object.values(d.setup_stats || {}).forEach(function (s) {
                         totalTrades += (s.n_trades || 0);
                     });
                     wrToday = totalTrades > 0 ? Math.round(100.0 * totalWinsAll / totalTrades) : 0;
                 }
-                // 25/05 fix Bug pnl_ticks : agreger depuis closed_today
+                // Schema dual : closed_today peut etre dans d.closed_today (Bot 3) ou d.state.closed_today (Bot MR)
+                var closedTodaySource = d.closed_today
+                    || (hasStateBlock ? d.state.closed_today : null)
+                    || [];
                 var pnlTicksTotal = 0;
-                (d.closed_today || []).forEach(function (c) {
+                closedTodaySource.forEach(function (c) {
                     pnlTicksTotal += (c.pnl_ticks || 0);
                 });
                 // PF session = sum(gains_R) / |sum(losses_R)| depuis setup_stats
@@ -5312,15 +5331,17 @@
                 // (Bot 3 MP utilisait ces noms, Bot 3 v3/v4 backend utilise side/reason/ts_close).
                 // Calculer pnl_ticks + duration_sec si backend renvoie null (cf Fix 2 code-reviewer).
                 var TICK_SIZE_BY_SYM = { NQ: 0.25, ES: 0.25, MGC: 0.10 };
-                var closedTodayList = (d.closed_today || []).map(function (c) {
+                // FIX 18/06 dual schema : Bot MR utilise d.state.closed_today
+                var closedTodayList = closedTodaySource.map(function (c) {
                     var sym = c.symbol || c.sym || "NQ";
                     var tickSize = TICK_SIZE_BY_SYM[sym] || 0.25;
                     var ts_close = c.ts_close || c.exit_time;
-                    var ts_open = c.ts_open;
+                    var ts_open = c.ts_open || c.entry_time;
                     // Calcul pnl_ticks si null (backend Bot 3 v3/v4 ne le calcule pas)
                     var pnlTicks = c.pnl_ticks;
                     if ((pnlTicks == null || isNaN(pnlTicks)) && c.entry_price && c.exit_price) {
-                        var direction = (c.side === "LONG" || c.side === "BUY") ? 1 : -1;
+                        var rawDir = c.side || c.direction;
+                        var direction = (rawDir === "LONG" || rawDir === "BUY") ? 1 : -1;
                         pnlTicks = Math.round(direction * (c.exit_price - c.entry_price) / tickSize);
                     }
                     // Calcul duration_sec si null (depuis ts_open/ts_close ISO)
@@ -5331,20 +5352,21 @@
                         } catch (e) { /* ignore */ }
                     }
                     var reason = c.reason || c.exit_cause || c.exit_reason;
+                    var sideRaw = c.side || c.direction;
                     return {
                         ts_close: ts_close,
                         ts_open: ts_open,
-                        exit_time: ts_close,         // alias pour rendu legacy
+                        exit_time: ts_close,
                         signal_id: c.signal_id,
                         symbol: sym,
                         sym: sym,
-                        side: c.side,
-                        direction: c.side,           // alias pour rendu legacy
+                        side: sideRaw,
+                        direction: sideRaw,
                         level: c.level,
                         entry_price: c.entry_price,
                         exit_price: c.exit_price,
                         reason: reason,
-                        exit_reason: reason,         // alias pour rendu legacy
+                        exit_reason: reason,
                         exit_cause: reason,
                         pnl_ticks: pnlTicks,
                         pnl_usd: c.pnl_usd,
@@ -5355,12 +5377,24 @@
                         tp_mode: c.tp_mode,
                     };
                 });
+                // 18/06 Bot MR (Sim1) countdown : propage cooldown_status +
+                // cooldown_minutes/max_hold_minutes du payload backend vers
+                // botNormalized.state pour le rendu PROTECTIONS ACTIVES (ligne 7367).
+                // Fallback {} si backend ancien sans field (defensive : pas de regression).
+                var cooldownStatusFromBackend = (hasStateBlock && d.state && d.state.cooldown_status)
+                    ? d.state.cooldown_status
+                    : (d.cooldown_status || {});
                 var botNormalized = {
                     state: {
                         open_by_symbol: openBySymbol,
                         closed_today: closedTodayList,
                         stats_today: statsTodayNorm,
                         trade_account: d.trade_account || (version === "v3" ? "Sim1" : "Sim3"),
+                        cooldown_status: cooldownStatusFromBackend,
+                        // Bot MR : ces fields permettent au render protections d'afficher
+                        // "Cooldown 15m / MAX_HOLD 30m" comme info config (vs juste countdown).
+                        cooldown_minutes: d.cooldown_minutes || null,
+                        max_hold_minutes: d.max_hold_minutes || null,
                     },
                     stats_7d: d.stats_7d,
                     stats_30d: d.stats_30d,
@@ -6670,7 +6704,10 @@
             var estSuffix = pnlEstimated ? '*' : '';
             var pnl = pnlKnown ? Number(t.pnl_ticks).toFixed(2) + 't' + estSuffix : "—";
             var pnlUsdVal = (t.pnl_usd != null) ? t.pnl_usd : t.pnl_dollars;
-            var pnlUsd = pnlKnown && pnlUsdVal != null ? '$' + Number(pnlUsdVal).toFixed(2) + estSuffix : "—";
+            // FIX 18/06 Jackson : convert MICRO eq → sizing 1 MES + 3 MNQ (display only)
+            var symForRatio = t.symbol || t.sym || "NQ";
+            var pnlUsdDisplay = pnlUsdVal != null ? _convertPnlForDisplay(pnlUsdVal, symForRatio) : null;
+            var pnlUsd = pnlKnown && pnlUsdDisplay != null ? '$' + Number(pnlUsdDisplay).toFixed(2) + estSuffix : "—";
             var pnlClass = !pnlKnown ? "v3-pnl-flat" :
                            (t.pnl_ticks > 0) ? "v3-pnl-pos" :
                            (t.pnl_ticks < 0) ? "v3-pnl-neg" : "v3-pnl-flat";
@@ -6883,39 +6920,51 @@
         return typeof isOwner === "function" && isOwner();
     }
 
-    // ════════ PNL MICRO VIRTUEL (Jackson directive 03/06 06:55) ════════
-    // Calcule un PnL projete "comme si 1 ES E-mini + 3 MNQ Micros" pour info.
-    // Broker reality = 1 NQ E-mini ($5/tick) + 1 ES E-mini ($12.50/tick).
-    // Vue projetee = 3 MNQ Micros NQ ($1.50/tick total) + 1 ES E-mini ($12.50 inchange).
-    // Ratios :
-    //   NQ : 3 micros / 1 E-mini = 3 * 0.50 / 5.00 = 0.30
-    //   ES : 1 E-mini / 1 E-mini = 1.00 (inchange, Jackson "1 MI ES")
-    //   MGC : 1 micro / 1 micro = 1.00
-    var _PNL_MICRO_RATIOS = { "NQ": 0.30, "ES": 1.00, "MGC": 1.00 };
+    // ════════ PNL SIZING VIRTUEL (Jackson directive 18/06 11:00) ════════
+    // Convention dashboard affichage : 1 MINI ES + 3 MICRO NQ.
+    // Execution broker reality INCHANGEE = 1 ES E-mini standard + 1 NQ E-mini standard.
+    // pnl_usd stocke dans state.json = MICRO equivalent ($1.25/tick ES, $0.50/tick NQ).
+    // Conversion vers convention Jackson :
+    //   ES : 1 MINI ES = $12.50/tick. MICRO = $1.25/tick. Ratio = 10.0 (multiplier).
+    //   NQ : 3 MNQ = 3 * $0.50/tick = $1.50/tick. MICRO = $0.50/tick. Ratio = 3.0.
+    //   MGC : 1 MICRO = $1.00/tick (inchange).
+    // Cf memory feedback_dashboard_micro_eq.md pour historique convention.
+    var _PNL_DISPLAY_RATIOS = { "NQ": 3.00, "ES": 10.00, "MGC": 1.00 };
 
-    function _computePnlMicroVirtuel(closedTrades, openPositions) {
+    function _computePnlDisplaySizing(closedTrades, openPositions) {
         var total = 0;
         (closedTrades || []).forEach(function (t) {
             var sym = t.sym || t.symbol || "NQ";
             var pnl = parseFloat(t.pnl_usd || 0) || 0;
-            total += pnl * (_PNL_MICRO_RATIOS[sym] || 1.00);
+            total += pnl * (_PNL_DISPLAY_RATIOS[sym] || 1.00);
         });
         if (openPositions && typeof openPositions === "object") {
             Object.keys(openPositions).forEach(function (sym) {
                 var pos = openPositions[sym];
                 if (pos) {
-                    var pnlFloat = parseFloat(pos.pnl_usd || pos.pnl_usd_floating || 0) || 0;
-                    total += pnlFloat * (_PNL_MICRO_RATIOS[sym] || 1.00);
+                    var pnlFloat = parseFloat(pos.pnl_usd || pos.pnl_usd_floating
+                                              || pos.unrealized_pnl_usd || 0) || 0;
+                    total += pnlFloat * (_PNL_DISPLAY_RATIOS[sym] || 1.00);
                 }
             });
         }
         return total;
     }
 
-    function _formatPnlMicroVirtuelHtml(pnlMicro) {
-        var sign = pnlMicro >= 0 ? '+$' : '-$';
+    function _convertPnlForDisplay(pnl_micro, sym) {
+        var ratio = _PNL_DISPLAY_RATIOS[sym] || 1.00;
+        return (parseFloat(pnl_micro || 0) || 0) * ratio;
+    }
+
+    // Backward-compat aliases (anciens noms encore utilises ailleurs)
+    var _PNL_MICRO_RATIOS = _PNL_DISPLAY_RATIOS;
+    var _computePnlMicroVirtuel = _computePnlDisplaySizing;
+
+    function _formatPnlMicroVirtuelHtml(pnlMicroEq) {
+        // Garde le footer "MICRO equivalent" pour reference, plus discret.
+        var sign = pnlMicroEq >= 0 ? '+$' : '-$';
         return '<div class="pnl-micro-virtuel" style="grid-column:1/-1;text-align:right;font-size:0.7rem;color:var(--text-disabled);padding:4px 8px 2px;font-style:italic;">' +
-            'PnL projete (1 ES E-mini + 3 MNQ Micros) : <strong>' + sign + Math.abs(pnlMicro).toFixed(2) + '</strong>' +
+            'PnL MICRO eq (1 MES + 1 MNQ) : <strong>' + sign + Math.abs(pnlMicroEq).toFixed(2) + '</strong>' +
             '</div>';
     }
 
@@ -7166,9 +7215,10 @@
                     // SOURCE PRIORITAIRE : state.json (calculs faits cote bot avec live source)
                     if (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null
                         && p.current_price !== undefined && p.current_price !== null) {
-                        unrealized = p.unrealized_pnl_usd;
+                        // FIX 18/06 Jackson : convertir MICRO eq → sizing 1 MES + 3 MNQ
+                        unrealized = _convertPnlForDisplay(p.unrealized_pnl_usd, sym);
                         var perContract = (p.unrealized_pnl_ticks !== undefined && p.unrealized_pnl_ticks !== null) ? p.unrealized_pnl_ticks : 0;
-                        unrealizedTicks = Math.round(perContract * nMicros);  // TOTAL aligne SC
+                        unrealizedTicks = Math.round(perContract * nMicros);
                         livePriceUsed = p.current_price;
                     } else {
                         // Fallback rare : state.json incomplet → recalc depuis banner
@@ -7183,7 +7233,9 @@
                             var sign = _isLong(p.direction) ? 1 : -1;
                             var ticksPerContract = Math.round(((bannerPrice - p.entry_price) / TICK) * sign);
                             unrealizedTicks = ticksPerContract * nMicros;
-                            unrealized = Math.round(ticksPerContract * TICK_VAL * nMicros * 100) / 100;
+                            // FIX 18/06 : recalc en MICRO eq puis convert sizing
+                            var unrealizedMicroEq = Math.round(ticksPerContract * TICK_VAL * nMicros * 100) / 100;
+                            unrealized = _convertPnlForDisplay(unrealizedMicroEq, sym);
                             livePriceUsed = bannerPrice;
                         } else {
                             unrealized = 0;
@@ -7250,16 +7302,19 @@
         var statsEl = $("paper-stats-today");
         if (statsEl) {
             var st = state.stats_today || {};
-            var pnl = st.pnl_usd || 0;
-            var pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+            // FIX 18/06 Jackson : PnL principal = sizing virtuel 1 MINI ES + 3 MNQ.
+            // Bot trade execution INCHANGEE (1 ES + 1 NQ E-mini standard) mais
+            // dashboard affiche le PnL comme si sizing 1 MES + 3 MNQ.
+            var pnlSizing = _computePnlDisplaySizing(state.closed_today, state.open_by_symbol);
+            var pnlMicroEq = st.pnl_usd || 0;  // legacy MICRO eq pour footer reference
+            var pnlColor = pnlSizing >= 0 ? 'var(--green)' : 'var(--red)';
             statsEl.innerHTML =
                 _paperStatBox('Trades', st.trades || 0, (state.trade_count_today || 0) + ' / ' + (((state.max_trades_per_day || 9999) >= 9999) ? '∞' : (state.max_trades_per_day || 9999))) +
                 _paperStatBox('Win Rate', (st.wr || 0) + '%', (st.wins || 0) + 'W / ' + (st.losses || 0) + 'L') +
                 _paperStatBox('Profit Factor', (st.pf !== null && st.pf !== undefined) ? st.pf : '—', '') +
-                _paperStatBox('PnL', (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2), (st.pnl_ticks || 0) + ' ticks', pnlColor);
-            // 03/06 Jackson : PnL secondaire discret "comme si 1 ES + 3 MNQ" pour vue prop firm Micro
-            var pnlMicro = _computePnlMicroVirtuel(state.closed_today, state.open_by_symbol);
-            statsEl.innerHTML += _formatPnlMicroVirtuelHtml(pnlMicro);
+                _paperStatBox('PnL', (pnlSizing >= 0 ? '+$' : '-$') + Math.abs(pnlSizing).toFixed(2), (st.pnl_ticks || 0) + ' ticks (1 MES + 3 MNQ)', pnlColor);
+            // Footer reference : MICRO eq (1 MES + 1 MNQ)
+            statsEl.innerHTML += _formatPnlMicroVirtuelHtml(pnlMicroEq);
         }
 
         // ── Closed today
@@ -7283,7 +7338,10 @@
                     // distinguer estim (close bar) vs known (TP/SL fill capture).
                     var pnlKnown = t.pnl_known !== false && t.pnl_ticks != null;
                     var pnlEstimated = t.pnl_estimated === true;
-                    var pnl = pnlKnown ? (t.pnl_usd || 0) : null;
+                    // FIX 18/06 Jackson : convert MICRO eq → sizing 1 MES + 3 MNQ par symbole
+                    var pnlMicroEq = pnlKnown ? (t.pnl_usd || 0) : null;
+                    var symForRatio = t.symbol || t.sym || "NQ";
+                    var pnl = pnlMicroEq != null ? _convertPnlForDisplay(pnlMicroEq, symForRatio) : null;
                     var pnlC = !pnlKnown ? 'var(--text-secondary)' :
                                (pnl >= 0 ? 'var(--green)' : 'var(--red)');
                     var estSuffix = pnlEstimated ? '*' : '';
@@ -7339,18 +7397,37 @@
                  (maxTrades >= 9999 ? '<div style="color:var(--text-disabled);font-size:0.7rem;margin-top:2px;">Illimite (paper)</div>' : '')) +
                 '<div style="font-size:0.7rem;color:var(--text-disabled);margin-top:4px;border-top:1px solid var(--border);padding-top:4px;">' + cbCfgLabel + '</div>' +
                 '</div>';
+            // 18/06 Bot MR (Sim1) countdown : si state expose max_hold_remaining_sec
+            // (field exclusif Bot MR), on affiche "Trade actif - timeout dans Xm" pour
+            // les positions ouvertes, sinon le pattern legacy (cooldown / circuit / Pret).
+            // Format mm/ss humain-friendly (mmHss ou Xs si <1m).
+            function _fmtCountdown(sec) {
+                if (sec == null || sec <= 0) return null;
+                var m = Math.floor(sec / 60);
+                var s = sec % 60;
+                if (m === 0) return s + 's';
+                if (s === 0) return m + 'm';
+                return m + 'm' + (s < 10 ? '0' + s : s);
+            }
             ['ES', 'NQ'].forEach(function (sym) {
                 var cs = cooldown[sym] || {};
                 var cd = cs.cooldown_remaining_sec || 0;
                 var cb = cs.circuit_breaker_remaining_sec || 0;
+                var mh = cs.max_hold_remaining_sec;  // null = pas de position (Bot MR specific)
                 var losses = cs.consec_losses || 0;
                 html += '<div style="padding:8px;border:1px solid var(--border);border-radius:6px;">' +
                     '<div style="color:var(--text-secondary);font-size:0.75rem;">' + sym + '</div>';
                 if (cb > 0) {
                     html += '<div style="color:var(--red);font-weight:700;margin-top:3px;">⛔ Circuit ' + Math.round(cb / 60) + ' min</div>' +
                         '<div style="font-size:0.75rem;color:var(--text-disabled);">' + losses + ' pertes consec.</div>';
+                } else if (mh != null && mh > 0) {
+                    // Bot MR : position ouverte avec MAX_HOLD timer
+                    html += '<div style="color:#ff9800;font-weight:700;margin-top:3px;">🔄 Trade actif</div>' +
+                        '<div style="font-size:0.75rem;color:var(--text-disabled);margin-top:2px;">Timeout dans ' + _fmtCountdown(mh) + '</div>';
                 } else if (cd > 0) {
-                    html += '<div style="color:#ff9800;font-weight:700;margin-top:3px;">⏳ Cooldown ' + Math.round(cd / 60) + ' min</div>';
+                    // Bot MR / pattern legacy : cooldown actif
+                    var cdLabel = _fmtCountdown(cd) || (Math.round(cd / 60) + ' min');
+                    html += '<div style="color:#ff9800;font-weight:700;margin-top:3px;">🕐 Cooldown ' + cdLabel + '</div>';
                 } else {
                     html += '<div style="color:var(--green);margin-top:3px;">✓ Pret</div>';
                 }

@@ -2202,6 +2202,176 @@ def compute_stats_period_bot3(version: str, days: int) -> dict:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Bot MR (Sim1) — Countdown helpers (cooldown + MAX_HOLD)
+# Ajout 18/06/2026 Jackson : dashboard PROTECTIONS ACTIVES affiche les
+# temps restants au lieu d'un simple "Pret".
+#
+# Sources lues :
+#   - state_sim1.json (StateBridge dashboard, deja lu par get_bot3_v3_payload)
+#   - bot_mr_runtime_positions.json (PositionStore Bot MR, source verite
+#     pour positions ouvertes + last_trade_ts_by_symbol persistant)
+#
+# Convention BotMRConfig :
+#   - COOLDOWN_BARS exprime en MINUTES (1 bar = 60 sec, cf signal_engine.py:183)
+#   - MAX_HOLD_MINUTES en minutes
+#   - entry_ts dans positions = MILLISECONDES epoch (cf position_store.py:13)
+#   - last_trade_ts_by_symbol = ISO 8601 UTC string (cf position_store.py:24)
+# ─────────────────────────────────────────────────────────────────────────
+
+# Path source positions Bot MR (PositionStore dedie, voir
+# CORE/bot_mean_revert/main.py:65). Path absolu pour evite ambiguite cwd.
+BOT_MR_RUNTIME_POSITIONS_FILE = PAPER_DIR / "bot_mr_runtime_positions.json"
+
+
+def _bot_mr_cooldown_remaining_sec(last_trade_ts_iso: Optional[str],
+                                   cooldown_minutes: int,
+                                   now_utc: Optional[datetime] = None) -> int:
+    """Secondes restantes avant fin cooldown Bot MR (0 si expire/absent).
+
+    Le PositionStore.set_last_trade_ts() stocke un ISO 8601 UTC string apres
+    chaque OPEN_TRADE. Le cooldown = `cooldown_minutes * 60` secondes apres ce ts.
+
+    Args:
+        last_trade_ts_iso: ISO 8601 UTC string ou None.
+        cooldown_minutes: BotMRConfig.COOLDOWN_BARS (en minutes, 1 bar = 1 min).
+        now_utc: override pour tests (default = utcnow).
+
+    Returns:
+        Secondes restantes (int >= 0). 0 si cooldown expire OU last_trade_ts
+        absent OU ISO corrompu (fail-safe : ne bloque pas l'affichage).
+    """
+    if not last_trade_ts_iso or cooldown_minutes <= 0:
+        return 0
+    try:
+        last_dt = datetime.fromisoformat(last_trade_ts_iso.replace("Z", "+00:00"))
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError, AttributeError):
+        return 0
+    now = now_utc if now_utc is not None else datetime.now(timezone.utc)
+    elapsed = (now - last_dt).total_seconds()
+    remaining = (cooldown_minutes * 60) - elapsed
+    return max(0, int(remaining))
+
+
+def _bot_mr_max_hold_remaining_sec(entry_ts_ms: Optional[float],
+                                   max_hold_minutes: int,
+                                   now_ts_sec: Optional[float] = None) -> Optional[int]:
+    """Secondes restantes avant MAX_HOLD force close (None si pas de position).
+
+    Bot MR positions.entry_ts est en MILLISECONDES epoch (cf position_store.py).
+    MAX_HOLD = hard timeout Lopez Triple Barrier (close marche si elapsed
+    >= max_hold_minutes sans toucher TP/SL).
+
+    Args:
+        entry_ts_ms: epoch milliseconds OU None/0 si pas de position.
+        max_hold_minutes: BotMRConfig.MAX_HOLD_MINUTES.
+        now_ts_sec: override pour tests (default = time.time()).
+
+    Returns:
+        Secondes restantes (int >= 0) OU None si pas de position.
+        Si max_hold expire deja -> 0 (force close imminent).
+    """
+    if not entry_ts_ms or entry_ts_ms <= 0:
+        return None
+    if max_hold_minutes <= 0:
+        return None
+    import time as _time
+    now_sec = now_ts_sec if now_ts_sec is not None else _time.time()
+    entry_sec = float(entry_ts_ms) / 1000.0
+    elapsed = now_sec - entry_sec
+    remaining = (max_hold_minutes * 60) - elapsed
+    return max(0, int(remaining))
+
+
+def _bot_mr_read_runtime_config() -> tuple[int, int]:
+    """Lit cooldown_minutes + max_hold_minutes depuis env (override BotMRConfig).
+
+    Pattern aligne sur BotMRConfig.from_env() : env vars BOTMR_COOLDOWN_BARS
+    et BOTMR_MAX_HOLD_MINUTES, defaults config.py (30 / 30).
+
+    Defensive : si env corrompu (non-int), retourne defaults. Ne crash JAMAIS
+    le payload dashboard sur env var malforme.
+    """
+    try:
+        cooldown_min = int(os.environ.get("BOTMR_COOLDOWN_BARS", "30"))
+    except (ValueError, TypeError):
+        cooldown_min = 30
+    try:
+        max_hold_min = int(os.environ.get("BOTMR_MAX_HOLD_MINUTES", "30"))
+    except (ValueError, TypeError):
+        max_hold_min = 30
+    return cooldown_min, max_hold_min
+
+
+def _bot_mr_build_cooldown_status(runtime_path: Path,
+                                  cooldown_minutes: int,
+                                  max_hold_minutes: int,
+                                  now_utc: Optional[datetime] = None,
+                                  now_ts_sec: Optional[float] = None) -> dict:
+    """Lit bot_mr_runtime_positions.json et construit le payload cooldown_status.
+
+    Structure retournee compatible frontend convention (Bot 1, BN V4, Bot 4) :
+        {
+          "ES": {
+            "cooldown_remaining_sec": int,
+            "max_hold_remaining_sec": int | None,
+          },
+          "NQ": {...},
+        }
+
+    Defensive : si fichier absent OU JSON corrompu OU clefs absentes,
+    retourne {} (frontend retombe sur "Pret" defensive).
+    """
+    if not runtime_path.exists():
+        return {}
+    try:
+        with runtime_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    # FIX 18/06 R1 code-reviewer : prefer meta_config persiste par le bot
+    # (source unique de verite) plutot que les env vars du process dashboard
+    # (process distinct nssm = env vars decorrelees).
+    meta = data.get("meta_config") or {}
+    if isinstance(meta, dict):
+        try:
+            cd_meta = int(meta.get("cooldown_minutes", 0))
+            if cd_meta > 0:
+                cooldown_minutes = cd_meta
+        except (ValueError, TypeError):
+            pass
+        try:
+            mh_meta = int(meta.get("max_hold_minutes", 0))
+            if mh_meta > 0:
+                max_hold_minutes = mh_meta
+        except (ValueError, TypeError):
+            pass
+    positions = data.get("positions") or {}
+    last_trade_ts_by_sym = data.get("last_trade_ts_by_symbol") or {}
+    # Union des symboles vus en cooldown OU position ouverte (pour ne pas oublier
+    # un symbole qui a juste un cooldown actif sans position).
+    symbols = set()
+    if isinstance(positions, dict):
+        symbols.update(positions.keys())
+    if isinstance(last_trade_ts_by_sym, dict):
+        symbols.update(last_trade_ts_by_sym.keys())
+    result = {}
+    for sym in symbols:
+        sym_up = sym.upper()
+        last_iso = last_trade_ts_by_sym.get(sym_up) if isinstance(last_trade_ts_by_sym, dict) else None
+        cd_sec = _bot_mr_cooldown_remaining_sec(last_iso, cooldown_minutes, now_utc=now_utc)
+        pos = positions.get(sym_up) if isinstance(positions, dict) else None
+        entry_ts_ms = pos.get("entry_ts") if isinstance(pos, dict) else None
+        mh_sec = _bot_mr_max_hold_remaining_sec(entry_ts_ms, max_hold_minutes, now_ts_sec=now_ts_sec)
+        result[sym_up] = {
+            "cooldown_remaining_sec": cd_sec,
+            "max_hold_remaining_sec": mh_sec,
+        }
+    return result
+
+
 def get_bot3_v3_payload() -> dict:
     """Endpoint slot Sim1 pour dashboard.
 
@@ -2220,6 +2390,13 @@ def get_bot3_v3_payload() -> dict:
       L'endpoint conserve le nom `get_bot3_v3_payload` (et l'URL
       `/api/paper_bot3_v3_state`) pour compat retro frontend, mais le label
       affiche reflete la realite "Bot Mean Revert".
+
+    18/06/2026 ajout countdown :
+      Le payload `state` est enrichi avec `cooldown_status[sym]` exposant :
+        - cooldown_remaining_sec : temps avant fin cooldown 15 min
+        - max_hold_remaining_sec : temps avant MAX_HOLD force close (None si
+          pas de position ouverte)
+      Source : bot_mr_runtime_positions.json (PositionStore Bot MR).
     """
     state_sim1_file = PAPER_DIR / "state_sim1.json"
     mr_state = _safe_read_state(state_sim1_file)
@@ -2236,22 +2413,40 @@ def get_bot3_v3_payload() -> dict:
         n_trades = len(closed_today)
         n_wins = sum(1 for t in closed_today if (t.get("pnl_usd") or 0) > 0)
         pnl_usd = sum(float(t.get("pnl_usd") or 0) for t in closed_today)
+        # FIX 18/06 Jackson : injecter stats_today DANS state pour que frontend
+        # le lise correctement (frontend cherche state.stats_today, line 7252 dashboard.js).
+        stats_today_dict = {
+            "n_trades": n_trades,
+            "n_wins": n_wins,
+            "wr_pct": round(100.0 * n_wins / n_trades, 1) if n_trades > 0 else None,
+            "pnl_usd": round(pnl_usd, 2),
+        }
+        mr_state["stats_today"] = stats_today_dict
+        # 18/06 ajout countdown : lecture bot_mr_runtime_positions.json pour exposer
+        # cooldown 15 min + MAX_HOLD 30 min restants par symbole dans le payload.
+        # Defensive : si runtime file absent (Bot MR pas demarre), cooldown_status
+        # reste {} et frontend retombe sur "Pret" defensive (pas de regression).
+        cooldown_minutes, max_hold_minutes = _bot_mr_read_runtime_config()
+        cooldown_status = _bot_mr_build_cooldown_status(
+            BOT_MR_RUNTIME_POSITIONS_FILE,
+            cooldown_minutes=cooldown_minutes,
+            max_hold_minutes=max_hold_minutes,
+        )
+        mr_state["cooldown_status"] = cooldown_status
         return {
             "state_file": "state_sim1.json (Bot Mean Revert)",
             "state": mr_state,
             "available": True,
             "bot_label": "Bot Mean Revert Sim1",
             "bot_description": "Mean Reversion VWAP SD2/SD3 + IntermarketGate ES leader - 24h ES + NQ",
-            "stats_today": {
-                "n_trades": n_trades,
-                "n_wins": n_wins,
-                "wr_pct": round(100.0 * n_wins / n_trades, 1) if n_trades > 0 else None,
-                "pnl_usd": round(pnl_usd, 2),
-            },
+            "stats_today": stats_today_dict,
             "stats_7d": None,  # Bot MR vient de demarrer 16/06, pas d'historique
             "stats_30d": None,
             "paper_trader_alive": paper_trader_alive,
             "last_update_age_sec": int(now_ts - last_update) if last_update > 0 else None,
+            # Exposes config Bot MR (consume par UI labels "Cooldown 15m / MAX_HOLD 30m")
+            "cooldown_minutes": cooldown_minutes,
+            "max_hold_minutes": max_hold_minutes,
         }
     # Fallback : state_sim1.json absent ou vide -> Bot MR pas demarre
     return {

@@ -31,6 +31,94 @@
 
 ---
 
+### 2026-06-18 (72) - [VALIDATION_MISS] - Confluence radius en ticks fonctionnellement asymetrique ES/NQ (echelle prix 4x)
+
+**Contexte** : Phase 2 18/06, recalibrage confluence filter Bot MR. Defauts ES=100t, NQ=250t calibres sur "distances observees live".
+**Ce qui a mal tourne** : Prix NQ ~30598 vs ES ~7550 = 4x. Niveaux MQ exprimes en `dist_*_pct` du prix. Resultat : 250t = 0.20% NQ vs 100t = 0.33% ES. Asymetrie inversee (NQ devrait avoir radius PLUS grand en %, pas plus petit). NQ bloque 100% des bars car niveau le plus proche = ~600t (HVL 1493t).
+**Cause racine** : confluence radius en TICKS ne peut pas etre calibre cross-instrument quand prix varient d'un facteur >2x. Refactor necessaire vers `radius_pct = 0.5%` applique uniformement.
+**Lecon** : tout seuil distance/confluence pour multi-instrument doit etre en POURCENTAGE du prix, pas en ticks absolus. Sinon asymetrie d'echelle pourrit le filtre.
+**Trigger prevention** : avant tout config "distance_ticks_*_ES/NQ" : verifier que les distances reelles observees live sont coherentes vs ratio prix. Si ecart >2x = refactor en pct immediat.
+**Reviewed** : Claude empirique (script Python inspect dist_mq fields live) 18/06.
+
+### 2026-06-18 (71) - [VALIDATION_MISS] - SCP position_store.py oublie 2 FOIS dans la meme journee (bot crash AttributeError)
+
+**Contexte** : Apres modif position_store.py (add helpers `get_halt_until_ts`, `last_trade_ts_by_symbol`, etc.), SCP des autres fichiers (config + signal_engine + main + log_catalog) effectue mais position_store oublie. Bot crash boot avec `AttributeError: 'PositionStore' object has no attribute 'get_halt_until_ts'`.
+**Ce qui a mal tourne** : 2 occurrences dans la journee (matin Phase 1 cooldown refactor + apres-midi Phase 2 seuils per-symbol). Pattern identique. Cause = mental model "j'ai SCP les fichiers que j'ai edites recemment" sans verifier les imports/dependances.
+**Cause racine** : pas de checklist SCP automatique. Quand un fichier importe un autre modifie, deps doivent etre SCP aussi. Risque amplifie quand modifs intercalees agents.
+**Lecon** : avant tout SCP, grep les nouveaux symbols/methodes utilises dans les fichiers modifies pour identifier TOUTES les dependances upstream qui doivent etre deployees.
+**Trigger prevention** : checklist obligatoire pre-SCP : `git diff --stat` + grep des nouvelles methodes appelees + verif fichiers contenants. Aussi : script `deploy_botmr.sh` qui liste les 5+ fichiers a SCP atomiquement.
+**Reviewed** : Claude apres 2eme crash (devrait avoir vu la lecon des le 1er) 18/06.
+
+### 2026-06-18 (70) - [VALIDATION_MISS] - Boucle infinie MAX_HOLD 9 closes en 8min (reserve mineure code-reviewer ignoree = SHORTs cumules sans SL/TP)
+
+**Contexte** : Deploy MAX_HOLD 30min Phase 1 matin. Code-reviewer flagge "reserve mineure #5 : status MARKET CLOSE non verifie → bot pourrait ressayer en boucle". Marquee "non-bloquante", deploye tel quel.
+**Ce qui a mal tourne** : Apres restart bot, position LONG entry 7541.25 toujours dans store. MAX_HOLD 32min → force close envoye. DtcFillListener n'a pas le `close_cid MIA_CLOSE_*` dans son `_cid_index` → fill ignore → position reste dans store. Au tick suivant, MAX_HOLD reclanche. **9 close markets envoyes en 8min**. Chaque close = SELL 1 contrat → LONG 1 → flat → SHORT 1 → SHORT 2 → ... → SHORT 8.
+**Cause racine** : `close_cid` jamais enregistre dans DtcFillListener. Code-reviewer avait raison mais reserve "mineure" → moi "non-bloquant" → deploy unsafe.
+**Lecon** : reserve mineure code-reviewer != "ignorable". Toujours evaluer impact reel + scenario worst-case. Si "rare event en theorie", calculer "que se passe-t-il si c'arrive ?". Ici = position SHORT cumulee sans SL/TP = catastrophique.
+**Trigger prevention** : toute reserve code-reviewer sur boucle/retry/race condition = bloquant par defaut. Fix avant deploy obligatoire (non negotiable). Documenter le fix dans CHANGELOG.
+**Reviewed** : code-reviewer round 1 (review ignoree) + Jackson Flatten manuel + fix complet 4 reserves apres Option B + code-reviewer round 2 GO 18/06.
+
+### 2026-06-18 (69) - [DEPLOY_UNSAFE] - BOM PowerShell sur state JSON corrompu (state load NEW_NO_FILE silent = cooldown bypass)
+
+**Contexte** : Cleanup state JSON Bot MR via PowerShell `Set-Content -Encoding UTF8` apres incident position fantome.
+**Ce qui a mal tourne** : `Set-Content -Encoding UTF8` PowerShell **ajoute un BOM** (Byte Order Mark `EF BB BF`) en debut de fichier. Python `json.load` interprete le BOM comme caractere invalide → exception silencieuse → `State load: NEW_NO_FILE` au boot bot. Resultat : `last_trade_ts_by_symbol` perdu → cooldown 15min **bypass** au boot → bot prend immediatement un nouveau trade sans respecter le cooldown.
+**Cause racine** : convention encoding PowerShell != Python. PS UTF8 = with-BOM par defaut, Python attend UTF-8 sans BOM.
+**Lecon** : NE JAMAIS utiliser `Set-Content -Encoding UTF8` PowerShell pour ecrire des fichiers JSON lus par Python. Toujours preferer Python via SSH ou `[System.IO.File]::WriteAllText` avec UTF8Encoding(false) sans BOM.
+**Trigger prevention** : avant tout cleanup state JSON via SSH, utiliser script Python (`tools/cleanup_*.py` SCP+execute) au lieu de PowerShell. Ou `Out-File -Encoding utf8NoBOM` (PS7+ uniquement).
+**Reviewed** : Claude empirique (grep bytes hex apres ecriture) 18/06.
+
+### 2026-06-18 (68) - [VALIDATION_MISS] - BN V4 : aucun backtest valide (data Databento morte sans total_vol != live sierra 8j)
+
+**Contexte** : Jackson demande d'elargir BN V4 (both directions + RTH wide). Backtest preservation lance sur `DATA/datasets/v4_enriched/symbol={NQ,ES}.c.0`.
+**Ce qui a mal tourne** : la data backtest = **Databento** (source ANNULEE 16/06, cf [[project_source_data_unique_jsonl_live]]) et **`total_vol` est ABSENT** (verifie : 0 colonne sur 120k barres NQ+ES). Or le gate `volume_breakout` fait `if "total_vol" not in df.columns: return True` -> filtre volume DESACTIVE en backtest mais ACTIF en live (total_vol=219 dans sierra_enriched). Le backtest est donc PLUS permissif que le live + sur une source differente = non representatif.
+**Aggravant** : sur cette data, l'edge BN V4 entier repose sur **1 seul trade** (+779t le 06/05, sortie par timeout 90b arbitraire) = 48-56% du PnL. Concentration >33% = data_mining_trap. PF C0 5.63 -> 1.81 en elargissant (leviers DEGRADENT). ES = 1-3 setups en 17j, aucun edge.
+**Cause racine** : la SEULE source valide (sierra_enriched live) n'a que **8 jours** (10->18/06). Impossible de backtester/valider/calibrer BN V4 ni d'elargir sur des bases solides. Le "PF 4.66" historique = data Databento incomplete.
+**Lecon** : avant tout backtest, verifier que la data = source LIVE (sierra) et que les features consommees (total_vol) existent. Un backtest sur data morte/incomplete "valide" un edge fantome.
+**Trigger prevention** : NE PAS elargir BN V4 ni calibrer ES tant que sierra_enriched < ~50j. Fixer B1 + collecter en paper config inchangee. Reviewer : backtest-runner + Claude (verif total_vol + source + historique) 18/06.
+
+### 2026-06-18 (67) - [DEPLOY_UNSAFE] - Bot 3 BN V4 (Sim3, --prod) : SL jamais pose a l'entree (position nue latente)
+
+**Contexte** : Audit ultrathink Bot 3 BN V4 (`CORE/bot_bn_v4/`, Sim3, service `MIA-Paper-BotBN-Sim3` lance `--symbols NQ,ES --prod`). 0 trade en 3 jours.
+**Ce qui a mal tourne** : `order_router.send_entry` (order_router.py:122) appelle `send_market_order(tp_price=0.0)`. `dtc_connector.py:393` conditionne TOUT le bloc bracket (attente fill parent + SL STOP lignes 514-568) a `tp_price > 0`. BN V4 n'a jamais de TP (exit = trailing SL) -> bloc saute -> MARKET envoye chez SC, AUCUN SL pose, `return (parent,"","")` -> order_router voit tuple3 sans brackets -> `success=False` (DTC_PARENT_FILL_ABORT). Position nue dans Sim3, NON trackee cote bot (fantome).
+**Cause racine** : connector concu pour bracket TP+SL ; cas SL-only non supporte. Bug latent masque par 0 setup A++ (config 0.25 trade/j + marche haussier). Le "0 trade" a litteralement protege du bug (comme #62 masque jusqu'au 1er fill).
+**Lecon** : un bot SL-only ne peut PAS reutiliser `send_market_order(tp=0)`. + 2 bloquants annexes : `MAX_TRADES_PER_DAY` incremente au close seulement (jamais a l'ouverture) ; `DailyState` reset au boot non persiste (restart = bypass stop-loss).
+**Trigger prevention** : avant tout deploy `--prod`, test empirique trade force (baisser grade) pour voir le SL dans le DOM SC. Tout bot SL-only exige un flow `send_market_with_stop_only` dedie. Verifie aussi : compteur trades a l'ouverture + persistance daily counters.
+**Reviewed** : agent code-reviewer + Claude (verif ligne par ligne dtc_connector.py:393/598 + order_router.py:122/137) 18/06.
+
+### 2026-06-18 (66) - [VALIDATION_MISS] - Autopsie Bot 2 D-1 cvd_day_dir : sur-diagnostic sur donnees pre-fix
+
+**Contexte** : Autopsie Bot 2, agent market-analyst conclut "cvd_day_dir NQ fige a +1 100%, NQ ne peut jamais shorter" en analysant les enriched locaux 10-15/06.
+
+**Ce qui a mal tourne** : ces fichiers sont PRE-FIX. L'override `CORE/cvd_session_override.py` (deploye 15/06, INCIDENT_LOG #59) corrige justement ce bug. Verification VPS post-fix : NQ cvd_day_dir = [-1,1] le 16, [-1,0,1] le 17, [-1] le 18. La feature fonctionne. Phase 1b de remediation = no-op (aucun code).
+
+**Lecon** : avant de diagnostiquer un bug pipeline, verifier la date de la donnee analysee vs la date de deploy du fix concerne. Un audit sur 4 jours pre-fix peut "confirmer" un bug deja resolu.
+
+**Trigger prevention** : pour tout finding "feature X cassee/figee", grep si un fix recent existe (cvd_session_override, INCIDENT_LOG) ET re-verifier sur donnees post-deploy AVANT de planifier un fix. Catch par Claude (challenge autopsie) 18/06.
+
+**NUANCE 18/06 (control agent)** : D-1 formulation "fige +1" = faux positif CONFIRME (NQ shorte depuis 16/06). MAIS un BUG RESIDUEL REEL existe : le reset de session 18:00 ET de `cvd_session_override.py` NE FIRE JAMAIS sur les donnees VPS (16/06 18:00:00 ET pile : cvd_day=-2513 alors que delta=+105, devrait etre ~+105). Le cvd cumule sur plusieurs sessions -> cvd_day_dir = signe a retardement multi-session, pas pression du jour. Impact CROSS-BOT (bias_calculator de tous les bots). Niveau IMPORTANT. Override ne crashe pas (0 CVD_OVERRIDE_FAIL). Cause a creuser : live vs batch write, semantique get_engine_state. NE PAS minimiser en "cosmetique" (j'avais fait cette erreur, repris par control agent).
+
+### 2026-06-18 (65) - [COMMENT_FALSE] - Bot 2 cooldown anti-revenge jamais arme + code anti-clustering mort
+
+**Contexte** : Autopsie Bot 2 "Mirror v2" (`CORE/bot1_v2/`). Commentaire `main.py:119` affirme "Callback on_close declenche daily_gate.register_close" pour le cooldown anti-revenge Mark Douglas.
+
+**Ce qui a mal tourne** : `_on_fill_close` (main.py:149) n'appelle QUE `daily_gate.update_after_trade`. `ClusterEngine.register_close()` (cluster.py:171, cooldown 60/90min post-loss) n'est JAMAIS appele → cooldown inerte. De plus `position_store.py:137` (anti-clustering spatial, fix documente "5 LONGs dans 13 ticks = -$237") = code mort, jamais branche.
+
+**Lecon** : protections annoncees dans docstring/commentaire != protections actives. Verifier l'appel reel (grep usages) avant de croire un garde-fou en place.
+
+**Trigger prevention** : sur tout module risk, grep les usages des fonctions de protection (register_close, set_last_entry_price...) AVANT d'affirmer qu'elles protegent. Cf plan `DOCS/plans/2026-06-18-bot2-mirror-v2-autopsie-remediation.md` F-3/F-4.
+
+### 2026-06-18 (64) - [VALIDATION_MISS] - Bot 2 tracabilite cassee : JSONL decisions absent VPS + direction="?" 88% logs
+
+**Contexte** : Autopsie Bot 2 "Mirror v2" (Sim2, 2 trades en 4 jours). Croisement logs VPS + 3 agents.
+
+**Ce qui a mal tourne** : (1) le JSONL dedie `LOGS/bot1_v2_decisions/` (cree par `logger.py:42`, cense porter le verdict mirror+sltp complet pour l'audit) est ABSENT du VPS → seuls les events catalog existent. (2) `direction="?"` sur 88% des events BOT1V2_NOT_TRADABLE (main.py:274) alors que `mirror.direction` est connu → impossible de tuner par sens du signal. Tout tuning data-driven serait aveugle.
+
+**Lecon** : avant de tuner un bot sur ses logs, verifier que les logs portent REELLEMENT les champs necessaires (regle critical-tasks §E : verif emit reel J+1). Un JSONL dedie code != JSONL dedie ecrit en prod.
+
+**Trigger prevention** : phase 2 du plan remediation = reparer tracabilite AVANT recalibration. Emit `BOT1V2_DECISIONS_PATH` au boot + confirmer fichier non-vide J+1. Cf `DOCS/plans/2026-06-18-bot2-mirror-v2-autopsie-remediation.md`.
+
+**CORRECTION 18/06 (verif VPS)** : (1) le JSONL dedie `LOGS/bot1_v2_decisions/` EXISTE bien et s'ecrit chaque jour (15-18/06, 2674 lignes le 16/06 avec verdict+sltp complets) — l'affirmation "absent" etait un MISREAD d'une commande `dir` composee. (2) direction="?" CONFIRME reel (362 mismatch le 16/06) MAIS le JSONL dedie stocke `verdict.direction` (mirror), donc le tuning n'est PAS aveugle — seul l'emit catalog perd la direction. Fix 2a applique (1 ligne cluster._make_decision). Lecon : meme erreur que #66 — verifier sur le VPS AVANT d'affirmer "absent/casse".
+
 ### 2026-06-17 (63) - [DEPLOY_UNSAFE] - Fix Bot MR + Bot BN V4 listener sans review prealable
 
 **Contexte** : 17/06 ~23h UTC (T-25 min Asia). Apres deploy Bot 1 v2 listener avec review code-reviewer GO, j'ai wire le meme listener sur Bot MR Sim1 et Bot BN V4 Sim3 SANS dispatcher code-reviewer (motivation : urgence Asia).

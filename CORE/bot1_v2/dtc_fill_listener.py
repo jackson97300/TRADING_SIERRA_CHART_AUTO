@@ -72,8 +72,13 @@ class DtcFillListener:
         cfg : Bot1V2Config (lit TRADE_ACCOUNT pour filtre)
         store : PositionStore (close_position + has_position)
         state_bridge : StateBridge (close_position pour dashboard)
-        on_close_callback : optionnel — appele apres close avec (sym, pnl_usd).
-            Utilise par main.py pour `daily_gate.register_close(pnl_usd)`.
+        on_close_callback : optionnel — appele apres close.
+            Nouvelle signature (18/06 RESERVE #4) : `(sym, pnl_usd, exit_reason)`
+            ou `exit_reason` est "TP" / "SL" / "TIMEOUT" (close market MAX_HOLD).
+            Backward compat : si le callback accepte seulement 2 args, on tombe
+            sur `(sym, pnl_usd)` via try/except TypeError.
+            Utilise par main.py pour `daily_gate.update_after_trade(pnl_usd)`
+            + circuit breaker (exit_reason="TIMEOUT" -> pas d'increment SL consec).
 
     Usage :
         listener = DtcFillListener(cfg, store, state_bridge, on_close_callback)
@@ -185,6 +190,47 @@ class DtcFillListener:
             if sl_cid:
                 self._cid_index[sl_cid] = {**ctx, "kind": "sl"}
 
+    def register_close_cid(self, sym: str, close_cid: str, pos: dict) -> None:
+        """Enregistre un CID de close market (MAX_HOLD timeout) dans _cid_index.
+
+        Bug racine fix 18/06 (carnage 9 close markets cumules) : sans cet
+        enregistrement, le fill du close market arrive avec ClientOrderID
+        inconnu -> handle_order_update_impl retourne silencieusement sur le
+        check `entry is None` -> position reste OPEN dans store -> MAX_HOLD
+        re-declenche au tick suivant -> boucle infinie SHORT cumul.
+
+        Convention kind="timeout" : distingue d'un TP/SL normal pour
+        exit_reason renvoye au callback (TIMEOUT vs TP/SL). Le main.py
+        BotMR utilise ce signal pour ne PAS polluer le circuit breaker
+        N SL consec (un MAX_HOLD timeout n'est PAS un SL signal-driven).
+
+        Doit etre appele juste apres send_close_market() succes dans
+        _force_close_timeout(). Idempotent : si appele 2x avec meme close_cid
+        c'est un no-op (overwrite sans effet).
+
+        Args:
+            sym: symbole ("ES", "NQ", "MGC")
+            close_cid: ClientOrderID du market close (ex: MIA_CLOSE_xxx)
+            pos: dict position depuis store.positions[sym] avant cleanup.
+                 Utilise pour calc PnL (entry_price + direction + n_micros).
+        """
+        if not close_cid:
+            return
+        with self._lock:
+            self._cid_index[close_cid] = {
+                "sym": sym,
+                "signal_id": pos.get("signal_id", ""),
+                "direction": pos.get("direction", "LONG"),
+                "entry_price": float(pos.get("entry_price", 0.0)),
+                "sl_price": float(pos.get("sl_price", 0.0)),
+                "tp_price": float(pos.get("tp_price", 0.0)),
+                "sl_ticks": int(pos.get("sl_ticks", 0)),
+                "tp_ticks": int(pos.get("tp_ticks", 0)),
+                "n_micros": int(pos.get("n_micros", 1)),
+                "ts_open": float(pos.get("entry_ts", 0)) / 1000.0,
+                "kind": "timeout",
+            }
+
     def handle_order_update(self, msg: dict) -> None:
         """Callback DTC : appele depuis dtc_connector._handle_order_update.
 
@@ -267,7 +313,19 @@ class DtcFillListener:
             tick, tick_value = _micro_tick_specs(sym)
             pnl_ticks = pnl_pts / tick if tick else 0.0
             pnl_usd = pnl_ticks * tick_value * n_micros
-            exit_reason = "TP" if kind == "tp" else "SL"
+            # RESERVE #1 fix 18/06 : 3 exit_reasons supportes.
+            #   - "tp" -> TP : signal-driven win.
+            #   - "timeout" -> TIMEOUT : MAX_HOLD force close (Lopez triple barrier).
+            #     PnL peut etre legerement negatif (slippage market close) mais ne
+            #     doit PAS incrementer le circuit breaker SL consec cote main.py
+            #     (sortie temporelle, pas une SL signal-driven).
+            #   - "sl" (ou tout autre) -> SL : signal-driven loss.
+            if kind == "tp":
+                exit_reason = "TP"
+            elif kind == "timeout":
+                exit_reason = "TIMEOUT"
+            else:
+                exit_reason = "SL"
             outcome = "WIN" if pnl_usd > 0 else "LOSS"
             # Cleanup store + state_bridge
             self.store.close_position(sym)
@@ -303,8 +361,18 @@ class DtcFillListener:
             cid=cid,
         )
         if self.on_close_callback is not None:
+            # RESERVE #4 fix 18/06 : nouvelle signature (sym, pnl_usd, exit_reason).
+            # Backward compat : callbacks bot1_v2 et bot_bn_v4 ont encore signature
+            # (sym, pnl_usd) — try la nouvelle d'abord, fallback sur l'ancienne si
+            # TypeError (positional args mismatch). Toute autre exception du
+            # callback est trappee par le bloc Exception classique (anti-crash
+            # recv_loop DTC).
             try:
-                self.on_close_callback(sym, pnl_usd)
+                try:
+                    self.on_close_callback(sym, pnl_usd, exit_reason)
+                except TypeError:
+                    # Ancienne signature 2 args : compat Bot 1 v2 + Bot BN V4
+                    self.on_close_callback(sym, pnl_usd)
             except Exception as e:  # noqa: BLE001
                 self._emit_pair(
                     "BOT1V2_ON_CLOSE_CALLBACK_EXCEPTION",
