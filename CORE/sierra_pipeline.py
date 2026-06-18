@@ -115,6 +115,13 @@ try:
     from CORE.phase_d_pvwap_streaming import (
         add_phase_d_pvwap_streaming, make_pvwap_stream_state,
     )
+    # Phase D Bloc 2 - PrevHelpers streaming (INCIDENT #76 19/06)
+    # 5 helpers prev_vah/val/vpoc + pdh/pdl Sierra natif BUGGUES intra-session
+    # (2-4 distinct values par session au lieu de constant). 4 bots paper
+    # actifs lisent les 5 distances ML-usable derivees.
+    from CORE.phase_d_prev_helpers_streaming import (
+        add_phase_d_prev_helpers_streaming, make_prev_helpers_state,
+    )
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -135,6 +142,10 @@ except ImportError:
     # Phase D Bloc 1 - PVWAP streaming (INCIDENT #75 18/06)
     from phase_d_pvwap_streaming import (  # type: ignore
         add_phase_d_pvwap_streaming, make_pvwap_stream_state,
+    )
+    # Phase D Bloc 2 - PrevHelpers streaming (INCIDENT #76 19/06)
+    from phase_d_prev_helpers_streaming import (  # type: ignore
+        add_phase_d_prev_helpers_streaming, make_prev_helpers_state,
     )
     from eco_news_features import compute_eco_news_features
     from session_utils import get_trading_date_from_utc, utc_to_et
@@ -336,6 +347,19 @@ class SierraPipelineOrchestrator:
         # NE PAS reinstancier au cross-day reset : vocation EOD broadcast J-1 sur J
         # (cf pattern composite_poc, INCIDENT #58).
         self._pvwap_stream_state = make_pvwap_stream_state()
+        # Phase D Bloc 2 - PrevHelpers streaming (INCIDENT #76 19/06)
+        # Helpers prev_vah/val/vpoc + pdh/pdl Sierra natif buggues intra-session
+        # (2-4 distinct values par session). 4 bots paper consument les 5
+        # distances ML-usable derivees (Bot 2 BN V4, Bot 3 v3, Bot 3 Gold).
+        # Sources :
+        #   - prev_vah/val/vpoc <- cur_vah/val/vpoc EOD snapshot
+        #   - pdh/pdl <- max(bar_high)/min(bar_low) 24h (incluant overnight)
+        #     PAS cash_high/cash_low (RTH-only) cf Q2 Plan agent.
+        # 2 feature flags separes : MIA_PREV_VA_WIRE_ENABLED + MIA_PREV_DAY_HL_WIRE_ENABLED.
+        # NE PAS reinstancier au cross-day reset (vocation EOD broadcast).
+        self._prev_helpers_state = make_prev_helpers_state()
+        # R2 code-reviewer 19/06 : counter monitoring %bars wirage actif J+1.
+        self._prev_helpers_emitted: int = 0
 
         # Stats orchestrateur (debug + monitoring)
         self._bars_processed: int = 0
@@ -1112,6 +1136,60 @@ class SierraPipelineOrchestrator:
                     except Exception:  # noqa: BLE001
                         pass
 
+        # ─── Phase D Bloc 2 - PrevHelpers streaming (10 features) ────────────
+        # INCIDENT #76 (19/06/2026) : 5 helpers prev_* Sierra natif buggues
+        # intra-session (2-4 distinct par session au lieu de constant EOD).
+        # 4 bots paper actifs consument les 5 distances dist_*_pct (Bot 2 BN
+        # V4, Bot 3 v3 Tier 3, Bot 3 Gold Tier 2) = signaux degrades depuis
+        # le debut. Pattern identique PVWAP (INCIDENT #75).
+        #
+        # 2 FEATURE FLAGS (Q5 Plan agent) :
+        #   MIA_PREV_VA_WIRE_ENABLED (default "1") : prev_vah/val/vpoc + 3 dist
+        #   MIA_PREV_DAY_HL_WIRE_ENABLED (default "1") : pdh/pdl + 2 dist
+        # Separes car sources differentes (cur_* vs bar_high/low 24h).
+        #
+        # DEROGATION_POLICY_SIERRA_PRESERVE (cf PVWAP wirage L1067+) :
+        # `_safe_update` standard preserve Sierra non-NaN. ICI on DEROGE :
+        # helpers Sierra natif sont BUGGUES (variant intra-session). Python
+        # non-NaN ECRASE Sierra (= comportement INTENTIONNEL et correct).
+        # Cold-start (Python NaN), fallback Sierra accepte (1j warmup).
+        # Cf phase_d_prev_helpers_streaming.py retourne 10 keys (5 par flag).
+        _prev_keys = (
+            "prev_vah", "prev_val", "prev_vpoc", "pdh", "pdl",
+            "dist_prev_vah_pct", "dist_prev_val_pct",
+            "dist_prev_vpoc_pct", "dist_pdh_pct", "dist_pdl_pct",
+        )
+        _prev_va_on = os.environ.get("MIA_PREV_VA_WIRE_ENABLED", "1") == "1"
+        _prev_hl_on = os.environ.get("MIA_PREV_DAY_HL_WIRE_ENABLED",
+                                       "1") == "1"
+        if _prev_va_on or _prev_hl_on:
+            try:
+                _prev_in = dict(enriched)
+                _prev_in.setdefault("symbol", self.symbol)
+                _prev_out = add_phase_d_prev_helpers_streaming(
+                    _prev_in, self._prev_helpers_state)
+                # Filter keys reellement produites (selon flags actifs)
+                self._safe_update(
+                    enriched,
+                    {k: _prev_out[k] for k in _prev_keys
+                     if k in _prev_out},
+                )
+                self._prev_helpers_emitted += 1
+                if self._log_event is not None:
+                    try:
+                        self._log_event("SIERRA_PORT_PREV_HELPERS_OK",
+                                         sym=self.symbol)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception as _e:  # noqa: BLE001
+                if self._log_event is not None:
+                    try:
+                        self._log_event("SIERRA_PORT_PREV_HELPERS_FAIL",
+                                         sym=self.symbol,
+                                         err=str(_e)[:200])
+                    except Exception:  # noqa: BLE001
+                        pass
+
         # ─── Phase 1 Group D - intermarket (10 features cross-sym ES/NQ) ────
         # Sierra DMP n'emet AUCUNE feature im_* native (0/10).
         # Caller (live_pipeline) doit appeler set_partner_bar(bar) AVANT
@@ -1487,6 +1565,10 @@ class SierraPipelineOrchestrator:
         # (sinon dist_pvwap_*_pct = NaN sur la nouvelle session entiere).
         # Le module gere lui-meme la transition session via comparaison
         # current_session_date vs sess_date_str (cf phase_d_pvwap_streaming:199-209).
+        # Phase D Bloc 2 PrevHelpers (INCIDENT #76 19/06) : meme principe.
+        # NE PAS reinstancier self._prev_helpers_state. Les 5 snapshots
+        # prev_session_* doivent traverser le cross-day boundary. Le module
+        # gere lui-meme la transition session (phase_d_prev_helpers_streaming).
         self._current_trading_date = trading_date
         return True
 

@@ -1363,6 +1363,9 @@ LOG_CODES = {
     # Phase D Bloc 1 PVWAP (INCIDENT #75 18/06/2026)
     "SIERRA_PORT_PVWAP_OK":                  (LogLevel.INFO,   "events", "Sierra port PVWAP OK : sym={sym}"),
     "SIERRA_PORT_PVWAP_FAIL":                (LogLevel.MAJEUR, "events", "Sierra port PVWAP FAIL : sym={sym} err={err}"),
+    # Phase D Bloc 2 PrevHelpers (INCIDENT #76 19/06/2026)
+    "SIERRA_PORT_PREV_HELPERS_OK":           (LogLevel.INFO,   "events", "Sierra port PrevHelpers OK : sym={sym}"),
+    "SIERRA_PORT_PREV_HELPERS_FAIL":         (LogLevel.MAJEUR, "events", "Sierra port PrevHelpers FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_RVOL_OK":                   (LogLevel.INFO,   "events", "Sierra port rvol OK : sym={sym}"),
     "SIERRA_PORT_RVOL_FAIL":                 (LogLevel.MAJEUR, "events", "Sierra port rvol FAIL : sym={sym} err={err}"),
     "SIERRA_PORT_RVOL_DEGRADED":             (LogLevel.ALERTE, "events", "Sierra port rvol DEGRADED : sym={sym} reason={reason}"),
