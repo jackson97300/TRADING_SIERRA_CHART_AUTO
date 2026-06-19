@@ -185,11 +185,17 @@ class BotMRConfig:
     SKIP_PREOPEN_US: bool = _env_bool("SKIP_PREOPEN_US", False)
 
     # ============================================================
-    # DAILY LIMITS Mark Douglas
+    # DAILY LIMITS — DIRECTIVE JACKSON 19/06/2026
     # ============================================================
-    MAX_TRADES_PER_DAY: int = _env_int("MAX_TRADES_PER_DAY", 5)
-    DAILY_STOP_LOSS_USD: float = _env_float("DAILY_STOP_LOSS_USD", -200.0)
-    DAILY_STOP_WIN_USD: float = _env_float("DAILY_STOP_WIN_USD", 150.0)
+    # CHANGEMENT : illimite + perte max -$2500 (vs ancien 5/-$200 Douglas).
+    # Raison : phase paper Sim1, BESOIN DE DATA pour analyse. Selectivite
+    # imposee par filtres qualite signaux PAS par limit hard. Reflexion long
+    # terme : ameliorer signal_engine pour qu'il sorte SEULEMENT trades de
+    # qualite (rvol range, cvd_session non-epuise, dist_prev_val positif BUY,
+    # etc.) au lieu de couper artificiellement le bot.
+    MAX_TRADES_PER_DAY: int = _env_int("MAX_TRADES_PER_DAY", 9999)
+    DAILY_STOP_LOSS_USD: float = _env_float("DAILY_STOP_LOSS_USD", -2500.0)
+    DAILY_STOP_WIN_USD: float = _env_float("DAILY_STOP_WIN_USD", 99999.0)
 
     # ============================================================
     # CIRCUIT BREAKER (anti-stubbornness 18/06/2026)
@@ -456,9 +462,10 @@ class BotMRConfig:
             TRADABLE_SESSIONS_ES=_env_tuple("TRADABLE_SESSIONS_ES", ("ASIA", "LONDON", "US")),
             TRADABLE_SESSIONS_NQ=_env_tuple("TRADABLE_SESSIONS_NQ", ("ASIA", "LONDON", "US")),
             SKIP_PREOPEN_US=_env_bool("SKIP_PREOPEN_US", False),
-            MAX_TRADES_PER_DAY=_env_int("MAX_TRADES_PER_DAY", 5),
-            DAILY_STOP_LOSS_USD=_env_float("DAILY_STOP_LOSS_USD", -200.0),
-            DAILY_STOP_WIN_USD=_env_float("DAILY_STOP_WIN_USD", 150.0),
+            # DIRECTIVE JACKSON 19/06 : illimite + -$2500 (cf docstring L188-)
+            MAX_TRADES_PER_DAY=_env_int("MAX_TRADES_PER_DAY", 9999),
+            DAILY_STOP_LOSS_USD=_env_float("DAILY_STOP_LOSS_USD", -2500.0),
+            DAILY_STOP_WIN_USD=_env_float("DAILY_STOP_WIN_USD", 99999.0),
             DMP_BAR_MAX_AGE_SEC=_env_int("DMP_BAR_MAX_AGE_SEC", 90),
             POLL_INTERVAL_SEC=_env_int("POLL_INTERVAL_SEC", 15),
             SIERRA_ENRICHED_DIR_TEMPLATE=os.environ.get(
