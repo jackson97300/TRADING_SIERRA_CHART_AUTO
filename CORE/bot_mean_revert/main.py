@@ -788,6 +788,61 @@ class BotMR:
                     "BOTMR_MOMENTUM_CAP_SHORT_BLOCK",
                     sym=sym, slope_10=slope_val, threshold=thr_val,
                 )
+            elif signal_result.skip_reason.startswith("ULTRATHINK_BLOCK_DELTA_BAR_LONG"):
+                # Format : ULTRATHINK_BLOCK_DELTA_BAR_LONG:delta={d}>={t} (MSG)
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    parts = payload.split(" ", 1)[0]
+                    delta_v, thr_v = parts.split(">=", 1)
+                    delta_v = delta_v.replace("delta=", "").strip()
+                except (IndexError, ValueError):
+                    delta_v, thr_v = "?", "?"
+                bot_log.emit(
+                    "BOTMR_ULTRATHINK_BLOCK_DELTA_BAR_LONG",
+                    sym=sym, delta_bar=delta_v, threshold=thr_v,
+                )
+            elif signal_result.skip_reason.startswith("ULTRATHINK_BLOCK_DELTA_BAR_SHORT"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    parts = payload.split(" ", 1)[0]
+                    delta_v, thr_v = parts.split("<=", 1)
+                    delta_v = delta_v.replace("delta=", "").strip()
+                except (IndexError, ValueError):
+                    delta_v, thr_v = "?", "?"
+                bot_log.emit(
+                    "BOTMR_ULTRATHINK_BLOCK_DELTA_BAR_SHORT",
+                    sym=sym, delta_bar=delta_v, threshold=thr_v,
+                )
+            elif signal_result.skip_reason.startswith("ULTRATHINK_BLOCK_FINISH_STRENGTH_LONG"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    parts = payload.split(" ", 1)[0]
+                    fs_v, thr_v = parts.split("<=", 1)
+                    fs_v = fs_v.replace("finish=", "").strip()
+                except (IndexError, ValueError):
+                    fs_v, thr_v = "?", "?"
+                bot_log.emit(
+                    "BOTMR_ULTRATHINK_BLOCK_FINISH_STRENGTH_LONG",
+                    sym=sym, finish_strength=fs_v, threshold=thr_v,
+                )
+            elif signal_result.skip_reason.startswith("ULTRATHINK_BLOCK_FINISH_STRENGTH_SHORT"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    parts = payload.split(" ", 1)[0]
+                    fs_v, thr_v = parts.split(">=", 1)
+                    fs_v = fs_v.replace("finish=", "").strip()
+                except (IndexError, ValueError):
+                    fs_v, thr_v = "?", "?"
+                bot_log.emit(
+                    "BOTMR_ULTRATHINK_BLOCK_FINISH_STRENGTH_SHORT",
+                    sym=sym, finish_strength=fs_v, threshold=thr_v,
+                )
+            elif signal_result.skip_reason.startswith("ULTRATHINK_NO_DATA"):
+                bot_log.emit(
+                    "BOTMR_ULTRATHINK_NO_DATA",
+                    sym=sym, direction=signal_result.direction,
+                    delta_bar="?", finish_strength="?",
+                )
             log_decision_jsonl(
                 bar_ts=bar_ts, symbol=sym, signal=signal_result,
                 executed=False, session_phase=session_phase,

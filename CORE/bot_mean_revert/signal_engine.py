@@ -413,7 +413,14 @@ class SignalEngine:
         # delta_bar positif OU exhaustion claire). Variable la + discriminante.
         # Fail-loud : si delta_bar absent, on ne peut pas prouver l'orderflow.
         # Esprit lessons.md "gamma fail-closed" : pas de data = pas de trade.
-        if self.cfg.ORDERFLOW_CONFIRM_ENABLED:
+        # FIX R1 code-reviewer 19/06 : si ULTRATHINK_FILTER actif, on SKIP
+        # ORDERFLOW_CONFIRM car ULTRATHINK est plus precis (delta_bar < -10
+        # + finish_strength > 0) que ORDERFLOW_CONFIRM (delta_bar >= 0 OR
+        # exhaustion rvol_z>=2.0). Les 2 filtres sont INCOMPATIBLES sur
+        # le path LONG : ULTRATHINK demande BEAR bar, ORDERFLOW BUYERS.
+        # Trade-off : on perd la branche cond_absorb (bn_absorb_bid) mais
+        # ULTRATHINK couvre le cas plus precisement (recovery via finish_strength).
+        if self.cfg.ORDERFLOW_CONFIRM_ENABLED and not self.cfg.ULTRATHINK_FILTER_ENABLED:
             delta_bar_raw = bar.get("delta_bar")
             if delta_bar_raw is None:
                 return SignalResult(
@@ -456,6 +463,81 @@ class SignalEngine:
                         skip_reason=(
                             f"ORDERFLOW_NO_SELLERS_SHORT:delta={delta_bar:.0f} "
                             f"rvol_z={rvol_z_of:.2f}"
+                        ),
+                        **base_ctx,
+                    )
+
+        # 4-ULTRATHINK QUALITY FILTER (19/06/2026 - directive Jackson selectivite).
+        # Backtest 37 trades (16-19/06) revele :
+        #   - Filtres "intuitifs" (delta_bar > 0 pour BUY) = INVERSES vs reel.
+        #   - Vraie philosophie MEAN REVERT = "acheter SUR barre BEAR + recovery
+        #     acheteurs fin de barre" (Wyckoff spring / low rejection).
+        #
+        # Combinaison GAGNANTE (deploy 19/06) :
+        #   LONG  : delta_bar < -10 AND finish_strength > 0
+        #   SHORT : delta_bar > +10 AND finish_strength < 0
+        #
+        # Sample 37 trades : 12 kept, WR 58.3%, PF 2.62, PnL +$1637 (baseline -$679).
+        # Sample < 100 DSR Lopez : feature flag BOTMR_ULTRATHINK_FILTER pour rollback.
+        if self.cfg.ULTRATHINK_FILTER_ENABLED:
+            delta_bar_raw = bar.get("delta_bar")
+            finish_strength_raw = bar.get("finish_strength")
+            # Fail-closed : si features manquantes, BLOQUE le trade (safe default).
+            if delta_bar_raw is None or finish_strength_raw is None:
+                return SignalResult(
+                    tradable=False, direction=direction,
+                    skip_reason=(
+                        f"ULTRATHINK_NO_DATA:delta_bar={delta_bar_raw} "
+                        f"finish_strength={finish_strength_raw}"
+                    ),
+                    **base_ctx,
+                )
+            delta_bar = _f(delta_bar_raw)
+            finish_strength = _f(finish_strength_raw)
+
+            if direction == "LONG":
+                # LONG : delta_bar < DELTA_BAR_BEAR_LONG_MAX (default -10)
+                if delta_bar >= self.cfg.DELTA_BAR_BEAR_LONG_MAX:
+                    return SignalResult(
+                        tradable=False, direction=direction,
+                        skip_reason=(
+                            f"ULTRATHINK_BLOCK_DELTA_BAR_LONG:"
+                            f"delta={delta_bar:.0f}>={self.cfg.DELTA_BAR_BEAR_LONG_MAX:.0f} "
+                            f"(MEAN_REVERT_NEED_BEAR_BAR)"
+                        ),
+                        **base_ctx,
+                    )
+                # LONG : finish_strength > FINISH_STRENGTH_LONG_MIN (default 0)
+                if finish_strength <= self.cfg.FINISH_STRENGTH_LONG_MIN:
+                    return SignalResult(
+                        tradable=False, direction=direction,
+                        skip_reason=(
+                            f"ULTRATHINK_BLOCK_FINISH_STRENGTH_LONG:"
+                            f"finish={finish_strength:.1f}<={self.cfg.FINISH_STRENGTH_LONG_MIN:.1f} "
+                            f"(MEAN_REVERT_NEED_BUYER_RECOVERY)"
+                        ),
+                        **base_ctx,
+                    )
+            elif direction == "SHORT":
+                # SHORT : delta_bar > DELTA_BAR_BULL_SHORT_MIN (default +10)
+                if delta_bar <= self.cfg.DELTA_BAR_BULL_SHORT_MIN:
+                    return SignalResult(
+                        tradable=False, direction=direction,
+                        skip_reason=(
+                            f"ULTRATHINK_BLOCK_DELTA_BAR_SHORT:"
+                            f"delta={delta_bar:.0f}<={self.cfg.DELTA_BAR_BULL_SHORT_MIN:.0f} "
+                            f"(MEAN_REVERT_NEED_BULL_BAR)"
+                        ),
+                        **base_ctx,
+                    )
+                # SHORT : finish_strength < FINISH_STRENGTH_SHORT_MAX (default 0)
+                if finish_strength >= self.cfg.FINISH_STRENGTH_SHORT_MAX:
+                    return SignalResult(
+                        tradable=False, direction=direction,
+                        skip_reason=(
+                            f"ULTRATHINK_BLOCK_FINISH_STRENGTH_SHORT:"
+                            f"finish={finish_strength:.1f}>={self.cfg.FINISH_STRENGTH_SHORT_MAX:.1f} "
+                            f"(MEAN_REVERT_NEED_SELLER_RECOVERY)"
                         ),
                         **base_ctx,
                     )
