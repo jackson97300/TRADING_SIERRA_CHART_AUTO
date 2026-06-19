@@ -24,9 +24,14 @@ Vetos calibres pour bloquer SEULEMENT cas extremes :
   - vix > 35 OR vix < 13 (cygne noir OR death market)
   - gamma_block True (mur < seuil critique dashboard)
 
-Strategy unifiee : etoile-mere = dashboard verdict (deja cluster 6 sous-signaux
-bull_pts/bear_pts/bias/MTF/divergence/gamma). On NE DUPLIQUE PAS MTF par dessus
-(double-comptage = pattern 11 V1).
+Strategy REFONTE Phase 4 (19/06) : la cascade ET (verdict 4/0 x 4 vetos x
+7 etoiles toutes requises = 0 trade) est remplacee par :
+  1. verdict directionnel souple (dir_score = bull_pts - bear_pts, with-trend)
+  2. 4 vetos hard INCHANGES
+  3. 1 CORE (near_level direction-aware : support LONG / resistance SHORT)
+  4. BONUS k-of-n (compte rvol/pullback/bar_confirmation >= MIN_BONUS_COUNT)
+Anti double-comptage : bias/MTF/momentum sont DEJA dans dir_score -> diagnostic
+seulement, ils NE gatent PLUS et NE sont PAS dans le bonus (pattern 11 V1).
 """
 from __future__ import annotations
 
@@ -34,6 +39,11 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from CORE.bot1_v2.config import Bot1V2Config
+
+try:
+    from CORE.constants import is_rth_bar
+except ImportError:
+    from constants import is_rth_bar  # type: ignore
 
 
 # ============================================================
@@ -90,8 +100,8 @@ class MirrorVerdict:
     ctx_climax_signal: bool = False
     vetos: tuple = field(default_factory=tuple)
     quality_misses: tuple = field(default_factory=tuple)
-    stars_count: int = 0  # nombre etoiles qualite allumees
-    stars_total: int = 5  # total etoiles
+    stars_count: int = 0  # bonus_count (nb dimensions bonus allumees)
+    stars_total: int = 3  # bonus_total (k-of-3) - compat cluster logging
     ready_to_arm: bool = False
     skip_reason: str = ""
 
@@ -131,16 +141,13 @@ def _as_bool(x) -> bool:
     return s in ("true", "1", "yes", "on")
 
 
-def _direction_from_action(action: str) -> Optional[str]:
-    """ACHAT -> LONG, VENTE -> SHORT, else None."""
-    if not isinstance(action, str):
-        return None
-    a = action.upper()
-    if "ACHAT" in a:
-        return "LONG"
-    if "VENTE" in a:
-        return "SHORT"
-    return None
+def _action_from_direction(direction: Optional[str]) -> str:
+    """LONG -> ACHAT, SHORT -> VENTE, None -> ATTENDRE (compat MirrorVerdict)."""
+    if direction == "LONG":
+        return "ACHAT"
+    if direction == "SHORT":
+        return "VENTE"
+    return "ATTENDRE"
 
 
 # ============================================================
@@ -213,47 +220,14 @@ def _compute_bias(bar: dict) -> tuple[float, str]:
     return raw_score, "NEUTRAL"
 
 
-def _compute_dashboard_action(
-    bar: dict,
-    bull_pts: int,
-    bear_pts: int,
-    bias_label: str,
-    mtf_bulls: int,
-    mtf_bears: int,
-) -> str:
-    """Reproduit conseil_global logic (builders.py).
+def _compute_pts(
+    bar: dict, cfg: Optional[Bot1V2Config] = None, symbol: str = "ES",
+) -> tuple[int, int]:
+    """Bull/bear points - read dashboard si present, sinon derive simplifie.
 
-    Si dashboard data injectee -> read direct.
-    Sinon : derive selon pts + MTF (simplifie).
+    SYMBOL-AWARE (Phase 4) : le point momentum utilise le seuil symbol-aware
+    (ES 1.0, NQ 10.0) car momentum_5b brut n'a pas la meme echelle ES vs NQ.
     """
-    # 1. Si bar contient deja le verdict dashboard (mode shadow)
-    action = bar.get("conseil_action") or bar.get("executable_action")
-    if isinstance(action, str) and action.strip():
-        return action.strip().upper()
-
-    # 2. Derive STRICT (sans verdict dashboard inject, on est conservateur).
-    #    Critere : TOUS les 4 signaux directionnels + MTF + bias coherent.
-    #    Cible : ~0.5-2% bars passent = trades RARES de qualite.
-    bias_bull = bias_label == "BULLISH"
-    bias_bear = bias_label == "BEARISH"
-
-    # ACHAT FORT : 4/4 bull + MTF >= 3 + bias BULLISH
-    if bull_pts == 4 and bear_pts == 0 and mtf_bulls >= 3 and bias_bull:
-        return "ACHAT"
-    # VENTE FORTE : 4/4 bear + MTF >= 3 + bias BEARISH
-    if bear_pts == 4 and bull_pts == 0 and mtf_bears >= 3 and bias_bear:
-        return "VENTE"
-    # ACHAT PRUDENT : 3/4 bull + MTF >= 3 + bias BULLISH
-    if bull_pts >= 3 and bear_pts == 0 and mtf_bulls >= 3 and bias_bull:
-        return "ACHAT PRUDENT"
-    # VENTE PRUDENTE : 3/4 bear + MTF >= 3 + bias BEARISH
-    if bear_pts >= 3 and bull_pts == 0 and mtf_bears >= 3 and bias_bear:
-        return "VENTE PRUDENTE"
-    return "ATTENDRE"
-
-
-def _compute_pts(bar: dict) -> tuple[int, int]:
-    """Bull/bear points - read dashboard si present, sinon derive simplifie."""
     bull = _as_int(bar.get("bull_pts") or bar.get("conseil_bull_pts"))
     bear = _as_int(bar.get("bear_pts") or bar.get("conseil_bear_pts"))
     if (bull + bear) > 0:
@@ -276,10 +250,12 @@ def _compute_pts(bar: dict) -> tuple[int, int]:
         bull += 1
     elif _as_int(bar.get("vwap_d_side")) < 0:
         bear += 1
+    # Point momentum SYMBOL-AWARE (seuil ES 1.0 / NQ 10.0 via cfg).
     momentum = _as_float(bar.get("momentum_5b"))
-    if momentum > 1.0:
+    mom_min = cfg.momentum_min_abs(symbol) if cfg is not None else 1.0
+    if momentum > mom_min:
         bull += 1
-    elif momentum < -1.0:
+    elif momentum < -mom_min:
         bear += 1
     return bull, bear
 
@@ -353,61 +329,6 @@ def _check_gamma_veto(
     return None
 
 
-def _check_quality_bias(
-    bar: dict, direction: str, bias_score: float, cfg: Bot1V2Config,
-) -> Optional[QualityMiss]:
-    """Etoile qualite : bias score absolu fort + signe coherent direction."""
-    if abs(bias_score) < cfg.BIAS_SCORE_MIN_ABS:
-        return QualityMiss(
-            name="BIAS_WEAK",
-            reason=f"|bias_score|={abs(bias_score):.2f} < {cfg.BIAS_SCORE_MIN_ABS}",
-            value=bias_score,
-        )
-    # Direction coherence : LONG necessite bias_score positif, SHORT negatif
-    if direction == "LONG" and bias_score < 0:
-        return QualityMiss(
-            name="BIAS_OPPOSITE", reason=f"LONG mais bias_score={bias_score:.2f}", value=bias_score,
-        )
-    if direction == "SHORT" and bias_score > 0:
-        return QualityMiss(
-            name="BIAS_OPPOSITE", reason=f"SHORT mais bias_score={bias_score:.2f}", value=bias_score,
-        )
-    return None
-
-
-def _check_quality_mtf(
-    direction: str, mtf_bulls: int, mtf_bears: int, cfg: Bot1V2Config,
-) -> Optional[QualityMiss]:
-    """Etoile qualite : MTF aligne (>=3) sans TF opposee (max 0)."""
-    if direction == "LONG":
-        if mtf_bulls < cfg.MTF_MIN_ALIGNED:
-            return QualityMiss(
-                name="MTF_INSUFFICIENT",
-                reason=f"LONG mtf_bulls={mtf_bulls} < {cfg.MTF_MIN_ALIGNED}",
-                value=mtf_bulls,
-            )
-        if mtf_bears > cfg.MTF_MAX_OPPOSED:
-            return QualityMiss(
-                name="MTF_CONFLICT",
-                reason=f"LONG mtf_bears={mtf_bears} > {cfg.MTF_MAX_OPPOSED}",
-                value=mtf_bears,
-            )
-    else:  # SHORT
-        if mtf_bears < cfg.MTF_MIN_ALIGNED:
-            return QualityMiss(
-                name="MTF_INSUFFICIENT",
-                reason=f"SHORT mtf_bears={mtf_bears} < {cfg.MTF_MIN_ALIGNED}",
-                value=mtf_bears,
-            )
-        if mtf_bulls > cfg.MTF_MAX_OPPOSED:
-            return QualityMiss(
-                name="MTF_CONFLICT",
-                reason=f"SHORT mtf_bulls={mtf_bulls} > {cfg.MTF_MAX_OPPOSED}",
-                value=mtf_bulls,
-            )
-    return None
-
-
 def _check_quality_rvol(
     bar: dict, cfg: Bot1V2Config,
 ) -> Optional[QualityMiss]:
@@ -425,111 +346,135 @@ def _check_quality_rvol(
     return None
 
 
-def _check_quality_momentum(
-    bar: dict, direction: str, cfg: Bot1V2Config,
-) -> Optional[QualityMiss]:
-    """Etoile qualite : momentum 5b fort dans la direction du signal."""
-    momentum = _as_float(bar.get("momentum_5b"))
-    if direction == "LONG":
-        if momentum < cfg.MOMENTUM_5B_MIN_ABS:
-            return QualityMiss(
-                name="MOMENTUM_WEAK",
-                reason=f"LONG momentum_5b={momentum:.2f} < {cfg.MOMENTUM_5B_MIN_ABS}",
-                value=momentum,
-            )
-    else:  # SHORT
-        if momentum > -cfg.MOMENTUM_5B_MIN_ABS:
-            return QualityMiss(
-                name="MOMENTUM_WEAK",
-                reason=f"SHORT momentum_5b={momentum:.2f} > {-cfg.MOMENTUM_5B_MIN_ABS}",
-                value=momentum,
-            )
-    return None
+# Niveaux d'intervention pro (sierra_enriched dist_* signes, en ticks).
+# Convention verifiee (enricher_chain.py:905/963) : dist_X = (niveau - prix)/tick
+#   dist > 0 -> niveau AU-DESSUS du prix -> RESISTANCE
+#   dist < 0 -> niveau EN-DESSOUS du prix -> SUPPORT
+# next_wall_dist_ticks RETIRE : non signe (cote inconnu). next_wall_is_call
+# permettrait de le reintegrer signe plus tard (YAGNI v1).
+_NEAR_LEVEL_KEYS = (
+    "dist_cur_vpoc", "dist_cur_vah", "dist_cur_val",      # Market Profile jour
+    "dist_vwap_d", "dist_vwap_w", "dist_vwap_m",          # VWAP multi-TF
+    "dist_prev_vpoc", "dist_prev_vah", "dist_prev_val",   # niveaux veille MP
+    "dist_pdh", "dist_pdl",                               # high/low veille
+    "dist_open_cash", "dist_open_830",                    # open RTH
+    "dist_ib_high", "dist_ib_low",                        # Initial Balance
+    "dist_sess_high", "dist_sess_low",                    # range jour
+)
+
+# Mapping dist_* -> niveau brut absolu, pour sanity-check de signe (garde-fou
+# pollution cross-instrument partner-bar, enricher_chain.py:745). Seuls les
+# niveaux qui ont un champ brut absolu dans sierra_enriched sont mappes.
+_DIST_TO_RAW_LEVEL = {
+    "dist_cur_vpoc": "cur_vpoc",
+    "dist_cur_vah": "cur_vah",
+    "dist_cur_val": "cur_val",
+    "dist_vwap_d": "vwap_d",
+    "dist_pdh": "pdh",
+    "dist_pdl": "pdl",
+    "dist_ib_high": "ib_high",
+    "dist_ib_low": "ib_low",
+    "dist_sess_high": "sess_high",
+    "dist_sess_low": "sess_low",
+}
 
 
 def _check_quality_near_level(
-    bar: dict, cfg: Bot1V2Config, symbol: str = "ES",
+    bar: dict, direction: str, cfg: Bot1V2Config, symbol: str = "ES",
 ) -> Optional[QualityMiss]:
-    """Etoile qualite : price action AU NIVEAU D'INTERVENTION PRO.
+    """Etoile qualite : price action AU NIVEAU D'INTERVENTION PRO, COTE CORRECT.
 
     Jackson souverain : "ON DOIS AVOIR DES ZONES OU INTERVENIR
                          ON NE DOIS PAS TRADER A TOUT VAS"
 
-    15 zones d'intervention pro valides (sierra_enriched distances en ticks) :
-      1. CUR_VPOC : POC volume jour
-      2. CUR_VAH / CUR_VAL : extremes VA jour Dalton
-      3. VWAP_D : mean reversion jour
-      4. VWAP_W : mean reversion semaine
-      5. VWAP_M : mean reversion mois
-      6. PREV_VPOC / PREV_VAH / PREV_VAL : niveaux veille MP
-      7. PDH / PDL : high/low veille (acceptance/rejection)
-      8. OPEN_CASH / OPEN_830 : open RTH (Dalton open type)
-      9. IB_HIGH / IB_LOW : Initial Balance breakouts
-      10. SESS_HIGH / SESS_LOW : range jour en cours
-      11. MQ_CALL / MQ_PUT / MQ_HVL : MenthorQ gamma walls
-      12. NEXT_WALL : mur MenthorQ le plus proche
+    DIRECTION-AWARE (fix D-2, 18/06) : un LONG doit etre proche d'un SUPPORT
+    (niveau en-dessous/au prix), un SHORT proche d'une RESISTANCE (au-dessus/au
+    prix). Avant ce fix le check etait purement geometrique et validait des SHORT
+    colles au plus bas de session (= vendre dans le trou).
 
-    Le bot trade UNIQUEMENT si <= NEAR_LEVEL_MAX_TICKS d'AU MOINS UN niveau.
+    Convention dist_X = (niveau - prix)/tick :
+      - dist > 0  -> RESISTANCE (au-dessus)
+      - dist < 0  -> SUPPORT (en-dessous)
+      - |dist| <= AT_TOL -> niveau ~AU prix (compte support ET resistance)
+
+    Classement par SIGNE runtime niveau-par-niveau : un meme niveau (VWAP, VPOC,
+    open, PDH/PDL...) est support OU resistance selon sa position vs prix a
+    l'instant t. PAS de table statique support/resistance.
+
+    Garde-fou : si le niveau brut absolu est present et que
+    sign(niveau_brut - close) contredit sign(dist), le dist_* est suspect
+    (pollution partner-bar cross-instrument) -> niveau ignore (fail-safe).
     """
     if not cfg.REQUIRE_NEAR_LEVEL:
         return None
 
     max_ticks = cfg.near_level_max_ticks(symbol)
-    # Note : sierra_enriched dist_* est en ticks (convention DMP).
+    at_tol = cfg.NEAR_LEVEL_AT_TOL_TICKS
+    close = _as_float(bar.get("close"))
+    # GATE vwap_d overnight (defense, impact mesure 0 mais coherent avec sl_tp) :
+    # dist_vwap_d est RTH-anchored, perime hors RTH -> ne pas l'utiliser comme zone.
+    is_rth = is_rth_bar(bar)
 
-    # Cherche AU MOINS un niveau pro a distance <= max_ticks
-    key_levels = [
-        # Market Profile - jour
-        "dist_cur_vpoc",
-        "dist_cur_vah",
-        "dist_cur_val",
-        # VWAP multi-TF
-        "dist_vwap_d",
-        "dist_vwap_w",
-        "dist_vwap_m",
-        # Niveaux veille
-        "dist_prev_vpoc",
-        "dist_prev_vah",
-        "dist_prev_val",
-        # Veille high/low
-        "dist_pdh",
-        "dist_pdl",
-        # Open levels RTH
-        "dist_open_cash",
-        "dist_open_830",
-        # Initial Balance
-        "dist_ib_high",
-        "dist_ib_low",
-        # Session range
-        "dist_sess_high",
-        "dist_sess_low",
-        # MenthorQ gamma walls (peut etre tres loin, on tente quand meme)
-        "next_wall_dist_ticks",
-    ]
+    # 2 trackers separes : on logue le niveau du TYPE attendu par la direction.
+    nearest_support = float("inf")
+    nearest_resistance = float("inf")
+    nearest_support_key = None
+    nearest_resistance_key = None
 
-    nearest_level = None
-    nearest_distance = float("inf")
-    for key in key_levels:
+    for key in _NEAR_LEVEL_KEYS:
+        if not is_rth and key == "dist_vwap_d":
+            continue  # vwap_d perime overnight -> pas une zone valide
         dist = bar.get(key)
-        if dist is None:
-            continue
         try:
-            abs_dist = abs(float(dist))
+            dist = float(dist)
         except (TypeError, ValueError):
             continue
-        if abs_dist < nearest_distance:
-            nearest_distance = abs_dist
-            nearest_level = key
-        if abs_dist <= max_ticks:
-            return None  # AU NIVEAU - OK
 
+        # Garde-fou signe : ignorer un dist_* incoherent avec son niveau brut.
+        raw_key = _DIST_TO_RAW_LEVEL.get(key)
+        if raw_key is not None and close > 0:
+            raw = bar.get(raw_key)
+            if isinstance(raw, (int, float)) and raw > 0:
+                raw_sign = 1 if (raw - close) > 0 else (-1 if (raw - close) < 0 else 0)
+                dist_sign = 1 if dist > 0 else (-1 if dist < 0 else 0)
+                if raw_sign != 0 and dist_sign != 0 and raw_sign != dist_sign:
+                    continue  # dist_* suspect (cross-instrument) -> ignore
+
+        abs_d = abs(dist)
+        # SUPPORT : niveau en-dessous ou ~au prix (dist <= +AT_TOL)
+        if dist <= at_tol and abs_d < nearest_support:
+            nearest_support = abs_d
+            nearest_support_key = key
+        # RESISTANCE : niveau au-dessus ou ~au prix (dist >= -AT_TOL)
+        if dist >= -at_tol and abs_d < nearest_resistance:
+            nearest_resistance = abs_d
+            nearest_resistance_key = key
+
+    if direction == "LONG":
+        if nearest_support <= max_ticks:
+            return None
+        return QualityMiss(
+            name="NOT_AT_SUPPORT",
+            reason=(
+                f"LONG pas a un support (proche={nearest_support_key} "
+                f"@ {nearest_support:.1f}t > {max_ticks}t)"
+                if nearest_support_key is not None
+                else f"LONG aucun support detecte (need <= {max_ticks}t)"
+            ),
+            value=(nearest_support if nearest_support != float("inf") else None),
+        )
+    # SHORT
+    if nearest_resistance <= max_ticks:
+        return None
     return QualityMiss(
-        name="NOT_AT_LEVEL",
+        name="NOT_AT_RESISTANCE",
         reason=(
-            f"Pas dans zone d'intervention pro (nearest={nearest_level} "
-            f"@ {nearest_distance:.1f}t > {max_ticks}t cible)"
+            f"SHORT pas a une resistance (proche={nearest_resistance_key} "
+            f"@ {nearest_resistance:.1f}t > {max_ticks}t)"
+            if nearest_resistance_key is not None
+            else f"SHORT aucune resistance detectee (need <= {max_ticks}t)"
         ),
-        value=nearest_distance,
+        value=(nearest_resistance if nearest_resistance != float("inf") else None),
     )
 
 
@@ -698,15 +643,28 @@ def _check_vix_veto(
 def compute_verdict(
     bar: dict, cfg: Optional[Bot1V2Config] = None, symbol: str = "ES",
 ) -> MirrorVerdict:
-    """Calcule le verdict miroir dashboard + applique vetos + etoiles qualite.
+    """Calcule le verdict directionnel souple + vetos hard + CORE + bonus k-of-n.
+
+    REFONTE Phase 4 (19/06) : remplace la cascade ET (verdict 4/0 x 4 vetos x
+    7 etoiles toutes requises = 0 trade) par :
+      1. dir_score = bull_pts - bear_pts -> direction souple (with-trend)
+      2. 4 vetos hard (climax, rvol_zscore>3, gamma, vix) INCHANGES
+      3. CORE : near_level direction-aware (support pour LONG, resistance SHORT)
+      4. BONUS : compte k-of-3 dimensions independantes (rvol, pullback,
+         bar_confirmation). count >= MIN_BONUS_COUNT requis.
+
+    Anti double-comptage (pattern 11 V1) : bias / MTF / momentum sont DEJA dans
+    dir_score -> ils servent UNIQUEMENT de diagnostic (MirrorVerdict), ils NE
+    gatent PLUS le verdict et NE sont PAS comptes dans le bonus.
 
     Args:
         bar : dict sierra_enriched (613 features) + dashboard data optionnelle
         cfg : config (default si None)
-        symbol : "ES" / "NQ" / "MGC" pour pullback ticks calibration
+        symbol : "ES" / "NQ" / "MGC" pour seuils symbol-aware
 
     Returns:
-        MirrorVerdict avec ready_to_arm True ssi action valide + 0 veto + 6/6 stars.
+        MirrorVerdict avec ready_to_arm True ssi direction definie + 0 veto +
+        near_level OK + bonus_count >= MIN_BONUS_COUNT.
     """
     if cfg is None:
         cfg = Bot1V2Config.from_env()
@@ -715,20 +673,29 @@ def compute_verdict(
     if isinstance(bar_sym, str) and bar_sym in ("ES", "NQ", "MGC"):
         symbol = bar_sym
 
-    # 1. BASE - reproduit dashboard
-    bull_pts, bear_pts = _compute_pts(bar)
+    # 1. BASE - reproduit dashboard (DIAGNOSTIC seulement, sauf bull/bear_pts).
+    bull_pts, bear_pts = _compute_pts(bar, cfg, symbol)
     mtf_bulls, mtf_bears, mtf_neutres = _compute_mtf_counts(bar)
     bias_score, bias_label = _compute_bias(bar)
     mtf_verdict = "ALIGNE" if max(mtf_bulls, mtf_bears) >= 3 else "CONFLIT"
 
-    action = _compute_dashboard_action(
-        bar, bull_pts, bear_pts, bias_label, mtf_bulls, mtf_bears,
-    )
-    direction = _direction_from_action(action)
+    # 2. VERDICT DIRECTIONNEL SOUPLE (with-trend, dir_score).
+    #    LONG  : dir_score >= +3 ET bear_pts <= 1
+    #    SHORT : dir_score <= -3 ET bull_pts <= 1
+    #    sinon : ATTENDRE (None). bias/MTF NE gatent PLUS.
+    dir_score = bull_pts - bear_pts
+    direction: Optional[str]
+    if dir_score >= 3 and bear_pts <= 1:
+        direction = "LONG"
+    elif dir_score <= -3 and bull_pts <= 1:
+        direction = "SHORT"
+    else:
+        direction = None
 
-    # 2. ETOILE-MERE : action doit etre dans liste acceptee
-    action_accepted = action in cfg.DASHBOARD_VERDICTS_ACCEPTED
-    if not action_accepted or direction is None:
+    action = _action_from_direction(direction)
+
+    # Snapshot diagnostic commun (re-utilise dans tous les returns).
+    def _verdict(**kw) -> MirrorVerdict:
         return MirrorVerdict(
             action=action,
             direction=direction,
@@ -745,11 +712,16 @@ def compute_verdict(
             vix_level=_as_float(bar.get("vix_level")),
             rvol_zscore=_as_float(bar.get("rvol_zscore")),
             ctx_climax_signal=_as_bool(bar.get("ctx_climax_signal")),
-            ready_to_arm=False,
-            skip_reason=f"DASHBOARD_VERDICT_REJECTED:{action}",
+            **kw,
         )
 
-    # 3. VETOS HARD (rejet immediat)
+    if direction is None:
+        return _verdict(
+            ready_to_arm=False,
+            skip_reason="DASHBOARD_VERDICT_REJECTED:ATTENDRE",
+        )
+
+    # 3. VETOS HARD (rejet immediat) - INCHANGES.
     vetos: list[VetoFired] = []
     for check_fn in (
         lambda: _check_climax_veto(bar, direction, cfg),
@@ -761,55 +733,59 @@ def compute_verdict(
         if veto:
             vetos.append(veto)
 
-    # 4. ETOILES QUALITE (FORTE CONVICTION cluster)
-    # Jackson souverain : "SIGNAUX FORT CONVICTION" + "TRADE DANS SENS TENDANCE"
-    # 7 etoiles. TOUTES doivent etre allumees pour ready_to_arm = True.
-    quality_misses: list[QualityMiss] = []
+    if vetos:
+        return _verdict(
+            vetos=tuple(vetos),
+            stars_count=0,
+            stars_total=3,
+            ready_to_arm=False,
+            skip_reason="VETO:" + ",".join(v.name for v in vetos),
+        )
+
+    # 4. CORE : near_level direction-aware (support LONG / resistance SHORT).
+    #    Seul filtre qualite OBLIGATOIRE hors vetos. Garde le nom du miss
+    #    (NOT_AT_SUPPORT / NOT_AT_RESISTANCE) comme skip_reason.
+    near_miss = _check_quality_near_level(bar, direction, cfg, symbol)
+    if near_miss is not None:
+        return _verdict(
+            quality_misses=(near_miss,),
+            stars_count=0,
+            stars_total=3,
+            ready_to_arm=False,
+            skip_reason=near_miss.name,
+        )
+
+    # 5. BONUS : COMPTE de 3 dimensions INDEPENDANTES (k-of-n).
+    #    rvol >= RVOL_MIN, pullback, bar_confirmation. count >= MIN_BONUS_COUNT.
+    #    Anti double-comptage : PAS bias/MTF/momentum (deja dans dir_score),
+    #    PAS de bonus "conviction" (= dir_score, redondant).
+    bonus_misses: list[QualityMiss] = []
     for check_fn in (
-        lambda: _check_quality_bias(bar, direction, bias_score, cfg),
-        lambda: _check_quality_mtf(direction, mtf_bulls, mtf_bears, cfg),
         lambda: _check_quality_rvol(bar, cfg),
-        lambda: _check_quality_momentum(bar, direction, cfg),
-        lambda: _check_quality_near_level(bar, cfg, symbol),
         lambda: _check_quality_pullback(bar, direction, cfg, symbol),
         lambda: _check_quality_bar_confirmation(bar, direction, cfg),
     ):
         miss = check_fn()
         if miss:
-            quality_misses.append(miss)
+            bonus_misses.append(miss)
 
-    stars_total = 7
-    stars_count = stars_total - len(quality_misses)
+    bonus_total = 3
+    bonus_count = bonus_total - len(bonus_misses)
 
-    # Verdict : aucun veto ET toutes etoiles allumees (5/5)
-    ready = (len(vetos) == 0) and (stars_count == stars_total)
+    if bonus_count < cfg.MIN_BONUS_COUNT:
+        return _verdict(
+            quality_misses=tuple(bonus_misses),
+            stars_count=bonus_count,
+            stars_total=bonus_total,
+            ready_to_arm=False,
+            skip_reason=f"BONUS_INSUFFICIENT:{bonus_count}/{bonus_total}",
+        )
 
-    skip_reason = ""
-    if vetos:
-        skip_reason = "VETO:" + ",".join(v.name for v in vetos)
-    elif quality_misses:
-        skip_reason = f"QUALITY_INSUFFICIENT:{stars_count}/{stars_total}:" + ",".join(m.name for m in quality_misses)
-
-    return MirrorVerdict(
-        action=action,
-        direction=direction,
-        bull_pts=bull_pts,
-        bear_pts=bear_pts,
-        bias_score=bias_score,
-        bias_label=bias_label,
-        mtf_bulls=mtf_bulls,
-        mtf_bears=mtf_bears,
-        mtf_neutres=mtf_neutres,
-        mtf_verdict=mtf_verdict,
-        gamma_block_long=_as_bool(bar.get("gamma_block_long")),
-        gamma_block_short=_as_bool(bar.get("gamma_block_short")),
-        vix_level=_as_float(bar.get("vix_level")),
-        rvol_zscore=_as_float(bar.get("rvol_zscore")),
-        ctx_climax_signal=_as_bool(bar.get("ctx_climax_signal")),
-        vetos=tuple(vetos),
-        quality_misses=tuple(quality_misses),
-        stars_count=stars_count,
-        stars_total=stars_total,
-        ready_to_arm=ready,
-        skip_reason=skip_reason,
+    # 6. READY : direction OK + 0 veto + near_level OK + bonus_count suffisant.
+    return _verdict(
+        quality_misses=tuple(bonus_misses),
+        stars_count=bonus_count,
+        stars_total=bonus_total,
+        ready_to_arm=True,
+        skip_reason="",
     )

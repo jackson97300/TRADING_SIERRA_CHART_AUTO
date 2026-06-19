@@ -47,17 +47,33 @@ class Bot1V2Config:
     # ============================================================
     # CLUSTER & ETOILES
     # ============================================================
-    # Etoile-mere : dashboard verdict accepte
-    # JACKSON souverain : FORTE CONVICTION seulement (pas PRUDENT = signal faible)
+    # DEPRECATED Phase 4 : le verdict directionnel souple (dir_score) remplace
+    # le filtre etoile-mere par liste d'actions. Conserve pour compat (lecteurs
+    # externes / shadow mode), N'EST PLUS lu par compute_verdict.
     DASHBOARD_VERDICTS_ACCEPTED: tuple = field(default_factory=lambda: (
         "ACHAT", "VENTE",
     ))
 
     # ============================================================
+    # VERDICT DIRECTIONNEL SOUPLE + BONUS k-of-n (Phase 4 refonte 19/06)
+    # ============================================================
+    # Refonte Phase 4 : la cascade ET (verdict 4/0 x 4 vetos x 7 etoiles toutes
+    # requises) bloquait 100% des trades. Remplacee par :
+    #   verdict directionnel souple (dir_score) -> 4 vetos hard -> 1 CORE
+    #   (near_level) + BONUS k-of-n (rvol/pullback/bar_confirmation).
+    # Bias/MTF/momentum NE gatent PLUS le verdict (deja dans dir_score) et NE
+    # sont PAS comptes dans le bonus (anti double-comptage, pattern 11 V1).
+
+    # BONUS : nombre minimum de dimensions independantes (rvol/pullback/bar_conf)
+    # qui doivent PASSER. count >= MIN_BONUS_COUNT requis (k-of-3).
+    MIN_BONUS_COUNT: int = _env_int("MIN_BONUS_COUNT", 2)
+
+    # ============================================================
     # ETOILES QUALITE (FORTE CONVICTION cluster)
     # ============================================================
     # Bias score absolu minimum (conviction directionnelle claire)
-    BIAS_SCORE_MIN_ABS: float = _env_float("BIAS_SCORE_MIN_ABS", 0.5)
+    # NOTE Phase 4 : ne gate plus le verdict (diagnostic MirrorVerdict seulement).
+    BIAS_SCORE_MIN_ABS: float = _env_float("BIAS_SCORE_MIN_ABS", 0.33)
 
     # MTF : nombre min de TF alignees (cluster confluence)
     MTF_MIN_ALIGNED: int = _env_int("MTF_MIN_ALIGNED", 3)
@@ -65,19 +81,29 @@ class Bot1V2Config:
     MTF_MAX_OPPOSED: int = _env_int("MTF_MAX_OPPOSED", 0)
 
     # RVOL minimum (volume confirme le mouvement - mais pas > 3 deja veto)
-    RVOL_MIN: float = _env_float("RVOL_MIN", 1.3)
+    # Phase 4 : 1.3 -> 1.1 (dimension du BONUS k-of-n, pas un gate dur).
+    RVOL_MIN: float = _env_float("RVOL_MIN", 1.1)
 
-    # Momentum 5b minimum absolu (direction confirmation)
-    MOMENTUM_5B_MIN_ABS: float = _env_float("MOMENTUM_5B_MIN_ABS", 2.0)
+    # Momentum 5b minimum absolu (direction confirmation) - SYMBOL-AWARE.
+    # ES/MGC : echelle ~ticks ES (default). NQ : echelle 10x (points NQ plus gros).
+    # MOMENTUM_5B_MIN_ABS reste le default ES (cf momentum_min_abs()).
+    MOMENTUM_5B_MIN_ABS: float = _env_float("MOMENTUM_5B_MIN_ABS", 1.0)
+    MOMENTUM_5B_MIN_ABS_ES: float = _env_float("MOMENTUM_5B_MIN_ABS_ES", 1.0)
+    MOMENTUM_5B_MIN_ABS_NQ: float = _env_float("MOMENTUM_5B_MIN_ABS_NQ", 10.0)
+    MOMENTUM_5B_MIN_ABS_MGC: float = _env_float("MOMENTUM_5B_MIN_ABS_MGC", 1.0)
 
     # Sur niveau de confluence : price action AU NIVEAU pro (pas dans le vide)
     # Jackson souverain : "ON DOIT AVOIR DES ZONES OU INTERVENIR
     #                      ON NE DOIS PAS TRADER A TOUT VAS"
+    # Phase 4 : near_level est le CORE (seul filtre qualite obligatoire hors vetos).
     REQUIRE_NEAR_LEVEL: bool = _env_bool("REQUIRE_NEAR_LEVEL", True)
-    # Distance maximale en ticks pour considerer "AU niveau" (strict)
-    NEAR_LEVEL_MAX_TICKS_ES: int = _env_int("NEAR_LEVEL_MAX_TICKS_ES", 4)
-    NEAR_LEVEL_MAX_TICKS_NQ: int = _env_int("NEAR_LEVEL_MAX_TICKS_NQ", 8)
+    # Distance maximale en ticks pour considerer "AU niveau" (relaxe Phase 4).
+    NEAR_LEVEL_MAX_TICKS_ES: int = _env_int("NEAR_LEVEL_MAX_TICKS_ES", 8)
+    NEAR_LEVEL_MAX_TICKS_NQ: int = _env_int("NEAR_LEVEL_MAX_TICKS_NQ", 16)
     NEAR_LEVEL_MAX_TICKS_MGC: int = _env_int("NEAR_LEVEL_MAX_TICKS_MGC", 8)
+    # AT_TOL : un niveau a +/- ce nb de ticks du prix est "AU prix" = compte
+    # comme support ET resistance (fix D-2 direction-aware near_level 18/06).
+    NEAR_LEVEL_AT_TOL_TICKS: int = _env_int("NEAR_LEVEL_AT_TOL_TICKS", 1)
 
     # Confirmation bar N+1 : OFF en v1 (BN V4 trade SUR la bar, edge intraday)
     # Activable si trop de faux signaux apres backtest 14j.
@@ -251,6 +277,21 @@ class Bot1V2Config:
             return self.NEAR_LEVEL_MAX_TICKS_MGC
         return self.NEAR_LEVEL_MAX_TICKS_ES
 
+    def momentum_min_abs(self, symbol: str) -> float:
+        """Seuil momentum_5b absolu SYMBOL-AWARE (ES 1.0, NQ 10.0, MGC 1.0).
+
+        NQ bouge en points beaucoup plus gros que ES -> un meme momentum_5b
+        brut n'a pas la meme signification. ES reste le default.
+        """
+        s = symbol.upper()
+        if s == "ES":
+            return self.MOMENTUM_5B_MIN_ABS_ES
+        if s == "NQ":
+            return self.MOMENTUM_5B_MIN_ABS_NQ
+        if s == "MGC":
+            return self.MOMENTUM_5B_MIN_ABS_MGC
+        return self.MOMENTUM_5B_MIN_ABS
+
     @classmethod
     def from_env(cls) -> "Bot1V2Config":
         """Construit depuis env vars (snapshot au boot).
@@ -260,11 +301,15 @@ class Bot1V2Config:
         """
         return cls(
             CONFIRMATION_BARS=_env_int("CONFIRMATION_BARS", 0),
-            BIAS_SCORE_MIN_ABS=_env_float("BIAS_SCORE_MIN_ABS", 0.5),
+            MIN_BONUS_COUNT=_env_int("MIN_BONUS_COUNT", 2),
+            BIAS_SCORE_MIN_ABS=_env_float("BIAS_SCORE_MIN_ABS", 0.33),
             MTF_MIN_ALIGNED=_env_int("MTF_MIN_ALIGNED", 3),
             MTF_MAX_OPPOSED=_env_int("MTF_MAX_OPPOSED", 0),
-            RVOL_MIN=_env_float("RVOL_MIN", 1.3),
-            MOMENTUM_5B_MIN_ABS=_env_float("MOMENTUM_5B_MIN_ABS", 2.0),
+            RVOL_MIN=_env_float("RVOL_MIN", 1.1),
+            MOMENTUM_5B_MIN_ABS=_env_float("MOMENTUM_5B_MIN_ABS", 1.0),
+            MOMENTUM_5B_MIN_ABS_ES=_env_float("MOMENTUM_5B_MIN_ABS_ES", 1.0),
+            MOMENTUM_5B_MIN_ABS_NQ=_env_float("MOMENTUM_5B_MIN_ABS_NQ", 10.0),
+            MOMENTUM_5B_MIN_ABS_MGC=_env_float("MOMENTUM_5B_MIN_ABS_MGC", 1.0),
             REQUIRE_NEAR_LEVEL=_env_bool("REQUIRE_NEAR_LEVEL", True),
             CLIMAX_VETO_ENABLED=_env_bool("CLIMAX_VETO_ENABLED", True),
             RVOL_ZSCORE_VETO_THRESHOLD=_env_float("RVOL_ZSCORE_VETO_THRESHOLD", 3.0),
@@ -288,9 +333,10 @@ class Bot1V2Config:
             PULLBACK_MIN_TICKS_MGC=_env_int("PULLBACK_MIN_TICKS_MGC", 5),
             BAR_CONFIRMATION_REQUIRED=_env_bool("BAR_CONFIRMATION_REQUIRED", True),
             BAR_FINISH_STRENGTH_MIN=_env_float("BAR_FINISH_STRENGTH_MIN", 30.0),
-            NEAR_LEVEL_MAX_TICKS_ES=_env_int("NEAR_LEVEL_MAX_TICKS_ES", 4),
-            NEAR_LEVEL_MAX_TICKS_NQ=_env_int("NEAR_LEVEL_MAX_TICKS_NQ", 8),
+            NEAR_LEVEL_MAX_TICKS_ES=_env_int("NEAR_LEVEL_MAX_TICKS_ES", 8),
+            NEAR_LEVEL_MAX_TICKS_NQ=_env_int("NEAR_LEVEL_MAX_TICKS_NQ", 16),
             NEAR_LEVEL_MAX_TICKS_MGC=_env_int("NEAR_LEVEL_MAX_TICKS_MGC", 8),
+            NEAR_LEVEL_AT_TOL_TICKS=_env_int("NEAR_LEVEL_AT_TOL_TICKS", 1),
             MAX_TRADES_PER_DAY=_env_int("MAX_TRADES_PER_DAY", 5),
             COOLDOWN_POST_CLOSE_MIN=_env_int("COOLDOWN_POST_CLOSE_MIN", 60),
             COOLDOWN_POST_LOSS_MIN=_env_int("COOLDOWN_POST_LOSS_MIN", 90),

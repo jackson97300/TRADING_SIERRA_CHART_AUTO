@@ -415,3 +415,26 @@ def is_in_mgc_rth(now_utc: datetime | None = None) -> bool:
     if now_et.weekday() >= 5:  # 5=Saturday, 6=Sunday
         return False
     return MGC_RTH_OPEN_ET <= now_et.time() < MGC_RTH_CLOSE_ET
+
+
+def is_rth_bar(bar: dict) -> bool:
+    """True ssi la barre est en session US RTH (cash), via champ `is_cash_session`.
+
+    Robuste aux representations (bool natif, 1/0, "true"/"false") car l'enricher
+    Sierra peut serialiser differemment selon la source.
+
+    FAIL-SAFE : si le champ est absent/illisible -> retourne False (= traite comme
+    overnight). Utilise pour gater les features RTH-anchored perimees hors RTH
+    (ex: vwap_d + bandes SD qui ne resettent pas a la frontiere CME 18:00 ET et
+    deviennent des murs SL faux en overnight). Mieux vaut exclure un mur que
+    placer un SL sur un niveau perime (cf trade -$967, INCIDENT_LOG).
+    """
+    v = bar.get("is_cash_session")
+    if v is True:
+        return True
+    if v is False or v is None:
+        return False
+    try:
+        return float(v) != 0.0
+    except (TypeError, ValueError):
+        return str(v).strip().lower() in ("true", "1", "yes", "rth", "us_cash")

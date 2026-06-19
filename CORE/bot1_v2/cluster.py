@@ -53,7 +53,7 @@ class ClusterDecision:
     mirror: Optional[MirrorVerdict] = None
     sltp: Optional[SLTPResult] = None
     stars_count: int = 0
-    stars_total: int = 7
+    stars_total: int = 3
     vetos_active: tuple = field(default_factory=tuple)
 
 
@@ -192,6 +192,12 @@ class ClusterEngine:
         n_micros: int = 0,
     ) -> ClusterDecision:
         """Construit ClusterDecision en propageant le contexte."""
+        # F-1 (18/06) : propager la direction connue du mirror si non passee
+        # explicitement (cas QUALITY_INSUFFICIENT / VETO / verdict PRUDENT rejete).
+        # Sans ca, les logs catalog affichaient direction="?" sur ~88% des rejets.
+        # ATTENDRE garde None (mirror.direction None) = correct.
+        if direction is None and mirror is not None:
+            direction = mirror.direction
         bar_ts = bar.get("ts")
         decision = ClusterDecision(
             tradable=tradable,
@@ -212,7 +218,7 @@ class ClusterEngine:
             mirror=mirror,
             sltp=sltp,
             stars_count=mirror.stars_count if mirror else 0,
-            stars_total=mirror.stars_total if mirror else 7,
+            stars_total=mirror.stars_total if mirror else 3,
             vetos_active=mirror.vetos if mirror else (),
         )
         self.last_decision = decision

@@ -62,6 +62,182 @@ Justification business + data (chiffres, findings). Lien incidents/backtests.
 
 ## Entries
 
+## 2026-06-19 — Bot 2 "Mirror v2" (Sim2) : PHASE 4 cascade 7★ → score (déblocage collecte)
+
+**Categorie** : GATE + REFACTO (Trading/Risk critère 1)
+**Impact prod** : PAPER (Sim2, MIA-Paper-Bot1V2)
+**Fichier(s)** : `CORE/bot1_v2/dashboard_mirror.py` (compute_verdict + _compute_pts), `config.py`, `cluster.py`
+**Reviewer(s)** : trading-strategy-analyst GO FRANC (3 rounds) + code-reviewer GO FRANC (contrôle final)
+
+### Quoi
+Remplace la cascade ET (verdict 4/0 × 4 vetos × 7 étoiles toutes requises = 0 trade) par : verdict
+directionnel souple (`dir_score = bull−bear`, LONG>=3/SHORT<=−3, with-trend assumé) → 4 vetos hard
+INCHANGÉS → 1 CORE (near_level S/R) → BONUS k-of-3 {rvol≥1.1, pullback, bar_confirmation} >= MIN_BONUS_COUNT.
+momentum symbol-aware (ES 1.0 / NQ 10.0). Anti double-comptage (bias/MTF/momentum = diagnostic seulement).
+
+### Pourquoi
+0 trade le 19/06 (Pattern 11). Empirique : 36 setups ES + 3 NQ valables ratés. dir_score sur day-features
+= design Mirror "with-trend" assumé par Jackson.
+
+### Impact attendu
+Trades/jour 2-6 (médiane 5, régulé cooldown 60min + MAX_TRADES). Couplage : si MAX_TRADES levé (collecte)
+→ 9-11/j. NE PAS relâcher le cap sans re-mesurer.
+
+### Validation pre-deploy
+- [x] pytest CORE/bot1_v2/tests/ : 119 passed (2 pré-existants test_logger hors scope)
+- [x] Préservation 2 trades réels (16+17/06) : tradable=True SHORT (re-vérifié code-reviewer)
+- [x] Re-replay funnel dédup ts : ES 5/j, NQ 5/j
+- [x] Review : trading-strategy-analyst + code-reviewer GO FRANC
+
+### Caveat
+Veto gamma INACTIF sur ES (gamma_block_* absent enriched) → protection -$967 non garantie ES. Accepté
+collecte paper ; branchement mq_* = backlog.
+
+### Revert plan
+```bash
+git checkout HEAD -- CORE/bot1_v2/dashboard_mirror.py CORE/bot1_v2/config.py CORE/bot1_v2/cluster.py  # avant commit Phase 4
+# scp les 3 fichiers + nssm restart MIA-Paper-Bot1V2
+```
+
+### Deployed at 2026-06-19 ~07:1x UTC
+SCP dashboard_mirror.py + config.py + cluster.py → VPS + `nssm restart MIA-Paper-Bot1V2`. Service RUNNING,
+boot propre (heartbeats actifs, 0 crash import → Phase 4 chargée), 0 position. Confirmation fonctionnelle
+des nouveaux skip codes (BONUS_INSUFFICIENT / dir_score ATTENDRE) reportée au suivi J+1 (quoting shell).
+
+### Suivi post-deploy
+- J+1 : grep BONUS_INSUFFICIENT + DASHBOARD_VERDICT_REJECTED:ATTENDRE dans decisions ; compter trades/jour
+  (cible 2-6, ou 9-11 si MAX_TRADES relevé collecte) ; vérifier qualité directionnelle (with-trend).
+
+### Liens
+- Plan : `DOCS/plans/2026-06-18-bot2-mirror-v2-autopsie-remediation.md` §9 (v4)
+
+## 2026-06-19 — Bot 3 BN V4 (Sim3) : DEPLOY Phase 0 securite (B1 SL + B2/B3 limites + M1 sessions)
+
+**Categorie** : FIX
+**Impact prod** : PAPER (Sim3, service MIA-Paper-BotBN-Sim3, --symbols NQ,ES --prod)
+**Fichier(s)** : `BOT/dtc_connector.py` (send_market_with_stop_only + _to_contract send_close_market), `CORE/bot_bn_v4/execution/order_router.py` (flow SL-only + flag naked), `CORE/bot_bn_v4/main.py` (naked flatten, register_open, persistance daily, SessionGate config BN V4), `CORE/bot_bn_v4/config.py` (TRADABLE_SESSIONS unifie, SHADOW_LOG_LONDON=False), `CORE/bot1_v2/gates/daily_limits.py` (register_open/apply_pnl/snapshot/restore + lock), `CORE/log_catalog.py` (3 codes)
+**Reviewer(s) agent** : code-reviewer x4 (B1 GO, B2/B3 GO post-fix, M1 GO)
+
+### Quoi
+4 bugs securite Bot 3 BN V4 corriges : B1 = SL jamais pose a l'entree (send_market_order saute le bloc bracket si tp=0) -> nouvelle methode dediee MARKET+SL + flatten auto si position nue. B2 = compteur trades a l'ouverture (plafond Mark Douglas). B3 = persistance compteurs daily cross-restart (lock + write atomique). M1 = SessionGate pilote par config BN V4 (plus Bot 2). Decision Jackson : toutes sessions reel, NQ+ES.
+
+### Pourquoi
+Audit ultrathink 18/06 (cf INCIDENT_LOG #67/#68). Le bot n'avait jamais trade (0 setup A++ + marche haussier) ce qui masquait B1 : 1er trade reel = position nue. Pas d'elargissement (data sierra 8j insuffisante, backtest sur source Databento morte sans total_vol).
+
+### Impact attendu
+- Securite : SL toujours pose, plafond/stop-loss quotidien effectifs et persistants
+- Effet de bord : aucun sur Bot 1/2/4 (send_market_order + update_after_trade inchanges, isolation prouvee 4 reviews + grep)
+
+### Validation pre-deploy
+- [x] Tests unitaires: 64/64 (bot_bn_v4 + B1 + B2/B3 + sessions)
+- [ ] Backtest preservation: N/A (fix securite, ne change pas le scoring/gates)
+- [x] Review agent: GO x4 (code-reviewer)
+- [x] Test empirique: boot prod OK (pid51384), 0 exception, BOTBN_DAILY_STATE_LOAD emis. Test SL-dans-DOM = attente 1er setup A++ reel (decision Jackson, pas de forcage).
+
+### Revert plan
+```bash
+# rollback : redeployer la version HEAD~ des 6 fichiers + restart
+git stash  # ou git checkout HEAD~ -- <fichiers>
+scp BOT/dtc_connector.py CORE/bot_bn_v4/{config,main}.py CORE/bot_bn_v4/execution/order_router.py CORE/bot1_v2/gates/daily_limits.py CORE/log_catalog.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/<paths>"
+ssh Administrator@212.28.179.199 "nssm restart MIA-Paper-BotBN-Sim3"
+```
+
+### Deployed at 2026-06-19 06:46 UTC
+SCP 6 fichiers + restart MIA-Paper-BotBN-Sim3. Boot OK : dry_run=False, NQ+ES, Sim3, A++. py_compile VPS OK. BOTBN_BOOT + BOTBN_DAILY_STATE_LOAD emis. 0 exception/CRITIQUE/naked nouveau process. Bot 1/2/4 non redemarres (gardent ancien code en memoire, retro-compatible).
+
+### Suivi post-deploy
+- J+1 (a faire) : grep BOTBN_TRADABLE / BOTBN_ORDER_SENT / SL_STOP_PATCHED_V1 au 1er setup A++ -> confirmer SL pose dans DOM. grep MARKET_STOP_ONLY_NAKED (doit rester 0). Verifier bot_bn_v4_daily_state.json cree au 1er trade.
+
+## 2026-06-18 — Bot 2 "Mirror v2" (Sim2) : DEPLOY fixes Phase 1a/2a + gate vwap_d overnight
+
+**Categorie** : FIX + GATE (Trading/Risk critère 1)
+**Impact prod** : PAPER (Sim2, service MIA-Paper-Bot1V2)
+**Fichier(s)** :
+- `CORE/constants.py` — NEW `is_rth_bar(bar)` (helper robuste partagé, fail-safe)
+- `CORE/bot1_v2/risk/sl_tp.py` — gate vwap_d_sd* hors RTH (anti SL périmé overnight) + reject reason `NO_SL_WALL_OVERNIGHT_VWAPD_GATED`
+- `CORE/bot1_v2/dashboard_mirror.py` — near_level direction-aware (support/résistance, fix D-2) + gate dist_vwap_d hors RTH
+- `CORE/bot1_v2/config.py` — NEW `NEAR_LEVEL_AT_TOL_TICKS=1`
+- `CORE/bot1_v2/cluster.py` — propagation `direction` du mirror dans les logs de rejet (fix F-1)
+**Reviewer(s) agent** : code-reviewer GO franc (gate vwap_d) + GO (near_level Phase 1a, direction Phase 2a)
+
+### Quoi
+3 fixes : (1) near_level exige le BON côté (LONG=support, SHORT=résistance) → bloque les "short dans le trou" ; (2) gate des bandes vwap_d hors RTH (RTH-anchored, périmées overnight, servaient de murs SL faux) ; (3) direction propagée dans les logs.
+
+### Pourquoi
+Autopsie Bot 2 (2 trades/4j). near_level géométrique validait des SHORT à 3t du plus bas de session. vwap_d ne reset pas à 18:00 CME (48% bars overnight avec bande SD ≤20t, min 0t = SL absurde, classe -$967). Détail : `DOCS/plans/2026-06-18-bot2-mirror-v2-autopsie-remediation.md` + INCIDENT_LOG 18/06.
+
+### Impact attendu
+- Filtre les SHORT mauvais-côté + SL overnight faux (~22% SHORT overnight rejetés = effet voulu).
+- RTH strictement inchangé.
+
+### Validation pre-deploy
+- [x] Tests unitaires bot1_v2 : 126 passed (3 pré-existants périmés hors scope)
+- [x] Backtest préservation : 2 trades réels (16+17/06) restent tradable=True 7/7 CUR_VAH (replay bar_ts exact)
+- [x] Review agent : GO franc (gate vwap_d) + GO (near_level/direction)
+- [x] Empirique : replay 16320 bars (1722 SHORT-into-hole bloqués), gate overnight 48% bandes SD périmées
+
+### Revert plan
+```bash
+git revert <commit> ; scp CORE/constants.py CORE/bot1_v2/{config,cluster,dashboard_mirror}.py CORE/bot1_v2/risk/sl_tp.py VPS ; nssm restart MIA-Paper-Bot1V2
+```
+
+### Deployed at 2026-06-18 ~10:53 UTC
+SCP 5 fichiers + `nssm restart MIA-Paper-Bot1V2`. Sanity import VPS OK (AT_TOL=1). Boot confirmé :
+DTC connecté (MIA_Bot1V2, TA=Sim2), State load OK, heartbeats actifs, 0 position. Note : bars stale
+~94s au boot (lag enricher, transitoire, > seuil 90s — se résorbe avec bars fraîches).
+
+### Suivi post-deploy
+- J+1 : grep `NO_SL_WALL_OVERNIGHT_VWAPD_GATED` + `NOT_AT_SUPPORT/RESISTANCE` + vérifier direction loggée non-"?"
+
+### Liens
+- Plan : `DOCS/plans/2026-06-18-bot2-mirror-v2-autopsie-remediation.md`
+- INCIDENT_LOG : #64/#65/#66 (18/06)
+- NON déployé : fixes cvd_day/delta_day (#1/#2) + cvd ts fallback enricher_chain (path Databento mort)
+
+---
+
+## 2026-06-18 — Bot 2 "Mirror v2" (Sim2) : remédiation paralysie — PLANNED (non déployé)
+
+**Categorie** : GATE + CONFIG + FIX (Trading/Risk critère 1)
+**Impact prod** : PAPER (Sim2) — non déployé, plan en phases
+**Fichier(s)** : `CORE/bot1_v2/dashboard_mirror.py`, `config.py`, `cluster.py`, `main.py`, `risk/sl_tp.py`, `state/position_store.py` (+ pipeline enrichissement si Phase 3 Option A)
+**Reviewer(s) agent** : code-reviewer (a3c3e2d4) + trading-strategy-analyst (aeb40634) + market-analyst (a33a1135) — autopsie GO-AVEC-RESERVES
+
+### Quoi
+Plan de remédiation du Bot 2 qui ne sort que 2 trades en 4 jours (paralysie). 5 phases : (1) sécuriser
+near_level support/résistance + cvd_day_dir NQ, (2) traçabilité, (3) décision "mirror" réel vs dérivé,
+(4) recalibration cascade→score N/7 + seuils, (5) validation re-replay + N>=100 avant live.
+
+### Pourquoi
+Logs VPS 15→18/06 (n=9544) : 57% verdict ATTENDRE (4/0 inatteignable), 91,6% directions tuées par
+cascade 7★ ET strict (Pattern 11). 2 découvertes dangereuses : `cvd_day_dir` figé sur NQ (jamais de SHORT),
+`near_level` valide des SHORT à 3t du plus bas de session. Détail : `DOCS/plans/2026-06-18-bot2-mirror-v2-autopsie-remediation.md`.
+
+### Impact attendu
+- Métriques : passer de ~0,5 trade/j à 2-5 trades/j de qualité (à valider par re-replay)
+- Effet de bord : risque d'amplifier les mauvais trades SI seuils relâchés avant fix near_level (raison de l'ordre des phases)
+
+### Validation pre-deploy
+- [ ] Tests unitaires `CORE/bot1_v2/tests/` : N/N
+- [ ] Backtest preservation : 2 wins ES SHORT 7/7 restent valides
+- [ ] Re-replay 4j → 2-5 trades/j
+- [ ] N>=100 simulés + costs avant tout live (DSR)
+- [ ] Review agent par phase (Trading/Risk)
+
+### Revert plan
+```bash
+# config via env vars BOT1V2_* : revert = restaurer valeurs par defaut config.py
+# code : git revert du commit de phase
+```
+
+### Deployed at
+(non déployé — plan)
+
+### Liens
+- Plan : `DOCS/plans/2026-06-18-bot2-mirror-v2-autopsie-remediation.md`
+- INCIDENT_LOG : 2026-06-18 (64) VALIDATION_MISS + (65) COMMENT_FALSE
+- Mémoires : `feedback_ia_traps_detection`, `feedback_data_mining_trap`, `project_bots_architecture_20260529`
+
 ## 2026-06-17 21:35 UTC — DtcFillListener 3 bots (Bot 1 v2, MR, BN V4) + fix order_router CID desync
 
 **Categorie** : FIX (Trading/Risk critere 1)

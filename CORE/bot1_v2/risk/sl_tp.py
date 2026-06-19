@@ -18,9 +18,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 try:
-    from CORE.constants import get_tick_size
+    from CORE.constants import get_tick_size, is_rth_bar
 except ImportError:
-    from constants import get_tick_size  # type: ignore
+    from constants import get_tick_size, is_rth_bar  # type: ignore
 
 from CORE.bot1_v2.config import Bot1V2Config
 
@@ -81,9 +81,19 @@ def compute_sl_tp(
     # Trouve mur SL : pour SHORT = prix > entry, pour LONG = prix < entry
     sl_wall_name, wall_price, sl_tier = _find_sl_wall(bar, direction, entry_price)
     if wall_price <= 0:
+        # Reason distinct si overnight ET des bandes vwap_d existaient (= gatees) :
+        # c'est le gate qui a retire le seul mur -> tracable (J+1 grep volume bloque).
+        # Si aucune bande vwap_d, c'est un vrai NO_SL_WALL_FOUND (pas le gate).
+        reason = "NO_SL_WALL_FOUND"
+        _vwap_d_keys = (
+            "vwap_d_sd1u", "vwap_d_sd1d", "vwap_d_sd2u",
+            "vwap_d_sd2d", "vwap_d_sd3u", "vwap_d_sd3d",
+        )
+        if not is_rth_bar(bar) and any(bar.get(k) is not None for k in _vwap_d_keys):
+            reason = "NO_SL_WALL_OVERNIGHT_VWAPD_GATED"
         return SLTPResult(
             accepted=False,
-            reject_reason="NO_SL_WALL_FOUND",
+            reject_reason=reason,
             direction=direction,
         )
 
@@ -205,10 +215,19 @@ def _find_sl_wall(
          bar.get("sess_high") if direction == "SHORT" else bar.get("sess_low"), 3),
     ]
 
+    # GATE vwap_d overnight (fix 18/06) : vwap_d + bandes SD sont RTH-anchored
+    # (Sierra natif) et ne resettent PAS a la frontiere CME 18:00 ET. Hors RTH
+    # elles portent l'ancrage de la veille = murs SL perimes (48% des bars
+    # overnight ont une bande SD a <=20t, min 0t = SL absurde). On les exclut
+    # hors RTH. Les autres murs (sess/ovn/pdh/pdl/ib/prev) resettent correctement.
+    is_rth = is_rth_bar(bar)
+
     for pairs in (t1_pairs, t2_pairs, t3_pairs):
         for name, price, tier in pairs:
             if price is None:
                 continue
+            if not is_rth and name.startswith("VWAP_D_SD"):
+                continue  # vwap_d perime overnight -> ne pas l'utiliser comme mur SL
             try:
                 price = float(price)
             except (TypeError, ValueError):

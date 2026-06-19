@@ -1,6 +1,12 @@
-"""Tests dashboard_mirror.py - VETOS HARD + ETOILE-MERE.
+"""Tests dashboard_mirror.py - REFONTE Phase 4 (verdict souple + bonus k-of-n).
 
-Cas critique #1 : Trade ES SHORT 15/06 -$967 DOIT etre SKIP.
+Nouvelle logique (19/06) :
+  1. dir_score = bull_pts - bear_pts -> direction souple (LONG>=3, SHORT<=-3)
+  2. 4 vetos hard (climax, rvol_zscore>3, gamma, vix) INCHANGES
+  3. CORE : near_level direction-aware (support LONG / resistance SHORT)
+  4. BONUS : compte k-of-3 (rvol, pullback, bar_confirmation) >= MIN_BONUS_COUNT
+
+Cas critique #1 : Trade ES SHORT 15/06 -$967 DOIT etre SKIP (vetos).
 Cas critique #2 : Trade de qualite DOIT PASSER (NO PARALYSIS).
 """
 from __future__ import annotations
@@ -16,48 +22,44 @@ from CORE.bot1_v2.dashboard_mirror import compute_verdict
 # ============================================================
 
 def _make_bar(**overrides):
-    """Bar synthetique avec valeurs QUALITE par defaut (7/7 etoiles + 0 veto).
+    """Bar LONG synthetique : dir_score=+4 + near_level support OK + bonus 3/3.
 
-    7 etoiles : bias + mtf + rvol_min + momentum + near_level + pullback + bar_confirmation.
+    dir_score : cvd(+1) + delta(+1) + vwap_d_side(+1) + momentum_5b>1.0(+1) = 4.
+    near_level : dist_vwap_d=-2 (support en-dessous, |2|<=8t ES).
+    bonus : rvol>=1.1 + pullback (sess_high au-dessus) + bar verte.
     """
     base = {
-        # Dashboard verdict FORT (ACHAT, pas ACHAT PRUDENT)
-        "conseil_action": "ACHAT",
-        "bull_pts": 6,
-        "bear_pts": 0,
-        # ETOILE 1 : bias score absolu fort + signe correct
-        "bias_score": 0.6,
-        "bias_label": "BULLISH",
-        # ETOILE 2 : MTF aligne 4/4
-        "mtf_bulls": 4,
-        "mtf_bears": 0,
-        "mtf_neutres": 0,
-        # Order flow coherent
+        "sym": "ES",
+        # dir_score = +4 (LONG fort)
         "cvd_day_dir": 1,
         "delta_day_dir": 1,
         "vwap_d_side": 1,
-        # ETOILE 3 : RVOL >= 1.3 (volume confirme)
-        "rvol": 1.5,
-        # ETOILE 4 : momentum fort dans direction (mais m3 < m5 = pullback)
         "momentum_5b": 3.0,
-        "momentum_3b": 1.5,  # m3 < m5 -> pullback OK
-        # ETOILE 5 : AU NIVEAU pro (distance <= 4t ES)
-        # dist_vwap_d en ticks (convention sierra_enriched)
-        "dist_vwap_d": 2,  # 2 ticks de VWAP D = AU niveau
-        # ETOILE 6 : pullback - prix retrace depuis high
+        "momentum_3b": 1.5,  # m3 < m5 -> pullback via momentum OK aussi
+        # bias diagnostic (ne gate plus)
+        "bias_score": 0.6,
+        "bias_label": "BULLISH",
+        # MTF diagnostic
+        "mtf_bulls": 4, "mtf_bears": 0, "mtf_neutres": 0,
+        # CORE near_level : support en-dessous (dist < 0 = SUPPORT)
+        "is_cash_session": True,
+        "dist_vwap_d": -2,  # 2t sous le prix = support proche
+        # BONUS 1 : rvol >= 1.1
+        "rvol": 1.5,
+        # BONUS 2 : pullback (prix retrace depuis high session)
         "close": 7600.0,
-        "open": 7599.0,  # close > open = bar verte (bar confirmation)
+        "open": 7599.0,  # bar verte (bonus 3)
         "high": 7600.5,
-        "sess_high": 7602.0,  # 2 pts = 8 ticks de retracement
-        "finish_strength": 5.0,  # positif = clot pres du high
-        # ETOILE 7 : bar confirmation (couleur up)
+        "sess_high": 7602.0,  # 2 pts = 8t de retracement
+        "finish_strength": 5.0,
+        # BONUS 3 : bar confirmation couleur up
         "bar_color_up": 1,
-        # Vetos -> tous OFF par defaut (qualite bar)
+        # Vetos OFF
         "ctx_climax_signal": False,
         "rvol_zscore": 0.5,
         "gamma_block_long": False,
         "gamma_block_short": False,
-        "vix_level": 17.0,  # NORMAL
+        "vix_level": 17.0,
         "vix_regime_label": "NORMAL",
     }
     base.update(overrides)
@@ -65,30 +67,26 @@ def _make_bar(**overrides):
 
 
 def _make_bar_short(**overrides):
-    """Bar synthetique SHORT qualite 7/7 etoiles."""
+    """Bar SHORT synthetique : dir_score=-4 + near_level resistance OK + bonus 3/3."""
     base = {
-        "conseil_action": "VENTE",
-        "bull_pts": 0,
-        "bear_pts": 6,
-        "bias_score": -0.6,
-        "bias_label": "BEARISH",
-        "mtf_bulls": 0,
-        "mtf_bears": 4,
-        "mtf_neutres": 0,
+        "sym": "ES",
         "cvd_day_dir": -1,
         "delta_day_dir": -1,
         "vwap_d_side": -1,
-        "rvol": 1.5,
         "momentum_5b": -3.0,
         "momentum_3b": -1.5,  # m3 > m5 -> bounce OK
-        "dist_vwap_d": -2,  # AU VWAP D
-        # ETOILE 6 : bounce - prix remonte depuis low
+        "bias_score": -0.6,
+        "bias_label": "BEARISH",
+        "mtf_bulls": 0, "mtf_bears": 4, "mtf_neutres": 0,
+        "is_cash_session": True,
+        # near_level : resistance au-dessus (dist > 0 = RESISTANCE)
+        "dist_vwap_d": 2,
+        "rvol": 1.5,
         "close": 7600.0,
-        "open": 7601.0,  # close < open = bar rouge (bar confirmation)
+        "open": 7601.0,  # bar rouge (bonus)
         "low": 7599.5,
-        "sess_low": 7598.0,  # 2 pts = 8 ticks de bounce
-        "finish_strength": -5.0,  # negatif = clot pres du low
-        # ETOILE 7 : bar confirmation (couleur dn)
+        "sess_low": 7598.0,  # 2 pts = 8t de bounce
+        "finish_strength": -5.0,
         "bar_color_dn": 1,
         "ctx_climax_signal": False,
         "rvol_zscore": 0.5,
@@ -106,49 +104,26 @@ def _make_bar_short(**overrides):
 # ============================================================
 
 def test_skip_trade_es_short_967():
-    """Le trade ES SHORT 15/06 17:55:00 UTC qui a perdu $967 DOIT etre rejected.
+    """Le trade ES SHORT 15/06 qui a perdu $967 DOIT etre rejected.
 
-    Snapshot reel (DATA/_AUDIT/trades_20260615.jsonl) :
-      - close=7633.75
-      - cvd_day_dir=-1
-      - ctx_climax_signal=True (Wyckoff)
-      - rvol_zscore=3.74 (Dalton exceptional)
-      - gamma_block_short=True (MenthorQ)
-      - conseil_action="VENTE PRUDENTE"
+    Snapshot reel : ctx_climax_signal=True, rvol_zscore=3.74, gamma_block_short=True.
     """
-    bar = _make_bar(
-        conseil_action="VENTE PRUDENTE",
-        direction_hint="SHORT",
-        bull_pts=0,
-        bear_pts=4,
-        bias_label="BEARISH",
-        # Anti-SHORT signaux IGNORES par Bot 1 actuel :
+    bar = _make_bar_short(
         ctx_climax_signal=True,
         rvol_zscore=3.74,
         gamma_block_short=True,
-        # Pro-SHORT signaux :
-        cvd_day_dir=-1,
-        delta_day_dir=-1,
-        vwap_d_side=-1,
         momentum_5b=-5.75,
         vix_level=16.23,
     )
     verdict = compute_verdict(bar)
 
-    # Le trade DOIT etre rejete (soit etoile-mere VENTE PRUDENTE eteinte,
-    # soit vetos hard climax/rvol/gamma, soit quality misses).
     assert verdict.ready_to_arm is False, (
-        f"BOT v2 DEVAIT REJECT ce trade. Got ready_to_arm=True. "
-        f"action={verdict.action} vetos={verdict.vetos} "
-        f"quality_misses={verdict.quality_misses}"
+        f"BOT v2 DEVAIT REJECT ce trade. action={verdict.action} "
+        f"vetos={verdict.vetos} misses={verdict.quality_misses}"
     )
-    # Verifier que c'est rejete pour UNE bonne raison :
     veto_names = {v.name for v in verdict.vetos}
-    is_veto_critique = bool(veto_names & {"CLIMAX_WYCKOFF", "RVOL_EXCEPTIONAL", "GAMMA_BLOCK_SHORT"})
-    is_etoile_mere_eteinte = "DASHBOARD_VERDICT_REJECTED" in verdict.skip_reason
-    assert is_veto_critique or is_etoile_mere_eteinte, (
-        f"Rejet doit etre justifie par veto critique OR etoile-mere eteinte. "
-        f"skip_reason={verdict.skip_reason}"
+    assert veto_names & {"CLIMAX_WYCKOFF", "RVOL_EXCEPTIONAL", "GAMMA_BLOCK_SHORT"}, (
+        f"Rejet doit etre justifie par veto critique. skip={verdict.skip_reason}"
     )
 
 
@@ -157,78 +132,169 @@ def test_skip_trade_es_short_967():
 # ============================================================
 
 def test_no_paralysis_quality_long_passes():
-    """Un setup LONG de QUALITE (etoile-mere + tous vetos OFF) DOIT passer.
-
-    Jackson souverain : "DES TRADES DE QUALITE DOIVENT PASSER, PAS TOUT BLOQUER"
-    """
-    bar = _make_bar(
-        conseil_action="ACHAT",
-        bull_pts=6,
-        bear_pts=0,
-        bias_label="BULLISH",
-        mtf_bulls=4,
-        mtf_bears=0,
-        # Tous vetos OFF :
-        ctx_climax_signal=False,
-        rvol_zscore=0.3,
-        gamma_block_long=False,
-        gamma_block_short=False,
-        vix_level=17.0,  # NORMAL
-    )
+    """Un setup LONG de QUALITE DOIT passer (dir_score>=3 + near + bonus>=2)."""
+    bar = _make_bar()
     verdict = compute_verdict(bar)
-
     assert verdict.ready_to_arm is True, (
-        f"BOT v2 DEVAIT ACCEPTER ce setup de qualite. "
-        f"action={verdict.action} vetos={verdict.vetos} skip={verdict.skip_reason}"
+        f"DEVAIT ACCEPTER. action={verdict.action} vetos={verdict.vetos} "
+        f"skip={verdict.skip_reason} bonus={verdict.stars_count}"
     )
     assert verdict.direction == "LONG"
     assert verdict.vetos == ()
 
 
 def test_no_paralysis_quality_short_passes():
-    """Un setup SHORT de QUALITE FORTE CONVICTION (5/5 etoiles) DOIT passer."""
+    """Un setup SHORT de QUALITE DOIT passer."""
     bar = _make_bar_short()
     verdict = compute_verdict(bar)
     assert verdict.ready_to_arm is True, (
         f"SHORT qualite doit passer. skip={verdict.skip_reason} "
-        f"misses={verdict.quality_misses} stars={verdict.stars_count}/{verdict.stars_total}"
+        f"bonus={verdict.stars_count}/{verdict.stars_total}"
     )
     assert verdict.direction == "SHORT"
-    assert verdict.stars_count == verdict.stars_total  # 6/6
-
-
-def test_achat_prudent_rejected_force_conviction():
-    """ACHAT PRUDENT rejected (FORTE CONVICTION : seulement ACHAT/VENTE fort)."""
-    bar = _make_bar(conseil_action="ACHAT PRUDENT")
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False, (
-        f"ACHAT PRUDENT doit etre REJETE (force conviction only)"
-    )
-    assert "DASHBOARD_VERDICT_REJECTED" in verdict.skip_reason
-
-
-def test_vente_prudente_rejected():
-    """VENTE PRUDENTE rejected."""
-    bar = _make_bar_short(conseil_action="VENTE PRUDENTE")
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
 
 
 # ============================================================
-# VETOS INDIVIDUELS
+# VERDICT DIRECTIONNEL (dir_score)
 # ============================================================
 
-def test_veto_climax_blocks_short():
-    """Wyckoff climax + SHORT = veto hard."""
+def test_dir_score_long_when_ge_3():
+    """dir_score >= +3 ET bear_pts <= 1 -> LONG."""
+    bar = _make_bar()  # dir_score = +4
+    verdict = compute_verdict(bar)
+    assert verdict.direction == "LONG"
+    assert verdict.bull_pts - verdict.bear_pts >= 3
+
+
+def test_dir_score_short_when_le_minus_3():
+    """dir_score <= -3 ET bull_pts <= 1 -> SHORT."""
+    bar = _make_bar_short()  # dir_score = -4
+    verdict = compute_verdict(bar)
+    assert verdict.direction == "SHORT"
+    assert verdict.bull_pts - verdict.bear_pts <= -3
+
+
+def test_dir_score_attendre_between():
+    """dir_score entre -3 et +3 -> ATTENDRE (None)."""
+    # cvd +1, delta -1, vwap_d 0, momentum 0 -> bull=1 bear=1 dir_score=0
     bar = _make_bar(
-        conseil_action="VENTE",
-        bear_pts=5,
-        ctx_climax_signal=True,
+        cvd_day_dir=1,
+        delta_day_dir=-1,
+        vwap_d_side=0,
+        momentum_5b=0.0,
+        momentum_3b=0.0,
+    )
+    verdict = compute_verdict(bar)
+    assert verdict.direction is None
+    assert verdict.ready_to_arm is False
+    assert verdict.skip_reason == "DASHBOARD_VERDICT_REJECTED:ATTENDRE"
+
+
+def test_dir_score_mixed_blocks_direction():
+    """dir_score = -1 (mixte) -> ATTENDRE, pas de SHORT force."""
+    bar = _make_bar_short(
         cvd_day_dir=-1,
         delta_day_dir=-1,
-        vwap_d_side=-1,
-        mtf_bears=3,
+        vwap_d_side=1,   # 1 contre
+        momentum_5b=0.0,  # neutre
+        momentum_3b=0.0,
     )
+    # bear=2 bull=1 dir_score=-1 -> ATTENDRE
+    verdict = compute_verdict(bar)
+    assert verdict.direction is None
+
+
+# ============================================================
+# BONUS k-of-n
+# ============================================================
+
+def test_bonus_3_of_3_passes():
+    """3/3 dimensions bonus -> ready (avec near + dir_score OK)."""
+    bar = _make_bar()
+    verdict = compute_verdict(bar)
+    assert verdict.stars_count == 3
+    assert verdict.ready_to_arm is True
+
+
+def test_bonus_2_of_3_passes():
+    """2/3 dimensions bonus (>= MIN_BONUS_COUNT=2) -> ready."""
+    # Casse 1 bonus : rvol trop bas (1.0 < 1.1). pullback + bar OK = 2/3.
+    bar = _make_bar(rvol=1.0)
+    verdict = compute_verdict(bar)
+    assert verdict.stars_count == 2, f"bonus={verdict.stars_count} misses={verdict.quality_misses}"
+    assert verdict.ready_to_arm is True
+
+
+def test_bonus_1_of_3_rejects():
+    """1/3 dimensions bonus (< MIN_BONUS_COUNT=2) -> reject."""
+    # Casse 2 bonus : rvol bas (1.0) + bar rouge (pas de confirmation LONG).
+    # Reste : pullback via sess_high = 1/3.
+    bar = _make_bar(
+        rvol=1.0,
+        open=7601.0, close=7600.0,  # bar rouge
+        bar_color_up=0,
+        sess_high=7602.0,  # pullback OK (1/3)
+    )
+    verdict = compute_verdict(bar)
+    assert verdict.ready_to_arm is False
+    assert verdict.stars_count == 1, f"bonus={verdict.stars_count}"
+    assert "BONUS_INSUFFICIENT" in verdict.skip_reason
+
+
+def test_bonus_count_via_env_override(monkeypatch):
+    """MIN_BONUS_COUNT=3 via env : 2/3 ne suffit plus."""
+    monkeypatch.setenv("BOT1V2_MIN_BONUS_COUNT", "3")
+    cfg = Bot1V2Config.from_env()
+    bar = _make_bar(rvol=1.0)  # 2/3
+    verdict = compute_verdict(bar, cfg=cfg)
+    assert verdict.ready_to_arm is False
+    assert "BONUS_INSUFFICIENT" in verdict.skip_reason
+
+
+# ============================================================
+# CORE near_level (direction-aware)
+# ============================================================
+
+def test_core_near_level_long_needs_support():
+    """LONG sans support proche -> NOT_AT_SUPPORT (skip_reason garde le nom)."""
+    bar = _make_bar(dist_vwap_d=20)  # support trop loin
+    for k in list(bar.keys()):
+        if k.startswith("dist_") and k != "dist_vwap_d":
+            bar.pop(k)
+    verdict = compute_verdict(bar)
+    assert verdict.ready_to_arm is False
+    assert verdict.skip_reason == "NOT_AT_SUPPORT"
+    assert any(m.name == "NOT_AT_SUPPORT" for m in verdict.quality_misses)
+
+
+def test_core_near_level_short_needs_resistance():
+    """SHORT sans resistance proche -> NOT_AT_RESISTANCE."""
+    bar = _make_bar_short(dist_vwap_d=-20)  # support en-dessous, pas resistance
+    for k in list(bar.keys()):
+        if k.startswith("dist_") and k != "dist_vwap_d":
+            bar.pop(k)
+    verdict = compute_verdict(bar)
+    assert verdict.ready_to_arm is False
+    assert verdict.skip_reason == "NOT_AT_RESISTANCE"
+
+
+def test_core_near_level_long_at_support_passes():
+    """LONG proche d'un support (dist_vwap_d=-3) -> near OK."""
+    bar = _make_bar(dist_vwap_d=-3)
+    verdict = compute_verdict(bar)
+    assert not any(
+        m.name in ("NOT_AT_SUPPORT", "NOT_AT_RESISTANCE")
+        for m in verdict.quality_misses
+    )
+
+
+# ============================================================
+# VETOS HARD (inchanges)
+# ============================================================
+
+def test_veto_climax_blocks():
+    """Wyckoff climax = veto hard."""
+    bar = _make_bar_short(ctx_climax_signal=True)
     verdict = compute_verdict(bar)
     assert verdict.ready_to_arm is False
     assert any(v.name == "CLIMAX_WYCKOFF" for v in verdict.vetos)
@@ -243,26 +309,15 @@ def test_veto_rvol_blocks_extreme():
 
 
 def test_veto_rvol_lets_pass_25():
-    """RVOL z = 2.5 PASSE (calibration NO PARALYSIS : seuil 3.0, pas 2.5)."""
+    """RVOL z = 2.5 PASSE (seuil 3.0 NO PARALYSIS)."""
     bar = _make_bar(rvol_zscore=2.5)
     verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is True, (
-        f"rvol_zscore=2.5 doit passer (seuil 3.0 NO PARALYSIS). "
-        f"vetos={verdict.vetos}"
-    )
+    assert verdict.ready_to_arm is True, f"vetos={verdict.vetos}"
 
 
 def test_veto_gamma_blocks_short():
     """gamma_block_short=True + SHORT = veto hard (root cause -$967)."""
-    bar = _make_bar(
-        conseil_action="VENTE",
-        bear_pts=5,
-        gamma_block_short=True,
-        cvd_day_dir=-1,
-        delta_day_dir=-1,
-        vwap_d_side=-1,
-        mtf_bears=3,
-    )
+    bar = _make_bar_short(gamma_block_short=True)
     verdict = compute_verdict(bar)
     assert verdict.ready_to_arm is False
     assert any(v.name == "GAMMA_BLOCK_SHORT" for v in verdict.vetos)
@@ -278,11 +333,7 @@ def test_veto_gamma_blocks_long():
 
 def test_veto_gamma_does_not_block_opposite_direction():
     """gamma_block_short=True NE bloque PAS un LONG (asymetrie)."""
-    bar = _make_bar(
-        conseil_action="ACHAT",
-        gamma_block_short=True,  # bloque SHORT seulement
-        gamma_block_long=False,
-    )
+    bar = _make_bar(gamma_block_short=True, gamma_block_long=False)
     verdict = compute_verdict(bar)
     assert verdict.ready_to_arm is True
     assert not any("GAMMA" in v.name for v in verdict.vetos)
@@ -311,195 +362,38 @@ def test_veto_vix_normal_pass():
     assert verdict.ready_to_arm is True
 
 
-def test_etoile_mere_attendre_blocks():
-    """Dashboard verdict ATTENDRE = SKIP (etoile-mere eteinte)."""
-    bar = _make_bar(conseil_action="ATTENDRE")
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert "DASHBOARD_VERDICT_REJECTED" in verdict.skip_reason
+# ============================================================
+# MOMENTUM SYMBOL-AWARE (point dir_score)
+# ============================================================
+
+def test_momentum_symbol_aware_nq_threshold_10():
+    """NQ : momentum_5b=5 NE compte PAS comme point (seuil NQ = 10)."""
+    # NQ : cvd+1, delta+1, vwap+1, momentum=5 (< 10 -> pas de point) = bull 3.
+    bar_nq = _make_bar(sym="NQ", momentum_5b=5.0, momentum_3b=2.0)
+    verdict = compute_verdict(bar_nq, symbol="NQ")
+    assert verdict.bull_pts == 3, f"bull_pts={verdict.bull_pts} (momentum 5<10 NQ ne compte pas)"
+
+
+def test_momentum_symbol_aware_nq_threshold_passes_above_10():
+    """NQ : momentum_5b=12 compte comme point (> seuil NQ 10)."""
+    bar_nq = _make_bar(sym="NQ", momentum_5b=12.0, momentum_3b=6.0)
+    verdict = compute_verdict(bar_nq, symbol="NQ")
+    assert verdict.bull_pts == 4, f"bull_pts={verdict.bull_pts} (momentum 12>10 NQ compte)"
+
+
+def test_momentum_symbol_aware_es_threshold_1():
+    """ES : momentum_5b=2 compte (seuil ES = 1.0)."""
+    bar_es = _make_bar(sym="ES", momentum_5b=2.0, momentum_3b=1.0)
+    verdict = compute_verdict(bar_es, symbol="ES")
+    assert verdict.bull_pts == 4
 
 
 # ============================================================
-# ETOILES QUALITE INDIVIDUELLES (FORTE CONVICTION)
-# ============================================================
-
-def test_quality_bias_weak_rejects():
-    """bias_score absolu < 0.5 -> quality miss BIAS_WEAK."""
-    bar = _make_bar(bias_score=0.3)
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "BIAS_WEAK" for m in verdict.quality_misses)
-
-
-def test_quality_bias_opposite_rejects():
-    """LONG mais bias_score negatif -> BIAS_OPPOSITE."""
-    bar = _make_bar(bias_score=-0.6, bias_label="BULLISH")
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "BIAS_OPPOSITE" for m in verdict.quality_misses)
-
-
-def test_quality_mtf_insufficient_rejects():
-    """MTF aligne < 3 -> MTF_INSUFFICIENT."""
-    bar = _make_bar(mtf_bulls=2, mtf_bears=0, mtf_neutres=2)
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "MTF_INSUFFICIENT" for m in verdict.quality_misses)
-
-
-def test_quality_mtf_conflict_rejects():
-    """MTF aligne 3 mais 1 TF opposee -> MTF_CONFLICT."""
-    bar = _make_bar(mtf_bulls=3, mtf_bears=1, mtf_neutres=0)
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "MTF_CONFLICT" for m in verdict.quality_misses)
-
-
-def test_quality_rvol_low_rejects():
-    """RVOL < 1.3 -> RVOL_LOW."""
-    bar = _make_bar(rvol=1.0)
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "RVOL_LOW" for m in verdict.quality_misses)
-
-
-def test_quality_momentum_weak_rejects():
-    """momentum_5b absolu < 2.0 -> MOMENTUM_WEAK."""
-    bar = _make_bar(momentum_5b=1.0)
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "MOMENTUM_WEAK" for m in verdict.quality_misses)
-
-
-def test_quality_no_level_near_rejects():
-    """Pas niveau key proche -> NOT_AT_LEVEL (anciennement NO_LEVEL_NEAR)."""
-    bar = _make_bar(
-        bool_near_level=0,
-        dist_cur_vpoc=20,  # trop loin
-        dist_vwap_d=15,
-        dist_cur_vah=12,
-        dist_cur_val=18,
-    )
-    # Pop tous les autres dist proches qui sont dans _make_bar par defaut
-    for k in list(bar.keys()):
-        if k.startswith("dist_") and k not in (
-            "dist_vwap_d", "dist_cur_vpoc", "dist_cur_vah", "dist_cur_val",
-        ):
-            bar.pop(k)
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "NOT_AT_LEVEL" for m in verdict.quality_misses)
-
-
-def test_quality_partial_6_of_7_still_rejects():
-    """6/7 etoiles allumees = rejet (FORTE CONVICTION = 7/7 strict)."""
-    bar = _make_bar(rvol=1.0)  # 1 etoile manquante : RVOL_LOW
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False, "6/7 etoiles ne suffit pas (force conviction)"
-    assert verdict.stars_count == 6
-    assert verdict.stars_total == 7
-
-
-def test_quality_not_at_level_rejects():
-    """Pas dans zone d'intervention pro -> NOT_AT_LEVEL."""
-    bar = _make_bar(
-        # Eloigne TOUS les niveaux key (>4t ES)
-        dist_vwap_d=20,  # 20 ticks
-        dist_cur_vpoc=15,
-        dist_cur_vah=18,
-        dist_cur_val=22,
-    )
-    # Pop tous les autres dist pour forcer la valeur
-    for k in list(bar.keys()):
-        if k.startswith("dist_") and k not in ("dist_vwap_d", "dist_cur_vpoc",
-                                                "dist_cur_vah", "dist_cur_val"):
-            bar.pop(k)
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "NOT_AT_LEVEL" for m in verdict.quality_misses)
-
-
-def test_quality_at_level_passes():
-    """Proche d'AU MOINS UN niveau pro -> NEAR_LEVEL OK."""
-    bar = _make_bar(
-        dist_vwap_d=2,  # 2 ticks de VWAP D = AU NIVEAU
-    )
-    verdict = compute_verdict(bar)
-    # Doit passer si proche d'au moins un niveau
-    near_level_misses = [m for m in verdict.quality_misses if m.name == "NOT_AT_LEVEL"]
-    assert not near_level_misses, f"dist_vwap_d=2 doit etre considere AU niveau"
-
-
-def test_quality_bar_confirmation_long_requires_green():
-    """LONG bar rouge (close < open) -> BAR_NOT_CONFIRMED_LONG."""
-    bar = _make_bar(
-        open=7601.0,
-        close=7600.0,  # close < open = rouge
-        bar_color_up=0,
-    )
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "BAR_NOT_CONFIRMED_LONG" for m in verdict.quality_misses)
-
-
-def test_quality_bar_confirmation_short_requires_red():
-    """SHORT bar verte -> BAR_NOT_CONFIRMED_SHORT."""
-    bar = _make_bar_short(
-        open=7599.0,
-        close=7600.0,  # close > open = verte
-        bar_color_dn=0,
-    )
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "BAR_NOT_CONFIRMED_SHORT" for m in verdict.quality_misses)
-
-
-def test_quality_pullback_long_required():
-    """LONG sans pullback (close = sess_high) -> NO_PULLBACK_LONG."""
-    bar = _make_bar(
-        close=7602.0,  # AU high = pas de pullback
-        sess_high=7602.0,
-        momentum_3b=3.0,  # m3 = m5 = push, pas pullback
-        momentum_5b=3.0,
-    )
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "NO_PULLBACK_LONG" for m in verdict.quality_misses)
-
-
-def test_quality_pullback_long_via_momentum_decline():
-    """LONG : si pas sess_high, fallback momentum (m3 < m5 = pullback OK)."""
-    bar = _make_bar(
-        close=7600.0,
-        momentum_5b=3.0,
-        momentum_3b=1.0,  # m3 < m5 = pullback (momentum declining)
-    )
-    # Retire sess_high pour forcer fallback
-    bar.pop("sess_high", None)
-    verdict = compute_verdict(bar)
-    # Si autre etoile ne fail pas
-    assert verdict.stars_count >= 5  # pullback OK au moins
-
-
-def test_quality_pullback_short_required():
-    """SHORT sans bounce (close = sess_low) -> NO_PULLBACK_SHORT."""
-    bar = _make_bar_short(
-        close=7598.0,  # AU low = pas de bounce
-        sess_low=7598.0,
-        momentum_3b=-3.0,
-        momentum_5b=-3.0,
-    )
-    verdict = compute_verdict(bar)
-    assert verdict.ready_to_arm is False
-    assert any(m.name == "NO_PULLBACK_SHORT" for m in verdict.quality_misses)
-
-
-# ============================================================
-# OVERRIDES ENV (toggle vetos pour debugging / backtest)
+# OVERRIDES ENV
 # ============================================================
 
 def test_veto_climax_disabled_via_env(monkeypatch):
-    """Si BOT1V2_CLIMAX_VETO_ENABLED=false, climax ne bloque pas."""
+    """BOT1V2_CLIMAX_VETO_ENABLED=false : climax ne bloque pas."""
     monkeypatch.setenv("BOT1V2_CLIMAX_VETO_ENABLED", "false")
     cfg = Bot1V2Config.from_env()
     bar = _make_bar(ctx_climax_signal=True)

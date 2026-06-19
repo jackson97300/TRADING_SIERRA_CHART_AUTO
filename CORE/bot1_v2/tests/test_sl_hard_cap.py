@@ -137,3 +137,39 @@ def test_sl_buffer_anti_hunter():
     else:
         # Si rejete par cap (25+3=28t > 20), c'est ok
         assert "SL_HARD_CAP_EXCEEDED" in result.reject_reason
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# GATE vwap_d overnight (fix 18/06) — vwap_d RTH-anchored perime hors RTH
+# ════════════════════════════════════════════════════════════════════════════
+
+from CORE.bot1_v2.risk.sl_tp import _find_sl_wall
+
+
+def test_vwap_d_wall_used_in_rth():
+    """RTH : vwap_d_sd1u (4t, le plus proche) est selectionne comme mur SL."""
+    bar = {"vwap_d_sd1u": 7601.0, "sess_high": 7603.0, "is_cash_session": True}
+    name, price, tier = _find_sl_wall(bar, "SHORT", 7600.0)
+    assert name == "VWAP_D_SD1U", f"RTH doit utiliser vwap_d, got {name}"
+
+
+def test_vwap_d_wall_excluded_overnight():
+    """Overnight : vwap_d exclu (perime) -> fallback sur sess_high."""
+    bar = {"vwap_d_sd1u": 7601.0, "sess_high": 7603.0, "is_cash_session": False}
+    name, price, tier = _find_sl_wall(bar, "SHORT", 7600.0)
+    assert name == "SESS_HIGH", f"overnight doit exclure vwap_d, got {name}"
+
+
+def test_vwap_d_gate_failsafe_missing_field():
+    """Fail-safe : is_cash_session absent -> traite comme overnight -> vwap_d exclu."""
+    bar = {"vwap_d_sd1u": 7601.0, "sess_high": 7603.0}  # pas de is_cash_session
+    name, price, tier = _find_sl_wall(bar, "SHORT", 7600.0)
+    assert name == "SESS_HIGH"
+
+
+def test_vwap_d_only_wall_overnight_rejects():
+    """Overnight + seul mur = vwap_d -> NO_SL_WALL_OVERNIGHT_VWAPD_GATED (tracable)."""
+    bar = {"vwap_d_sd1u": 7601.0, "is_cash_session": False}
+    result = compute_sl_tp(bar, direction="SHORT", entry_price=7600.0, symbol="ES")
+    assert result.accepted is False
+    assert "NO_SL_WALL_OVERNIGHT_VWAPD_GATED" in result.reject_reason
