@@ -214,25 +214,15 @@ static inline bool DMP_OT_IsNewSession(SCStudyInterfaceRef sc,
                                        int y_et, int mo_et, int d_et, int h_et)
 {
     const int curr_id = DMP_OT_GetSessionDateID(y_et, mo_et, d_et, h_et);
-    // FIX INCIDENT #77b (19/06/2026) - BUG float32 precision YYYYMMDD :
-    //   Ancien code : float& cached_id = GetPersistentFloat(...)
-    //   Probleme : YYYYMMDD = 8 digits int (ex: 20260619 > 2^24 = 16777216)
-    //     depasse precision mantissa float32 (24 bits = 7-8 digits decimal).
-    //     Cast (float)20260619 perd precision -> lecture (int)cached_id !=
-    //     curr_id -> IsNewSession() retourne true a chaque bar -> RESET +
-    //     log emit chaque ~1 min (pollution massive log Sierra Chart).
-    //   Fix : GetPersistentInt stocke int directement, 32 bits precision
-    //     totale, pas de drift. Pattern identique a FIX R1 review-code
-    //     DMP_F9_Roll.h:115 (07/06/2026) et DMP_B4_Features.h cvd_snapshot.
-    int& cached_id = sc.GetPersistentInt(DMP_OT_P_LAST_SESSION_ID);
-    // Cas 1 : premiere bar (cached_id pas encore set, vaut 0)
-    if (cached_id == 0) {
-        cached_id = curr_id;
+    float& cached_id = sc.GetPersistentFloat(DMP_OT_P_LAST_SESSION_ID);
+    // Cas 1 : premiere bar (cached_id pas encore set, vaut 0.0 ou NOT_SET)
+    if (cached_id == 0.0f || cached_id == DMP_OT_NOT_SET) {
+        cached_id = (float)curr_id;
         return false;  // pas "nouvelle" : juste init
     }
     // Cas 2 : session changee
-    if (cached_id != curr_id) {
-        cached_id = curr_id;
+    if ((int)cached_id != curr_id) {
+        cached_id = (float)curr_id;
         return true;
     }
     // Cas 3 : meme session
