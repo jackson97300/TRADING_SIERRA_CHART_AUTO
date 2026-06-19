@@ -1266,6 +1266,11 @@ LOG_CODES = {
     # Execution M5 (14 codes - IO transitions DTC)
     "BOT4_EXEC_BRACKET_SENT":       (LogLevel.INFO,     "execution", "Bot4 exec bracket sent : sym={sym} side={side} qty={qty} parent={parent_id} tp_cid={tp_cid} sl_cid={sl_cid} signal_ref={signal_ref_price}"),
     "BOT4_EXEC_BRACKET_FAIL":       (LogLevel.MAJEUR,   "execution", "Bot4 exec bracket FAIL : sym={sym} side={side} qty={qty} reject_reason={reject_reason}"),
+    # INCIDENT #77 (19/06/2026) DTC reconnect automatique
+    "BOT4_DTC_RECONNECT_ATTEMPT":   (LogLevel.INFO,     "events",    "Bot4 DTC reconnect ATTEMPT n={attempt_n}"),
+    "BOT4_DTC_RECONNECT_OK":        (LogLevel.INFO,     "events",    "Bot4 DTC reconnect OK n={attempt_n}"),
+    "BOT4_DTC_RECONNECT_FAIL":      (LogLevel.MAJEUR,   "events",    "Bot4 DTC reconnect FAIL n={attempt_n} reason={reason}"),
+    "BOT4_DTC_RECONNECT_SKIP_THROTTLE": (LogLevel.INFO, "events",    "Bot4 DTC reconnect SKIP throttle : elapsed={elapsed_sec}s min={min_interval_sec}s attempts_so_far={attempts_so_far}"),
     "BOT4_SCENARIO_SLTP_REJECT_SIDE": (LogLevel.MAJEUR, "execution", "Bot4 scenario SL/TP du mauvais cote -> fallback sltp_engine : sym={sym} scenario={scenario} entry={entry} sl={sl} tp={tp}"),
     "BOT4_EXEC_FILL_PARENT":        (LogLevel.INFO,     "execution", "Bot4 exec FILL parent : sym={sym} cid={cid} fill_price={fill_price} signal_ref={signal_ref_price} slip_ticks={slip_ticks}"),
     "BOT4_EXEC_FILL_TP":            (LogLevel.INFO,     "execution", "Bot4 exec FILL TP : sym={sym} cid={cid} fill_price={fill_price} pnl_ticks={pnl_ticks}"),

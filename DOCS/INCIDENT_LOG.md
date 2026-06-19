@@ -31,6 +31,26 @@
 
 ---
 
+### 2026-06-19 (77b) - [SIERRA_BUG_C++] - DMP_OpenType RESET session emit toutes les minutes (float32 precision sur YYYYMMDD 8 digits)
+
+**Contexte** : Screen Sierra Chart 19/06 montre logs DMP polluees par `[DMP_OpenType] RESET session (ET YYYY-MM-DD HH:MM)` emis toutes les ~1 min sur ES + NQ, parfois plusieurs fois avec ET timestamps differents dans la meme minute UTC. Pollution massive du log (~ 720 RESET log entries / 12h pour 2 symbols).
+**Ce qui a mal tourne** : Code `CPP/MIA_REFACTORED/DUMPER/DMP_OpenType.h:213-230 DMP_OT_IsNewSession` utilise `GetPersistentFloat(DMP_OT_P_LAST_SESSION_ID)` pour cacher `session_date_id` (encode YYYYMMDD int, ex: 20260619). float32 mantissa = 24 bits (precision 7-8 digits). 20260619 > 2^24 = 16777216 → cast `(float)20260619` perd precision → lecture suivante `(int)cached_id != curr_id` → IsNewSession() = true → ResetSession() + log emit a chaque bar.
+**Cause racine** : float32 ne peut PAS stocker exactement int de 8 digits (YYYYMMDD). Drift de precision a chaque cast float↔int → fausse detection cross-session. Bug present depuis FIX 12/06 INCIDENT #54 (introduction ET-based detection).
+**Lecon** : pour stocker des IDs entiers grands (YYYYMMDD, signal_id), utiliser `GetPersistentInt` ou `GetPersistentDouble` (mantissa 52 bits = 15 digits). Ne JAMAIS caster int>2^24 en float32.
+**Trigger prevention** : code review C++ doit grep tous les `GetPersistentFloat` qui stockent un cast d'int. Si valeur attendue > 16M → utiliser Int/Double.
+**Fix propose (NON deploye)** : remplacer `GetPersistentFloat(DMP_OT_P_LAST_SESSION_ID)` par `GetPersistentInt(DMP_OT_P_LAST_SESSION_ID)` dans `DMP_OT_IsNewSession` ligne 217 et reset L241. Necessite confirmation Jackson (regle cpp.md "ne JAMAIS deployer C++ sans confirmation") + audit 4 fichiers + recompile SC + reload charts 30/31.
+**Reviewed** : Claude empirique (analyse logs SC 19/06 + lecture code DMP_OpenType.h) 19/06. Agent review C++ a faire avant deploy.
+
+### 2026-06-19 (77) - [VALIDATION_MISS] - Bot 4 Sim4 DTC reconnect manquant (87 BRACKET_FAIL 18/06 + 10 le 19/06, ~48h hors-ligne, 0 trade Sim4)
+
+**Contexte** : Audit matinal 19/06 revele Bot 4 (P7.2_AGGRESSIVE NQ+ES Sim4) accumule BRACKET_FAIL `reject_reason=not_connected` depuis le 18/06 00:00 UTC sans tenter aucun reconnect. Heartbeats continuent (bot vivant, bars_processed=30506) mais DTC down. 14 BOT4_FILL_UNKNOWN_CID = broadcast pollution Sierra Chart des fills autres bots ignores correctement. Screen Sierra confirme : Sim4 = Flat, P/L=0T, aucun trade reel filled depuis ~48h.
+**Ce qui a mal tourne** : `NEW_BOT_2_MIA_TRADER/src/execution.py:266-269 is_connected()` est un GETTER pur. `send_bracket()` L293 `if not self.is_connected(): return BracketResult(reject_reason="not_connected")`. `main.py:422-430 run()` verifie `is_connected()` UNE FOIS au start puis loop forever sans re-check. Quand DTC tombe (network blip, Sierra Chart restart, broker timeout), aucun mecanisme de reconnect → bot hors-ligne indefiniment.
+**Cause racine** : pattern "fail-fast sans recovery" introduit a la creation de DTCExecutor. Bot 1 v2 / Bot MR / Bot BN V4 ont leurs propres patterns de reconnect dans dtc_connector.py legacy mais Bot 4 wrapper DTCExecutor n'a JAMAIS implemente ensure_connected().
+**Lecon** : tout client reseau persistant (DTC TCP, WebSocket, API HTTP) doit avoir un mecanisme de reconnect automatique avec anti-spam. Pas seulement "verifier au start".
+**Trigger prevention** : code review obligatoire de tout module qui fait `if not connected: fail`. Doit toujours tenter reconnect avec circuit breaker.
+**Fix applique** : Phase 1 immediate restart Bot 4 service (DTC reconnect au boot, verifie BOT4_BOOT_READY dtc_state=connected). Phase 2 permanent `execution.py` ajoute `ensure_connected(min_retry_interval_sec=30)` avec anti-spam 30s, telemetry codes BOT4_DTC_RECONNECT_{ATTEMPT,OK,FAIL,SKIP_THROTTLE}, `send_bracket()` utilise `ensure_connected()` au lieu de `is_connected()`. 13/13 tests pytest PASS (warmup, attempt success, attempt fail, raise, throttle 30s, custom interval, send_bracket integration, telemetry emit codes).
+**Reviewed** : Claude empirique (analyse 87+10 BRACKET_FAIL + screen Sierra Sim4) + tests pytest 13/13 PASS 19/06. Code-reviewer agent a faire avant deploy VPS.
+
 ### 2026-06-19 (76) - [VALIDATION_MISS] - Prev_* helpers Sierra natif 5 features buggees intra-session (4 bots paper degrades depuis le debut)
 
 **Contexte** : Audit empirique post-INCIDENT #75 (PVWAP) 5j ES + 4j NQ revele que TOUS les helpers Sierra natif "previous session" varient INTRA-SESSION : `prev_vah/val/vpoc` (2-4 distinct values par session), `pdh/pdl` (2-3 distinct). Devraient etre CONSTANTS = EOD broadcast J-1 fige. Pattern racine identique INCIDENT #75 : alias DMP C++ `prev_*` pointe vers etude COURANTE au lieu de figer EOD snapshot.
