@@ -41,7 +41,10 @@ def test_env_override():
 
 
 def test_tradable_sessions_helper():
-    """Sessions etendues 17/06 : ASIA+LONDON+US (cf bot_config.py session config)."""
+    """FIX 18/06 M1 : source unique TRADABLE_SESSIONS (toutes sessions reel).
+    Inclut us_cash pour matcher session_segment sierra. NQ et ES identiques."""
     cfg = BotBNV4Config.from_env()
-    assert cfg.tradable_sessions_for("NQ") == ("ASIA", "LONDON", "US")
-    assert cfg.tradable_sessions_for("ES") == ("ASIA", "LONDON", "US")
+    expected = ("ASIA", "LONDON", "US", "us_cash")
+    assert cfg.TRADABLE_SESSIONS == expected
+    assert cfg.tradable_sessions_for("NQ") == expected
+    assert cfg.tradable_sessions_for("ES") == expected

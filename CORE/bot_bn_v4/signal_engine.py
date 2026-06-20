@@ -118,7 +118,7 @@ class SignalEngine:
         if n_target <= 0:
             return 0
         try:
-            from CORE.bot_bn_v4.bar_history_loader import load_recent_bars
+            from CORE.bot_bn_v4.bar_history_loader import load_recent_bars, _list_jsonl_files
             bars = load_recent_bars(self.symbol, n_target)
         except Exception as e:  # noqa: BLE001
             # Fail-soft : pas de silent fallback (regle souveraine
@@ -135,6 +135,26 @@ class SignalEngine:
                     pass
             return 0
         if not bars:
+            # FIX B.6 audit ULTRATHINK 19/06 (schema-auditor) : diagnostic
+            # detaille quand n_loaded=0 + emit MAJEUR pour Discord alert.
+            # Cause typique : pipeline MIA-Sierra-Enricher-{SYM} Stopped =
+            # aucun fichier sierra_enriched ecrit -> Bot 3 aveugle 4h+.
+            try:
+                files = _list_jsonl_files(self.symbol, max_age_hours=36)
+                n_files = len(files)
+                latest = str(files[0].name) if files else "NONE"
+            except Exception:  # noqa: BLE001
+                n_files = -1
+                latest = "ERR"
+            if self.log_fn is not None:
+                try:
+                    self.log_fn(
+                        "BOTBN_WARMUP_ZERO_LOADED",
+                        sym=self.symbol, n_loaded=0, target=n_target,
+                        n_files_36h=n_files, latest_file=latest,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             return 0
         # Enrich + append chaque bar (meme pipeline que on_bar)
         for raw_bar in bars:

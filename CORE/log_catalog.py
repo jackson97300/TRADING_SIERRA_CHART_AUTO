@@ -663,6 +663,15 @@ LOG_CODES = {
     # daily JSONL dedie. Plus de double-comptabilite.
     # Fix P0 templates : retire constantes config (move vers CONFIG_LOADED).
     # Templates simplifies : valeurs courantes uniquement, pas de constantes.
+    # FIX B.5 audit ULTRATHINK 19/06 (schema-auditor) : tracer warmup visible.
+    # AVANT : check_zone early return SILENT pendant warmup -> 0 BN_V4_GATE_*
+    # emit, impossible de savoir pourquoi 0 trade. Empirique 1554 decisions
+    # JSONL sans aucun BN_V4_GATE_* (warmup masque la cascade).
+    "BN_V4_WARMUP_SKIP":                 (LogLevel.INFO,     "decisions", "BN V4 warmup skip : sym={sym} dir={direction} i={i}/needed={needed} (missing={missing})"),
+    # FIX B.6 audit ULTRATHINK 19/06 (schema-auditor) : alerte MAJEUR quand
+    # warmup_from_disk retourne 0 (pipeline enricher off ?). 4 restarts d'affilee
+    # le 18/06 avec n_loaded=0 = bot aveugle 4h+. Avant : silent fail. Now : Discord.
+    "BOTBN_WARMUP_ZERO_LOADED":          (LogLevel.MAJEUR,   "events",    "BotBN warmup ZERO loaded {sym} target={target} n_files_36h={n_files_36h} latest={latest_file} (pipeline enricher off ?)"),
     "BN_V4_GATE_TREND_BLOCK":            (LogLevel.MAJEUR,   "decisions", "BN V4 gate TREND block : sym={sym} dir={direction} slope_mean={slope_mean} threshold={threshold}"),
     "BN_V4_GATE_OPEN_WINDOW_BLOCK":      (LogLevel.INFO,     "decisions", "BN V4 gate OPEN_WINDOW block (hors fenetre) : sym={sym} ts_et={ts_et} mins_et={mins_et}"),
     "BN_V4_GATE_TREND_LONG_ALIGN_BLOCK": (LogLevel.MAJEUR,   "decisions", "BN V4 gate TREND_LONG_ALIGN block (SHORT only) : sym={sym} dir={direction} slope_240={slope_240}"),
@@ -1467,6 +1476,26 @@ LOG_CODES = {
     "BOT1V2_GATE_SESSION_BLOCK":    (LogLevel.INFO,     "risk",      "Bot1V2 skip {sym} : session gate {phase} ({reason})"),
     "BOT1V2_GATE_DAILY_BLOCK":      (LogLevel.MAJEUR,   "risk",      "Bot1V2 daily limit : {sym} {reason}"),
     "BOT1V2_NOT_TRADABLE":          (LogLevel.INFO,     "decisions", "Bot1V2 skip {sym} {direction} : {skip_reason} stars={stars_count}/{stars_total} vetos={vetos}"),
+    # FIX audit ULTRATHINK 19/06 : detection divorce silencieux Mirror.
+    # bull_pts/bear_pts/mtf_bulls/mtf_bears dashboard absents -> fallback derive
+    # cf agents code-reviewer + trading-strategy-analyst + schema-auditor.
+    # Si > 5% emit J+1 -> Mirror divorce officiel, documenter INCIDENT_LOG.
+    # FIX L1 review 19/06 : passer INFO (au lieu de MAJEUR) pour eviter flood
+    # Discord. Si > 5% bars en fallback J+1 grep prod -> promouvoir MAJEUR.
+    "BOT1V2_PTS_FALLBACK_FORCED":   (LogLevel.INFO,     "decisions", "Bot1V2 Mirror divorce {sym} : bull/bear_pts NULL (reason={reason}, derive bull={bull} bear={bear})"),
+    "BOT1V2_MTF_FALLBACK_FORCED":   (LogLevel.INFO,     "decisions", "Bot1V2 MTF divorce {sym} : mtf_bulls/bears/neutres NULL (reason={reason}, derive bulls={bulls} bears={bears})"),
+    # FIX audit 19/06 : daily_state persistance cross-restart (pattern Bot MR FIX 1)
+    "BOT1V2_DAILY_STATE_RESTORED":  (LogLevel.INFO,     "decisions", "Bot1V2 daily_gate restored cross-restart : date={date_str} n_trades={n_trades_today} pnl=${cumul_pnl_usd}"),
+    "BOT1V2_DAILY_STATE_RESET":     (LogLevel.INFO,     "decisions", "Bot1V2 daily_gate reset : date={date_str} reason={reason}"),
+    "BOT1V2_DAILY_STATE_PERSIST_FAIL": (LogLevel.CRITIQUE, "events",  "Bot1V2 daily_state persist FAIL : context={context} err={err} (DSL inoperante restart suivant)"),
+    # FIX B3 Phase 2 review code-reviewer 19/06 : codes log Phase 2 obligatoires
+    # (regle souveraine LOGS TRACABILITE 01/05). Sans ces codes, validation J+1
+    # impossible = on deploie a l'aveugle. Default OFF Phase 2 actuellement,
+    # mais codes present pour quand on active via env var BOT1V2_DAYTYPE_AWARE=1.
+    "BOT1V2_DAYTYPE_CLASSIFIED":    (LogLevel.INFO, "decisions", "Bot1V2 day-type {sym} : regime={regime} conf={conf} slope_30={slope_30} reason={reason}"),
+    "BOT1V2_BYPASS_NEAR_LEVEL_DAYTYPE": (LogLevel.INFO, "decisions", "Bot1V2 {sym} {direction} : near_level bypass (regime={regime} conf={conf}, Dalton trend day)"),
+    "BOT1V2_CLIMAX_BYPASS_BIDIRECTIONAL": (LogLevel.INFO, "decisions", "Bot1V2 {sym} {direction} : climax veto bypass (bidirectional buying/selling climax delta_bar={delta_bar})"),
+    "BOT1V2_PULLBACK_WAIVED_TREND_DAY": (LogLevel.INFO, "decisions", "Bot1V2 {sym} {direction} : pullback waived (trend day regime={regime} conf={conf})"),
     "BOT1V2_TRADABLE":              (LogLevel.INFO,     "decisions", "Bot1V2 TRADABLE : {sym} {direction} @ {entry_price:.2f} SL {sl_ticks}t({sl_wall}) TP {tp_ticks}t RR {rr_ratio:.1f} stars {stars_count}/{stars_total}"),
     "BOT1V2_TRADABLE_HYPOTHETICAL": (LogLevel.INFO,     "decisions", "Bot1V2 TRADABLE_HYPO : {sym} {direction} @ {entry_price:.2f} session={session_phase} (audit Asia/London - non execute)"),
     "BOT1V2_ORDER_SENT":            (LogLevel.INFO,     "execution", "Bot1V2 ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
@@ -1594,6 +1623,80 @@ LOG_CODES = {
         "BotMR {sym} SHORT skip - ULTRATHINK no seller recovery : finish={finish_strength} >= {threshold} (NEED RECOVERY end-of-bar)"),
     "BOTMR_ULTRATHINK_NO_DATA": (LogLevel.MAJEUR, "decisions",
         "BotMR {sym} {direction} skip - ULTRATHINK features manquantes : delta_bar={delta_bar} finish={finish_strength}"),
+    # ════════════════════════════════════════════════════════════════════════
+    # FIX audit 19/06/2026 (3 fixes critiques carnage 18/06 FOMC)
+    # FIX 1 — Daily state persistance cross-restart
+    # ════════════════════════════════════════════════════════════════════════
+    "BOTMR_DAILY_STATE_RESTORED": (LogLevel.INFO, "decisions",
+        "BotMR daily_gate restored cross-restart : date={date_str} n_trades={n_trades_today} pnl=${cumul_pnl_usd}"),
+    "BOTMR_DAILY_STATE_RESET": (LogLevel.INFO, "decisions",
+        "BotMR daily_gate reset : date={date_str} reason={reason}"),
+    "BOTMR_DAILY_STATE_PERSIST_FAIL": (LogLevel.CRITIQUE, "events",
+        "BotMR daily_state persist FAIL : context={context} err={err} (DSL inoperante au prochain restart)"),
+    # ════════════════════════════════════════════════════════════════════════
+    # FIX 2 — Reconcile DTC au boot (5 cas python state vs broker)
+    # ════════════════════════════════════════════════════════════════════════
+    "BOTMR_RECONCILE_SKIPPED": (LogLevel.INFO, "events",
+        "BotMR reconcile DTC skip : {reason}"),
+    "BOTMR_RECONCILE_OK": (LogLevel.INFO, "events",
+        "BotMR reconcile DTC OK (tous symbols verifies)"),
+    "BOTMR_RECONCILE_OK_FLAT": (LogLevel.INFO, "events",
+        "BotMR reconcile {sym} : Python flat + broker flat"),
+    "BOTMR_RECONCILE_OK_RESTORED": (LogLevel.INFO, "events",
+        "BotMR reconcile {sym} : position restored {direction} qty={qty} (match broker)"),
+    "BOTMR_RECONCILE_PYTHON_GHOST": (LogLevel.ALERTE, "events",
+        "BotMR reconcile {sym} GHOST : Python {py_direction}@{py_entry} mais broker flat (auto-purge, audit P&L manuel)"),
+    "BOTMR_RECONCILE_GHOST_CANCEL_FAIL": (LogLevel.MAJEUR, "events",
+        "BotMR reconcile {sym} GHOST cancel {leg} fail cid={cid} (orphan risk si Working)"),
+    "BOTMR_RECONCILE_GHOST_CANCEL_EXCEPTION": (LogLevel.MAJEUR, "events",
+        "BotMR reconcile {sym} GHOST cancel {leg} exception cid={cid} err={err}"),
+    "BOTMR_RECONCILE_GHOST_FLATTEN_SENT": (LogLevel.INFO, "events",
+        "BotMR reconcile {sym} GHOST Type 209 flatten sent cid={cid} (defense en profondeur)"),
+    "BOTMR_RECONCILE_GHOST_FLATTEN_EXCEPTION": (LogLevel.MAJEUR, "events",
+        "BotMR reconcile {sym} GHOST flatten exception : {err}"),
+    "BOTMR_RECONCILE_FORCE_FLAT_SENT": (LogLevel.MAJEUR, "events",
+        "BotMR reconcile {sym} force_flat Type 209 sent contract={contract} ta={ta} cid={cid} reason={reason}"),
+    "BOTMR_RECONCILE_FORCE_FLAT_EXCEPTION": (LogLevel.CRITIQUE, "events",
+        "BotMR reconcile {sym} force_flat EXCEPTION : {err} reason={reason} (broker pos pas flatten)"),
+    "BOTMR_RECONCILE_FORCE_FLAT_DTC_DOWN": (LogLevel.CRITIQUE, "events",
+        "BotMR reconcile {sym} force_flat impossible : DTC down reason={reason}"),
+    "BOTMR_RECONCILE_UNKNOWN_BROKER_POS": (LogLevel.CRITIQUE, "events",
+        "BotMR reconcile {sym} UNKNOWN_BROKER_POS : Python flat mais broker {broker_side} qty={broker_qty} action={action}"),
+    "BOTMR_RECONCILE_DIVERGENCE": (LogLevel.CRITIQUE, "events",
+        "BotMR reconcile {sym} DIVERGENCE : Python {py_direction} {py_qty} vs Broker {br_direction} {br_qty} action={action}"),
+    "BOTMR_RECONCILE_QUERY_FAILED": (LogLevel.CRITIQUE, "events",
+        "BotMR reconcile {sym} query DTC fail : contract={contract} err={err}"),
+    "BOTMR_RECONCILE_HALT_BOOT": (LogLevel.CRITIQUE, "events",
+        "BotMR boot HALT cause reconcile critique. Bypass via MIA_BOT_MR_RECONCILE_FORCE_FLAT={force_flat_available}"),
+    "BOTMR_BOOT_HALT_RECONCILE": (LogLevel.CRITIQUE, "events",
+        "BotMR boot HALTE : reconcile DTC a detecte un cas critique (intervention manuelle requise)"),
+    # ════════════════════════════════════════════════════════════════════════
+    # FIX 3 — Codes specifiques par gate (75% skips tombaient en BOTMR_NOT_TRADABLE)
+    # ════════════════════════════════════════════════════════════════════════
+    "BOTMR_CIRCUIT_BREAKER_ACTIVE": (LogLevel.MAJEUR, "decisions",
+        "BotMR {sym} skip - circuit breaker actif : {remaining_sec}s remaining (3 SL consec hit)"),
+    "BOTMR_COOLDOWN_ACTIVE": (LogLevel.INFO, "decisions",
+        "BotMR {sym} skip - cooldown actif : elapsed={elapsed}s/{cooldown_sec}s"),
+    "BOTMR_SESSION_NOT_ALLOWED": (LogLevel.INFO, "decisions",
+        "BotMR {sym} skip - session {phase} non tradable (allowed={allowed})"),
+    "BOTMR_PREOPEN_US_SKIP": (LogLevel.INFO, "decisions",
+        "BotMR {sym} skip - preopen US 11:30-13:30 UTC (bruit pre-RTH)"),
+    "BOTMR_RVOL_TOO_LOW": (LogLevel.INFO, "decisions",
+        "BotMR {sym} skip - rvol_zscore trop bas : rvol_z={rvol_z}<min={min_z}"),
+    "BOTMR_NO_EXTENSION": (LogLevel.INFO, "decisions",
+        "BotMR {sym} skip - pas d'extension SD : d_low={d_low} d_high={d_high} thr={thr}"),
+    "BOTMR_REGIME_MODE_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR {sym} {direction} skip - regime mode {mode} bloque : reason={reason}"),
+    "BOTMR_VIX_TOO_LOW_FOR_SHORT": (LogLevel.INFO, "decisions",
+        "BotMR {sym} SHORT skip - VIX trop bas : vix={vix}<={min_vix}"),
+    "BOTMR_NQ_TREND_DAY_TOO_HIGH": (LogLevel.INFO, "decisions",
+        "BotMR NQ SHORT skip - trend_day_score eleve : {score}>{max_score}"),
+    "BOTMR_EXHAUSTION_REQUIRED": (LogLevel.INFO, "decisions",
+        "BotMR {sym} {direction} skip - exhaustion requise mais absente"),
+    "BOTMR_DELTA_DIRECTION_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR {sym} {direction} skip - delta_bar oppose direction : delta={delta}"),
+    "BOTMR_INVALID_CLOSE_PRICE": (LogLevel.MAJEUR, "decisions",
+        "BotMR {sym} {direction} skip - close price invalide (signal donnee corrompue)"),
     "BOTMR_TRADABLE":              (LogLevel.INFO,     "decisions", "BotMR TRADABLE : {sym} {direction} @ {entry_price:.2f} SL {sl_ticks}t TP {tp_ticks}t RR {rr_ratio:.1f}"),
     "BOTMR_TRADABLE_HYPOTHETICAL": (LogLevel.INFO,     "decisions", "BotMR TRADABLE_HYPO : {sym} {direction} session={session_phase} (NQ dry-eval)"),
     "BOTMR_ORDER_SENT":            (LogLevel.INFO,     "execution", "BotMR ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
@@ -1672,11 +1775,21 @@ LOG_CODES = {
     "BOTBN_FEATURE_DEGRADED":       (LogLevel.ALERTE,   "events",    "BotBN feature degraded : {sym} missing={features}"),
     "BOTBN_DTC_CONNECTED":          (LogLevel.INFO,     "execution", "BotBN DTC connecte : client={client_name} ta={trade_account}"),
     "BOTBN_DTC_FALLBACK_DRYRUN":    (LogLevel.MAJEUR,   "execution", "BotBN DTC echec -> fallback dry-run : {err}"),
+    # FIX BUG #1 audit ULTRATHINK 19/06 - PROD FANTOME : connect() return False
+    # ignore = log "connected" mensonger + ordres orphans. Now : detection +
+    # force dry_run + dtc_connector=None empeche utilisation downstream.
+    "BOTBN_DTC_BOOT_FAIL":          (LogLevel.CRITIQUE, "execution", "BotBN DTC connect FAILED (return False) : host={host} port={port} client={client_name} ta={trade_account} -> fallback dry_run"),
+    # FIX B.3 audit ULTRATHINK 19/06 : ensure_connected pattern Bot 4 INCIDENT #77.
+    "BOTBN_DTC_RECONNECT_OK":       (LogLevel.MAJEUR,   "execution", "BotBN DTC reconnect SUCCESS apres silent kick SC"),
+    "BOTBN_DTC_RECONNECT_FAIL":     (LogLevel.CRITIQUE, "execution", "BotBN DTC reconnect FAILED : reason={reason}"),
     # FIX 17/06 (Jackson audit logs) : GATE blocking codes -> "risk" pour fichier risk/risk_*_botbn.jsonl dedie.
     "BOTBN_SKIP_HAS_POSITION":      (LogLevel.INFO,     "risk",      "BotBN skip {sym} : position deja ouverte"),
     "BOTBN_GATE_SESSION_BLOCK":     (LogLevel.INFO,     "risk",      "BotBN skip {sym} : session {phase} non-tradee"),
     "BOTBN_GATE_DAILY_BLOCK":       (LogLevel.MAJEUR,   "risk",      "BotBN daily limit : {sym} {reason}"),
     "BOTBN_GATE_REGIME_BLOCK":      (LogLevel.INFO,     "risk",      "BotBN regime block : {sym} {direction} reason={reason}"),
+    # FIX BUG #4 review code-reviewer 19/06 : RegimeGate deferred check post-SignalEngine
+    # quand DIRECTION_MODE=both. Bloque la direction reellement proposee par le moteur.
+    "BOTBN_GATE_REGIME_BLOCK_POST_SIGNAL": (LogLevel.INFO, "risk", "BotBN regime block post-signal : {sym} {direction} reason={reason}"),
     "BOTBN_NOT_TRADABLE":           (LogLevel.INFO,     "decisions", "BotBN skip {sym} {direction} : {skip_reason} grade={grade}"),
     "BOTBN_TRADABLE":               (LogLevel.INFO,     "decisions", "BotBN TRADABLE : {sym} {direction} grade={grade} @ {entry_price:.2f} SL {sl_ticks}t TP_pivot_dow"),
     "BOTBN_TRADABLE_HYPOTHETICAL":  (LogLevel.INFO,     "decisions", "BotBN TRADABLE_HYPO : {sym} {direction} grade={grade} session={session_phase} (shadow log A/B ou London)"),

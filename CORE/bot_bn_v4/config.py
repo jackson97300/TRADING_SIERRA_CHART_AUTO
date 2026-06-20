@@ -61,7 +61,15 @@ class BotBNV4Config:
     # STRATEGIE BN V4 (port spec Jackson 23/05/2026)
     # ============================================================
     GRADE_MIN: str = field(default_factory=lambda: _env_str("GRADE_MIN", "A++"))
-    DIRECTION_MODE: str = field(default_factory=lambda: _env_str("DIRECTION_MODE", "long"))
+    # FIX B.4 audit ULTRATHINK 19/06 (decision Jackson 18/06 souveraine) :
+    # Default "both" pour capturer SHORT en regime bearish (cf trade -$967 15/06
+    # missed). Memory `project_bot3_bn_v4_audit_20260618.md` : "revenir both
+    # directions + open_window elargi data-driven".
+    # FIX MINEUR-4 review 2 code-reviewer 20/06 : env var = "DIRECTION_MODE" (sans
+    # prefixe BOTBN_). Convention multi-bots assumee : env vars partagees sauf
+    # collision. Si necessaire, prefixer plus tard avec migration explicite.
+    # Decision Jackson NQ+ES garde les 2 symboles (override trading-strategy NOGO ES).
+    DIRECTION_MODE: str = field(default_factory=lambda: _env_str("DIRECTION_MODE", "both"))
 
     # Filtre open window (Jackson recommande NQ A++)
     REQUIRE_OPEN_WINDOW: bool = field(default_factory=lambda: _env_bool("REQUIRE_OPEN_WINDOW", True))
@@ -97,13 +105,21 @@ class BotBNV4Config:
     MIN_RISK_TICKS: int = field(default_factory=lambda: _env_int("MIN_RISK_TICKS", 4))
 
     # ============================================================
-    # SESSIONS (17/06 Jackson : toutes sessions pour commencer)
+    # SESSIONS (18/06 Jackson : TOUTES sessions en REEL - decision audit Bot 3)
     # ============================================================
-    TRADABLE_SESSIONS_NQ: tuple = field(default_factory=lambda: ("ASIA", "LONDON", "US"))
-    TRADABLE_SESSIONS_ES: tuple = field(default_factory=lambda: ("ASIA", "LONDON", "US"))
-    # Shadow log : evalue A/B grades + London en hypothetical (audit empirique)
+    # FIX 18/06 M1 : source unique consommee par SessionGate (via main.py). Avant,
+    # SessionGate lisait Bot1V2Config.TRADABLE_SESSIONS (sessions de Bot 2) -> BN V4
+    # heritait silencieusement des sessions d'un autre bot. Inclut "us_cash" pour
+    # matcher session_segment sierra ; "US" est de toute facon toujours tradable
+    # (path is_in_us de SessionGate).
+    TRADABLE_SESSIONS: tuple = field(
+        default_factory=lambda: ("ASIA", "LONDON", "US", "us_cash")
+    )
+    # Shadow A/B grade (observation grade A vs A++) : orthogonal aux sessions.
     SHADOW_LOG_GRADES_AB: bool = field(default_factory=lambda: _env_bool("SHADOW_LOG_GRADES_AB", True))
-    SHADOW_LOG_LONDON: bool = field(default_factory=lambda: _env_bool("SHADOW_LOG_LONDON", True))
+    # Shadow London DESACTIVE (18/06) : toutes sessions tradees en reel -> plus de
+    # hypothetical par session. is_shadow_session devient inerte (cf main.py).
+    SHADOW_LOG_LONDON: bool = field(default_factory=lambda: _env_bool("SHADOW_LOG_LONDON", False))
 
     # EOD lockout (minutes avant 16:00 ET)
     EOD_LOCKOUT_MINUTES: int = field(default_factory=lambda: _env_int("EOD_LOCKOUT_MINUTES", 10))
@@ -136,10 +152,8 @@ class BotBNV4Config:
     # HELPERS
     # ============================================================
     def tradable_sessions_for(self, symbol: str) -> tuple:
-        s = symbol.upper()
-        if s == "ES":
-            return self.TRADABLE_SESSIONS_ES
-        return self.TRADABLE_SESSIONS_NQ
+        # NQ et ES partagent la meme config sessions (toutes en reel).
+        return self.TRADABLE_SESSIONS
 
     @classmethod
     def from_env(cls) -> "BotBNV4Config":

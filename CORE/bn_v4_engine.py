@@ -307,7 +307,17 @@ def assign_grade(density: int) -> str:
 
 
 def edge_buy_active(bar: Any, direction: str) -> bool:
-    """Edge buy/sell actif autour du prix."""
+    """Edge buy/sell actif autour du prix.
+
+    BUG B.7 audit ULTRATHINK 19/06 (schema-auditor) : `n_edge_buy_active`
+    est STUCK >= 5 systematiquement sur les 990 bars NQ live 19/06 (jamais
+    0, 1, 2, 3, 4). Cause : `ExtensionLineBuffer` accumulatif (max_age 5j)
+    sur pipeline tournant > 5 jours sans reset.
+    Impact : gate Phase 4 (`>= 1`) JAMAIS filtrant en live.
+    Comportement DIFFERENT vs backtest (Databento sans ExtensionLineBuffer).
+    Fix definitif = pipeline reset + recalibrage seuil. Phase E walk-forward
+    testera seuils plus eleves (5, 10, 20). Ce fix est hors scope Bot 3.
+    """
     f = "n_edge_buy_active" if direction == "long" else "n_edge_sell_active"
     return _safe_int(bar.get(f)) >= 1
 
@@ -676,7 +686,15 @@ def check_zone(df: pd.DataFrame, i: int, params: BNV4Params,
     if log_fn is None:
         log_fn = _default_log_fn
 
-    if i < max(params.trend_lookback, params.trend_long_lookback):
+    # FIX B.5 audit ULTRATHINK 19/06 (schema-auditor) : emit warmup_skip
+    # visible pour tracer combien de bars sont en warmup post-restart.
+    # AVANT : early return silent -> 0 BN_V4_GATE_* emit pendant warmup
+    # (= toutes les premieres 240 bars apres chaque restart). Schema-auditor
+    # a confirme empirique 0/1554 decisions JSONL avec BN_V4_GATE_*.
+    needed = max(params.trend_lookback, params.trend_long_lookback)
+    if i < needed:
+        log_fn("BN_V4_WARMUP_SKIP", sym=symbol, direction=direction,
+                i=i, needed=needed, missing=needed - i)
         return None
     bar = df.iloc[i]
 

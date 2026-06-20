@@ -4,7 +4,7 @@ Boucle principale :
   1. Pour chaque symbole, read_last_bar() depuis sierra_enriched
   2. Check fraicheur (DMP_BAR_MAX_AGE_SEC)
   3. Position existante ? Update trailing + skip new entry
-  4. Session gate (US RTH only - sinon shadow log si SHADOW_LOG_LONDON=True)
+  4. Session gate (toutes sessions en reel - config BN V4 TRADABLE_SESSIONS, 18/06)
   5. Daily limits gate (5 trades, $200 loss, $150 win - Mark Douglas)
   6. Regime gate (gamma/VIX/news)
   7. SignalEngine.on_bar(bar) -> SignalDecision
@@ -97,6 +97,8 @@ class BotBNV4:
         root = Path(__file__).resolve().parents[2]
         positions_path = root / "DATA" / "PAPER_TRADES" / "bot_bn_v4_runtime_positions.json"
         self.store = PositionStore(path=positions_path)
+        # FIX 18/06 B3 : persistance compteurs daily (anti reset au restart)
+        self._daily_state_path = root / "DATA" / "PAPER_TRADES" / "bot_bn_v4_daily_state.json"
         loaded = self.store.load()
         state_status = "OK" if loaded else "NEW_NO_FILE"
         self.log.info(f"State load: {state_status}")
@@ -153,16 +155,33 @@ class BotBNV4:
                         self.data_sources[sym].last_ts_seen = last_ts_ms
 
         # Gates : session + daily limits (reuse Bot 1 v2), regime (BN V4 dedie)
-        self.session_gate = SessionGate(self.bot1v2_cfg)
-        self.daily_gate = DailyLimitsGate(self.bot1v2_cfg)
-        # Override seuils daily gate avec config Bot BN V4 (anti silent fallback)
-        # On surcharge MAX_TRADES_PER_DAY/STOP_LOSS/STOP_WIN dans Bot1V2Config
-        # via env vars BOT1V2_MAX_TRADES_PER_DAY etc., mais ici on les force depuis
-        # BOTBN_* en re-initialisant l'objet pour bypass.
-        # Plus simple : DailyLimitsGate lit cfg.MAX_TRADES_PER_DAY donc s'ils
-        # correspondent c'est OK. On documente que les 2 configs doivent matcher.
+        # FIX 18/06 M1 : SessionGate pilote par la config BN V4 (PAS Bot 2). Avant,
+        # SessionGate(self.bot1v2_cfg) lisait les sessions de Bot 2 -> BN V4 heritait
+        # silencieusement. SessionGate duck-type .TRADABLE_SESSIONS + .EOD_LOCKOUT_MINUTES.
+        from types import SimpleNamespace
+        _session_cfg = SimpleNamespace(
+            TRADABLE_SESSIONS=self.cfg.TRADABLE_SESSIONS,
+            EOD_LOCKOUT_MINUTES=self.cfg.EOD_LOCKOUT_MINUTES,
+        )
+        self.session_gate = SessionGate(_session_cfg)
+        # FIX BUG #6 audit ULTRATHINK 19/06 (code-reviewer) - Silent fallback Mark Douglas.
+        # AVANT : DailyLimitsGate(self.bot1v2_cfg) -> lit MAX_TRADES_PER_DAY +
+        # DAILY_STOP_LOSS_USD + DAILY_STOP_WIN_USD de Bot1V2Config, jamais de
+        # BotBNV4Config. Si env BOTBN_DAILY_STOP_LOSS_USD=-300 set, SILENT IGNORE.
+        # Viole data-quality.md Rechute #2. Le commentaire legacy avouait le bug :
+        # "On documente que les 2 configs doivent matcher" = silent fallback DOC.
+        # APRES : adapter SimpleNamespace force les 3 seuils BotBNV4Config sur
+        # DailyLimitsGate, pattern coherent avec SessionGate ligne 162-164.
+        _daily_cfg = SimpleNamespace(
+            MAX_TRADES_PER_DAY=self.cfg.MAX_TRADES_PER_DAY,
+            DAILY_STOP_LOSS_USD=self.cfg.DAILY_STOP_LOSS_USD,
+            DAILY_STOP_WIN_USD=self.cfg.DAILY_STOP_WIN_USD,
+        )
+        self.daily_gate = DailyLimitsGate(_daily_cfg)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self.daily_gate.reset_for_new_day(today)
+        # FIX 18/06 B3 : restaurer les compteurs du jour si restart le meme jour
+        self._load_daily_state(today)
 
         self.regime_gate = RegimeGate(self.cfg)
 
@@ -202,13 +221,65 @@ class BotBNV4:
 
         self._running = False
         self._last_heartbeat_ts = 0.0
+        # FIX BUG #3 review code-reviewer 19/06 IMPORTANT : init defensif.
+        # _last_reconnect_attempt etait init seulement dans run() -> AttributeError
+        # si _ensure_dtc_connected() appele hors run() (tests, future on_demand).
+        self._last_reconnect_attempt = 0.0
 
     def _on_fill_close(self, sym: str, pnl_usd: float) -> None:
-        """Callback DtcFillListener post-close : maj daily_gate."""
+        """Callback DtcFillListener post-close : ajoute le PnL au cumul daily.
+
+        FIX 18/06 B2 : apply_pnl (PAS update_after_trade) — le trade est deja
+        compte a l'ouverture via register_open. update_after_trade double-compterait.
+        """
         try:
-            self.daily_gate.update_after_trade(pnl_usd)
+            self.daily_gate.apply_pnl(pnl_usd)
+            self._save_daily_state()
         except Exception as e:  # noqa: BLE001
-            self.log.error(f"daily_gate.update_after_trade fail: {e}")
+            self.log.error(f"daily_gate.apply_pnl fail: {e}")
+
+    def _load_daily_state(self, today: str) -> None:
+        """Restaure les compteurs daily persistes (fix B3). Restore SEULEMENT si
+        le snapshot date du jour courant (sinon nouveau jour = compteurs a zero)."""
+        try:
+            import json
+            if self._daily_state_path.exists():
+                data = json.loads(self._daily_state_path.read_text(encoding="utf-8"))
+                if data.get("date_str") == today:
+                    self.daily_gate.restore(
+                        n_trades_today=data.get("n_trades_today", 0),
+                        cumul_pnl_usd=data.get("cumul_pnl_usd", 0.0),
+                        date_str=today,
+                    )
+            try:
+                bot_log.emit(
+                    "BOTBN_DAILY_STATE_LOAD",
+                    n_trades=self.daily_gate.state.n_trades_today,
+                    pnl=self.daily_gate.state.cumul_pnl_usd,
+                    date=today,
+                )
+            except Exception:
+                pass
+        except Exception as e:  # noqa: BLE001
+            self.log.warning(f"daily_state load fail: {e}")
+
+    def _save_daily_state(self) -> None:
+        """Persiste les compteurs daily (fix B3) — write ATOMIQUE tmp+rename
+        (MAJEUR-2 review) : evite la corruption si crash en plein write ou si
+        2 threads (poll + DTC) ecrivent en concurrence. tmp unique par appel."""
+        try:
+            import json
+            import os
+            from uuid import uuid4
+            self._daily_state_path.parent.mkdir(parents=True, exist_ok=True)
+            data = json.dumps(self.daily_gate.snapshot())
+            tmp = self._daily_state_path.with_name(
+                f"{self._daily_state_path.name}.{uuid4().hex[:8]}.tmp"
+            )
+            tmp.write_text(data, encoding="utf-8")
+            os.replace(str(tmp), str(self._daily_state_path))
+        except Exception as e:  # noqa: BLE001
+            self.log.warning(f"daily_state save fail: {e}")
 
     def stop(self, *_):
         self.log.info("Stop signal received, graceful shutdown...")
@@ -224,6 +295,7 @@ class BotBNV4:
             except Exception:
                 pass
             self.daily_gate.reset_for_new_day(today)
+            self._save_daily_state()  # FIX 18/06 B3 : persister le reset du nouveau jour
             try:
                 self.state_bridge.rotate_day(today.replace("-", ""))
             except Exception as e:  # noqa: BLE001
@@ -372,22 +444,57 @@ class BotBNV4:
                 pass
             return
 
-        # Regime gate (gamma/VIX/news)
-        # Direction proposee : selon DIRECTION_MODE config (defaut long)
-        proposed_dir = self.cfg.DIRECTION_MODE if self.cfg.DIRECTION_MODE != "both" else "long"
-        rg = self.regime_gate.check_allow_entry(bar, proposed_dir)
-        if not rg.allowed:
-            try:
-                bot_log.emit(
-                    "BOTBN_GATE_REGIME_BLOCK",
-                    sym=sym, direction=proposed_dir, reason=rg.skip_reason,
-                )
-            except Exception:
-                pass
-            return
+        # FIX BUG #4 review code-reviewer 19/06 BLOQUANT : RegimeGate appele avec
+        # proposed_dir='long' meme quand DIRECTION_MODE='both' sabotait B.4. Si
+        # regime bearish + DIRECTION_MODE=both : RegimeGate bloquait 'long' et on
+        # ratait le SHORT (scenario trade -$967 15/06 manque). Pattern VALIDATION_MISS.
+        # FIX : si DIRECTION_MODE != 'both', check classique. Si 'both', deferred
+        # check APRES SignalEngine confirme la direction (lignes suivantes).
+        if self.cfg.DIRECTION_MODE != "both":
+            proposed_dir = self.cfg.DIRECTION_MODE
+            rg = self.regime_gate.check_allow_entry(bar, proposed_dir)
+            if not rg.allowed:
+                try:
+                    bot_log.emit(
+                        "BOTBN_GATE_REGIME_BLOCK",
+                        sym=sym, direction=proposed_dir, reason=rg.skip_reason,
+                    )
+                except Exception:
+                    pass
+                return
 
         # SignalEngine evaluation (TOUJOURS evalue, meme shadow session)
         decision: SignalDecision = self.signals[sym].on_bar(bar)
+
+        # FIX BUG #4 (suite) : deferred RegimeGate check si DIRECTION_MODE=both
+        # ET SignalEngine a propose une direction. Permet d'evaluer LONG et SHORT
+        # independamment vs un seul check biaise vers 'long'.
+        if (
+            self.cfg.DIRECTION_MODE == "both"
+            and decision.direction is not None
+        ):
+            rg = self.regime_gate.check_allow_entry(bar, decision.direction)
+            if not rg.allowed:
+                try:
+                    bot_log.emit(
+                        "BOTBN_GATE_REGIME_BLOCK_POST_SIGNAL",
+                        sym=sym, direction=decision.direction,
+                        reason=rg.skip_reason,
+                    )
+                except Exception:
+                    pass
+                # FIX MINEUR-1 review 2 code-reviewer 20/06 : early return apres
+                # log_decision_jsonl pour eviter double emit BOTBN_NOT_TRADABLE.
+                # Volume estime sans early return : 10-50 doubles emits/jour/sym =
+                # pollution audit (count blocks regime via grep = 2x vraie valeur).
+                log_decision_jsonl(
+                    bar_ts=bar_ts, symbol=sym, direction=decision.direction,
+                    setup=decision.setup, tradable=False,
+                    skip_reason=f"REGIME_POST_SIGNAL:{rg.skip_reason}",
+                    session_phase=session_phase,
+                    hypothetical=False,
+                )
+                return
 
         if not decision.tradable:
             # Skip ou hypothetical (OBSERVE mode A grade par ex.)
@@ -478,15 +585,32 @@ class BotBNV4:
             n_micros=self.cfg.N_MICROS_DEFAULT,
         )
         if not order_result.success:
-            self.log.error(f"{sym} ORDER FAIL: {order_result.error_msg}")
-            try:
-                bot_log.emit(
-                    "BOTBN_ORDER_FAIL",
-                    sym=sym, direction=decision.direction or "?",
-                    err_msg=order_result.error_msg,
+            # R1 (review B1) : position nue (fill OK, SL non pose). order_router
+            # a deja tente un flatten MARKET inverse. On alerte CRITIQUE.
+            if getattr(order_result, "naked", False):
+                self.log.error(
+                    f"{sym} POSITION NUE @ {order_result.fill_price} "
+                    f"-> flatten ({order_result.error_msg})"
                 )
-            except Exception:
-                pass
+                try:
+                    bot_log.emit(
+                        "BOTBN_POSITION_NAKED",
+                        sym=sym, direction=decision.direction or "?",
+                        fill_price=order_result.fill_price,
+                        parent_cid=order_result.parent_cid,
+                    )
+                except Exception:
+                    pass
+            else:
+                self.log.error(f"{sym} ORDER FAIL: {order_result.error_msg}")
+                try:
+                    bot_log.emit(
+                        "BOTBN_ORDER_FAIL",
+                        sym=sym, direction=decision.direction or "?",
+                        err_msg=order_result.error_msg,
+                    )
+                except Exception:
+                    pass
             log_decision_jsonl(
                 bar_ts=bar_ts, symbol=sym, direction=decision.direction,
                 setup=setup, tradable=True, executed=False,
@@ -537,10 +661,18 @@ class BotBNV4:
             "sl_pivots": 0,
         })
         self.store.save()
+        # FIX 18/06 B2 : compter le trade a l'OUVERTURE (plafond Mark Douglas
+        # effectif avant tout close) + persister (anti reset au restart).
+        try:
+            self.daily_gate.register_open()
+            self._save_daily_state()
+        except Exception as e:  # noqa: BLE001
+            self.log.warning(f"daily register_open fail: {e}")
         # FIX 17/06 : register CIDs DTC reels avant state_bridge open (anti-race)
-        # BN V4 : pas de TP fixe, donc tp_cid sera "". Seul le SL initial sera
-        # detecte. Post-trailing cancel-replace, le nouveau sl_cid n'est PAS
-        # connu par le listener (BACKLOG : ajouter update_sl_cid au trailing).
+        # BN V4 : pas de TP fixe, donc tp_cid sera "". Le SL initial est detecte
+        # par le listener ; le SL post-trailing est propage via
+        # fill_listener.update_sl_cid (cf _process_open_position). Cas residuel :
+        # replace_sl en echec -> position nue, gere par alerte (cf B1/M4).
         if self.fill_listener is not None:
             try:
                 self.fill_listener.register_bracket(
@@ -605,6 +737,52 @@ class BotBNV4:
                 self.log.warning(f"state_bridge heartbeat fail: {e}")
             self._last_heartbeat_ts = now
 
+    def _ensure_dtc_connected(self) -> None:
+        """FIX B.3 audit ULTRATHINK 19/06 : check DTC alive + auto-reconnect.
+
+        Pattern Bot 4 INCIDENT #77 portage : sans ce check, un silent kick
+        Sierra Chart (socket OS vivante mais SC ferme la session DTC) laisse
+        le bot envoyer ordres dans le vide pendant des heures.
+
+        Strategie :
+          - Check `self.router.dtc.connected` (flag DTCConnector interne)
+          - Si False : tenter reconnect (anti-spam 30s entre tentatives)
+          - Emit BOTBN_DTC_RECONNECT_OK ou BOTBN_DTC_RECONNECT_FAIL
+
+        Dry-run : skip silencieusement (pas de DTC).
+        """
+        if self.dry_run or self.router is None or self.router.dtc is None:
+            return
+        dtc = self.router.dtc
+        if dtc.connected:
+            return  # OK, connecte
+        # Anti-spam : 30s minimum entre tentatives
+        now = time.time()
+        if now - self._last_reconnect_attempt < 30.0:
+            return
+        self._last_reconnect_attempt = now
+        self.log.warning("DTC disconnected, attempting reconnect...")
+        try:
+            ok = dtc.connect()
+            if ok:
+                self.log.info("DTC reconnected successfully")
+                try:
+                    bot_log.emit("BOTBN_DTC_RECONNECT_OK")
+                except Exception:
+                    pass
+            else:
+                self.log.error("DTC reconnect FAILED (return False)")
+                try:
+                    bot_log.emit("BOTBN_DTC_RECONNECT_FAIL", reason="connect_returned_false")
+                except Exception:
+                    pass
+        except Exception as e:  # noqa: BLE001
+            self.log.error(f"DTC reconnect exception: {e}")
+            try:
+                bot_log.emit("BOTBN_DTC_RECONNECT_FAIL", reason=repr(e)[:200])
+            except Exception:
+                pass
+
     def run(self):
         """Boucle principale poll loop."""
         self.log.info(
@@ -628,9 +806,18 @@ class BotBNV4:
         except (AttributeError, ValueError):
             pass  # Windows / non-main thread
 
+        # FIX BUG #B.3 audit ULTRATHINK 19/06 (code-reviewer) - ensure_connected.
+        # Pattern Bot 4 INCIDENT #77 : sans check periodique de dtc.connected,
+        # un silent kick SC (socket vivante cote OS mais morte cote SC) laisse
+        # le bot envoyer des ordres dans le vide. Anti-spam 30s.
+        # NOTE BUG #3 review 19/06 : self._last_reconnect_attempt = 0.0 init
+        # deja fait dans __init__ (ligne ~227). Pas besoin de re-init ici.
+
         self._running = True
         while self._running:
             try:
+                # FIX B.3 : ensure_connected check periodique avant chaque cycle
+                self._ensure_dtc_connected()
                 self._rotate_day_if_needed()
                 for sym in self.symbols:
                     self._process_symbol(sym)
@@ -691,15 +878,42 @@ def main():
             # ClientName unique : MIA_BotBN (anti-collision MIA_Bot1V2, MIA_PaperTrader)
             dtc_cfg = DTCConfig(client_name="MIA_BotBN")
             dtc_connector = DTCConnector(config=dtc_cfg)
-            dtc_connector.connect()
-            logging.info(f"DTC connector connected (ClientName=MIA_BotBN, TA={cfg.TRADE_ACCOUNT})")
-            try:
-                bot_log.emit(
-                    "BOTBN_DTC_CONNECTED",
-                    client_name="MIA_BotBN", trade_account=cfg.TRADE_ACCOUNT,
+            # FIX BUG #1 audit ULTRATHINK 19/06 (code-reviewer) - PROD FANTOME.
+            # AVANT : connect() return value IGNORE. Si LOGON refuse ou socket
+            # timeout, le bot continue en "prod fantome" : send_market_with_stop_only
+            # retourne ("","",0.0), ordres jamais envoyes a SC, signal_id orphan.
+            # Cf BOT/dtc_connector.py:233-286 : return False si Result!=1 ou exception.
+            # APRES : capture return value + force dry_run + emit BOOT_FAIL + nullify
+            # dtc_connector pour empecher utilisation downstream (cf Bot 2 pattern).
+            connected = dtc_connector.connect()
+            if not connected:
+                logging.error(
+                    f"DTC connect FAILED (LOGON refused or socket error) - "
+                    f"fallback dry_run. host={dtc_cfg.host} port={dtc_cfg.port}"
                 )
-            except Exception:
-                pass
+                try:
+                    bot_log.emit(
+                        "BOTBN_DTC_BOOT_FAIL",
+                        host=dtc_cfg.host, port=dtc_cfg.port,
+                        client_name="MIA_BotBN",
+                        trade_account=cfg.TRADE_ACCOUNT,
+                    )
+                except Exception:
+                    pass
+                dry_run = True
+                dtc_connector = None  # CRITIQUE : empeche utilisation downstream
+            else:
+                logging.info(
+                    f"DTC connector connected "
+                    f"(ClientName=MIA_BotBN, TA={cfg.TRADE_ACCOUNT})"
+                )
+                try:
+                    bot_log.emit(
+                        "BOTBN_DTC_CONNECTED",
+                        client_name="MIA_BotBN", trade_account=cfg.TRADE_ACCOUNT,
+                    )
+                except Exception:
+                    pass
         except Exception as e:  # noqa: BLE001
             logging.error(f"DTC connector failed: {e}. Falling back to dry-run.")
             try:
@@ -707,6 +921,7 @@ def main():
             except Exception:
                 pass
             dry_run = True
+            dtc_connector = None  # FIX BUG #1 : meme protection exception path
 
     bot = BotBNV4(
         symbols=symbols, cfg=cfg, dry_run=dry_run,

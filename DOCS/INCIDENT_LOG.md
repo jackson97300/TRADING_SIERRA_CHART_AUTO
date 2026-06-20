@@ -31,6 +31,41 @@
 
 ---
 
+### 2026-06-20 (79) - [VALIDATION_MISS] - Bot 3 BN V4 main.py:445 hardcode 'long' fallback sabotait DIRECTION_MODE='both' silencieusement
+
+**Contexte** : Phase B Bot 3 BN V4 fix B.4 changeait DIRECTION_MODE default 'long' -> 'both'. Mais review code-reviewer a detecte que main.py:445 contenait `proposed_dir = self.cfg.DIRECTION_MODE if != "both" else "long"` -> RegimeGate appele avec 'long' meme quand 'both'. Si gamma bearish -> bloque LONG -> return immediat -> SHORT jamais evalue.
+
+**Ce qui a mal tourne** : B.4 'both' active la config mais le code main.py annule l'intention. Trade -$967 15/06 scenario (SHORT manque) restait reproductible meme avec fix B.4.
+
+**Cause racine** : Pattern VALIDATION_MISS (cf memory feedback_validation_miss_pre_deploy.md). Modif config non grep'd cross-codebase pour detecter consumer hardcodes. Aurait du grep `proposed_dir` ou `DIRECTION_MODE` dans tous les fichiers Python AVANT B.4 implementation.
+
+**Lecon** : Quand on modifie une config qui debloque une fonctionnalite, grep TOUS les consumers (callers, getters, defaults) pour s'assurer qu'aucun hardcode upstream ne neutralise la modif. Verifie aussi via test pytest fonctionnel (pas juste source-pattern).
+
+**Trigger prevention** : Modif default config -> grep `{config_name}` dans tous *.py -> chaque match doit etre justifie ou refactor. Cf nouveau test `test_regime_gate_direction_mode_both.py::test_source_no_more_hardcoded_long_fallback`.
+
+**Fix applique** : main.py refactor pattern deferred regime check (eager check seulement si DIRECTION_MODE != 'both', sinon check POST-SignalEngine avec direction reellement proposee) + nouveau code log BOTBN_GATE_REGIME_BLOCK_POST_SIGNAL + 4 tests pytest. Suite 88/88 PASS.
+
+**Reviewed** : code-reviewer (verdict initial GO-AVEC-RESERVES, fix applique post-review)
+
+---
+
+### 2026-06-19 (78) - [VALIDATION_MISS] - Bot MR daily_gate.state PAS persiste cross-restart depuis le debut (carnage 18/06 FOMC root cause -$1025)
+
+**Contexte** : Audit Bot MR Sim1 19/06 (apres confirmation Jackson "OUI C ETAIT UN FOMC COMMENCE A APLIQUER LES 3 FIX") revele que `main.py:142-143` faisait `daily_gate.reset_for_new_day(today)` systematique au boot. Carnage 18/06 FOMC : 15 restarts dans la journee. Chaque restart effacait n_trades + cumul_pnl. Resultat : DSL=-$2500 jamais mordue, bot a continue a trader jusqu'a -$1025 broker E-mini.
+**Ce qui a mal tourne** :
+1. `daily_gate.snapshot()/restore()` API existait dans `bot1_v2/gates/daily_limits.py:86-104` mais Bot MR ne les utilisait pas
+2. `BotMR.__init__` faisait reset systematique au boot
+3. `_on_fill_close` mettait a jour `daily_gate` in-memory sans persister sur disque
+4. Aucun reconcile DTC au boot -> positions fantomes possibles apres desync Sierra Chart (cas 19/06 PARENT_NOT_FILLED_TIMEOUT)
+5. 5111/6861 events = `BOTMR_NOT_TRADABLE` catch-all = 74.5% des skips opaques, analyse strategique impossible
+**Cause racine** : developpement Bot MR (debut juin 2026) n'avait pas integre les helpers existants de Bot 1 v2 (`daily_gate.snapshot()` + `bot_persistance.PositionPersistance.reconcile_with_dtc()`). Pattern V1 connu mais non re-applique.
+**Lecon** : tout bot paper qui gere DSL/DSW DOIT persister le snapshot daily_gate cross-restart. Sinon limite cosmetique (le bot oublie son etat journalier a chaque restart). Mark Douglas "consistency over intensity" non respecte si compteur reset par crash.
+**Trigger prevention** : avant tout deploy d'un nouveau bot paper, verifier 4 garde-fous obligatoires : (1) daily_gate.snapshot/restore persiste, (2) reconcile DTC au boot, (3) codes log specifiques par gate (pas catch-all), (4) circuit breaker SL consec persiste. Si manquant -> bug latent garanti.
+**Fix deploye** : 3 fixes critiques + 5 bugs review (cf `DOCS/BOT_CHANGELOG.md` entry 19/06 22:00). 50/50 tests PASS dont scenario carnage 18/06 reproduit.
+**Reviewed** : code-reviewer agent (verdict initial GO-AVEC-RESERVES, 5 bugs detectes, fix applique). Audit market-analyst + code-reviewer (DIM 1-5).
+
+---
+
 ### 2026-06-19 (77b) - [SIERRA_BUG_C++] - DMP_OpenType RESET session emit toutes les minutes (float32 precision sur YYYYMMDD 8 digits)
 
 **Contexte** : Screen Sierra Chart 19/06 montre logs DMP polluees par `[DMP_OpenType] RESET session (ET YYYY-MM-DD HH:MM)` emis toutes les ~1 min sur ES + NQ, parfois plusieurs fois avec ET timestamps differents dans la meme minute UTC. Pollution massive du log (~ 720 RESET log entries / 12h pour 2 symbols).
@@ -4720,7 +4755,7 @@ Resultat : recompile aurait donne **ZERO changement observable** sur les 4 featu
 | Categorie | Occurrences | Promoted en memoire ? |
 |---|---|---|
 | CONTEXT_MISS | **6** | **OUI** `feedback_context_miss.md` (deja promu, renforce 22/04 avec trigger "grep enum existant" + "batch add = grep chaque nouveau nom") |
-| VALIDATION_MISS | **9** | **OUI** (9 occurrences post +3 entries 31/32/33 le 03/06) — promu `feedback_validation_miss_patterns.md` : **27/04 leak structurel session features + 03/06 trigger renforce : "tout changement broker symbol + tout guard CRITIQUE empirique audit > 100/24h"** |
+| VALIDATION_MISS | **10** | **OUI** (10 occurrences post +1 entry #79 le 20/06 hardcode 'long' fallback Bot 3) — promu `feedback_validation_miss_patterns.md` : **27/04 leak structurel session features + 03/06 trigger renforce : "tout changement broker symbol + tout guard CRITIQUE empirique audit > 100/24h" + 20/06 trigger : "tout modif default config -> grep consumers cross-codebase"** |
 | AGENT_MISUSE | 1 | **OUI preventivement** `feedback_agent_brief_verify.md` |
 | SCOPE_CREEP | 1 | Pas encore |
 | COMMENT_FALSE | **2** | Pas encore (seuil 3+) — trigger nouveau 22/04 : "grep empirique toute reference file:line header" |

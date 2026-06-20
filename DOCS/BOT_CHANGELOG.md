@@ -2,6 +2,170 @@
 
 **Journal permanent de toutes les modifications apportees au bot** : gates, features, fixes, configs, refactos. Ordre **anti-chronologique** (dernier en haut).
 
+## 2026-06-20 02:00 — [FIX] Bot 3 BN V4 Sim3 9 fixes ULTRATHINK + 2 bugs review
+
+**Categorie** : FIX (7 B.x audit + 2 review code-reviewer)
+**Impact prod** : PAPER (Sim3)
+**Fichier(s)** :
+- `CORE/bot_bn_v4/main.py` (BUG #1 PROD FANTOME + BUG #2 silent fallback DailyGate + BUG #3 init _last_reconnect_attempt + BUG #4 deferred RegimeGate + BUG #B.3 _ensure_dtc_connected)
+- `CORE/bot_bn_v4/config.py` (BUG #4 DIRECTION_MODE default 'long' -> 'both')
+- `CORE/bn_v4_engine.py` (BUG #B.5 BN_V4_WARMUP_SKIP emit)
+- `CORE/bot_bn_v4/signal_engine.py` (BUG #B.6 BOTBN_WARMUP_ZERO_LOADED MAJEUR + diagnostic n_files_36h)
+- `CORE/log_catalog.py` (+6 nouveaux codes : BOTBN_DTC_BOOT_FAIL, BOTBN_DTC_RECONNECT_OK/FAIL, BN_V4_WARMUP_SKIP, BOTBN_WARMUP_ZERO_LOADED, BOTBN_GATE_REGIME_BLOCK_POST_SIGNAL)
+- `CORE/bot_bn_v4/tests/` (+6 nouveaux tests files, 30 tests total : 88/88 PASS suite)
+
+**Reviewer(s) agent** : code-reviewer (verdict GO-AVEC-RESERVES, 2 bugs review : #3 init defensif + #4 BLOQUANT RegimeGate deferred)
+
+### Quoi
+
+7 fixes critiques + 2 bugs review post-audit ULTRATHINK Bot 3 BN V4 Sim3 (19/06) :
+1. **B.1 PROD FANTOME** : connect() retval ignore -> dtc=None propage pour empecher utilisation downstream + emit BOTBN_DTC_BOOT_FAIL
+2. **B.2 Silent fallback Mark Douglas** : DailyLimitsGate utilisait bot1v2_cfg (DSL=-$2000) au lieu de BN V4 cfg (DSL=-$200) -> SimpleNamespace adapter explicit
+3. **B.3 ensure_connected** : check periodique cycle dtc.is_alive (pattern Bot 4 INCIDENT #77 silent kick SC)
+4. **B.4 DIRECTION_MODE='both' default** : config.py default 'long' -> 'both' (autorise SHORT en regime bearish, scenario trade -$967 15/06)
+5. **B.5 BN_V4_WARMUP_SKIP emit** : check_zone retournait None silencieusement pendant warmup -> 0/1554 GATE emit en logs prod = diagnostic impossible
+6. **B.6 BOTBN_WARMUP_ZERO_LOADED MAJEUR** : warmup_from_disk emit alerte Discord si pipeline enricher down + diagnostic n_files_36h
+7. **B.7 n_edge_buy_active** : documente (hors scope = pipeline live_enricher upstream fix)
+
+Bugs corriges suite a la review code-reviewer :
+- **Bug #4 BLOQUANT** : RegimeGate appele avec proposed_dir='long' meme si DIRECTION_MODE='both' -> sabote B.4. Refactor pattern deferred regime check POST-SignalEngine + nouveau code log BOTBN_GATE_REGIME_BLOCK_POST_SIGNAL.
+- **Bug #3 IMPORTANT** : _last_reconnect_attempt init dans __init__ (defensif AttributeError hors run()).
+
+### Pourquoi
+
+Audit 4 agents Phase A (18/06) : verdict 4/4 NOGO + 9 findings critiques sur Bot 3 BN V4. Audit ULTRATHINK suivi : 7 bugs majeurs detectes. Trade -$967 15/06 = scenario manque silencieux quand DIRECTION_MODE='long' bloque SHORT en regime bearish. Carnage similar pattern Bot MR 18/06.
+
+Review code-reviewer post-implementation (19/06) : 2 bugs critiques de plus a fixer avant deploy. Notamment bug #4 qui sabotait totalement l'intention B.4.
+
+Jackson directive : "BIEN ENTENDU TESTER CECQUE ON PEUX SUR LES VRAI DONNER" + "ES ET NQ OK ON COMMENCE".
+
+### Impact attendu
+
+- DTC fantome impossible (B.1 fail-loud + emit BOTBN_DTC_BOOT_FAIL CRITIQUE Discord)
+- DailyLimitsGate utilise vraiment les seuils Mark Douglas BN V4 (DSL=-$200 vs -$2000 avant)
+- Reconnexion automatique cycle (B.3 anti-spam 30s) + emit BOTBN_DTC_RECONNECT_OK/FAIL
+- DIRECTION_MODE='both' autorise BOTH directions + RegimeGate check sur direction REELLE post-SignalEngine
+- Diagnostic warmup visible (B.5 + B.6 Discord alert pipeline down)
+
+### Validation pre-deploy
+
+- pytest CORE/bot_bn_v4/tests/ -v --no-cov : **88/88 PASS** (incluant 4 nouveaux tests bug #4)
+- Test integration empirique local 1626 bars sierra_enriched (8j data 10-19/06) : ZERO crash, cascade gates emit visible (OPEN_WINDOW=694, TREND=82, TREND_LONG_ALIGN=72, LEVELS=2, DENSITY=2), 0 tradable (sur-selectif normal BN V4)
+- DIRECTION_MODE='both' confirme : evaluations 2x (long + short) par bar
+- DailyLimitsGate config Mark Douglas verifie : max_trades=5, DSL=-$200, DSW=$150
+- Warmup local NQ+ES 240/240, is_ready=True
+
+### Revert plan
+
+`git revert` du commit feat/sierra-full-migration HEAD. Restart MIA-BotBN-V4 service. Bot reverra config Direction='long' + RegimeGate eager.
+
+### Suivi post-deploy
+
+- J+1 : grep BOTBN_GATE_REGIME_BLOCK_POST_SIGNAL dans LOGS/risk/risk_botbn_*.jsonl (verif fix bug #4 emit reel)
+- J+1 : grep BOTBN_DTC_BOOT_FAIL + BOTBN_DTC_RECONNECT_* (verif B.1 + B.3 emit reel)
+- J+7 : verif PnL Sim3 vs PnL theorique sans B.4 (mesure impact deferred RegimeGate)
+- J+30 : si N>=30 trades, walk-forward DSR Lopez complet
+
+### Nouveaux logs catalog
+
+- BOTBN_DTC_BOOT_FAIL (CRITIQUE, execution)
+- BOTBN_DTC_RECONNECT_OK (MAJEUR, execution)
+- BOTBN_DTC_RECONNECT_FAIL (CRITIQUE, execution)
+- BN_V4_WARMUP_SKIP (INFO, decisions)
+- BOTBN_WARMUP_ZERO_LOADED (MAJEUR, events)
+- BOTBN_GATE_REGIME_BLOCK_POST_SIGNAL (INFO, risk)
+
+---
+
+## 2026-06-19 22:00 — [FIX] Bot MR 3 fixes critiques audit + 5 bugs review
+
+**Categorie** : FIX (3 fixes audit + 5 bugs review-detected)
+**Impact prod** : PAPER (Sim1)
+**Fichier(s)** :
+- `CORE/bot1_v2/state/position_store.py` (+ daily_state field + 2 methodes)
+- `CORE/bot_mean_revert/main.py` (+ FIX 1 restore boot + persist after trade + FIX 2 _reconcile_with_dtc_at_boot + _force_flatten_broker + FIX 3 elif dispatch 13 prefixes)
+- `CORE/log_catalog.py` (+33 nouveaux codes : 2 daily_state + 14 reconcile + 12 skip_reasons + 5 ghost/force_flat)
+- `CORE/bot_mean_revert/tests/test_daily_state_persistence.py` (NEW : 10 tests dont scenario carnage 18/06)
+- `CORE/bot_mean_revert/tests/test_reconcile_dtc_boot.py` (NEW : 11 tests 5 cas)
+
+**Reviewer(s) agent** : code-reviewer (verdict initial GO-AVEC-RESERVES, 5 bugs detectes, fix applique, re-run pytest 50/50 PASS)
+
+### Quoi
+
+3 fixes critiques suite a l'audit Bot MR Sim1 19/06 :
+1. **Persistance daily_gate.state cross-restart** : snapshot + restore via PositionStore.set_daily_state/get_daily_state, filtre par date_str.
+2. **Reconcile DTC au boot** : 5 cas (OK_FLAT / OK_RESTORED / PYTHON_GHOST / UNKNOWN_BROKER_POS / DIVERGENCE) + bypass HALT via env MIA_BOT_MR_RECONCILE_FORCE_FLAT=1.
+3. **Codes log specifiques** : 12 nouveaux codes pour les prefixes skip_reason qui tombaient en BOTMR_NOT_TRADABLE catch-all (74.5% des skips opaques).
+
+Bugs corriges suite a la review code-reviewer :
+- Bug #1 CRITIQUE : PYTHON_GHOST cancel TP/SL CIDs + Type 209 flatten AVANT purge store (orphan-prevention.md)
+- Bug #2 CRITIQUE : force_flat=1 envoie Type 209 SUBMIT_FLATTEN_POSITION_ORDER + purge store (evite mode aveugle)
+- Bug #3 IMPORTANT : dispatch REGIME_CLASSIFIER_BLOCKED (etait en catch-all alors que ~30% des skips si vote actif)
+- Bug #4 IMPORTANT : snapshot list syms_to_check explicit (race condition reconcile vs fill_listener thread DTC)
+- Bug #5 MAJEUR : daily_state persist fail emit CRITIQUE Discord (au lieu de log.warning silencieux)
+
+### Pourquoi
+
+Carnage 18/06 FOMC (-$1025 broker) root cause : 15 restarts dans la journee -> daily_gate.reset_for_new_day() systematique au boot effacait n_trades + cumul_pnl -> DSL=-$2500 jamais mordue.
+
+Audit market-analyst : 5111/6861 events = `BOTMR_NOT_TRADABLE` catch-all = 74.5% des skips opaques, analyse strategique impossible.
+
+Audit code-reviewer : 4 trous structurels (daily_gate PAS persiste, aucun reconcile DTC au boot, aucune surveillance dtc.is_alive, DSL=-$2500 mathematiquement injoignable = circuit breaker mord avant).
+
+Jackson : "OUI C ETAIT UN FOMC COMMENCE A APLIQUER LES 3 FIX".
+
+### Impact attendu
+
+- DSL fonctionnel cross-restart (kill-switch reellement effectif)
+- Positions fantomes detectees au boot (avant 1er trade)
+- Analyse log J+1 possible (skips par gate trackes)
+- Codes ghost/force_flat : orphan-prevention respectee
+- Effet de bord : aucun sur Bot 1 v2 (daily_state ignore si absent dans load)
+
+### Validation pre-deploy
+
+- [x] Tests unitaires dedies : 50/50 PASS (10 daily_state + 11 reconcile + 29 config/circuit/ultrathink/integration)
+- [x] Test empirique : `from CORE.bot_mean_revert.main import BotMR` -> import OK + methodes _reconcile_with_dtc_at_boot + _force_flatten_broker presentes
+- [x] Review agent : code-reviewer GO-AVEC-RESERVES initial -> 5 bugs fix
+- [x] Codes log_catalog : 33 nouveaux codes verifies via LOG_CODES
+- [ ] Tests pre-existants 41 FAIL : pre-deploy ULTRATHINK 19/06 matin (hors scope, finish_strength manquant dans bars factory)
+
+### Revert plan
+
+```bash
+ssh Administrator@212.28.179.199 "powershell -Command 'Stop-Service MIA-BotMR'"
+git revert <commit_sha>
+scp CORE/bot_mean_revert/main.py CORE/bot1_v2/state/position_store.py CORE/log_catalog.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/CORE/<paths>"
+ssh Administrator@212.28.179.199 "powershell -Command 'Start-Service MIA-BotMR'"
+```
+
+### Deployed at YYYY-MM-DD HH:MM
+(a remplir apres deploy VPS + restart service Bot MR)
+
+### Suivi post-deploy
+
+**J+1 (20/06 matin)** :
+- `grep "BOTMR_DAILY_STATE_RESTORED" LOGS/decisions/decisions_20260620*.jsonl` -> doit emit >=1 par restart
+- `grep "BOTMR_RECONCILE_OK" LOGS/events/events_20260620*.jsonl` -> >=1 par restart, 0 si HALT_BOOT
+- `grep -c "BOTMR_NOT_TRADABLE" LOGS/decisions/decisions_20260620*.jsonl` vs 19/06 -> doit baisser drastiquement (<25%)
+- `grep -c "BOTMR_NO_EXTENSION" LOGS/decisions/decisions_20260620*.jsonl` -> attendu 50%+ des skips
+- `grep "BOTMR_DAILY_STATE_PERSIST_FAIL" LOGS/events/events_20260620*.jsonl` -> doit etre 0
+- `grep "BOTMR_BOOT_HALT_RECONCILE" LOGS/events/events_20260620*.jsonl` -> doit etre 0
+
+**J+7** : valider que les fixes ne regressent pas - nombre signals >= baseline, pas de nouvelle position fantome reportee.
+
+**J+30** : sample 100+ trades collecte avec PnL correct cross-restart -> validation Lopez DSR possible sur ULTRATHINK.
+
+### Cross-references
+
+- Audit Bot MR 19/06 (cette session) : DIM 1+2+5 market-analyst, DIM 3+4 code-reviewer
+- INCIDENT_LOG : entry 78 (a creer pour VALIDATION_MISS daily_gate pas persiste depuis le debut)
+- Memories : `feedback_douglas_consistency_principles.md`, `project_4bots_persistance_chantier.md`, `feedback_validation_miss_pre_deploy.md`
+- `.claude/rules/critical-tasks-review.md` : 3 fixes = critere 1 Trading/Risk + critere 6 Cross-module
+- `.claude/rules/orphan-prevention.md` : PYTHON_GHOST cancel TP/SL + Type 209 flatten respecte (bug #1 review)
+
+---
+
 ## Regles d'usage (obligatoires)
 
 1. **AVANT** tout deploy d'une modif qui touche le moteur de decision (paper_trader, builders, SLTPEngine, C++ DMP, gates), ecrire une entry ici.
