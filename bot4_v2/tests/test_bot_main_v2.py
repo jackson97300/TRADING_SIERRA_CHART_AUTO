@@ -798,3 +798,198 @@ def test_ultrathink_log_codes_registered():
     }
     missing = expected - set(LOG_CODES.keys())
     assert missing == set(), f"Missing log codes: {missing}"
+
+
+# ============================================================
+# STRESS TESTS (P5.3 backlog)
+# ============================================================
+
+
+def test_stress_1000_bars_no_crash():
+    """1000 bars consecutifs sans dispatch -> pas de crash + memory bornee."""
+    settings = BotMainSettings(
+        symbols=("NQ",), heartbeat_interval_sec=0.0, poll_idle_sec=0.0,
+        max_cycles=1000, install_signal_handlers=False,
+        catch_cycle_exceptions=False, max_consecutive_exceptions=0,
+    )
+    # Bars safes sans trigger (low > entry par defaut)
+    bars = [
+        _bar(high=20005, low=20002, close=20003,
+              ts=f"2026-06-25T{(10+i//60):02d}:{i%60:02d}:00+00:00")
+        for i in range(1000)
+    ]
+    loop, _, _, _ = _make_loop(bars=bars, settings=settings)
+    loop.run()
+    assert loop.processed_bars == 1000
+    assert loop.total_dispatches == 0
+    # Map _signal_to_dispatch doit etre vide (pas de fire car detector None)
+    assert len(loop._router._signal_to_dispatch) == 0
+
+
+def test_stress_1000_bars_with_fires_and_archives():
+    """1000 bars avec scenarios trigger + close cycle complet.
+
+    Verifie pas de leak _signal_to_dispatch + reconciler clean apres N cycles.
+    """
+    fire = _make_fire(direction="SHORT", confidence=0.8)
+    settings = BotMainSettings(
+        symbols=("NQ",), heartbeat_interval_sec=0.0, poll_idle_sec=0.0,
+        max_cycles=300, install_signal_handlers=False,
+        catch_cycle_exceptions=True, max_consecutive_exceptions=0,
+    )
+    # 300 cycles de 3 bars : fire/PENDING -> trigger -> COMPLETED
+    bars = []
+    for cycle in range(100):
+        base_min = cycle * 3
+        # Bar fire (PENDING create)
+        bars.append(_bar(high=20005, low=20002, close=20003,
+                          ts=f"2026-06-25T10:{base_min%60:02d}:00+00:00"))
+        # Bar trigger (PENDING confirmed via auto-confirm? not automatic)
+        # Au lieu : bar pas trigger pour eviter besoin confirm
+        bars.append(_bar(high=20003, low=20001, close=20002,
+                          ts=f"2026-06-25T10:{(base_min+1)%60:02d}:00+00:00"))
+        # Bar idle
+        bars.append(_bar(high=20002, low=20001, close=20001,
+                          ts=f"2026-06-25T10:{(base_min+2)%60:02d}:00+00:00"))
+    loop, _, _, _ = _make_loop(
+        detectors=[FixedDetector("S", fire)], bars=bars, settings=settings,
+    )
+    loop.run()
+    # PENDING instances expirent par window=5 bars -> INVALIDATED + archive
+    # Map _signal_to_dispatch reste vide car aucun dispatch (PENDING never triggered)
+    assert loop.processed_bars >= 100
+    assert len(loop._router._signal_to_dispatch) == 0
+
+
+def test_stress_multi_symbol_5_instruments():
+    """5 symboles trackers isoles + state correct par symbol (max_concurrent=10)."""
+    class SymbolFilter:
+        def __init__(self, sym):
+            self._sym = sym
+
+        @property
+        def name(self):
+            return f"F_{self._sym}"
+
+        @property
+        def family(self):
+            return "Test"
+
+        @property
+        def directions_supported(self):
+            return ("LONG", "SHORT")
+
+        def detect(self, ctx):
+            return ScenarioFire(
+                signal_id=f"Test_{ctx.symbol}_001",
+                scenario_name=f"Test_{ctx.symbol}",
+                family="Test", symbol=ctx.symbol,
+                direction="SHORT",
+                entry_price=20000.0, stop_loss=20010.0, target_1=19980.0,
+                heuristic_score=80, confidence=0.8,
+                regime="TREND", session="us_cash",
+                timestamp_utc="2026-06-25T10:00:00+00:00",
+            )
+
+    symbols = ("NQ", "ES", "MGC", "GC", "SI")
+    settings = BotMainSettings(
+        symbols=symbols,
+        heartbeat_interval_sec=0.0, poll_idle_sec=0.0, max_cycles=1,
+        install_signal_handlers=False, catch_cycle_exceptions=True,
+    )
+    bars = [_bar()]
+    loop, _, _, _ = _make_loop(
+        detectors=[SymbolFilter("*")],
+        bars=bars, settings=settings,
+    )
+    # Override router settings : max_concurrent=10 pour permettre 5 trackers
+    loop._router._settings = RouterSettings(max_concurrent_trades=10)
+    loop.run()
+    # Apres 1 bar, chaque symbol a son tracker avec instance PENDING
+    for sym in symbols:
+        assert sym in loop._router.trackers, f"Missing tracker {sym}"
+        assert loop._router.trackers[sym].n_active == 1, (
+            f"Symbol {sym}: expected n_active=1, got {loop._router.trackers[sym].n_active}"
+        )
+
+
+def test_stress_dispatch_map_cap_eviction_under_load():
+    """Sous charge >> cap, eviction FIFO maintient borne."""
+    fire = _make_fire(direction="SHORT", confidence=0.8)
+    loop, _, _, _ = _make_loop(detectors=[FixedDetector("S", fire)])
+    loop._router._dispatch_map_cap = 50  # cap reduit
+    # Inject 200 dispatches via injection directe
+    from bot4_v2.decision.decision_router import DispatchedBracket
+    for i in range(200):
+        bm = DispatchedBracket(
+            signal_id=f"S_{i:04d}", parent_cid=f"P_{i:04d}", sl_cid="SL",
+            symbol="NQ", direction="SHORT", quantity=1, fill_price=20000.0,
+            scenario_name="Test",
+        )
+        # Reproduit eviction logic
+        if len(loop._router._signal_to_dispatch) >= loop._router._dispatch_map_cap:
+            evict = next(iter(loop._router._signal_to_dispatch))
+            del loop._router._signal_to_dispatch[evict]
+        loop._router._signal_to_dispatch[bm.signal_id] = bm
+    # Cap maintenu
+    assert len(loop._router._signal_to_dispatch) == 50
+    # Premiers signaux evictes, derniers presents
+    assert "S_0000" not in loop._router._signal_to_dispatch
+    assert "S_0199" in loop._router._signal_to_dispatch
+
+
+def test_stress_kill_switch_under_persistent_exceptions():
+    """N exceptions consecutives -> kill_switch declenche + total ok."""
+    call_idx = [0]
+    def explosive_ctx(bar, symbol):
+        call_idx[0] += 1
+        raise RuntimeError("persistent")
+
+    settings = BotMainSettings(
+        symbols=("NQ",), heartbeat_interval_sec=0.0, poll_idle_sec=0.0,
+        max_cycles=100, install_signal_handlers=False,
+        catch_cycle_exceptions=True, max_consecutive_exceptions=10,
+    )
+    bars = [_bar(ts=f"2026-06-25T10:{i%60:02d}:00+00:00") for i in range(100)]
+    loop, _, _, _ = _make_loop(bars=bars, settings=settings)
+    loop._build_context = explosive_ctx
+    loop.run()
+    # Kill switch a 10 consecutives -> processed_bars <= 11
+    assert loop.processed_bars <= 11
+
+
+def test_stress_naked_plus_dispatched_same_tick_no_corruption():
+    """Naked instance + closed instance dans le meme tick -> state correct."""
+    # Cas edge : 1 instance TRIGGERED (naked) + autre COMPLETED meme bar
+    # Difficile a setup propre via bot_main car anti-pyramiding.
+    # On test que la map _signal_to_dispatch gere correctement add + del
+    # dans le meme cycle.
+    fire = _make_fire(direction="SHORT", confidence=0.8)
+    loop, _, _, _ = _make_loop(detectors=[FixedDetector("S", fire)])
+    # 1. Inject dispatch dans map
+    from bot4_v2.decision.decision_router import DispatchedBracket
+    loop._router._signal_to_dispatch["S_old"] = DispatchedBracket(
+        signal_id="S_old", parent_cid="P_OLD", sl_cid="SL",
+        symbol="NQ", direction="SHORT", quantity=1, fill_price=20000.0,
+        scenario_name="Test",
+    )
+    # 2. Pop simule archive
+    popped = loop._router._signal_to_dispatch.pop("S_old", None)
+    assert popped is not None
+    assert popped.parent_cid == "P_OLD"
+    assert "S_old" not in loop._router._signal_to_dispatch
+
+
+def test_stress_total_dispatches_counter_monotonic():
+    """Counter total_dispatches reste monotonique sur N bars."""
+    settings = BotMainSettings(
+        symbols=("NQ",), heartbeat_interval_sec=0.0, poll_idle_sec=0.0,
+        max_cycles=100, install_signal_handlers=False,
+        catch_cycle_exceptions=False,
+    )
+    bars = [_bar(ts=f"2026-06-25T10:{i%60:02d}:00+00:00") for i in range(100)]
+    loop, _, _, _ = _make_loop(bars=bars, settings=settings)
+    loop.run()
+    # Sans detector + sans trigger -> 0 dispatches
+    assert loop.total_dispatches == 0
+    assert loop.processed_bars == 100

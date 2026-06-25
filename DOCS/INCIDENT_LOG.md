@@ -32,6 +32,36 @@
 
 ---
 
+### 2026-06-26 (89) - [CONTEXT_MISS] - Bot 4 v2 P5.3.A schema inconsistance bar `sym` vs `symbol`
+
+**Contexte** : Phase P5.3.A (26/06) ContextBuilder echec test sur `ctx.symbol == "UNKNOWN"`. Investigation : `narrative_engine.py:658,689` lit `bar.get("sym", "NQ")` ALORS QUE le JSONL live_enriched stocke la clef `"symbol"` (verifie via fixture `bot4_v2/tests/fixtures/sample_100_NQ.jsonl` premier bar).
+
+**Workaround applique P5.3.A** : `ContextBuilder.build()` set les 2 clefs dans le bar enrichi (`bar["sym"] = sym` + `bar.setdefault("symbol", sym)`). Tests passent.
+
+**Pourquoi c'est un CONTEXT_MISS** :
+- ContextBuilder consomme `bar.get("sym")` indirectement via narrative_engine
+- Si demain quelqu'un consomme `bar["sym"]` hors ContextBuilder (sur un bar non-enrichi via cette pipeline) → KeyError
+- C'est un silent fallback pattern (cf `.claude/rules/lessons.md` regle souveraine)
+
+**Cause racine** : schema inconsistance entre :
+1. JSONL live_enriched produit par `BOT/run_sierra_enricher.py` (clef `symbol`)
+2. narrative_engine.py legacy heritage (clef `sym`)
+
+**Fix propre (backlog P5.3.E patch ULTRATHINK R1)** :
+- Option A : narrative_engine.py lire `bar.get("sym") or bar.get("symbol", "UNKNOWN")` (resilience)
+- Option B : enricher Sierra produire les 2 clefs au moment du dump
+- Option C : helper `_extract_symbol(bar)` partage cross-modules
+
+Decision Jackson : **Option A** (modif locale narrative_engine, pas de regen JSONL retro).
+
+**Trigger prevention** :
+- Avant fix bar features lecture : grep cross-codebase `bar.get("sym")` + `bar.get("symbol")` pour identifier l'inconsistance globale
+- Si modif schema JSONL (clef ajoutee/renommee) → grep TOUS les consommateurs simultanement
+
+**Reviewed** : code-reviewer agent ULTRATHINK P5.3 (RESERVE CRITIQUE 1) + Claude self-audit + Jackson 26/06.
+
+---
+
 ### 2026-06-25 (88) - [BONNE_NOUVELLE+SINGLE_TRADE] - Bot 1 mean revert 1er trade 25/06 ES BUY -$25 SL (post-PCE window)
 
 **Contexte** : Apres 22h de session sans trade Bot 1+2+3 (audit ULTRATHINK 25/06 #87), Jackson rapporte "BOT 1 A TRADER ENFIN" (snap dashboard). Investigation confirme :
