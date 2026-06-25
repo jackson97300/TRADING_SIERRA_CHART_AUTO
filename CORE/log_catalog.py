@@ -1245,9 +1245,13 @@ LOG_CODES = {
     "BOT4_CONFIG_LOADED":           (LogLevel.INFO,     "events", "Bot4 config loaded : risk_mode={risk_mode} sizing={sizing_mode} tr40={tr40_enabled} mfe_tp={mfe_tp_enabled} dry_run={dry_run}"),
     "BOT4_LOCK_FAIL":               (LogLevel.CRITIQUE, "events", "Bot4 lock file present, double-instance bloquee : path={lock_path} content={content}"),
     "BOT4_SHUTDOWN":                (LogLevel.MAJEUR,   "events", "Bot4 shutdown : reason={reason} positions_open={positions_open}"),
-    "BOT4_HEARTBEAT":               (LogLevel.INFO,     "events", "Bot4 heartbeat : uptime_min={uptime_min} bars_processed={bars_processed} trades_today={trades_today} positions={positions}"),
+    "BOT4_HEARTBEAT":               (LogLevel.INFO,     "events", "Bot4 heartbeat : uptime_min={uptime_min} bars_processed={bars_processed} stale_skips={stale_skips} stale_skips_last_window={stale_skips_last_window} trades_today={trades_today} positions={positions}"),
     "BOT4_LOOP_EXCEPTION":          (LogLevel.CRITIQUE, "events", "Bot4 loop exception : symbol={symbol} exc_type={exc_type} exc_msg={exc_msg}"),
     "BOT4_KILL_SWITCH_DETECTED":    (LogLevel.MAJEUR,   "events", "Bot4 kill switch detected STOP.flag : path={kill_switch_path}"),
+    # FIX 24/06/2026 audit garde-fous : Bot 4 etait SEUL bot sans check fraicheur bar.
+    # Helper transversal CORE/bar_freshness.check_bar_freshness_with_emit emit ce code
+    # quand la bar live_enriched/sierra/{SYM}/ est stale (> DMP_BAR_MAX_AGE_SEC).
+    "BOT4_BAR_STALE_DETECTED":      (LogLevel.MAJEUR,   "decisions", "Bot4 bar stale detected (skip cycle) : sym={sym} age_sec={age_sec} reason={reason}"),
 
     # Reader M1 (6 codes - degraded modes only, ReaderEvent Pydantic capture le reste)
     "BOT4_READER_NO_BAR":           (LogLevel.ALERTE,   "events", "Bot4 reader no bar : sym={sym} live_root={live_root} reason={reason}"),
@@ -1488,6 +1492,18 @@ LOG_CODES = {
     "BOT1V2_DAILY_STATE_RESTORED":  (LogLevel.INFO,     "decisions", "Bot1V2 daily_gate restored cross-restart : date={date_str} n_trades={n_trades_today} pnl=${cumul_pnl_usd}"),
     "BOT1V2_DAILY_STATE_RESET":     (LogLevel.INFO,     "decisions", "Bot1V2 daily_gate reset : date={date_str} reason={reason}"),
     "BOT1V2_DAILY_STATE_PERSIST_FAIL": (LogLevel.CRITIQUE, "events",  "Bot1V2 daily_state persist FAIL : context={context} err={err} (DSL inoperante restart suivant)"),
+
+    # ============================================================
+    # FIX PHASE B audit forensique 22-23/06 (Bot 2 Mirror v2 Sim2)
+    # Bugs identifies par quality-auditor : register_open/close inoperants
+    # (26 trades vs limit 5), zone toxique 13h-17h30 UTC (PF 0.00, -$72),
+    # stars 1/2 non-predictifs (WR 38%/23% vs 80% pour 3/3)
+    # ============================================================
+    "BOT1V2_DAILY_OPEN_REGISTERED": (LogLevel.INFO, "risk", "Bot1V2 trade opened : sym={sym} n_trades_today={n_trades_today}/{max_trades} (Fix B1 register_open)"),
+    "BOT1V2_COOLDOWN_POST_LOSS_ACTIVE": (LogLevel.MAJEUR, "risk", "Bot1V2 cooldown post-loss ACTIVE : sym={sym} duration_min={duration_min} until={until_iso} (Fix B2)"),
+    "BOT1V2_COOLDOWN_POST_LOSS_BLOCK": (LogLevel.INFO, "risk", "Bot1V2 skip {sym} : cooldown post-loss actif ({remaining_min} min restant)"),
+    "BOT1V2_PRE_RTH_LOCKOUT_BLOCK": (LogLevel.INFO, "decisions", "Bot1V2 skip {sym} : PRE_RTH_LOCKOUT 12h30-13h30 ET (zone London close + US pre-open toxique, WR 0% PF 0.00 historique)"),
+    "BOT1V2_MIN_STARS_INSUFFICIENT": (LogLevel.INFO, "decisions", "Bot1V2 skip {sym} : stars={stars_count}/{stars_total} < min_required={min_stars} (stars 1/2 non-predictifs WR<40%, seul 3/3 a WR 80%)"),
     # FIX B3 Phase 2 review code-reviewer 19/06 : codes log Phase 2 obligatoires
     # (regle souveraine LOGS TRACABILITE 01/05). Sans ces codes, validation J+1
     # impossible = on deploie a l'aveugle. Default OFF Phase 2 actuellement,
@@ -1514,6 +1530,12 @@ LOG_CODES = {
     "BOT1V2_FILL_PRICE_INVALID":    (LogLevel.ALERTE,   "execution", "Bot1V2 fill price invalid : {sym} kind={kind} status={msg_status} last={last_fill_price} avg={avg_fill_price} sig={signal_id} cid={cid}"),
     "BOT1V2_STATE_BRIDGE_CLOSE_EXCEPTION": (LogLevel.ALERTE, "events", "Bot1V2 state_bridge.close_position exception : {sym} {err}"),
     "BOT1V2_ON_CLOSE_CALLBACK_EXCEPTION":  (LogLevel.ALERTE, "events", "Bot1V2 on_close_callback exception : {sym} {err}"),
+    # FIX Phase 1C+2 audit ULTRATHINK 24/06 : trade_journal + regime-aware
+    "BOT1V2_TRADE_JOURNAL_WIRED":   (LogLevel.INFO,     "events",    "Bot1V2 TradeJournal initialise : path={path}"),
+    "BOT1V2_TRADE_JOURNAL_EXCEPTION": (LogLevel.ALERTE, "events",   "Bot1V2 TradeJournal log_trade fail : {sym} {err}"),
+    "BOT1V2_REGIME_CLASSIFIER_WIRED": (LogLevel.INFO,   "events",    "Bot1V2 RegimeClassifier V_FINAL wire : blacklist={blacklist}"),
+    "BOT1V2_REGIME_DETECTED":       (LogLevel.INFO,     "decisions", "Bot1V2 {sym} regime={regime} session={session} (V_FINAL)"),
+    "BOT1V2_REGIME_SESSION_BLOCK":  (LogLevel.MAJEUR,   "decisions", "Bot1V2 skip {sym} : blacklist (regime={regime}, session={session}) - V_FINAL"),
     "BOT1V2_FILL_CLOSE":            (LogLevel.MAJEUR,   "decisions", "Bot1V2 fill close : {sym} ${pnl_usd:.2f} trades_today={trades_today} cumul=${cumul_pnl:.2f}"),
     "BOT1V2_FILL_SL_CID_UPDATED":   (LogLevel.INFO,     "execution", "Bot1V2 fill SL CID updated (trailing) : {sym} old={old_sl_cid} new={new_sl_cid} sig={signal_id}"),
 
@@ -1594,6 +1616,25 @@ LOG_CODES = {
     # Bloque uniquement TREND_*_STRONG + PANIC. TREND_*_WEAK et RANGE autorises.
     "BOTMR_REGIME_SCORE_BLOCK": (LogLevel.INFO, "decisions",
         "BotMR {sym} {direction} skip - regime score {regime} (score={score} features={features})"),
+
+    # ============================================================
+    # FIX PHASE A audit forensique 22-23/06 (Bot 1 Mean Revert Sim1)
+    # Bug critique identifie par market-analyst : condition SD inversee
+    # signal_engine.py:400 -> 1030 LONG / 0 SHORT le 18/06. Le bot achete
+    # dans zone HAUTE entre VWAP et SD3u au lieu de SD3 extension extreme.
+    # ============================================================
+    "BOTMR_LONG_BELOW_VWAP_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR skip LONG {sym} : prix sous VWAP-d intraday (dist_vwap_d_pct={dist:.3f}<{thr:.2f}) - fade trend down probable (Fix A2)"),
+    "BOTMR_SHORT_ABOVE_VWAP_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR skip SHORT {sym} : prix au-dessus VWAP-d intraday (dist_vwap_d_pct={dist:.3f}>{thr:.2f}) - fade trend up probable (Fix A2)"),
+    "BOTMR_SD_FEATURE_MISSING": (LogLevel.MAJEUR, "decisions",
+        "BotMR skip {sym} : feature SD critique absente (level={level} d_low={d_low} d_high={d_high}) - fail-loud anti-pattern Gamma=0.0 (Fix A1 BUG#3 review 23/06)"),
+    "BOTMR_COOLDOWN_PROGRESSIVE_ACTIVE": (LogLevel.INFO, "decisions",
+        "BotMR skip {sym} : cooldown progressif post-LOSS actif (elapsed={elapsed:.0f}s/{cooldown:.0f}s n_sl_consec={n_sl_consec}) - anti-spirale carnage FOMC (Fix A3)"),
+    "BOTMR_NEWS_WINDOW_BLOCK": (LogLevel.MAJEUR, "decisions",
+        "BotMR skip {sym} : news window active ({event} until={until_iso}, buffer_min={buffer_min}) - eviter carnage type FOMC 18/06 (Fix A4)"),
+    "BOTMR_NEWS_GATE_FAIL_CLOSED": (LogLevel.CRITIQUE, "decisions",
+        "BotMR skip {sym} : eco_calendar module FAIL fail-closed (err={err}) - aligne Bot 3 v3 24/05 (Fix A4)"),
     # 🆕 18/06/2026 Phase 4 Orderflow confirmation + Anti-top + Momentum cap.
     # Calibration empirique 6 trades 18/06 : LOSS 3/3 partagent delta_bar negatif +
     # slope_10 surchauffe + proche HH frais. Variable la + discriminante = delta_bar
@@ -1666,6 +1707,23 @@ LOG_CODES = {
         "BotMR reconcile {sym} DIVERGENCE : Python {py_direction} {py_qty} vs Broker {br_direction} {br_qty} action={action}"),
     "BOTMR_RECONCILE_QUERY_FAILED": (LogLevel.CRITIQUE, "events",
         "BotMR reconcile {sym} query DTC fail : contract={contract} err={err}"),
+    # FIX 24/06/2026 Jackson directive ES + NQ : bypass HALT si force_flat=1 + py_flat
+    # (DTC sans reply pour contrat sans position chez le broker = traite comme OK_FLAT).
+    "BOTMR_RECONCILE_QUERY_FAILED_BYPASS_FLAT": (LogLevel.ALERTE, "events",
+        "BotMR reconcile {sym} bypass HALT (force_flat=1 + py_flat) : contract={contract}"),
+    # FIX PROP #1+#2 audit market-analyst 24/06 - momentum_5b filter + skip AH
+    "BOTMR_MOMENTUM_5B_BLOCK_LONG": (LogLevel.INFO, "decisions",
+        "BotMR skip LONG {sym} : momentum_5b too bear (mom_5b={mom_5b:.1f}<{thr:.1f}) - anti catch falling knife (Prop #1)"),
+    "BOTMR_MOMENTUM_5B_BLOCK_SHORT": (LogLevel.INFO, "decisions",
+        "BotMR skip SHORT {sym} : momentum_5b too bull (mom_5b={mom_5b:.1f}>{thr:.1f}) - anti catch falling razor (Prop #1)"),
+    "BOTMR_SESSION_AH_BLOCK": (LogLevel.INFO, "decisions",
+        "BotMR skip {sym} : session AH UTC (hour={hour}h in [{start}-{end}h]) - 0/10 TP empirique (Prop #2)"),
+    # V_FINAL audit market-analyst 24/06 - REGIME-AWARE architecture
+    # Backtest 7j (22929 bars, 67 trades) : +$299, 95% wins preserves, cross-period.
+    "BOTMR_REGIME_DETECTED": (LogLevel.INFO, "decisions",
+        "BotMR {sym} regime={regime} session={session} (V_FINAL)"),
+    "BOTMR_REGIME_SESSION_BLOCK": (LogLevel.MAJEUR, "decisions",
+        "BotMR skip {sym} : blacklist (regime={regime}, session={session}) - V_FINAL exclusion regle"),
     "BOTMR_RECONCILE_HALT_BOOT": (LogLevel.CRITIQUE, "events",
         "BotMR boot HALT cause reconcile critique. Bypass via MIA_BOT_MR_RECONCILE_FORCE_FLAT={force_flat_available}"),
     "BOTMR_BOOT_HALT_RECONCILE": (LogLevel.CRITIQUE, "events",
@@ -1795,11 +1853,75 @@ LOG_CODES = {
     "BOTBN_TRADABLE_HYPOTHETICAL":  (LogLevel.INFO,     "decisions", "BotBN TRADABLE_HYPO : {sym} {direction} grade={grade} session={session_phase} (shadow log A/B ou London)"),
     "BOTBN_ORDER_SENT":             (LogLevel.INFO,     "execution", "BotBN ordre envoye : {sym} {direction} qty={n_micros} parent={parent_cid} fill={fill_price:.2f}"),
     "BOTBN_ORDER_FAIL":             (LogLevel.CRITIQUE, "execution", "BotBN ordre fail : {sym} {direction} err={err_msg}"),
+    "BOTBN_DTC_NOT_CONNECTED_PRE_SEND": (LogLevel.CRITIQUE, "execution", "BotBN DTC down avant envoi : {sym} {direction} (SC restart silencieux probable, signal {grade} perdu)"),
     "BOTBN_POSITION_NAKED":         (LogLevel.CRITIQUE, "execution", "BotBN position NUE (fill OK, SL non pose) : {sym} {direction} fill={fill_price:.2f} parent={parent_cid} -> close auto requis"),
     "BOTBN_DAILY_STATE_LOAD":       (LogLevel.INFO,     "events",    "BotBN daily state load : n_trades={n_trades} pnl=${pnl:.2f} date={date}"),
     "MARKET_STOP_ONLY_NAKED":       (LogLevel.CRITIQUE, "execution", "MARKET+SL : fill OK mais SL non pose, position NUE : parent={parent_id} fill={fill_price:.2f} sl={sl_price:.2f}"),
     "BOTBN_TRAIL_SL_UPDATE":        (LogLevel.INFO,     "execution", "BotBN trail SL update : {sym} {old_sl:.2f} -> {new_sl:.2f} pivot_low={pivot_low}"),
     "BOTBN_TRADE_CLOSE":            (LogLevel.INFO,     "execution", "BotBN trade close : {sym} {direction} reason={reason} pnl_ticks={pnl_ticks} pnl_usd={pnl_usd:.2f}"),
+
+    # =====================================================================
+    # BOT 4 V2 (refonte propre 25/06/2026, INCIDENT_LOG #83 DECISION_SOUVERAINE)
+    # Namespace BOT4V2_* segmente. Module bot4_v2/ isole de Bot 4 v1 (stop+disabled).
+    # B1 review FINAL P1 : pre-declarer codes ICI evite VALIDATION_MISS dès P3.
+    # =====================================================================
+    "BOT4V2_DRY_RUN_BOOT":          (LogLevel.INFO,     "events",    "Bot4V2 dry-run boot : phase={phase} n_modules={n_modules}"),
+    "BOT4V2_BOOT_READY":            (LogLevel.INFO,     "events",    "Bot4V2 boot ready : symbols={symbols} shadow_mode={shadow_mode}"),
+    "BOT4V2_SHUTDOWN":              (LogLevel.INFO,     "events",    "Bot4V2 shutdown clean"),
+    "BOT4V2_SHADOW_FIRE":           (LogLevel.INFO,     "decisions", "Bot4V2 shadow fire : {sym} {direction} scenario={scenario_name} score={heuristic_score} regime={regime}"),
+    "BOT4V2_OUTCOME_DECIDED":       (LogLevel.INFO,     "decisions", "Bot4V2 outcome decide : {sym} {scenario_name} status={outcome_status} pnl_ticks={pnl_ticks} duration={duration_bars}"),
+    "BOT4V2_OUTCOME_TIMEOUT":       (LogLevel.INFO,     "decisions", "Bot4V2 outcome timeout : {sym} {scenario_name} duration={duration_bars}/{horizon_bars}"),
+    "BOT4V2_CALIBRATION_LOADED":    (LogLevel.INFO,     "events",    "Bot4V2 calibration loaded : {sym} {scenario} regime={regime} dsr={dsr} age_days={age_days}"),
+    "BOT4V2_CALIBRATION_STALE":     (LogLevel.MAJEUR,   "events",    "Bot4V2 calibration stale : {sym} {scenario} age={age_days}j > max={max_age_days}j"),
+    "BOT4V2_CALIBRATION_REFUSED":   (LogLevel.MAJEUR,   "events",    "Bot4V2 calibration refused save : n_trades={n_trades} < N_MIN={n_min} (Lopez data-mining-trap)"),
+    "BOT4V2_SHADOW_PERSIST_FAIL":   (LogLevel.ALERTE,   "events",    "Bot4V2 shadow persist fail : path={path} exc={exc} (event dropped)"),
+    # P2 Batch 4b dtc_adapter (NEW Pydantic ISOLATED wrapper) :
+    "BOT4V2_DTC_NOT_CONNECTED_PRE_SEND": (LogLevel.MAJEUR, "execution", "Bot4V2 DTC backend not connected pre-send : sym={symbol} side={side} reason={reason}"),
+    "BOT4V2_DTC_RECONNECT_OK":      (LogLevel.MAJEUR,   "execution", "Bot4V2 DTC reconnect SUCCESS apres silent kick (anti-spam throttle 30s)"),
+    "BOT4V2_DTC_RECONNECT_FAIL":    (LogLevel.CRITIQUE, "execution", "Bot4V2 DTC reconnect FAILED : reason={reason}"),
+    "BOT4V2_DTC_CANCEL_FAIL":       (LogLevel.MAJEUR,   "execution", "Bot4V2 DTC cancel order fail : cid={cid} reason={reason}"),
+
+    # P3 Batch 3 decision_router (NEW orchestrateur per-bar) :
+    "BOT4V2_ROUTER_FIRE":              (LogLevel.INFO,     "decisions", "Router {sym} fire scenario={scenario} dir={direction} conf={confidence:.3f} score={score} regime={regime} session={session}"),
+    "BOT4V2_ROUTER_FIRE_INVALID":      (LogLevel.MAJEUR,   "decisions", "Router {sym} fire INVALID scenario={scenario} reason={reason}"),
+    "BOT4V2_ROUTER_COLLISION_BLOCKED": (LogLevel.MAJEUR,   "decisions", "Router {sym} collision LONG vs SHORT BLOCKED gap={gap:.3f} <= {min_gap:.3f} long_conf={long_conf:.3f} short_conf={short_conf:.3f}"),
+    "BOT4V2_ROUTER_COLLISION_RESOLVED":(LogLevel.INFO,     "decisions", "Router {sym} collision gap={gap:.3f} > {min_gap:.3f} winner={direction}"),
+    "BOT4V2_ROUTER_SKIP_PYRAMIDING":   (LogLevel.INFO,     "decisions", "Router {sym} skip fire eval, tracker active n={n_active}"),
+    "BOT4V2_ROUTER_SKIP_MAX_CONCURRENT":(LogLevel.MAJEUR,  "decisions", "Router skip {sym}, cap max_concurrent={cap} reached"),
+    "BOT4V2_ROUTER_ARCHIVE_TERMINALS": (LogLevel.INFO,     "decisions", "Router {sym} archived n={n} terminals (COMPLETED + INVALIDATED)"),
+    "BOT4V2_ROUTER_BRACKET_OK":        (LogLevel.INFO,     "execution", "Router {sym} bracket OK scenario={scenario} dir={direction} fill={fill:.2f} parent={parent_cid} sl={sl_cid}"),
+    "BOT4V2_ROUTER_BRACKET_FAIL":      (LogLevel.MAJEUR,   "execution", "Router {sym} bracket FAIL scenario={scenario} err={error}"),
+    "BOT4V2_ROUTER_BRACKET_NAKED":     (LogLevel.CRITIQUE, "execution", "Router {sym} bracket NAKED scenario={scenario} parent={parent_cid} fill={fill:.2f} FORCE_CLOSE_REQUIRED"),
+    "BOT4V2_ROUTER_BRACKET_EXC":       (LogLevel.CRITIQUE, "execution", "Router {sym} bracket exception scenario={scenario} exc={exc_type}"),
+    "BOT4V2_ROUTER_DISPATCH_NO_MATCH": (LogLevel.MAJEUR,   "execution", "Router {sym} TRIGGERED but no matching instance signal_id={signal_id}"),
+
+    # P4 position_reconciler (NEW force-close NAKED + stale detection + heartbeat) :
+    "BOT4V2_RECONCILER_NAKED_FORCE_CLOSE":   (LogLevel.CRITIQUE, "execution", "Reconciler {sym} NAKED force-close parent={parent_cid} dir={direction} qty={qty}"),
+    "BOT4V2_RECONCILER_NAKED_CLOSE_OK":      (LogLevel.MAJEUR,   "execution", "Reconciler {sym} NAKED close OK parent={parent_cid} close_cid={close_cid}"),
+    "BOT4V2_RECONCILER_NAKED_CLOSE_FAIL":    (LogLevel.CRITIQUE, "execution", "Reconciler {sym} NAKED close FAIL parent={parent_cid} retry={retry} reason={reason}"),
+    "BOT4V2_RECONCILER_REGISTER_BRACKET":    (LogLevel.INFO,     "execution", "Reconciler {sym} register bracket parent={parent_cid} dir={direction} fill={fill:.2f}"),
+    "BOT4V2_RECONCILER_MARK_CLOSED":         (LogLevel.INFO,     "execution", "Reconciler {sym} mark closed parent={parent_cid} reason={reason}"),
+    "BOT4V2_RECONCILER_STALE_DETECTED":      (LogLevel.MAJEUR,   "execution", "Reconciler {sym} STALE position parent={parent_cid} age_sec={age_sec:.1f}"),
+    "BOT4V2_RECONCILER_STALE_FORCE_CLOSE":   (LogLevel.CRITIQUE, "execution", "Reconciler {sym} STALE force-close parent={parent_cid} dir={direction} age_sec={age_sec:.1f}"),
+    "BOT4V2_RECONCILER_HEARTBEAT":           (LogLevel.INFO,     "execution", "Reconciler heartbeat n_positions={n_pos} n_stale={n_stale}"),
+    "BOT4V2_RECONCILER_HEARTBEAT_SKIP":      (LogLevel.INFO,     "execution", "Reconciler heartbeat skip (last={last_age:.1f}s < interval={interval}s)"),
+    "BOT4V2_RECONCILER_REGISTER_DUPLICATE":  (LogLevel.MAJEUR,   "execution", "Reconciler {sym} register DUPLICATE parent={parent_cid} (already tracked)"),
+    "BOT4V2_RECONCILER_STALE_CLOSE_FAIL":    (LogLevel.CRITIQUE, "execution", "Reconciler {sym} STALE close FAIL parent={parent_cid} retry={retry} reason={reason}"),
+    "BOT4V2_RECONCILER_NAKED_SKIP_UNREGISTERED":(LogLevel.MAJEUR,"execution", "Reconciler {sym} NAKED skip parent={parent_cid} reason=position_not_registered"),
+
+    # P5.2 bot_main loop (BotMainLoop orchestre router + reconciler) :
+    "BOT4V2_MAIN_BOOT":                  (LogLevel.MAJEUR,   "events",    "BotMainLoop BOOT bot4_v2 build={build_id} symbols={symbols}"),
+    "BOT4V2_MAIN_SHUTDOWN":              (LogLevel.MAJEUR,   "events",    "BotMainLoop SHUTDOWN reason={reason} processed_bars={n_bars} dispatches_total={n_disp}"),
+    "BOT4V2_MAIN_CYCLE_EXC":             (LogLevel.CRITIQUE, "events",    "BotMainLoop cycle exception sym={sym} exc={exc_type} - skipped bar"),
+    "BOT4V2_MAIN_STREAM_END":            (LogLevel.INFO,     "events",    "BotMainLoop stream END processed_bars={n_bars}"),
+    "BOT4V2_MAIN_DISPATCHED_REGISTER":   (LogLevel.INFO,     "execution", "BotMainLoop {sym} bracket -> reconciler register parent={parent_cid} dir={direction}"),
+    "BOT4V2_MAIN_NAKED_RECONCILED":      (LogLevel.MAJEUR,   "execution", "BotMainLoop {sym} naked reconciled n={n} closed_ok={ok}"),
+    "BOT4V2_MAIN_SIGNAL_CLOSED":         (LogLevel.INFO,     "execution", "BotMainLoop {sym} signal closed parent={parent_cid} state={final_state} reason={reason}"),
+    "BOT4V2_MAIN_HEARTBEAT_TICK":        (LogLevel.INFO,     "events",    "BotMainLoop heartbeat tick n_pos={n_pos} n_stale_closed={n_stale}"),
+    "BOT4V2_MAIN_KILL_SWITCH":           (LogLevel.CRITIQUE, "events",    "BotMainLoop KILL_SWITCH consecutive_exc={n_exc} threshold={threshold} - bot stopped"),
+    "BOT4V2_MAIN_SIGNAL_HANDLER":        (LogLevel.MAJEUR,   "events",    "BotMainLoop signal {signal} received - graceful stop initiated"),
+    "BOT4V2_ROUTER_DISPATCH_MAP_OVERFLOW":(LogLevel.ALERTE,  "execution", "Router _signal_to_dispatch overflow cap={cap} - oldest entry evicted (signal_id={evicted})"),
+    "BOT4V2_ROUTER_DISPATCH_FALLBACK":   (LogLevel.ALERTE,   "execution", "Router {sym} _dispatch_bracket fallback actives[-1] signal_id={signal_id} - latent bug anti-pyramiding"),
 }
 
 
