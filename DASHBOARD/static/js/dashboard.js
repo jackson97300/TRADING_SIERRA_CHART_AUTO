@@ -4744,6 +4744,10 @@
         // FIX bug Jackson 27/05 PM "point pas vert" : ne pas exiger available=true
         // strict. Si payload existe avec ts_utc + state_age_sec frais (< 180s),
         // c'est qu'au moins le service a tourne recemment -> dot doit refleter ca.
+        // FIX 25/06 (Jackson) : Bot 4 v1 STOPPED + DISABLED INCIDENT_LOG #83
+        // refonte v2 7-8 sem. Si payload stale > 6h, c'est clairement disabled
+        // volontairement (pas un down accidentel) -> force idle (gris) au lieu
+        // de DOWN (rouge) pour eviter confusion visuelle.
         var src = window.paperBot4Data;
         if (!src || typeof src !== "object") return null;
         // Si l'endpoint retourne explicitement available=false (ENABLED=0)
@@ -4756,6 +4760,8 @@
         }
         // Si available=false ET pas de ts -> idle
         if (src.available === false && ageSec == null) return null;
+        // FIX 25/06 : payload >6h ancien = bot disabled volontairement -> idle
+        if (ageSec != null && ageSec > 21600) return null;
         var alive = (typeof src.paper_trader_alive === "boolean")
             ? src.paper_trader_alive
             : (ageSec != null && ageSec < 180);
@@ -7215,8 +7221,10 @@
                     // SOURCE PRIORITAIRE : state.json (calculs faits cote bot avec live source)
                     if (p.unrealized_pnl_usd !== undefined && p.unrealized_pnl_usd !== null
                         && p.current_price !== undefined && p.current_price !== null) {
-                        // FIX 18/06 Jackson : convertir MICRO eq → sizing 1 MES + 3 MNQ
-                        unrealized = _convertPnlForDisplay(p.unrealized_pnl_usd, sym);
+                        // FIX 24/06/2026 BUG MULTIPLICATEUR x3 :
+                        // Bot 4 unrealized_pnl_usd = STANDARD * n_micros (real dollars).
+                        // Pas appliquer _convertPnlForDisplay (qui multiplierait encore par 3).
+                        unrealized = parseFloat(p.unrealized_pnl_usd || 0) || 0;
                         var perContract = (p.unrealized_pnl_ticks !== undefined && p.unrealized_pnl_ticks !== null) ? p.unrealized_pnl_ticks : 0;
                         unrealizedTicks = Math.round(perContract * nMicros);
                         livePriceUsed = p.current_price;
@@ -7233,9 +7241,8 @@
                             var sign = _isLong(p.direction) ? 1 : -1;
                             var ticksPerContract = Math.round(((bannerPrice - p.entry_price) / TICK) * sign);
                             unrealizedTicks = ticksPerContract * nMicros;
-                            // FIX 18/06 : recalc en MICRO eq puis convert sizing
-                            var unrealizedMicroEq = Math.round(ticksPerContract * TICK_VAL * nMicros * 100) / 100;
-                            unrealized = _convertPnlForDisplay(unrealizedMicroEq, sym);
+                            // FIX 24/06 : recalc STANDARD * n_micros (real dollars, pas micro eq)
+                            unrealized = Math.round(ticksPerContract * TICK_VAL * nMicros * 100) / 100;
                             livePriceUsed = bannerPrice;
                         } else {
                             unrealized = 0;
@@ -7302,19 +7309,38 @@
         var statsEl = $("paper-stats-today");
         if (statsEl) {
             var st = state.stats_today || {};
-            // FIX 18/06 Jackson : PnL principal = sizing virtuel 1 MINI ES + 3 MNQ.
-            // Bot trade execution INCHANGEE (1 ES + 1 NQ E-mini standard) mais
-            // dashboard affiche le PnL comme si sizing 1 MES + 3 MNQ.
-            var pnlSizing = _computePnlDisplaySizing(state.closed_today, state.open_by_symbol);
-            var pnlMicroEq = st.pnl_usd || 0;  // legacy MICRO eq pour footer reference
-            var pnlColor = pnlSizing >= 0 ? 'var(--green)' : 'var(--red)';
+            // FIX 24/06/2026 BUG MULTIPLICATEUR x3 (audit Jackson) :
+            // Bot 4 trade NQ STANDARD x 3 contrats (P7.2 PAPER AGGRESSIVE).
+            // Le risk manager Bot 4 emit pnl_usd = pnl_ticks * tick_value($5 NQ std) * n_micros(3)
+            // = pnl reel broker (-$1065 pour 71t SL, -$750 pour 50t SL).
+            // _computePnlDisplaySizing applique ratio NQ=3.0 supposant pnl_usd en MICRO eq
+            // -> DOUBLE MULTIPLICATION -$1815 x 3 = -$5445 (affichage trompeur).
+            // Solution : pour Bot 4, utiliser pnl_usd brut (sum des risk events).
+            // Label "1 MES + 3 MNQ" remplace par "3 NQ Std" qui reflet la realite execution.
+            var pnlBot4Real = (state.closed_today || []).reduce(function (acc, t) {
+                return acc + (parseFloat(t.pnl_usd || 0) || 0);
+            }, 0);
+            (state.open_by_symbol && typeof state.open_by_symbol === "object")
+                && Object.keys(state.open_by_symbol).forEach(function (sym) {
+                    var pos = state.open_by_symbol[sym];
+                    if (pos) {
+                        pnlBot4Real += parseFloat(pos.pnl_usd || pos.pnl_usd_floating
+                                                  || pos.unrealized_pnl_usd || 0) || 0;
+                    }
+                });
+            var pnlColor = pnlBot4Real >= 0 ? 'var(--green)' : 'var(--red)';
             statsEl.innerHTML =
                 _paperStatBox('Trades', st.trades || 0, (state.trade_count_today || 0) + ' / ' + (((state.max_trades_per_day || 9999) >= 9999) ? '∞' : (state.max_trades_per_day || 9999))) +
                 _paperStatBox('Win Rate', (st.wr || 0) + '%', (st.wins || 0) + 'W / ' + (st.losses || 0) + 'L') +
                 _paperStatBox('Profit Factor', (st.pf !== null && st.pf !== undefined) ? st.pf : '—', '') +
-                _paperStatBox('PnL', (pnlSizing >= 0 ? '+$' : '-$') + Math.abs(pnlSizing).toFixed(2), (st.pnl_ticks || 0) + ' ticks (1 MES + 3 MNQ)', pnlColor);
-            // Footer reference : MICRO eq (1 MES + 1 MNQ)
-            statsEl.innerHTML += _formatPnlMicroVirtuelHtml(pnlMicroEq);
+                _paperStatBox('PnL', (pnlBot4Real >= 0 ? '+$' : '-$') + Math.abs(pnlBot4Real).toFixed(2), (st.pnl_ticks || 0) + ' ticks (3 NQ Std)', pnlColor);
+            // Footer reference : MICRO eq (1 NQ Standard / 10 = MNQ virtuel)
+            // -$1815 standard / 10 = -$181.50 micro equivalent reel
+            var pnlMicroRealEq = pnlBot4Real / 10.0;
+            statsEl.innerHTML += '<div class="pnl-micro-virtuel" style="grid-column:1/-1;text-align:right;font-size:0.7rem;color:var(--text-disabled);padding:4px 8px 2px;font-style:italic;">'
+                + 'PnL MICRO eq (1 MNQ virtuel = std/10) : <strong>'
+                + (pnlMicroRealEq >= 0 ? '+$' : '-$') + Math.abs(pnlMicroRealEq).toFixed(2)
+                + '</strong></div>';
         }
 
         // ── Closed today
@@ -7338,10 +7364,11 @@
                     // distinguer estim (close bar) vs known (TP/SL fill capture).
                     var pnlKnown = t.pnl_known !== false && t.pnl_ticks != null;
                     var pnlEstimated = t.pnl_estimated === true;
-                    // FIX 18/06 Jackson : convert MICRO eq → sizing 1 MES + 3 MNQ par symbole
-                    var pnlMicroEq = pnlKnown ? (t.pnl_usd || 0) : null;
-                    var symForRatio = t.symbol || t.sym || "NQ";
-                    var pnl = pnlMicroEq != null ? _convertPnlForDisplay(pnlMicroEq, symForRatio) : null;
+                    // FIX 24/06/2026 BUG MULTIPLICATEUR x3 :
+                    // Bot 4 pnl_usd = NQ Standard * n_micros (deja le vrai dollar).
+                    // _convertPnlForDisplay multiplierait encore par 3 -> double mult.
+                    // Solution : utiliser pnl_usd brut.
+                    var pnl = pnlKnown ? (parseFloat(t.pnl_usd || 0) || 0) : null;
                     var pnlC = !pnlKnown ? 'var(--text-secondary)' :
                                (pnl >= 0 ? 'var(--green)' : 'var(--red)');
                     var estSuffix = pnlEstimated ? '*' : '';

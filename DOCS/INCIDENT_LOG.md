@@ -32,6 +32,159 @@
 
 ---
 
+### 2026-06-25 (88) - [BONNE_NOUVELLE+SINGLE_TRADE] - Bot 1 mean revert 1er trade 25/06 ES BUY -$25 SL (post-PCE window)
+
+**Contexte** : Apres 22h de session sans trade Bot 1+2+3 (audit ULTRATHINK 25/06 #87), Jackson rapporte "BOT 1 A TRADER ENFIN" (snap dashboard). Investigation confirme :
+- Heure : 19:41:12 UTC (= 15:41 ET, post-PCE 13:30 + buffer A4 45min = OK fenetre)
+- Symbole : **ES**
+- Direction : BUY (mean reversion long)
+- Entry : 7416.75 / Exit : 7411.75 (SL hit)
+- Ticks : -20 → PnL **-$25.00** (1 contrat)
+- Duree : 9 min
+- Win Rate journee : 0% (1W/0L → 0W/1L)
+- Profit Factor : N/A (pas de win)
+
+**Interpretation** :
+- Bot 1 = pipeline OPERATIONNEL (entry + exit + log + dashboard) malgre fenetres NEWS_WINDOW + ULTRATHINK_BLOCK strictes
+- Single trade ES BUY = setup mean-revert post-PCE (echec). Dans le contexte trend day haussier NQ (+968 pts range mais grind), le bounce ES 19:41 etait probablement faux
+- 1 trade = STAT NON SIGNIFICATIVE. NE PAS conclure "Bot 1 cassee" sur N=1.
+
+**Action** : monitorer cumul Bot 1 J+3 (28/06) : si > 5 trades cumul avec WR < 30% sur trend days = re-calibration Fix A4 NEWS_WINDOW + ULTRATHINK delta_bar (cf audit Bot 1 agent #87 "compromis assume").
+
+**Reviewed** : Jackson 25/06 dashboard observation directe + Claude verification logs VPS.
+
+---
+
+### 2026-06-25 (87) - [PRODUCTION_BUG+SYNC_MISS] - Bot 2 SYNC VPS→local en retard (faux zombie!) + Bot 3 BN V4 2 crashes silencieux 00:10-00:34
+
+**Contexte** : Investigation ULTRATHINK Jackson 25/06 sur "pourquoi les 3 bots n'ont pas trade aujourd'hui ?". Dispatch 3 agents puis verification empirique cross-VPS (SSH Get-Service + Get-Process + grep logs).
+
+**🚨 CORRECTION 25/06 22h00 UTC - LA "ZOMBIE Bot 2" ETAIT UN FAUX POSITIF** :
+
+Initialement diagnostique zombie Bot 2 (process actif PID 60868 + 0 fichier log 20260625_bot1v2 local). MAIS verification SSH VPS apres restart revele que les logs `decisions_20260625_bot1v2.jsonl` (2.3 MB) + `events_20260625_bot1v2.jsonl` (720 KB) EXISTENT SUR VPS, juste **pas synces vers le local**. LastWriteTime VPS 25/06 15:37 ET ≈ 19:37 UTC (env 1h avant investigation).
+
+**LECON CRITIQUE** : avant de conclure "bot freeze/zombie", VERIFIER SUR VPS via SSH path direct (`C:/TRADING_SIERRA_CHART_AUTO/LOGS/`), pas seulement local D:/. Le local est une COPIE syncee qui peut etre en retard.
+
+**Decouverte 1 (CORRIGEE) - Bot 2 sync VPS→local en retard** :
+- Service `MIA-Paper-Bot1V2` = RUNNING sur VPS
+- PID 60868 = process actif (4 threads, 50MB RAM, 1219s CPU cumul) depuis 24/06 15:06
+- Logs VPS : 2.3 MB decisions + 720 KB events 25/06 ACTIVITE NORMALE
+- Logs LOCAL : 0 fichier 25/06 sur D:/ → **probleme sync, PAS bot freeze**
+- Cause racine sync : a investiguer (probable mecanisme `/sync` ou auto-task)
+- ACTION 25/06 22h : Restart Bot 2 effectue (autorisation Jackson) AVANT correction diagnostic → restart inutile mais sans danger (Bot 2 sans position ouverte)
+- Nouveau PID 284 actif `CORE.bot1_v2.main --symbols ES,NQ --prod`. Service RUNNING.
+- BUG REEL a clarifier : pourquoi 50 min gap entre last write VPS (15:37 ET = 19:37 UTC) et restart (20:23 UTC) ? Buffer flush ou vraie inactivite ?
+
+**Workflow sync VPS→local (Jackson directive 25/06)** :
+- PAS de tache planifiee 5 min auto. Trop d'infra.
+- Quand Jackson demande "verifie X" : SSH VPS direct (`C:/TRADING_SIERRA_CHART_AUTO/LOGS/...`)
+- Si besoin copy local : 1 scp manuel a ce moment-la
+- "C'est comme ca qu'on a toujours fait"
+- Anti-pattern : ne PAS conclure "freeze/zombie/dead" sur absence local sans avoir checke VPS d'abord
+
+**Decouverte 2 - Bot 3 BN V4 2 CRASHES SILENCIEUX 25/06** :
+Sequence reconstituee via `LOGS/events/events_20260625_botbn.jsonl` :
+```
+00:10:38Z SHUTDOWN clean PID 141444 (probablement daily rollover propre)
+00:10:43Z BOOT   PID 2628    (+5s nssm restart)
+00:11:24Z BOOT   PID 33612   (+41s CRASH PID 2628 SANS SHUTDOWN propre)
+00:34:16Z BOOT   PID 17988   (+22min CRASH PID 33612 SANS SHUTDOWN propre, PID stable depuis 14h+)
+```
+- Pas d'event ERROR/CRITICAL/SHUTDOWN entre BOOTs = crashes silencieux non logges
+- Windows Event Viewer "Application Error" 24h = 0 entry trouvee (pas escaladé)
+- nssm respawn a sauve la mise (PID 17988 stable depuis 00:34)
+- Cause racine : INCONNUE. Hypotheses : (a) nssm stop pour heartbeat fail / memory limit, (b) crash interne Python non logged, (c) daily rollover handler bug rotation fichier en concurrence thread DTC
+
+**Decouverte 3 - Mes erreurs brief agents** (CONTEXT_MISS auto) :
+- Brief dispatch Mission 3 disait "Bot 2 = bot_bn_v4 BN V4" → FAUX (Bot 2 = bot1_v2 Mirror v2)
+- Brief disait "Bot 3 v3 + v4 deux variantes deployees" → Bot 3 v3 Wyckoff **mort depuis 02/06/2026** (23 jours)
+- Resultat : Agent 2 et Agent 3 ont DOUBLE-AUDITE LOGS/bot_bn_v4_decisions car meme code base
+- L'agent 3 a flag mes erreurs publiquement = bon reflexe critique
+- Mes memoires `project_bots_architecture_20260529` etaient datees, pas relue avant brief
+
+**Lecon** :
+1. **AVANT brief multi-agents : verifier SSH VPS Get-Service real-state au lieu de fier aux memoires**. Memoires `project_bot*` peuvent dater de plusieurs semaines. Reality check empirique = SSH avant brief = source de verite.
+2. **AVANT affirmer "service standalone vs nssm" : ssh + `Get-Service MIA-*`**. L'agent Bot 1 a affirme "MIA-Bot-Mean-Revert n'existe PAS" sans SSH, en se basant sur logs locaux. FAUX (service est `MIA-Paper-BotMR-Sim1` running).
+3. **Pour bots production en paper qui silent depuis 22h, restart != toujours bon reflexe**. Investiguer root cause AVANT restart pour pouvoir corriger code.
+
+**Trigger prevention** :
+- A chaque session "investigue Bot X" : SSH Get-Service + Get-Process avec commandline (`Get-WmiObject Win32_Process | Select CommandLine`) en PREMIER, avant tout brief agent ou affirmation.
+- Si bot silent > 6h : check process consomme CPU (zombie freeze sign) puis hypotheses dans ordre : (1) bar stream connection lost, (2) exception silent caught, (3) thread principal crashed, (4) memory pressure.
+- INCIDENT_LOG nouveau type `PRODUCTION_BUG` pour cas reels live (Bot 2 zombie, Bot 3 crashes) vs `DEPLOY_UNSAFE` (avant deploy).
+
+**Actions Jackson decisions ce soir 25/06 (en cours)** :
+1. Restart Bot 2 `nssm restart MIA-Paper-Bot1V2` → permission Jackson explicit en attente
+2. Investigation Bot 3 crashes 00:10-00:34 root cause → nssm Service Control Manager log
+3. MGC pipeline restore → reporte explicit Jackson
+
+**Reviewed** : Jackson 25/06 + Claude self-audit cross-VPS + 3 agents Mission 3 (dont 1 a flag mes context_miss correctement).
+
+---
+
+### 2026-06-25 (86) - [DECISION_SOUVERAINE] - Bot 3 v3 Wyckoff continuation officiellement abandonne
+
+**Contexte** : Audit ULTRATHINK 25/06 Jackson revele que Bot 3 v3 Wyckoff continuation (`CORE/bot3_v3_continuation_paper.py`) n'a pas tradee une seule bar depuis le **2026-06-02 10:16:10Z**. Dernier log `LOGS/bot3_v3/bot3_v3_v1_20260602.jsonl` BAR_PROCESSED NQ close 30561.5, pas de SHUTDOWN propre (arret brutal). Service `MIA-Bot-3-V3-Paper` n'existe PAS sur VPS (Get-Service). Mais les memoires `project_bots_architecture_20260529` + `project_bot3_bn_v4_audit_20260618` + brief Mission 3 25/06 affirmaient encore "Bot 3 = v3 + v4 deux variantes deployees".
+
+**Audit 18/06 historique** :
+- Bot 3 v3 NQ : "sur-selectif 0.25 trade/j (vs docstring fantome 7.5/j)"
+- Bot 3 v4 BN data-driven (= meme code base bot_bn_v4) confirme remplace v3 sur Sim3
+- Decision Jackson 18/06 : "garder paper actif" → mais runner v3 n'a PAS ete redeploye
+
+**Constat empirique 25/06** :
+- 23 jours sans activite Bot 3 v3 (02/06 → 25/06)
+- Pas de service nssm dedie
+- Pas de process Python avec commandline `bot3_v3_continuation_paper`
+- Bot 3 v4 (BN V4 Sim3) remplace effectivement Bot 3
+
+**Decision Jackson souveraine 25/06** : ACTER ABANDON OFFICIEL Bot 3 v3 Wyckoff continuation.
+
+**Actions** :
+1. Cette entry INCIDENT_LOG #86 trace decision
+2. Memoire `project_bots_architecture_20260529` a mettre a jour (Bot 3 = bot_bn_v4 seul, retirer mention Bot 3 v3)
+3. Memoire `project_bot3_bn_v4_audit_20260618` declassee (info Bot 3 v3 obsolete)
+4. `CLAUDE.md` ne mentionne pas Bot 3 v3, OK pas update necessaire
+5. `LOGS/bot3_v3/*.jsonl` = a conserver pour audit historique. Ne PAS supprimer (regle souveraine zero suppression log).
+
+**Trigger prevention** : avant brief "Bot X deployee" → SSH VPS verifier `Get-Service` + `Get-Process | Select CommandLine`. Memoires `project_bot*` peuvent dater.
+
+**Reviewed** : Jackson 25/06 post-ULTRATHINK investigation.
+
+---
+
+### 2026-06-25 (85) - [CONTEXT_MISS] - Brief agents Mission 3 base sur memoires obsoletes (Bot 2 = bot_bn_v4 + Bot 3 v3 existante)
+
+**Contexte** : Claude dispatch 3 agents Mission 3 "audit Bot 1+2+3 non-trade 25/06" sans verifier SSH VPS prealablement. Brief base sur memoires `project_bots_architecture_20260529` + `project_bot3_bn_v4_audit_20260618` + index MEMORY.md des semaines precedentes.
+
+**Erreurs brief** :
+1. **Bot 2 = bot_bn_v4 BN V4** : FAUX. Vrai mapping = Bot 2 = `CORE/bot1_v2/` (Mirror v2 VWAP+4vetos+7etoiles), service `MIA-Paper-Bot1V2`.
+2. **Bot 3 v3 Wyckoff continuation NQ deployee** : FAUX. Bot 3 v3 mort depuis 02/06/2026 (23 jours), pas de service, pas de process.
+3. **Bot 3 v3 + v4 deux variantes simultanees** : FAUX. Bot 3 = bot_bn_v4 seul depuis 02/06.
+
+**Consequences pratiques** :
+- Agent 2 + Agent 3 ont DOUBLE-AUDITE meme fichier `LOGS/bot_bn_v4_decisions_20260625.jsonl` (vraie cible Bot 3)
+- L'audit du VRAI Bot 2 (`bot1_v2` Mirror v2) reste **manquant** (decouverte ZOMBIE pas analysee profondeur)
+- Agent 3 a explicitement flag mes erreurs ("Le brief m'a demande d'auditer un Bot 3 v3 qui n'existe plus") = bon reflexe critique
+- Bot 1 agent a affirme "MIA-Bot-Mean-Revert n'existe PAS" sans SSH, FAUX (vrai nom `MIA-Paper-BotMR-Sim1` running)
+
+**Cause racine** :
+- Memoires `project_bot*` datees (29/05 + 18/06)
+- Brief base sur memoires sans SSH preliminaire
+- Echec protocole consultation INCIDENT_LOG (categorie CONTEXT_MISS dej a 5+ occurrences avant celle-ci)
+
+**Lecon** :
+- **AVANT tout brief multi-agents impliquant services VPS** : SSH `Get-Service MIA-*` + `Get-Process | Get-WmiObject Win32_Process | Select CommandLine` = sanity check 30 sec qui evite faux briefs.
+- Memoires `project_*` = snapshots datees, NE PAS substituer a sanity check empirique.
+- Si memoire `project_X` date de plus de 7 jours = re-validation empirique obligatoire.
+
+**Trigger prevention** :
+1. Avant brief Mission "audit Bot Y" : grep `LOGS/decisions/decisions_{YYYYMMDD}_*` pour identifier vrais bot identifiers
+2. Cross-check `MEMORY.md` index date last modified vs date now : si > 7 jours, re-verifier empirique
+3. INCIDENT_LOG categorie `CONTEXT_MISS` 5+ occurrences en 1 semaine → promouvoir en memoire dediee auto-chargee
+
+**Reviewed** : Claude self-audit + agent 3 cross-check + Jackson notification ce soir 25/06.
+
+---
+
 ### 2026-06-25 (84) - [DECISION_SOUVERAINE+OVER_ENGINEERING_AVOIDED] - Bot 4 v2 P5 ULTRATHINK : 6 patches review pre-deploy Sim5
 
 **Contexte** : Phase P5 (sem 8) Tests E2E + bot_main + prep deploy Sim5 du chantier Bot 4 v2 (refonte 7-8 sem, cf INCIDENT_LOG #83). Jackson demande mode ULTRATHINK explicite pour phase critique avant paper deploy.
