@@ -191,11 +191,52 @@ def test_build_loop_dry_run_default(tmp_path):
     assert loop.processed_bars == 0  # avant run()
 
 
-def test_build_loop_no_dry_run_raises():
-    """--no-dry-run -> NotImplementedError car backlog P5.4."""
-    args = parse_args(["--no-dry-run"])
-    with pytest.raises(NotImplementedError, match="DTC backend"):
-        build_loop(args)
+def test_build_loop_no_dry_run_attempts_sierra_backend(monkeypatch, tmp_path):
+    """P5.4.A : --no-dry-run construit SierraDTCBackend (mock dependencies)."""
+    # Stub _build_sierra_backend pour eviter import BOT.dtc_connector lourd
+    from bot4_v2.main import __main__ as main_mod
+
+    class FakeBackend:
+        connected = True
+
+        def connect(self):
+            return True
+
+        def disconnect(self):
+            pass
+
+        def send_market_with_stop_only(self, **kw):
+            return ("", "", 0.0)
+
+        def send_close_market(self, **kw):
+            return ""
+
+        def cancel_order(self, **kw):
+            return True
+
+    monkeypatch.setattr(main_mod, "_build_sierra_backend",
+                          lambda args: FakeBackend())
+
+    replay_path = tmp_path / "sample.jsonl"
+    replay_path.write_text(
+        '{"sym": "NQ", "ts_event": "2026-06-26T14:00:00+00:00", '
+        '"high": 20010, "low": 19995, "close": 20000, "atr": 10, "atr_14m": 40, '
+        '"vix_level": 18}\n',
+        encoding="utf-8",
+    )
+    menthorq_dir = tmp_path / "menthorq"
+    menthorq_dir.mkdir()
+
+    args = parse_args([
+        "--no-dry-run",
+        "--symbols", "NQ",
+        "--replay", str(replay_path),
+        "--menthorq-dir", str(menthorq_dir),
+        "--max-cycles", "1",
+        "--heartbeat-sec", "0",
+    ])
+    loop = build_loop(args)
+    assert loop is not None
 
 
 # ============================================================
@@ -224,7 +265,13 @@ def test_main_dry_run_sample_replay_exits_clean(tmp_path):
     assert rc == 0
 
 
-def test_main_no_dry_run_returns_1():
-    """--no-dry-run = exit 1 (NotImplementedError)."""
+def test_main_no_dry_run_import_fail_returns_1(monkeypatch):
+    """--no-dry-run si BOT/dtc_connector indispo (ImportError) -> exit 1."""
+    from bot4_v2.main import __main__ as main_mod
+
+    def fake_build_sierra(args):
+        raise ImportError("simulated BOT/dtc_connector missing")
+
+    monkeypatch.setattr(main_mod, "_build_sierra_backend", fake_build_sierra)
     rc = main(["--no-dry-run"])
     assert rc == 1

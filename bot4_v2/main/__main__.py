@@ -187,19 +187,21 @@ def build_loop(args: argparse.Namespace) -> BotMainLoop:
     """Wire up tous les composants depuis args. SRP wiring uniquement."""
     symbols = tuple(s.strip().upper() for s in args.symbols.split(",") if s.strip())
 
-    # R4 ULTRATHINK : raise NotImplementedError AVANT instanciation DTCSettings
-    # pour eviter dead code latent (DTCSettings cree puis raise = code mort
-    # tolerable aujourd'hui mais piege quand vrai DTC implemente futur).
+    # P5.4.A wire : si --no-dry-run, construit SierraDTCBackend (heritage
+    # BOT/dtc_connector validee production-grade). Sinon dry-run safe.
     if args.no_dry_run:
-        raise NotImplementedError(
-            "Vrai DTC backend Sierra Chart : backlog P5.4 (Jackson Q1-Q4 + "
-            "wrapper sur BOT/dtc_connector avec orphan-prevention rules)."
+        backend = _build_sierra_backend(args)
+        dtc_settings = DTCSettings(
+            dry_run=False,
+            trade_account=args.trade_account,
         )
-    dtc_settings = DTCSettings(
-        dry_run=True,
-        trade_account=args.trade_account,
-    )
-    dtc = DTCAdapter(backend=_DryRunBackend(), settings=dtc_settings)
+    else:
+        backend = _DryRunBackend()
+        dtc_settings = DTCSettings(
+            dry_run=True,
+            trade_account=args.trade_account,
+        )
+    dtc = DTCAdapter(backend=backend, settings=dtc_settings)
     dtc.ensure_connected()
 
     # Registry + detectors
@@ -261,6 +263,44 @@ def build_loop(args: argparse.Namespace) -> BotMainLoop:
         context_builder=lambda bar, sym: builder.build(bar, sym),
         settings=bot_settings,
     )
+
+
+# ============================================================
+# SIERRA DTC BACKEND FACTORY (P5.4.A wire heritage BOT/dtc_connector)
+# ============================================================
+
+
+def _build_sierra_backend(args):
+    """Construit SierraDTCBackend pour paper Sim5 reel.
+
+    Lazy import BOT.dtc_connector + bot_config (anti import cycle tests).
+
+    Raises:
+        ImportError : si BOT/dtc_connector indisponible (deps manquantes)
+        ConnectionError : si DTC connect echoue
+    """
+    # Lazy import heritage prod (anti import lourd pour tests dry-run)
+    import sys
+    from pathlib import Path
+    bot_path = Path(__file__).resolve().parent.parent.parent / "BOT"
+    if str(bot_path) not in sys.path:
+        sys.path.insert(0, str(bot_path))
+
+    try:
+        from BOT.dtc_connector import DTCConnector  # noqa: F401
+        from BOT.bot_config import DTCConfig  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            f"BOT/dtc_connector + bot_config requis pour --no-dry-run "
+            f"(import fail : {exc})"
+        )
+
+    from bot4_v2.execution.dtc_backend_sierra import SierraDTCBackend
+
+    # Override client_name pour eviter collision avec Bot 1/2/3 (cf bot_config.py:147)
+    config = DTCConfig(client_name="MIA_Bot_4_V2")
+    dtc_conn = DTCConnector(config)
+    return SierraDTCBackend(dtc_conn)
 
 
 # ============================================================

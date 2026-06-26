@@ -1922,6 +1922,17 @@ LOG_CODES = {
     "BOT4V2_MAIN_SIGNAL_HANDLER":        (LogLevel.MAJEUR,   "events",    "BotMainLoop signal {signal} received - graceful stop initiated"),
     "BOT4V2_ROUTER_DISPATCH_MAP_OVERFLOW":(LogLevel.ALERTE,  "execution", "Router _signal_to_dispatch overflow cap={cap} - oldest entry evicted (signal_id={evicted})"),
     "BOT4V2_ROUTER_DISPATCH_FALLBACK":   (LogLevel.ALERTE,   "execution", "Router {sym} _dispatch_bracket fallback actives[-1] signal_id={signal_id} - latent bug anti-pyramiding"),
+
+    # P5.4.A SierraDTCBackend wrapper (heritage BOT/dtc_connector validee) :
+    "BOT4V2_SIERRA_CONNECT_OK":          (LogLevel.MAJEUR,   "execution", "Sierra DTC connect OK"),
+    "BOT4V2_SIERRA_CONNECT_FAIL":        (LogLevel.CRITIQUE, "execution", "Sierra DTC connect FAIL exc={exc_type}"),
+    "BOT4V2_SIERRA_DISCONNECT_OK":       (LogLevel.INFO,     "execution", "Sierra DTC disconnect OK"),
+    "BOT4V2_SIERRA_DISCONNECT_FAIL":     (LogLevel.MAJEUR,   "execution", "Sierra DTC disconnect FAIL exc={exc_type}"),
+    "BOT4V2_SIERRA_SEND_MARKET_EXC":     (LogLevel.CRITIQUE, "execution", "Sierra send_market_with_stop_only exception {sym} exc={exc_type}"),
+    "BOT4V2_SIERRA_SEND_MARKET_BAD_RESULT":(LogLevel.CRITIQUE,"execution", "Sierra send_market_with_stop_only bad result {sym} type={result_type}"),
+    "BOT4V2_SIERRA_SEND_CLOSE_EXC":      (LogLevel.CRITIQUE, "execution", "Sierra send_close_market exception {sym} exc={exc_type}"),
+    "BOT4V2_SIERRA_CANCEL_EXC":          (LogLevel.MAJEUR,   "execution", "Sierra cancel_order exception cid={cid} exc={exc_type}"),
+    "BOT4V2_SIERRA_CANCEL_FAIL":         (LogLevel.MAJEUR,   "execution", "Sierra cancel_order FAIL cid={cid} trade_account={trade_account}"),
 }
 
 

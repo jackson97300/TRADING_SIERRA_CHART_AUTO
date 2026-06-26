@@ -32,6 +32,54 @@
 
 ---
 
+### 2026-06-26 (90) - [VALIDATION_GO] - Bot 4 v2 P5.4 pipeline empirique 10j NQ GO + SierraDTCBackend wrapper
+
+**Contexte** : Phase P5.4 deploy prep Sim5 du chantier Bot 4 v2 (refonte 7-8 sem). Apres P5.3 (646 tests), phase finale wiring + validation.
+
+**P5.4.A SierraDTCBackend wrapper** :
+- `bot4_v2/execution/dtc_backend_sierra.py` (~230 LOC) - pure delegation IDTCBackend Protocol P2 vers BOT/dtc_connector.DTCConnector
+- Heritage production-grade valide Sim1+Sim2+Sim3 (30+ patches : H6 TradeAccount, ClientOrderID obligatoire, anti-orphan V2 9 etapes, OCO manuel Type 208, OrderStatus=7=Filled)
+- INTERDIT modifier BOT/dtc_connector.py (gele production)
+- Garde-fou anti H6 : cancel_order REQUIRE trade_account (raise ValueError, anti hardcode Sim3 piege)
+- 9 codes log BOT4V2_SIERRA_* dans CORE/log_catalog.py
+- 25 tests PASS (mock DTCConnector matchant Protocol)
+- Wire dans bot4_v2/main/__main__.py via `_build_sierra_backend(args)` lazy import (anti import cycle tests)
+
+**P5.4.B Backtest replay analytics** :
+- `tools/bot4v2_replay_metrics.py` (~250 LOC) - replay cross-day JSONL historique
+- Metriques per-day : bars_processed, tracker_instances, total_dispatches, crashes
+- Aggregat : has_fire, n_crashed, max_dispatch_map_size, status GO/RESERVE
+- Critere heuristique conservative (Bot 4 v2 = refonte totale, "preservation wins" literal impossible) :
+  * >0 fires_evaluated sur la periode
+  * 0 crash sur tous les jours
+  * Closed_signals ~= dispatched_brackets
+  * naked_brackets = 0 en dry-run
+- 12 tests PASS
+
+**Validation empirique 10 jours NQ historiques (12/06 → 25/06)** :
+- 20,418 bars processes sur 10 jours
+- 0 crash sur tous les jours
+- 8 instances creees (7/10 jours actifs)
+- 0 dispatch (PENDING sans confirm - normal selectivite Bearish_Rejection + Sweep_Reclaim_N1 state machine multi-bar Wyckoff)
+- **STATUS : GO** - Pipeline fonctionnel + robuste
+
+**Interpretation Jackson** :
+- Pipeline detecte des setups 80% des jours = detecteurs fonctionnent
+- 0 dispatch = state machine demande `confirm()` order flow (caller responsability)
+- Comportement attendu Sim5 paper validation pre-deploy
+
+**Tests cumules bot4_v2** : 684/684 PASS (+37 nouveaux P5.4 = 25 SierraBackend + 12 replay_metrics)
+
+**Conditions GO Sim5 restantes (backlog P5.4)** :
+- [ ] Service nssm `MIA-Bot4V2-Sim5-Paper` (Jackson Q1-Q4 attendu)
+- [ ] Discord webhook BRACKET_NAKED + KILL_SWITCH (Jackson Q3)
+- [ ] Sentinels J+1 cron scheduling sur VPS
+- [ ] Test reel DTC connection localhost:11099 Sierra Chart (Jackson presence requise)
+
+**Reviewed** : Jackson 26/06 + Claude P5.4.A wrapper delegation pure (0 risque reintroduction bugs heritage).
+
+---
+
 ### 2026-06-26 (89) - [CONTEXT_MISS] - Bot 4 v2 P5.3.A schema inconsistance bar `sym` vs `symbol`
 
 **Contexte** : Phase P5.3.A (26/06) ContextBuilder echec test sur `ctx.symbol == "UNKNOWN"`. Investigation : `narrative_engine.py:658,689` lit `bar.get("sym", "NQ")` ALORS QUE le JSONL live_enriched stocke la clef `"symbol"` (verifie via fixture `bot4_v2/tests/fixtures/sample_100_NQ.jsonl` premier bar).
