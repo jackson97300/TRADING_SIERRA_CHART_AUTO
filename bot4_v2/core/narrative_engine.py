@@ -351,9 +351,10 @@ def _extract_resistance_levels(bar: dict, close: float, atr: float) -> list:
     # Composite POC
     _add(bar.get("composite_poc_5d"), "Composite POC 5d")
     _add(bar.get("composite_poc_20d"), "Composite POC 20d")
-    # PSD veille
+    # PSD veille (cf INCIDENT_LOG #93 : prev_vwap_sd1u absente du bar enrichi,
+    # garde le code avec fail-soft _add silencieux pour compat futur enricher)
     _add(bar.get("prev_vwap_sd2u"), "PSD +2")
-    _add(bar.get("prev_vwap_sd1u"), "PSD +1")
+    _add(bar.get("prev_vwap_sd1u"), "PSD +1")  # fail-soft si absent (cf #93)
     _add(_pvwap(bar), "PVWAP")
     # Swing reconstruction depuis dist
     swing_high = None
@@ -426,8 +427,9 @@ def _extract_support_levels(bar: dict, close: float, atr: float) -> list:
     _add(bar.get("cur_vpoc"), "Cur VPOC")
     _add(bar.get("sess_low"), "Session low")
     _add(bar.get("ovn_low"), "OVN low")
-    # PSD veille
-    _add(bar.get("prev_vwap_sd1d"), "PSD -1")
+    # PSD veille (cf INCIDENT_LOG #93 : prev_vwap_sd1d absente du bar enrichi,
+    # garde le code avec fail-soft _add silencieux pour compat futur enricher)
+    _add(bar.get("prev_vwap_sd1d"), "PSD -1")  # fail-soft si absent (cf #93)
     _add(bar.get("prev_vwap_sd2d"), "PSD -2")
     _add(_pvwap(bar), "PVWAP")
     # Composite POC (peut etre below)
@@ -558,7 +560,15 @@ def _extract_market_structure(bar: dict) -> MarketStructureState:
         ib_is_narrow=_safe_bool(bar, "ib_is_narrow"),
         ib_is_wide=_safe_bool(bar, "ib_is_wide"),
         ib_position_pct=bar.get("ib_position_pct"),
-        ib_extension_ratio=bar.get("ib_extension_ratio"),
+        # INCIDENT_LOG #93 : ib_extension_ratio absent du bar enrichi.
+        # Fallback : derive depuis ib_position_pct si dispo (range [0,100]).
+        # >100 = extension UP, <0 = extension DN, 100 = exactement ib_high.
+        # Sinon utilise ib_extension_ratio direct (compat futur).
+        ib_extension_ratio=(
+            bar.get("ib_extension_ratio")
+            if bar.get("ib_extension_ratio") is not None
+            else bar.get("ib_position_pct")
+        ),
         ib_high=bar.get("ib_high"),
         ib_low=bar.get("ib_low"),
     )
@@ -635,8 +645,34 @@ def _extract_session(bar: dict) -> SessionState:
         judas_swing_direction=_safe_int(bar, "judas_swing_direction"),
         bars_since_london_open=bar.get("bars_since_london_open"),
         mins_et=bar.get("mins_et"),
-        tod_bucket_rth=bar.get("tod_bucket_rth"),
+        # INCIDENT_LOG #93 : tod_bucket_rth absent du bar enrichi.
+        # Calcul depuis mins_et (= minutes since midnight ET).
+        # RTH = 9:30-16:00 ET = mins_et [570, 960]. Buckets de 30 min.
+        # tod_bucket_rth = 0 -> 9:30-10:00, 1 -> 10:00-10:30, ..., 12 -> 15:30-16:00
+        tod_bucket_rth=(
+            bar.get("tod_bucket_rth")
+            if bar.get("tod_bucket_rth") is not None
+            else _compute_tod_bucket_rth(bar.get("mins_et"))
+        ),
     )
+
+
+def _compute_tod_bucket_rth(mins_et) -> Optional[int]:
+    """Calcul tod_bucket_rth depuis mins_et (#93 fallback).
+
+    RTH session = 9:30-16:00 ET = [570, 960] mins_et.
+    Buckets de 30 min : 0->9:30, 1->10:00, ..., 12->15:30.
+    Hors RTH = None.
+    """
+    if mins_et is None:
+        return None
+    try:
+        m = int(mins_et)
+    except (TypeError, ValueError):
+        return None
+    if m < 570 or m >= 960:
+        return None
+    return (m - 570) // 30
 
 
 def _extract_patterns(bar: dict) -> PatternsDetected:

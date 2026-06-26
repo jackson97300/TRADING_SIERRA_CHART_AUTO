@@ -562,3 +562,58 @@ def test_build_narrative_full_e2e():
     assert ctx.patterns.fvg_up_count == 2
     assert ctx.patterns.single_prints_present is True
     assert ctx.patterns.single_print_position == "above"
+
+
+# ============================================================
+# INCIDENT_LOG #93 fixes mineurs : ib_extension_ratio + tod_bucket_rth fallbacks
+# ============================================================
+
+
+def test_tod_bucket_rth_fallback_from_mins_et():
+    """tod_bucket_rth absent du bar -> calcule depuis mins_et."""
+    from bot4_v2.core.narrative_engine import _compute_tod_bucket_rth
+    # RTH = mins_et [570, 960]
+    assert _compute_tod_bucket_rth(None) is None
+    assert _compute_tod_bucket_rth(569) is None
+    assert _compute_tod_bucket_rth(570) == 0   # 9:30 ET
+    assert _compute_tod_bucket_rth(600) == 1   # 10:00 ET
+    assert _compute_tod_bucket_rth(800) == 7
+    assert _compute_tod_bucket_rth(959) == 12  # 15:59 ET
+    assert _compute_tod_bucket_rth(960) is None  # 16:00 ET hors RTH
+    assert _compute_tod_bucket_rth("not_int") is None
+
+
+def test_session_tod_bucket_rth_fallback_in_context():
+    """SessionState.tod_bucket_rth utilise fallback mins_et si tod_bucket_rth absent."""
+    bar = _make_minimal_bar()
+    bar["mins_et"] = 600  # 10:00 ET RTH
+    # tod_bucket_rth NOT set in bar
+    ctx = build_narrative_context(bar)
+    assert ctx.session.tod_bucket_rth == 1
+
+
+def test_session_tod_bucket_rth_uses_explicit_if_present():
+    """Si bar a tod_bucket_rth explicite, utilise (priorite)."""
+    bar = _make_minimal_bar()
+    bar["mins_et"] = 600
+    bar["tod_bucket_rth"] = 5  # explicit override
+    ctx = build_narrative_context(bar)
+    assert ctx.session.tod_bucket_rth == 5
+
+
+def test_ib_extension_ratio_fallback_from_position_pct():
+    """ib_extension_ratio absent -> fallback ib_position_pct."""
+    bar = _make_minimal_bar()
+    bar["ib_position_pct"] = 75.0
+    # ib_extension_ratio NOT set
+    ctx = build_narrative_context(bar)
+    assert ctx.market_structure.ib_extension_ratio == 75.0
+
+
+def test_ib_extension_ratio_uses_explicit_if_present():
+    """Si bar a ib_extension_ratio explicite, utilise (priorite sur position_pct)."""
+    bar = _make_minimal_bar()
+    bar["ib_position_pct"] = 75.0
+    bar["ib_extension_ratio"] = 1.2  # explicit override
+    ctx = build_narrative_context(bar)
+    assert ctx.market_structure.ib_extension_ratio == 1.2
