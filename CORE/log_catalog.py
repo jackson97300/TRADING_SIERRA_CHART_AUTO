@@ -1933,6 +1933,12 @@ LOG_CODES = {
     "BOT4V2_SIERRA_SEND_CLOSE_EXC":      (LogLevel.CRITIQUE, "execution", "Sierra send_close_market exception {sym} exc={exc_type}"),
     "BOT4V2_SIERRA_CANCEL_EXC":          (LogLevel.MAJEUR,   "execution", "Sierra cancel_order exception cid={cid} exc={exc_type}"),
     "BOT4V2_SIERRA_CANCEL_FAIL":         (LogLevel.MAJEUR,   "execution", "Sierra cancel_order FAIL cid={cid} trade_account={trade_account}"),
+
+    # P5.4.C DiscordAlerter (alertes critique paper Sim4 24h supervision) :
+    "BOT4V2_DISCORD_PAYLOAD_FAIL":       (LogLevel.MAJEUR,   "events",    "Discord payload serialize FAIL code={alert_code} exc={exc_type}"),
+    "BOT4V2_DISCORD_HTTP_FAIL":          (LogLevel.MAJEUR,   "events",    "Discord HTTP FAIL code={alert_code} status={http_status}"),
+    "BOT4V2_DISCORD_NETWORK_FAIL":       (LogLevel.MAJEUR,   "events",    "Discord network FAIL code={alert_code} exc={exc_type}"),
+    "BOT4V2_DISCORD_UNEXPECTED_FAIL":    (LogLevel.MAJEUR,   "events",    "Discord unexpected FAIL code={alert_code} exc={exc_type}"),
 }
 
 
