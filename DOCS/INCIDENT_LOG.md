@@ -32,6 +32,45 @@
 
 ---
 
+### 2026-06-26 (92) - [CONTEXT_MISS] - Bot 4 v2 MenthorQ DEJA dans bar enrichi (pas de fichier JSON separe)
+
+**Contexte** : Phase P5.4 deploy Sim4. Documentation `DOCS/BOT4V2_NSSM_DEPLOY.md` mentionnait `DATA/MENTHORQ/{YYYYMMDD}_menthorq_complete.json` comme source niveaux MenthorQ. Claude propose verifier presence fichier JSON pre-deploy.
+
+**Jackson directive 26/06** : "LES DONNER MONTHOR Q SON PRESENT DAN LE LIVE ENRICHED DE SIERRA - NOTRE SEUL SOURCE DE VERITER"
+
+**Verification empirique** : grep bar `DATA/live_enriched/sierra/NQ/20260625_NQ_sierra_enriched.jsonl` montre 56 features liees a MenthorQ DEJA presentes :
+- `dist_mq_call_pct = 3.03`, `dist_mq_put_pct = -6.95`, `dist_mq_hvl_pct = 1.33`
+- `dist_mq_call_0dte = 1641`, `dist_mq_put_0dte = -859`, `dist_mq_hvl_0dte = None`
+- `dist_gex_nearest_up = 441`, `dist_gex_nearest_dn = -359`, `gex_cluster_count = 0`
+- `mq_gamma_condition = 0`, `ctx_mq_put_call_ratio = 2.293`, `bool_above_mq_hvl = 0`
+- `gamma_block_long`, `gamma_block_short`, `bool_gex_flip_zone = 1`
+
+**Erreur Claude** : Pendant P5.3.A (24/06) Claude a fork `CORE/menthorq_source.py` -> `bot4_v2/core/menthorq_source.py` qui charge un fichier JSON `DATA/MENTHORQ/{date}_menthorq_complete.json`. Mais ce fichier n'est PAS la source live realtime (cf `lessons.md` : "Les colonnes mq_* sont daily broadcast sur chaque barre sauf mq_dist_* dynamiques par prix"). En live, Sierra Enricher PRE-CALCULE les distances MenthorQ et les inject directement dans chaque bar JSONL.
+
+**Consequences pratiques** :
+- `bot4_v2/core/menthorq_source.py` = code MORT pour live (mais utile pour MenthorQ analytics offline)
+- `bot4_v2/main/context_builder.py` charge MenthorQLevels qui reste `is_empty=True` 99% du temps (fichier JSON souvent absent)
+- `bot4_v2/core/narrative_engine._extract_resistance_levels` n'utilisait PAS les `dist_mq_*` du bar -> niveaux MQ jamais detectes -> Bearish_Rejection ne pouvait pas detecter confluence MQ + PDH/VWAP
+
+**Cause racine** : Claude a fork le menthorq_source CORE legacy (qui sert backtest) sans verifier que pipeline live = differente source. Anti-pattern documentation memoire : pas de cross-check des features du bar enriched 621 colonnes avant fork.
+
+**Patch applique** (P5.4.D) :
+- `bot4_v2/core/narrative_engine.py:_extract_resistance_levels` ajoute extraction `dist_mq_call`, `dist_mq_call_0dte`, `dist_mq_hvl`, `dist_mq_hvl_0dte`, `dist_gex_nearest_up`
+- `_extract_support_levels` ajoute `dist_mq_put`, `dist_mq_put_0dte`, `dist_mq_hvl` (si below), `dist_gex_nearest_dn`
+- Validation empirique bar reel NQ 25/06 : 5 niveaux MQ resistance + 4 niveaux MQ support extraits + confluence Cash high HIER + Session high + OVN high (conf 3) detectee
+- `menthorq_source.py` + `MenthorQCache` ContextBuilder restent (compat backlog), is_empty=True OK car niveaux passent via narrative.key_levels_*
+
+**Trigger prevention** :
+- AVANT fork module CORE legacy : verifier features bar enrichi 621 colonnes (`head -1 fichier.jsonl | jq keys`)
+- Cross-check `.claude/rules/core.md` : "Les colonnes mq_* sont daily broadcast sur chaque barre sauf mq_dist_* dynamiques par prix"
+- Source de verite live = bar enrichi JSONL, JAMAIS un fichier separe (sauf si VPS produit explicite)
+
+**Tests** : 715/715 PASS apres patch (extraction MQ levels test empirique sur bar reel).
+
+**Reviewed** : Jackson 26/06 ("CES ETRANGE CETTE ERREUR" flag directement) + Claude self-audit + correction immediate.
+
+---
+
 ### 2026-06-26 (91) - [CONTEXT_MISS] - Bot 4 v2 trade_account Sim5 invente (Sierra Chart = 4 comptes seul)
 
 **Contexte** : Phase P5.4.A wire SierraDTCBackend (26/06). Claude a propose dans __main__.py default `--trade-account Sim5` + configs P1 settings.py + INCIDENT_LOG #84+#90. Jackson reagit : "ON A QQUE 4 COMPTE SIM".

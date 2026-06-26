@@ -365,6 +365,27 @@ def _extract_resistance_levels(bar: dict, close: float, atr: float) -> list:
             pass
     _add(swing_high, "Swing high")
 
+    # P5.4.D ULTRATHINK : MenthorQ levels DEJA presents dans bar enrichi
+    # (Jackson directive 26/06 "NOTRE SEUL SOURCE DE VERITER"). Reconstruction
+    # prix absolu depuis `dist_*` features pre-calcules Sierra Enricher.
+    def _add_from_dist(dist_key: str, label: str):
+        """Helper : reconstitue prix absolu depuis dist au close."""
+        d = bar.get(dist_key)
+        if d is None:
+            return
+        try:
+            price = close + float(d)
+        except (TypeError, ValueError):
+            return
+        if price > close:
+            _add(price, label)
+
+    _add_from_dist("dist_mq_call", "MQ Call resistance")
+    _add_from_dist("dist_mq_call_0dte", "MQ Call 0DTE")
+    _add_from_dist("dist_mq_hvl", "MQ HVL")
+    _add_from_dist("dist_mq_hvl_0dte", "MQ HVL 0DTE")
+    _add_from_dist("dist_gex_nearest_up", "GEX flip UP")
+
     # Sort by distance ascending
     levels.sort(key=lambda level: level.distance_atr)
     return _cluster_levels(levels, atr, close)
@@ -426,6 +447,25 @@ def _extract_support_levels(bar: dict, close: float, atr: float) -> list:
         except (TypeError, ValueError):
             pass
     _add(swing_low, "Swing low")
+
+    # P5.4.D ULTRATHINK : MenthorQ support levels DEJA dans bar enrichi
+    # (Jackson directive 26/06 "NOTRE SEUL SOURCE DE VERITER").
+    def _add_from_dist(dist_key: str, label: str):
+        """Helper : reconstitue prix absolu depuis dist negative au close."""
+        d = bar.get(dist_key)
+        if d is None:
+            return
+        try:
+            price = close + float(d)
+        except (TypeError, ValueError):
+            return
+        if price < close:
+            _add(price, label)
+
+    _add_from_dist("dist_mq_put", "MQ Put support")
+    _add_from_dist("dist_mq_put_0dte", "MQ Put 0DTE")
+    _add_from_dist("dist_mq_hvl", "MQ HVL")  # peut etre support si below
+    _add_from_dist("dist_gex_nearest_dn", "GEX flip DN")
 
     # Sort by distance descending (plus proche = distance plus proche de 0)
     levels.sort(key=lambda level: -level.distance_atr)
