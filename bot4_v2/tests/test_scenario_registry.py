@@ -477,18 +477,43 @@ def test_sweep_reclaim_long_setup_fires():
     assert "sweep_low_lag1_detected" in fire.reasons
 
 
-def test_sweep_reclaim_fallback_to_active_compteur():
-    """Si lag1 features absentes, fallback sweep_*_active."""
+def test_sweep_reclaim_fallback_to_bars_since_canonical():
+    """Source canonique INCIDENT_LOG #93 : bars_since_last_sweep_high == 1
+    = sweep bar N-1 + reclaim bar courante."""
     det = SweepReclaimN1Detector()
     bar = _make_bar(
         high=20020, low=19995, close=20005,
-        sweep_high_active=2,  # fallback (lag1 absent)
+        bars_since_last_sweep_high=1,  # canonique : sweep bar precedente
         delta_bar=-100,
     )
     ctx = _make_ctx(bar=bar)
     fire = det.detect(ctx)
     assert fire is not None
     assert fire.direction == "SHORT"
+
+
+def test_sweep_reclaim_no_fire_if_bars_since_zero():
+    """bars_since_last_sweep_high == 0 = sweep cette bar (PAS reclaim N+1)."""
+    det = SweepReclaimN1Detector()
+    bar = _make_bar(
+        high=20020, low=19995, close=20005,
+        bars_since_last_sweep_high=0,  # sweep cette bar = pas reclaim
+        delta_bar=-100,
+    )
+    ctx = _make_ctx(bar=bar)
+    assert det.detect(ctx) is None
+
+
+def test_sweep_reclaim_no_fire_if_bars_since_too_old():
+    """bars_since_last_sweep_high > 1 = sweep trop ancien."""
+    det = SweepReclaimN1Detector()
+    bar = _make_bar(
+        high=20020, low=19995, close=20005,
+        bars_since_last_sweep_high=5,  # trop vieux
+        delta_bar=-100,
+    )
+    ctx = _make_ctx(bar=bar)
+    assert det.detect(ctx) is None
 
 
 def test_sweep_reclaim_short_close_above_high_no_fire():

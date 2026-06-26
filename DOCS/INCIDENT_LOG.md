@@ -32,6 +32,59 @@
 
 ---
 
+### 2026-06-26 (93) - [CONTEXT_MISS+AUDIT] - Bot 4 v2 audit complet sources donnees - sweep_*_lag1 inventee
+
+**Contexte** : Jackson directive 26/06 "VERIFFIE TOTE LES SOURCE DE DONNE CE GENRE ERREUR NE DOIS PAS ARRIVER". Suite a #91 (Sim5 invente) + #92 (MenthorQ fichier JSON invente), Claude lance audit complet de toutes les `bar.get("...")` utilisees par bot4_v2 vs vrais features bar live_enriched.
+
+**Methodologie** :
+1. `grep -rho 'bar.get(["'][a-z_0-9]*["']' bot4_v2/` -> 62 clefs uniques
+2. `head -1 NQ_sierra_enriched.jsonl | python -c "print sorted keys"` -> 621 clefs
+3. `comm -23 sorted normalized` -> discordances
+
+**Findings classifies** :
+
+🔴 **CRITIQUE - bug effectif corrige** :
+- `sweep_high_lag1` / `sweep_low_lag1` INVENTEES (n'existent PAS dans le bar)
+- Source canonique reelle : `bars_since_last_sweep_high == 1` (= sweep bar N-1)
+- Sweep_Reclaim_N1 utilisait fallback `sweep_*_active >= 1` qui est SEMANTIQUEMENT FAUX (active=4 != lag1=1)
+- **Consequence** : scenario ne fire JAMAIS correctement sur live data
+- Fix : refactor pour utiliser `bars_since_last_sweep_*` source canonique + 2 tests valid (bars_since=0 et bars_since=5 = NO FIRE)
+
+🟡 **COSMETIQUE - fail-soft acceptable** :
+- `prev_vwap` -> `pvwap` (fallback `or` deja en place narrative_engine:289 OK)
+- `prev_vwap_sd1u` / `prev_vwap_sd1d` -> absent du bar (sd2 dispo, niveaux PSD +-1 perdus, backlog)
+- `ib_extension_ratio` -> absent (ib_atr/ib_range_atr dispo, info attribute seul, `None` par defaut)
+- `tod_bucket_rth` -> absent (session_segment dispo en string, info `None`)
+
+🟢 **OK** :
+- MenthorQ niveaux deja fix #92 (`dist_mq_*` extraits depuis bar)
+- Toutes les autres features OF (delta_bar, bn_pressure_*), structure (high/low/close), session (session_segment), VWAP (vwap_d/vwap_w/vwap_m + SD 2/3 levels), swing (dist_swing_*), market profile (cur_vah/val/vpoc, prev_vah/val/vpoc, sess_high/low, ovn_high/low), regime (vix_level)
+
+**Cause racine pattern recurrent** :
+- Claude fork module legacy CORE/ sans verifier features bar live_enriched (621 colonnes)
+- Documentation `.claude/rules/core.md` mentionne schema 3.7.2 262 cols mais le bar enrichi expose 621 features post-enricher (post-build_v4)
+- Tests E2E sur sample crafted bar inclut TOUTES les features utilisees (faux positif validation)
+- Tests E2E sur sample REEL (P5.3.C 100 bars NQ) auraient detecte ces bugs si assert empirique > 0 dispatches sur sample reel etait strict
+
+**Trigger prevention** (cumul #91 + #92 + #93 -> categorie CONTEXT_MISS 3+ occurrences = promouvoir memoire dediee) :
+1. AVANT fork module CORE legacy : grep features bar enrichi reel (621 colonnes)
+2. AVANT nouveau detector : grep clefs candidates dans bar reel sample
+3. AVANT deploy : sentinel cross-check toutes les `bar.get("...")` vs features reelles
+4. Tests E2E sur sample REEL > 0 dispatches (regle dure - on a corrige par R8 P5.3 ULTRATHINK partiellement)
+5. Audit cross-day verifications sentinel (eviter discrepancies sample 1 jour vs autre)
+
+**Tests** : 717/717 PASS apres fix sweep canonique + 2 nouveaux tests (`bars_since=0 NO FIRE`, `bars_since=5 NO FIRE`).
+
+**Backlog mineur (P5.4 deploy reste GO)** :
+- prev_vwap_sd1u/d : optionnel (sd2/sd3 dispo, peu d'impact confluence)
+- ib_extension_ratio : info attribute, pas gate
+- tod_bucket_rth : info attribute, pas gate
+- Audit similaire bot 1, bot 2, bot 3 si meme pattern fork CORE
+
+**Reviewed** : Jackson 26/06 (3eme CONTEXT_MISS consecutif = promotion memoire dediee) + Claude self-audit empirique exhaustif.
+
+---
+
 ### 2026-06-26 (92) - [CONTEXT_MISS] - Bot 4 v2 MenthorQ DEJA dans bar enrichi (pas de fichier JSON separe)
 
 **Contexte** : Phase P5.4 deploy Sim4. Documentation `DOCS/BOT4V2_NSSM_DEPLOY.md` mentionnait `DATA/MENTHORQ/{YYYYMMDD}_menthorq_complete.json` comme source niveaux MenthorQ. Claude propose verifier presence fichier JSON pre-deploy.

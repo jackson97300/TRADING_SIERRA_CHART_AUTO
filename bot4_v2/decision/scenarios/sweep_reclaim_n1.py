@@ -36,10 +36,16 @@ from bot4_v2.decision.scenario_registry import (
 class SweepReclaimN1Detector:
     """Detector Sweep+Reclaim N+1 (ICT canonical liquidity sweep + smart money entry).
 
-    Tolerance multi-format features (defensive parsing) :
-    - sweep_high_this_bar / sweep_low_this_bar (bar N current)
-    - sweep_high_lag1 / sweep_low_lag1 (bar N-1, si dispo)
-    - sweep_high_active / sweep_low_active (compteur)
+    Source canonique features Sierra Enricher live_enriched (verifie 26/06
+    INCIDENT_LOG #93 audit complet sources) :
+    - `bars_since_last_sweep_high` : nb bars depuis dernier sweep high
+      (0 = cette bar, **1 = sweep bar precedente = lag1 canonique**)
+    - `bars_since_last_sweep_low` : idem pour sweep low
+    - `sweep_high_this_bar` / `sweep_low_this_bar` : True si cette bar
+    - `liquidity_sweep_*_lag5` : True si sweep dans 5 dernieres bars
+
+    Backlog : features `sweep_*_lag1` AUGURE Claude P3 batch 2 NE EXISTENT PAS
+    dans le bar (CONTEXT_MISS #93). Fix : utiliser bars_since_last_sweep_* == 1.
     """
 
     SCENARIO_NAME = "Sweep_Reclaim_N1"
@@ -80,18 +86,21 @@ class SweepReclaimN1Detector:
         if bar_high <= 0 or bar_low <= 0:
             return None
 
-        # Detection : sweep happened bar N-1 (lag1) puis reclaim bar courante
+        # Detection : sweep happened bar N-1 puis reclaim bar courante.
+        # Source canonique : bars_since_last_sweep_* == 1 (cf #93 audit).
+        # Tolerance backward-compat sweep_*_lag1 si refacto futur enricher.
         sweep_high_lag1 = self._get_int(ctx.bar, "sweep_high_lag1")
         sweep_low_lag1 = self._get_int(ctx.bar, "sweep_low_lag1")
 
-        # Fallback : si lag1 features absentes, utilise sweep_*_active (compteur barre)
         if sweep_high_lag1 == 0 and sweep_low_lag1 == 0:
-            sweep_high_active = self._get_int(ctx.bar, "sweep_high_active")
-            sweep_low_active = self._get_int(ctx.bar, "sweep_low_active")
-            # active>=1 signifie sweep recent (heuristic fallback - moins precis que lag1)
-            if sweep_high_active >= 1:
+            # Source canonique : bars_since_last_sweep_high == 1 = sweep bar N-1
+            bsls_high = self._get_int(ctx.bar, "bars_since_last_sweep_high",
+                                       default=-1)
+            bsls_low = self._get_int(ctx.bar, "bars_since_last_sweep_low",
+                                      default=-1)
+            if bsls_high == 1:
                 sweep_high_lag1 = 1
-            if sweep_low_active >= 1:
+            if bsls_low == 1:
                 sweep_low_lag1 = 1
 
         # SHORT setup : sweep_high then reclaim down (price came back below high)
@@ -202,15 +211,15 @@ class SweepReclaimN1Detector:
         return min(100, score)
 
     @staticmethod
-    def _get_int(bar: dict, key: str) -> int:
-        """Extract int fail-soft (return 0 si absent / non-castable)."""
+    def _get_int(bar: dict, key: str, default: int = 0) -> int:
+        """Extract int fail-soft (return default si absent / non-castable)."""
         v = bar.get(key)
         if v is None:
-            return 0
+            return default
         try:
             return int(v)
         except (TypeError, ValueError):
-            return 0
+            return default
 
     @staticmethod
     def _estimate_tick_size(symbol: str) -> float:
