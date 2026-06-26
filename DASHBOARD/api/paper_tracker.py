@@ -3091,15 +3091,18 @@ def _load_bot4_today_state(day_str: Optional[str] = None) -> dict:
     events_sorted = sorted(events_logger, key=_ts_key)
     for ev in events_sorted:
         code = ev.get("code", "")
-        if code == "BOT4_KILL_SWITCH_DETECTED":
+        # FIX 26/06 : accepter codes Bot 4 v1 (BOT4_*) ET Bot 4 v2 (BOT4V2_*)
+        # Bot 4 v2 deploye Sim4 INCIDENT_LOG #83+#91 reuse meme path _bot4.jsonl
+        # mais emit codes BOT4V2_* (preserve namespace fork).
+        if code in ("BOT4_KILL_SWITCH_DETECTED", "BOT4V2_MAIN_KILL_SWITCH"):
             last_kill_switch_ev = ev
-        elif code == "BOT4_HEARTBEAT":
+        elif code in ("BOT4_HEARTBEAT", "BOT4V2_MAIN_HEARTBEAT_TICK"):
             last_heartbeat_ev = ev
-        elif code == "BOT4_CONFIG_LOADED":
+        elif code in ("BOT4_CONFIG_LOADED",):
             last_config_loaded_ev = ev
-        elif code == "BOT4_BOOT_READY":
+        elif code in ("BOT4_BOOT_READY", "BOT4V2_MAIN_BOOT"):
             last_boot_ready_ev = ev
-        elif code == "BOT4_BOOT_START":
+        elif code in ("BOT4_BOOT_START", "BOT4V2_MAIN_BOOT"):
             last_boot_start_ev = ev
 
     kill_switch_active = False
