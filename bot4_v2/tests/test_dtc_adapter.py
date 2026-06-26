@@ -143,7 +143,7 @@ def test_dtc_settings_defaults():
     assert cfg.host == "127.0.0.1"
     assert cfg.port == 11099
     assert cfg.client_name == "MIA_Bot_4_v2"
-    assert cfg.trade_account == "Sim5"
+    assert cfg.trade_account == "Sim4"
     assert cfg.reconnect_throttle_sec == 30.0
     assert cfg.parent_fill_timeout_sec == 30.0
     assert cfg.dry_run is False
@@ -195,7 +195,7 @@ def test_dtc_settings_frozen():
 def test_adapter_init_with_valid_backend():
     backend = FakeDTCBackend()
     adapter = DTCAdapter(backend=backend)
-    assert adapter.settings.trade_account == "Sim5"
+    assert adapter.settings.trade_account == "Sim4"
 
 
 def test_adapter_init_rejects_non_protocol_backend():
@@ -327,7 +327,7 @@ def test_send_bracket_sl_only_success():
     assert call["side"] == 1  # BUY = 1
     assert call["quantity"] == 2
     assert call["sl_price"] == 19990.0
-    assert call["trade_account"] == "Sim5"  # default
+    assert call["trade_account"] == "Sim4"  # default
     assert call["signal_ref_price"] == 20000.0
 
 
@@ -495,7 +495,7 @@ def test_cancel_order_success():
     assert ok is True
     call = backend.cancel_calls[0]
     assert call["client_order_id"] == "MIA_SL_xyz"
-    assert call["trade_account"] == "Sim5"  # default
+    assert call["trade_account"] == "Sim4"  # default
     assert call["server_order_id"] == "SERVER_123"
 
 

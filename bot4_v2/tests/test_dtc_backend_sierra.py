@@ -180,7 +180,7 @@ def test_send_market_delegates_args():
     backend = SierraDTCBackend(mock)
     result = backend.send_market_with_stop_only(
         symbol="NQ", side=2, quantity=1,
-        sl_price=20010.0, trade_account="Sim5",
+        sl_price=20010.0, trade_account="Sim4",
         signal_ref_price=19998.0,
     )
     assert result == ("P_123", "SL_456", 20000.5)
@@ -188,7 +188,7 @@ def test_send_market_delegates_args():
     args = mock.calls[-1][2]
     assert args["symbol"] == "NQ"
     assert args["side"] == 2
-    assert args["trade_account"] == "Sim5"
+    assert args["trade_account"] == "Sim4"
     assert args["signal_ref_price"] == 19998.0
 
 
@@ -197,7 +197,7 @@ def test_send_market_returns_empty_tuple_on_exception():
     backend = SierraDTCBackend(mock)
     result = backend.send_market_with_stop_only(
         symbol="NQ", side=2, quantity=1,
-        sl_price=20010.0, trade_account="Sim5",
+        sl_price=20010.0, trade_account="Sim4",
     )
     assert result == ("", "", 0.0)
 
@@ -208,7 +208,7 @@ def test_send_market_returns_empty_on_bad_result_type():
     backend = SierraDTCBackend(mock)
     result = backend.send_market_with_stop_only(
         symbol="NQ", side=2, quantity=1,
-        sl_price=20010.0, trade_account="Sim5",
+        sl_price=20010.0, trade_account="Sim4",
     )
     assert result == ("", "", 0.0)
 
@@ -231,7 +231,7 @@ def test_send_close_delegates_and_returns_cid():
     mock = MockDTCConnector(send_close_result="CLOSE_CID_999")
     backend = SierraDTCBackend(mock)
     cid = backend.send_close_market(
-        symbol="NQ", side=1, quantity=1, trade_account="Sim5",
+        symbol="NQ", side=1, quantity=1, trade_account="Sim4",
     )
     assert cid == "CLOSE_CID_999"
 
@@ -240,7 +240,7 @@ def test_send_close_returns_empty_on_exception():
     mock = MockDTCConnector(raise_on="send_close_market")
     backend = SierraDTCBackend(mock)
     cid = backend.send_close_market(
-        symbol="NQ", side=1, quantity=1, trade_account="Sim5",
+        symbol="NQ", side=1, quantity=1, trade_account="Sim4",
     )
     assert cid == ""
 
@@ -250,7 +250,7 @@ def test_send_close_returns_empty_on_non_string():
     mock = MockDTCConnector(send_close_result=None)  # type: ignore
     backend = SierraDTCBackend(mock)
     cid = backend.send_close_market(
-        symbol="NQ", side=1, quantity=1, trade_account="Sim5",
+        symbol="NQ", side=1, quantity=1, trade_account="Sim4",
     )
     assert cid == ""
 
@@ -279,25 +279,25 @@ def test_cancel_order_delegates_with_trade_account():
     mock = MockDTCConnector(cancel_result=True)
     backend = SierraDTCBackend(mock)
     ok = backend.cancel_order(
-        client_order_id="CID_123", trade_account="Sim5",
+        client_order_id="CID_123", trade_account="Sim4",
     )
     assert ok is True
     args = mock.calls[-1][2]
     assert args["order_id"] == "CID_123"
-    assert args["trade_account"] == "Sim5"
+    assert args["trade_account"] == "Sim4"
 
 
 def test_cancel_order_returns_false_on_dtc_false():
     mock = MockDTCConnector(cancel_result=False)
     backend = SierraDTCBackend(mock)
-    ok = backend.cancel_order(client_order_id="X", trade_account="Sim5")
+    ok = backend.cancel_order(client_order_id="X", trade_account="Sim4")
     assert ok is False
 
 
 def test_cancel_order_returns_false_on_exception():
     mock = MockDTCConnector(raise_on="cancel_order")
     backend = SierraDTCBackend(mock)
-    ok = backend.cancel_order(client_order_id="X", trade_account="Sim5")
+    ok = backend.cancel_order(client_order_id="X", trade_account="Sim4")
     assert ok is False
 
 

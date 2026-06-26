@@ -33,7 +33,7 @@ Garde-fous :
 
 EXCLU scope P5.2 (backlog P5.3+) :
 - Tail -F file watcher production (impl pure-Python long mais straightforward)
-- DTC fill event callback (caller doit hook DTC live events si pas paper Sim5
+- DTC fill event callback (caller doit hook DTC live events si pas paper Sim4 (reuse compte Bot 4 v1 stopped INCIDENT_LOG #83+#91)
   qui fait auto-fill)
 - Signal handler SIGINT/SIGTERM (caller invoque .stop())
 - Service nssm packaging

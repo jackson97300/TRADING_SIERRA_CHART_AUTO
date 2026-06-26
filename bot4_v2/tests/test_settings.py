@@ -31,7 +31,7 @@ def _clear_env_bot4v2(monkeypatch):
 
 def test_default_values():
     cfg = Bot4V2Settings.from_env()
-    assert cfg.trade_account == "Sim5"
+    assert cfg.trade_account == "Sim4"
     assert cfg.client_name == "MIA_Bot_4_v2"
     assert cfg.cid_prefix == "MIA4V2"
     assert cfg.n_micros_default == 1

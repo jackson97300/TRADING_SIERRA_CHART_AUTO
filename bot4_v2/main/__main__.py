@@ -9,8 +9,8 @@ Usage :
     # REPLAY sample JSONL historique (validation pipeline) :
     python -m bot4_v2.main --symbols NQ --replay DATA/live_enriched/sierra/NQ/20260624_NQ_sierra_enriched.jsonl --max-cycles 1000
 
-    # PAPER Sim5 (vrai DTC, demande Jackson Q1-Q4 P5.4 confirmation) :
-    python -m bot4_v2.main --symbols NQ,ES --trade-account Sim5 --no-dry-run
+    # PAPER Sim4 (vrai DTC, demande Jackson Q1-Q4 P5.4 confirmation) :
+    python -m bot4_v2.main --symbols NQ,ES --trade-account Sim4 --no-dry-run
 
 Architecture wiring :
     JSONLStream (tail-F OR replay)
@@ -111,7 +111,7 @@ def build_registry() -> ScenarioRegistry:
     """Construit registry avec les 2 detectors P3 batch 2 (Bearish + Sweep).
 
     Les 15 autres scenarios = backlog P6 (post-shadow data 30j).
-    Pour Sim5 paper validation, 2 scenarios = suffisant pipeline test.
+    Pour Sim4 paper validation, 2 scenarios = suffisant pipeline test.
     """
     registry = ScenarioRegistry()
     registry.register(BearishRejectionDetector())
@@ -132,7 +132,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(
         prog="bot4_v2.main",
-        description="Bot 4 v2 entry point - paper Sim5 validation pipeline",
+        description="Bot 4 v2 entry point - paper Sim4 validation pipeline",
     )
     parser.add_argument(
         "--symbols",
@@ -141,8 +141,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--trade-account",
-        default="Sim5",
-        help="Compte DTC TradeAccount (defaut Sim5)",
+        default="Sim4",
+        help="Compte DTC TradeAccount (defaut Sim4)",
     )
     parser.add_argument(
         "--build-id",
@@ -271,7 +271,7 @@ def build_loop(args: argparse.Namespace) -> BotMainLoop:
 
 
 def _build_sierra_backend(args):
-    """Construit SierraDTCBackend pour paper Sim5 reel.
+    """Construit SierraDTCBackend pour paper Sim4 reel.
 
     Lazy import BOT.dtc_connector + bot_config (anti import cycle tests).
 

@@ -25,7 +25,7 @@ from bot4_v2.main.bot_main_v2 import StreamEnded
 def test_parse_args_defaults():
     args = parse_args([])
     assert args.symbols == "NQ"
-    assert args.trade_account == "Sim5"
+    assert args.trade_account == "Sim4"
     assert args.max_cycles == 0
     assert args.no_dry_run is False  # dry_run par defaut
     assert args.heartbeat_sec == 30.0
@@ -155,7 +155,7 @@ def test_dry_run_backend_methods_safe():
     backend.disconnect()  # noop
     result = backend.send_market_with_stop_only(
         symbol="NQ", side=2, quantity=1, sl_price=20010.0,
-        trade_account="Sim5",
+        trade_account="Sim4",
     )
     assert result == ("DRYRUN_PARENT", "DRYRUN_SL", 20000.0)
 

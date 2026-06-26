@@ -32,6 +32,39 @@
 
 ---
 
+### 2026-06-26 (91) - [CONTEXT_MISS] - Bot 4 v2 trade_account Sim5 invente (Sierra Chart = 4 comptes seul)
+
+**Contexte** : Phase P5.4.A wire SierraDTCBackend (26/06). Claude a propose dans __main__.py default `--trade-account Sim5` + configs P1 settings.py + INCIDENT_LOG #84+#90. Jackson reagit : "ON A QQUE 4 COMPTE SIM".
+
+**Erreur** : Sierra Chart Trade Simulation Mode expose UNIQUEMENT 4 comptes simu : `Sim1`, `Sim2`, `Sim3`, `Sim4`. PAS de Sim5. Mapping deja documente memoire `project_bots_architecture_20260529` (MAJ 25/06 cf #85) :
+- Sim1 : Bot 1 Mean Revert
+- Sim2 : Bot 2 Mirror v2
+- Sim3 : Bot 3 BN V4
+- Sim4 : Bot 4 v1 (STOPPED + DISABLED INCIDENT_LOG #83 refonte v2)
+
+**Cause racine** : Claude a invente "Sim5" pour Bot 4 v2 par analogie naive (v2 = nouveau compte) sans verifier disponibilite reelle Sierra Chart. Le mapping memoire 25/06 etait clair "Sim4 reserve Bot 4" et Bot 4 v1 STOPPED = compte LIBRE pour reuse.
+
+**Decision Jackson souveraine 26/06** : Bot 4 v2 reuse Sim4 (compte Bot 4 v1 stoppé). Pas de nouveau compte cree.
+
+**Patch applique** :
+- `bot4_v2/main/__main__.py` default `--trade-account Sim4`
+- `bot4_v2/config/settings.py` default `TRADE_ACCOUNT=Sim4`
+- `bot4_v2/execution/dtc_adapter.py` default `TRADE_ACCOUNT=Sim4`
+- `bot4_v2/execution/dtc_backend_sierra.py` docstrings Sim4
+- Tests test_dtc_adapter + test_settings + test_dtc_backend_sierra : Sim5→Sim4
+- `tools/bot4v2_replay_metrics.py` docstrings Sim4
+
+**Tests** : 684/684 PASS apres correction.
+
+**Trigger prevention** :
+- AVANT proposer compte Sim/broker : VERIFIER liste reelle disponible Sierra Chart (Get-Service nssm cross-check, ou demander a Jackson)
+- Memoire `project_bots_architecture_*` = source de verite mapping comptes
+- Si bot v1 stoppé : son compte est REUSABLE pour v2 (no need new account)
+
+**Reviewed** : Jackson 26/06 (CONTEXT_MISS flagge directement) + Claude self-audit + correction immediate.
+
+---
+
 ### 2026-06-26 (90) - [VALIDATION_GO] - Bot 4 v2 P5.4 pipeline empirique 10j NQ GO + SierraDTCBackend wrapper
 
 **Contexte** : Phase P5.4 deploy prep Sim5 du chantier Bot 4 v2 (refonte 7-8 sem). Apres P5.3 (646 tests), phase finale wiring + validation.

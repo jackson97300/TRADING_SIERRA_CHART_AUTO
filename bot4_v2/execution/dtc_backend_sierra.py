@@ -79,7 +79,7 @@ class SierraDTCBackend:
 
     Pattern : pure delegation sur `BOT.dtc_connector.DTCConnector` heritage.
 
-    Usage paper Sim5 :
+    Usage paper Sim4 :
         from BOT.dtc_connector import DTCConnector
         from bot_config import DTCConfig
         dtc_conn = DTCConnector(DTCConfig(...))
@@ -167,7 +167,7 @@ class SierraDTCBackend:
             side : 1=BUY (long) / 2=SELL (short)
             quantity : nb contrats
             sl_price : prix SL initial (absolu)
-            trade_account : OBLIGATOIRE compte cible (Sim5 pour bot4_v2)
+            trade_account : OBLIGATOIRE compte cible (Sim4 pour bot4_v2)
             signal_ref_price : prix reference informatif
 
         Returns:

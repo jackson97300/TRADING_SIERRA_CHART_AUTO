@@ -108,7 +108,7 @@ class DTCSettings:
         default_factory=lambda: _env_str("CLIENT_NAME", "MIA_Bot_4_v2")
     )
     trade_account: str = field(
-        default_factory=lambda: _env_str("TRADE_ACCOUNT", "Sim5")
+        default_factory=lambda: _env_str("TRADE_ACCOUNT", "Sim4")
     )
 
     # Timeouts (sec)
