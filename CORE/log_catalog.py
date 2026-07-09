@@ -1168,6 +1168,8 @@ LOG_CODES = {
     "PHASE_3C_C_FFD_FAIL":         (LogLevel.ALERTE,  "events", "Phase 3c-C cvd_5d_ffd crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
     "PHASE_3C_C_VA_FAIL":          (LogLevel.ALERTE,  "events", "Phase 3c-C cur_va_* read crash : sym={sym} exc_type={exc_type} msg={exc_msg}"),
     "PHASE_3C_C_ATR_STALE":        (LogLevel.MAJEUR,  "events", "Phase 3c-C atr feed STALE : sym={sym} n_bars_consec_none={n_bars} (anti-pattern 11 V1 - atr_regime_zscore_60d reste None silencieux)"),
+    "SIERRA_ATR_REGIME_BOOT_WARMUP": (LogLevel.MAJEUR, "events", "Sierra Pipeline ATR Regime BOOT : sym={sym} warmup={warmup_bars}_bars_required ({warmup_days}j RTH) - vol_regime force NORMAL pendant warmup (Bot 4 v2 gate EXTREME inactif)"),
+    "BOTBN_SL_SENT":               (LogLevel.MAJEUR,  "execution", "BotBN SL ATTACHED post-fill CONFIRMED : sym={sym} direction={direction} sl_cid={sl_cid} sl_price={sl_price} (success path anti-INCIDENT #67 / NAKED counterpart - P0.B 28/06)"),
     "PHASE_3C_C_CVD_STALE":        (LogLevel.MAJEUR,  "events", "Phase 3c-C cvd_day feed STALE : sym={sym} n_bars_consec_none={n_bars} (anti-pattern 11 V1 - cvd_5d_rolling_ffd reste None silencieux)"),
     "PHASE_3C_C_NPOC_SESS_SKIP":   (LogLevel.INFO,    "events", "Phase 3c-C naked_poc skip push history : sym={sym} old_sess={old_sess} new_sess={new_sess} reason={reason} (boot mi-session ou prev_vpoc None - feature reste None pendant 7j)"),
     "ENRICHER_SEED_VP_FAIL": (LogLevel.ALERTE, "events", "Enricher seed VolumeProfile FAIL : {sym} reason={reason} (P2.1 - prev_*/pdh/pdl restera null jusqu'a session change)"),
@@ -1527,6 +1529,18 @@ LOG_CODES = {
     "BOT1V2_DTC_FILL_TP":           (LogLevel.MAJEUR,   "execution", "Bot1V2 fill TP : {sym} {direction} entry={entry_price:.2f} exit={exit_price:.2f} {pnl_ticks:.1f}t ${pnl_usd:.2f} sig={signal_id} cid={cid}"),
     "BOT1V2_DTC_FILL_SL":           (LogLevel.MAJEUR,   "execution", "Bot1V2 fill SL : {sym} {direction} entry={entry_price:.2f} exit={exit_price:.2f} {pnl_ticks:.1f}t ${pnl_usd:.2f} sig={signal_id} cid={cid}"),
     "BOT1V2_FILL_LISTENER_EXCEPTION": (LogLevel.CRITIQUE, "events",  "Bot1V2 fill listener exception : {err}"),
+    # Fix #1 MAX_HOLD 30/06 : sequence anti-orphelin V2 (cf orphan-prevention.md)
+    "BOT1V2_POSITION_TIMEOUT_CLOSE": (LogLevel.MAJEUR,   "execution", "Bot1V2 timeout force close : {sym} direction={direction} entry={entry_price} age_min={age_min} close_cid={close_cid} qty={qty}"),
+    "BOT1V2_TIMEOUT_CANCEL_EXCEPTION": (LogLevel.ALERTE,  "execution", "Bot1V2 timeout cancel exception : {sym} label={label} cid={cid} err={err}"),
+    "BOT1V2_TIMEOUT_CANCEL_FAIL_ORPHAN_RISK": (LogLevel.CRITIQUE, "execution", "Bot1V2 timeout cancel fail ORPHAN RISK : {sym} direction={direction} failed={failed}"),
+    "BOT1V2_TIMEOUT_ALREADY_FLAT":  (LogLevel.INFO,     "execution", "Bot1V2 timeout deja flat : {sym} direction={direction} age_min={age_min}"),
+    "BOT1V2_TIMEOUT_POSITION_UNKNOWN": (LogLevel.ALERTE,  "execution", "Bot1V2 timeout position unknown (DTC freeze) : {sym} direction={direction} age_min={age_min}"),
+    "BOT1V2_TIMEOUT_REQUEST_POS_FAIL": (LogLevel.ALERTE,  "execution", "Bot1V2 timeout request_position fail : {sym} err={err}"),
+    "BOT1V2_TIMEOUT_DTC_DOWN_ORPHAN_RISK": (LogLevel.CRITIQUE, "execution", "Bot1V2 timeout DTC DOWN orphan risk : {sym} direction={direction} age_min={age_min}"),
+    "BOT1V2_TIMEOUT_VERIFY_CLEAN":  (LogLevel.INFO,     "execution", "Bot1V2 timeout cleanup verified clean : {sym} direction={direction}"),
+    "BOT1V2_TIMEOUT_ORPHAN_DETECTED_POST_CLEANUP": (LogLevel.CRITIQUE, "execution", "Bot1V2 ORPHAN detected post-cleanup : {sym} direction={direction} n_working={n_working}"),
+    # Fix #2 BUG FIX 30/06 : cooldown active post-close (register_close manquant)
+    "BOT1V2_COOLDOWN_ACTIVATED": (LogLevel.MAJEUR, "execution", "Bot1V2 cooldown active : {sym} was_loss={was_loss} cooldown_min={cooldown_min} pnl=${pnl_usd}"),
     "BOT1V2_FILL_PRICE_INVALID":    (LogLevel.ALERTE,   "execution", "Bot1V2 fill price invalid : {sym} kind={kind} status={msg_status} last={last_fill_price} avg={avg_fill_price} sig={signal_id} cid={cid}"),
     "BOT1V2_STATE_BRIDGE_CLOSE_EXCEPTION": (LogLevel.ALERTE, "events", "Bot1V2 state_bridge.close_position exception : {sym} {err}"),
     "BOT1V2_ON_CLOSE_CALLBACK_EXCEPTION":  (LogLevel.ALERTE, "events", "Bot1V2 on_close_callback exception : {sym} {err}"),
@@ -1783,7 +1797,7 @@ LOG_CODES = {
     "BOTMR_TIMEOUT_FLATTEN_EXCEPTION": (LogLevel.MAJEUR, "execution",
         "BotMR {sym} timeout flatten exception err={err}"),
     "BOTMR_TIMEOUT_CLOSE_DONE": (LogLevel.INFO, "execution",
-        "BotMR {sym} timeout close sequence complete"),
+        "BotMR {sym} timeout close sequence complete (dir={direction}, entry={entry_price}, elapsed={elapsed_min}min, qty={n_micros})"),
 
     # 🆕 18/06/2026 ANTI-BOUCLE MAX_HOLD (incident 9 close markets cumules).
     # Boot warmup : laisse temps DtcFillListener detecter fills orphelins (60s).
@@ -1858,7 +1872,7 @@ LOG_CODES = {
     "BOTBN_DAILY_STATE_LOAD":       (LogLevel.INFO,     "events",    "BotBN daily state load : n_trades={n_trades} pnl=${pnl:.2f} date={date}"),
     "MARKET_STOP_ONLY_NAKED":       (LogLevel.CRITIQUE, "execution", "MARKET+SL : fill OK mais SL non pose, position NUE : parent={parent_id} fill={fill_price:.2f} sl={sl_price:.2f}"),
     "BOTBN_TRAIL_SL_UPDATE":        (LogLevel.INFO,     "execution", "BotBN trail SL update : {sym} {old_sl:.2f} -> {new_sl:.2f} pivot_low={pivot_low}"),
-    "BOTBN_TRADE_CLOSE":            (LogLevel.INFO,     "execution", "BotBN trade close : {sym} {direction} reason={reason} pnl_ticks={pnl_ticks} pnl_usd={pnl_usd:.2f}"),
+    "BOTBN_TRADE_CLOSE":            (LogLevel.MAJEUR,   "execution", "BotBN trade CLOSE : sym={sym} pnl_usd={pnl_usd} exit_reason={exit_reason} (P0.B 28/06 - audit weekend, requis mesure PF/WR/DSR Lopez)"),
 
     # =====================================================================
     # BOT 4 V2 (refonte propre 25/06/2026, INCIDENT_LOG #83 DECISION_SOUVERAINE)

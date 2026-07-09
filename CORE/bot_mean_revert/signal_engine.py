@@ -19,6 +19,12 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from CORE.bot_mean_revert.config import BotMRConfig
+# FIX B3 review code-reviewer 24/06 : import top-of-file (vs per-call dans eval).
+from CORE.bot_mean_revert.regime_classifier import (
+    detect_session_utc,
+    is_blacklisted,
+    parse_blacklist,
+)
 
 try:
     from CORE.constants import get_tick_size
@@ -127,6 +133,8 @@ class SignalEngine:
         on_corrupted_state: Optional[Callable[[str, str], None]] = None,
         regime_classifier=None,
         regime_scorer=None,
+        regime_classifier_v_final=None,
+        on_regime_detected: Optional[Callable[[str, str, str], None]] = None,
     ):
         self.symbol = symbol.upper()
         self.cfg = cfg
@@ -143,6 +151,22 @@ class SignalEngine:
         # non-monotonie observee dans calibration empirique deciles slope_30.
         # Bloque uniquement TREND_*_STRONG + PANIC (TREND_*_WEAK et RANGE OK).
         self.regime_scorer = regime_scorer
+        # V_FINAL audit market-analyst 24/06 : architecture regime-aware
+        # validee empirique sur 7j (5 regimes + 3 regles d'exclusion).
+        # Distinct de regime_classifier 18/06 (qui fait du vote majoritaire,
+        # autre semantique). Injection optionnelle pour backward compat tests.
+        # Cf CORE/bot_mean_revert/regime_classifier.py
+        self.regime_classifier_v_final = regime_classifier_v_final
+        # Callback emit pour log BOTMR_REGIME_DETECTED (decoupe bot_log).
+        # Signature : (symbol, regime_str, session_str) -> None
+        self._on_regime_detected = on_regime_detected
+        # FIX B1 review code-reviewer 24/06 : memoize blacklist parse au boot
+        # (avant : parse a chaque bar = ~22929 invocations sample backtest).
+        self._regime_blacklist_cache: Optional[frozenset] = None
+        # FIX B2 review code-reviewer 24/06 : throttle emit BOTMR_REGIME_DETECTED
+        # sur changement regime (avant : ~2880 logs/jour, apres : ~10-20 transitions).
+        # Format : {symbol: "regime:session"}
+        self._last_regime_emit: dict[str, str] = {}
         self._cooldown_until_ts = 0.0
         # LEGACY counter (fallback si pas de store)
         self._bars_since_last_trade = cfg.COOLDOWN_BARS  # ready immediat au boot
@@ -200,11 +224,45 @@ class SignalEngine:
         if self.store is None:
             self._bars_since_last_trade += 1
 
+    def _get_cooldown_seconds(self) -> tuple[float, int]:
+        """Retourne (cooldown_sec, n_sl_consec) calcule selon le nombre de SL
+        consecutives via store (mode time-based) ou legacy COOLDOWN_BARS sinon.
+
+        FIX A3 audit forensique 22-23/06 : cooldown progressif post-LOSS.
+        - 0 SL consec (post-WIN ou flat) : COOLDOWN_BARS (default 30 min)
+        - 1 SL consec : COOLDOWN_POST_LOSS_BARS (default 45 min)
+        - 2 SL consec : COOLDOWN_POST_2LOSS_BARS (default 90 min)
+        - 3+ SL consec : circuit breaker HALT 60 min (deja en place via main.py)
+
+        Anti-spirale carnage FOMC 18/06 (16 trades / jour) sans tuer le volume
+        data (directive Jackson 23/06).
+        """
+        n_sl_consec = 0
+        if self.store is not None:
+            try:
+                n_sl_consec = int(self.store.get_n_sl_consec(self.symbol))
+            except Exception:  # noqa: BLE001
+                # Si store inaccessible, fallback cooldown standard
+                n_sl_consec = 0
+
+        # Bareme progressif
+        if n_sl_consec >= 2:
+            cooldown_bars = self.cfg.COOLDOWN_POST_2LOSS_BARS
+        elif n_sl_consec == 1:
+            cooldown_bars = self.cfg.COOLDOWN_POST_LOSS_BARS
+        else:
+            cooldown_bars = self.cfg.COOLDOWN_BARS
+
+        return float(cooldown_bars) * 60.0, n_sl_consec
+
     def _is_cooldown_active(self) -> tuple[bool, float]:
         """Retourne (cooldown_actif, elapsed).
 
         Mode time-based (store) : elapsed = secondes ecoulees depuis last_trade_ts.
         Mode legacy counter (no store) : elapsed = nombre de bars depuis register_trade.
+
+        FIX A3 23/06 : cooldown progressif via `_get_cooldown_seconds()` (basee
+        sur n_sl_consec persiste store, reuse infra circuit breaker existante).
         """
         if self.store is not None:
             last_iso = self.store.get_last_trade_ts(self.symbol)
@@ -229,9 +287,9 @@ class SignalEngine:
             if last_dt.tzinfo is None:
                 last_dt = last_dt.replace(tzinfo=timezone.utc)
             elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds()
-            cooldown_sec = self.cfg.COOLDOWN_BARS * 60.0  # 1 bar = 1 min
+            cooldown_sec, _ = self._get_cooldown_seconds()
             return elapsed < cooldown_sec, elapsed
-        # Mode legacy counter
+        # Mode legacy counter (pas de progressif sans store)
         return (
             self._bars_since_last_trade < self.cfg.COOLDOWN_BARS,
             float(self._bars_since_last_trade),
@@ -356,11 +414,20 @@ class SignalEngine:
                 )
 
         # 1. Cooldown (time-based si store, sinon legacy counter)
+        # FIX A3 23/06 : cooldown progressif post-LOSS. Skip reason expose
+        # n_sl_consec pour permettre le dispatcher main.py d'emit code
+        # BOTMR_COOLDOWN_PROGRESSIVE_ACTIVE (durcissement vs cooldown standard).
         is_cool, elapsed = self._is_cooldown_active()
         if is_cool:
             if self.store is not None:
-                cooldown_sec = self.cfg.COOLDOWN_BARS * 60
-                skip_reason = f"COOLDOWN:{elapsed:.0f}s/{cooldown_sec:.0f}s"
+                cooldown_sec, n_sl_consec = self._get_cooldown_seconds()
+                if n_sl_consec > 0:
+                    skip_reason = (
+                        f"COOLDOWN_PROGRESSIVE:{elapsed:.0f}s/{cooldown_sec:.0f}s "
+                        f"n_sl_consec={n_sl_consec}"
+                    )
+                else:
+                    skip_reason = f"COOLDOWN:{elapsed:.0f}s/{cooldown_sec:.0f}s"
             else:
                 skip_reason = f"COOLDOWN:{int(elapsed)}/{self.cfg.COOLDOWN_BARS}"
             return SignalResult(
@@ -379,6 +446,136 @@ class SignalEngine:
                 **base_ctx,
             )
 
+        # 2quater. V_FINAL audit market-analyst 24/06 - REGIME-AWARE BLACKLIST
+        # ============================================================
+        # Directive Jackson "TOUT doit etre dynamique selon le regime".
+        # Backtest empirique 7j (22929 bars + 67 trades) : 5 regimes + 3 regles
+        # d'exclusion = +$299 retroactif, 95% wins preserves, cross-period validee.
+        # Architecture : RegimeClassifier injectee par main.py (None -> skip).
+        # Sessions : asia/london/us_cash/ah via detect_session_utc(bar_hour).
+        # Blacklist par defaut : (PANIC,*), (CALM_RANGE,us_cash), (VOLATILE,asia).
+        # FIX B1+B2+B3 review code-reviewer 24/06 :
+        #   - B1 : memoize blacklist au boot (avant parse 22929 fois)
+        #   - B2 : throttle emit BOTMR_REGIME_DETECTED sur changement regime
+        #   - B3 : imports top-of-file (deja fait)
+        if (self.cfg.REGIME_AWARE_ENABLED
+                and self.regime_classifier_v_final is not None):
+            bar_ts_us = bar.get("ts")
+            if bar_ts_us is not None:
+                try:
+                    bar_dt = datetime.fromtimestamp(
+                        float(bar_ts_us) / 1000.0, tz=timezone.utc,
+                    )
+                    session_utc = detect_session_utc(bar_dt.hour)
+                    regime = self.regime_classifier_v_final.classify(
+                        bar, self.symbol,
+                    )
+                    # FIX B2 : throttle emit sur changement regime only.
+                    if self._on_regime_detected is not None:
+                        cur_key = f"{regime.value}:{session_utc}"
+                        last_key = self._last_regime_emit.get(self.symbol)
+                        if last_key != cur_key:
+                            try:
+                                self._on_regime_detected(
+                                    self.symbol, regime.value, session_utc,
+                                )
+                                self._last_regime_emit[self.symbol] = cur_key
+                            except Exception:  # noqa: BLE001
+                                pass  # safe-fail emit
+                    # FIX B1 : memoize blacklist parse au 1er appel
+                    if self._regime_blacklist_cache is None:
+                        self._regime_blacklist_cache = parse_blacklist(
+                            self.cfg.REGIME_AWARE_BLACKLIST,
+                        )
+                    if is_blacklisted(
+                        regime, session_utc, self._regime_blacklist_cache,
+                    ):
+                        return SignalResult(
+                            tradable=False,
+                            skip_reason=(
+                                f"REGIME_SESSION_BLOCK:regime={regime.value} "
+                                f"session={session_utc}"
+                            ),
+                            **base_ctx,
+                        )
+                except (TypeError, ValueError, OSError):
+                    # Fail-open : si bar ts corrompu, pas de block
+                    pass
+
+        # 2ter. FIX PROP #2 audit market-analyst 24/06 - SKIP SESSION AH
+        # ============================================================
+        # Empirique 7 jours 16-24/06 : session AH 21:00-24:00 UTC = 0/10 TP.
+        # Notamment 23/06 NQ AH carnage 4 SL -$700 en 1h15 (revenge trade).
+        # Backtest 67 trades : sacrifice 0 win, evite 5 SL = +$875.
+        # Wins preserves : 100% (directive Jackson >= 70%).
+        # NOTE : on lit l'heure UTC du bar ts (pas datetime.utcnow) pour aligner
+        # sur les bars effectivement traitees (anti-clock-skew).
+        if self.cfg.SKIP_AH_SESSION_ENABLED:
+            bar_ts_us = bar.get("ts")
+            if bar_ts_us is not None:
+                try:
+                    bar_dt = datetime.fromtimestamp(
+                        float(bar_ts_us) / 1000.0, tz=timezone.utc,
+                    )
+                    bar_hour = bar_dt.hour
+                    ah_start = self.cfg.AH_SESSION_START_UTC_HOUR
+                    ah_end = self.cfg.AH_SESSION_END_UTC_HOUR
+                    if ah_start <= bar_hour < ah_end:
+                        return SignalResult(
+                            tradable=False,
+                            skip_reason=(
+                                f"SESSION_AH_BLOCK:hour={bar_hour}h "
+                                f"in [{ah_start}-{ah_end}h] UTC"
+                            ),
+                            **base_ctx,
+                        )
+                except (TypeError, ValueError, OSError):
+                    # Bar ts corrupted -> fail-open (do not block on bug)
+                    pass
+
+        # 2bis. FIX A4 audit forensique 22-23/06 (PHASE A) - GATE NEWS/FOMC
+        # ============================================================
+        # Empirique 18/06 FOMC : Bot 1 a fait 16 trades pendant FOMC day 14:00 ET.
+        # Reuse CORE/eco_calendar.is_blocked_now() qui couvre FOMC/NFP/CPI/PCE
+        # avec windows BLOCK_WINDOWS configurees. Convention Bot 3 v3 24/05
+        # (R1 code-reviewer) : fail-CLOSED si module HS (mieux rater un trade
+        # qu'etre dans un FOMC carnage).
+        # NOTE : on n'utilise PAS is_blocked_combined() car _check_session()
+        # ci-dessus couvre deja les sessions/weekend. is_blocked_now() = news only.
+        if self.cfg.NEWS_GATE_ENABLED:
+            try:
+                from CORE import eco_calendar as _eco
+                _news_blocked, _news_reason, _block_end = _eco.is_blocked_now()
+            except Exception as _e:  # noqa: BLE001
+                if self.cfg.NEWS_GATE_FAIL_CLOSED:
+                    return SignalResult(
+                        tradable=False,
+                        skip_reason=f"NEWS_GATE_FAIL_CLOSED:err={str(_e)[:80]}",
+                        **base_ctx,
+                    )
+                # Fail-OPEN explicite (debug seulement)
+                _news_blocked, _news_reason, _block_end = False, None, None
+            if _news_blocked:
+                # Format: NEWS_BLOCK:{event_title}_until_{iso}_buffer_{min}min
+                # _block_end est datetime UTC, on l'expose en ISO pour audit J+1
+                block_end_iso = _block_end.isoformat() if _block_end else "?"
+                # Calcul buffer_min approximatif (apres window)
+                from datetime import datetime as _dt, timezone as _tz
+                try:
+                    buffer_min = int(
+                        (_block_end - _dt.now(_tz.utc)).total_seconds() / 60
+                    ) if _block_end else 0
+                except Exception:  # noqa: BLE001
+                    buffer_min = 0
+                return SignalResult(
+                    tradable=False,
+                    skip_reason=(
+                        f"NEWS_BLOCK:event={_news_reason or '?'} "
+                        f"until={block_end_iso} buffer_min={buffer_min}"
+                    ),
+                    **base_ctx,
+                )
+
         # 3. RVOL min
         if rvol_z < self.cfg.RVOL_ZSCORE_MIN:
             return SignalResult(
@@ -388,18 +585,60 @@ class SignalEngine:
             )
 
         # 4. Distances SD bands
+        # FIX BUG #3 review code-reviewer 23/06 : recuperer valeurs BRUTES
+        # pour distinguer "feature absente" vs "0.0 legitime". Anti-pattern V1
+        # Gamma=0.0 silencieux (cf lessons.md). Sans cette distinction, le fix A1
+        # (thr=0.1) declenche LONG fantome quand sd3d_pct=None car _f(None)=0.0
+        # et 0.0 >= -0.1 = True. Regle data-quality.md : fail-loud sur SD critique.
         if self.cfg.SD_LEVEL == "sd3":
-            d_low = _f(bar.get("dist_vwap_d_sd3d_pct"))
-            d_high = _f(bar.get("dist_vwap_d_sd3u_pct"))
+            d_low_raw = bar.get("dist_vwap_d_sd3d_pct")
+            d_high_raw = bar.get("dist_vwap_d_sd3u_pct")
+            level_key = "sd3"
         else:
-            d_low = _f(bar.get("dist_vwap_d_sd2d_pct"))
-            d_high = _f(bar.get("dist_vwap_d_sd2u_pct"))
+            d_low_raw = bar.get("dist_vwap_d_sd2d_pct")
+            d_high_raw = bar.get("dist_vwap_d_sd2u_pct")
+            level_key = "sd2"
 
+        if d_low_raw is None or d_high_raw is None:
+            return SignalResult(
+                tradable=False,
+                skip_reason=f"SD_FEATURE_MISSING:level={level_key} d_low={d_low_raw} d_high={d_high_raw}",
+                **base_ctx,
+            )
+
+        d_low = _f(d_low_raw)
+        d_high = _f(d_high_raw)
+
+        # FIX A1 audit forensique 22-23/06 (PHASE A) - CONDITION SD INVERSEE
+        # ============================================================
+        # BUG documente (`PATTERN_11` + `COMMENT_FALSE` + `VALIDATION_MISS`) :
+        # Convention DMP empirique sur 4257 bars ES 18/06 :
+        #   - dist_vwap_d_sd3d_pct (d_low)  : range [-1.80, 0.00] (toujours <= 0)
+        #   - dist_vwap_d_sd3u_pct (d_high) : range [0.01, 1.18]  (toujours >= 0)
+        # Valeur ~0 = prix touche la bande SD3 (extension extreme).
+        #
+        # ANCIEN CODE (CASSE avec thr=0.0):
+        #   if d_low <= -thr:    => sd3d_pct <= 0 => TRUE pour 100% des bars
+        #     direction = "LONG"
+        # Resultat empirique 18/06 : 1030 LONG / 0 SHORT generes.
+        # Le bot achetait dans la zone HAUTE entre VWAP et SD3u, OPPOSE de la
+        # mean reversion. WR 26%, PF 0.54 sur 23 trades juin.
+        #
+        # NOUVEAU CODE :
+        #   - LONG : sd3d_pct >= -thr  (prix proche/sous SD3 inferieur)
+        #   - SHORT : sd3u_pct <= thr  (prix proche/sus SD3 superieur)
+        # Avec thr=0.1 : LONG si dist <= 0.1% au-dessus de SD3 down
+        #                SHORT si dist <= 0.1% en-dessous de SD3 up
+        # Backtest validation 18/06 : SHORT ES = +430 ticks WR 42.1% (vs 0
+        # SHORT possibles avant). LONG NQ trend up = +3995t WR 48.5%.
+        #
+        # Ref : DOCS/superpowers/specs/2026-06-23-audit-forensique-bots-correction.md
+        #       (a creer Phase D documentation)
         thr = self.cfg.SD_THRESHOLD_PCT
         direction: Optional[str] = None
-        if d_low <= -thr:
+        if d_low >= -thr:    # FIX A1 : LONG si proche/sous SD3 down (extension valide)
             direction = "LONG"
-        elif d_high >= thr:
+        elif d_high <= thr:  # FIX A1 : SHORT si proche/sus SD3 up (extension valide)
             direction = "SHORT"
         else:
             return SignalResult(
@@ -407,6 +646,58 @@ class SignalEngine:
                 skip_reason=f"NO_EXTENSION:d_low={d_low:.3f} d_high={d_high:.3f} thr={thr:.3f}",
                 **base_ctx,
             )
+
+        # FIX A2 audit forensique 22-23/06 (PHASE A) - GATE VWAP INTRADAY
+        # ============================================================
+        # Empirique 18/06 : 9/12 LOSS Bot 1 ont MFE=0 (75%) = bot fade un
+        # mouvement immediat dans la mauvaise direction. Cause : vwap_slope_30
+        # base sur VWAP-day cumulative qui LAG (slope reste +0.55-0.83 pendant
+        # une chute -46pts ES en 1h). Filtre slope_30 inutile pour intraday.
+        #
+        # SOLUTION : garde-fou `dist_vwap_d_pct` (close vs VWAP daily) :
+        #   - LONG bloque si prix sous VWAP-d de > LONG_BLOCK_THR_PCT (default 0.3%)
+        #     => trend down intraday clair, on n'achete pas un falling knife
+        #   - SHORT bloque si prix au-dessus VWAP-d de > SHORT_BLOCK_THR_PCT
+        #     => trend up intraday clair, on ne shorte pas un trend bullish
+        #
+        # Codes log : BOTMR_LONG_BELOW_VWAP_BLOCK / BOTMR_SHORT_ABOVE_VWAP_BLOCK
+        # FIX BUG #1 review code-reviewer 23/06 : recuperer valeur BRUTE
+        # pour distinguer "feature absente" (None) vs "0.0 legitime" (close==VWAP).
+        # Ancien code `_f(bar.get("dist_vwap_d_pct"))` retournait 0.0 si None,
+        # rendant le test `is not None` mort (toujours True sur un float). Donc
+        # gate s'appliquait avec dist=0.0 silencieux quand feature corrompue
+        # (anti-pattern V1 Gamma=0.0 cf lessons.md). Fail-open ici car backward
+        # compat plus important que blocking total — MAIS on logge warning pour
+        # tracer en J+1 (regle .claude/rules/data-quality.md section "fail-loud").
+        dist_vwap_raw = bar.get("dist_vwap_d_pct")
+        if dist_vwap_raw is None:
+            # Fail-OPEN explicite : feature non encore enrichie (backward compat
+            # avec bots Sim1 actuels) MAIS log warning pour grep J+1 si en prod.
+            logging.getLogger("bot_mr").warning(
+                f"[{self.symbol}] A2 fail-open : dist_vwap_d_pct absent du bar"
+            )
+        else:
+            try:
+                dist_vwap_d_pct = float(dist_vwap_raw)
+            except (TypeError, ValueError):
+                logging.getLogger("bot_mr").warning(
+                    f"[{self.symbol}] A2 fail-open : dist_vwap_d_pct corrupted={dist_vwap_raw!r}"
+                )
+            else:
+                long_block_thr = -abs(self.cfg.VWAP_INTRADAY_LONG_BLOCK_PCT)
+                short_block_thr = abs(self.cfg.VWAP_INTRADAY_SHORT_BLOCK_PCT)
+                if direction == "LONG" and dist_vwap_d_pct < long_block_thr:
+                    return SignalResult(
+                        tradable=False,
+                        skip_reason=f"LONG_BELOW_VWAP_INTRADAY:dist={dist_vwap_d_pct:.3f}<{long_block_thr:.2f}",
+                        **base_ctx,
+                    )
+                if direction == "SHORT" and dist_vwap_d_pct > short_block_thr:
+                    return SignalResult(
+                        tradable=False,
+                        skip_reason=f"SHORT_ABOVE_VWAP_INTRADAY:dist={dist_vwap_d_pct:.3f}>{short_block_thr:.2f}",
+                        **base_ctx,
+                    )
 
         # 4-orderflow. Confirmation orderflow (Phase 4 18/06 calibration empirique
         # 6 trades : LOSS 3/3 partagent delta_bar negatif, WIN 3/3 partagent
@@ -541,6 +832,38 @@ class SignalEngine:
                         ),
                         **base_ctx,
                     )
+
+        # 4-momentum-5b. FIX PROP #1 audit market-analyst 24/06 - ANTI CATCH FALLING KNIFE
+        # ============================================================
+        # Empirique 7 jours 16-24/06 :
+        # - momentum_5b <= -5  : WR 6.7% (1 TP / 21 SL+MH) sur n=22
+        # - momentum_5b <= -10 : WR 0% (0/7) - catch falling knife garanti
+        # - momentum_5b >= 0   : WR 51.7% - bull bar = signal
+        # Backtest 67 trades : sacrifice 1 win (4.5%), PnL +$1912.
+        # Wins preserves : 95.5%.
+        # Inverse pour SHORT : bloquer si momentum_5b > MAX_SHORT (catch falling razor).
+        if self.cfg.MOMENTUM_5B_FILTER_ENABLED:
+            momentum_5b = _f(bar.get("momentum_5b"))
+            if direction == "LONG" and momentum_5b < self.cfg.MOMENTUM_5B_MIN_LONG:
+                return SignalResult(
+                    tradable=False, direction=direction,
+                    skip_reason=(
+                        f"MOMENTUM_5B_TOO_BEAR_LONG:"
+                        f"mom_5b={momentum_5b:.1f}<{self.cfg.MOMENTUM_5B_MIN_LONG:.1f} "
+                        f"(ANTI_CATCH_FALLING_KNIFE)"
+                    ),
+                    **base_ctx,
+                )
+            if direction == "SHORT" and momentum_5b > self.cfg.MOMENTUM_5B_MAX_SHORT:
+                return SignalResult(
+                    tradable=False, direction=direction,
+                    skip_reason=(
+                        f"MOMENTUM_5B_TOO_BULL_SHORT:"
+                        f"mom_5b={momentum_5b:.1f}>{self.cfg.MOMENTUM_5B_MAX_SHORT:.1f} "
+                        f"(ANTI_CATCH_FALLING_RAZOR)"
+                    ),
+                    **base_ctx,
+                )
 
         # 4-anti-top. Eviter entries pres swing high frais + proche HOD/LOD.
         # Calibration empirique 18/06 : LOSS 3/3 partagent bars_since_HH<=5

@@ -11,12 +11,15 @@ def test_default_config_values():
     assert cfg.RR == 1.5
     assert cfg.SL_TICKS_ES == 20
     assert cfg.SL_TICKS_NQ == 35
-    assert cfg.MAX_TRADES_PER_DAY == 5
-    assert cfg.DAILY_STOP_LOSS_USD == -200.0
-    assert cfg.DAILY_STOP_WIN_USD == 150.0
+    # 19/06/2026 directive Jackson : relaxe pour collecte data (ULTRATHINK validation).
+    # Audit 19/06 documente : DSL effectif = circuit breaker (3 SL consec halt 60min),
+    # pas le DSL=-$2500. A revenir aux defauts Douglas (-200/150/5) en live AMP.
+    assert cfg.MAX_TRADES_PER_DAY == 9999
+    assert cfg.DAILY_STOP_LOSS_USD == -2500.0
+    assert cfg.DAILY_STOP_WIN_USD == 99999.0
     assert cfg.REGIME_FILTER_MODE_ES == "trend_align_es"
     assert cfg.REGIME_FILTER_MODE_NQ == "contrarian_nq"
-    assert cfg.SKIP_PREOPEN_US is True
+    assert cfg.SKIP_PREOPEN_US is False
     # 16/06/2026 souverain Jackson : NQ trade LIVE avec IntermarketGate active.
     # Backtest 4j ne fait pas autorite (sample trop petit + ne capture pas le setup
     # pro intermarket de Jackson). Paper = test live = pas de risque financier.
@@ -30,8 +33,9 @@ def test_default_config_values():
     assert cfg.sl_ticks("MGC") == 50
     assert cfg.regime_filter_mode("ES") == "trend_align_es"
     assert cfg.regime_filter_mode("NQ") == "contrarian_nq"
-    assert cfg.tradable_sessions("ES") == ("US",)
-    assert cfg.tradable_sessions("NQ") == ("ASIA",)
+    # 14/06/2026 ouverture multi-sessions ES + NQ (Asia + London + US).
+    assert cfg.tradable_sessions("ES") == ("ASIA", "LONDON", "US")
+    assert cfg.tradable_sessions("NQ") == ("ASIA", "LONDON", "US")
     # NQ live (DRY_EVAL_NQ=False par defaut souverain 16/06)
     assert cfg.is_dry_eval("NQ") is False
     assert cfg.is_dry_eval("ES") is False

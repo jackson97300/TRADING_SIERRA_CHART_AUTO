@@ -65,8 +65,19 @@ class BotMRConfig:
     # SD level : sd3 (extension extreme) vs sd2 (extension simple)
     # Sweep ES : sd3 PF 1.69 vs sd2 PF 1.23
     SD_LEVEL: str = os.environ.get("BOTMR_SD_LEVEL", "sd3")
-    # Threshold % au-dela du SD level (0.0 = just touch)
-    SD_THRESHOLD_PCT: float = _env_float("SD_THRESHOLD_PCT", 0.0)
+    # Threshold % au-dela du SD level (0.0 = just touch, 0.1 = vrai extension)
+    # FIX A1 audit forensique 22-23/06 : default 0.0 mais recommande 0.1 apres
+    # fix condition SD inversee. Avec 0.1 : LONG si sd3d_pct >= -0.1 (proche SD3d).
+    SD_THRESHOLD_PCT: float = _env_float("SD_THRESHOLD_PCT", 0.1)
+
+    # FIX A2 audit forensique 22-23/06 - VWAP INTRADAY GATE
+    # ============================================================
+    # 9/12 LOSS Bot 1 18/06 avec MFE=0 (75%) = bot fade un mouvement immediat
+    # adverse. vwap_slope_30 inutile (LAG VWAP-day cumulative). Solution :
+    # filtrer LONG si prix sous VWAP-d intraday + SHORT si prix au-dessus.
+    # Empirique : seuil 0.3% bloque la plupart des fades intraday catastrophiques.
+    VWAP_INTRADAY_LONG_BLOCK_PCT: float = _env_float("VWAP_INTRADAY_LONG_BLOCK_PCT", 0.3)
+    VWAP_INTRADAY_SHORT_BLOCK_PCT: float = _env_float("VWAP_INTRADAY_SHORT_BLOCK_PCT", 0.3)
     # RVOL zscore min (capitulation volume) - sweep baseline best : 0.0
     RVOL_ZSCORE_MIN: float = _env_float("RVOL_ZSCORE_MIN", 0.0)
     # Exhaustion ctx (climax / failed_auction / delta_exhaustion) - off baseline
@@ -86,6 +97,84 @@ class BotMRConfig:
 
     # Cooldown bars apres trade (anti-overtrade)
     COOLDOWN_BARS: int = _env_int("COOLDOWN_BARS", 30)
+
+    # FIX A3 audit forensique 22-23/06 (PHASE A) - COOLDOWN PROGRESSIF POST-LOSS
+    # ============================================================
+    # Empirique 18/06 FOMC : 16 trades Bot 1 sur 1 journee, 12 LOSS dont 9 avec
+    # MFE=0 (75% fade adverse immediat). Spirale carnage type "revenge trade".
+    # SOLUTION : cooldown progressif selon n_sl_consec (reuse circuit breaker).
+    #   - 1 SL consec → COOLDOWN_POST_LOSS_BARS (default 45 min)
+    #   - 2 SL consec → COOLDOWN_POST_2LOSS_BARS (default 90 min)
+    #   - 3+ SL consec → circuit breaker HALT 60 min existant prend le relais
+    # Mark Douglas "consistency beats intensity" sans tuer le volume data
+    # (Jackson directive 23/06 : pas de MAX_TRADES=5, besoin data).
+    COOLDOWN_POST_LOSS_BARS: int = _env_int("COOLDOWN_POST_LOSS_BARS", 45)
+    COOLDOWN_POST_2LOSS_BARS: int = _env_int("COOLDOWN_POST_2LOSS_BARS", 90)
+
+    # FIX A4 audit forensique 22-23/06 (PHASE A) - GATE NEWS/FOMC
+    # ============================================================
+    # Empirique 18/06 FOMC : Bot 1 a fait 16 trades pendant FOMC day 14:00 ET
+    # (carnage 12 LOSS). News calendar deja en place dans CORE/eco_calendar.py
+    # (utilise par Bot 3 v3) avec windows BLOCK_WINDOWS configurees pour
+    # FOMC/NFP/CPI/PCE. SOLUTION : reuse is_blocked_now() dans signal_engine
+    # AVANT trade. Fail-CLOSED si module HS (mieux rater un trade qu'etre dans
+    # un FOMC). Convention Bot 3 v3 24/05 (R1 code-reviewer).
+    NEWS_GATE_ENABLED: bool = _env_bool("NEWS_GATE_ENABLED", True)
+    NEWS_GATE_FAIL_CLOSED: bool = _env_bool("NEWS_GATE_FAIL_CLOSED", True)
+
+    # FIX PROP #1 audit market-analyst 24/06 - MOMENTUM_5B FILTER (anti catch falling knife)
+    # ============================================================
+    # Empirique 7 jours 16-24/06 (67 trades) :
+    # - momentum_5b <= -5  : WR 6.7% (1 TP / 21 SL+MH) sur n=22
+    # - momentum_5b <= -10 : WR 0% (0/7) - catch falling knife garanti
+    # - momentum_5b >= 0   : WR 51.7% - bull bar = signal
+    # Solution : pour LONG bloquer si momentum_5b < MIN_LONG.
+    #             pour SHORT bloquer si momentum_5b > MAX_SHORT.
+    # Backtest 67 trades : sacrifie 1 win (4.5%), PnL +$1912 (delta retroactif).
+    # Wins preserves : 95.5% (directive Jackson >= 70% wins).
+    MOMENTUM_5B_FILTER_ENABLED: bool = _env_bool("MOMENTUM_5B_FILTER_ENABLED", True)
+    MOMENTUM_5B_MIN_LONG: float = _env_float("MOMENTUM_5B_MIN_LONG", -5.0)
+    MOMENTUM_5B_MAX_SHORT: float = _env_float("MOMENTUM_5B_MAX_SHORT", 5.0)
+
+    # FIX PROP #2 audit market-analyst 24/06 - SKIP SESSION AH (After Hours 21-24h UTC)
+    # ============================================================
+    # Empirique 7 jours 16-24/06 :
+    # - Session AH (21:00-24:00 UTC) : 0/10 TP - CARNAGE TOTAL (0% WR)
+    # - Notamment 23/06 NQ 22:34-23:48 : 4 SL -$700 en 1h15 (revenge trade)
+    # Cause probable : liquidite faible + news asiatiques imminentes + gap risk.
+    # Backtest 67 trades : sacrifie 0 win, evite 5 SL, +$875.
+    # Wins preserves : 100%.
+    SKIP_AH_SESSION_ENABLED: bool = _env_bool("SKIP_AH_SESSION_ENABLED", True)
+    AH_SESSION_START_UTC_HOUR: int = _env_int("AH_SESSION_START_UTC_HOUR", 21)
+    AH_SESSION_END_UTC_HOUR: int = _env_int("AH_SESSION_END_UTC_HOUR", 24)
+
+    # FIX V_FINAL audit market-analyst 24/06 - REGIME-AWARE ARCHITECTURE
+    # ============================================================
+    # Directive Jackson 24/06 soir : "TOUT DOIT ETRE DYNAMIQUE SELON LE REGIME".
+    # Backtest empirique 22929 bars 7j : 5 regimes + 3 regles d'exclusion =
+    # PnL +$299 retroactif (de -$269 a +$30), wins preserves 95%.
+    # Validation cross-period : TRAIN 5j, TEST 2j, sans-FOMC : tous positifs.
+    # Cf CORE/bot_mean_revert/regime_classifier.py pour seuils + logic.
+    REGIME_AWARE_ENABLED: bool = _env_bool("REGIME_AWARE_ENABLED", True)
+    # Blacklist format "REGIME:session", "REGIME:*" = any session.
+    # V_FINAL = 3 regles backtest validees :
+    #   PANIC:*               -> event-driven, illiquide
+    #   CALM_RANGE:us_cash    -> chop institutionnel (0% WR sample N=7)
+    #   VOLATILE_RANGE:asia   -> panic post-news Asia (11% WR sample N=9)
+    REGIME_AWARE_BLACKLIST: tuple = field(
+        default_factory=lambda: _env_tuple(
+            "REGIME_AWARE_BLACKLIST",
+            ("PANIC:*", "CALM_RANGE:us_cash", "VOLATILE_RANGE:asia"),
+        )
+    )
+
+    # Fix audit 30/06 (OR -> AND cross-confirmation) : env vars override pour
+    # tuner sans redeploy. Default = valeurs RegimeThresholds dataclass.
+    # Utilisation : BOTMR_VIX_PANIC=19.5 BOTMR_ATR_PCT_PANIC=0.076
+    #               BOTMR_VIX_PANIC_EXTREME=25.0
+    VIX_PANIC: float = _env_float("VIX_PANIC", 19.5)
+    ATR_PCT_PANIC: float = _env_float("ATR_PCT_PANIC", 0.076)
+    VIX_PANIC_EXTREME: float = _env_float("VIX_PANIC_EXTREME", 25.0)
 
     # ============================================================
     # REGIME HARD FILTER (anti catch falling knife - 18/06/2026)
@@ -457,7 +546,9 @@ class BotMRConfig:
             TRADE_ACCOUNT=os.environ.get("BOTMR_TRADE_ACCOUNT", "Sim1"),
             N_MICROS_DEFAULT=_env_int("N_MICROS_DEFAULT", 1),
             SD_LEVEL=os.environ.get("BOTMR_SD_LEVEL", "sd3"),
-            SD_THRESHOLD_PCT=_env_float("SD_THRESHOLD_PCT", 0.0),
+            SD_THRESHOLD_PCT=_env_float("SD_THRESHOLD_PCT", 0.1),
+            VWAP_INTRADAY_LONG_BLOCK_PCT=_env_float("VWAP_INTRADAY_LONG_BLOCK_PCT", 0.3),
+            VWAP_INTRADAY_SHORT_BLOCK_PCT=_env_float("VWAP_INTRADAY_SHORT_BLOCK_PCT", 0.3),
             RVOL_ZSCORE_MIN=_env_float("RVOL_ZSCORE_MIN", 0.0),
             REQUIRE_EXHAUSTION=_env_bool("REQUIRE_EXHAUSTION", False),
             REQUIRE_DELTA_DIRECTION=_env_bool("REQUIRE_DELTA_DIRECTION", False),
@@ -466,6 +557,21 @@ class BotMRConfig:
             SL_TICKS_NQ=_env_int("SL_TICKS_NQ", 35),
             SL_TICKS_MGC=_env_int("SL_TICKS_MGC", 50),
             COOLDOWN_BARS=_env_int("COOLDOWN_BARS", 30),
+            COOLDOWN_POST_LOSS_BARS=_env_int("COOLDOWN_POST_LOSS_BARS", 45),
+            COOLDOWN_POST_2LOSS_BARS=_env_int("COOLDOWN_POST_2LOSS_BARS", 90),
+            NEWS_GATE_ENABLED=_env_bool("NEWS_GATE_ENABLED", True),
+            NEWS_GATE_FAIL_CLOSED=_env_bool("NEWS_GATE_FAIL_CLOSED", True),
+            MOMENTUM_5B_FILTER_ENABLED=_env_bool("MOMENTUM_5B_FILTER_ENABLED", True),
+            MOMENTUM_5B_MIN_LONG=_env_float("MOMENTUM_5B_MIN_LONG", -5.0),
+            MOMENTUM_5B_MAX_SHORT=_env_float("MOMENTUM_5B_MAX_SHORT", 5.0),
+            SKIP_AH_SESSION_ENABLED=_env_bool("SKIP_AH_SESSION_ENABLED", True),
+            AH_SESSION_START_UTC_HOUR=_env_int("AH_SESSION_START_UTC_HOUR", 21),
+            AH_SESSION_END_UTC_HOUR=_env_int("AH_SESSION_END_UTC_HOUR", 24),
+            REGIME_AWARE_ENABLED=_env_bool("REGIME_AWARE_ENABLED", True),
+            REGIME_AWARE_BLACKLIST=_env_tuple(
+                "REGIME_AWARE_BLACKLIST",
+                ("PANIC:*", "CALM_RANGE:us_cash", "VOLATILE_RANGE:asia"),
+            ),
             REGIME_FILTER_ENABLED=_env_bool("REGIME_FILTER_ENABLED", True),
             SLOPE_30_MIN_LONG=_env_float("SLOPE_30_MIN_LONG", -0.3),
             SLOPE_30_MAX_SHORT=_env_float("SLOPE_30_MAX_SHORT", 0.3),

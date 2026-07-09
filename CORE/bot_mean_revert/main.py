@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import time
@@ -42,6 +43,15 @@ def _setup_logging(verbose: bool = False):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+# Sentinelle direction pour les gates qui bloquent AVANT que la direction soit
+# calculee (signal_engine.py:638 `direction = None`, assignee seulement en 640/642).
+# Ces gates (COOLDOWN, REGIME_SESSION_BLOCK, RVOL_TOO_LOW, NO_EXTENSION) sont
+# direction-agnostiques PAR CONCEPTION : ils bloquent les deux sens indifferemment.
+# Loguer `None` nu ferait croire a un trou de logging (cf review code-reviewer 09/07).
+# Pour NO_EXTENSION, la direction VISEE se derive de d_low/d_high, deja loggees.
+_PRE_DIR = "PRE_DIR"
 
 
 class BotMR:
@@ -107,6 +117,37 @@ class BotMR:
         from CORE.bot_mean_revert.gates.regime_scorer import RegimeScorer
         self.regime_scorer = RegimeScorer(self.cfg)
 
+        # V_FINAL audit market-analyst 24/06 : RegimeClassifier mutuellement exclusif
+        # (5 regimes) + 3 regles blacklist (PANIC, CALM_RANGE us_cash, VOLATILE asia).
+        # Backtest 7j empirique +$299, 95% wins preserves. Distinct du
+        # RegimeClassifier 18/06 (vote majoritaire - autre semantique).
+        # Stateful par-symbol (EWM slope smoothing) - une instance partagee
+        # entre tous les SignalEngine, isolation symbole via dict interne.
+        from CORE.bot_mean_revert.regime_classifier import (
+            RegimeClassifier as RegimeClassifierVFinal,
+            RegimeThresholds,
+        )
+        # Fix audit 30/06 R4 : env vars override pour tuner sans redeploy
+        # (BOTMR_VIX_PANIC, BOTMR_ATR_PCT_PANIC, BOTMR_VIX_PANIC_EXTREME).
+        _thresholds = RegimeThresholds(
+            vix_panic=self.cfg.VIX_PANIC,
+            atr_pct_panic=self.cfg.ATR_PCT_PANIC,
+            vix_panic_extreme=self.cfg.VIX_PANIC_EXTREME,
+        )
+        self.regime_classifier_v_final = RegimeClassifierVFinal(
+            thresholds=_thresholds,
+        )
+
+        # Callback emit BOTMR_REGIME_DETECTED (decoupe bot_log du engine).
+        def _emit_regime_detected(sym: str, regime_str: str, session_str: str) -> None:
+            try:
+                bot_log.emit(
+                    "BOTMR_REGIME_DETECTED",
+                    sym=sym, regime=regime_str, session=session_str,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.log.warning(f"emit BOTMR_REGIME_DETECTED fail: {exc}")
+
         for sym in self.symbols:
             # store passe au SignalEngine pour cooldown time-based persistant
             # (fix bug 18/06 : restart ne bypass plus le cooldown).
@@ -118,6 +159,8 @@ class BotMR:
                 on_corrupted_state=_emit_iso_corrupted,
                 regime_classifier=self.regime_classifier,
                 regime_scorer=self.regime_scorer,
+                regime_classifier_v_final=self.regime_classifier_v_final,
+                on_regime_detected=_emit_regime_detected,
             )
             # Reuse SierraDataSource avec Bot1V2Config (compatible : meme DMP_BAR_MAX_AGE_SEC + dir).
             self.data_sources[sym] = SierraDataSource(symbol=sym, cfg=ds_cfg)
@@ -140,7 +183,33 @@ class BotMR:
         # DAILY_STOP_LOSS_USD + DAILY_STOP_WIN_USD).
         self.daily_gate = DailyLimitsGate(self._daily_cfg_adapter())
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        self.daily_gate.reset_for_new_day(today)
+        # FIX audit 19/06 : restaurer daily_gate cross-restart si meme date UTC.
+        # Sans ca, DSL=-$2500 / DSW / MAX_TRADES sont effaces a chaque restart =
+        # carnage 18/06 FOMC root cause (15 restarts -> DSL jamais mordue).
+        # Filtre par date_str : nouveau jour UTC -> reset propre.
+        prior = self.store.get_daily_state()
+        if prior and prior.get("date_str") == today:
+            self.daily_gate.restore(
+                n_trades_today=int(prior.get("n_trades_today", 0)),
+                cumul_pnl_usd=float(prior.get("cumul_pnl_usd", 0.0)),
+                date_str=today,
+            )
+            bot_log.emit(
+                "BOTMR_DAILY_STATE_RESTORED",
+                date_str=today,
+                n_trades_today=int(prior.get("n_trades_today", 0)),
+                cumul_pnl_usd=round(float(prior.get("cumul_pnl_usd", 0.0)), 2),
+            )
+        else:
+            self.daily_gate.reset_for_new_day(today)
+            reason = "NEW_DAY" if prior else "NO_PRIOR_STATE"
+            bot_log.emit("BOTMR_DAILY_STATE_RESET", date_str=today, reason=reason)
+            # Persiste immediatement le nouveau snapshot vide pour le prochain boot.
+            try:
+                self.store.set_daily_state(self.daily_gate.snapshot())
+                self.store.save()
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"daily_state init persist fail: {e}")
 
         # Order router dedie (ClientName MIA_BotMR, Sim1)
         self.router = OrderRouter(
@@ -214,6 +283,24 @@ class BotMR:
         """
         try:
             self.daily_gate.update_after_trade(pnl_usd)
+            # FIX audit 19/06 : persister daily_state apres maj pour survivre
+            # cross-restart (carnage 18/06 FOMC root cause).
+            try:
+                self.store.set_daily_state(self.daily_gate.snapshot())
+                self.store.save()
+            except Exception as persist_err:  # noqa: BLE001
+                # FIX bug #5 review : escalade CRITIQUE (Discord) au lieu de
+                # warning silencieux. Si persist fail = restart suivant aura
+                # daily_state stale = DSL inoperante = carnage 18/06 reproduit.
+                self.log.critical(
+                    f"daily_state persist after trade FAIL: {persist_err}. "
+                    f"DSL inoperante au prochain restart."
+                )
+                bot_log.emit(
+                    "BOTMR_DAILY_STATE_PERSIST_FAIL",
+                    context="on_fill_close",
+                    err=str(persist_err)[:200],
+                )
         except Exception as e:  # noqa: BLE001
             self.log.error(f"daily_gate.update_after_trade fail: {e}")
 
@@ -234,6 +321,19 @@ class BotMR:
             try:
                 if pnl_usd < 0:  # SL hit
                     n_consec = self.store.increment_sl_consec(sym)
+                    # FIX review A3 IMPORTANT-1 23/06 : persist IMMEDIAT apres
+                    # increment pour fermer la fenetre crash (~5-10 LOC entre
+                    # increment et save() ligne 313 plus bas). Si crash dans
+                    # cette fenetre, le compteur n_sl_consec est perdu au
+                    # restart suivant = cooldown progressif inoperant = carnage
+                    # type FOMC reproduit. Atomicite critique.
+                    try:
+                        self.store.save()
+                    except Exception as save_err:  # noqa: BLE001
+                        self.log.warning(
+                            f"store.save FAIL after increment_sl_consec: "
+                            f"{save_err}"
+                        )
                     bot_log.emit(
                         "BOTMR_SL_CONSEC_INCREMENTED",
                         sym=sym, n_consec=n_consec, pnl_usd=round(pnl_usd, 2),
@@ -413,7 +513,18 @@ class BotMR:
         # Le DtcFillListener sur ORDER_UPDATE status=7 du MARKET CLOSE fera le
         # close_position complet (store + state_bridge + daily_gate). Faire un
         # double cleanup ici = double comptage PnL + race condition.
-        bot_log.emit("BOTMR_TIMEOUT_CLOSE_DONE", sym=sym)
+        # FIX observabilite 09/07 : le DONE ne loggait que {sym} -> les trades fermes
+        # par MAX_HOLD etaient invisibles en audit (ni direction, ni entry, ni duree),
+        # violation regle LOGS TRACABILITE. exit_price/pnl ne sont PAS connus ici : ils
+        # arrivent via DtcFillListener sur le fill du MARKET CLOSE (cf. Step 7 ci-dessus).
+        # signal_id (R2 review 09/07) : c'est le fil qui permet de recoller ce DONE au
+        # fill/pnl asynchrone qui arrive plus tard. Sans lui, correlation heuristique.
+        bot_log.emit(
+            "BOTMR_TIMEOUT_CLOSE_DONE",
+            signal_id=pos.get("signal_id"),
+            sym=sym, direction=direction, entry_price=entry_price,
+            elapsed_min=round(elapsed_min, 1), n_micros=n_micros,
+        )
 
     @staticmethod
     def _sym_to_contract(sym: str) -> str:
@@ -448,6 +559,314 @@ class BotMR:
         self.log.info("Stop signal received, graceful shutdown...")
         self._running = False
 
+    def _force_flatten_broker(
+        self, sym: str, contract: str, ta: str, reason: str,
+    ) -> None:
+        """Envoie Type 209 SUBMIT_FLATTEN_POSITION_ORDER pour ce symbole.
+
+        Utilise quand MIA_BOT_MR_RECONCILE_FORCE_FLAT=1 + cas
+        UNKNOWN_BROKER_POS ou DIVERGENCE detecte au boot. Reset broker
+        a flat pour eviter le mode aveugle (sinon nouvelle entry =
+        double position = orphelin garanti).
+
+        ClientOrderID OBLIGATOIRE (orphan-prevention.md : SC rejette
+        silencieusement Type 209/210 sans CID).
+        """
+        if self.router is None or self.router.dtc is None:
+            bot_log.emit(
+                "BOTMR_RECONCILE_FORCE_FLAT_DTC_DOWN",
+                sym=sym, reason=reason,
+            )
+            return
+        dtc = self.router.dtc
+        flatten_cid = (
+            f"BOTMR_RECONCILE_FFLAT_{sym[:2]}_{int(time.time()) % 100000}"
+        )
+        try:
+            dtc._send({
+                "Type": 209,
+                "ClientOrderID": flatten_cid,
+                "Symbol": contract,
+                "TradeAccount": ta,
+                "Exchange": "CME",
+                "IsAutomatedOrder": 1,
+            })
+            bot_log.emit(
+                "BOTMR_RECONCILE_FORCE_FLAT_SENT",
+                sym=sym, contract=contract, ta=ta,
+                cid=flatten_cid, reason=reason,
+            )
+        except Exception as e:  # noqa: BLE001
+            bot_log.emit(
+                "BOTMR_RECONCILE_FORCE_FLAT_EXCEPTION",
+                sym=sym, err=str(e)[:200], reason=reason,
+            )
+
+    def _reconcile_with_dtc_at_boot(self) -> bool:
+        """Reconcilie store.positions avec broker DTC apres connect.
+
+        FIX audit 19/06 code-reviewer : sans reconcile, une desync Sierra Chart
+        (cas 19/06 PARENT_NOT_FILLED_TIMEOUT apres restart) laisse Bot MR
+        croire pos OPEN alors que broker est FLAT (ou inverse). Resultat :
+          - Python pos + broker flat = position fantome eternelle (skip trades)
+          - Python flat + broker pos = bot ignore une position reelle exposee
+          - divergence direction/qty = trade reel sur mauvaise hypothese
+
+        5 cas explicites (extraits de bot_persistance.PositionPersistance) :
+          OK_FLAT          : python flat + broker flat -> OK (no-op)
+          OK_RESTORED      : python pos + broker match (direction + qty) -> OK
+          PYTHON_GHOST     : python pos + broker flat -> auto-purge + ALERTE
+          UNKNOWN_BROKER   : python flat + broker pos -> HALT BOOT
+          DIVERGENCE       : python pos + broker pos mismatch -> HALT BOOT
+
+        Bypass HALT via env var MIA_BOT_MR_RECONCILE_FORCE_FLAT=1 (Jackson explicite).
+
+        Returns:
+            True si reconcile OK (boot peut proceder). False si HALT critique.
+        """
+        # Dry-run ou pas de DTC : skip reconcile (rien a verifier)
+        if self.router is None or getattr(self.router, "dtc", None) is None:
+            bot_log.emit("BOTMR_RECONCILE_SKIPPED", reason="NO_DTC_DRY_RUN")
+            return True
+
+        dtc = self.router.dtc
+        ta = self.cfg.TRADE_ACCOUNT
+        force_flat = os.environ.get(
+            "MIA_BOT_MR_RECONCILE_FORCE_FLAT", "0"
+        ) == "1"
+        has_critical = False
+
+        # Union des symboles a verifier : tous ceux configures + ceux ayant
+        # une position persistee (au cas ou rollover/config change post-restart).
+        # FIX bug #4 review : snapshot list explicit avant la boucle pour eviter
+        # race condition avec fill_listener.handle_order_update qui peut muter
+        # self.store.positions en parallele depuis _recv_loop thread DTC.
+        # `sorted(list(...))` materialise une copie -> safe iteration.
+        syms_to_check = sorted(list(
+            set(s.upper() for s in self.symbols)
+            | set(s.upper() for s in list(self.store.positions.keys()))
+        ))
+
+        for sym in syms_to_check:
+            contract = self._sym_to_contract(sym)
+            try:
+                broker_qty = dtc.request_position_blocking(
+                    contract, trade_account=ta, timeout=3.0,
+                )
+            except Exception as e:  # noqa: BLE001
+                self.log.error(f"{sym} reconcile query FAIL: {e}")
+                bot_log.emit(
+                    "BOTMR_RECONCILE_QUERY_FAILED",
+                    sym=sym, contract=contract, err=str(e)[:200],
+                )
+                has_critical = True
+                continue
+
+            py_pos = self.store.positions.get(sym)
+            py_flat = py_pos is None
+            # broker_qty = None => DTC pas de reponse, considere critique (cf orphan-prevention R3)
+            if broker_qty is None:
+                # FIX 24/06/2026 Jackson directive : ES + NQ simultaneous trading.
+                # Avant : BROKER_QTY_NONE -> has_critical=True -> HALT bot ENTIER.
+                # Probleme : si ES n'a aucune position chez le broker, DTC ne repond
+                # pas et le bot halt -> impossible de trader ES (le service tournait
+                # avec --symbols NQ seul justement a cause de ca).
+                # Apres : si MIA_BOT_MR_RECONCILE_FORCE_FLAT=1 ET Python state flat,
+                # on accepte broker_qty=None comme equivalent "flat" (consistant Python).
+                # Reasoning : DTC sans reply = soit pas de position soit DTC freeze.
+                # Avec force_flat=1 + py_flat=True, on traite comme OK_FLAT et continue.
+                if force_flat and py_flat:
+                    self.log.warning(
+                        f"{sym} reconcile : broker_qty=None + force_flat=1 + py_flat "
+                        f"-> traite comme OK_FLAT (bypass HALT)."
+                    )
+                    bot_log.emit(
+                        "BOTMR_RECONCILE_QUERY_FAILED_BYPASS_FLAT",
+                        sym=sym, contract=contract,
+                    )
+                    continue
+                # Sinon : halt critique (orphan-prevention R3)
+                self.log.error(
+                    f"{sym} reconcile : broker_qty=None (DTC freeze ou no reply). HALT."
+                )
+                bot_log.emit(
+                    "BOTMR_RECONCILE_QUERY_FAILED",
+                    sym=sym, contract=contract, err="BROKER_QTY_NONE",
+                )
+                has_critical = True
+                continue
+            br_flat = broker_qty == 0
+
+            # Cas a : OK_FLAT
+            if py_flat and br_flat:
+                bot_log.emit("BOTMR_RECONCILE_OK_FLAT", sym=sym)
+                continue
+
+            # Cas c : python flat + broker pos -> UNKNOWN_BROKER_POS
+            if py_flat and not br_flat:
+                br_side = "LONG" if broker_qty > 0 else "SHORT"
+                action = "FORCE_FLATTEN_BROKER" if force_flat else "HALT_BOOT"
+                self.log.critical(
+                    f"{sym} RECONCILE_UNKNOWN_BROKER_POS: broker has {br_side} "
+                    f"qty={abs(broker_qty)} but Python state flat. action={action}"
+                )
+                bot_log.emit(
+                    "BOTMR_RECONCILE_UNKNOWN_BROKER_POS",
+                    sym=sym,
+                    broker_qty=broker_qty,
+                    broker_side=br_side,
+                    action=action,
+                )
+                if force_flat:
+                    # FIX bug #2 review 19/06 : force_flat=1 doit ACTIVEMENT
+                    # flatten le broker, sinon mode aveugle dangereux (bot va
+                    # trader croit flat alors que broker a deja une pos = double
+                    # position au prochain entry). Type 209 + ClientOrderID
+                    # obligatoire (orphan-prevention.md).
+                    self._force_flatten_broker(sym, contract, ta, reason="UNKNOWN_BROKER_POS")
+                else:
+                    has_critical = True
+                continue
+
+            # Cas d : python pos + broker flat -> PYTHON_GHOST (auto-purge)
+            if (not py_flat) and br_flat:
+                self.log.warning(
+                    f"{sym} RECONCILE_PYTHON_GHOST: Python pos "
+                    f"{py_pos.get('direction')} entry={py_pos.get('entry_price')} "
+                    f"but broker flat. Cancel TP/SL orphans + purge."
+                )
+                bot_log.emit(
+                    "BOTMR_RECONCILE_PYTHON_GHOST",
+                    sym=sym,
+                    py_direction=py_pos.get("direction"),
+                    py_entry=py_pos.get("entry_price"),
+                )
+                # FIX bug #1 review 19/06 : orphan-prevention.md exige cancel
+                # des CIDs TP/SL connus AVANT purge store. Sans ca, ordres restent
+                # Working dans le DOM Sim1 -> fire 2h plus tard = trade fantome
+                # = perte capital. Reference incident production Bot 3 04/05.
+                tp_cid = py_pos.get("tp_cid")
+                sl_cid = py_pos.get("sl_cid")
+                for leg_label, cid in [("TP", tp_cid), ("SL", sl_cid)]:
+                    if not cid:
+                        continue
+                    try:
+                        ok = dtc.cancel_order(cid, trade_account=ta)
+                        if not ok:
+                            bot_log.emit(
+                                "BOTMR_RECONCILE_GHOST_CANCEL_FAIL",
+                                sym=sym, leg=leg_label, cid=cid,
+                            )
+                    except Exception as cancel_err:  # noqa: BLE001
+                        bot_log.emit(
+                            "BOTMR_RECONCILE_GHOST_CANCEL_EXCEPTION",
+                            sym=sym, leg=leg_label, cid=cid,
+                            err=str(cancel_err)[:200],
+                        )
+                # Propagation cancels avant flatten defensif
+                time.sleep(1.0)
+                # Type 209 flatten symbole = defense en profondeur (cf orphan-prevention
+                # step 7) au cas ou des Working orders sans CID connus existent encore.
+                # ClientOrderID OBLIGATOIRE (SC rejette sans).
+                flatten_cid = (
+                    f"BOTMR_RECONCILE_GHOST_{sym[:2]}_"
+                    f"{int(time.time()) % 100000}"
+                )
+                try:
+                    dtc._send({
+                        "Type": 209,
+                        "ClientOrderID": flatten_cid,
+                        "Symbol": contract,
+                        "TradeAccount": ta,
+                        "Exchange": "CME",
+                        "IsAutomatedOrder": 1,
+                    })
+                    bot_log.emit(
+                        "BOTMR_RECONCILE_GHOST_FLATTEN_SENT",
+                        sym=sym, cid=flatten_cid,
+                    )
+                except Exception as flatten_err:  # noqa: BLE001
+                    bot_log.emit(
+                        "BOTMR_RECONCILE_GHOST_FLATTEN_EXCEPTION",
+                        sym=sym, err=str(flatten_err)[:200],
+                    )
+                # Purge store + state_bridge (audit P&L manuel a faire cote Sierra)
+                self.store.close_position(sym)
+                try:
+                    self.store.save()
+                except Exception as e:  # noqa: BLE001
+                    self.log.warning(
+                        f"store.save fail after ghost purge {sym}: {e}"
+                    )
+                try:
+                    self.state_bridge.close_position(
+                        sym, exit_reason="RECONCILE_GHOST",
+                    )
+                except Exception as e:  # noqa: BLE001
+                    self.log.warning(
+                        f"state_bridge close on ghost fail: {e}"
+                    )
+                continue
+
+            # Cas b ou e : python pos + broker pos -> match ou divergence
+            py_dir = str(py_pos.get("direction") or "").upper()
+            py_qty = int(py_pos.get("n_micros", 0))
+            br_side = "LONG" if broker_qty > 0 else "SHORT"
+            br_qty = abs(int(broker_qty))
+
+            if py_dir == br_side and py_qty == br_qty:
+                bot_log.emit(
+                    "BOTMR_RECONCILE_OK_RESTORED",
+                    sym=sym, direction=py_dir, qty=py_qty,
+                )
+                continue
+
+            # Cas e : divergence
+            action = "FORCE_FLATTEN_BROKER" if force_flat else "HALT_BOOT"
+            self.log.critical(
+                f"{sym} RECONCILE_DIVERGENCE: Python {py_dir} {py_qty} vs "
+                f"Broker {br_side} {br_qty}. action={action}"
+            )
+            bot_log.emit(
+                "BOTMR_RECONCILE_DIVERGENCE",
+                sym=sym,
+                py_direction=py_dir, py_qty=py_qty,
+                br_direction=br_side, br_qty=br_qty,
+                action=action,
+            )
+            if force_flat:
+                # FIX bug #2 review 19/06 : flatten broker ET purge store pour
+                # reset propre. Sinon le bot continue avec un tracking incorrect.
+                self._force_flatten_broker(sym, contract, ta, reason="DIVERGENCE")
+                self.store.close_position(sym)
+                try:
+                    self.store.save()
+                except Exception as e:  # noqa: BLE001
+                    self.log.warning(
+                        f"store.save fail after divergence flatten {sym}: {e}"
+                    )
+                try:
+                    self.state_bridge.close_position(
+                        sym, exit_reason="RECONCILE_FORCE_FLAT",
+                    )
+                except Exception as e:  # noqa: BLE001
+                    self.log.warning(
+                        f"state_bridge close on divergence flatten fail: {e}"
+                    )
+            else:
+                has_critical = True
+
+        if has_critical:
+            self.log.critical(
+                "Reconcile DTC : cas CRITIQUE detecte. Boot halt. "
+                "Bypass via MIA_BOT_MR_RECONCILE_FORCE_FLAT=1 (decision Jackson)."
+            )
+            bot_log.emit("BOTMR_RECONCILE_HALT_BOOT", force_flat_available="1")
+            return False
+
+        bot_log.emit("BOTMR_RECONCILE_OK")
+        return True
+
     def _rotate_day_if_needed(self):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         old_date = self.daily_gate.state.date_str
@@ -455,6 +874,13 @@ class BotMR:
             self.log.info(f"Day rollover: {old_date} -> {today}")
             bot_log.emit("BOTMR_DAY_ROLLOVER", old_date=old_date, new_date=today)
             self.daily_gate.reset_for_new_day(today)
+            # FIX audit 19/06 : persister snapshot reset pour eviter restore
+            # ancien jour au prochain restart cross-rollover.
+            try:
+                self.store.set_daily_state(self.daily_gate.snapshot())
+                self.store.save()
+            except Exception as e:  # noqa: BLE001
+                self.log.warning(f"daily_state rotate persist fail: {e}")
             try:
                 self.state_bridge.rotate_day(today.replace("-", ""))
             except Exception as e:  # noqa: BLE001
@@ -662,6 +1088,30 @@ class BotMR:
                     "BOTMR_REGIME_VIX_PANIC_BLOCK",
                     sym=sym, vix_change_pct=vix_val, threshold=thr_val,
                 )
+            # 18/06 Regime classifier vote majoritaire 3 signaux (Phase 3).
+            # Format skip_reason : "REGIME_CLASSIFIER_BLOCKED:{regime}_blocks_{direction} "
+            #                      "votes={votes} signals={signals}"
+            # FIX bug #3 review 19/06 : ce prefixe tombait en BOTMR_NOT_TRADABLE
+            # catch-all (manquait dispatch). Maintenant emit code dedie deja
+            # present dans log_catalog (BOTMR_REGIME_CLASSIFIER_BLOCK).
+            elif signal_result.skip_reason.startswith("REGIME_CLASSIFIER_BLOCKED"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    head, _sep, rest = payload.partition(" ")
+                    regime_val = head.split("_blocks_", 1)[0]
+                    votes_part = (
+                        rest.split("votes=", 1)[1].split(" ", 1)[0]
+                        if "votes=" in rest else "?"
+                    )
+                except (IndexError, ValueError):
+                    regime_val, votes_part = "?", "?"
+                bot_log.emit(
+                    "BOTMR_REGIME_CLASSIFIER_BLOCK",
+                    sym=sym,
+                    direction=signal_result.direction or "?",
+                    regime=regime_val,
+                    votes=votes_part,
+                )
             # 18/06 Regime scorer continu (alternative score pondere multi-features).
             # Format skip_reason : "REGIME_SCORE_BLOCKED:{regime}_blocks_{direction} "
             #                      "score={score} features={features_dict}"
@@ -799,7 +1249,8 @@ class BotMR:
                     delta_v, thr_v = "?", "?"
                 bot_log.emit(
                     "BOTMR_ULTRATHINK_BLOCK_DELTA_BAR_LONG",
-                    sym=sym, delta_bar=delta_v, threshold=thr_v,
+                    sym=sym, direction=signal_result.direction,
+                    delta_bar=delta_v, threshold=thr_v,
                 )
             elif signal_result.skip_reason.startswith("ULTRATHINK_BLOCK_DELTA_BAR_SHORT"):
                 try:
@@ -811,7 +1262,8 @@ class BotMR:
                     delta_v, thr_v = "?", "?"
                 bot_log.emit(
                     "BOTMR_ULTRATHINK_BLOCK_DELTA_BAR_SHORT",
-                    sym=sym, delta_bar=delta_v, threshold=thr_v,
+                    sym=sym, direction=signal_result.direction,
+                    delta_bar=delta_v, threshold=thr_v,
                 )
             elif signal_result.skip_reason.startswith("ULTRATHINK_BLOCK_FINISH_STRENGTH_LONG"):
                 try:
@@ -842,6 +1294,300 @@ class BotMR:
                     "BOTMR_ULTRATHINK_NO_DATA",
                     sym=sym, direction=signal_result.direction,
                     delta_bar="?", finish_strength="?",
+                )
+            # ════════════════════════════════════════════════════════════════
+            # FIX 3 audit 19/06 : dispatch codes specifiques pour les ~12 prefixes
+            # qui tombaient dans BOTMR_NOT_TRADABLE catch-all (5111/6861 events
+            # = 74.5% des skips opaque a l'analyse cf audit market-analyst).
+            # ════════════════════════════════════════════════════════════════
+            elif signal_result.skip_reason.startswith("CIRCUIT_BREAKER_HALT"):
+                # Format : "CIRCUIT_BREAKER_HALT:{N}s_remaining"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    remaining = payload.replace("s_remaining", "").strip()
+                except (IndexError, ValueError):
+                    remaining = "?"
+                bot_log.emit(
+                    "BOTMR_CIRCUIT_BREAKER_ACTIVE",
+                    sym=sym, remaining_sec=remaining,
+                )
+            elif signal_result.skip_reason.startswith("COOLDOWN_PROGRESSIVE"):
+                # FIX A3 23/06 : Format "COOLDOWN_PROGRESSIVE:{elapsed}s/{cooldown}s n_sl_consec={n}"
+                # Code dedie au cooldown progressif post-LOSS (vs COOLDOWN standard).
+                # Note : ce elif DOIT etre AVANT "COOLDOWN" car startswith("COOLDOWN")
+                # matcherait aussi "COOLDOWN_PROGRESSIVE" et stealerait l'emit.
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    parts = payload.split(" n_sl_consec=", 1)
+                    timing_part = parts[0]
+                    n_sl_str = parts[1].strip() if len(parts) > 1 else "0"
+                    elapsed_str, cool_str = timing_part.split("/", 1)
+                    elapsed_val = float(elapsed_str.replace("s", "").strip())
+                    cool_val = float(cool_str.replace("s", "").strip())
+                    n_sl_val = int(n_sl_str)
+                except (IndexError, ValueError) as parse_err:
+                    # FIX review A3 IMPORTANT-2 23/06 : log warning au lieu de
+                    # silent fallback. Si format skip_reason change accidentellement
+                    # (regression signal_engine), emit silencieux avec valeurs 0 =
+                    # invisible J+1 (anti-pattern VALIDATION_MISS regle log B).
+                    elapsed_val, cool_val, n_sl_val = 0.0, 0.0, 0
+                    self.log.warning(
+                        f"COOLDOWN_PROGRESSIVE skip_reason parse FAIL: "
+                        f"{signal_result.skip_reason!r} ({parse_err})"
+                    )
+                bot_log.emit(
+                    "BOTMR_COOLDOWN_PROGRESSIVE_ACTIVE",
+                    sym=sym, direction=_PRE_DIR,
+                    elapsed=elapsed_val,
+                    cooldown=cool_val, n_sl_consec=n_sl_val,
+                )
+            elif signal_result.skip_reason.startswith("COOLDOWN"):
+                # Format : "COOLDOWN:{elapsed}s/{cooldown}s" (time-based)
+                # ou "COOLDOWN:{n}/{N}" (legacy counter)
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    elapsed_val, cool_val = payload.split("/", 1)
+                    elapsed_val = elapsed_val.replace("s", "").strip()
+                    cool_val = cool_val.replace("s", "").strip()
+                except (IndexError, ValueError):
+                    elapsed_val, cool_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_COOLDOWN_ACTIVE",
+                    sym=sym, elapsed=elapsed_val, cooldown_sec=cool_val,
+                )
+            elif signal_result.skip_reason.startswith("SESSION_NOT_ALLOWED"):
+                # Format : "SESSION_NOT_ALLOWED:{phase}"
+                try:
+                    phase_val = signal_result.skip_reason.split(":", 1)[1].strip()
+                except (IndexError, ValueError):
+                    phase_val = "?"
+                allowed = ",".join(self.cfg.tradable_sessions(sym))
+                bot_log.emit(
+                    "BOTMR_SESSION_NOT_ALLOWED",
+                    sym=sym, phase=phase_val, allowed=allowed,
+                )
+            elif signal_result.skip_reason.startswith("PREOPEN_US_SKIP"):
+                bot_log.emit("BOTMR_PREOPEN_US_SKIP", sym=sym)
+            elif signal_result.skip_reason.startswith("RVOL_TOO_LOW"):
+                # Format : "RVOL_TOO_LOW:{rvol_z}<{min_z}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    rvol_val, min_val = payload.split("<", 1)
+                except (IndexError, ValueError):
+                    rvol_val, min_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_RVOL_TOO_LOW",
+                    sym=sym, direction=_PRE_DIR,
+                    rvol_z=rvol_val, min_z=min_val,
+                )
+            elif signal_result.skip_reason.startswith("NO_EXTENSION"):
+                # Format : "NO_EXTENSION:d_low={x} d_high={y} thr={z}"
+                # 75% des skips d'apres audit market-analyst — code dedicated CRITIQUE
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    d_low_val = payload.split("d_low=", 1)[1].split(" ", 1)[0]
+                    d_high_val = payload.split("d_high=", 1)[1].split(" ", 1)[0]
+                    thr_val = payload.split("thr=", 1)[1].strip()
+                except (IndexError, ValueError):
+                    d_low_val, d_high_val, thr_val = "?", "?", "?"
+                bot_log.emit(
+                    "BOTMR_NO_EXTENSION",
+                    sym=sym, direction=_PRE_DIR,
+                    d_low=d_low_val, d_high=d_high_val, thr=thr_val,
+                )
+            # FIX BUG #2 review code-reviewer 23/06 : 3 dispatchers manquants
+            # pour codes Phase A. Sans ces branches, codes definis log_catalog.py
+            # mais jamais emis = VALIDATION_MISS J+1 (pattern 8+ occurrences).
+            elif signal_result.skip_reason.startswith("LONG_BELOW_VWAP_INTRADAY"):
+                # Format : "LONG_BELOW_VWAP_INTRADAY:dist={x}<{thr}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    dist_str, thr_str = payload.split("<", 1)
+                    dist_val = float(dist_str.replace("dist=", "").strip())
+                    thr_val_f = float(thr_str.strip())
+                except (IndexError, ValueError):
+                    dist_val, thr_val_f = 0.0, 0.0
+                bot_log.emit(
+                    "BOTMR_LONG_BELOW_VWAP_BLOCK",
+                    sym=sym, dist=dist_val, thr=thr_val_f,
+                )
+            elif signal_result.skip_reason.startswith("SHORT_ABOVE_VWAP_INTRADAY"):
+                # Format : "SHORT_ABOVE_VWAP_INTRADAY:dist={x}>{thr}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    dist_str, thr_str = payload.split(">", 1)
+                    dist_val = float(dist_str.replace("dist=", "").strip())
+                    thr_val_f = float(thr_str.strip())
+                except (IndexError, ValueError):
+                    dist_val, thr_val_f = 0.0, 0.0
+                bot_log.emit(
+                    "BOTMR_SHORT_ABOVE_VWAP_BLOCK",
+                    sym=sym, dist=dist_val, thr=thr_val_f,
+                )
+            elif signal_result.skip_reason.startswith("NEWS_GATE_FAIL_CLOSED"):
+                # FIX A4 23/06 : Format "NEWS_GATE_FAIL_CLOSED:err={msg}"
+                # Module eco_calendar HS = fail-closed (mieux rater trade que FOMC).
+                try:
+                    err_val = signal_result.skip_reason.split(":", 1)[1]
+                    err_val = err_val.replace("err=", "").strip()
+                except (IndexError, ValueError):
+                    err_val = "?"
+                bot_log.emit(
+                    "BOTMR_NEWS_GATE_FAIL_CLOSED",
+                    sym=sym, err=err_val[:200],
+                )
+            elif signal_result.skip_reason.startswith("NEWS_BLOCK"):
+                # FIX A4 23/06 : Format "NEWS_BLOCK:event={x} until={iso} buffer_min={n}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    event_val = payload.split("event=", 1)[1].split(" until=", 1)[0]
+                    until_val = payload.split("until=", 1)[1].split(" buffer_min=", 1)[0]
+                    buffer_str = payload.split("buffer_min=", 1)[1].strip()
+                    buffer_val = int(buffer_str)
+                except (IndexError, ValueError) as parse_err:
+                    event_val, until_val, buffer_val = "?", "?", 0
+                    self.log.warning(
+                        f"NEWS_BLOCK skip_reason parse FAIL: "
+                        f"{signal_result.skip_reason!r} ({parse_err})"
+                    )
+                bot_log.emit(
+                    "BOTMR_NEWS_WINDOW_BLOCK",
+                    sym=sym, event=event_val, until_iso=until_val,
+                    buffer_min=buffer_val,
+                )
+            elif signal_result.skip_reason.startswith("REGIME_SESSION_BLOCK"):
+                # Format : "REGIME_SESSION_BLOCK:regime={r} session={s}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    regime_val = payload.split("regime=", 1)[1].split(" ", 1)[0]
+                    session_val = payload.split("session=", 1)[1].strip()
+                except (IndexError, ValueError):
+                    regime_val, session_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_REGIME_SESSION_BLOCK",
+                    sym=sym, direction=_PRE_DIR,
+                    regime=regime_val, session=session_val,
+                )
+            elif signal_result.skip_reason.startswith("MOMENTUM_5B_TOO_BEAR_LONG"):
+                # Format : "MOMENTUM_5B_TOO_BEAR_LONG:mom_5b={x}<{thr} (ANTI_...)"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    val_part = payload.split("(", 1)[0].strip()
+                    mom_str, thr_str = val_part.split("<", 1)
+                    mom_val = float(mom_str.replace("mom_5b=", "").strip())
+                    thr_val = float(thr_str.strip())
+                except (IndexError, ValueError):
+                    mom_val, thr_val = 0.0, 0.0
+                bot_log.emit(
+                    "BOTMR_MOMENTUM_5B_BLOCK_LONG",
+                    sym=sym, mom_5b=mom_val, thr=thr_val,
+                )
+            elif signal_result.skip_reason.startswith("MOMENTUM_5B_TOO_BULL_SHORT"):
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    val_part = payload.split("(", 1)[0].strip()
+                    mom_str, thr_str = val_part.split(">", 1)
+                    mom_val = float(mom_str.replace("mom_5b=", "").strip())
+                    thr_val = float(thr_str.strip())
+                except (IndexError, ValueError):
+                    mom_val, thr_val = 0.0, 0.0
+                bot_log.emit(
+                    "BOTMR_MOMENTUM_5B_BLOCK_SHORT",
+                    sym=sym, mom_5b=mom_val, thr=thr_val,
+                )
+            elif signal_result.skip_reason.startswith("SESSION_AH_BLOCK"):
+                # Format : "SESSION_AH_BLOCK:hour={h}h in [{s}-{e}h] UTC"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    hour_str = payload.split("hour=", 1)[1].split("h", 1)[0]
+                    bracket = payload.split("[", 1)[1].split("]", 1)[0]
+                    start_str, end_str = bracket.replace("h", "").split("-", 1)
+                    hour_val = int(hour_str)
+                    start_val = int(start_str)
+                    end_val = int(end_str)
+                except (IndexError, ValueError):
+                    hour_val, start_val, end_val = 0, 0, 0
+                bot_log.emit(
+                    "BOTMR_SESSION_AH_BLOCK",
+                    sym=sym, hour=hour_val, start=start_val, end=end_val,
+                )
+            elif signal_result.skip_reason.startswith("SD_FEATURE_MISSING"):
+                # Format : "SD_FEATURE_MISSING:level={x} d_low={y} d_high={z}"
+                # Fail-loud anti-pattern Gamma=0.0 (BUG #3 review 23/06)
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    level_val = payload.split("level=", 1)[1].split(" ", 1)[0]
+                    d_low_val = payload.split("d_low=", 1)[1].split(" ", 1)[0]
+                    d_high_val = payload.split("d_high=", 1)[1].strip()
+                except (IndexError, ValueError):
+                    level_val, d_low_val, d_high_val = "?", "?", "?"
+                bot_log.emit(
+                    "BOTMR_SD_FEATURE_MISSING",
+                    sym=sym, level=level_val, d_low=d_low_val, d_high=d_high_val,
+                )
+            elif signal_result.skip_reason.startswith(
+                ("REGIME_TREND_ES", "REGIME_CONTRA_NQ")
+            ):
+                # Format : "REGIME_TREND_ES_LONG_BLOCKED:slope_30={x}"
+                # ou      "REGIME_CONTRA_NQ_SHORT_BLOCKED:slope_30={x}"
+                prefix = signal_result.skip_reason.split(":", 1)[0]
+                mode = (
+                    "trend_align_es"
+                    if "TREND_ES" in prefix
+                    else "contrarian_nq"
+                )
+                bot_log.emit(
+                    "BOTMR_REGIME_MODE_BLOCK",
+                    sym=sym,
+                    direction=signal_result.direction or "?",
+                    mode=mode,
+                    reason=signal_result.skip_reason,
+                )
+            elif signal_result.skip_reason.startswith("VIX_TOO_LOW_FOR_SHORT"):
+                # Format : "VIX_TOO_LOW_FOR_SHORT:{vix}<={min_vix}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    vix_val, min_val = payload.split("<=", 1)
+                except (IndexError, ValueError):
+                    vix_val, min_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_VIX_TOO_LOW_FOR_SHORT",
+                    sym=sym, vix=vix_val, min_vix=min_val,
+                )
+            elif signal_result.skip_reason.startswith("NQ_TREND_DAY_TOO_HIGH"):
+                # Format : "NQ_TREND_DAY_TOO_HIGH:{score}>{max_score}"
+                try:
+                    payload = signal_result.skip_reason.split(":", 1)[1]
+                    score_val, max_val = payload.split(">", 1)
+                except (IndexError, ValueError):
+                    score_val, max_val = "?", "?"
+                bot_log.emit(
+                    "BOTMR_NQ_TREND_DAY_TOO_HIGH",
+                    score=score_val, max_score=max_val,
+                )
+            elif signal_result.skip_reason.startswith("EXHAUSTION_REQUIRED"):
+                bot_log.emit(
+                    "BOTMR_EXHAUSTION_REQUIRED",
+                    sym=sym, direction=signal_result.direction or "?",
+                )
+            elif signal_result.skip_reason.startswith(
+                ("DELTA_NEG_FOR_LONG", "DELTA_POS_FOR_SHORT")
+            ):
+                # Format : "DELTA_NEG_FOR_LONG:{val}" / "DELTA_POS_FOR_SHORT:{val}"
+                try:
+                    delta_val = signal_result.skip_reason.split(":", 1)[1].strip()
+                except (IndexError, ValueError):
+                    delta_val = "?"
+                bot_log.emit(
+                    "BOTMR_DELTA_DIRECTION_BLOCK",
+                    sym=sym,
+                    direction=signal_result.direction or "?",
+                    delta=delta_val,
+                )
+            elif signal_result.skip_reason.startswith("INVALID_CLOSE_PRICE"):
+                bot_log.emit(
+                    "BOTMR_INVALID_CLOSE_PRICE",
+                    sym=sym, direction=signal_result.direction or "?",
                 )
             log_decision_jsonl(
                 bar_ts=bar_ts, symbol=sym, signal=signal_result,
@@ -1068,6 +1814,17 @@ class BotMR:
             signal.signal(signal.SIGTERM, self.stop)
         except (AttributeError, ValueError):
             pass
+
+        # FIX audit 19/06 : reconcile DTC AVANT d'entrer dans la boucle.
+        # Si cas CRITIQUE (UNKNOWN_BROKER_POS ou DIVERGENCE), halt boot pour
+        # forcer intervention manuelle Jackson (set env force_flat ou flatten SC).
+        if not self._reconcile_with_dtc_at_boot():
+            self.log.critical(
+                "Boot HALTE par reconcile DTC. "
+                "Set MIA_BOT_MR_RECONCILE_FORCE_FLAT=1 pour bypass."
+            )
+            bot_log.emit("BOTMR_BOOT_HALT_RECONCILE")
+            return  # Exit clean sans entrer dans la loop
 
         self._running = True
         while self._running:
