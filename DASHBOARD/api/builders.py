@@ -1787,14 +1787,14 @@ def build_order_flow_advanced(bar: dict, symbol: str = "ES") -> dict:
     big_buy_dom = get_field(bar, "big_buy_dominance", 0.0)   # ratio 0-1
     big_sell_dom = get_field(bar, "big_sell_dominance", 0.0)
     # Total counts par tier (T1 = plus gros volume)
-    n_big_buy_t1 = get_int_field(bar, "n_big_buy_t1", 0)
-    n_big_buy_t2 = get_int_field(bar, "n_big_buy_t2", 0)
-    n_big_sell_t1 = get_int_field(bar, "n_big_sell_t1", 0)
-    n_big_sell_t2 = get_int_field(bar, "n_big_sell_t2", 0)
+    n_big_buy_t1 = get_int_field(bar, "n_big_ask_t1", 0)
+    n_big_buy_t2 = get_int_field(bar, "n_big_ask_t2", 0)
+    n_big_sell_t1 = get_int_field(bar, "n_big_bid_t1", 0)
+    n_big_sell_t2 = get_int_field(bar, "n_big_bid_t2", 0)
     n_big_buy_total = n_big_buy_t1 + n_big_buy_t2 + \
-        get_int_field(bar, "n_big_buy_t3", 0) + get_int_field(bar, "n_big_buy_t4", 0)
+        get_int_field(bar, "n_big_ask_t3", 0) + get_int_field(bar, "n_big_ask_t4", 0)
     n_big_sell_total = n_big_sell_t1 + n_big_sell_t2 + \
-        get_int_field(bar, "n_big_sell_t3", 0) + get_int_field(bar, "n_big_sell_t4", 0)
+        get_int_field(bar, "n_big_bid_t3", 0) + get_int_field(bar, "n_big_bid_t4", 0)
     max_big_ask_vol = get_int_field(bar, "max_big_ask_vol_in_bar", 0)
     max_big_bid_vol = get_int_field(bar, "max_big_bid_vol_in_bar", 0)
     dist_big_ask_pct = get_field(bar, "dist_big_ask_nearest_pct", 0.0)
@@ -1911,8 +1911,8 @@ def build_order_flow_advanced(bar: dict, symbol: str = "ES") -> dict:
     # Le "sliding 5 bars" necessiterait acces a historique → on utilise les
     # ratio buy_dom et sell_dom (dejacalcules sur window phase B+++) comme
     # proxy momentum directionnel.
-    big_buy_tier_sum = n_big_buy_t1 + n_big_buy_t2 + get_int_field(bar, "n_big_buy_t3", 0)
-    big_sell_tier_sum = n_big_sell_t1 + n_big_sell_t2 + get_int_field(bar, "n_big_sell_t3", 0)
+    big_buy_tier_sum = n_big_buy_t1 + n_big_buy_t2 + get_int_field(bar, "n_big_ask_t3", 0)
+    big_sell_tier_sum = n_big_sell_t1 + n_big_sell_t2 + get_int_field(bar, "n_big_bid_t3", 0)
     if big_buy_tier_sum + big_sell_tier_sum > 0:
         momentum_ratio = (big_buy_tier_sum - big_sell_tier_sum) / (big_buy_tier_sum + big_sell_tier_sum)
     else:
