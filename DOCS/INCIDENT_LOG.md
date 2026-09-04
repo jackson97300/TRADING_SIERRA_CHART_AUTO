@@ -33,6 +33,48 @@
 
 ---
 
+### 2026-09-05 — [VALIDATION_MISS] — 25 "regressions semantiques" dont la majorite etaient des artefacts de check
+
+**Contexte** : verification semantique avant construction du module de normalisation.
+Ventilation par jour des 95 checks sur 75 jours NQ : 25 identites changent de
+comportement dans le temps, la plupart le 18-19/06 et au meme boot_id.
+
+**Ce qui a mal tourne** : conclusion annoncee a Jackson — "trois vraies ruptures,
+regressions datees". Les trois dates correspondaient en realite a trois COMMITS DE
+CORRECTION : e3e36e0 (INCIDENT #75, pvwap), 8935b73 (INCIDENT #76, prev_helpers),
+56b1f56 (INCIDENT #73, cvd_day). Le taux d'echec explose APRES la correction parce
+que le check visait la colonne que la correction venait justement d'abandonner.
+
+**Cause racine** : deux colonnes coexistent pour le meme concept. `prev_vpoc` est
+l'alias DMP C++ que l'incident #76 declare casse ; `prev_vpoc_lvl` est le snapshot
+cable le 19/06. Depuis cette date `dist_prev_vpoc` suit `prev_vpoc_lvl` a 100,0 %
+et `prev_vpoc` a 5,0 %. Le check testait `prev_vpoc`. Meme schema sur vah et val.
+
+Second facteur, plus grave car il touche tous les audits : `session_date` bascule a
+04:01 UTC (minuit ET) alors que la session Sierra ouvre a 22:01 UTC (18h ET). Six
+heures d'ecart. Tout `groupby(session_date)` decoupe donc chaque session en deux —
+d'ou "2 valeurs distinctes par session" sur TOUTES les colonnes de niveau sans
+exception, uniformite qui aurait du alerter immediatement.
+
+**Lecon** : avant de qualifier une divergence de regression, verifier QUELLE colonne
+alimente le calcul. Un taux d'echec qui bondit exactement le jour d'un commit de fix
+est presque toujours un check perime, pas une regression. Et un motif identique sur
+toutes les colonnes d'une famille designe le decoupage, jamais le calcul.
+
+**Trigger prevention** : (1) toute rupture datee -> `git log --since --until` sur la
+fenetre AVANT d'ecrire le mot regression ; (2) ne jamais grouper par `session_date`
+pour une propriete de session Sierra — decouper a 22:00 UTC ; (3) quand une famille
+entiere de colonnes presente la meme anomalie au meme degre, suspecter la cle
+d'agregation avant la source.
+
+**Reste vrai apres correction** : `prev_vpoc/vah/val_lvl` bascule a 17:00 UTC, en
+pleine seance, et porte le profil de l'avant-veille jusque-la (0,0 % = J-1 avant
+17h contre 18,4 % apres ; ecart median 111 points). `cvd_day` est faux avant le
+18/06 (5 jours). `dist_prev_vwap` ne correspond a aucune colonne du fichier
+(ecart median -3,84 points) — non resolu.
+
+**Reviewed** : self (detecte en verifiant les commits des dates de rupture)
+
 ### 2026-09-04 (101) - [VALIDATION_MISS + COMMENT_FALSE] - Allegement du protocole de demarrage : commande grep prescrite ratant 30% des entrees
 
 **Contexte** : chantier d'allegement du contexte de session. `CLAUDE.md` l.7 imposait "Lire `DOCS/INCIDENT_LOG.md` **integralement**" (490 Ko / 5489 lignes ~ 125K tokens). Regle inapplicable : soit elle brule la moitie de la fenetre avant la premiere reponse, soit elle est ignoree en silence — c'est ce que je faisais (120 lignes lues sur 5489). Remplacee par "en-tete + grep par categorie au moment de l'action critique".
