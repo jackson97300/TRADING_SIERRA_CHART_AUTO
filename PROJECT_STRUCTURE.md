@@ -232,6 +232,7 @@ Schema actif : **3.7.2 — 262 colonnes DMP + 37 colonnes MenthorQ = 299 feature
 | **MIA_MenthorQ_PreMarket** | 14:15 | 08:15 | Scrape MenthorQ ES+NQ (pré-US) |
 | **MIA_MenthorQ_MidDay** | 17:15 | 11:15 | Scrape MenthorQ (Swing/Blind refresh) |
 | **DMP collecte** | 24/7 | 24/7 | Sierra Chart DMP (continu) |
+| **MIA-HealthCheck-Daily** | 14:00 | 08:00 | `TOOLS/health_check_daily.py` — collecte figée / boucle d'ordres / services critiques → alerte Discord + trace `LOGS/health_checks/health_YYYYMM.jsonl` (créée 04/09, INCIDENT #98) |
 
 ---
 
