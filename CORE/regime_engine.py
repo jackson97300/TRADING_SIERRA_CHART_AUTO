@@ -25,9 +25,33 @@ Reproduction fidele DASHBOARD/api/builders.py:120-362 (build_regime_context) :
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field, asdict
 from typing import Optional
+
+# Seuils par symbole + helper d'echelle. Source unique de verite : les seuils
+# ne doivent JAMAIS etre codes en dur dans ce fichier (audit 04/09 : tous les
+# seuils etaient ceux de NQ, appliques tels quels a ES).
+try:
+    from CORE.regime_calibration import (
+        RANGE_POS_BAS, RANGE_POS_HAUT, VIX_EXTREME, VIX_HIGH, VIX_LOW,
+        fenetre_de_barre, get_seuils, seuils_sont_par_defaut, symbole_de_barre,
+    )
+    from CORE.constants import range_pos_pct
+except ImportError:  # scripts lances depuis CORE/
+    from regime_calibration import (
+        RANGE_POS_BAS, RANGE_POS_HAUT, VIX_EXTREME, VIX_HIGH, VIX_LOW,
+        fenetre_de_barre, get_seuils, seuils_sont_par_defaut, symbole_de_barre,
+    )
+    from constants import range_pos_pct
+
+_logger = logging.getLogger(__name__)
+
+# Anti-spam : le VIX manque sur ~1.2 % des barres, concentrees sur
+# quelques jours. Un warning par barre noierait les logs ; un par jour
+# suffit a alerter.
+_vix_absent_signale: set = set()
 
 # === Kill switch + version (R1+R2 code-reviewer 03/05) ===
 # Permet rollback rapide en cas de probleme RTH J+1 sans redeploy code :
@@ -36,7 +60,7 @@ REGIME_SKIP_ENABLED: bool = os.environ.get("MIA_REGIME_SKIP_ENABLED", "1") == "1
 
 # Version calibration pour distinguer Bot 1 (dashboard ancienne 2.0) vs
 # Bot 2+3 (regime_engine v2 grid search optimal 5.5).
-REGIME_CALIB_VERSION: str = "v2_optim_20260503"
+REGIME_CALIB_VERSION: str = "v3_etats_20260904"
 
 
 @dataclass
@@ -53,6 +77,7 @@ class RegimeAnalysis:
     details: list = field(default_factory=list)
     bear_factors: int = 0    # nombre de facteurs bias bear (pour audit)
     bull_factors: int = 0    # nombre de facteurs bias bull (pour audit)
+    calib_symbole: str = ""  # symbole dont les seuils ont servi (audit)
 
 
 # ===========================================================================
@@ -157,12 +182,16 @@ def _compute_bias_proxy(bar: dict, mode: str) -> tuple[float, str, int, int]:
     # alors que le regime etait legitimement TREND favor=LONG.
     # APRES : range_pos n'est evalue que hors mode TREND (RANGE ou NORMAL).
     # En TREND, le prix aux extremes est attendu, pas un signal contraire.
+    # FIX 04/09/2026 (INCIDENT #99 bis) — range_pos etait lu brut alors que
+    # le champ est en echelle [0,1] (mediane 0.53). Avec des seuils 70/30,
+    # "pos > 70" ne partait jamais et "pos < 30" partait toujours : biais
+    # bull constant. range_pos_pct() lit range_pos_va, seule source [0,100].
     if mode != "TREND":
-        pos = _get_field(bar, "range_pos", 50.0)
-        if pos > 70:
+        pos = range_pos_pct(bar)
+        if pos > RANGE_POS_HAUT:
             score -= 0.20
             bear_factors += 1
-        elif pos < 30:
+        elif pos < RANGE_POS_BAS:
             score += 0.20
             bull_factors += 1
 
@@ -197,8 +226,21 @@ def _compute_bias_proxy(bar: dict, mode: str) -> tuple[float, str, int, int]:
 # Compute regime — coeur logique (10 votes ponderes)
 # ===========================================================================
 
-def compute_regime(bar: dict) -> RegimeAnalysis:
-    """Detecte regime via 10 votes ponderes Market Profile + VWAP + Open.
+def compute_regime(bar: dict, symbole: str | None = None) -> RegimeAnalysis:
+    """Detecte le regime via 4 votes ponderes sur des etats Market Profile.
+
+    Les criteres reposant sur des compteurs cumules de session
+    (single_print_count, bars_in_va, sess_range_atr) et sur des magnitudes
+    dependantes de l'heure (vwap_slope, poc_bar_dist) ont ete retires le
+    04/09/2026 : ils mesuraient le temps ecoule plus que le marche.
+    Voir CORE/regime_calibration.py et INCIDENT_LOG #100.
+
+    Args:
+        bar: barre enrichie (live_enriched) ou ligne de parquet V4.
+        symbole: "ES" / "NQ". A passer explicitement depuis les builders de
+            dataset : les parquets ne portent pas de colonne symbole, et le
+            repli silencieux sur ES a deja produit des datasets NQ calibres
+            avec les seuils ES.
 
     Args:
         bar: dict ligne (DMP JSONL ou parquet V4 enriched).
@@ -237,6 +279,16 @@ def compute_regime(bar: dict) -> RegimeAnalysis:
     # Cross-validation PnL Bot V1 : 4/5 jours alignes (22/04 BULL / 28/04 SHORT-dom /
     # 23/04 choppy OK ; 30/04 regime dit BULL mais reversal).
 
+    # Seuils calibres pour CE symbole (repli ES si inconnu). Le symbole vient
+    # de l'appelant ou, a defaut, de la barre elle-meme (cle `sym`).
+    # Plus aucun critere du MODE n'a de seuil numerique depuis le 04/09 :
+    # les quatre restants sont des categories (IB, day type, open type,
+    # profile shape). `sym` et `fenetre` ne servent donc plus qu'a tracer la
+    # provenance dans `calib_symbole` — et a accueillir un futur critere
+    # calibre sans avoir a re-cabler la signature.
+    sym = symbole or symbole_de_barre(bar)
+    fenetre = fenetre_de_barre(bar)
+
     # 1. IB Breakout (poids 2 si breakout, 1 si IB intacte)
     ib_up = _get_int_field(bar, "ib_broken_up", 0)
     ib_dn = _get_int_field(bar, "ib_broken_down", 0)
@@ -268,35 +320,40 @@ def compute_regime(bar: dict) -> RegimeAnalysis:
         details.append("Day Type: Neutral")
     # day_type == 0 (NonTrend, 7%) : pas de vote
 
-    # 3. Single Prints — empreinte de conviction (calibre p25=47, p75=170)
-    single_prints = _get_int_field(bar, "single_print_count", 0)
-    if single_prints > 100:
-        trend_votes += 1
-        details.append(f"SinglePrints: {single_prints} (fort)")
-    elif single_prints < 30:
-        range_votes += 1
-        details.append(f"SinglePrints: {single_prints} (faible)")
+    # 3. RETIRE le 04/09/2026 — `single_print_count` est un compteur cumule
+    # depuis le debut de session : mediane ES en seance 33, 33, 32, 35, puis
+    # 3 apres le reset de 17h UTC, soit un facteur 11.7 pilote par l'heure.
+    # Recalibrer son seuil ne corrige rien, la grandeur est mal posee.
+    # Pourra revenir normalise par le temps ecoule dans la session.
 
-    # 4. VWAP Slope (calibre grid search optimal 3.5)
-    vwap_slope_10 = _get_field(bar, "vwap_slope_10", 0.0)
-    vwap_sl = abs(vwap_slope_10)
-    if vwap_sl > 3.5:
-        trend_votes += 1
-        details.append(f"VWAP slope: {vwap_slope_10:+.1f}")
-    elif vwap_sl < 0.5:
-        range_votes += 1
-        details.append(f"VWAP slope: {vwap_slope_10:+.1f} (plat)")
+    # 4. RETIRE le 04/09/2026 — |vwap_slope_10| varie d'un facteur 9.6 selon
+    # l'heure en seance (0.33 a 16h UTC, 2.31 a 17h au reset du VWAP) et d'un
+    # facteur 11 entre seance et hors-seance (p75 1.256 contre 0.114). La
+    # pente absolue mesure surtout ou l'on se trouve dans la session.
+    # Le SIGNE de la pente reste utilise par le bias proxy, ou il est
+    # legitime : c'est une direction, pas une magnitude.
 
-    # 5. Sess/ATR (vol ratio) — calibre p50=2.27, p75=4.04
-    atr_ratio = _get_field(bar, "sess_range_atr", 0.0)
-    if atr_ratio > 1.0:
-        trend_votes += 1
-        details.append(f"Sess/ATR: {atr_ratio:.2f}x (expansion)")
-    elif atr_ratio < 0.4:
-        range_votes += 1
-        details.append(f"Sess/ATR: {atr_ratio:.2f}x (compression)")
+    # 5. RETIRE le 04/09/2026 — sess_range_atr est un cumul de session : il
+    # croit mecaniquement avec l'heure (mediane ES 2.13 a 00h UTC, 4.66 a 16h,
+    # 0.69 au reset de 17h, facteur 6.8). C'est une horloge, pas un regime.
+    # Avec le seuil 1.0 il votait TREND sur 94.96 % des barres ES. Un vote
+    # quasi-constant n'informe pas, il decale seulement le seuil effectif du
+    # verdict. Total max de votes : 12 -> 11.
 
-    # 6. Open Type (1=OD up, 2=OD down, 3-4=OTD, 5-6=ORR)
+    # 6. Open Type — classification Dalton. Le mapping complet est dans
+    # DASHBOARD/api/readers.py:OPEN_TYPE_LABELS (0 a 11).
+    #
+    # FIX 04/09/2026 : le code ne traitait que les valeurs 1 a 6. Or le
+    # classifieur emet aussi 7, 8 et 9, qui representent 16.4 % des barres ES
+    # (OAOR 9.84 % + OAIR 3.28 % + 3.28 %) — ignorees en silence, donc autant
+    # de votes perdus. Semantique Market Profile :
+    #   OD / OTD  : le marche part et ne revient pas       -> conviction
+    #   OAOR      : ouverture HORS du range de la veille   -> conviction
+    #   ORR       : rejet immediat, retournement           -> equilibre
+    #   OAIR      : auction A L'INTERIEUR du range veille  -> equilibre
+    #   ODF       : un drive qui echoue                    -> equilibre
+    # A valider empiriquement (ces categories predisent-elles la continuation ?)
+    # avant d'en faire davantage qu'un vote parmi quatre.
     open_type = _get_int_field(bar, "open_type", 0)
     if open_type in (1, 2):
         trend_votes += 1
@@ -304,9 +361,18 @@ def compute_regime(bar: dict) -> RegimeAnalysis:
     elif open_type in (3, 4):
         trend_votes += 1
         details.append("Open Test Drive")
+    elif open_type in (8, 9):
+        trend_votes += 1
+        details.append("Open Auction Out of Range")
     elif open_type in (5, 6):
         range_votes += 1
         details.append("Open Rejection Reverse")
+    elif open_type == 7:
+        range_votes += 1
+        details.append("Open Auction In Range")
+    elif open_type in (10, 11):
+        range_votes += 1
+        details.append("Open Drive Failure")
 
     # 7. Profile Shape (1=P, 2=b directionnel ; 0=D, 3=DoubleDist range)
     profile_shape = _get_int_field(bar, "profile_shape", -1)
@@ -317,37 +383,44 @@ def compute_regime(bar: dict) -> RegimeAnalysis:
         range_votes += 1
         details.append("Profile: " + ("D" if profile_shape == 0 else "DoubleDist"))
 
-    # 8. POC distance (calibre p50=9, p75=19)
-    poc_dist = _get_field(bar, "poc_bar_dist", 0.0)
-    if poc_dist > 15:
-        trend_votes += 1
-        details.append(f"POC distant: {poc_dist:.0f} bars")
-    elif poc_dist < 3:
-        range_votes += 1
-        details.append(f"POC proche: {poc_dist:.0f} bars")
+    # 8 et 9. RETIRES le 04/09/2026.
+    # `poc_bar_dist` : facteur 3.0 selon l'heure, et seuil calibre sur NQ
+    # (p75 NQ = 15 contre p75 ES = 2) -> 0.35 % de declenchement sur ES.
+    # `bars_in_va` : compteur cumule (mediane ES en seance 0, 0, 0, 0, 1, 3, 9
+    # de 13h a 19h UTC). Son vote TREND se declenchait EXCLUSIVEMENT sur les
+    # zeros (45.25 % des barres ES, dont 45.25 % sous le seuil), c'est-a-dire
+    # sur l'absence de donnee — le defaut meme qui a fait desactiver le vote
+    # RANGE de trend_day_probability. Deux poids deux mesures, corrige.
 
-    # 9. Bars in VA (% temps prix dans Value Area) — calibre p75=22, p90=53
-    bars_va = _get_field(bar, "bars_in_va", 0.0)
-    if bars_va > 30:
-        range_votes += 1
-        details.append(f"Bars in VA: {bars_va:.0f}% (confine)")
-    elif bars_va < 10:
-        trend_votes += 1
-        details.append(f"Bars in VA: {bars_va:.0f}% (hors VA)")
+    # 10. RETIRE le 04/09/2026 — `trend_day_probability` n'a que deux valeurs
+    # utiles en seance : 0.15 et 0.35. Sur ES, 0.35 couvre 70.53 % des barres
+    # et 0.15 en couvre 23.64 % ; les valeurs superieures (0.45, 0.65) pesent
+    # 0.16 %. Aucun seuil ne donne un taux de declenchement exploitable :
+    # au-dessus de 0.30 le vote part 70.68 % du temps, au-dessus de 0.35 il ne
+    # part plus du tout. C'est un booleen deguise, pas une probabilite.
+    #
+    # Le vote MODE ne conserve donc que quatre criteres, tous des etats
+    # Market Profile verifies stables dans la journee : IB, day type,
+    # open type, profile shape. Maximum 6 votes TREND, 4 votes RANGE.
 
-    # 10. Trend Day Probability (calibre p75=0.35, p90=0.35)
-    tdp = _get_field(bar, "trend_day_probability", 0.5)
-    if tdp > 0.30:
-        trend_votes += 1
-        details.append(f"TrendProb: {tdp:.0%}")
-    elif tdp < 0.10:
-        range_votes += 1
-        details.append(f"TrendProb: {tdp:.0%} (faible)")
-
-    # ===== Mode verdict (seuil grid search optimal mode_strong=3) =====
-    if trend_votes >= 3 and trend_votes >= range_votes + 1:
+    # ===== Mode verdict =====
+    # Quatre criteres, tous des etats Market Profile : IB (poids 2 en
+    # breakout, 1 si intacte), day type (2 ou 1), open type (1), profile
+    # shape (1). Maximum atteignable : 6 votes TREND, 4 votes RANGE.
+    # Seuil ramene de 3 a 2 le 04/09/2026. Le 3 avait ete derive quand le vote
+    # comptait dix criteres ; avec quatre il ne restait que 10.8 % de TREND et
+    # 82.3 % de NORMAL — un mode degenere. Mesure a 2 : ES TREND 27.9 % /
+    # RANGE 8.5 % / NORMAL 63.6 %, NQ 25.6 % / 15.3 % / 59.1 %.
+    #
+    # DETTE MESUREE, a traiter : `day_type` vaut 2 ("Normal Variation") sur
+    # 91.68 % des barres ES et 84.43 % des NQ, donc il vote trend+1 presque
+    # toujours. Le cote RANGE part avec un handicap systematique, ce qui
+    # explique l'ecart 27.9 % / 8.5 %. Soit le classifieur de day type ne
+    # discrimine pas, soit la periode etudiee est atypique — a verifier JOUR
+    # par jour (et non barre par barre) avant de toucher a ce critere.
+    if trend_votes >= 2 and trend_votes >= range_votes + 1:
         mode = "TREND"
-    elif range_votes >= 3 and range_votes >= trend_votes + 1:
+    elif range_votes >= 2 and range_votes >= trend_votes + 1:
         mode = "RANGE"
     else:
         mode = "NORMAL"
@@ -356,13 +429,18 @@ def compute_regime(bar: dict) -> RegimeAnalysis:
     # BUG #2 fix : passer `mode` au proxy pour qu'il skip range_pos en TREND
     # (mean reversion incoherente quand le prix est attendu aux extremes).
     bias_score, bias_label, bear_factors, bull_factors = _compute_bias_proxy(bar, mode)
-    range_pos = _get_field(bar, "range_pos", 50.0)
+    # FIX 04/09/2026 — meme bug que le bias proxy. Mesure sur 12 754 barres :
+    # "range_pos >= 70" se declenchait 0.00 % du temps, "range_pos <= 30"
+    # 100 % du temps. En mode RANGE, favor valait LONG sur TOUTES les barres
+    # et SHORT jamais. Corrige le 03/06 dans regime_engine_v2.py et
+    # bot4_v2/core/regime_source.py, jamais retroporte ici.
+    range_pos = range_pos_pct(bar)
 
     # ===== Direction (favor) =====
     if mode == "RANGE":
-        if range_pos >= 70:
+        if range_pos >= RANGE_POS_HAUT:
             favor = "SHORT"
-        elif range_pos <= 30:
+        elif range_pos <= RANGE_POS_BAS:
             favor = "LONG"
         else:
             favor = "NEUTRE"
@@ -381,32 +459,43 @@ def compute_regime(bar: dict) -> RegimeAnalysis:
         favor = "NEUTRE"
         details.append("Override SHORT -> NEUTRE (3+ bull factors)")
 
-    # ===== Volatility regime — Fix 11/05/2026 (audit feature-engineer) =====
-    # AVANT : utilisait sess_range_atr (ratio sess/atr) qui est NaN 97.5% ES
-    #   et ABSENT MGC -> fallback 0.0 -> vol_regime="LOW" constant.
-    #   ES 97.7% LOW, MGC 100% LOW -> feature inutilisable.
-    # APRES : utilise atr_regime_zscore_60d (z-score normalise rolling 60d).
-    #   Cross-instrument (meme echelle ES/NQ/MGC).
-    #   ES/MGC ~52% non-NaN, distribution attendue : LOW 25%, NORMAL 60%,
-    #   HIGH 12%, EXTREME 3%. Seuils calibres sur quantiles empiriques
-    #   ES q95=1.94, MGC q95=2.22.
-    # Fallback : si z-score NaN (premiers 60j rolling), retour "NORMAL"
-    #   (neutralite plutot que LOW biaise).
-    atr_z = _get_field(bar, "atr_regime_zscore_60d", float('nan'))
-    if atr_z != atr_z:  # NaN — premiers 60j rolling, neutralite explicite
+    # ===== Volatility regime — refonte 04/09/2026 =====
+    # Deux sources ecartees apres mesure sur 10 jours :
+    #   - atr_regime_zscore_60d : jamais positif (ES max +0.27, NQ max -0.31)
+    #     alors que les seuils etaient a +1.5 et +2.5. HIGH et EXTREME
+    #     inatteignables -> vol_regime constant. Le fix du 11/05 n'a pas tenu.
+    #   - sess_range_atr : cumul de session, croit avec l'heure (facteur 6.8
+    #     entre creux et pic de journee). Horloge, pas regime.
+    # Le VIX est rempli a 100 %, stable dans la journee (0.49 pt d'ecart entre
+    # medianes horaires) et directement interpretable par un trader d'indices.
+    # Repli : NORMAL si absent (neutralite, jamais LOW qui serait un biais).
+    vix = _get_field(bar, "vix_level", 0.0)
+    if vix <= 0:
+        # 1.23 % des barres ES sur 49 jours, concentrees sur 3 jours (dont
+        # 35 % de la seance du 10/08). Le regime de volatilite est alors
+        # inconnu, pas normal — on le signale au lieu de l'inventer.
+        _jour = str(bar.get("session_date") or bar.get("session_date_trading") or "?")
+        if _jour not in _vix_absent_signale:
+            _vix_absent_signale.add(_jour)
+            _logger.warning(
+                "regime : vix_level absent ou nul (%r) le %s pour %s — "
+                "vol_regime force a NORMAL (regime de volatilite inconnu, "
+                "pas normal)", bar.get("vix_level"), _jour, sym)
         vol_regime = "NORMAL"
-    elif atr_z >= 2.5:
+    elif vix >= VIX_EXTREME:
         vol_regime = "EXTREME"
-    elif atr_z >= 1.5:
+    elif vix >= VIX_HIGH:
         vol_regime = "HIGH"
-    elif atr_z >= -0.5:
-        vol_regime = "NORMAL"
-    else:
+    elif vix < VIX_LOW:
         vol_regime = "LOW"
+    else:
+        vol_regime = "NORMAL"
 
-    # ===== Confidence (votes nets / total max possible 12) =====
+    # ===== Confidence (votes nets / maximum atteignable) =====
+    # 6 = maximum du cote TREND (2 IB + 2 day type + 1 open + 1 shape).
+    # Le cote RANGE plafonne a 4, donc |trend - range| ne depasse pas 6.
     net = abs(trend_votes - range_votes)
-    confidence = min(1.0, net / 12.0)
+    confidence = min(1.0, net / 6.0)
 
     # ===== Is actionable (calibre conf_actionable=0.10) =====
     is_actionable = (
@@ -426,12 +515,14 @@ def compute_regime(bar: dict) -> RegimeAnalysis:
         details=details,
         bear_factors=bear_factors,
         bull_factors=bull_factors,
+        calib_symbole=("%s/%s" % (sym, fenetre) if sym
+                       else "DEFAUT_ES/%s" % fenetre),
     )
 
 
-def compute_regime_dict(bar: dict) -> dict:
+def compute_regime_dict(bar: dict, symbole: str | None = None) -> dict:
     """Wrapper retournant dict (pour pipeline V4 builder)."""
-    r = compute_regime(bar)
+    r = compute_regime(bar, symbole)
     return {
         "regime_mode": r.mode,
         "regime_favor": r.favor,

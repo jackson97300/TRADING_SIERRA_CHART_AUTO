@@ -1201,8 +1201,16 @@ def build_for_symbol(symbol: str, start: date, end: date,
 
         regime_records = []
         for _, row in df.iterrows():
+            # B1/B2 (review 04/09) — les parquets V4 ne portent ni colonne
+            # symbole ni `range_pos_va`. Sans le symbole, get_seuils()
+            # repliait sur ES et le dataset NQ etait donc calibre avec les
+            # seuils ES. Sans `range_pos_va`, range_pos_pct() renvoyait le
+            # defaut 50.0 sur 100 % des lignes. Ici `range_pos` est deja en
+            # [0,100] (verifie : min 0, max 100), on le declare comme tel.
             bar = row.to_dict()
-            regime_records.append(compute_regime_dict(bar))
+            if "range_pos_va" not in bar and "range_pos" in bar:
+                bar["range_pos_va"] = bar["range_pos"]
+            regime_records.append(compute_regime_dict(bar, symbole=symbol))
         df_regime = pd.DataFrame(regime_records, index=df.index)
         df = pd.concat([df, df_regime], axis=1)
         actionable_pct = df["regime_actionable"].mean() * 100 if "regime_actionable" in df.columns else 0

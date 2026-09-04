@@ -21,6 +21,7 @@
 - `LAZY_DELEGATION` — saute STEP 1-3 d'analyse manuelle, delegue tout aux agents (cf `.claude/rules/module-review-protocol.md`)
 - `DATA_MINING_TRAP` — audit one-shot qui produit "edges" sans walk-forward + DSR Lopez = noise habille en signal (haircut multiple testing manquant)
 - `DECISION_SOUVERAINE` — Jackson override review agent en paper avec kill switch trivial (cf #81bis 25/06)
+- `SCALE_DRIFT` — seuil fige dans le code alors que la feature a change d'echelle, d'instrument ou de definition. Echec SILENCIEUX : le critere vote toujours pareil sans lever d'erreur. 5 occurrences (#57, #99, #100 x3). Garde-fou : `tools/check_regime_calibration.py`
 
 ## Regles de maintenance
 
@@ -29,6 +30,111 @@
 3. **Une entree = 10 lignes max** (sinon linker vers fichier dedie)
 4. **Escalation** : si une categorie atteint 3+ occurrences, promouvoir en memoire dediee auto-chargee
 5. **Cross-reference** avec `.claude/rules/lessons.md` + memoires `feedback_*`
+
+---
+
+### 2026-09-04 (101) - [VALIDATION_MISS + COMMENT_FALSE] - Allegement du protocole de demarrage : commande grep prescrite ratant 30% des entrees
+
+**Contexte** : chantier d'allegement du contexte de session. `CLAUDE.md` l.7 imposait "Lire `DOCS/INCIDENT_LOG.md` **integralement**" (490 Ko / 5489 lignes ~ 125K tokens). Regle inapplicable : soit elle brule la moitie de la fenetre avant la premiere reponse, soit elle est ignoree en silence — c'est ce que je faisais (120 lignes lues sur 5489). Remplacee par "en-tete + grep par categorie au moment de l'action critique".
+
+**Ce qui a mal tourne** : j'ai prescrit `grep -n "\[CATEGORIE\]"` sans le tester. Or 30 % des entrees ont une categorie composee (`[DEPLOY_UNSAFE + PATTERN_11]`), que le crochet fermant fait rater. Mesure : DEPLOY_UNSAFE 5/15, PATTERN_11 9/20, DATA_MINING_TRAP 3/10, COMMENT_FALSE 5/15. Second defaut : "les ~5 derniers incidents (`head -120`)" — `head -120` n'en rend qu'UN, tronque (l'en-tete occupe 35 lignes, une entree ~87). Troisieme : `SCALE_DRIFT` (categorie la plus recente, #100) absente de la liste de `CLAUDE.md`, devenue de fait la seule source de ce qu'on greppe.
+
+**Cause racine** : avoir remplace une protection exhaustive par une protection selective **sans tester la selection**. Une regle trop couteuse n'est pas respectee, mais une regle qui semble marcher et rate 2/3 des cas est pire : l'echec est silencieux. Meme famille que `SCALE_DRIFT` (#100) et que le `x || defaut` de #99 — le mecanisme rend une valeur plausible au lieu de lever.
+
+**Lecon** : toute commande prescrite dans un protocole doit etre **executee et son taux de rappel mesure** avant d'etre ecrite dans la doc. Un `grep` dans une regle est du code : il se teste.
+
+**Trigger prevention** : quand une doc prescrit une commande (grep/head/find), l'executer et comparer son resultat au comptage exhaustif. Si rappel < 100 %, corriger le motif avant commit. Ancrer les greps de categorie sur `^### ` (titres d'entree), jamais sur `[...]`.
+
+**Fix applique** : `CLAUDE.md` — motif `^### .*CATEGORIE` (rappel 100 % verifie), `head -235` (5 entrees completes), 12 categories dont `SCALE_DRIFT`, tableau "Hooks" corrige (il declarait actif le hook `SessionStart` neutralise apres l'incident du 12/04), 4 slash commands manquantes ajoutees.
+
+**Reviewed** : agent Plan (revue du plan, avant application) + agent code-reviewer (revue du diff, apres application — c'est lui qui a mesure le taux de rappel du grep). Defaut non detecte par moi.
+
+---
+
+### 2026-09-04 (100) - [SCALE_DRIFT] - Moteur de regime : 6 seuils sur 10 calibres sur NQ et appliques a ES, plus 2 criteres sans aucun sens physique
+
+**Contexte** : revue en profondeur de l'onglet Overview du dashboard demandee par Jackson
+(BIAS, MODE, FAVORISER, VOLATILITE + 5 jauges). Verification systematique de CHAQUE seuil
+de `CORE/regime_engine.py` contre la distribution empirique reelle : 23 794 barres
+(10 jours ES + NQ, `DATA/live_enriched_clean`).
+
+**Ce qui a mal tourne** : sur les 10 criteres du vote MODE, **6 ne fonctionnaient pas**.
+
+| Critere | Seuil code | Realite ES | Taux reel | Diagnostic |
+|---|---|---|---|---|
+| `single_print_count` | trend si > 100 | max observe **84** | **0.00 %** | seuil NQ (p75=176) sur ES (p75=31) |
+| `vwap_slope_10` | trend si abs > 3.5 | p75 = 0.29 | 1.89 % | seuil NQ (p75=1.89) |
+| `sess_range_atr` | trend si > 1.0 | p25 = 1.77 | **94.96 %** | vote constant |
+| `poc_bar_dist` | trend si > 15 | p75 = 2 | 0.35 % | seuil NQ (p75=15) |
+| `trend_day_probability` | range si < 0.10 | 74.9 % de zeros | 74.87 % | vote l'ABSENCE de donnee |
+| `bars_in_va` (NQ) | trend si < 10 | 49 % de zeros | 60.29 % | limite haute depassee |
+
+Deux criteres n'avaient en plus **aucun sens physique** :
+
+- `sess_range_atr` est un **cumul de session** : il croit mecaniquement avec l'heure.
+  Mediane ES par heure UTC : 2.13 (00h) -> 2.80 (13h) -> 4.66 (16h) -> **0.69 (17h, reset)**.
+  Facteur 6.8 entre creux et pic. C'est une **horloge deguisee en signal de regime**.
+- `atr_regime_zscore_60d` n'est **jamais positif** (ES min -0.92 max +0.27, NQ max -0.31)
+  alors que `vol_regime` testait `>= 1.5` (HIGH) et `>= 2.5` (EXTREME). Ces deux etats
+  etaient **inatteignables** -> `vol_regime` constant. Le fix du 11/05 qui avait
+  precisement bascule sur ce z-score pour corriger un "vol_regime constant" a donc
+  **reproduit le bug qu'il pretendait corriger**, sans que personne ne le mesure.
+
+**Cause racine** : deux causes distinctes qui se cumulent.
+
+1. **Calibration mono-instrument.** Les seuils ont ete derives d'un grid search sur NQ
+   (les commentaires du code le trahissent : "calibre p25=47, p75=170" correspond
+   exactement a NQ) puis appliques a ES sans re-mesure. ES et NQ different d'un facteur
+   ~5 sur `single_print_count` et `poc_bar_dist`. Jackson l'avait dit explicitement le
+   03/09 : "l'ES ne se traite pas vraiment comme l'ENQ" — le code, lui, les traitait pareil.
+
+2. **Aucun controle automatique du taux de declenchement.** Rien ne verifiait qu'un vote
+   se declenche parfois. Un critere a 0.00 % ou 94.96 % passe totalement inapercu : il ne
+   leve pas d'exception, il ne produit pas de NaN, il vote juste toujours pareil.
+
+**Effet de bord non mesure jusqu'ici** : `regime_favor` etait aussi affecte par le bug
+range_pos (#99) **dans ce fichier precis** — corrige le 03/06 dans `regime_engine_v2.py`
+et `bot4_v2/core/regime_source.py`, **jamais retroporte** dans `regime_engine.py` qui est
+celui que le dashboard consomme. Mesure : en mode RANGE, `favor` valait LONG sur **100 %**
+des barres et SHORT sur **0.00 %**.
+
+**Impact mesure du fix** (memes barres, ancien vs nouveau) :
+
+```
+ES  favor  LONG 84.62 % -> 28.24 %   SHORT  6.63 % -> 24.32 %   NEUTRE  8.75 % -> 47.44 %
+NQ  favor  LONG 59.60 % -> 25.13 %   SHORT 13.79 % -> 24.72 %   NEUTRE 26.61 % -> 50.15 %
+ES  actionable 64.85 % -> 33.17 %  |  NQ actionable 46.34 % -> 30.69 %
+```
+
+**Lecon** : un seuil numerique dans du code de decision est une **hypothese sur une
+distribution**. Elle se perime : quand la source de donnees change, quand l'instrument
+change, quand la definition de la feature evolue. Une hypothese non testee finit toujours
+par etre fausse, et son echec est **silencieux** — c'est ce qui la rend dangereuse.
+
+C'est la **cinquieme occurrence** du meme motif dans ce projet :
+- #57 `MIN_DELTA_SLOPE = 100` contre une distribution reelle 0.001-0.05
+- #99 `range_pos` seuils 70/30 contre une echelle [0,1]
+- #100 (ici) `single_print_count > 100` contre un maximum de 84
+- #100 (ici) `sess_range_atr > 1.0` contre un p25 de 1.77
+- #100 (ici) `atr_regime_zscore_60d >= 1.5` contre un maximum de +0.27
+
+D'ou la creation de la categorie `SCALE_DRIFT` et d'un garde-fou automatique.
+
+**Trigger prevention** :
+
+1. **Aucun seuil en dur dans le code de decision.** Les seuils vivent dans
+   `CORE/regime_calibration.py`, par symbole, avec la date et la source de calibration.
+2. **`python -X utf8 tools/check_regime_calibration.py` apres toute modification** du
+   moteur de regime ou de la calibration. L'outil mesure le taux de declenchement reel de
+   chaque vote et **sort en erreur** si un critere se declenche moins de 5 % ou plus de
+   60 % du temps. Il a trouve 3 criteres casses de plus des sa premiere execution.
+3. **Avant d'ajouter un critere**, verifier qu'il n'est pas une fonction de l'heure :
+   grouper sa mediane par heure UTC. Si l'ecart creux/pic depasse un facteur 2, c'est une
+   horloge, pas un signal.
+4. **Un seuil recopie d'un instrument a l'autre doit etre re-mesure**, jamais recopie.
+
+**Reviewed** : mesure empirique 23 794 barres + code-reviewer (critere 1 Trading/Risk,
+critere 6 Cross-module)
 
 ---
 

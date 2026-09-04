@@ -457,8 +457,12 @@ def range_pos_pct(bar: dict, default: float = 50.0) -> float:
 
     SOURCE CANONIQUE : `range_pos_va`, emis par le C++ DMP deja en [0,100].
     Le C++ a renomme `range_pos` -> `range_pos_va` le 08/06 (batch B4, "fix
-    collision Python"), et `range_pos_va` est present sur 100 % des barres des
-    DEUX sources (DMP brut ET live_enriched). Il n'y a donc aucune ambiguite.
+    collision Python"). ATTENTION (review 04/09) : `range_pos_va` est present
+    sur 100 % des barres de DATA/live_enriched_clean, mais ABSENT des
+    parquets V4 et de DATA/live_enriched/. Sur ces sources ce helper renvoie
+    donc le defaut. Un appelant qui lit un parquet doit alimenter
+    `range_pos_va` lui-meme, en connaissance de l'echelle de son `range_pos`
+    (cf les builders V4).
 
     PAS DE FALLBACK sur `range_pos` : ambigu ([0,100] en parquet v4, [0,1] en
     JSONL live_enriched). Si `range_pos_va` manque -> defaut neutre.

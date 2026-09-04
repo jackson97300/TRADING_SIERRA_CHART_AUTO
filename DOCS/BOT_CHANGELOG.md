@@ -2,6 +2,135 @@
 
 **Journal permanent de toutes les modifications apportees au bot** : gates, features, fixes, configs, refactos. Ordre **anti-chronologique** (dernier en haut).
 
+## 2026-09-04 — [MOTEUR DE DECISION] Regime : le vote MODE ne garde que des etats Market Profile + fix range_pos + garde-fou anti-derive
+
+**Categorie** : BUG FIX (INCIDENT_LOG #100, categorie `SCALE_DRIFT`) + OBSERVABILITE
+**Impact prod** : DASHBOARD (onglet Overview : BIAS, MODE, FAVORISER, VOLATILITE) et
+tout consommateur de `CORE/regime_engine.py`. Les colonnes `regime_*` ecrites par
+`CORE/enricher_chain.py` changent de valeur. Aucun bot n'est arrete par ce changement.
+
+### Quoi
+
+Audit ligne a ligne du vote MODE contre les distributions reelles (23 794 barres,
+10 jours ES + NQ). **Six criteres sur dix ne fonctionnaient pas**, et le champ
+`favor` etait bloque sur LONG.
+
+1. **`range_pos` lu a la mauvaise echelle.** Le champ est en [0,1] (mediane 0.53)
+   mais le code appliquait des seuils 70/30. Mesure sur 12 754 barres :
+   `range_pos >= 70` se declenchait **0.00 %** du temps, `range_pos <= 30`
+   **100 %**. En mode RANGE, `favor` valait donc LONG sur toutes les barres et
+   SHORT sur aucune. Corrige le 03/06 dans `regime_engine_v2.py` et
+   `bot4_v2/core/regime_source.py`, **jamais retroporte** dans le moteur que le
+   dashboard consomme.
+
+2. **Seuils calibres sur NQ, appliques a ES.** `single_print_count > 100` pour
+   voter TREND alors que le maximum ES observe est **84** : 0.00 % de
+   declenchement. Idem `vwap_slope_10 > 3.5` (1.89 % sur ES) et
+   `poc_bar_dist > 15` (0.35 %). Les commentaires du code citaient les
+   percentiles NQ. Mesure d'ampleur : **66.7 % des 381 features comparables ont
+   un ecart ES/NQ superieur a x1.5** (`CORE/research/audit_ecart_es_nq.py`).
+
+3. **Cinq criteres sur dix etaient des horloges de session, pas des mesures de
+   marche.** Mediane par heure UTC en seance :
+   ```
+   single_print_count   33  33  32  35   3   9   9    x11.7
+   vwap_slope_abs     0.55 0.84 0.60 0.33 2.31 …      x9.6
+   bars_in_va            0   0   0   0   1   3   9    x9.0
+   sess_range_atr      2.13 … 4.66 … 0.69 au reset    x6.8
+   poc_bar_dist          3   3   2   2   2   1   2    x3.0
+   ```
+   Aucun seuil ne peut sauver une grandeur qui mesure le temps ecoule.
+
+4. **`day_type` est constante** : "NormVariation" sur **20 jours / 20**, ES et NQ.
+   Le classifieur ne classifie rien.
+
+5. **`open_type` emettait des valeurs 7, 8, 9** (OAIR, OAOR) que le code ignorait
+   — 16.4 % des barres ES ne votaient pas. Mapping complete selon la
+   classification Dalton.
+
+### Pourquoi
+
+Un seuil en dur est une hypothese sur une distribution : elle se perime quand la
+source, l'instrument ou la definition changent, et son echec est **silencieux**.
+Cinquieme occurrence du motif dans ce projet (#57, #99, #100 x3) — d'ou la
+creation de la categorie `SCALE_DRIFT` et du garde-fou automatique.
+
+### Fichiers
+
+- `CORE/regime_calibration.py` **(NOUVEAU)** — seuils par symbole ET par fenetre
+  de session, avec date et source. Helpers `normaliser_symbole` (couvre
+  ESU26/ESZ26/MES/MNQ — le rollover est donc deja gere), `symbole_de_barre`,
+  `fenetre_de_barre`, `get_seuils`.
+- `CORE/regime_engine.py` — `compute_regime(bar, symbole=None)` ; `range_pos` via
+  `CORE.constants.range_pos_pct()` ; **cinq criteres retires** (single prints,
+  vwap slope, sess/ATR, poc distance, bars in VA) ; `trend_day_probability`
+  retire faute de seuil exploitable ; mapping `open_type` complete ; seuil du
+  verdict ramene de 3 a 2 ; `vol_regime` bascule sur `vix_level` (13/20/30) ;
+  confidence /6 ; nouveau champ `calib_symbole` ; `REGIME_CALIB_VERSION` bumpe
+  en `v3_etats_20260904`.
+- `CORE/constants.py` — docstring corrige : `range_pos_va` est ABSENT des
+  parquets V4 (etait annonce present sur les deux sources).
+- `CORE/build_dataset_v4_{phase_b,dmp_databento,pure_databento}.py` — passent
+  `symbole=symbol` et declarent l'echelle de leur `range_pos`. Sans cela, les
+  datasets NQ etaient construits avec les seuils ES et `range_pos_pct()` renvoyait
+  le defaut sur 100 % des lignes.
+- `DASHBOARD/api/builders.py` + `v4_reader.py` — cles LUES renommees
+  `n_big_buy_t*` -> `n_big_ask_t*`, `n_big_sell_t*` -> `n_big_bid_t*`. Les
+  anciennes n'existaient dans aucune donnee : le bloc GROS ORDRES retournait 0
+  en permanence. Cles de SORTIE inchangees (consommees par `dashboard.js:950`).
+- `tools/check_regime_calibration.py` **(NOUVEAU)** — deux controles : taux de
+  declenchement 5-60 % **par fenetre de session**, et test d'horloge. Une
+  premiere version mesurait sur 24 h et annoncait "tout va bien" alors que deux
+  votes partaient a ~70 % pendant les seules heures de trading.
+
+### Impact mesure (23 794 barres, ancien vs nouveau)
+
+```
+ES  favor  LONG 84.62 % -> 24.75 %   SHORT  6.63 % -> 25.55 %   NEUTRE  8.75 % -> 49.70 %
+NQ  favor  LONG 59.60 % -> 20.09 %   SHORT 13.79 % -> 28.43 %   NEUTRE 26.61 % -> 51.48 %
+ES  mode   TREND 27.93 %  RANGE 8.49 %  NORMAL 63.58 %
+ES  actionable 64.85 % -> 24.79 %   |   NQ 46.34 % -> 21.16 %
+Bloc GROS ORDRES : 0 % -> ES 60.8 % / NQ 100 % de barres non nulles
+```
+
+Le systeme peut enfin vendre, et il s'abstient une fois sur deux.
+
+### Validation pre-deploy
+
+- **Tests** : 63 tests passent (`CORE/tests/test_regime_engine.py`,
+  `test_a1_bias_calculator.py`, `tests/test_regime_gate.py`,
+  `tests/test_bias_calculator.py`).
+- **Test empirique** : comparaison ancien/nouveau moteur sur les memes barres
+  reelles (tableau ci-dessus).
+- **Garde-fou** : `tools/check_regime_calibration.py` passe ses deux controles.
+- **Etat VPS verifie** : aucun fichier cible modifie sur le VPS apres le 25/06 —
+  le deploiement n'ecrase aucun travail distant.
+- **Reviewer agent** : code-reviewer (criteres 1 Trading/Risk, 6 Cross-module) —
+  GO-AVEC-RESERVES, 3 bloquants (B1 range_pos parquet, B2 symbole builders,
+  B3 calibration 24 h vs RTH) **tous corriges**, plus I1 a I4.
+
+### Dette identifiee, non traitee
+
+- `day_type` constante sur 20/20 jours : le classifieur est a auditer.
+- `regime_engine_v6.py` porte encore le bug `range_pos` 70/30 (non deploye).
+- `atr_regime_zscore_60d` n'est jamais positif en live alors qu'il l'est dans les
+  parquets (max +6.90) : la fenetre roulante 60j n'est probablement jamais
+  amorcee dans l'enricher. Bug de feature, a traiter separement.
+
+### Revert plan
+
+`CORE/regime_engine.py.bak_20260904` contient la version d'avant. Revert =
+restaurer ce fichier, supprimer `CORE/regime_calibration.py`, redeployer,
+redemarrer le dashboard. Backups `.bak_bigorders` pour `builders.py` et
+`v4_reader.py`.
+
+### Suivi post-deploy
+
+- **J+1** : verifier sur le dashboard live que FAVORISER affiche parfois VENTE,
+  que RANGE POS n'est plus bloque a 50 %, et que le bloc GROS ORDRES est non nul.
+- **J+7** : relancer `tools/check_regime_calibration.py` sur donnees fraiches.
+- **J+30** : recalibrer si un critere derive hors de la plage 5-60 %.
+
 ## 2026-09-04 — [HOTFIX BOUCLE MARKET CLOSE] Bot 2 (Bot1V2 Sim2) - deploy D1 + D3 (jamais montes depuis le 13/07) + fix close_cid broker
 
 **Categorie** : SAFETY + BUG FIX (INCIDENT_LOG #98)
