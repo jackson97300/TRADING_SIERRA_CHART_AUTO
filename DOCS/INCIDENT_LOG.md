@@ -32,6 +32,141 @@
 
 ---
 
+### 2026-09-04 (98) - [VALIDATION_MISS + COMMENT_FALSE] - Fix #70 jamais propage a bot1_v2 : ~6000 MARKET CLOSE emis en 7 semaines (close_cid fantome)
+
+**Contexte** : reprise apres 7,5 semaines d'absence Jackson. Audit VPS revele ~65 MARKET CLOSE/jour sur Sim2 depuis le 13/07 (4433 juillet + 1395 aout + 241 sept), 100% des fills, zero ouverture en face. Position ES SHORT 7557.75 figee dans le state depuis le 13/07 22:04 (52 jours).
+
+**Ce qui a mal tourne** : `order_router.py:309` fabrique `close_cid = f"BOT1V2_CLOSE_{sym}_{ts}"` et `main.py:855` l'enregistre dans `fill_listener._cid_index`. MAIS `send_close_market()` genere son PROPRE ClientOrderID `MIA_CLOSE_<uuid>` (`dtc_connector.py:1067`) et le RETOURNE — valeur ignoree. Le broker fille `MIA_CLOSE_*`, cid inconnu du listener → fill ignore → position jamais retiree du store → re-close au boot suivant (service relance ~toutes les 15 min). Boucle.
+
+**Cause racine — DEUX defauts cumules (perimetre corrige par review 04/09)** :
+1. **DECLENCHEUR — Fix D1/D3 du 13/07 jamais deployes** (verifie md5 local vs VPS). Le VPS tournait encore le fallback aveugle `qty_broker = -n_micros if SHORT else n_micros` quand `request_position_blocking` renvoie None => MARKET CLOSE **inconditionnel meme sur compte plat**. C'est ce qui explique "100% des fills, zero ouverture en face" : un close sur compte flat ne PEUT PAS avoir d'ouverture en face. `_reconcile_broker_at_boot` (D3, 171 LOC) etait egalement absent du VPS. Les fixes ecrits le 13/07 pour arreter #96 sont restes en local 7,5 semaines.
+2. **ENTRETIEN — close_cid non route** : le fix INCIDENT #70 (18/06, meme mecanisme, 9 closes en 8 min) a ete applique a **BotMR** (`main.py:460`) et **BN V4** (`order_router.py:174`) qui recuperent bien la valeur de retour — **jamais a bot1_v2**. Le fill du close n'etant jamais route, la position n'etait jamais retiree du store, donc le close se re-declenchait au boot suivant. Pattern "fix corrige sur un bot, non propage aux autres" (cf #63).
+
+Aggravant COMMENT_FALSE : le commentaire `main.py:850` affirme "Fix B2 CRITIQUE : register close_cid ... sans cela fill ignore silencieusement" alors que le cid enregistre est le mauvais — la protection annoncee n'a jamais fonctionne.
+
+**Lecon de perimetre (self)** : mon diagnostic initial attribuait la boucle au seul close_cid. Le fix CID **seul** n'aurait pas arrete l'hemorragie. Cause : j'ai analyse le code LOCAL sans comparer au code REELLEMENT deploye sur le VPS. Avant tout diagnostic de bug prod, **diff local vs VPS d'abord** — sinon on debug du code qui ne tourne pas.
+
+**Bug secondaire** : `send_close_market` retourne `""` si DTC non connecte. L'ancien code marquait `result["ok"]=True` malgre un ordre jamais parti (faux positif de succes).
+
+**Lecon** : tout appel a une fonction qui GENERE un identifiant broker doit consommer sa valeur de retour. Un identifiant fabrique cote appelant + un identifiant genere cote connector = deux mondes qui ne se rejoignent jamais.
+
+**Trigger prevention** : (1) apres tout fix sur un chemin d'execution partage, grep les 4 bots (`bot1_v2`, `bot_mean_revert`, `bot_bn_v4`, `bot4_v2`) pour le meme motif AVANT de clore. (2) Tout `cid` enregistre dans un `_cid_index` doit etre celui rendu par le connector, jamais un cid local.
+
+**Fix applique** : `order_router.py` consomme le retour de `send_close_market` (3 cas explicites : str non vide = nominal ; `""` = ordre non emis → `ok=False` + `BOT1V2_TIMEOUT_CLOSE_NOT_SENT` CRITIQUE ; autre = legacy + `BOT1V2_TIMEOUT_CLOSE_CID_UNRESOLVED` ALERTE). 2 codes ajoutes `log_catalog.py`. 3 tests non-regression (`test_max_hold_timeout.py`). 13/13 PASS sur le fichier, 163 passed suite bot1_v2 (6 echecs preexistants isoles : 3 codes categorie `risk` + dashboard_mirror + state_bridge, aucun n'importe order_router/log_catalog).
+
+**Reviewed** : self (preuve empirique ancienne vs nouvelle logique) — code-reviewer a dispatcher avant deploy VPS (critere 1 Trading/Risk).
+
+---
+
+### 2026-07-13 (97) - [DEPLOY_UNSAFE + PATTERN_11] - Cascade 9 SHORTs cumul ESU26 Sim2 causee par Fix D1 MAX_HOLD initial (fallback aveugle)
+
+**Contexte** : Bot 2 (Bot1V2 Sim2) etait cense proteger contre les positions bloquees via Fix #1 MAX_HOLD (deploye 30/06 apres incident 13h trade). Le 13/07 matin, decouverte de 9 SHORTs cumules ESU26 avg 7596.36 sur broker Sim2 (aucun close visible dans state file, aucun trade dans dashboard).
+
+**Ce qui a mal tourne** : `close_position_market_safe` (Fix #1 initial 30/06) contenait un fallback dangereux : `if qty_broker is None: qty_broker = -n_micros if direction == "SHORT" else n_micros` (aveugle) puis MARKET CLOSE envoye. State file avait ES LONG 1 micro entry 09/07 12:57. Broker Sim2 etait FLAT depuis 10/07 (fill du TP/SL non propage au fill_listener). Chaque restart Bot 2 (~12 fois via nssm auto-restart), `_check_position_timeouts` detectait "position 4 jours d'age >> 45 min" → close → `request_position_blocking` retournait None → **fallback aveugle emettait SELL MARKET creant nouvelle SHORT** (broker etait flat). Repete 12 fois → cumul -9 SHORTs.
+
+**Cause racine** : PATTERN_11 V1 dans Fix D1 initial - fabriquer aveuglement une valeur (qty_broker) quand l'observation est absente au lieu de refuser d'agir. Cousin du pattern "silent fallback" documente dans lessons.md V1.
+
+**Fix** :
+- **D1** (order_router.py:288-302) : `if qty_broker is None` → REFUS explicit MARKET CLOSE. Emit CRITIQUE `BOT1V2_TIMEOUT_POSITION_UNKNOWN_SKIP_CLOSE` + `result["error"] = "BROKER_QTY_UNKNOWN_SKIP_UNSAFE_CLOSE"` + return net.
+- **D3** (main.py:221-380) : `_reconcile_broker_at_boot()` compare state vs broker au boot. `broker=0 + state=pos` → clean state + cancel orphan working orders (R1). `broker=None` → tiebreaker via 0 Working orders (R2). `broker=mismatch` → NO auto-fix + CRITIQUE (human review).
+- Code-reviewer verdict : GO paper Sim2 + 5 reserves (R1/R2/R4 appliquees, R3/R5 reportees LIVE AMP).
+- 20/20 tests PASS.
+
+**Lecon** : (1) JAMAIS fallback avec valeur inventee quand observation broker absente - preferer refuser d'agir. (2) Un fix de safety qui lit un etat broker DOIT inclure chemin `observation_missing = STOP + emit CRITIQUE`. (3) Reconciliation broker au BOOT (D3) est le filet obligatoire quand close automatique peut fail.
+
+**Trigger prevention** : tout code de close automatique qui lit un etat broker doit inclure un chemin `observation_missing = STOP + emit CRITIQUE`, jamais `observation_missing = invent_a_value`. Cross-check obligatoire code-reviewer avant deploy pour tout code touchant `order_router` (critere 1 Trading/Risk).
+
+**Reviewed** : code-reviewer (GO paper + 5 reserves R1-R5) / self
+
+---
+
+### 2026-07-09 (96) - [VALIDATION_MISS] - "Verifie par git stash" : comparaison de deux etats git incomparables
+
+**Contexte** : fix d'observabilite sur BotMR (main.py + log_catalog.py). Avant review agent, je devais prouver que mes edits ne cassaient pas les ~40 tests rouges de `CORE/bot_mean_revert/tests/`.
+
+**Ce qui a mal tourne** : j'ai fait `git stash push` de mes 2 fichiers, lance pytest (51 failed / 320 passed), puis `stash pop` + pytest (40 failed / 331 passed), et j'ai affirme a Jackson : **"echecs preexistants, verifie par git stash"**. J'ai aussi ecrit **"tests apparemment flaky / time-dependants"** sans aucune preuve.
+
+**Cause racine** : les deux runs ne testaient PAS le meme perimetre. Le working tree contient **7 fichiers de tests untracked** (test_fix_a3_cooldown_progressive.py, test_fix_a4_news_gate.py, test_regime_classifier_v_final.py...) + de grosses modifs non commitees (signal_engine.py +343, main.py +765). Stasher 2 fichiers ramenait une partie du code prod vers HEAD **tout en gardant les nouveaux tests untracked** → tests attendant un comportement prod absent. 261 tests a HEAD vs 371 en working tree. **J'ai compare des pommes et des oranges en croyant tester "le meme code".** De plus les tests sont **deterministes** (aucun plugin de random ordering ; 3 runs identiques) : "flaky" etait une invention.
+
+**Ce qui a sauve** : agent code-reviewer dispatche par Jackson ("demande de l'aide a un agent specialise"), qui a reproduit via worktree detache et demontre le vrai etat.
+
+**Lecon** :
+1. `git stash` sur un sous-ensemble de fichiers dans un repo a **1566 fichiers non commites** ne produit PAS un etat de reference. Pour comparer, utiliser un **worktree detache sur HEAD** (`git worktree add`), jamais un stash partiel.
+2. Ne JAMAIS ecrire "flaky" / "time-dependant" sans avoir (a) verifie l'absence de plugin de random ordering, (b) lance N runs sur un etat fige.
+3. Une conclusion juste obtenue par une methode fausse reste un VALIDATION_MISS.
+
+**Trigger prevention** : avant toute phrase "verifie que X n'est pas cause par mes edits" → l'etat de comparaison est-il reellement HEAD-propre ? Y a-t-il des fichiers untracked qui survivent au stash ? Si oui → worktree detache obligatoire.
+
+**Finding corollaire (plus grave que l'incident)** : la vraie couverture des garde-fous de risque (cooldown A3 32 tests, news gate A4, regime V_FINAL, PROP1/2 — tous VERTS) vit dans des fichiers **untracked**. Un `git clean -fd` les detruirait. Les 5 vieux tests cooldown de test_signal_engine.py ont une couverture effective **ZERO** (ils meurent au setup sur ULTRATHINK_NO_DATA, fixtures sans `finish_strength`).
+
+**Reviewed** : code-reviewer (agent) / self
+
+---
+
+### 2026-06-30 (95) - [COMMENT_FALSE+VALIDATION_MISS+DEPLOY_UNSAFE] - Bot 2 (Bot1V2 Sim2) 3 safety absentes decouvertes lundi matin
+
+**Contexte** : Trade ES SELL Bot 2 ouvert dimanche 29/06 23:24:09 UTC a couru 13h+ sans fermeture. Investigation revele 3 safety CRITIQUES absentes du code Bot 2 : (1) MAX_HOLD position timeout, (2) COOLDOWN post-close, (3) audit dashboard verdict regressed.
+
+**Ce qui a mal tourne** :
+1. **MAX_HOLD absent** : `CORE/bot1_v2/main.py` boucle ne check pas elapsed positions. Trade peut courir 13h+ jusqu'a SL/TP fill broker naturel. `position_store.py:56` commentaire affirmait "max_hold_minutes 30 au boot" = **COMMENT_FALSE** total (verifie `meta_config: {}` vide sur VPS).
+2. **COOLDOWN bug fix** : `_on_fill_close` callback ne appelait PAS `clusters[sym].register_close()` -> cooldown POST_LOSS (90 min) / POST_CLOSE (60 min) **jamais active**. Cluster 4 SHORT ES 22-23h 29/06 = -$67.50 en 1h05 + manual flat -$62.50 = cumul -$130 = **victime directe du bug**.
+3. **Dashboard verdict -22pp regression** : sem 22-26 = 56% ATTENDRE, 29/06 = 34% (-22pp). Investigation revele PAS un bug : **regime marche change** (BULLISH 100% le 30/06 vs mixed sem precedente) rend les signaux directionnels plus clairs. Faux positif alarme.
+
+**Cause racine** :
+- MAX_HOLD : mecanique existante dans dashboard JS (`data-timeout-min` 30 min hardcoded) mais **PUREMENT COSMETIQUE** cote backend (aucun POST /api/bot/close). Illusion de garde-fou.
+- COOLDOWN : `cluster.register_close(exit_ts, was_loss)` defini `cluster.py:171` + `store.set_cooldown` defini `position_store.py:134` mais l'appel MANQUAIT dans le callback fill. Bug pur (pas nouvelle feature). Backtest empirique 29/06 : activation cooldown = **+$101.25 net** (3 SHORTs evites).
+- Dashboard : hypothese bug rejettee empiriquement. VALIDATION_MISS_FAUX_POSITIF cree fausse alarme.
+
+**Lecon** :
+1. Avant d'affirmer "MAX_HOLD 30 min actif", grep code backend + verify env prod (`meta_config: {}` seen si absent).
+2. Avant de declarer "regression dashboard", checker direction bias marche + regime avant blamer code.
+3. Bug callback callback missing = 15 LOC fix mais coute 12h paper drift 29/06. Instrumentation `BOT1V2_COOLDOWN_ACTIVATED` grep J+1 obligatoire post-deploy.
+
+**Trigger prevention** :
+1. Avant deploy N'IMPORTE QUEL bot avec position tracking : grep `max_hold\|timeout\|MAX_HOLD` code + verifier boucle main appelle un checker.
+2. Avant deploy callback fill : verifier TOUS side-effects designes (cooldown, cid_register, daily_gate, state_bridge) sont appeles.
+3. Avant declarer regression : compare direction bias + stars distribution + regime marche vs semaine reference.
+4. Instrumentation obligatoire nouvelle safety : code log_catalog + grep J+1 emit > 0.
+
+**Fix applique** (3 fixes deployes VPS 30/06 matin) :
+- Fix #1 MAX_HOLD 45 min : `CORE/bot1_v2/main.py:_check_position_timeouts` + `close_position_market_safe` sequence anti-orphelin V2 (8 etapes conformes `orphan-prevention.md`). 10 tests PASS. Review code-reviewer GO apres B1+B2+R1 fixes (drop etape 9 direct_recv + register_close_cid + lock fill_listener).
+- Fix #2 COOLDOWN bug fix : `_on_fill_close` appelle `cluster.register_close` + `store.set_cooldown` + `store.save()`. 6 tests PASS. Review code-reviewer GO + R1 (store.save immediat). Backtest empirique +$101.25.
+- Fix #3 audit dashboard : PAS de fix code. Documentation regime marche = cause.
+- Fix bonus : `CORE/flatten_bot.py` rollover ES/NQ/MGC ESM26 -> ESU26 (juin -> septembre).
+
+**Reviewed** : code-reviewer P0 Fix #1 (double review B1+B2+R1) + P0 Fix #2 (GO + R1). Backtest empirique 29/06 sur les 2 fixes.
+
+---
+
+### 2026-06-28 (94) - [VALIDATION_MISS+DEPLOY_UNSAFE] - Audit weekend - 3 BLOQUANTS critiques restes invisibles semaine 22-26/06
+
+**Contexte** : Audit weekend 28/06 avec 4 agents paralleles (1 par bot). 3 bugs P0 cumules decouverts.
+
+**Ce qui a mal tourne** :
+1. **Bot 4 v2 regime casse silencieusement** : `atr_regime_zscore_60d`, `ib_formed_bool`, `range_pos` = 100% absentes (cle manquante) live_enriched depuis migration enricher Sierra (Phase 4.1 10/06). `vol_regime` fige NORMAL -> gate EXTREME mort -> news/FOMC sans garde-fou. PERSONNE n'a alerte en 18 jours car silent fallback parfait.
+2. **Bot 2/3 BN V4 logs close absents** : 4 BOTBN_ORDER_SENT semaine mais 0 TRADE_CLOSE. Cause : DtcFillListener partage namespace bot1_v2. 3 trades sem 22-26/06 sans trace close BN V4 audit-able -> DSR Lopez J+30 bloque.
+3. **Bot 4 v2 Sweep_Reclaim_N1 PF 0.80 LOSER** mais deploye 25/06 sans backtest pre-deploy. 362 fires/jour 0 dispatch (entry close N jamais touchee bar N+1, scenario tautologique).
+
+**Cause racine** : Pattern silent fallback systemique (3 features -> default -> continue) + listener partage sans namespace bot dedie + scope creep P3 batch 2 register 2 detectors sans backtest pre-deploy.
+
+**Lecon** : avant tout deploy enricher, dispatch sentinel cross-check `bar.get("X") != None` empirique sample N>=100. Avant listener partage, verifier code log namespace dedie. Avant register detector live, backtest 1 jour fresh PF >= 1.0.
+
+**Trigger prevention** :
+1. AVANT deploy enricher Sierra : test E2E sample 1000 bars + assert features regime_source.py consume sont presentes
+2. AVANT register listener partage : grep `_emit_pair("X_*"` segmente BOTBN_*/BOT1V2_*/MIA_*
+3. AVANT register detector live : backtest PF >= 1.0 minimum
+4. **VALIDATION_MISS 9+ occurrences** : regle souveraine deja en place (`feedback_validation_miss_pre_deploy.md`).
+
+**Fix applique** :
+- P0.A `CORE/sierra_atr_regime.py` (NEW 145 LOC) + integration sierra_pipeline + emit STALE + BOOT_WARMUP
+- P0.B `CORE/bot_bn_v4/main.py` emit BOTBN_TRADE_CLOSE + BOTBN_SL_SENT
+- P0.C `bot4_v2/main/__main__.py` env var BOT4V2_DISABLED_SCENARIOS (STOP Sweep)
+- Tests : 30 nouveaux PASS. Total 752/752 PASS.
+
+**Reviewed** : code-reviewer P0.A + P0.B + trading-strategy-analyst P0.C tous GO-AVEC-RESERVES (reserves appliquees).
+
+---
+
 ### 2026-06-26 (93) - [CONTEXT_MISS+AUDIT] - Bot 4 v2 audit complet sources donnees - sweep_*_lag1 inventee
 
 **Contexte** : Jackson directive 26/06 "VERIFFIE TOTE LES SOURCE DE DONNE CE GENRE ERREUR NE DOIS PAS ARRIVER". Suite a #91 (Sim5 invente) + #92 (MenthorQ fichier JSON invente), Claude lance audit complet de toutes les `bar.get("...")` utilisees par bot4_v2 vs vrais features bar live_enriched.

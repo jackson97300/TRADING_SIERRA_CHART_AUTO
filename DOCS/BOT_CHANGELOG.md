@@ -2,6 +2,713 @@
 
 **Journal permanent de toutes les modifications apportees au bot** : gates, features, fixes, configs, refactos. Ordre **anti-chronologique** (dernier en haut).
 
+## 2026-09-04 — [HOTFIX BOUCLE MARKET CLOSE] Bot 2 (Bot1V2 Sim2) - deploy D1 + D3 (jamais montes depuis le 13/07) + fix close_cid broker
+
+**Categorie** : SAFETY + BUG FIX (INCIDENT_LOG #98)
+**Impact prod** : PAPER (Sim2) - stoppe une boucle de ~6000 MARKET CLOSE emis a vide du 13/07 au 04/09 (4433 juillet + 1395 aout + 241 septembre, ~65/jour, 100% des fills, zero ouverture en face)
+
+**⚠ PERIMETRE REEL (corrige par review 04/09)** : ce deploy embarque **3 fixes**, pas 1.
+Le VPS tournait du code **anterieur au 13/07** : les Fix D1 + D3 ecrits le 13/07 pour arreter
+l'INCIDENT #96 n'ont **jamais ete deployes** (verifie par md5 local vs VPS).
+- **D1** (`order_router.py`) : supprime le fallback aveugle `qty_broker = -n_micros if SHORT else n_micros`
+  quand `request_position_blocking` renvoie None -> MARKET CLOSE inconditionnel meme sur compte plat.
+  **C'est le DECLENCHEUR principal de la boucle** (un close sur compte flat ne peut pas avoir
+  d'ouverture en face -> explique "100% des fills, zero ouverture").
+- **D3** (`main.py`, 171 LOC) : `_reconcile_broker_at_boot` — absent du VPS.
+- **CID** (`order_router.py`, ce fix) : consomme le retour de `send_close_market`.
+  **C'est l'ENTRETIEN de la boucle, pas son declencheur** : le fill du close n'etait jamais
+  route, donc la position n'etait jamais retiree du store.
+
+Le fix CID **seul** n'aurait pas arrete l'hemorragie. Les trois doivent partir ensemble.
+
+**Fichier(s) modifies** :
+- `CORE/bot1_v2/execution/order_router.py` (D1 + fix CID ~30 LOC, 3 branches explicites)
+- `CORE/bot1_v2/main.py` (D3 : `_reconcile_broker_at_boot` ~171 LOC)
+- `CORE/log_catalog.py` (+2 codes execution ce fix, + les codes D1/D3 du 13/07 jamais montes)
+- Tests : `CORE/bot1_v2/tests/test_max_hold_timeout.py` (+3 tests non-regression)
+
+**Reviewer(s) agent** : code-reviewer 04/09 (critere 1 Trading/Risk) — **GO-AVEC-RESERVES**.
+- **R0 CRITIQUE (perimetre)** : diagnostic initial incomplet, D1+D3 jamais deployes. **Traitee** : perimetre elargi aux 3 fixes.
+- **R1 IMPORTANT** : branche `""` ne purgeait pas `result["close_cid"]` -> entree fantome dans `_cid_index` a chaque tour (recreait la pathologie corrigee). **Corrigee** + assertion de test ajoutee.
+- **R2 IMPORTANT** : `close_res["ok"]` n'est **jamais lu** par `main.py` (seuls `is None` et `qty_broker == 0` le sont). `ok=False` n'a aucun effet prod ; les vrais garde-fous sont le `close_cid` vide et l'emit CRITIQUE. Documente, pas de code.
+- **Q1** : branche `else` conservee — `send_close_market` est typee `-> str` avec 2 returns seulement (`""` / `close_id`), aucun chemin ne rend `None`. Branche inatteignable en prod.
+- **Q3** : `send_entry` deja correct (fix 17/06). Type 209/210 utilisent des cids locaux non routes mais **auto-guerissants** (le flatten amene `qty_broker == 0` -> cleanup). Backlog P1.
+- **Q4** : `bot4_v2` verifie **propre** (`dtc_backend_sierra.py:224`, `dtc_adapter.py:484` consomment le cid). **4/4 bots verifies.**
+- **Q5** : deployer **uniquement** `CORE/log_catalog.py` (ne pas toucher `BOT/log_catalog.py`, perime, non charge par ce bot).
+
+### Nouveaux codes log (regle souveraine 01/05 LOGS_TRACABILITE)
+
+- `BOT1V2_TIMEOUT_CLOSE_NOT_SENT` (CRITIQUE, execution) - MARKET CLOSE non emis car DTC non connecte (`send_close_market` retourne `""`). Avant ce fix : `result["ok"]=True` mentait sur un ordre jamais parti.
+- `BOT1V2_TIMEOUT_CLOSE_CID_UNRESOLVED` (ALERTE, execution) - le connector n'a pas rendu de ClientOrderID exploitable ; cid local conserve mais fill non routable.
+
+### Quoi
+
+`order_router.close_position_market_safe` ETAPE 5 fabriquait `close_cid = f"BOT1V2_CLOSE_{sym}_{ts}"` puis appelait `send_close_market(...)` **en ignorant sa valeur de retour**. Or `BOT/dtc_connector.py:1067` genere son propre `MIA_CLOSE_<uuid8>` et le retourne.
+
+Consequence : `main.py:855` enregistrait le cid local dans `fill_listener._cid_index`, le broker fillait `MIA_CLOSE_*`, le listener ne reconnaissait pas le cid, le fill etait ignore, la position n'etait jamais retiree du store, et le boot suivant (service relance ~toutes les 15 min par le watchdog) re-declenchait un close. Boucle.
+
+Le fix consomme le retour avec 3 branches explicites (str non vide = nominal ; `""` = ordre non emis -> `ok=False` + CRITIQUE ; autre = legacy + ALERTE, pour ne pas casser les mocks historiques sans `return_value`).
+
+### Pourquoi
+
+C'est la repetition exacte de l'INCIDENT #70 (18/06, 9 closes en 8 min, meme mecanisme de cid non route). Le fix #70 avait ete applique a `CORE/bot_mean_revert/main.py:460` et `CORE/bot_bn_v4/execution/order_router.py:174` — **jamais a bot1_v2**. Pattern "fix corrige sur un bot, non propage aux autres" (cf #63).
+
+Aggravant COMMENT_FALSE : le commentaire `main.py:850` affirmait "Fix B2 CRITIQUE : register close_cid ... sans cela fill ignore silencieusement" alors que le cid enregistre etait le mauvais — la protection annoncee n'a jamais fonctionne.
+
+### Impact preservation
+
+Pas de backtest applicable : le bug touche un chemin d'execution (close sur timeout), pas le moteur de decision. Aucun trade d'entree n'est affecte. Verifie par :
+- `test_max_hold_timeout.py` : 13/13 PASS
+- Suite `CORE/bot1_v2/tests/` : 163 passed, 6 echecs **preexistants** (2 test_logger causes par 3 codes preexistants en categorie `risk` ; 4 autres n'importent ni order_router ni log_catalog)
+- Preuve empirique ancienne vs nouvelle logique (cid local vs cid broker)
+- Resolution des 2 nouveaux codes verifiee via `resolve()`
+- Verifie empiriquement sur VPS que `CORE.log_catalog` est bien le module charge (incident #11 non applicable a bot1_v2 : import absolu au top de module)
+
+### Validation pre-deploy
+
+- [x] Tests pytest : 13/13 sur le fichier cible, 163 passed suite complete
+- [x] Codes log au catalogue AVANT commit
+- [x] INCIDENT_LOG #98
+- [ ] Review code-reviewer (en cours)
+- [ ] Deploy VPS + restart service
+- [ ] Verification J+1 : grep `BOT1V2_TIMEOUT_CLOSE_NOT_SENT` / `_CID_UNRESOLVED` + confirmer 0 `MIA_CLOSE_` sans `TRADE_CLOSE` en face
+
+### Revert plan
+
+`git checkout CORE/bot1_v2/execution/order_router.py CORE/log_catalog.py` puis re-SCP les 2 fichiers + restart `MIA-Paper-Bot1V2`. Aucune migration de donnees, aucun etat persistant modifie par ce fix.
+
+### Suivi post-deploy
+
+- **J+1** : compter les MARKET CLOSE emis sur Sim2. Attendu : 0 hors close legitime. Si > 5/jour sans trade ouvert en face -> rollback.
+- **J+7** : verifier qu'aucune position ne reste dans `bot1_v2_runtime_positions.json` au-dela de MAX_HOLD (45 min).
+- **J+30** : confirmer absence de reapparition du motif (cf 8 incidents positions fantomes : #11, #19, #41, #69, #70, #78, #95, #97).
+
+---
+
+## 2026-07-13 — [HOTFIX CASCADE SHORT CUMUL] Bot 2 (Bot1V2 Sim2) - Fix D1 (anti-fallback aveugle) + Fix D3 (boot reconciliation broker vs state)
+
+**Categorie** : SAFETY + BUG FIX (2 fixes bloquants, INCIDENT_LOG #97)
+**Impact prod** : PAPER (Sim2) - stoppe cascade 9 SHORTs cumules ESU26 avg 7596.36 causee par Fix D1 initial 30/06 (fallback aveugle qty_broker=None -> MARKET CLOSE creait position inverse)
+**Fichier(s) modifies** :
+- `CORE/bot1_v2/execution/order_router.py` (~15 LOC : Fix D1 refuse MARKET CLOSE si qty_broker=None)
+- `CORE/bot1_v2/main.py` (+~150 LOC : `_reconcile_broker_at_boot` avec R1 orphan cancel + R2 tiebreaker + R4 fail-loud)
+- `CORE/log_catalog.py` (+9 codes log : 1 D1 + 6 D3 + 2 R1/R4)
+- Tests : `CORE/bot1_v2/tests/test_boot_reconciliation.py` (NEW, 9 tests PASS) + update `test_max_hold_timeout.py::test_close_broker_dtc_freeze_skip_unsafe_close` = **10 tests nouveaux/updated**
+
+**Reviewer(s) agent** :
+- code-reviewer Fix D1+D3 : GO paper Sim2 + 5 reserves (R1 orphan working orders CRITIQUE, R2 tiebreaker None CRITIQUE, R3 Type 210 belt-suspenders reporte, R4 silent except mineure, R5 cooldown post-clean reporte). R1 + R2 + R4 appliquees avant deploy. R3 + R5 = TODO LIVE AMP.
+
+### Nouveaux codes log (regle souveraine 01/05 LOGS_TRACABILITE)
+
+**Fix D1 (1 code execution)** :
+- `BOT1V2_TIMEOUT_POSITION_UNKNOWN_SKIP_CLOSE` (CRITIQUE) - refuse MARKET CLOSE quand qty_broker=None (anti-cascade #97)
+
+**Fix D3 boot reconciliation (6 codes events)** :
+- `BOT1V2_BOOT_RECONCILE_START` (INFO) - debut cycle per-sym
+- `BOT1V2_BOOT_RECONCILE_ALIGNED_TO_FLAT` (MAJEUR) - clean state car broker flat + optional tiebreaker="no_working_orders"
+- `BOT1V2_BOOT_RECONCILE_MISMATCH_CRITICAL` (CRITIQUE) - broker vs state divergent, human review requis
+- `BOT1V2_BOOT_RECONCILE_MATCH` (INFO) - state == broker
+- `BOT1V2_BOOT_RECONCILE_DTC_DOWN` (ALERTE) - skip car DTC indisponible
+
+**R1+R4 code-reviewer (2 codes events)** :
+- `BOT1V2_BOOT_RECONCILE_ORPHAN_CANCELLED` (MAJEUR) - cancel working order orphelin sur path flat
+- `BOT1V2_BOOT_RECONCILE_OPEN_ORDERS_FAIL` (ALERTE) - query open_orders fail (orphelins non-audites)
+
+### Quoi
+
+**Fix D1 order_router.py** : remplace fallback dangereux (`qty_broker = -n_micros if SHORT else n_micros`) par REFUS explicite d'emit MARKET CLOSE si `qty_broker is None`. Emit CRITIQUE + return net. Trade-off : orphelin theorique si vrai DTC freeze + vraie position (filet = D3 au prochain boot).
+
+**Fix D3 main.py._reconcile_broker_at_boot()** : appele en fin `__init__` si `not dry_run`. Pour chaque position dans store :
+- Query DTC Type 305 (`request_position_blocking`)
+- `broker=0` + state=pos → cancel Working orders orphelins (R1) + clean state + `state_bridge.close_position(outcome="ORPHAN_CLEANED")`
+- `broker=None` (SC silent) → tiebreaker via `request_open_orders_blocking` : si 0 Working orders sur symbole → confiance haute broker flat → aligne (R2). Sinon → DTC_DOWN skip.
+- `broker=match` → emit INFO, aucune action
+- `broker=mismatch` → CRITIQUE + PAS d'auto-fix (human review via `flatten_bot.py`)
+
+### Pourquoi
+
+Fix D1 initial 30/06 supposait DTC toujours repondre. Empirique cascade #97 : SC ne repond PAS Type 306 pour un compte flat en Sim (documente lessons.md). Donc `qty_broker=None` peut vouloir dire "broker flat + SC silent" ET "DTC vraiment freeze" - les 2 indistinguables sans tiebreaker.
+
+Le bug etait : quand broker deja flat, fallback creait une nouvelle position INVERSE via MARKET CLOSE aveugle. Repete 12 fois via nssm restart → cumul -9 SHORTs.
+
+### Impact preservation
+
+Impossible de backtest wins historiques (bug touche path exceptionnel `qty=None`). Verifie par :
+- 20/20 tests pytest PASS (D1+D3+R1+R2)
+- Code-reviewer verdict GO paper avec 5 reserves
+- Non-regression Bot1V2 : 157/163 (6 fails pre-existants documentes, independants)
+
+### Validation pre-deploy
+
+- [x] Tests pytest D1+D3+R1+R2 : 20/20 PASS
+- [x] Non-regression Bot1V2 : 157/163 PASS
+- [x] Code-reviewer agent : GO paper avec 5 reserves (R1/R2/R4 appliquees, R3/R5 reportees LIVE AMP)
+- [x] INCIDENT_LOG #97 documente
+
+### Revert plan
+
+Si cascade recidive apres deploy :
+1. Git revert commits D1+D3 (2 fichiers)
+2. Bot 2 fallback = pas de MAX_HOLD + pas de reconciliation - risque = trade 13h+ reproduction 30/06
+3. Alternative safe : disable MAX_HOLD via env var `BOT1V2_MAX_HOLD_ENABLED=0`
+
+### Suivi post-deploy
+
+- **J+1** : grep `BOT1V2_BOOT_RECONCILE_*` dans events logs Sim2. Verifier 0 emit `MISMATCH_CRITICAL`. Verifier 0 emit `TIMEOUT_POSITION_UNKNOWN_SKIP_CLOSE`.
+- **J+7** : verifier aucune position >45 min persistante. Verifier state file coherence.
+- **J+30** : reserves R3 (Type 210 belt-suspenders) + R5 (cooldown post-clean 60min) integres avant tout deploy LIVE AMP.
+
+---
+
+## 2026-06-30 — [P0 LUNDI MATIN] Bot 2 (Bot1V2 Sim2) - 3 safety fixes : MAX_HOLD + COOLDOWN + rollover flatten_bot
+
+**Categorie** : SAFETY + BUG FIX + observability (3 fixes P0 Bot 2)
+**Impact prod** : PAPER (Sim2) - Bot 2 tourne maintenant avec safety complete
+**Fichier(s) modifies** :
+- `CORE/bot1_v2/config.py` (+15 LOC : MAX_HOLD_MINUTES=45 + MAX_HOLD_ENABLED + env vars override)
+- `CORE/bot1_v2/main.py` (+~140 LOC : _check_position_timeouts + _on_fill_close cooldown activation)
+- `CORE/bot1_v2/execution/order_router.py` (+~200 LOC : close_position_market_safe sequence anti-orphelin V2 8 etapes)
+- `CORE/log_catalog.py` (+11 nouveaux codes log)
+- `CORE/flatten_bot.py` (+3 LOC : rollover ES/NQ/MGC ESM26 -> ESU26)
+- Tests : `CORE/bot1_v2/tests/test_max_hold_timeout.py` (NEW, 10 tests PASS) + `test_cooldown_activation.py` (NEW, 6 tests PASS) = **16 nouveaux tests**
+
+**Reviewer(s) agent** :
+- code-reviewer Fix #1 MAX_HOLD : 1ere review = NOGO B1+B2+R1. Fixes appliques (drop etape 9 read direct, register_close_cid, lock fill_listener). Re-review = GO.
+- code-reviewer Fix #2 COOLDOWN : GO + R1 mineure (store.save() immediat post set_cooldown). Appliquee.
+
+### Nouveaux codes log (regle souveraine 01/05 LOGS_TRACABILITE)
+
+**Fix #1 MAX_HOLD (9 codes execution)** :
+- `BOT1V2_POSITION_TIMEOUT_CLOSE` (MAJEUR) - force close position apres timeout
+- `BOT1V2_TIMEOUT_CANCEL_EXCEPTION` (ALERTE) - exception cancel bracket
+- `BOT1V2_TIMEOUT_CANCEL_FAIL_ORPHAN_RISK` (CRITIQUE) - cancel echec, risque orphelin
+- `BOT1V2_TIMEOUT_ALREADY_FLAT` (INFO) - broker deja flat
+- `BOT1V2_TIMEOUT_POSITION_UNKNOWN` (ALERTE) - DTC freeze qty=None
+- `BOT1V2_TIMEOUT_REQUEST_POS_FAIL` (ALERTE) - request_position fail
+- `BOT1V2_TIMEOUT_DTC_DOWN_ORPHAN_RISK` (CRITIQUE) - DTC down pendant timeout
+- `BOT1V2_TIMEOUT_VERIFY_CLEAN` (INFO) - verify post-cleanup emit
+- `BOT1V2_TIMEOUT_ORPHAN_DETECTED_POST_CLEANUP` (CRITIQUE) - orphelin detecte (backlog P1 verify)
+
+**Fix #2 COOLDOWN (1 code execution)** :
+- `BOT1V2_COOLDOWN_ACTIVATED` (MAJEUR) - cooldown active post-close (was_loss + cooldown_min + pnl)
+
+### Quoi
+
+**Fix #1 MAX_HOLD 45 min** : Bot 2 n'avait AUCUNE logique max_hold. Trade ES SELL 29/06 23:24 a couru 13h+ (Jackson a du flatten manuellement). Countdown dashboard "Timeout dans 30 min" = **PUREMENT COSMETIQUE JS** (no backend force-close). Fix ajoute :
+- Config MAX_HOLD_MINUTES + MAX_HOLD_ENABLED (env vars override)
+- Boucle main appelle `_check_position_timeouts` avant `_process_symbol`
+- Sequence anti-orphelin V2 conforme `orphan-prevention.md` :
+  1. Cancel TP+SL (trade_account=Sim2 explicite)
+  2. Wait 1s propagation
+  3. R1 verify position broker via request_position_blocking (anti-race)
+  4. MARKET CLOSE Type 208 OpenCloseTrade=2 si qty!=0
+  5. Wait 2s fill
+  6. Type 209 SUBMIT_FLATTEN_POSITION par symbole
+  7. Type 210 FLATTEN_POSITIONS_FOR_ACCOUNT (Sim2 dedie = SAFE)
+  8. Verify post-cleanup emit (etape 9 read direct SUPPRIMEE cause B1 review = race _recv_loop)
+- Register close_cid dans DtcFillListener (Fix B2 : anti bug 18/06 SHORT cumul)
+- Lock fill_listener._lock autour close+cleanup (Fix R1 anti-race)
+
+**Fix #2 COOLDOWN activation** : BUG FIX pur. `_on_fill_close` ne appelait PAS `clusters[sym].register_close()` = cooldown POST_LOSS 90 min / POST_CLOSE 60 min **jamais active**. Cluster 4 SHORT ES 22-23h 29/06 = -$67.50 en 1h05 + manual flat -$62.50 = -$130. Backtest empirique sur ces 6 trades avec cooldown active = **+$3.75 (vs -$97.50 real)** = **impact +$101.25 net**. Fix ajoute 15 LOC dans `_on_fill_close` : `register_close` + `set_cooldown` + `store.save()` (R1 defensif) + emit `BOT1V2_COOLDOWN_ACTIVATED`.
+
+**Fix #3 dashboard verdict audit** : PAS de fix code. Investigation revele que -22pp (56% sem -> 34% 29/06) n'est PAS un bug. C'est un changement de regime marche : 29/06 direction 95% BULLISH vs sem mixed = signaux directionnels plus clairs = moins d'ATTENDRE. Documentation VALIDATION_MISS_FAUX_POSITIF pour eviter alarme future.
+
+**Fix bonus rollover flatten_bot** : `CORE/flatten_bot.py` mapping ES/NQ/MGC obsolete (juin M26 expire 19/06). Passage a septembre (U26 pour ES/NQ, Q26 pour MGC). Debloque bouton FLATTEN dashboard qui ne marchait plus.
+
+### Pourquoi
+
+Sans ces fixes, Bot 2 tournait :
+- Sans timeout (trade peut courir indefiniment jusqu'a SL/TP)
+- Sans cooldown (4 SHORT ES consecutifs 22-23h possible = -$67.50 en 1h05)
+- Sans flatten fonctionnel (rollover casse le script)
+
+Bot 2 en **paper live prend risques cumules** cumul potentiel de drawdown vers daily_stop_loss -$200 en single day.
+
+### Impact
+
+- Bot 2 tourne maintenant avec safety complete alignee sur design Douglas (`feedback_douglas_consistency_principles.md`)
+- Cooldown 60/90 min bloque overtrading meme direction cluster
+- MAX_HOLD 45 min force close si SL/TP ne fire pas
+- Flatten manuel operationnel via dashboard (contrat correct)
+
+### Validation pre-deploy
+
+- pytest : 16/16 tests PASS (10 MAX_HOLD + 6 COOLDOWN)
+- Backtest empirique : +$110 net cumulatif (MAX_HOLD +$9.38 + COOLDOWN +$101.25) sur 5 trades 29/06
+- Hashes VPS = local verifies apres SCP
+- Review code-reviewer 2x GO-AVEC-RESERVES fixes appliquees
+
+### Revert plan
+
+**Fix #1 MAX_HOLD** :
+- Runtime : `nssm set MIA-Paper-Bot1V2 AppEnvironmentExtra BOT1V2_MAX_HOLD_ENABLED=0` -> feature disabled sans deploy
+- Code : `git revert` sur `CORE/bot1_v2/main.py:_check_position_timeouts` + config.py
+
+**Fix #2 COOLDOWN** :
+- Runtime : `BOT1V2_COOLDOWN_POST_LOSS_MIN=0 BOT1V2_COOLDOWN_POST_CLOSE_MIN=0` -> cooldown instant expire
+- Code : revert `_on_fill_close` register_close call
+
+**Fix flatten_bot** :
+- Simple : revert `CORE/flatten_bot.py` SYMBOLS dict
+
+### Suivi post-deploy
+
+- **J+1 (01/07)** : grep logs :
+  - `BOT1V2_COOLDOWN_ACTIVATED` count > 0 apres 1er trade close
+  - `BOT1V2_POSITION_TIMEOUT_CLOSE` count = si trade force close attendu
+  - `cooldown_skips_today > 0` dans daily state si applicable
+  - Aucun `BOT1V2_TIMEOUT_ORPHAN_*` (CRITIQUE = safety cassee)
+- **J+7 (07/07)** : audit trades sem Bot 2 : cluster 4 SHORTs reproduit ? MAX_HOLD trigger ? PnL vs sem 29/06.
+- **J+30 (30/07)** : N=100+ trades accumules ? calcul DSR Lopez : validate spec BN V4 PF ratio.
+
+### Backlog P1 residuel
+
+- R6+R7 Fix #1 : guard "1 timeout close par sym" via flag `pos["timeout_close_pending"]` (anti-doublon en cas DTC freeze persistant) + test integration end-to-end.
+- Etape 9 verify post-cleanup : implementer `dtc.snapshot_working_orders()` async-safe via callback dispatchee par `_recv_loop` (au lieu de read direct interdit).
+- Direction-specific cooldown (halt direction apres N=2 SL consec same dir) = fine tuning si Fix #2 cooldown trop restrictif (audit J+30).
+
+---
+
+## 2026-06-28 — [P0 WEEKEND] Audit semaine 22-26/06 - 3 BLOQUANTS critiques fixes (regime features + logs BN V4 + STOP Sweep_Reclaim_N1)
+
+**Categorie** : OBSERVABILITY + SAFETY + STOP scenario (3 fixes P0)
+**Impact prod** : PAPER (Sim3 BotBN + Sim4 Bot4V2) - Bot 4 v2 garde uniquement Bearish_Rejection actif
+**Fichier(s)** :
+- `CORE/sierra_atr_regime.py` (NEW, 145 LOC) - Welford 60d + derive_ib_formed_bool
+- `CORE/sierra_pipeline.py` (+~50 LOC) - integration 3 features + emit STALE + BOOT_WARMUP
+- `CORE/bot_bn_v4/main.py` (+~30 LOC) - emit BOTBN_TRADE_CLOSE + BOTBN_SL_SENT
+- `CORE/log_catalog.py` (3 nouveaux codes: BOTBN_TRADE_CLOSE update, BOTBN_SL_SENT, SIERRA_ATR_REGIME_BOOT_WARMUP)
+- `bot4_v2/main/__main__.py` (+~25 LOC) - env var BOT4V2_DISABLED_SCENARIOS
+- `CORE/tests/test_sierra_atr_regime.py` (NEW, 18 tests) + `CORE/bot_bn_v4/tests/test_p0b_trade_close_emit.py` (NEW, 6 tests) + `bot4_v2/tests/test_p0c_disable_scenarios.py` (NEW, 6 tests) = **30 nouveaux tests, 752/752 PASS**
+
+**Reviewer(s) agent** :
+- code-reviewer P0.A : GO-AVEC-RESERVES (Welford correct, 3 fixes appliques : emit STALE + BOOT_WARMUP + commentaire IB clarifie)
+- code-reviewer P0.B : GO-AVEC-RESERVES (3 reserves appliquees : template SL_SENT + CHANGELOG entry + test integration backlog)
+- trading-strategy-analyst P0.C : GO-AVEC-RESERVES (STOP scenario via env var = decision pragmatique P0, suppression definitive backlog P1)
+
+**Nouveaux logs** (regle souveraine 01/05 LOGS_TRACABILITE) :
+- `SIERRA_ATR_REGIME_BOOT_WARMUP` (MAJEUR, events) - warm-up 10j post-restart
+- `PHASE_3C_C_ATR_STALE` (existant, cable) - emit feed atr stale 30+ bars
+- `BOTBN_TRADE_CLOSE` (MAJEUR, execution) - close trade BN V4 audit DSR Lopez
+- `BOTBN_SL_SENT` (MAJEUR, execution) - SL ATTACHED confirmed post-fill (anti-INCIDENT #67)
+
+**Quoi** :
+Audit weekend agents parallèles (4 bots) a découvert :
+1. **3 features régime ABSENTES live_enriched** (`atr_regime_zscore_60d`, `ib_formed_bool`, `range_pos`) → vol_regime Bot 4 v2 figé NORMAL → gate EXTREME mort → news/FOMC sans garde-fou
+2. **0 logs TRADE_CLOSE Bot 2/3 BN V4** semaine (4 BOTBN_ORDER_SENT + 0 close) → impossible mesurer PF/WR → DSR Lopez J+30 bloqué
+3. **Bot 4 v2 scenario Sweep_Reclaim_N1 backtest PF 0.80 LOSER** (538 trades 5j) + tautologique + entry close N jamais touchee → 362 fires post-patch en 2j, 0 dispatch confirmé loser
+
+**Pourquoi** :
+Sans ces 3 fixes, Bot 4 v2 trade en aveugle régime, Bot 2/3 BN V4 ne peuvent prouver edge (zero observability close), et 362 fires/jour Sweep brûlent capital potentiel.
+
+**Impact** :
+- Bot 4 v2 vol_regime maintenant fonctionnel apres warm-up 10j (BOOT_WARMUP loggué visible)
+- Bot 2/3 BN V4 PnL trackable execution_*_botbn.jsonl (audit J+30 debloquera)
+- Bot 4 v2 disable Sweep via env `BOT4V2_DISABLED_SCENARIOS=Sweep_Reclaim_N1` → Bearish_Rejection seul actif
+
+**Validation pre-deploy** :
+- pytest : 752/752 PASS (722 Bot4v2 existant + 18 P0.A + 6 P0.B + 6 P0.C)
+- Hashes locaux verifies
+- Review 3 agents GO-AVEC-RESERVES reserves traitees
+- Empirique : test E2E sierra_pipeline = 3 features emis + simulate _on_fill_close emit confirmé
+
+**Revert plan** :
+- P0.A : revert commit `CORE/sierra_pipeline.py` + supprimer `CORE/sierra_atr_regime.py`. Tolérable (régression mais bot stable)
+- P0.B : revert commit `CORE/bot_bn_v4/main.py` + `CORE/log_catalog.py` rollback codes. Tolérable.
+- P0.C : `unset BOT4V2_DISABLED_SCENARIOS` sur VPS → Sweep_Reclaim_N1 réactive instantanément.
+
+**Suivi post-deploy** :
+- J+1 (29/06) : grep `SIERRA_ATR_REGIME_BOOT_WARMUP` = 1 emit boot. grep `BOTBN_SL_SENT` si trade BN V4. grep `BOT4V2_SCENARIO_DISABLED` au boot.
+- J+7 (05/07) : audit `execution_*_botbn.jsonl` doit contenir BOTBN_TRADE_CLOSE si trades. atr_regime_zscore_60d toujours None (warm-up <10j).
+- J+30 (28/07) : atr_regime_zscore_60d sortir valeur first non-None. Audit DSR Lopez Bot 2/3 BN V4 finally possible avec close logs.
+
+---
+
+## 2026-06-24 17:00 — [FEATURE V_FINAL] Bot 1 Mean Revert Sim1 - Architecture REGIME-AWARE (5 regimes + 3 regles blacklist)
+
+**Categorie** : FEATURE (nouvelle architecture decision)
+**Impact prod** : PAPER (Sim1) - Deploy autorise par review code-reviewer GO-AVEC-RESERVES
+**Fichier(s)** :
+- `CORE/bot_mean_revert/regime_classifier.py` (NEW, 231 lignes)
+- `CORE/bot_mean_revert/config.py` (+18 lignes : REGIME_AWARE_ENABLED + BLACKLIST)
+- `CORE/bot_mean_revert/signal_engine.py` (+~45 lignes : section 2quater + B1+B2 cache/throttle)
+- `CORE/bot_mean_revert/main.py` (+~25 lignes : instantiation classifier + callback emit)
+- `CORE/log_catalog.py` (+2 codes : BOTMR_REGIME_DETECTED + BOTMR_REGIME_SESSION_BLOCK)
+- `CORE/bot_mean_revert/tests/test_regime_classifier_v_final.py` (NEW, 37 tests)
+
+**Reviewer(s) agent** :
+- market-analyst : backtest cross-period (+$299, 95% wins, TRAIN/TEST/sans-FOMC tous positifs)
+- code-reviewer : GO-AVEC-RESERVES avec 3 fixes pre-deploy (B1+B2+B3 appliques) + 4 conditions post-deploy J+1/J+7/J+30
+
+### Quoi
+
+**Directive Jackson 24/06 soir** : "TOUT DOIT ETRE DYNAMIQUE SELON LE REGIME, PAS FIGE SHORT/LONG, C'EST LE REGIME QUI DETERMINE".
+
+Architecture V_FINAL minimaliste (preuve empirique, pas theorie) :
+
+1. **5 regimes mutuellement exclusifs** (seuils derives quantiles 22929 bars 7j) :
+   - PANIC : VIX>=19.5 OU atr_14m_pct>=0.076 (p95/p90)
+   - TREND_DOWN : trend_day_probability>=0.35 AND slope_smoothed5<=-1.5
+   - TREND_UP : trend_day_probability>=0.35 AND slope_smoothed5>=+1.5
+   - VOLATILE_RANGE : atr_14m_pct>=0.048, pas trend
+   - CALM_RANGE : residuel (66.3% du marche)
+
+2. **3 regles blacklist** (clusters losers identifies sur 67 trades) :
+   - (PANIC, *) : event-driven illiquide, no MR
+   - (CALM_RANGE, us_cash) : chop institutionnel - 0% WR sample N=7
+   - (VOLATILE_RANGE, asia) : panic post-news Asia - 11% WR sample N=9
+
+3. **EWM smoothing slope_30** alpha=0.4 (~5 bars effectifs) avec isolation par-symbole (anti cross-contamination ES/NQ).
+
+4. **Backward compat** : 2 chemins kill-switch independants :
+   - `REGIME_AWARE_ENABLED=false` (config)
+   - `regime_classifier_v_final=None` (pas injecte)
+
+### Pourquoi
+
+Audit forensique 7 jours (16-24/06) sur 67 trades :
+- 100% LONG (0 SHORT) malgre fix A1 → bias structurel persiste
+- 34.4% WR, PnL -$1975 (E-mini standard)
+- ULTRATHINK actuel exige delta_bar<-10 pour LONG mais empiriquement delta_bar>=0 = WR 44.8%
+- "Mean Revert classique" perd en regime trend (marche juin 2026 bearish)
+
+Backtest V_FINAL retroactif :
+- TRAIN 5j (16-22/06) : +$185 vs V1
+- TEST 2j (23-24/06) : +$114 vs V1
+- Sans 18/06 FOMC : +$224 vs V1
+- Robustesse seuils +-20% : OK
+
+### Impact attendu
+
+- Bot exclut ~25% des bars (regime+session blacklist)
+- Wins preserves 95% (sacrifice 1/20 wins legitimes)
+- PnL retroactif sample : -$269 → +$30 (+$299 delta)
+- Architecture extensible Phase 2 (SHORT MR en TREND_DOWN apres 20 candidats)
+- Architecture extensible Phase 3 (tuning SD/ULTRATHINK par regime apres N>=200)
+
+### Validation pre-deploy
+
+- pytest test_regime_classifier_v_final.py : **37/37 PASS**
+- pytest combine Phase A + PROP #1+#2 + V_FINAL : **85/85 PASS**
+- Backtest cross-period 3 splits : TRAIN/TEST/sans-FOMC tous positifs
+- Robustesse seuils +-10% : 80% classifications identiques
+- Wins preserves 95% (>= 70% directive Jackson)
+- Code-reviewer agent : GO-AVEC-RESERVES (3 fixes appliques pre-deploy)
+
+### Fixes pre-deploy code-reviewer (appliques)
+
+**B1 (MAJEUR PERFORMANCE)** : Memoize blacklist parse au boot (avant parse 22929 fois). Ajout `self._regime_blacklist_cache = None` dans __init__, hydrate au 1er call.
+
+**B2 (MINEUR VOLUME LOG)** : Throttle emit BOTMR_REGIME_DETECTED sur changement regime only (avant ~2880/jour, apres ~10-20 transitions/jour). Ajout `self._last_regime_emit: dict[str, str]` dans __init__.
+
+**B3 (COSMETIQUE)** : Import detect_session_utc / parse_blacklist / is_blacklisted top-of-file (vs per-call). Reduit cosmetiquement la boucle eval().
+
+### Revert plan
+
+**Kill-switch immediat (env var, sans deploy)** :
+```bash
+BOTMR_REGIME_AWARE_ENABLED=false
+```
+Restart MIA-Paper-BotMR-Sim1. Pipeline retombe sur Phase A + PROP #1+#2 (V1 actuel).
+
+**Revert code (git)** :
+- `git revert` du commit V_FINAL
+- Restart service
+
+### Suivi post-deploy
+
+**J+1 (regle feedback_validation_miss_pre_deploy.md)** :
+- grep `BOTMR_REGIME_DETECTED` >= 10 entries (transitions regime)
+- grep `BOTMR_REGIME_SESSION_BLOCK` >= 1 entry si conditions blacklist remplies
+- Si 0 emit : incident_log categorie VALIDATION_MISS
+
+**J+7** :
+- Audit volume emit decisions/*.jsonl (apres throttle B2) : ~30-100 transitions/jour expected
+- Verifier 0 regression Phase A / PROP #1+#2 sur cumul trades semaine
+
+**J+30** (CRITERE BLOQUANT) :
+- N atteinte >= 100 obligatoire pour calcul DSR Lopez
+- Si DSR >= 0.95 : consolidation (retrait kill-switch, possible deprecation classifier 18/06)
+- Si DSR < 0.95 : rollback `REGIME_AWARE_ENABLED=false`
+
+### Reserves non-bloquantes (post-Sim1)
+
+- Q1 thread-safety EWM (ajouter threading.Lock interne) - actuel mono-thread donc safe
+- Q3 validation regime via `Regime.__members__` dans parse_blacklist
+- Section 2.4 duplication constante DEFAULT_BLACKLIST_V_FINAL (3 sources -> 1)
+- Tests integration etendus (Q8 - 4 cas manquants : warmup EWM multi-bars, transition regime mid-session, etc.) avant J+7
+
+### Nouveaux logs catalog (2 codes)
+
+- `BOTMR_REGIME_DETECTED` (INFO, decisions) - throttle sur changement
+- `BOTMR_REGIME_SESSION_BLOCK` (MAJEUR, decisions) - regle blacklist match
+
+### Limites methodologiques (transparence Jackson)
+
+- Sample N=50 < 100 Lopez DSR → verdict provisoire, pas conclusion edge formel
+- 18/06 concentre 28/67 trades (FOMC) → biais possible
+- TREND_DOWN sample 4 trades, 0 SHORT → Phase 2 reportee (besoin >= 20 candidats)
+- TREND_UP run median = 1 bar → detection oscille, monitoring requis
+
+---
+
+## 2026-06-23 02:00 — [FIX CRITIQUE] Bot 1 (Mean Revert Sim1) Phase A1+A2 - Condition SD inversee + Gate VWAP intraday
+
+**Categorie** : FIX CRITIQUE (audit forensique 22-23/06 - bug structurel decouvert)
+**Impact prod** : PAPER (Sim1) - **A NE PAS DEPLOYER avant review code-reviewer + Phase A3+A4**
+**Fichier(s)** :
+- `CORE/bot_mean_revert/signal_engine.py:390-470` (FIX A1 condition SD inversee + FIX A2 gate VWAP intraday)
+- `CORE/bot_mean_revert/config.py` (SD_THRESHOLD_PCT 0.0 → 0.1, ajout VWAP_INTRADAY_LONG/SHORT_BLOCK_PCT = 0.3)
+- `CORE/log_catalog.py` (+3 codes : BOTMR_LONG_BELOW_VWAP_BLOCK, BOTMR_SHORT_ABOVE_VWAP_BLOCK, BOTMR_NEWS_WINDOW_BLOCK)
+- `CORE/bot_mean_revert/tests/test_fix_a1_a2_sd_inverse_vwap_intraday.py` (NEW - 9 tests)
+
+**Reviewer(s) agent** : market-analyst (audit forensique GO empirique) - **code-reviewer DONE 23/06** (3 bugs detectes + corriges)
+
+### Update 23/06 04:30 - Post review code-reviewer : 3 bugs durcis
+
+Le code-reviewer a identifie 3 fragilites dans A1+A2 v1, toutes fixees :
+
+1. **BUG #1 CRITIQUE** - `signal_engine.py:450` : `is not None` mort apres `_f()` (default 0.0).
+   Le test `is not None` etait toujours True (float jamais None). Confusion semantique
+   `close==VWAP exact` (dist=0.0) indistinguable de "feature absente" = anti-pattern V1
+   `Gamma=0.0` documente dans lessons.md.
+   **FIX** : recuperer valeur BRUTE `bar.get(...)` + try/except float + logging.warning
+   si None/corrupted. Fail-OPEN explicite (backward compat) mais TRACE en J+1.
+
+2. **BUG #2 IMPORTANT** - `main.py` : codes `BOTMR_LONG_BELOW_VWAP_BLOCK` /
+   `BOTMR_SHORT_ABOVE_VWAP_BLOCK` definis dans log_catalog mais aucun dispatcher
+   elif → 0 emit garanti = INCIDENT VALIDATION_MISS J+1 auto-genere (pattern 8+
+   occurrences documente memory feedback_validation_miss_pre_deploy).
+   **FIX** : ajout 3 branches elif dans `main.py` (LONG_BELOW_VWAP, SHORT_ABOVE_VWAP,
+   SD_FEATURE_MISSING) avec parsing skip_reason → bot_log.emit().
+
+3. **BUG #3 IMPORTANT** - `signal_engine.py:391` : regression fail-loud sur SD absent.
+   Si `dist_vwap_d_sd3d_pct` ou `sd3u_pct` absent (`_f(None)=0.0`), nouveau code
+   thr=0.1 declenchait LONG fantome (`0.0 >= -0.1` = True). Avant le fix A1 avec
+   thr=0.0 le bug etait latent mais avec 0.1 il devient actif.
+   **FIX** : detection valeurs brutes None → return `SD_FEATURE_MISSING` skip
+   explicite + nouveau code log `BOTMR_SD_FEATURE_MISSING` (MAJEUR, decisions).
+
+**Tests ajoutes (3 edge cases)** :
+- `test_bug1_a2_dist_vwap_d_pct_exactly_zero_passes` : 0.0 exact = pass-through legitime
+- `test_bug3_a1_fail_loud_when_sd_features_absent` : 3 sous-cas (sd3d, sd3u, both absent)
+- `test_a1_boundary_sd3d_exactly_minus_threshold` : frontiere `>= -thr` inclusif
+
+**Resultat** : 12/12 PASS (9 originaux + 3 edge cases).
+
+**Nouveau code log_catalog** :
+- `BOTMR_SD_FEATURE_MISSING` (MAJEUR, decisions) - fail-loud anti-pattern Gamma=0.0
+
+### Quoi
+
+**Audit forensique 22-23/06** sur 23 trades juin Bot 1 (WR 26%, PF 0.54, -$181.75 micros) a revele :
+
+1. **BUG STRUCTUREL #1 (A1) - Condition SD inversee** :
+   - `signal_engine.py:400` : `if d_low <= -thr:` avec thr=0 → toujours TRUE pour sd3d_pct (range observe [-1.80, 0.00])
+   - Resultat empirique 18/06 : **1030 LONG generes / 0 SHORT** (100% bias unidirectionnel structurel)
+   - Bot achetait dans zone HAUTE entre VWAP et SD3u (oppose mean reversion)
+   - Categories INCIDENT_LOG : PATTERN_11 + COMMENT_FALSE + VALIDATION_MISS
+   - **FIX** : `if d_low >= -thr` (LONG si proche SD3 down) + `elif d_high <= thr` (SHORT si proche SD3 up)
+   - Threshold default 0.0 → 0.1 (vraie extension extreme)
+
+2. **BUG #2 (A2) - VWAP intraday gate manquant** :
+   - 9/12 LOSS Bot 1 18/06 avec MFE=0 (75% bot fade un mouvement immediat adverse)
+   - `vwap_slope_30` base sur VWAP-day cumulative (LAG, reste +0.55-0.83 pendant chute -46 pts)
+   - **FIX** : Gate `dist_vwap_d_pct < -0.3` bloque LONG (trend down clair), `> +0.3` bloque SHORT (trend up clair)
+   - Fail-open si dist_vwap_d_pct absent (backward compat)
+
+### Pourquoi
+
+Backtest validation A0 sur 4257 bars ES + 4257 bars NQ du 18/06 (FOMC day) :
+- Convention SD verifiee empiriquement : sd3d_pct [-1.80, 0.00], sd3u_pct [0.01, 1.18]
+- **ES (bear day FOMC)** : SHORT post-fix = +430 ticks WR 42.1% (145 trades). 0 SHORT possible avant.
+- **NQ (bull day)** : LONG post-fix = +3995 ticks WR 48.5% (557 trades)
+- Sans A2, LONG dans ES bear day = -6660 ticks → A1+A2 INDISSOCIABLES
+
+### Impact attendu
+
+- Bot 1 enfin BIDIRECTIONNEL (premier SHORT possible depuis deploiement)
+- Filtre intraday elimine les fades catastrophiques (75% LOSS avec MFE=0)
+- WR cible : 26% → ~50%+ apres deploy
+- PF cible : 0.54 → ~1.5+
+
+### Validation pre-deploy
+
+- pytest CORE/bot_mean_revert/tests/test_fix_a1_a2_sd_inverse_vwap_intraday.py : **9/9 PASS**
+- Backtest empirique ES+NQ 18/06 : valide
+- Code-reviewer agent : EN COURS
+- **A NE PAS DEPLOYER** avant : Phase A3 (cooldown 30 min) + Phase A4 (gate news/FOMC) + review synthese
+
+### Revert plan
+
+`git revert` du commit. Restart `MIA-Paper-BotMR-Sim1`.
+
+### Suivi post-deploy (apres Phase A3+A4)
+
+- J+1 : verifier presence SHORT trades (`grep BOTMR_TRADABLE.*SHORT`)
+- J+1 : verifier emit `BOTMR_LONG_BELOW_VWAP_BLOCK` + `BOTMR_SHORT_ABOVE_VWAP_BLOCK` actifs
+- J+7 : WR et PF cumul vs baseline 23 trades juin
+- J+30 : DSR Lopez si N >= 30
+
+### Nouveaux logs catalog (4 codes apres review 23/06)
+
+- BOTMR_LONG_BELOW_VWAP_BLOCK (INFO, decisions) - emit via main.py dispatcher
+- BOTMR_SHORT_ABOVE_VWAP_BLOCK (INFO, decisions) - emit via main.py dispatcher
+- BOTMR_SD_FEATURE_MISSING (MAJEUR, decisions) - fail-loud SD absente (BUG #3)
+- BOTMR_NEWS_WINDOW_BLOCK (MAJEUR, decisions) - pour Phase A4 (orphelin temporaire)
+
+### Update 23/06 06:00 - Phase A3 cooldown progressif post-LOSS
+
+**Categorie** : FIX A3 audit forensique (anti-spirale carnage FOMC 18/06)
+**Impact prod** : PAPER (Sim1) - durcissement cooldown SANS reduire volume data
+**Decision Jackson 23/06** : Option A retenue (cooldown progressif). MAX_TRADES=5
+**rejete** : "ON A BESOIN DE DONNER POUR ANALSE".
+
+**Fichier(s)** :
+- `CORE/bot_mean_revert/config.py` (+2 params COOLDOWN_POST_LOSS_BARS=45,
+  COOLDOWN_POST_2LOSS_BARS=90 + from_env)
+- `CORE/bot_mean_revert/signal_engine.py` (new `_get_cooldown_seconds()` helper +
+  modif `_is_cooldown_active()` + skip_reason COOLDOWN_PROGRESSIVE)
+- `CORE/bot_mean_revert/main.py` (+1 dispatcher elif COOLDOWN_PROGRESSIVE
+  AVANT COOLDOWN car startswith match)
+- `CORE/log_catalog.py` (+1 code BOTMR_COOLDOWN_PROGRESSIVE_ACTIVE INFO)
+- `CORE/bot_mean_revert/tests/test_fix_a3_cooldown_progressive.py` (NEW - 9 tests)
+
+**Bareme progressif (reuse n_sl_consec circuit breaker existant)** :
+- 0 SL consec (post-WIN ou flat) : 30 min (COOLDOWN_BARS standard)
+- 1 SL consec : 45 min (COOLDOWN_POST_LOSS_BARS)
+- 2 SL consec : 90 min (COOLDOWN_POST_2LOSS_BARS)
+- 3+ SL consec : circuit breaker HALT 60 min existant prend le relais
+
+**Pourquoi** : Carnage FOMC 18/06 = 16 trades, 12 LOSS dont 9 MFE=0 (fade immediat).
+Sans frein adaptatif, le bot enchainait LOSS sur LOSS en mode revenge trade.
+Mark Douglas "consistency beats intensity" applique sans tuer le volume data
+(Jackson directive : besoin data pour analyse).
+
+**Impact simulee 18/06** :
+- Hypothese : si LOSS 1 -> cooldown 45 min, LOSS 2 -> 90 min, LOSS 3 -> HALT 60 min
+- Sur 8h trading : max 5-6 trades carnage au lieu de 16 (60% reduction)
+- Days normaux (0-1 LOSS) : 0% impact volume (cooldown 30 min ou 45 min suffisant)
+
+**Validation pre-deploy** :
+- pytest test_fix_a3_cooldown_progressive.py : 9/9 PASS
+- pytest A1+A2+A3 combine : 21/21 PASS
+- Reuse store.get_n_sl_consec deja persistant (atomique save) → cross-restart
+  validation via test_a3_persistence_across_restart
+
+**Revert plan** : Mettre `BOTMR_COOLDOWN_POST_LOSS_BARS=30` et
+`BOTMR_COOLDOWN_POST_2LOSS_BARS=30` en env vars → desactivation runtime sans
+revert code.
+
+**Suivi post-deploy** :
+- J+1 : verifier emit `BOTMR_COOLDOWN_PROGRESSIVE_ACTIVE` quand n_sl_consec > 0
+- J+7 : compter trades/jour avec >=1 LOSS vs baseline (cible <50% du baseline)
+- J+30 : verifier reduction des carnage days (>=10 LOSS / jour disparues)
+
+**Nouveau code log_catalog** :
+- BOTMR_COOLDOWN_PROGRESSIVE_ACTIVE (INFO, decisions) - emit via main.py
+
+### Update 23/06 06:30 - Post review code-reviewer A3 : 2 IMPORTANT durcis
+
+Le code-reviewer a livre verdict GO pour deploy paper avec 2 IMPORTANT a appliquer :
+
+1. **IMPORTANT-1 atomicite persist** - `main.py:281+` : ajout `self.store.save()`
+   IMMEDIAT apres `increment_sl_consec()` pour fermer la fenetre crash ~5-10 LOC
+   entre increment et save() ligne 313. Si crash dans cette fenetre, compteur
+   perdu = cooldown progressif inoperant = carnage type FOMC reproduit.
+
+2. **IMPORTANT-2 parse fail log** - `main.py:1240` : remplacer silent fallback
+   `(0.0, 0.0, 0)` par `self.log.warning(...)` sur exception parse. Sinon
+   regression format skip_reason = emit silencieux avec valeurs 0 = invisible
+   audit J+1 (anti-pattern VALIDATION_MISS regle log B).
+
+**Tests anti-regression ajoutes (2)** :
+- `test_a3_dispatcher_format_progressive_emit_code` : verifie distinction
+  startswith("COOLDOWN_PROGRESSIVE") vs startswith("COOLDOWN"). Anti-bug si
+  quelqu'un inverse l'ordre elif main.py (PROGRESSIVE matche aussi COOLDOWN).
+- `test_a3_dispatcher_parse_fails_gracefully` : verifie fallback (0,0,0) sur
+  format malformed (cf IMPORTANT-2).
+
+**Resultat** : 11/11 A3 tests + 12/12 A1+A2 = **23/23 PASS combine**.
+
+**MINEUR + 1 test manquant** (acceptable post-deploy J+1) :
+- `test_a3_increment_persistence_atomicity` (simuler crash entre increment et save)
+- `test_a3_circuit_breaker_overrides_progressive` (HALT priorite sur progressive)
+- Bareme 30→45→90 non backed empirique (n=1 carnage 18/06) : a reviser
+  apres 30 trades-jour Phase B post-deploy
+
+### Update 23/06 07:00 - Phase A4 Gate news/FOMC
+
+**Categorie** : FIX A4 audit forensique (anti-carnage event-driven FOMC/NFP/CPI)
+**Impact prod** : PAPER (Sim1) - bot ne tradera plus pendant news critiques
+**Strategie** : reuse `CORE/eco_calendar.py` existant (utilise par Bot 3 v3
+**depuis 24/05). Pas de duplication de code.
+
+**Fichier(s)** :
+- `CORE/bot_mean_revert/config.py` (+2 params NEWS_GATE_ENABLED=True,
+  NEWS_GATE_FAIL_CLOSED=True + from_env)
+- `CORE/bot_mean_revert/signal_engine.py` (etape 2bis nouveau gate after session,
+  before RVOL : appel `eco_calendar.is_blocked_now()`)
+- `CORE/bot_mean_revert/main.py` (+2 dispatchers elif NEWS_GATE_FAIL_CLOSED,
+  NEWS_BLOCK avec parsing skip_reason)
+- `CORE/log_catalog.py` (BOTMR_NEWS_WINDOW_BLOCK MAJEUR deja defini Phase A1,
+  +1 nouveau BOTMR_NEWS_GATE_FAIL_CLOSED CRITIQUE)
+- `CORE/bot_mean_revert/tests/test_fix_a4_news_gate.py` (NEW - 8 tests)
+
+**Pourquoi** : 18/06 FOMC = Bot 1 a fait 16 trades pendant 14:00 ET sans gate
+news. Carnage type "event-driven volatility spike" + LOSS streak. Module
+`eco_calendar.py` existant deja fait l'API complete : fetch_events ForexFactory,
+parse impact, BLOCK_WINDOWS configurees (FOMC -15/+30min, NFP -5/+15min, etc.).
+
+**Architecture decision** :
+- Utiliser `is_blocked_now()` (news SEUL) et pas `is_blocked_combined()` car
+  Bot 1 a deja `_check_session()` qui couvre sessions/weekend. Double-check
+  inutile.
+- Position dans le pipeline : APRES session check (etape 2), AVANT RVOL (etape 3)
+- Fail-CLOSED par defaut (aligne Bot 3 v3 R1 code-reviewer 24/05 : "mieux
+  rater un trade que trader pendant FOMC")
+
+**Format skip_reason** :
+- `NEWS_BLOCK:event={title} until={iso} buffer_min={n}` - news active
+- `NEWS_GATE_FAIL_CLOSED:err={msg}` - module fail (fail-closed)
+
+**Validation pre-deploy** :
+- pytest test_fix_a4_news_gate.py : 8/8 PASS
+- pytest A1+A2+A3+A4 combine : **31/31 PASS**
+- Module eco_calendar utilise depuis 24/05 par Bot 3 v3 (battle-tested)
+- Cache 1h sur fetch_events (pas de surcout reseau par bar)
+
+**Impact attendu** :
+- Bot 1 ne tradera plus pendant : FOMC (-15/+30min), NFP, CPI, PCE, ECB rate
+- Sur jours normaux (~95% des jours) : 0% impact
+- Sur jours news (~5%) : -1 a -3 LOSS evitees (gain estime $30-100/event)
+
+**Tests anti-regression inclus** :
+- `test_a4_skip_reason_parsable_by_dispatcher` : si format change, dispatcher
+  casse silencieux. Le test verifie parsing exact.
+- `test_a4_block_end_none_buffer_zero` : edge case quand event sans fin definie.
+
+**Revert plan** : `BOTMR_NEWS_GATE_ENABLED=false` en env vars → desactivation
+runtime sans revert code. Si module eco_calendar HS et qu'on veut pas bloquer :
+`BOTMR_NEWS_GATE_FAIL_CLOSED=false` (debug seulement).
+
+**Suivi post-deploy** :
+- J+1 : verifier emit `BOTMR_NEWS_WINDOW_BLOCK` au moins 1 fois (sur news US)
+- J+7 : compter blocks par event type (FOMC vs NFP vs CPI)
+- J+30 : comparer P&L cumule jours news vs jours normaux pre/post deploy
+
+**Nouveau code log_catalog A4** :
+- BOTMR_NEWS_WINDOW_BLOCK (MAJEUR, decisions) - deja defini Phase A1, brancher
+  dispatcher main.py update template avec `until_iso` au lieu de `event_ts_utc`
+- BOTMR_NEWS_GATE_FAIL_CLOSED (CRITIQUE, decisions) - nouveau code A4
+
+### TOTAL PHASE A : 31/31 tests PASS (A1+A2+A3+A4)
+- A1 + A2 : 12 tests (9 originaux + 3 edge cases post-review)
+- A3 : 11 tests (9 fonctionnels + 2 anti-regression)
+- A4 : 8 tests (6 fonctionnels + 2 anti-regression)
+
+---
+
 ## 2026-06-20 02:00 — [FIX] Bot 3 BN V4 Sim3 9 fixes ULTRATHINK + 2 bugs review
 
 **Categorie** : FIX (7 B.x audit + 2 review code-reviewer)
