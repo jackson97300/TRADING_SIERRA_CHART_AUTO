@@ -32,6 +32,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+# Source unique de la normalisation d'echelle range_pos (INCIDENT #99).
+# Double convention d'import : certains scripts sont lances depuis CORE/,
+# d'autres depuis la racine (cf .claude/rules/tick-size-policy.md).
+try:
+    from CORE.constants import range_pos_pct as _range_pos_pct
+except ImportError:  # pragma: no cover
+    from constants import range_pos_pct as _range_pos_pct  # type: ignore
+
 
 # ==============================================================================
 # CONSTANTES — seuils documentes depuis builders.py
@@ -278,7 +286,13 @@ def compute_bias(bar: Dict[str, Any]) -> BiasResult:
     # ----------------------------------------------------------------------
     # BLOC 1 — Position dans range 1D (30%)
     # ----------------------------------------------------------------------
-    pos = _get(bar, "range_pos", 50.0)
+    # FIX 04/09 (INCIDENT #99) : range_pos est persiste en echelle [0,1] par
+    # sierra_pipeline depuis le 28/06 (P0.A, pour ctx_rolling + bot4_v2), mais
+    # POS_EXTREME_HIGH/LOW ci-dessus sont en [0,100]. Sans normalisation, la
+    # branche "TOP" (bear +0.30) etait INATTEIGNABLE et "BOTTOM" (bull +0.30)
+    # se declenchait quasi systematiquement => biais bull structurel sur le
+    # bloc le plus lourd du calculateur (30 %).
+    pos = _range_pos_pct(bar)
     new_high = _get_int(bar, "new_swing_high", 0)
     new_low = _get_int(bar, "new_swing_low", 0)
     delta_day = _get(bar, "delta_day", 0.0)

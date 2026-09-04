@@ -32,6 +32,48 @@
 
 ---
 
+### 2026-09-04 (99) - [VALIDATION_MISS] - range_pos persiste en [0,1] le 28/06 : ZERO signal VENTE emis sur 110 946 barres (cause racine du biais long-only de TOUS les bots)
+
+**Contexte** : Jackson signale que le dashboard produit "trop de setups" et demande de les rendre pertinents. Audit des 74 jours propres (`live_enriched_clean`, ES+NQ). Jackson corrige une premiere affirmation erronee de ma part ("le systeme ne peut structurellement qu'acheter", basee sur `detect_active_setups` qui est une fonction ANNEXE) — sa correction mene a la vraie cause, bien plus grave.
+
+**Ce qui a mal tourne** : `range_pos` existe en DEUX conventions d'echelle incompatibles :
+- `[0,1]`   : `ctx_rolling` (seuils EXTREME 0.9/0.1), `bot4_v2/regime_source` (default 0.5)
+- `[0,100]` : `bias_calculator` (POS_EXTREME 20/80), dashboard `build_conseil_global` (20/80), `dalton_features`, `dmp_validator` (valide 0-100.01)
+
+Le **11/06**, `sierra_pipeline.py:658-663` ajoute une normalisation `/100` (auto-detect `> 1.5`) pour corriger ~70% de faux positifs climax dans `ctx_rolling`. Le **28/06 (P0.A)**, `sierra_pipeline.py:667-669` **PERSISTE** cette valeur `[0,1]` dans `enriched["range_pos"]`, donc dans le JSONL live, pour satisfaire `bot4_v2`. Les consommateurs `[0,100]` n'ont jamais ete grepes.
+
+**Mesure empirique (110 946 barres, 74 jours ES+NQ)** :
+- `range_pos` reel : min 0.0, median 0.641, max 1.4925 -> echelle `[0,1]` confirmee
+- `pos <= 20` vrai sur **100 %** des barres (22 931/22 935) -> **+1 point bull offert en permanence**
+- `pos >= 80` **jamais** vrai -> +1 bear impossible ET +2 bear (divergence) impossible
+- `bear_points` plafonne a **3** ; `VENTE PRUDENTE` exige 4, `VENTE` exige 5
+- **ZERO signal VENTE emis sur 110 946 barres**
+- `bias_calculator` bloc 1 (30 % du poids, le plus lourd) : branche "TOP" (bear +0.30) INATTEIGNABLE, "BOTTOM" (bull +0.30) quasi systematique
+
+**Aggravant — le dashboard masquait le bug** : `dashboard.js:1575/2049/2790` faisaient `var rangePos = ... || 50`. En JS `0 || 50` vaut `50`. La derniere barre live du VPS a `range_pos = 0.0` -> la jauge affichait **"50 % — MILIEU"**, une valeur par defaut prise pour une mesure. Idem `dashboard.js:1495` : `range_pos >= 70 ? "Favorise VENTE" : range_pos <= 30 ? "Favorise ACHAT"` -> **toujours "Favorise ACHAT"**.
+
+**Cause racine** : modification a la SOURCE (persistance d'une echelle) sans grep des consommateurs aval. Exactement le pattern de l'INCIDENT #79 ("modif default config -> grep consumers cross-codebase OBLIGATOIRE") et meme famille que #9 (`IB_NARROW_THRESHOLD` 0.40 convention C++ vs Python) et #57 (`MIN_DELTA_SLOPE`=100 vs distribution reelle 0.001-0.05) : le seuil reste sur une echelle, la feature en change.
+
+**Ce que ca explique** : le fil rouge de toutes les memoires projet — "BotMR defaut long-only-in-bear", "bot1_v2 5/5 LONG perdants", "Bot 3 v1 biais structurel 3:1 LONG". Ce n'etait ni le marche, ni la strategie, ni la malchance : **une echelle de feature**.
+
+**Lecon** : quand deux modules attendent des conventions differentes pour la MEME cle, ne jamais trancher en modifiant la source — le second groupe de consommateurs casse en silence. Normaliser a la LECTURE, via un helper unique.
+
+**Trigger prevention** : (1) avant de PERSISTER une valeur transformee dans le payload partage, grep TOUS les consommateurs de la cle et verifier leur convention d'echelle. (2) Interdire `x || defaut` en JS pour toute valeur numerique dont 0 est legitime — utiliser un test de type. (3) Toute feature en "%" doit avoir sa convention documentee au point de production.
+
+**Fix applique** : helper unique `normalize_range_pos()` dans `CORE/constants.py` (retourne toujours `[0,100]`, cutoff 1.5 aligne sur `sierra_pipeline`) + appel dans `bias_calculator` bloc 1 et `builders.build_regime_context` (dont herite `build_conseil_global`) + 3 corrections `|| 50` dans `dashboard.js`. **On ne corrige PAS a la source** : cela casserait `ctx_rolling` et `bot4_v2` deja calibres sur `[0,1]`.
+
+**Effet mesure (memes 74 jours, apres fix)** :
+- `bear_points` : max 3 (valeurs {0,1,3}) -> max 6 (valeurs {0,1,2,3,4,6}). La valeur 2, **inexistante avant**, apparait (2 106 ES / 2 754 NQ)
+- VENTE PRUDENTE : 0 -> **3 515 ES / 3 412 NQ** | VENTE : 0 -> 8 ES / 15 NQ
+- BIAS BEARISH : ES 15 % -> 27 %, NQ 22 % -> 31 % (NQ bascule bearish-dominant, coherent avec un marche baissier sur la periode)
+- 37/37 tests `bias_calculator` PASS ; 8 echecs preexistants isoles (test_auth, test_paper_tracker_bot4 : 0 occurrence de builders/bias_calculator/constants)
+
+**Dette laissee** : `dalton_features`, `mia_entry` (CORE/15 legacy) et `bias_calculator_v6` portent le meme defaut mais sont **dormants** (non wires dans `sierra_pipeline`). A corriger si reactives.
+
+**Reviewed** : Jackson (correction de mon affirmation erronee -> a mene a la vraie cause) + code-reviewer dispatche 04/09.
+
+---
+
 ### 2026-09-04 (98) - [VALIDATION_MISS + COMMENT_FALSE] - Fix #70 jamais propage a bot1_v2 : ~6000 MARKET CLOSE emis en 7 semaines (close_cid fantome)
 
 **Contexte** : reprise apres 7,5 semaines d'absence Jackson. Audit VPS revele ~65 MARKET CLOSE/jour sur Sim2 depuis le 13/07 (4433 juillet + 1395 aout + 241 sept), 100% des fills, zero ouverture en face. Position ES SHORT 7557.75 figee dans le state depuis le 13/07 22:04 (52 jours).

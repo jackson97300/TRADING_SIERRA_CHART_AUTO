@@ -1572,7 +1572,7 @@
         var vol = (reg && reg.vol_regime) || (adv.vol_regime) || "NORMAL";
         var biasScore = (reg && reg.bias_score) || 0;
         var atr = (reg && reg.atr) || 0;
-        var rangePos = (reg && reg.range_pos) || 50;
+        var rangePos = (reg && typeof reg.range_pos === "number") ? reg.range_pos : 50;  // fix #99 : 0 || 50 = 50
 
         // Big boxes — messages specifiques
         var biasMsg = { "BULLISH": "Acheteurs dominent", "BEARISH": "Vendeurs dominent", "NEUTRAL": "Aucune direction" };
@@ -2046,7 +2046,7 @@
         }
 
         // 5. Position range
-        var rangePos = reg.range_pos || 50;
+        var rangePos = (reg && typeof reg.range_pos === "number") ? reg.range_pos : 50;  // fix #99 : 0 || 50 = 50
         var rpLabel = rangePos >= 70 ? "HAUT (favorise vente)" : rangePos <= 30 ? "BAS (favorise achat)" : "MILIEU";
         checks.push({ name: "Position range: " + Math.round(rangePos) + "% — " + rpLabel, ok: rangePos <= 30 || rangePos >= 70, bull: rangePos <= 30 });
         if (rangePos <= 30) bullPoints++;
@@ -2787,7 +2787,7 @@
         var ib = instr.initial_balance || {};
 
         // Range position
-        var rangePos = (instr.regime && instr.regime.range_pos) || 50;
+        var rangePos = (instr.regime && typeof instr.regime.range_pos === "number") ? instr.regime.range_pos : 50;  // fix #99
         $("range-position").innerHTML =
             '<div style="display:flex;align-items:center;gap:12px;">' +
             '<span class="mono" style="color:var(--green);">0%</span>' +

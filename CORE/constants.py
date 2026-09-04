@@ -438,3 +438,56 @@ def is_rth_bar(bar: dict) -> bool:
         return float(v) != 0.0
     except (TypeError, ValueError):
         return str(v).strip().lower() in ("true", "1", "yes", "rth", "us_cash")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# range_pos — normalisation d'echelle (fix 04/09/2026, INCIDENT #99)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def range_pos_pct(bar: dict, default: float = 50.0) -> float:
+    """Position dans le range/VA en [0,100]. AUCUNE heuristique d'echelle.
+
+    POURQUOI PAS D'AUTO-DETECT (correction review 04/09, INCIDENT #99) :
+    une premiere version de ce helper multipliait par 100 toute valeur <= 1.5.
+    Or `range_pos_va` vaut legitimement 0.8 quand le prix est a 0,8 % du bas de
+    la Value Area. La regle l'aurait transforme en 80.0 => lu comme HAUT de VA
+    alors que le prix est au PLUS BAS. Signal **inverse** exactement au point
+    de decision le plus critique. Mesure : 380 barres reelles concernees, et le
+    max observe (1.4925) frole le cutoff.
+
+    SOURCE CANONIQUE : `range_pos_va`, emis par le C++ DMP deja en [0,100].
+    Le C++ a renomme `range_pos` -> `range_pos_va` le 08/06 (batch B4, "fix
+    collision Python"), et `range_pos_va` est present sur 100 % des barres des
+    DEUX sources (DMP brut ET live_enriched). Il n'y a donc aucune ambiguite.
+
+    PAS DE FALLBACK sur `range_pos` : ambigu ([0,100] en parquet v4, [0,1] en
+    JSONL live_enriched). Si `range_pos_va` manque -> defaut neutre.
+
+    Args:
+        bar : la barre complete (PAS une valeur — le helper choisit la cle)
+        default : retour si aucune cle exploitable (50.0 = milieu = neutre)
+
+    Returns:
+        float en [0,100] (peut depasser 100 si le prix sort de la VA : c'est
+        une information, pas une anomalie — on ne clampe pas).
+    """
+    v = bar.get("range_pos_va")
+    if v is None:
+        # PAS DE FALLBACK sur `range_pos` : cette cle vaut [0,100] dans le
+        # parquet v4 et les fixtures historiques, mais [0,1] dans le JSONL
+        # live_enriched. Impossible de trancher sans deviner — et deviner est
+        # precisement ce qui a produit l'inversion corrigee ici (cf #97 :
+        # "refuser d'agir plutot qu'inventer une valeur"). On rend le defaut
+        # neutre, ce qui desactive proprement le bloc position.
+        return default
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    if f != f:  # NaN
+        return default
+    # Garde-fou d'absurdite (PAS un clamp) : hors de cette plage, la convention
+    # n'est pas celle attendue -> neutre plutot qu'un signal faux.
+    if not -50.0 <= f <= 250.0:
+        return default
+    return f

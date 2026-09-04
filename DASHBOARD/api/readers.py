@@ -149,10 +149,65 @@ def rvol_to_regime(rvol: float) -> int:
 # ═══════════════════════════════════════════════════════════════
 
 
+LIVE_ENRICHED_DIR = os.path.join(DATA_DIR, "live_enriched", "sierra")
+
+_SOURCE_LOGGEE: set[str] = set()
+
+
+def get_bars_source(symbol: str) -> tuple[str, str] | None:
+    """Retourne (dossier, motif) de la source de barres. None si aucune.
+
+    BASCULE 04/09 (INCIDENT #100) — la source ENRICHIE Python fait foi.
+
+    Decision projet : les donnees Sierra brutes ont ete jugees non fiables, le
+    pipeline Python (`CORE/sierra_pipeline.py`) recalcule et enrichit. Les bots
+    consomment deja cette source ; le dashboard etait reste sur le DMP brut.
+
+    Ecart mesure le 04/09 sur une barre reelle ES :
+      - DMP brut      : 380 colonnes
+      - live_enriched : 626 colonnes
+    Le dashboard cherchait 16 cles absentes du DMP brut, dont `range_pos`,
+    `volume`, les divergences delta (`delta_div_*`), la migration du POC
+    (`poc_migration_dir`) et les gros ordres (`n_big_ask_v2_t1`...) — des
+    ingredients centraux de la methode. Il tournait donc ampute.
+
+    Bonus : le DMP brut n'a ni `high`/`low`/`close` ni `volume` ; `read_bars`
+    approximait l'open ("on n'a pas l'open exact"). L'enrichi porte les vrais
+    OHLC + volume.
+
+    Le DMP brut reste en SECOURS : si l'enricher tombe, le dashboard continue
+    d'afficher quelque chose plutot que de se vider.
+    """
+    sym = symbol.upper()
+    enrichi = os.path.join(LIVE_ENRICHED_DIR, sym)
+    motif_enrichi = f"*_{sym}_sierra_enriched.jsonl"
+    if glob(os.path.join(enrichi, motif_enrichi)):
+        if sym not in _SOURCE_LOGGEE:
+            _SOURCE_LOGGEE.add(sym)
+            logger.info("Source barres %s : live_enriched (%s)", sym, enrichi)
+        return enrichi, motif_enrichi
+
+    brut = os.path.join(DATA_DIR, sym)
+    motif_brut = f"*_{sym}.jsonl"
+    if glob(os.path.join(brut, motif_brut)):
+        if sym not in _SOURCE_LOGGEE:
+            _SOURCE_LOGGEE.add(sym)
+            logger.warning(
+                "Source barres %s : DMP BRUT en secours (%s) — enrichi absent, "
+                "16 features manquantes (range_pos, volume, delta_div_*, ...)",
+                sym, brut)
+        return brut, motif_brut
+
+    return None
+
+
 def get_latest_jsonl(symbol: str) -> str | None:
-    """Trouve le fichier JSONL le plus recent par mtime."""
-    pattern = os.path.join(DATA_DIR, symbol, f"*_{symbol}.jsonl")
-    files = glob(pattern)
+    """Trouve le fichier JSONL le plus recent par mtime (source enrichie d'abord)."""
+    src = get_bars_source(symbol)
+    if src is None:
+        return None
+    dossier, motif = src
+    files = glob(os.path.join(dossier, motif))
     if not files:
         return None
     return max(files, key=os.path.getmtime)
@@ -831,9 +886,9 @@ def read_ib_bars(symbol: str) -> dict:
 
     Retourne les barres IB du jour + de la veille (dernier vrai jour).
     """
-    data_dir = os.path.join(DATA_DIR, symbol)
-    pattern = os.path.join(data_dir, f"*_{symbol}.jsonl")
-    files = sorted(glob(pattern), key=os.path.getmtime)
+    # BASCULE 04/09 (#100) : source enrichie prioritaire (cf get_bars_source)
+    _src = get_bars_source(symbol)
+    files = sorted(glob(os.path.join(*_src)), key=os.path.getmtime) if _src else []
     if not files:
         return {"today": [], "yesterday": [], "today_ib": {}, "yesterday_ib": {}}
 
@@ -1115,9 +1170,9 @@ def read_volume_profile(symbol: str) -> dict:
     Distribue le volume de chaque barre 1min sur son range de prix.
     Retourne {today: [{price, vol, pct}], yesterday: [...], today_levels, yesterday_levels}.
     """
-    data_dir = os.path.join(DATA_DIR, symbol)
-    pattern = os.path.join(data_dir, f"*_{symbol}.jsonl")
-    files = sorted(glob(pattern), key=os.path.getmtime)
+    # BASCULE 04/09 (#100) : source enrichie prioritaire (cf get_bars_source)
+    _src = get_bars_source(symbol)
+    files = sorted(glob(os.path.join(*_src)), key=os.path.getmtime) if _src else []
     if not files:
         return {"today": [], "yesterday": [], "today_levels": {}, "yesterday_levels": {}}
 

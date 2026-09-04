@@ -7,6 +7,7 @@ import logging
 from typing import List, Optional, Tuple
 
 from CORE.bias_calculator import calc_confidence, compute_bias  # 3.7.9 (24/04) source unique biais
+from CORE.constants import range_pos_pct as _range_pos_pct  # INCIDENT #99 (04/09)
 # 11/05 J2b MGC integration : get_tick_size strict (source unique CORE/constants).
 # TICK_SIZE legacy de readers = default ES/NQ 0.25 hardcode (cf rules/tick-size-policy.md).
 # Pour MGC (tick=0.10), il FAUT lire dynamiquement le tick par symbole.
@@ -197,7 +198,15 @@ def build_regime_context(bar: dict) -> dict:
     bias_result = compute_bias(bar)
 
     # Variables utilisees plus loin dans le dict sortant (pos, dist_vwap, etc.)
-    pos = get_field(bar, "range_pos", 50.0)
+    # FIX 04/09 (INCIDENT #99) : range_pos est persiste en echelle [0,1] par
+    # sierra_pipeline depuis le 28/06. Les consommateurs aval raisonnent en
+    # [0,100] : `build_conseil_global` lit `regime["range_pos"]` et teste
+    # `pos <= 20` / `pos >= 80`. Sans normalisation ici, `pos <= 20` etait vrai
+    # sur 100 % des barres (+1 bull offert en permanence) et `pos >= 80` jamais
+    # (+1 bear et +2 bear divergence impossibles) => bear_points plafonnait a 3
+    # alors que VENTE PRUDENTE exige 4 => ZERO VENTE emise sur 110 946 barres.
+    # Corriger ici couvre aussi build_conseil_global qui herite de ce dict.
+    pos = _range_pos_pct(bar)
     dist_vwap = get_field(bar, "dist_vwap_d", 0.0)
     delta_day_dir = get_int_field(bar, "delta_day_dir", 0)
 
@@ -638,7 +647,8 @@ def build_levels_distances(bar: dict) -> dict:
         "sess_high_price": dist_to_price(bar, "dist_sess_high"),
         "sess_low_price": dist_to_price(bar, "dist_sess_low"),
         "sess_range_ticks": get_field(bar, "sess_range_ticks", 0.0),
-        "range_pos": get_field(bar, "range_pos", 50.0),
+        # R3 (#99) : echelle unifiee [0,100], sinon 2 conventions dans le meme JSON
+        "range_pos": _range_pos_pct(bar),
         "range_size_ticks": get_field(bar, "range_size_ticks", 0.0),
         # VWAP Daily + SD bands
         "vwap_d_price": dist_to_price(bar, "dist_vwap_d"),
@@ -784,8 +794,8 @@ def build_intermarket(bar_es: dict, bar_nq: dict) -> dict:
         smt_detail = "NQ fait un nouveau low, ES ne confirme PAS — force ES"
 
     # Divergence de momentum : ES et NQ en directions opposees
-    es_range_pos = get_field(bar_es, "range_pos", 50.0) if bar_es else 50.0
-    nq_range_pos = get_field(bar_nq, "range_pos", 50.0) if bar_nq else 50.0
+    es_range_pos = _range_pos_pct(bar_es) if bar_es else 50.0  # R3 (#99)
+    nq_range_pos = _range_pos_pct(bar_nq) if bar_nq else 50.0  # R3 (#99)
     range_pos_gap = abs(es_range_pos - nq_range_pos)
     momentum_div = range_pos_gap > 30  # gap significatif entre ES et NQ
 
@@ -809,8 +819,8 @@ def build_intermarket(bar_es: dict, bar_nq: dict) -> dict:
     nq_mid = get_field(bar_nq, "price_vs_swing_mid", 0.0) if bar_nq else 0.0
 
     # Correlation multi-facteurs : swing_mid + delta_dir + range_pos
-    es_rpos = get_field(bar_es, "range_pos", 50.0) if bar_es else 50.0
-    nq_rpos = get_field(bar_nq, "range_pos", 50.0) if bar_nq else 50.0
+    es_rpos = _range_pos_pct(bar_es) if bar_es else 50.0  # R3 (#99)
+    nq_rpos = _range_pos_pct(bar_nq) if bar_nq else 50.0  # R3 (#99)
     # Normaliser range_pos de 0-100 vers -1..+1
     es_rn = (es_rpos - 50) / 50
     nq_rn = (nq_rpos - 50) / 50
