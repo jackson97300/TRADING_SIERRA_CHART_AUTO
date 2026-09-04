@@ -140,6 +140,64 @@ def compute_sl_tp(
         tp_price = entry_price - tp_ticks * tick
     rr = tp_ticks / sl_ticks if sl_ticks > 0 else 0.0
 
+    # FIX Phase 1B audit ULTRATHINK 24/06/2026 (market-analyst) :
+    # Edge case observe 22/06 17:02 NQ LONG : entry=30578.25, SL=30585.35
+    # (SL AU-DESSUS de entry pour un LONG = absurde mathematiquement).
+    # Cause : wall Tier1 (VWAP_D_SD1D) etait DEJA au-dessus du prix au moment
+    # du calcul, le buffer place SL encore plus haut = trade pre-condamne.
+    # Solution : assert SL coherent direction avant accept. REJECT si violation.
+    if direction == "LONG" and sl_price >= entry_price:
+        return SLTPResult(
+            accepted=False,
+            sl_price=sl_price,
+            sl_ticks=sl_ticks,
+            sl_wall=sl_wall_name,
+            sl_tier=sl_tier,
+            reject_reason=(
+                f"SL_INVALID_LONG:sl_price={sl_price:.2f}>=entry={entry_price:.2f} "
+                f"(wall={sl_wall_name} cote oppose)"
+            ),
+            direction=direction,
+        )
+    if direction == "SHORT" and sl_price <= entry_price:
+        return SLTPResult(
+            accepted=False,
+            sl_price=sl_price,
+            sl_ticks=sl_ticks,
+            sl_wall=sl_wall_name,
+            sl_tier=sl_tier,
+            reject_reason=(
+                f"SL_INVALID_SHORT:sl_price={sl_price:.2f}<=entry={entry_price:.2f} "
+                f"(wall={sl_wall_name} cote oppose)"
+            ),
+            direction=direction,
+        )
+    # Idem pour TP (defense en profondeur)
+    if direction == "LONG" and tp_price <= entry_price:
+        return SLTPResult(
+            accepted=False,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            sl_ticks=sl_ticks,
+            tp_ticks=tp_ticks,
+            sl_wall=sl_wall_name,
+            sl_tier=sl_tier,
+            reject_reason=f"TP_INVALID_LONG:tp_price={tp_price:.2f}<=entry={entry_price:.2f}",
+            direction=direction,
+        )
+    if direction == "SHORT" and tp_price >= entry_price:
+        return SLTPResult(
+            accepted=False,
+            sl_price=sl_price,
+            tp_price=tp_price,
+            sl_ticks=sl_ticks,
+            tp_ticks=tp_ticks,
+            sl_wall=sl_wall_name,
+            sl_tier=sl_tier,
+            reject_reason=f"TP_INVALID_SHORT:tp_price={tp_price:.2f}>=entry={entry_price:.2f}",
+            direction=direction,
+        )
+
     return SLTPResult(
         accepted=True,
         sl_price=sl_price,

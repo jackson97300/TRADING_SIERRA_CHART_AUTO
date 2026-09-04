@@ -35,6 +35,7 @@ seulement, ils NE gatent PLUS et NE sont PAS dans le bonus (pattern 11 V1).
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -104,6 +105,22 @@ class MirrorVerdict:
     stars_total: int = 3  # bonus_total (k-of-3) - compat cluster logging
     ready_to_arm: bool = False
     skip_reason: str = ""
+    # FIX audit ULTRATHINK 19/06 : detecte le divorce silencieux du Mirror.
+    # `bull_pts`/`bear_pts` du dashboard ne sont JAMAIS injectes dans bar
+    # enriched live (NULL 100% sur 990 bars NQ 19/06). Le code tombe en fallback
+    # derive simplifie (4 features hardcoded) qui n'utilise PAS les memes
+    # ponderations que build_conseil_global du dashboard reel.
+    # Cf agents code-reviewer + trading-strategy-analyst + schema-auditor.
+    # Si True -> emit MAJEUR cote consumer (main.py) pour tracer divorce.
+    fallback_pts_used: bool = False
+    fallback_mtf_used: bool = False
+    # FIX B3 review 19/06 : flags Phase 2 pour tracabilite J+1 cote main.py.
+    daytype_regime: str = "UNKNOWN"
+    daytype_confidence: float = 0.0
+    daytype_aware_active: bool = False
+    bypass_near_level_active: bool = False
+    climax_bypass_active: bool = False
+    pullback_waived_active: bool = False
 
 
 # ============================================================
@@ -154,7 +171,7 @@ def _action_from_direction(direction: Optional[str]) -> str:
 # BASE - reproduit logique dashboard
 # ============================================================
 
-def _compute_mtf_counts(bar: dict) -> tuple[int, int, int]:
+def _compute_mtf_counts(bar: dict) -> tuple[int, int, int, bool]:
     """MTF confluence : compte bulls/bears/neutres sur 4 VRAIES timeframes.
 
     Source 1 : si dashboard injecte mtf_bulls/bears (live mode) -> read direct.
@@ -166,13 +183,15 @@ def _compute_mtf_counts(bar: dict) -> tuple[int, int, int]:
 
     Ces 4 TF sont REELLEMENT differentes (3min / 5min / 1day / 1week)
     contrairement au fallback precedent qui melangeait indicateurs sur meme bar.
+
+    FIX audit 19/06 : retourne aussi flag fallback_used pour tracer divorce.
     """
     # Si bar contient deja les comptes (dashboard data injectee live)
     mtf_bulls = _as_int(bar.get("mtf_bulls"))
     mtf_bears = _as_int(bar.get("mtf_bears"))
     mtf_neutres = _as_int(bar.get("mtf_neutres"))
     if (mtf_bulls + mtf_bears + mtf_neutres) > 0:
-        return mtf_bulls, mtf_bears, mtf_neutres
+        return mtf_bulls, mtf_bears, mtf_neutres, False
 
     # Fallback VRAI MTF : 4 timeframes distinctes
     bulls = 0
@@ -195,7 +214,7 @@ def _compute_mtf_counts(bar: dict) -> tuple[int, int, int]:
     elif vwap_w < 0: bears += 1
 
     neutres = 4 - bulls - bears
-    return bulls, bears, neutres
+    return bulls, bears, neutres, True  # fallback_used=True
 
 
 def _compute_bias(bar: dict) -> tuple[float, str]:
@@ -222,18 +241,22 @@ def _compute_bias(bar: dict) -> tuple[float, str]:
 
 def _compute_pts(
     bar: dict, cfg: Optional[Bot1V2Config] = None, symbol: str = "ES",
-) -> tuple[int, int]:
+) -> tuple[int, int, bool]:
     """Bull/bear points - read dashboard si present, sinon derive simplifie.
 
     SYMBOL-AWARE (Phase 4) : le point momentum utilise le seuil symbol-aware
     (ES 1.0, NQ 10.0) car momentum_5b brut n'a pas la meme echelle ES vs NQ.
+
+    FIX audit 19/06 : retourne aussi un flag fallback_used (True si bull/bear
+    dashboard absents -> fallback derive). Consumer doit emit MAJEUR pour
+    tracer le divorce silencieux Mirror vs dashboard reel.
     """
     bull = _as_int(bar.get("bull_pts") or bar.get("conseil_bull_pts"))
     bear = _as_int(bar.get("bear_pts") or bar.get("conseil_bear_pts"))
     if (bull + bear) > 0:
-        return bull, bear
+        return bull, bear, False
 
-    # Derive simplifie :
+    # Derive simplifie (fallback_used=True):
     bull = 0
     bear = 0
     cvd_dir = _as_float(bar.get("cvd_day_dir"))
@@ -257,7 +280,7 @@ def _compute_pts(
         bull += 1
     elif momentum < -mom_min:
         bear += 1
-    return bull, bear
+    return bull, bear, True  # fallback_used=True
 
 
 # ============================================================
@@ -271,13 +294,35 @@ def _check_climax_veto(
 
     Trade -$967 (15/06 ES SHORT) avait ctx_climax_signal=True, ignored par bot
     actuel. Bot 1 v2 BLOQUE.
+
+    FIX Phase 2 audit ULTRATHINK 19/06 : climax BIDIRECTIONNEL.
+    Wyckoff distingue buying climax (= bullish exhaustion = OK SHORT) vs
+    selling climax (= bearish exhaustion = OK LONG). Le veto actuel bloquait
+    les DEUX cas indistinctement -> perd des entries contrarian valides.
+    Proxy : utiliser delta_bar comme indicateur du sens du climax.
+    Source : memory `feedback_lightgbm_no_composite_indicators.md` + audit
+    trading-strategy-analyst Phase 2 brief.
+    Bypass possible via BOT1V2_CLIMAX_BIDIRECTIONAL=0 si comportement legacy
+    bidirectionnel binaire (preserve trade -$967 protection).
     """
     if not cfg.CLIMAX_VETO_ENABLED:
         return None
     if not _as_bool(bar.get("ctx_climax_signal")):
         return None
-    # climax + direction = blocage hard (peu importe sens climax car detection
-    # binaire dans ctx_rolling, on assume bidirectionnel)
+    # FIX 19/06 : climax bidirectionnel
+    # FIX 2.6.4 review trading-strategy-analyst 19/06 : default OFF.
+    # Proxy delta_bar seul = insuffisant Wyckoff (need volume+spread+close+delta).
+    # Risque false positive 50% sur veto rare event (3.6% bars) qui protege contre
+    # disasters trade -$967 type. Phase 3 backtest requis avant activation.
+    bidirectional = os.environ.get("BOT1V2_CLIMAX_BIDIRECTIONAL", "0") == "1"
+    if bidirectional and direction is not None:
+        delta_bar = _as_float(bar.get("delta_bar"))
+        if delta_bar > 0 and direction == "SHORT":
+            # buying climax (bull bar climax) -> exhaustion haussiere -> OK SHORT
+            return None
+        if delta_bar < 0 and direction == "LONG":
+            # selling climax (bear bar climax) -> exhaustion baissiere -> OK LONG
+            return None
     return VetoFired(
         name="CLIMAX_WYCKOFF",
         reason=f"ctx_climax_signal=True (epuisement Wyckoff, reversal probable)",
@@ -291,9 +336,22 @@ def _check_rvol_veto(
     """VETO Dalton RVOL exceptional : zone d'epuisement volume.
 
     Calibre NO-PARALYSIS : > 3.0 (catastrophe, pas 2.5 trop strict).
+
+    FIX audit ULTRATHINK 19/06 : cold-start guard premiere bar RTH.
+    rvol_zscore rolling 20 bars contient des bars Asia/London low-vol au
+    cold-start RTH open -> z-score spike artificiel (ex: 3.67 sur premier
+    bar RTH 19/06). Veto faux positif systematique sur 5-10 premieres bars
+    RTH = bloque les meilleurs setups d'ouverture.
+    Garde : si bars_since_boot < RVOL_COLD_START_BARS (default 20) -> skip veto.
     """
     rvol_z = abs(_as_float(bar.get("rvol_zscore")))
     if rvol_z <= cfg.RVOL_ZSCORE_VETO_THRESHOLD:
+        return None
+    # FIX 19/06 : cold-start guard
+    cold_start_bars = getattr(cfg, "RVOL_COLD_START_BARS", 20)
+    bars_since_boot = _as_int(bar.get("bars_since_boot"), default=99999)
+    if bars_since_boot < cold_start_bars:
+        # rvol_zscore spike non fiable (rolling window pas encore RTH-pure)
         return None
     return VetoFired(
         name="RVOL_EXCEPTIONAL",
@@ -504,19 +562,40 @@ def _check_quality_bar_confirmation(
     # Note : finish_strength_pct existe peut-etre dans certaines bars (0-1)
     # mais on utilise finish_strength en ticks/points selon sierra_enriched
 
+    # FIX Phase 1A audit ULTRATHINK 24/06/2026 (market-analyst) :
+    # BAR_FINISH_STRENGTH_MIN (config.py:176) etait DEAD CONFIG (jamais lu).
+    # Trade 22/06 17:13 ES LONG : bar verte +0.75t MAIS finish_strength=-42
+    # (close pres du low de la bar) -> SL en 0 secondes.
+    # Empirique 13 trades 22/06 <60s majoritaires ont bars avortees.
+    # Solution : exiger close > open ET finish_strength >= MIN (default 30).
+    # Backtest mental 7j : sacrifice ~3 TP, evite ~5-7 SL = +$30 estime.
+    # Wins preserves : 70-80%. Backward compat via flag config (default off
+    # pour eviter regression - active explicitement via BOT1V2_BAR_FINISH_STRENGTH_ENABLED).
+    finish_required = getattr(cfg, "BAR_FINISH_STRENGTH_ENABLED", False)
+    finish_min = getattr(cfg, "BAR_FINISH_STRENGTH_MIN", 30.0)
+
     if direction == "LONG":
         # bar verte
         bar_is_green = close > open_p
         # OR bar_color_up flag
         bar_color = _as_int(bar.get("bar_color_up"))
-        # OR finish_strength positif fort
-        strength_ok = finish_strength > 0  # decroissant = clot pres du high
 
-        # Methode robust : exiger AU MOINS bar verte
+        # Methode robust : exiger AU MOINS bar verte (color OK)
         if not bar_is_green and bar_color != 1:
             return QualityMiss(
                 name="BAR_NOT_CONFIRMED_LONG",
                 reason=f"LONG mais bar rouge (close={close:.2f} <= open={open_p:.2f}, color_up={bar_color})",
+            )
+        # FIX 24/06 : finish_strength check si activé (anti bar avortee)
+        # finish_strength positif = clot pres du high (favorable LONG)
+        # negatif = clot pres du low (= rejet)
+        if finish_required and finish_strength < finish_min:
+            return QualityMiss(
+                name="BAR_FINISH_STRENGTH_WEAK_LONG",
+                reason=(
+                    f"LONG bar verte mais finish_strength={finish_strength:.1f}<{finish_min:.1f} "
+                    "(close pres du low = bar avortee)"
+                ),
             )
         return None
     else:  # SHORT
@@ -527,6 +606,16 @@ def _check_quality_bar_confirmation(
             return QualityMiss(
                 name="BAR_NOT_CONFIRMED_SHORT",
                 reason=f"SHORT mais bar verte (close={close:.2f} >= open={open_p:.2f}, color_dn={bar_color})",
+            )
+        # FIX 24/06 : finish_strength inverse pour SHORT
+        # SHORT bar rouge ideale = finish_strength <= -finish_min (clot pres du low)
+        if finish_required and finish_strength > -finish_min:
+            return QualityMiss(
+                name="BAR_FINISH_STRENGTH_WEAK_SHORT",
+                reason=(
+                    f"SHORT bar rouge mais finish_strength={finish_strength:.1f}>{-finish_min:.1f} "
+                    "(close pres du high = bar avortee)"
+                ),
             )
         return None
 
@@ -674,20 +763,35 @@ def compute_verdict(
         symbol = bar_sym
 
     # 1. BASE - reproduit dashboard (DIAGNOSTIC seulement, sauf bull/bear_pts).
-    bull_pts, bear_pts = _compute_pts(bar, cfg, symbol)
-    mtf_bulls, mtf_bears, mtf_neutres = _compute_mtf_counts(bar)
+    bull_pts, bear_pts, fallback_pts_used = _compute_pts(bar, cfg, symbol)
+    mtf_bulls, mtf_bears, mtf_neutres, fallback_mtf_used = _compute_mtf_counts(bar)
+
+    # FIX B3 review 19/06 : day_verdict init early (utilise par _verdict closure).
+    # En Phase 2 dormante (default OFF), le day_verdict est calcule pour
+    # diagnostic mais n'influence pas la cascade. En Phase 2 active (env
+    # BOT1V2_DAYTYPE_AWARE=1), il modifie bypass_near_level + waive_pullback.
+    daytype_aware_global = os.environ.get("BOT1V2_DAYTYPE_AWARE", "0") == "1"
+    day_verdict = None
+    try:
+        from CORE.bot1_v2.day_type_classifier import classify_day_type
+        day_verdict = classify_day_type(bar, cfg)
+    except ImportError:
+        pass
     bias_score, bias_label = _compute_bias(bar)
     mtf_verdict = "ALIGNE" if max(mtf_bulls, mtf_bears) >= 3 else "CONFLIT"
 
     # 2. VERDICT DIRECTIONNEL SOUPLE (with-trend, dir_score).
-    #    LONG  : dir_score >= +3 ET bear_pts <= 1
-    #    SHORT : dir_score <= -3 ET bull_pts <= 1
+    #    LONG  : dir_score >= +DIR_SCORE_MIN ET bear_pts <= OPPOSING_PTS_MAX
+    #    SHORT : dir_score <= -DIR_SCORE_MIN ET bull_pts <= OPPOSING_PTS_MAX
     #    sinon : ATTENDRE (None). bias/MTF NE gatent PLUS.
+    # FIX audit 19/06 : seuils env-configurables (defauts 3/1 preservent comportement).
+    dir_min = getattr(cfg, "DIR_SCORE_MIN", 3)
+    opp_max = getattr(cfg, "OPPOSING_PTS_MAX", 1)
     dir_score = bull_pts - bear_pts
     direction: Optional[str]
-    if dir_score >= 3 and bear_pts <= 1:
+    if dir_score >= dir_min and bear_pts <= opp_max:
         direction = "LONG"
-    elif dir_score <= -3 and bull_pts <= 1:
+    elif dir_score <= -dir_min and bull_pts <= opp_max:
         direction = "SHORT"
     else:
         direction = None
@@ -712,6 +816,11 @@ def compute_verdict(
             vix_level=_as_float(bar.get("vix_level")),
             rvol_zscore=_as_float(bar.get("rvol_zscore")),
             ctx_climax_signal=_as_bool(bar.get("ctx_climax_signal")),
+            fallback_pts_used=fallback_pts_used,
+            fallback_mtf_used=fallback_mtf_used,
+            daytype_regime=getattr(day_verdict, "regime", "UNKNOWN") if day_verdict else "UNKNOWN",
+            daytype_confidence=getattr(day_verdict, "confidence", 0.0) if day_verdict else 0.0,
+            daytype_aware_active=daytype_aware_global,
             **kw,
         )
 
@@ -745,40 +854,107 @@ def compute_verdict(
     # 4. CORE : near_level direction-aware (support LONG / resistance SHORT).
     #    Seul filtre qualite OBLIGATOIRE hors vetos. Garde le nom du miss
     #    (NOT_AT_SUPPORT / NOT_AT_RESISTANCE) comme skip_reason.
-    near_miss = _check_quality_near_level(bar, direction, cfg, symbol)
-    if near_miss is not None:
-        return _verdict(
-            quality_misses=(near_miss,),
-            stars_count=0,
-            stars_total=3,
-            ready_to_arm=False,
-            skip_reason=near_miss.name,
+    # FIX Phase 2 audit 19/06 : day-type aware. En trend day strong, on bypass
+    # le CORE near_level (Dalton "find direction in morning, stick"). En balance
+    # day, on garde le filtre strict actuel.
+    # day_verdict deja calcule au top (ligne ~688) pour _verdict closure.
+    try:
+        from CORE.bot1_v2.day_type_classifier import should_bypass_pullback
+    except ImportError:
+        should_bypass_pullback = lambda v: False  # noqa: E731
+    # FIX B2/B3 review 19/06 : seuils env-configurables + default OFF (data-mining).
+    daytype_aware = daytype_aware_global
+    try:
+        bypass_conf_min = float(
+            os.environ.get("BOT1V2_DAYTYPE_BYPASS_CONF_MIN", "0.65")
         )
+    except (TypeError, ValueError):
+        bypass_conf_min = 0.65
+    bypass_near_level = (
+        daytype_aware
+        and day_verdict is not None
+        and day_verdict.regime in ("TREND_UP", "TREND_DOWN")
+        and day_verdict.confidence >= bypass_conf_min
+        and (
+            (day_verdict.regime == "TREND_DOWN" and direction == "SHORT")
+            or (day_verdict.regime == "TREND_UP" and direction == "LONG")
+        )
+    )
+    if not bypass_near_level:
+        near_miss = _check_quality_near_level(bar, direction, cfg, symbol)
+        if near_miss is not None:
+            return _verdict(
+                quality_misses=(near_miss,),
+                stars_count=0,
+                stars_total=3,
+                ready_to_arm=False,
+                skip_reason=near_miss.name,
+            )
 
     # 5. BONUS : COMPTE de 3 dimensions INDEPENDANTES (k-of-n).
     #    rvol >= RVOL_MIN, pullback, bar_confirmation. count >= MIN_BONUS_COUNT.
     #    Anti double-comptage : PAS bias/MTF/momentum (deja dans dir_score),
     #    PAS de bonus "conviction" (= dir_score, redondant).
+    # FIX Phase 2 audit 19/06 : regime-aware. En trend day strong, le pullback
+    # est statistiquement absent (continuation pure). Waiver pullback en trend
+    # day pour eviter contradiction philosophique with-trend.
+    # Source : memory `feedback_lightgbm_no_composite_indicators.md` + audit
+    # trading-strategy-analyst : "trend day = no pullback, bot rate setups
+    # valides Dalton/Wyckoff".
+    # FIX 2.6.4 review trading-strategy-analyst 19/06 : env var dedie pour kill-switch
+    # independant DAYTYPE_AWARE (granularite individuelle composant).
+    # Default OFF : memory `feedback_no_quick_fixes.md` = pas de waiver pullback
+    # sans backtest 6 mois (Dalton "shallow pullbacks" PAS bypass total).
+    pullback_waive_enabled = (
+        os.environ.get("BOT1V2_DAYTYPE_WAIVE_PULLBACK", "0") == "1"
+    )
+    waive_pullback = (
+        daytype_aware
+        and pullback_waive_enabled
+        and day_verdict is not None
+        and should_bypass_pullback(day_verdict)
+        and (
+            (day_verdict.regime == "TREND_DOWN" and direction == "SHORT")
+            or (day_verdict.regime == "TREND_UP" and direction == "LONG")
+        )
+    )
     bonus_misses: list[QualityMiss] = []
-    for check_fn in (
+    check_fns = [
         lambda: _check_quality_rvol(bar, cfg),
-        lambda: _check_quality_pullback(bar, direction, cfg, symbol),
         lambda: _check_quality_bar_confirmation(bar, direction, cfg),
-    ):
+    ]
+    if not waive_pullback:
+        check_fns.append(
+            lambda: _check_quality_pullback(bar, direction, cfg, symbol)
+        )
+    for check_fn in check_fns:
         miss = check_fn()
         if miss:
             bonus_misses.append(miss)
 
-    bonus_total = 3
+    # bonus_total adjusts to active checks (2 si pullback waived, 3 sinon)
+    bonus_total = len(check_fns)
     bonus_count = bonus_total - len(bonus_misses)
+    # FIX B1 review code-reviewer 19/06 : MIN_BONUS_COUNT scaling dynamique.
+    # BUG legacy : si pullback waived (bonus_total=2) avec MIN_BONUS_COUNT=2,
+    # le filtre devient PLUS strict (2/2=100% requis) qu'avant (2/3=66%).
+    # Inverse l'intention du waive. Scale proportionnellement :
+    #   bonus_total=3 -> min_required = MIN_BONUS_COUNT (legacy 2/3)
+    #   bonus_total=2 -> min_required = MIN_BONUS_COUNT-1 (au moins 1/2 PASS,
+    #                    coherent avec "Dalton trend day : direction et stick").
+    pullback_dropped = 3 - bonus_total  # 0 ou 1
+    min_required = max(1, cfg.MIN_BONUS_COUNT - pullback_dropped)
 
-    if bonus_count < cfg.MIN_BONUS_COUNT:
+    if bonus_count < min_required:
         return _verdict(
             quality_misses=tuple(bonus_misses),
             stars_count=bonus_count,
             stars_total=bonus_total,
             ready_to_arm=False,
-            skip_reason=f"BONUS_INSUFFICIENT:{bonus_count}/{bonus_total}",
+            skip_reason=(
+                f"BONUS_INSUFFICIENT:{bonus_count}/{bonus_total}"
+                f"(min={min_required}, pullback_waived={pullback_dropped>0})"
+            ),
         )
 
     # 6. READY : direction OK + 0 veto + near_level OK + bonus_count suffisant.

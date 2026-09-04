@@ -98,17 +98,22 @@ class DtcFillListener:
         state_bridge: StateBridge,
         on_close_callback=None,
         bot_id: str = "bot1v2",
+        trade_journal=None,
     ):
         """Args:
             bot_id: identifiant du bot ("bot1v2"/"bot_mr"/"bot_bn_v4") pour
                     code log MIA_FILL_* generique cross-bot. Permet audit J+1
                     grep MIA_DTC_FILL_TP pour voir tous les fills 3 bots.
+            trade_journal: optionnel BOT.trade_journal.TradeJournal pour persistance
+                    JSONL trades fermes. FIX Phase 1C audit 24/06 : sans journal,
+                    36/39 trades non documentes = bloquant audit DSR Lopez J+30.
         """
         self.cfg = cfg
         self.store = store
         self.state_bridge = state_bridge
         self.on_close_callback = on_close_callback
         self.bot_id = bot_id
+        self.trade_journal = trade_journal
         # cid -> {sym, kind: "parent"|"tp"|"sl", signal_id, ...details position...}
         self._cid_index: dict = {}
         self._lock = threading.Lock()
@@ -360,6 +365,50 @@ class DtcFillListener:
             signal_id=signal_id,
             cid=cid,
         )
+        # FIX Phase 1C audit ULTRATHINK 24/06/2026 (market-analyst) :
+        # Journal trades cassé : 36/39 trades non ecrits dans bot1v2_trades_juin.jsonl
+        # Bloquant pour audit DSR Lopez J+30. Solution : cable TradeJournal commun
+        # apres close pour persistance JSONL atomique.
+        if self.trade_journal is not None:
+            try:
+                from BOT.trade_journal import TradeRecord
+                from datetime import datetime as _dt, timezone as _tz
+                entry_ts_ms = float(entry.get("entry_ts", 0))
+                entry_iso = (
+                    _dt.fromtimestamp(entry_ts_ms / 1000.0, tz=_tz.utc).isoformat()
+                    if entry_ts_ms > 0 else ""
+                )
+                now_dt = _dt.now(_tz.utc)
+                duration_sec = (
+                    (now_dt.timestamp() - entry_ts_ms / 1000.0)
+                    if entry_ts_ms > 0 else 0.0
+                )
+                record = TradeRecord(
+                    symbol=sym,
+                    date=now_dt.strftime("%Y%m%d"),
+                    direction=(1 if direction == "LONG" else -1),
+                    entry_price=float(entry_price),
+                    entry_time=entry_iso,
+                    exit_price=float(fill_price),
+                    exit_time=now_dt.isoformat(),
+                    exit_reason=exit_reason,
+                    sl_price=float(entry.get("sl_price", 0.0)),
+                    tp_price=float(entry.get("tp_price", 0.0)),
+                    position_size=int(n_micros),
+                    pnl_ticks=float(round(pnl_ticks, 2)),
+                    pnl_usd=float(round(pnl_usd, 2)),
+                    duration_seconds=float(round(duration_sec, 1)),
+                    is_winner=(pnl_usd > 0),
+                    paper_trade=True,
+                    session_id="bot1v2",
+                )
+                self.trade_journal.log_trade(record)
+            except Exception as e:  # noqa: BLE001
+                self._emit_pair(
+                    "BOT1V2_TRADE_JOURNAL_EXCEPTION",
+                    "MIA_FILL_TRADE_JOURNAL_EXCEPTION",
+                    sym=sym, err=str(e)[:200],
+                )
         if self.on_close_callback is not None:
             # RESERVE #4 fix 18/06 : nouvelle signature (sym, pnl_usd, exit_reason).
             # Backward compat : callbacks bot1_v2 et bot_bn_v4 ont encore signature

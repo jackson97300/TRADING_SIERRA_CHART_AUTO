@@ -37,6 +37,18 @@ def _env_bool(name: str, default: bool) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_tuple(name: str, default: tuple) -> tuple:
+    """Parse env var en tuple (split sur ',' avec strip).
+
+    Ajoute Phase 2 audit ULTRATHINK 24/06 pour REGIME_AWARE_BLACKLIST.
+    Format env : "PANIC:*,CALM_RANGE:us_cash,VOLATILE_RANGE:asia"
+    """
+    val = os.environ.get(f"BOT1V2_{name}")
+    if val is None:
+        return default
+    return tuple(s.strip() for s in val.split(",") if s.strip())
+
+
 @dataclass(frozen=True)
 class Bot1V2Config:
     """Configuration immutable Bot 1 v2.
@@ -67,6 +79,15 @@ class Bot1V2Config:
     # BONUS : nombre minimum de dimensions independantes (rvol/pullback/bar_conf)
     # qui doivent PASSER. count >= MIN_BONUS_COUNT requis (k-of-3).
     MIN_BONUS_COUNT: int = _env_int("MIN_BONUS_COUNT", 2)
+
+    # FIX audit ULTRATHINK 19/06 : env-configurable verdict directionnel.
+    # Avant : dir_score >= +3 (LONG) et <= -3 (SHORT) HARDCODE dans dashboard_mirror:688-691
+    # + bear_pts <= 1 / bull_pts <= 1 HARDCODE.
+    # Cf agents convergents : sur jour J+1 post-FOMC, 65% des bars ATTENDRE
+    # car seuils trop strict. Relax via env vars sans recompile.
+    # Defaults preservent comportement Phase 4 actuel.
+    DIR_SCORE_MIN: int = _env_int("DIR_SCORE_MIN", 3)
+    OPPOSING_PTS_MAX: int = _env_int("OPPOSING_PTS_MAX", 1)
 
     # ============================================================
     # ETOILES QUALITE (FORTE CONVICTION cluster)
@@ -117,6 +138,10 @@ class Bot1V2Config:
 
     # Dalton RVOL exceptional : > 3.0 = catastrophe (market-analyst 2.5 trop strict)
     RVOL_ZSCORE_VETO_THRESHOLD: float = _env_float("RVOL_ZSCORE_VETO_THRESHOLD", 3.0)
+    # FIX audit 19/06 : cold-start guard premiere bar RTH (rolling 20 bars
+    # contient bars Asia/London low-vol -> rvol_zscore artificiel spike).
+    # Skip veto si bars_since_boot < RVOL_COLD_START_BARS.
+    RVOL_COLD_START_BARS: int = _env_int("RVOL_COLD_START_BARS", 20)
 
     # MenthorQ gamma block : hard veto (root cause trade -$967 ignore by Bot 1)
     GAMMA_BLOCK_VETO_ENABLED: bool = _env_bool("GAMMA_BLOCK_VETO_ENABLED", True)
@@ -161,6 +186,11 @@ class Bot1V2Config:
     # Sinon : on entre au mauvais moment du pullback (=dans la chute)
     BAR_CONFIRMATION_REQUIRED: bool = _env_bool("BAR_CONFIRMATION_REQUIRED", True)
     BAR_FINISH_STRENGTH_MIN: float = _env_float("BAR_FINISH_STRENGTH_MIN", 30.0)
+    # FIX Phase 1A audit ULTRATHINK 24/06 : activer BAR_FINISH_STRENGTH filter
+    # (avant : config defini mais JAMAIS LU = dead config). Default True maintenant
+    # car backtest empirique 7j montre +$30 estime, 70-80% wins preserves.
+    # Kill switch : BOT1V2_BAR_FINISH_STRENGTH_ENABLED=false pour rollback.
+    BAR_FINISH_STRENGTH_ENABLED: bool = _env_bool("BAR_FINISH_STRENGTH_ENABLED", True)
 
     # ============================================================
     # PATIENCE & RISK MANAGEMENT (Mark Douglas)
@@ -173,6 +203,16 @@ class Bot1V2Config:
     DAILY_STOP_WIN_USD: float = _env_float("DAILY_STOP_WIN_USD", 150.0)
 
     # ============================================================
+    # MAX_HOLD timeout positions (Fix #1 audit 30/06 — anti trade qui dure 13h+)
+    # ============================================================
+    # Sans MAX_HOLD : trade peut courir indefiniment si SL/TP ne fire pas.
+    # Empirique audit 29/06 : trade #3 56min SL avec MFE 10t jamais securise.
+    # Cible 45 min = capture pattern stagnation sans trop tronquer scalp R:R 1.5.
+    # Sequence anti-orphelin V2 cf .claude/rules/orphan-prevention.md.
+    MAX_HOLD_MINUTES: int = _env_int("MAX_HOLD_MINUTES", 45)
+    MAX_HOLD_ENABLED: bool = _env_bool("MAX_HOLD_ENABLED", True)
+
+    # ============================================================
     # FLOOR ANTI-PARALYSIE (Jackson souverain : "des trades doivent passer")
     # ============================================================
     # Si N jours consecutifs sans trade > seuil -> log ALERTE + propose recalibration
@@ -180,6 +220,24 @@ class Bot1V2Config:
     # Si N jours consecutifs sans trade > seuil critique -> auto-relax (decremente MIN_STARS)
     # Pas implemente en v1 : observation seulement, decision humaine
     PARALYSIS_AUTO_RELAX_DAYS: int = _env_int("PARALYSIS_AUTO_RELAX_DAYS", 7)
+
+    # ============================================================
+    # REGIME-AWARE (Phase 2 audit ULTRATHINK 24/06)
+    # ============================================================
+    # Architecture partagee avec Bot 1 Mean Revert (CORE/bot_mean_revert/regime_classifier.py)
+    # Backtest empirique 7j Bot MR : +$299 retroactif, 95% wins preserves.
+    # Adoption Bot 2 = applique meme philosophie regime-aware (V_FINAL).
+    # Blacklist V_FINAL :
+    #   PANIC:*               -> event-driven illiquide (no trade)
+    #   CALM_RANGE:us_cash    -> chop institutionnel (0% WR sample Bot MR)
+    #   VOLATILE_RANGE:asia   -> panic post-news Asia (11% WR sample Bot MR)
+    REGIME_AWARE_ENABLED: bool = _env_bool("REGIME_AWARE_ENABLED", True)
+    REGIME_AWARE_BLACKLIST: tuple = field(
+        default_factory=lambda: _env_tuple(
+            "REGIME_AWARE_BLACKLIST",
+            ("PANIC:*", "CALM_RANGE:us_cash", "VOLATILE_RANGE:asia"),
+        )
+    )
 
     # ============================================================
     # SESSIONS & EXEC
@@ -302,6 +360,10 @@ class Bot1V2Config:
         return cls(
             CONFIRMATION_BARS=_env_int("CONFIRMATION_BARS", 0),
             MIN_BONUS_COUNT=_env_int("MIN_BONUS_COUNT", 2),
+            # FIX L2 review 19/06 : oubli dans from_env() = monkeypatch tests ne marchait pas
+            DIR_SCORE_MIN=_env_int("DIR_SCORE_MIN", 3),
+            OPPOSING_PTS_MAX=_env_int("OPPOSING_PTS_MAX", 1),
+            RVOL_COLD_START_BARS=_env_int("RVOL_COLD_START_BARS", 20),
             BIAS_SCORE_MIN_ABS=_env_float("BIAS_SCORE_MIN_ABS", 0.33),
             MTF_MIN_ALIGNED=_env_int("MTF_MIN_ALIGNED", 3),
             MTF_MAX_OPPOSED=_env_int("MTF_MAX_OPPOSED", 0),
@@ -333,6 +395,12 @@ class Bot1V2Config:
             PULLBACK_MIN_TICKS_MGC=_env_int("PULLBACK_MIN_TICKS_MGC", 5),
             BAR_CONFIRMATION_REQUIRED=_env_bool("BAR_CONFIRMATION_REQUIRED", True),
             BAR_FINISH_STRENGTH_MIN=_env_float("BAR_FINISH_STRENGTH_MIN", 30.0),
+            BAR_FINISH_STRENGTH_ENABLED=_env_bool("BAR_FINISH_STRENGTH_ENABLED", True),
+            REGIME_AWARE_ENABLED=_env_bool("REGIME_AWARE_ENABLED", True),
+            REGIME_AWARE_BLACKLIST=_env_tuple(
+                "REGIME_AWARE_BLACKLIST",
+                ("PANIC:*", "CALM_RANGE:us_cash", "VOLATILE_RANGE:asia"),
+            ),
             NEAR_LEVEL_MAX_TICKS_ES=_env_int("NEAR_LEVEL_MAX_TICKS_ES", 8),
             NEAR_LEVEL_MAX_TICKS_NQ=_env_int("NEAR_LEVEL_MAX_TICKS_NQ", 16),
             NEAR_LEVEL_MAX_TICKS_MGC=_env_int("NEAR_LEVEL_MAX_TICKS_MGC", 8),
@@ -342,6 +410,9 @@ class Bot1V2Config:
             COOLDOWN_POST_LOSS_MIN=_env_int("COOLDOWN_POST_LOSS_MIN", 90),
             DAILY_STOP_LOSS_USD=_env_float("DAILY_STOP_LOSS_USD", -200.0),
             DAILY_STOP_WIN_USD=_env_float("DAILY_STOP_WIN_USD", 150.0),
+            # Fix #1 MAX_HOLD audit 30/06
+            MAX_HOLD_MINUTES=_env_int("MAX_HOLD_MINUTES", 45),
+            MAX_HOLD_ENABLED=_env_bool("MAX_HOLD_ENABLED", True),
             PARALYSIS_ALERT_DAYS=_env_int("PARALYSIS_ALERT_DAYS", 3),
             PARALYSIS_AUTO_RELAX_DAYS=_env_int("PARALYSIS_AUTO_RELAX_DAYS", 7),
             EOD_LOCKOUT_MINUTES=_env_int("EOD_LOCKOUT_MINUTES", 10),

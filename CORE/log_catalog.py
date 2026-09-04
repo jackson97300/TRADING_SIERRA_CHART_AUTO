@@ -1535,9 +1535,23 @@ LOG_CODES = {
     "BOT1V2_TIMEOUT_CANCEL_FAIL_ORPHAN_RISK": (LogLevel.CRITIQUE, "execution", "Bot1V2 timeout cancel fail ORPHAN RISK : {sym} direction={direction} failed={failed}"),
     "BOT1V2_TIMEOUT_ALREADY_FLAT":  (LogLevel.INFO,     "execution", "Bot1V2 timeout deja flat : {sym} direction={direction} age_min={age_min}"),
     "BOT1V2_TIMEOUT_POSITION_UNKNOWN": (LogLevel.ALERTE,  "execution", "Bot1V2 timeout position unknown (DTC freeze) : {sym} direction={direction} age_min={age_min}"),
+    "BOT1V2_TIMEOUT_POSITION_UNKNOWN_SKIP_CLOSE": (LogLevel.CRITIQUE, "execution", "Bot1V2 timeout SKIP unsafe MARKET CLOSE (broker qty unknown) : {sym} direction={direction} age_min={age_min} - safety anti SHORT cumul cascade cf INCIDENT #96"),
+    "BOT1V2_BOOT_RECONCILE_START": (LogLevel.INFO, "events", "Bot1V2 boot reconciliation broker vs state : {sym} state_dir={state_dir} state_qty={state_qty}"),
+    "BOT1V2_BOOT_RECONCILE_ALIGNED_TO_FLAT": (LogLevel.MAJEUR, "events", "Bot1V2 boot RECONCILE : broker flat mais state avait position - clean state (probable fill listener freeze pre-restart) : {sym} state_dir={state_dir}"),
+    "BOT1V2_BOOT_RECONCILE_MISMATCH_CRITICAL": (LogLevel.CRITIQUE, "events", "Bot1V2 boot RECONCILE MISMATCH CRITIQUE - intervention manuelle requise : {sym} state_dir={state_dir} state_qty={state_qty} broker_qty={broker_qty}"),
+    "BOT1V2_BOOT_RECONCILE_MATCH": (LogLevel.INFO, "events", "Bot1V2 boot RECONCILE OK : {sym} state et broker aligned qty={qty}"),
+    "BOT1V2_BOOT_RECONCILE_DTC_DOWN": (LogLevel.ALERTE, "events", "Bot1V2 boot RECONCILE DTC down - skip reconcile : {sym}"),
+    "BOT1V2_BOOT_RECONCILE_ORPHAN_CANCELLED": (LogLevel.MAJEUR, "events", "Bot1V2 boot RECONCILE - cancel working order orphelin (R1) : {sym} cid={cid}"),
+    "BOT1V2_BOOT_RECONCILE_OPEN_ORDERS_FAIL": (LogLevel.ALERTE, "events", "Bot1V2 boot RECONCILE - query open orders fail : {sym} (orphelins potentiels non-audites)"),
     "BOT1V2_TIMEOUT_REQUEST_POS_FAIL": (LogLevel.ALERTE,  "execution", "Bot1V2 timeout request_position fail : {sym} err={err}"),
     "BOT1V2_TIMEOUT_DTC_DOWN_ORPHAN_RISK": (LogLevel.CRITIQUE, "execution", "Bot1V2 timeout DTC DOWN orphan risk : {sym} direction={direction} age_min={age_min}"),
     "BOT1V2_TIMEOUT_VERIFY_CLEAN":  (LogLevel.INFO,     "execution", "Bot1V2 timeout cleanup verified clean : {sym} direction={direction}"),
+    # Fix cid 04/09 : le MARKET CLOSE n'a PAS ete emis (DTC non connecte, retour "").
+    # Sans ce code, result[ok]=True mentait sur un ordre jamais parti.
+    "BOT1V2_TIMEOUT_CLOSE_NOT_SENT": (LogLevel.CRITIQUE, "execution", "Bot1V2 MARKET CLOSE NON EMIS (DTC non connecte) : {sym} direction={direction} qty={qty} - position reste ouverte broker"),
+    # Fix cid 04/09 : send_close_market n'a pas rendu de ClientOrderID exploitable.
+    # On conserve le cid local mais le fill ne sera PAS route -> boucle possible (cf #70).
+    "BOT1V2_TIMEOUT_CLOSE_CID_UNRESOLVED": (LogLevel.ALERTE, "execution", "Bot1V2 close_cid broker non resolu : {sym} fallback={fallback} - fill close non routable"),
     "BOT1V2_TIMEOUT_ORPHAN_DETECTED_POST_CLEANUP": (LogLevel.CRITIQUE, "execution", "Bot1V2 ORPHAN detected post-cleanup : {sym} direction={direction} n_working={n_working}"),
     # Fix #2 BUG FIX 30/06 : cooldown active post-close (register_close manquant)
     "BOT1V2_COOLDOWN_ACTIVATED": (LogLevel.MAJEUR, "execution", "Bot1V2 cooldown active : {sym} was_loss={was_loss} cooldown_min={cooldown_min} pnl=${pnl_usd}"),

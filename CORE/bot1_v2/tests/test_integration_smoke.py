@@ -71,7 +71,10 @@ def test_session_us_rth_allowed():
     assert verdict.session_phase == "US_RTH"
 
 
-def test_session_asia_blocked():
+def test_session_asia_tradable():
+    """MAJ 17/06 Jackson : ASIA ajoute a Bot1V2Config.TRADABLE_SESSIONS (config:165)
+    -> Asia est desormais TRADABLE (le test 'asia_blocked' historique etait obsolete
+    depuis ce changement, fail independant de M1 BN V4). On verrouille la realite."""
     cfg = Bot1V2Config()
     gate = SessionGate(cfg)
     bar = {
@@ -80,8 +83,8 @@ def test_session_asia_blocked():
         "session_id": "ASIA",
     }
     verdict = gate.check_allow_entry(bar)
-    assert verdict.allowed is False
-    assert "ASIA" in verdict.skip_reason or "NOT_TRADABLE" in verdict.skip_reason
+    assert verdict.allowed is True
+    assert verdict.session_phase == "ASIA"
 
 
 def test_session_news_blocked():

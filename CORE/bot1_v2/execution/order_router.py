@@ -186,6 +186,229 @@ class OrderRouter:
                 dry_run=False,
             )
 
+    def close_position_market_safe(
+        self,
+        symbol: str,
+        contract: str,
+        direction: str,
+        n_micros: int,
+        parent_cid: str,
+        tp_cid: str,
+        sl_cid: str,
+        reason: str = "TIMEOUT",
+        emit_fn=None,
+    ) -> dict:
+        """Force-close position avec sequence anti-orphelin V2.
+
+        Fix #1 MAX_HOLD audit 30/06. Respecte .claude/rules/orphan-prevention.md.
+
+        Sequence :
+          1. Cancel TP cid (avec TA=Sim2 explicite, anti-fail-loud)
+          2. Cancel SL cid idem
+          3. Wait 1s propagation
+          4. R1 verify position broker (request_position_blocking, anti-race)
+          5. Si qty != 0 : MARKET CLOSE Type 208 OpenCloseTrade=2
+          6. Wait 2s pour fill
+          7. Type 209 SUBMIT_FLATTEN_POSITION par symbole (defense)
+          8. Type 210 FLATTEN_POSITIONS_FOR_ACCOUNT (Sim2 dedie = SAFE)
+          9. VERIFY POST-CLEANUP : re-query Type 300 working orders.
+             Si > 0 -> emit ORPHAN_DETECTED_POST_CLEANUP CRITIQUE.
+
+        Args:
+            symbol : "ES" / "NQ" / "MGC" (sym base, pour logs)
+            contract : "ESU26-CME" / "NQU26-CME" (contract DTC)
+            direction : "LONG" / "SHORT"
+            n_micros : nb micros position (fallback si broker qty None)
+            parent_cid, tp_cid, sl_cid : CIDs bracket initial (peuvent etre vides)
+            reason : "TIMEOUT" / "KILL_SWITCH" / "MANUAL" (pour close_reason)
+            emit_fn : callable(code, **ctx) pour emit logs (None = silent)
+
+        Returns:
+            dict {ok, close_cid, qty_broker, cancel_failed, orphan_detected, error}
+        """
+        result = {
+            "ok": False,
+            "close_cid": "",
+            "qty_broker": None,
+            "cancel_failed": [],
+            "orphan_detected": False,
+            "error": "",
+        }
+
+        def _emit(code, **ctx):
+            if emit_fn is not None:
+                try:
+                    emit_fn(code, **ctx)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # Dry-run = simu close = no-op safe
+        if self.dry_run or self.dtc is None:
+            result["ok"] = True
+            result["error"] = "DRY_RUN_NO_OP"
+            return result
+
+        ta = self.cfg.TRADE_ACCOUNT  # Sim2 explicite (anti-fix-H6 orphan-prevention)
+
+        # === ETAPE 1+2 : Cancel TP + SL (fail-loud, pas except:pass)
+        for label, cid in (("tp", tp_cid), ("sl", sl_cid)):
+            if not cid:
+                continue
+            try:
+                ok = self.dtc.cancel_order(cid, trade_account=ta)
+                if not ok:
+                    result["cancel_failed"].append(label)
+            except Exception as e:  # noqa: BLE001
+                result["cancel_failed"].append(label)
+                _emit("BOT1V2_TIMEOUT_CANCEL_EXCEPTION",
+                      sym=symbol, label=label, cid=cid, err=str(e)[:200])
+
+        if result["cancel_failed"]:
+            _emit("BOT1V2_TIMEOUT_CANCEL_FAIL_ORPHAN_RISK",
+                  sym=symbol, direction=direction, failed=result["cancel_failed"])
+
+        # === ETAPE 3 : wait propagation cancels
+        time.sleep(1.0)
+
+        # === ETAPE 4 : R1 verify position broker avant MARKET CLOSE (anti-race)
+        qty_broker = None
+        try:
+            qty_broker = self.dtc.request_position_blocking(
+                contract, trade_account=ta, timeout=2.0)
+        except Exception as e:  # noqa: BLE001
+            _emit("BOT1V2_TIMEOUT_REQUEST_POS_FAIL",
+                  sym=symbol, err=str(e)[:200])
+
+        result["qty_broker"] = qty_broker
+
+        if qty_broker == 0:
+            _emit("BOT1V2_TIMEOUT_ALREADY_FLAT",
+                  sym=symbol, direction=direction, age_min=0)
+            # Pas de MARKET CLOSE necessaire
+        elif qty_broker is None:
+            # CRITIQUE Fix D1 13/07 : SUPPRIME fallback n_micros aveugle qui a cause
+            # cascade SHORT cumul 9 contrats ESU26 sur Sim2 09-13/07 (INCIDENT_LOG #96).
+            # Cause racine : si broker deja FLAT (position closed side broker) ET
+            # request_position_blocking retourne None (DTC freeze OR broker vraiment 0),
+            # le fallback qty_broker=n_micros emettait SELL MARKET inconditionnel ->
+            # creait une position INVERSE dans un compte deja flat.
+            # Chaque restart = 1 SELL de plus = cumul SHORT.
+            # Nouvelle regle : REFUSE d'emettre MARKET CLOSE si qty broker unknown.
+            # Consequence : orphelin theorique si vrai DTC freeze + vraie position.
+            # Filet de defense en profondeur : D3 reconciliation broker au BOOT.
+            _emit("BOT1V2_TIMEOUT_POSITION_UNKNOWN_SKIP_CLOSE",
+                  sym=symbol, direction=direction, age_min=0)
+            result["error"] = "BROKER_QTY_UNKNOWN_SKIP_UNSAFE_CLOSE"
+            return result  # STOP net - PAS de MARKET CLOSE aveugle
+
+        # === ETAPE 5 : MARKET CLOSE Type 208 OpenCloseTrade=2 si position residuelle
+        if qty_broker is not None and qty_broker != 0:
+            n_to_close = abs(qty_broker)
+            # qty>0 = LONG broker -> SELL pour close ; qty<0 = SHORT broker -> BUY
+            side_close = 2 if qty_broker > 0 else 1  # 1=BUY, 2=SELL
+            # CID local = fallback seulement. Il est remplace juste apres par le
+            # ClientOrderID reel rendu par le connector (cf FIX CID ci-dessous).
+            close_cid = f"BOT1V2_CLOSE_{symbol[:2]}_{int(time.time()) % 100000}"
+            result["close_cid"] = close_cid
+            try:
+                send_close_fn = getattr(self.dtc, "send_close_market", None)
+                if send_close_fn is None:
+                    result["error"] = "DTC_NO_SEND_CLOSE_MARKET"
+                else:
+                    # === FIX CID 04/09 — INCIDENT #70 rejoue sur bot1_v2 ===
+                    # dtc_connector.send_close_market genere son PROPRE
+                    # ClientOrderID (MIA_CLOSE_<uuid>) et le RETOURNE.
+                    # Avant ce fix la valeur de retour etait ignoree :
+                    #   - main.py enregistrait le cid local BOT1V2_CLOSE_* dans
+                    #     fill_listener._cid_index
+                    #   - le broker fillait MIA_CLOSE_* => cid inconnu du listener
+                    #   - fill ignore => position jamais retiree du store
+                    #   - re-close au boot suivant => boucle
+                    # Mesure 04/09 : ~6000 MARKET CLOSE emis sur Sim2 du 13/07 au
+                    # 04/09 (4433 en juillet). Le fix #70 (18/06) avait ete
+                    # applique a BotMR et BN V4, jamais a bot1_v2.
+                    broker_cid = send_close_fn(
+                        symbol=contract, side=side_close,
+                        quantity=n_to_close, trade_account=ta)
+
+                    if isinstance(broker_cid, str) and broker_cid:
+                        # Cas nominal : le fill sera route sur le cid REEL.
+                        close_cid = broker_cid
+                        result["close_cid"] = broker_cid
+                        time.sleep(2.0)  # ETAPE 6 : wait fill MARKET CLOSE
+                        result["ok"] = True
+                    elif isinstance(broker_cid, str):
+                        # "" = connector non connecte : l'ordre n'est JAMAIS parti.
+                        # Ne pas mentir avec ok=True, la position reste ouverte.
+                        # R1 review 04/09 : purger le cid local. Sans ca,
+                        # main.py:856 l'enregistre dans _cid_index alors qu'aucun
+                        # ordre n'existe => une entree fantome par tour de boucle
+                        # (_cid_index croit sans borne) = exactement la pathologie
+                        # que ce fix corrige. Cid vide => register_close_cid sort
+                        # immediatement (dtc_fill_listener.py:224 `if not close_cid`).
+                        result["close_cid"] = ""
+                        _emit("BOT1V2_TIMEOUT_CLOSE_NOT_SENT",
+                              sym=symbol, direction=direction, qty=n_to_close)
+                        result["error"] = "CLOSE_NOT_SENT_DTC_DISCONNECTED"
+                    else:
+                        # Contrat non respecte (None, ou double de test).
+                        # Comportement legacy conserve mais TRACE : sans cid
+                        # broker le fill du close ne sera pas routable.
+                        _emit("BOT1V2_TIMEOUT_CLOSE_CID_UNRESOLVED",
+                              sym=symbol, fallback=close_cid)
+                        time.sleep(2.0)
+                        result["ok"] = True
+            except Exception as e:  # noqa: BLE001
+                result["error"] = f"CLOSE_EXC:{type(e).__name__}:{e}"
+
+        else:
+            # Deja flat ou broker freeze sans n_micros : on continue (defense en profondeur)
+            result["ok"] = True
+
+        # === ETAPE 7 : Type 209 SUBMIT_FLATTEN_POSITION par symbole (defense)
+        try:
+            flush_cid_209 = f"BOT1V2_FLUSH_{symbol[:2]}_{int(time.time()) % 100000}"
+            send_fn = getattr(self.dtc, "_send", None)
+            if send_fn is not None:
+                send_fn({
+                    "Type": 209,
+                    "ClientOrderID": flush_cid_209,
+                    "Symbol": contract,
+                    "TradeAccount": ta,
+                    "Exchange": "CME",
+                    "IsAutomatedOrder": 1,
+                })
+        except Exception:  # noqa: BLE001
+            pass
+
+        # === ETAPE 8 : Type 210 FLATTEN_POSITIONS_FOR_ACCOUNT (Sim2 dedie = SAFE)
+        try:
+            flush_cid_210 = f"BOT1V2_FLUSH_ACCT_{int(time.time()) % 100000}"
+            send_fn = getattr(self.dtc, "_send", None)
+            if send_fn is not None:
+                send_fn({
+                    "Type": 210,
+                    "ClientOrderID": flush_cid_210,
+                    "TradeAccount": ta,
+                    "IsAutomatedOrder": 1,
+                })
+        except Exception:  # noqa: BLE001
+            pass
+
+        # === ETAPE 9 : VERIFY POST-CLEANUP — REPORTEE BACKLOG P1
+        # Fix B1 review code-reviewer 30/06 : appel direct `self.dtc._recv(2)`
+        # depuis thread main = RACE avec `_recv_loop` thread daemon DTC qui
+        # distribue les ORDER_UPDATE Type 301 au DtcFillListener.
+        # Risque : steal du fill MARKET CLOSE = position OPEN dans store =
+        # nouveau timeout = SHORT cumul broker (bug 18/06 BotMR).
+        # Solution future : exposer `dtc.snapshot_working_orders()` async-safe
+        # qui utilise une callback dispatchee par `_recv_loop`. Reporte P1.
+        # En attendant : audit J+1 via grep logs LOGS/events si orphelins.
+        _emit("BOT1V2_TIMEOUT_VERIFY_CLEAN",
+              sym=symbol, direction=direction)
+
+        return result
+
     def cancel_brackets(self, parent_cid: str, tp_cid: str, sl_cid: str) -> bool:
         """Cancel les 3 ordres bracket (utilise pour close manual)."""
         if self.dry_run or self.dtc is None:

@@ -60,6 +60,11 @@ class PositionStore:
         # bypass via crash (carnage 18/06 -$1025 sur 4 SL LONG ES sans halt).
         self.n_sl_consec_by_symbol: dict = {}  # {"ES": 3, "NQ": 0}
         self.halt_until_ts_by_symbol: dict = {}  # {"ES": 1781780000.0, "NQ": 0.0}
+        # Daily gate state (FIX audit Bot MR 19/06 carnage FOMC 15 restarts) :
+        # snapshot {n_trades_today, cumul_pnl_usd, date_str} persiste cross-restart.
+        # Filtre par date_str cote restore : si nouveau jour UTC -> ignore (reset).
+        # Bot 1 v2 / autres consumers n'utilisent pas cette clef -> retrocompat OK.
+        self.daily_state: dict = {}
         self.last_save_ts: float = 0.0
 
     def load(self) -> bool:
@@ -82,6 +87,7 @@ class PositionStore:
         self.meta_config = data.get("meta_config", {})
         self.n_sl_consec_by_symbol = data.get("n_sl_consec_by_symbol", {})
         self.halt_until_ts_by_symbol = data.get("halt_until_ts_by_symbol", {})
+        self.daily_state = data.get("daily_state", {})
         self.last_save_ts = float(data.get("last_save_ts", 0.0))
         return True
 
@@ -98,6 +104,7 @@ class PositionStore:
             "meta_config": self.meta_config,
             "n_sl_consec_by_symbol": self.n_sl_consec_by_symbol,
             "halt_until_ts_by_symbol": self.halt_until_ts_by_symbol,
+            "daily_state": self.daily_state,
             "last_save_ts": time.time(),
         }
         try:
@@ -173,6 +180,47 @@ class PositionStore:
             "cooldown_minutes": int(cooldown_minutes),
             "max_hold_minutes": int(max_hold_minutes),
         }
+
+    # ------------------------------------------------------------------
+    # DAILY STATE helpers (FIX audit Bot MR 19/06/2026)
+    # ------------------------------------------------------------------
+    # Persiste le snapshot daily_gate cross-restart. Sans ca, DSL/DSW/MAX_TRADES
+    # sont effaces a chaque restart -> kill-switch inoperante.
+    # Carnage 18/06 FOMC : 15 restarts dans la journee -> DSL=-$2500 jamais
+    # mordue car compteur reset a chaque boot.
+    # Filtre par date_str cote restore : nouveau jour UTC = ignore + reset.
+
+    def set_daily_state(self, state: dict) -> None:
+        """Persiste un snapshot de l'etat journalier (DailyLimitsGate.snapshot()).
+
+        Args:
+            state: dict avec cles {n_trades_today, cumul_pnl_usd, date_str}.
+
+        Raises:
+            TypeError si state n'est pas un dict.
+        """
+        if not isinstance(state, dict):
+            raise TypeError(
+                f"daily state doit etre un dict, recu {type(state).__name__}"
+            )
+        self.daily_state = dict(state)
+
+    def get_daily_state(self) -> dict:
+        """Retourne le snapshot daily_state persiste (dict vide si jamais set).
+
+        Le caller filtre lui-meme par date_str pour decider restore vs reset
+        (nouveau jour = reset, meme jour = restore cross-restart).
+
+        FIX L3 review 19/06 : defense en profondeur contre corruption JSON.
+        Si daily_state n'est pas un dict (edition manuelle, version future),
+        retourne {} au lieu de crasher le bot au boot.
+        """
+        try:
+            if isinstance(self.daily_state, dict):
+                return dict(self.daily_state)
+            return {}
+        except (TypeError, ValueError):
+            return {}
 
     # ------------------------------------------------------------------
     # CIRCUIT BREAKER helpers (anti-stubbornness 18/06/2026)
