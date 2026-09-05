@@ -51,6 +51,8 @@ BORNES = {
 }
 MAX_NULLS_JOUR = 0.10
 BOOL_MIN, BOOL_MAX = 0.02, 0.98
+# En dessous : la colonne ne se declenche jamais, elle est morte.
+BOOL_MORT = 0.001
 MAX_DERIVE_BOOT = 0.50
 
 
@@ -75,9 +77,12 @@ def colonnes_verifiees(sym_csv):
     return cols
 
 
-def charger(sym, n_jours=25):
+def charger(sym, n_jours=None):
+    """Tous les jours exploitables par defaut : classer sur 25 jours laisserait
+    passer une colonne morte en juin et vivante en aout."""
+    fichiers = sorted(glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym))
     lignes = []
-    for f in sorted(glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym))[-n_jours:]:
+    for f in (fichiers[-n_jours:] if n_jours else fichiers):
         if os.path.basename(f)[:8] in JOURS_EN_PANNE:
             continue
         for ln in open(f, encoding="utf-8", errors="ignore"):
@@ -98,22 +103,49 @@ def charger(sym, n_jours=25):
     return df.reset_index(drop=True)
 
 
-def plausible(s, nom, jours, boots, close):
-    """Quatre controles pour une colonne de niveau B. Rend (ok, motif)."""
+def est_niveau_prix(s, close):
+    """Vrai si la colonne porte un prix absolu, quel que soit son nom."""
     x = pd.to_numeric(s, errors="coerce")
     if x.notna().sum() < 100:
-        return False, "moins de 100 valeurs"
+        return False
+    med, ref = float(x.abs().median()), float(close.median())
+    return bool(np.isfinite(med) and np.isfinite(ref) and ref > 0
+                and 0.5 * ref <= med <= 2.0 * ref)
+
+
+def plausible(s, nom, jours, boots, close):
+    """Rend (niveau, motif) parmi B, N, R, C.
+
+    N — niveau de prix absolu : entree de `recalc.py`, jamais feature. Ni
+        disqualifie ni retenu : sur 51 jours de tendance, `close`, `vwap_d`,
+        `pdh`, `ib_high` formeraient un mega-cluster « prix » qui absorberait
+        des distances.
+    R — evenement rare : booleen actif entre 0,1 % et 2 %. Mis a part pour la
+        phase 2, pas disqualifie. Le seuil unique de 2 % confondait
+        `delta_divergence` (0,5 %, rare) avec une colonne morte (0,0 %).
+    """
+    x = pd.to_numeric(s, errors="coerce")
+    if x.notna().sum() < 100:
+        return "C", "moins de 100 valeurs"
+    # 0. niveau de prix absolu : meme ordre de grandeur que le prix
+    med_abs = float(x.abs().median())
+    ref = float(close.median())
+    if np.isfinite(med_abs) and np.isfinite(ref) and ref > 0:
+        if 0.5 * ref <= med_abs <= 2.0 * ref:
+            return "N", "niveau de prix (entree de recalc, pas feature)"
     # 1. nulls par jour
     nulls = x.isna().groupby(jours).mean()
     if float(nulls.mean()) > MAX_NULLS_JOUR:
-        return False, "nulls %.0f%% par jour" % (100 * nulls.mean())
+        return "C", "nulls %.0f%% par jour" % (100 * nulls.mean())
     # 2. booleen : taux d'activation
     vals = set(x.dropna().unique()[:5])
     if x.nunique(dropna=True) <= 2 and vals <= {0.0, 1.0}:
         p = float(x.mean())
-        if not (BOOL_MIN <= p <= BOOL_MAX):
-            return False, "booleen actif %.1f%%" % (100 * p)
-        return True, ""
+        if p < BOOL_MORT or p > 1 - BOOL_MORT:
+            return "C", "booleen actif %.2f%% (mort)" % (100 * p)
+        if p < BOOL_MIN or p > BOOL_MAX:
+            return "R", "evenement rare, actif %.1f%%" % (100 * p)
+        return "B", ""
     # 3. ordre de grandeur — sur le NIVEAU, jamais sur une distance a ce niveau.
     #    `dist_vix_call` oscille autour de zero ; lui appliquer les bornes du
     #    VIX (5-90) la rejetait a tort, avec cinq autres.
@@ -122,7 +154,7 @@ def plausible(s, nom, jours, boots, close):
             if cle in nom:
                 med = float(x.median())
                 if not (lo <= med <= hi):
-                    return False, "mediane %.2f hors [%g, %g]" % (med, lo, hi)
+                    return "C", "mediane %.2f hors [%g, %g]" % (med, lo, hi)
     # 4. derive au changement de boot — comparee a la derive QUOTIDIENNE
     #    NORMALE, pas dans l'absolu. Un niveau d'options change tous les jours
     #    par construction : sans ce rapport, on rejette toute colonne
@@ -138,9 +170,9 @@ def plausible(s, nom, jours, boots, close):
             if chg.any() and np.isfinite(normal) and normal > 1e-9:
                 au_boot = float(saut[chg].max())
                 if np.isfinite(au_boot) and au_boot > 3.0 * normal * (1 + MAX_DERIVE_BOOT):
-                    return False, ("saut au boot %.0fx la derive quotidienne"
-                                   % (au_boot / normal))
-    return True, ""
+                    return "C", ("saut au boot %.0fx la derive quotidienne"
+                                % (au_boot / normal))
+    return "B", ""
 
 
 def classer(sym, verifiees):
@@ -158,12 +190,16 @@ def classer(sym, verifiees):
             out.append((c, "C", "hors noyau (alias ou §7)"))
         elif FUITE.search(c):
             out.append((c, "C", "metadonnee ou fuite"))
+        elif est_niveau_prix(df[c], close):
+            # Avant le test A : `high` et `sess_high` sont derriere un check a
+            # 0 %, donc "verifies", mais ce sont des niveaux de prix. Les
+            # laisser en A les ferait entrer dans le clustering.
+            out.append((c, "N", "niveau de prix (entree de recalc, pas feature)"))
         elif c in verifiees:
             out.append((c, "A", "verifiee par identite"))
         else:
-            ok, motif = plausible(df[c], c, df["_jour"], boots, close)
-            out.append((c, "B" if ok else "C",
-                        "plausibilite OK" if ok else motif))
+            niv, motif = plausible(df[c], c, df["_jour"], boots, close)
+            out.append((c, niv, motif or "plausibilite OK"))
     return pd.DataFrame(out, columns=["colonne", "provenance", "motif"])
 
 
@@ -186,11 +222,33 @@ def main():
     # Un desaccord entre les deux instruments vaut disqualification : une
     # colonne qui ne tient que d'un cote n'est pas une colonne sur laquelle
     # batir. C'est la meme exigence que la replication ES/NQ des hypotheses.
+    # La replication ES/NQ vaut pour les motifs STRUCTURELS (nulls, morte, saut
+    # au boot, effectif) : une colonne absente d'un cote ne sert a rien. Elle
+    # ne vaut pas pour les motifs de SEUIL : un booleen a 1,8 % sur ES et 2,4 %
+    # sur NQ n'est pas disqualifiable, il est rare des deux cotes.
+    STRUCT = re.compile(r"nulls|moins de 100|saut au boot|mort")
     accord = com.provenance_NQ == com.provenance_ES
-    com["provenance"] = np.where(accord, com.provenance_NQ, "C")
-    com["motif"] = np.where(accord, com.motif_NQ,
-                            "desaccord ES/NQ : " + com.provenance_NQ
-                            + " vs " + com.provenance_ES)
+    struct = (com.motif_NQ.astype(str).str.contains(STRUCT)
+              | com.motif_ES.astype(str).str.contains(STRUCT))
+    # A defaut d'accord : C si le desaccord est structurel, sinon le niveau le
+    # plus permissif des deux (A > B > R > N > C).
+    rang = {"A": 0, "B": 1, "R": 2, "N": 3, "C": 4}
+    permissif = com.apply(
+        lambda r: min(r.provenance_NQ, r.provenance_ES, key=lambda v: rang[v]),
+        axis=1)
+    com["provenance"] = np.where(accord, com.provenance_NQ,
+                                 np.where(struct, "C", permissif))
+    com["motif"] = np.where(
+        accord, com.motif_NQ,
+        np.where(struct, "desaccord structurel ES/NQ",
+                 "desaccord de seuil, niveau permissif retenu"))
+    des = com[~accord]
+    if len(des):
+        print("\n=== %d desaccords ES/NQ, liste nominative ===" % len(des))
+        for c, r in des.iterrows():
+            print("   %-32s NQ=%s / ES=%s -> %s   (%s)"
+                  % (c[:32], r.provenance_NQ, r.provenance_ES,
+                     r.provenance, str(r.motif_NQ)[:34]))
     fin = com[["provenance", "motif"]].reset_index()
     fin.to_csv("DOCS/features_provenance.csv", index=False)
     print("\n=== RETENU POUR LA REDUCTION ===")
