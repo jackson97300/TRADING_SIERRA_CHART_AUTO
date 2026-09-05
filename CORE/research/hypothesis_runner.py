@@ -58,6 +58,8 @@ import json
 import os
 import sys
 
+import csv
+
 import numpy as np
 import pandas as pd
 
@@ -73,7 +75,8 @@ N_BLOCS, TAILLE_BLOC = 5, 8
 N_MIN_SIGNAUX = 40
 N_MIN_JOURS = 5
 MAX_CONCENTRATION = 0.60
-N_HYPOTHESES = 10          # pour Bonferroni
+N_HYPOTHESES = 6           # Bonferroni — six apres retrait de H5 et H1
+                           # (tag mission-phase2-v1, 06/09/2026)
 N_BOOTSTRAP = 2000
 
 
@@ -101,7 +104,11 @@ def charger(sym, cols=None):
         return pd.DataFrame()
     df = pd.DataFrame(lignes)
     df["ts"] = recalc.horodatage(df)
-    df = df.dropna(subset=["ts"]).sort_values("ts").drop_duplicates("ts")
+    # La reecriture fait foi : l'enricher rejoue des lignes deja ecrites, et
+    # c'est la DERNIERE version d'une minute qui est la bonne. `drop_duplicates`
+    # garde la premiere par defaut — le contraire de ce qu'il faut.
+    df = df.dropna(subset=["ts"]).sort_values("ts")
+    df = recalc.dedoublonner_par_minute(df, cle_ts="ts", garder="dernier")
     df["dt"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
     return df[recalc.est_cash(df["dt"])].reset_index(drop=True)
 
@@ -127,22 +134,86 @@ def agreger_5min(df):
     return out.reset_index(drop=True)
 
 
+def _exclusions_stale():
+    """Couples (colonne, jour) suspects, lus dans DOCS/features_stale.csv.
+
+    1 080 couples sur 18 jours ; 63 colonnes du noyau touchees. Une hypothese
+    qui lit une colonne suspecte un jour donne ne doit pas produire de signal ce
+    jour-la : le prerequis 3d de la mission l'exige, et sans lui H3 et H6
+    perdraient pres de la moitie de leur echantillon sans le dire.
+    """
+    chemin = "DOCS/features_stale.csv"
+    if not os.path.exists(chemin):
+        return {}
+    par_cle = {}
+    with open(chemin, encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            sym = (r.get("symbole") or r.get("sym") or "").strip().upper()
+            col = (r.get("colonne") or r.get("feature") or "").strip()
+            jour = (r.get("jour") or r.get("date") or "").strip().replace("-", "")
+            if sym and col and jour:
+                # La cle porte le SYMBOLE : une colonne suspecte sur NQ le
+                # 15/06 ne dit rien de la meme colonne sur ES ce jour-la.
+                par_cle.setdefault((sym, col), set()).add(jour)
+    return par_cle
+
+
+_STALE = None
+
+
+def lire(colonne, df, sym):
+    """Seul acces autorise a une colonne du noyau.
+
+    Deux choses qu'un `df[colonne]` direct ne fait pas :
+      1. il applique la ligne `lecture` de `feature_reduction.json` — une
+         colonne `_atr` livree n'est JAMAIS lue telle quelle (mesure : le
+         rapport livre/vrai vaut 4,000 sur `dist_prev_vpoc_atr`) ;
+      2. il masque les jours ou la colonne est suspecte (`features_stale.csv`),
+         en rendant NaN plutot qu'une valeur qui se laisserait comparer.
+    """
+    global _STALE
+    if _STALE is None:
+        _STALE = _exclusions_stale()
+    if colonne not in df.columns:
+        raise KeyError("colonne absente du lot : %s" % colonne)
+    v = pd.to_numeric(df[colonne], errors="coerce")
+    jours = _STALE.get((str(sym).upper(), colonne))
+    if jours and "jour" in df.columns:
+        j = df["jour"].astype(str).str.replace("-", "", regex=False)
+        v = v.mask(j.isin(jours))
+    return v
+
+
 # ---------------------------------------------------------------------------
 # Signaux et triple barriere
 # ---------------------------------------------------------------------------
 
-def signaux_par_franchissement(cond, sorties):
-    """Indices d'entree : la condition passe de faux a vrai, et le signal
-    precedent a atteint une barriere.
+def signaux_par_franchissement(cond, jours, sorties=None):
+    """Indices d'entree : la condition passe de faux a vrai, **dans la journee**.
 
-    Sans cette regle, une condition vraie six barres de suite compte six
-    signaux : N gonfle, l'independance du bootstrap tombe, et le critere
-    `N >= 40` peut etre franchi par une seule journee.
+    Sans la regle du franchissement, une condition vraie six barres de suite
+    compte six signaux : N gonfle, l'independance du bootstrap tombe, et le
+    critere `N >= 40` peut etre franchi par une seule journee.
+
+    Sans la **remise a zero a la frontiere de journee**, deux erreurs symetriques
+    se produisent a chaque nuit :
+      - une condition vraie a la derniere barre du jour J et encore vraie a la
+        premiere du jour J+1 ne produit AUCUN signal, alors que c'est une
+        nouvelle seance, un nouveau contexte, et un signal legitime ;
+      - l'etat `vrai` de la veille bloque le lendemain sans qu'aucune barre du
+        lendemain ne l'ait justifie.
+    L'etat precedent est donc reinitialise a faux au premier indice de chaque
+    journee, et une barriere ouverte ne traverse pas la nuit.
     """
     c = pd.Series(cond).fillna(False).astype(bool).to_numpy()
+    j = pd.Series(jours).astype(str).to_numpy()
     idx, libre_a = [], -1
-    for i in range(1, len(c)):
-        if c[i] and not c[i - 1] and i > libre_a:
+    for i in range(len(c)):
+        nouveau_jour = (i == 0) or (j[i] != j[i - 1])
+        if nouveau_jour:
+            libre_a = -1                     # aucune barriere ne traverse la nuit
+        precedent = False if nouveau_jour else bool(c[i - 1])
+        if c[i] and not precedent and i > libre_a:
             idx.append(i)
             libre_a = sorties[i] if sorties is not None else i
     return idx
@@ -178,11 +249,13 @@ def triple_barriere(df, i_signal, side, couts_atr):
 
 def evaluer(df, cond, side, couts_atr=0.0):
     """Rend un DataFrame de trades : jour, etiquette, pnl_atr."""
-    sorties = np.full(len(df), -1)
-    idx = signaux_par_franchissement(cond, None)
+    idx = signaux_par_franchissement(cond, df["jour"])
     trades = []
-    libre_a = -1
+    libre_a, jour_libre = -1, None
     for i in idx:
+        jour_i = df["jour"].iloc[i]
+        if jour_i != jour_libre:      # la barriere de la veille ne bloque pas
+            libre_a, jour_libre = -1, jour_i
         if i <= libre_a:
             continue
         r = triple_barriere(df, i, side, couts_atr)
@@ -190,8 +263,7 @@ def evaluer(df, cond, side, couts_atr=0.0):
             continue
         etiq, pnl, k = r
         libre_a = k
-        trades.append({"jour": df["jour"].iloc[i], "etiquette": etiq,
-                       "pnl_atr": pnl})
+        trades.append({"jour": jour_i, "etiquette": etiq, "pnl_atr": pnl})
     return pd.DataFrame(trades)
 
 
@@ -217,22 +289,30 @@ def bootstrap_par_jour(trades, n=N_BOOTSTRAP, graine=12345):
     return float((tirages <= 0).mean()) if obs > 0 else 1.0
 
 
-def walk_forward(trades):
-    """Signe de l'esperance sur chacun des N blocs de jours consecutifs."""
-    if trades.empty:
+def walk_forward(trades, jours_du_lot):
+    """Esperance sur chacun des N blocs de TAILLE_BLOC jours **calendaires**.
+
+    Le decoupage porte sur les jours du LOT, pas sur les jours ou l'hypothese a
+    trade. Decouper les jours-avec-trades en paquets de huit donne des blocs de
+    largeur calendaire variable — une hypothese qui ne trade que douze jours sur
+    quarante verrait ses « cinq blocs de huit » couvrir tout le lot de facon
+    irreguliere, et la stabilite temporelle mesuree ne voudrait plus rien dire.
+    Un bloc sans aucun trade rend NaN : c'est une information, pas un zero.
+    """
+    if trades.empty or not len(jours_du_lot):
         return []
-    jours = sorted(trades["jour"].unique())
-    blocs = [jours[i * TAILLE_BLOC:(i + 1) * TAILLE_BLOC] for i in range(N_BLOCS)]
+    jours = sorted(jours_du_lot)
     out = []
-    for b in blocs:
-        if not b:
+    for b in range(N_BLOCS):
+        bloc = jours[b * TAILLE_BLOC:(b + 1) * TAILLE_BLOC]
+        if not bloc:
             continue
-        t = trades[trades["jour"].isin(b)]
-        out.append(float(t["pnl_atr"].mean()) if len(t) else np.nan)
+        sel = trades[trades["jour"].isin(bloc)]
+        out.append(float(sel["pnl_atr"].mean()) if len(sel) else np.nan)
     return out
 
 
-def verdict(par_sym):
+def verdict(par_sym, jours_par_sym=None):
     """SURVIT / CANDIDATE / MEURT / NON TESTABLE, et POURQUOI."""
     motifs = []
     for sym, t in par_sym.items():
@@ -248,7 +328,8 @@ def verdict(par_sym):
         if len(gains) and gains.max() / max(gains.sum(), 1e-9) > MAX_CONCENTRATION:
             motifs.append("concentration %.0f %% sur %s"
                           % (100 * gains.max() / gains.sum(), sym))
-        wf = walk_forward(t)
+        wf = walk_forward(t, (jours_par_sym or {}).get(
+            sym, sorted(t["jour"].unique())))
         positifs = sum(1 for x in wf if np.isfinite(x) and x > 0)
         if positifs < 4:
             motifs.append("%d/%d blocs positifs sur %s" % (positifs, len(wf), sym))
@@ -281,7 +362,7 @@ def tester_factices():
     print("Attendu : aleatoire MEURT, toujours_vraie MEURT ou NON TESTABLE,")
     print("          fuyante SURVIT. Si la fuyante meurt, le runner est faux.\n")
     rng = np.random.default_rng(4242)
-    dfs = {}
+    dfs, jours_lot = {}, {}
     for sym in ("NQ", "ES"):
         brut = charger(sym, cols=("ts", "open", "high", "low", "close",
                                   "total_vol", "delta_bar",
@@ -292,6 +373,7 @@ def tester_factices():
         d = agreger_5min(brut)
         jours = sorted(d["jour"].unique())[:N_JOURS_RECHERCHE]
         dfs[sym] = d[d["jour"].isin(jours)].reset_index(drop=True)
+        jours_lot[sym] = jours          # jours CALENDAIRES du lot, pas jours avec trades
         print("  %s : %d barres 5 min, %d jours" % (sym, len(dfs[sym]), len(jours)))
     print()
     resultats = []
@@ -300,7 +382,7 @@ def tester_factices():
         for sym, d in dfs.items():
             cond, side = _factices(d, rng)[nom]
             par_sym[sym] = evaluer(d, cond, side)
-        v, pourquoi = verdict(par_sym)
+        v, pourquoi = verdict(par_sym, jours_lot)
         resultats.append((nom, v, pourquoi,
                           {s: len(t) for s, t in par_sym.items()},
                           {s: round(float(t["pnl_atr"].mean()), 3) if len(t) else None

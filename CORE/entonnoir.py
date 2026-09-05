@@ -82,11 +82,23 @@ def journaliser(ts, sym, couche, hypothese, decision, motif="",
     return ligne
 
 
-def completer_devenir(chemin, prix_par_sym, horizon=HORIZON_BARRES):
+def completer_devenir(chemin, prix_par_sym, horizon=HORIZON_BARRES, col_atr="atr5"):
     """Remplit `devenir_atr` sur toutes les lignes qui l'ont a `null`.
 
     `prix_par_sym` : {"ES": df, "NQ": df} ou chaque df porte `ts`, `close` et
-    `atr` (en POINTS — cf CONVENTIONS §3), trie par `ts`.
+    la colonne d'ATR nommee par `col_atr`, trie par `ts`.
+
+    **Les barres doivent etre celles de 5 min, et `col_atr` l'ATR-5m** — c'est
+    le defaut `atr5`, le nom que porte la colonne produite par
+    `hypothesis_runner.agreger_5min`. Deux raisons de ne pas y toucher :
+      - `horizon` compte des BARRES. Vingt barres de 1 min font vingt minutes,
+        vingt barres de 5 min font cent minutes : le devenir mesure ne serait
+        pas celui de l'expiration de la triple barriere, et les deux ne se
+        compareraient plus.
+      - l'ATR 1 min et l'ATR-5m ne sont pas dans le meme rapport selon les
+        instruments ; normaliser par le mauvais rend ES et NQ incomparables.
+    Passer `col_atr="atr"` reste possible pour un df 1 min, mais alors
+    `horizon` doit etre ajuste et le resultat ne se compare plus a la mission.
 
     Le devenir est signe dans le sens du marche, pas de la decision : c'est au
     lecteur de le rapprocher du sens qu'aurait eu le trade. Une porte qui bloque
@@ -107,7 +119,13 @@ def completer_devenir(chemin, prix_par_sym, horizon=HORIZON_BARRES):
 
     tables = {}
     for sym, df in prix_par_sym.items():
-        d = df[["ts", "close", "atr"]].dropna(subset=["ts"]).sort_values("ts")
+        if col_atr not in df.columns:
+            raise KeyError(
+                "colonne d'ATR absente pour %s : %s. Le runner produit "
+                "'atr5' via agreger_5min ; ne pas retomber en silence "
+                "sur l'ATR 1 min." % (sym, col_atr))
+        d = df[["ts", "close", col_atr]].dropna(subset=["ts"]).sort_values("ts")
+        d = d.rename(columns={col_atr: "atr"})
         d = d.reset_index(drop=True)
         d["fwd"] = d["close"].shift(-horizon) - d["close"]
         tables[sym] = d
