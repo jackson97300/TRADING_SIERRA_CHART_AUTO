@@ -78,16 +78,34 @@ Mesure 04/09 NQ : 1 259 lignes `stable` pour 1 259 `ts` uniques, 731 `degraded`,
 - Une ligne `degraded` ou `warmup` n'entre ni dans le clustering, ni dans la
   mission, ni dans le bot. Elle reste dans le fichier brut, elle est exclue a la
   lecture. Le nombre de lignes exclues par jour est logue.
-- Repli, si plusieurs lignes `stable` partagent un `ts` : garder le dernier boot.
+- Repli, si plusieurs lignes partagent un `ts` : `stable` avant `warmup` avant
+  `degraded` ; a egalite la ligne la plus complete ; a egalite encore la
+  premiere. **Jamais `keep="last"`** : la derniere occurrence est la moins
+  complete (548 champs contre 573 le 04/09) et porte les nulls.
 - `seen_ts` **persiste sur disque, par jour**, et se recharge au demarrage.
 
 **Volumetrie** : session complete = 1 380 barres (23 h x 60), cash = 390. Compte
-sur les lignes `stable`. Hors de +/- 1 % → signale, jamais integre en silence.
-**Sauf dimanches et jours feries CME** (liste dans `sessions.yaml`) : ces sessions
-sont courtes par nature, signalees mais attendues.
+sur les lignes `stable`. Deux seuils, pas un :
 
-*Reserve* : filtre verifie sur le 04/09 seulement. A confirmer sur les 75 jours
-avant d'etre tenu pour invariant ; d'ici la, la volumetrie sert de garde-fou.
+| Part de 1 380 | Statut |
+|---|---|
+| >= 99 % | complet |
+| 90–99 % | **exploitable** — utilisable pour clustering, mission, bot |
+| < 90 % | **exclu** — signale, jamais integre en silence |
+
+**Sauf dimanches et jours feries CME** (liste dans `sessions.yaml`) : sessions
+courtes par nature, attendues, comptees a part.
+
+**Validation du filtre (05/09, 75 jours ES + NQ)** — la reserve est levee :
+- un seul `stable` par `ts` : 2 violations NQ, 0 ES sur ~79 400 lignes
+- lignes `stable` a valeur nulle : 5 NQ, 7 ES (0,006 %)
+- `ts` sans aucune ligne `stable` : 1,94 % NQ, 2,41 % ES — cout du filtre
+- **51 jours ouvrables exploitables sur NQ, 52 sur ES**, sur 61 ouvrables
+- fenetre continue : 15/06 → 03/09
+- jours exclus (< 90 %), communs aux deux instruments : 06-12, 06-19, 06-24,
+  06-25, 06-30, 07-03, 08-03, 08-10, 09-04
+
+Script : `CORE/research/valider_filtre_stable.py`.
 
 ## 5. Independance aux frontieres de fichier
 

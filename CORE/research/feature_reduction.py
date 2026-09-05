@@ -186,20 +186,40 @@ def famille_de(cle: str) -> str:
     return "AUTRES"
 
 
-def charger(symbole: str, jours: int, dossier: str) -> pd.DataFrame:
+def charger(symbole: str, jours: int, dossier: str,
+            rth_seul: bool = True) -> pd.DataFrame:
+    """Charge les JSONL enrichis, en filtrant DES LA LECTURE.
+
+    Le filtrage de seance se fait ligne par ligne plutot qu'apres construction
+    du DataFrame : la source complete pese pres de 2 Go et seule la seance US
+    (~26 % des barres) est retenue par defaut. Charger puis filtrer ferait
+    passer la memoire par un pic inutile de plusieurs gigaoctets.
+    """
     lignes = []
-    motif = os.path.join(dossier, symbole, "2026*.jsonl")
+    motif = os.path.join(dossier, symbole, "*.jsonl")
     for chemin in sorted(glob.glob(motif))[-jours:]:
         with open(chemin, "r", encoding="utf-8", errors="replace") as fh:
             for ligne in fh:
                 ligne = ligne.strip()
-                if ligne:
-                    lignes.append(json.loads(ligne))
+                if not ligne:
+                    continue
+                bar = json.loads(ligne)
+                if rth_seul and not bar.get("is_cash_session"):
+                    continue
+                lignes.append(bar)
     if not lignes:
         return pd.DataFrame()
     df = pd.DataFrame(lignes)
     if "ts" in df.columns:
-        df = df.sort_values("ts").drop_duplicates("ts", keep="last")
+        # Selection mesuree, pas raisonnee : la derniere occurrence est la moins
+        # complete (548 champs contre 573 le 04/09) et porte les nulls.
+        _ordre = {"stable": 0, "warmup": 1, "degraded": 2}
+        _r = (df["data_quality_flag"].map(_ordre).fillna(3)
+              if "data_quality_flag" in df.columns else 0)
+        df = (df.assign(_r=_r, _n=-df.notna().sum(axis=1))
+                .sort_values(["ts", "_r", "_n"], kind="mergesort")
+                .drop_duplicates("ts", keep="first")
+                .drop(columns=["_r", "_n"]).reset_index(drop=True))
     return df.reset_index(drop=True)
 
 
@@ -451,15 +471,27 @@ def clusteriser(rho: pd.DataFrame, seuil: float) -> dict[int, list[str]]:
 def choisir_representant(membres, rho, df) -> str:
     """Le membre le plus CENTRAL — celui qui resume le mieux son groupe.
 
-    A centralite comparable (2 % pres), on prefere le mieux rempli, puis le
-    nom le plus court : un nom court designe generalement la grandeur de base
-    plutot qu'une variante derivee (`dist_vwap_d` plutot que
+    Central = correlation absolue moyenne la plus forte avec les autres
+    membres. A centralite comparable (2 % pres), on prefere le mieux rempli,
+    puis le nom le plus court : un nom court designe generalement la grandeur
+    de base plutot qu'une variante derivee (`dist_vwap_d` plutot que
     `dist_vwap_d_sd1u_atr`).
+
+    CONTRAINTE — un representant CONTINU est obligatoire des que le cluster
+    contient au moins une feature continue. Un booleen ne peut prendre que
+    deux valeurs : elu porte-drapeau d'un groupe de grandeurs continues, il
+    en resume la direction mais en perd toute l'amplitude. Le bot lirait
+    "au-dessus / en-dessous" la ou le cluster disait "de combien".
+    Un cluster entierement binaire garde evidemment un representant binaire.
     """
     if len(membres) == 1:
         return membres[0]
+
+    continues = [m for m in membres if df[m].nunique(dropna=True) > 2]
+    eligibles = continues if continues else list(membres)
+
     scores = []
-    for m in membres:
+    for m in eligibles:
         autres = [x for x in membres if x != m]
         scores.append((m,
                        float(rho.loc[m, autres].abs().mean()),
@@ -486,7 +518,7 @@ def stabilite_cluster(membres, df_test) -> float:
 
 
 def analyser_symbole(sym, args):
-    brut = charger(sym, args.jours, args.data)
+    brut = charger(sym, args.jours, args.data, rth_seul=not args.tout)
     if brut.empty:
         return None
 

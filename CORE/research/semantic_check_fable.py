@@ -9,7 +9,15 @@ import glob, argparse, numpy as np, pandas as pd
 
 def load(path):
     df = pd.concat([pd.read_json(f, lines=True) for f in sorted(glob.glob(path))], ignore_index=True)
-    df = df.sort_values(["ts","boot_id"]).drop_duplicates("ts", keep="last").reset_index(drop=True)
+    # Selection mesuree, pas raisonnee : la derniere occurrence est la moins
+    # complete (548 champs contre 573 le 04/09) et porte les nulls.
+    _ordre = {"stable": 0, "warmup": 1, "degraded": 2}
+    _r = (df["data_quality_flag"].map(_ordre).fillna(3)
+          if "data_quality_flag" in df.columns else 0)
+    df = (df.assign(_r=_r, _n=-df.notna().sum(axis=1))
+            .sort_values(["ts", "_r", "_n"], kind="mergesort")
+            .drop_duplicates("ts", keep="first")
+            .drop(columns=["_r", "_n"]).reset_index(drop=True))
     df["dt"] = pd.to_datetime(df.ts, unit="ms")
     return df
 
