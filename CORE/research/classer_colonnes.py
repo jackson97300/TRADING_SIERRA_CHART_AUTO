@@ -103,6 +103,67 @@ def charger(sym, n_jours=None):
     return df.reset_index(drop=True)
 
 
+# --- fenetres d'applicabilite ----------------------------------------------
+# Implementees ici, rattachees aux colonnes par `config/applicabilite.yaml`.
+# Chaque fenetre rend un masque booleen indexe comme le DataFrame.
+
+def _f_apres_ib(df, dt):
+    mn = dt.dt.hour * 60 + dt.dt.minute
+    return recalc.est_cash(dt) & (mn >= 14 * 60 + 30)
+
+
+def _f_apres_ouverture_ny(df, dt):
+    return recalc.est_cash(dt)
+
+
+def _f_apres_ouverture_londres(df, dt):
+    mn = dt.dt.hour * 60 + dt.dt.minute
+    return mn >= 7 * 60
+
+
+def _f_jour_avec_0dte(df, dt):
+    """Jours ou au moins un niveau 0DTE est publie."""
+    col = next((c for c in df.columns if c.endswith("_0dte")
+                and pd.to_numeric(df[c], errors="coerce").notna().any()), None)
+    if col is None:
+        return pd.Series(True, index=df.index)
+    jours = pd.Series(dt.dt.date, index=df.index)
+    ok = pd.to_numeric(df[col], errors="coerce").notna().groupby(jours).any()
+    return jours.map(ok).fillna(False)
+
+
+def _f_news_programmee(df, dt):
+    for c in ("news_seconds_until", "mins_to_next_news", "news_minutes_until"):
+        if c in df.columns:
+            jours = pd.Series(dt.dt.date, index=df.index)
+            ok = pd.to_numeric(df[c], errors="coerce").notna().groupby(jours).any()
+            return jours.map(ok).fillna(False)
+    return pd.Series(True, index=df.index)
+
+
+_FENETRES = {
+    "apres_ib": _f_apres_ib,
+    "apres_ouverture_ny": _f_apres_ouverture_ny,
+    "apres_ouverture_londres": _f_apres_ouverture_londres,
+    "jour_avec_0dte": _f_jour_avec_0dte,
+    "news_programmee": _f_news_programmee,
+}
+
+
+def charger_applicabilite(chemin="config/applicabilite.yaml"):
+    """Rend (liste de (regex compilee, nom de fenetre, raison), vides reels)."""
+    try:
+        import yaml
+        with open(chemin, encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+    except Exception as e:  # noqa: BLE001
+        print("[avert] %s illisible (%s) : aucune fenetre declaree" % (chemin, e))
+        return [], set()
+    regles = [(re.compile(r["motif"]), r["fenetre"], r.get("raison", ""))
+              for r in cfg.get("regles", []) if r.get("fenetre") in _FENETRES]
+    return regles, set(cfg.get("vides_reels") or [])
+
+
 def est_niveau_prix(s, close):
     """Vrai si la colonne porte un prix absolu, quel que soit son nom."""
     x = pd.to_numeric(s, errors="coerce")
@@ -113,7 +174,7 @@ def est_niveau_prix(s, close):
                 and 0.5 * ref <= med <= 2.0 * ref)
 
 
-def plausible(s, nom, jours, boots, close):
+def plausible(s, nom, jours, boots, close, masque=None):
     """Rend (niveau, motif) parmi B, N, R, C.
 
     N — niveau de prix absolu : entree de `recalc.py`, jamais feature. Ni
@@ -133,10 +194,26 @@ def plausible(s, nom, jours, boots, close):
     if np.isfinite(med_abs) and np.isfinite(ref) and ref > 0:
         if 0.5 * ref <= med_abs <= 2.0 * ref:
             return "N", "niveau de prix (entree de recalc, pas feature)"
-    # 1. nulls par jour
-    nulls = x.isna().groupby(jours).mean()
-    if float(nulls.mean()) > MAX_NULLS_JOUR:
-        return "C", "nulls %.0f%% par jour" % (100 * nulls.mean())
+    # 1. nulls par jour — DANS la fenetre d'applicabilite quand elle est
+    #    declaree. Une feature d'Initial Balance est nulle 75 % du temps par
+    #    construction : la mesurer sur la journee entiere l'ecartait a tort.
+    if masque is None:
+        nulls = x.isna().groupby(jours).mean()
+        if float(nulls.mean()) > MAX_NULLS_JOUR:
+            return "C", "nulls %.0f%% par jour" % (100 * nulls.mean())
+    else:
+        dedans, dehors = x[masque], x[~masque]
+        if dedans.notna().sum() < 100:
+            return "C", "moins de 100 valeurs dans sa fenetre"
+        tx = float(dedans.isna().groupby(jours[masque]).mean().mean())
+        if tx > MAX_NULLS_JOUR:
+            return "C", "nulls %.0f%% dans sa fenetre" % (100 * tx)
+        # Controle symetrique : renseignee hors fenetre = bug, pas donnee.
+        if len(dehors) and float(dehors.isna().mean()) < 0.95:
+            return "C", ("renseignee hors de sa fenetre (%.0f%% de valeurs)"
+                         % (100 * dehors.notna().mean()))
+        x = dedans
+        jours = jours[masque]
     # 2. booleen : taux d'activation
     vals = set(x.dropna().unique()[:5])
     if x.nunique(dropna=True) <= 2 and vals <= {0.0, 1.0}:
@@ -178,6 +255,18 @@ def plausible(s, nom, jours, boots, close):
 def classer(sym, verifiees):
     df = charger(sym)
     close = pd.to_numeric(df["close"], errors="coerce")
+    regles, vides_reels = charger_applicabilite()
+    dt = pd.to_datetime(df["_ts"], unit="ms", utc=True)
+    _cache = {}
+
+    def masque_de(col):
+        """Fenetre d'applicabilite de la colonne, ou None."""
+        for rx, fen, _ in regles:
+            if rx.search(col):
+                if fen not in _cache:
+                    _cache[fen] = _FENETRES[fen](df, dt)
+                return _cache[fen]
+        return None
     boots = (df.groupby("_jour")["boot_id"].first().astype(str)
              if "boot_id" in df.columns else None)
     out = []
@@ -198,7 +287,11 @@ def classer(sym, verifiees):
         elif c in verifiees:
             out.append((c, "A", "verifiee par identite"))
         else:
-            niv, motif = plausible(df[c], c, df["_jour"], boots, close)
+            if c in vides_reels:
+                out.append((c, "C", "source non alimentee (vide reel declare)"))
+                continue
+            niv, motif = plausible(df[c], c, df["_jour"], boots, close,
+                                   masque=masque_de(c))
             out.append((c, niv, motif or "plausibilite OK"))
     return pd.DataFrame(out, columns=["colonne", "provenance", "motif"])
 

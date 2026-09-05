@@ -55,7 +55,7 @@ dist_mq_put,C,saut au boot 10x la derive quotidienne
 dist_mq_hvl,C,saut au boot 6x la derive quotidienne
 dist_mq_call_0dte,C,desaccord structurel ES/NQ
 dist_mq_put_0dte,C,desaccord structurel ES/NQ
-dist_mq_hvl_0dte,C,nulls 37% par jour
+dist_mq_hvl_0dte,C,nulls 37% dans sa fenetre
 dist_gex_nearest_up,C,desaccord structurel ES/NQ
 dist_gex_nearest_dn,C,saut au boot 7x la derive quotidienne
 gex_cluster_count,B,plausibilite OK
@@ -67,7 +67,7 @@ vix_regime,B,plausibilite OK
 vix_above_hvl,R,"evenement rare, actif 1.6%"
 dist_vix_call,C,saut au boot 17x la derive quotidienne
 dist_vix_put,C,saut au boot 5x la derive quotidienne
-dist_vix_call_0dte,C,nulls 26% par jour
+dist_vix_call_0dte,C,nulls 26% dans sa fenetre
 dist_vix_put_0dte,B,plausibilite OK
 dist_vix_hvl_0dte,C,saut au boot 8x la derive quotidienne
 vix_above_hvl_0dte,B,plausibilite OK
@@ -76,13 +76,13 @@ dist_vix_gex_nearest_dn,C,saut au boot 25x la derive quotidienne
 dist_ib_high,A,verifiee par identite
 dist_ib_low,A,verifiee par identite
 ib_range_ticks,A,verifiee par identite
-ib_range_atr,C,nulls 75% par jour
-ib_is_narrow,C,booleen actif 0.08% (mort)
-ib_is_wide,B,plausibilite OK
-ib_position_pct,C,nulls 87% par jour
-ib_broken_up,B,plausibilite OK
-ib_broken_down,B,plausibilite OK
-ib_complete,B,plausibilite OK
+ib_range_atr,C,renseignee hors de sa fenetre (6% de valeurs)
+ib_is_narrow,C,renseignee hors de sa fenetre (100% de valeurs)
+ib_is_wide,C,renseignee hors de sa fenetre (100% de valeurs)
+ib_position_pct,C,nulls 39% dans sa fenetre
+ib_broken_up,C,renseignee hors de sa fenetre (100% de valeurs)
+ib_broken_down,C,renseignee hors de sa fenetre (100% de valeurs)
+ib_complete,C,renseignee hors de sa fenetre (100% de valeurs)
 dist_sess_high,C,saut au boot 10x la derive quotidienne
 dist_sess_low,C,saut au boot 6x la derive quotidienne
 sess_range_ticks,C,desaccord structurel ES/NQ
@@ -94,20 +94,20 @@ dist_ovn_low,A,verifiee par identite
 ovn_range_ticks,B,plausibilite OK
 open_gap_ticks,C,saut au boot 5x la derive quotidienne
 open_position,B,plausibilite OK
-dist_comp_20d_vpoc,C,nulls 99% par jour
-dist_comp_20d_vpoc_atr,C,nulls 99% par jour
-dist_comp_20d_vah,C,nulls 99% par jour
-dist_comp_20d_val,C,nulls 99% par jour
-dist_comp_20d_vwap,C,nulls 99% par jour
+dist_comp_20d_vpoc,C,source non alimentee (vide reel declare)
+dist_comp_20d_vpoc_atr,C,source non alimentee (vide reel declare)
+dist_comp_20d_vah,C,source non alimentee (vide reel declare)
+dist_comp_20d_val,C,source non alimentee (vide reel declare)
+dist_comp_20d_vwap,C,source non alimentee (vide reel declare)
 dist_comp_50d_vpoc,C,moins de 100 valeurs
 dist_comp_50d_vpoc_atr,C,moins de 100 valeurs
 dist_comp_50d_vah,C,moins de 100 valeurs
 dist_comp_50d_val,C,moins de 100 valeurs
 dist_comp_50d_vwap,C,moins de 100 valeurs
-inside_comp_20d_va,C,nulls 99% par jour
-inside_comp_50d_va,C,nulls 99% par jour
-comp_vpoc_align_20_50,C,nulls 99% par jour
-comp_vpoc_align_day_20,C,nulls 99% par jour
+inside_comp_20d_va,C,source non alimentee (vide reel declare)
+inside_comp_50d_va,C,source non alimentee (vide reel declare)
+comp_vpoc_align_20_50,C,source non alimentee (vide reel declare)
+comp_vpoc_align_day_20,C,source non alimentee (vide reel declare)
 delta_bar,A,verifiee par identite
 delta_bar_vol_norm,A,verifiee par identite
 delta_day,C,hors noyau (alias ou §7)
@@ -297,8 +297,8 @@ dist_mq_call_pct,C,desaccord structurel ES/NQ
 dist_mq_put_pct,C,saut au boot 10x la derive quotidienne
 dist_mq_hvl_pct,C,saut au boot 6x la derive quotidienne
 dist_mq_call_0dte_pct,C,desaccord structurel ES/NQ
-dist_mq_put_0dte_pct,C,nulls 11% par jour
-dist_mq_hvl_0dte_pct,C,nulls 37% par jour
+dist_mq_put_0dte_pct,C,nulls 11% dans sa fenetre
+dist_mq_hvl_0dte_pct,C,nulls 37% dans sa fenetre
 dist_1d_max_ticks_pct,C,remplacee par recalc.py
 dist_1d_min_ticks_pct,C,desaccord structurel ES/NQ
 dist_long_up_nearest_pct,C,nulls 42% par jour
@@ -357,20 +357,20 @@ bar_upper_wick_pct,C,saut au boot 16x la derive quotidienne
 bar_lower_wick_pct,C,saut au boot 11x la derive quotidienne
 bar_no_trade,C,booleen actif 0.00% (mort)
 range_size,A,verifiee par identite
-is_news_715,C,booleen actif 0.07% (mort)
-is_news_730,C,booleen actif 0.00% (mort)
-is_news_830,R,"evenement rare, actif 0.1%"
-is_news_845,C,booleen actif 0.07% (mort)
-is_news_900,C,booleen actif 0.00% (mort)
-is_news_930,C,booleen actif 0.07% (mort)
-within_news_715_5m,R,"evenement rare, actif 0.4%"
-within_news_730_5m,R,"evenement rare, actif 0.3%"
-within_news_830_5m,R,"evenement rare, actif 0.4%"
-within_news_845_5m,R,"evenement rare, actif 0.4%"
-within_news_900_5m,R,"evenement rare, actif 0.3%"
-within_news_930_5m,R,"evenement rare, actif 0.4%"
-mins_since_news,C,nulls 26% par jour
-mins_to_next_news,C,nulls 65% par jour
+is_news_715,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_730,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_830,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_845,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_900,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_930,C,renseignee hors de sa fenetre (100% de valeurs)
+within_news_715_5m,C,renseignee hors de sa fenetre (100% de valeurs)
+within_news_730_5m,C,renseignee hors de sa fenetre (100% de valeurs)
+within_news_830_5m,C,renseignee hors de sa fenetre (100% de valeurs)
+within_news_845_5m,C,renseignee hors de sa fenetre (100% de valeurs)
+within_news_900_5m,C,renseignee hors de sa fenetre (100% de valeurs)
+within_news_930_5m,C,renseignee hors de sa fenetre (100% de valeurs)
+mins_since_news,C,nulls 26% dans sa fenetre
+mins_to_next_news,C,nulls 66% dans sa fenetre
 is_roll_day,R,"evenement rare, actif 0.2%"
 mins_et,C,saut au boot 511x la derive quotidienne
 is_in_us_cash,B,plausibilite OK
@@ -424,29 +424,29 @@ london_open,N,"niveau de prix (entree de recalc, pas feature)"
 ny_open,N,"niveau de prix (entree de recalc, pas feature)"
 after_open,N,"niveau de prix (entree de recalc, pas feature)"
 dist_asia_open_pct,B,plausibilite OK
-dist_london_open_pct,C,nulls 47% par jour
-dist_ny_open_pct,C,nulls 71% par jour
-dist_after_open_pct,C,nulls 96% par jour
+dist_london_open_pct,C,nulls 25% dans sa fenetre
+dist_ny_open_pct,C,renseignee hors de sa fenetre (6% de valeurs)
+dist_after_open_pct,C,moins de 100 valeurs dans sa fenetre
 dist_asia_high_pct,C,remplacee par recalc.py
 dist_asia_low_pct,C,remplacee par recalc.py
 dist_london_high_pct,C,remplacee par recalc.py
 dist_london_low_pct,C,remplacee par recalc.py
 dist_us_high_pct,C,nulls 71% par jour
 dist_us_low_pct,C,nulls 71% par jour
-dist_after_high_pct,C,nulls 96% par jour
-dist_after_low_pct,C,nulls 96% par jour
+dist_after_high_pct,C,moins de 100 valeurs dans sa fenetre
+dist_after_low_pct,C,moins de 100 valeurs dans sa fenetre
 is_cash_session,B,plausibilite OK
 session_date,C,metadonnee ou fuite
 session_date_trading,C,moins de 100 valeurs
 days_since_roll,C,saut au boot 87x la derive quotidienne
 roll_phase,B,plausibilite OK
-is_news_5m,R,"evenement rare, actif 0.2%"
-is_news_15m,R,"evenement rare, actif 0.5%"
-is_news_30m,R,"evenement rare, actif 0.9%"
-is_news_60m,R,"evenement rare, actif 1.7%"
-is_critical_news_60m,R,"evenement rare, actif 1.0%"
-news_seconds_until,C,nulls 32% par jour
-news_minutes_until,C,nulls 32% par jour
+is_news_5m,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_15m,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_30m,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_60m,C,renseignee hors de sa fenetre (100% de valeurs)
+is_critical_news_60m,C,renseignee hors de sa fenetre (100% de valeurs)
+news_seconds_until,C,nulls 15% dans sa fenetre
+news_minutes_until,C,nulls 15% dans sa fenetre
 is_eco_blocked,R,"evenement rare, actif 1.3%"
 is_session_blocked,B,plausibilite OK
 is_blocked_combined,B,plausibilite OK
@@ -508,8 +508,8 @@ n_color_dn_zones_active,C,saut au boot 5x la derive quotidienne
 n_color_up_cluster_within_0_2pct,B,plausibilite OK
 n_color_dn_cluster_within_0_2pct,B,plausibilite OK
 ctx_session_phase,B,plausibilite OK
-ctx_ib_extension_ratio,C,nulls 75% par jour
-ctx_ib_position_velocity,C,nulls 88% par jour
+ctx_ib_extension_ratio,C,renseignee hors de sa fenetre (6% de valeurs)
+ctx_ib_position_velocity,C,nulls 44% dans sa fenetre
 div_confluence_dmp,B,plausibilite OK
 delta_divergence_clean,B,plausibilite OK
 ctx_va_developing_10,C,desaccord structurel ES/NQ
@@ -551,7 +551,7 @@ cur_vah,N,"niveau de prix (entree de recalc, pas feature)"
 cur_val,N,"niveau de prix (entree de recalc, pas feature)"
 cur_vpoc,N,"niveau de prix (entree de recalc, pas feature)"
 open_830,C,hors noyau (alias ou §7)
-ib_atr,C,nulls 49% par jour
+ib_atr,C,nulls 42% dans sa fenetre
 is_new_sess_high,B,plausibilite OK
 ib_range,A,verifiee par identite
 is_new_sess_low,B,plausibilite OK
@@ -561,11 +561,11 @@ date_et,C,metadonnee ou fuite
 dist_cash_low_pct,C,nulls 75% par jour
 open_cash,C,hors noyau (alias ou §7)
 ib_high,N,"niveau de prix (entree de recalc, pas feature)"
-dist_ib_low_pct,C,nulls 75% par jour
+dist_ib_low_pct,C,renseignee hors de sa fenetre (6% de valeurs)
 price_1030,N,"niveau de prix (entree de recalc, pas feature)"
-ib_broken_dn,B,plausibilite OK
+ib_broken_dn,C,renseignee hors de sa fenetre (100% de valeurs)
 sess_high,N,"niveau de prix (entree de recalc, pas feature)"
-dist_ib_high_pct,C,nulls 75% par jour
+dist_ib_high_pct,C,renseignee hors de sa fenetre (6% de valeurs)
 dist_cash_high_pct,C,nulls 75% par jour
 im_cross_delta_agreement_5,B,plausibilite OK
 im_cross_delta_weighted_5,C,saut au boot 19x la derive quotidienne
@@ -598,8 +598,8 @@ open_relation_type,B,plausibilite OK
 profile_overlap_pct,C,saut au boot 8x la derive quotidienne
 profile_overlap_above_pdh,B,plausibilite OK
 profile_overlap_below_pdl,B,plausibilite OK
-range_extension_above_ib_atr,B,plausibilite OK
-range_extension_below_ib_atr,B,plausibilite OK
+range_extension_above_ib_atr,C,renseignee hors de sa fenetre (100% de valeurs)
+range_extension_below_ib_atr,C,renseignee hors de sa fenetre (100% de valeurs)
 range_extension_completed,B,plausibilite OK
 fvg_up_active,B,plausibilite OK
 fvg_dn_active,B,plausibilite OK
@@ -635,7 +635,7 @@ dist_pvwap_pct,B,plausibilite OK
 dist_pvwap_sd1u_pct,B,plausibilite OK
 dist_pvwap_sd1d_pct,B,plausibilite OK
 range_pos,C,nulls 15% par jour
-ib_formed_bool,C,nulls 15% par jour
+ib_formed_bool,C,nulls 15% dans sa fenetre
 atr_regime_zscore_60d,C,nulls 91% par jour
 dist_pdh,A,verifiee par identite
 dist_pdl,A,verifiee par identite
