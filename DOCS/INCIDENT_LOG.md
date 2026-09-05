@@ -33,6 +33,67 @@
 
 ---
 
+### 2026-09-06 — [VALIDATION_MISS] — Un defaut d'initialisation qui est une valeur valide de l'enum
+
+**Contexte** : crible « proxy / fallback / default » passe sur les colonnes des six hypotheses de
+MISSION_PHASE2, a la demande de Jackson (regle « donnees collectees uniquement »).
+
+**Ce qui a ete trouve** : `DMP_Transform.h:1355-1390` initialise plusieurs champs avant que leur
+module ne les calcule. La plupart sont ecrases. Deux ne le sont pas toujours, et leur valeur par
+defaut est **une valeur valide de l'enum** :
+
+```
+f.day_type = 2.0f   // "NormVar = le type le plus frequent (42%)"
+f.rvol     = 1.0f   // "Normal par defaut"
+```
+
+**Mesure sur les 57 jours** (source unique, barres stable) :
+- `day_type` reste fige a 2.0 pendant **tout le RTH sur 33 jours ES et 29 NQ (sur 53)**, soit 62 %
+  et 55 % des seances. Mediane par jour : **100 %**. Agrege sur le RTH seul : **82,3 % ES / 79,0 %
+  NQ** — a comparer aux **42 %** annonces par le commentaire du code. (Un premier comptage donnait
+  94 % : il agregeait aussi les barres hors seance, ou `day_type` vaut 2 legitimement puisque le
+  type de journee n'y a pas de sens. Le chiffre qui compte est celui du RTH.)
+- `open_type`, initialise dans le meme bloc, tourne **52 jours sur 53**. Ce n'est donc pas le module
+  `DMP_OpenType.h` qui tombe : c'est `day_type` seul. Cela correspond au « FIX #2 day_type
+  progressif intra-session », note TODO dans `DATA_SOURCES_V5.md:237` le 19/05 et jamais livre.
+- `rvol == 1.0` exactement : **23 barres sur 80 296 ES (0,03 %)**, 33 sur 80 262 NQ. Le fallback
+  existe mais ne se declenche presque jamais. Ce n'est pas l'incident qu'on croyait.
+
+**Cause racine** : un defaut d'initialisation choisi *dans* le domaine de la variable. « NormVar
+calcule » et « NormVar jamais calcule » produisent la meme valeur : aucun consommateur ne peut les
+distinguer, et aucun controle ne peut le detecter sans comparer a une distribution attendue. Le
+choix inverse — initialiser a `DMP_INVALID`, comme le fait deja `profile_hvn_dominant` deux lignes
+plus bas — rendrait le probleme visible immediatement.
+
+**Lecon** : une valeur par defaut ne doit jamais appartenir au domaine des valeurs mesurees. Si
+l'enum n'a pas de code « non calcule », c'est l'enum qu'il faut etendre, pas le defaut qu'il faut
+choisir « raisonnable ». Un defaut raisonnable est precisement celui qu'on ne remarque pas.
+
+**Portee** : **aucune des six hypotheses de MISSION_PHASE2 ne lit `day_type` ni `rvol` brut.** H8
+lit `rvol_r`, le recalcul de `recalc.py` — c'est retrospectivement la justification principale de
+ce recalcul (P1). Le tag `mission-phase2-v1` n'est pas affecte. En revanche, tout consommateur de
+`day_type` hors mission herite d'un « jour normal » invente plus d'une seance sur deux : a verifier
+avant de s'appuyer dessus.
+
+**Trigger prevention** : controle L6 n7 `valeurs_par_defaut` ajoute — part de `day_type == 2.0` sur
+le RTH, part de `rvol == 1.0` sur la journee. `day_type` rend l'etat **CONNU** et non ALERTE tant
+que le fix n'est pas livre : une alerte qui se leve deux jours sur trois n'est plus lue, et la regle
+`awesome-monitoring` le dit. Elle repassera en ALERTE apres le fix. Le seuil de `rvol` (1 %) est
+cale sur la mesure dedoublonnee : p90 par jour a 0,092 % ES / 0,145 % NQ, maximum observe 0,218 %.
+
+**Deux erreurs de mesure commises en ecrivant cette entree, gardees parce qu'elles sont la lecon** :
+1. Une premiere lecture agregee suggerait que le module `DMP_OpenType.h` entier etait mort. La
+   mesure **par jour** a montre que `open_type` tourne 52 jours sur 53 : c'est `day_type` seul.
+2. Le premier comptage lisait les JSONL **sans dedoublonner**, contrairement a `charger_jour`
+   (CONVENTIONS §4). Sur un jour teste au hasard, l'ecart etait franc — 100 % brut contre 82 %
+   dedoublonne. Le comptage refait proprement donne le meme nombre de jours figes (33 / 29), donc
+   le constat tenait ; mais il aurait pu ne pas tenir, et rien dans le resultat brut ne le disait.
+   **Tout comptage sur `live_enriched` doit passer par le chargeur, ou dedoublonner par minute.**
+
+**Reviewed** : Jackson (a demande le crible et l'entree) ; controle L6 teste empiriquement sur trois
+jours avant commit — c'est ce test qui a revele l'erreur de dedoublonnage, le controle rendant OK la
+ou la mesure brute annoncait un jour fige.
+
 ### 2026-09-05 — [ATTENDU] — 06/09 : fichier mixte w0/w1, ce n'est pas un defaut
 
 **Contexte** : la surveillance L6 leve une ALERTE quand un fichier melange deux

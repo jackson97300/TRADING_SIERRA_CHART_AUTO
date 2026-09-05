@@ -302,6 +302,59 @@ def controle_rollover(df, sym, jour):
                 contrat=ct[0], contrat_veille=str(ct_v), manques=manques)
 
 
+def controle_valeurs_par_defaut(df, sym, jour):
+    """Les valeurs d'initialisation qui se font passer pour des mesures.
+
+    `DMP_Transform.h:1355-1390` initialise plusieurs champs avant de les faire
+    calculer par leur module. Deux de ces defauts sont des valeurs **valides de
+    l'enum**, donc indistinguables d'un calcul qui les aurait rendues :
+
+      f.day_type = 2.0f  ("NormVar = le type le plus frequent (42 %)")
+      f.rvol     = 1.0f  ("Normal par defaut")
+
+    Mesure du 06/09 sur les 57 jours : `day_type` reste fige a 2.0 pendant TOUT
+    le RTH sur 33 jours ES et 29 NQ (sur 53), tandis que `open_type` tourne 52
+    jours sur 53 — ce n'est donc pas le module qui tombe, c'est `day_type` seul
+    (fix "day_type progressif intra-session", reste TODO depuis le 19/05).
+    `rvol == 1.0` ne represente que 0,03 % des barres : le fallback existe mais
+    ne se declenche presque jamais.
+
+    L'etat rendu pour `day_type` est **CONNU** et non ALERTE tant que le fix
+    n'est pas fait : une alerte qui se leve deux jours sur trois n'est plus lue.
+    Il repassera en ALERTE le jour ou le fix sera livre.
+    """
+    from datetime import datetime, timezone
+    if "_ts" not in df.columns or df.empty:
+        return _res("valeurs_par_defaut", "OK", "pas d'horodatage")
+    mins = df["_ts"].map(
+        lambda x: (datetime.fromtimestamp(int(x) / 1000, timezone.utc).hour * 60
+                   + datetime.fromtimestamp(int(x) / 1000, timezone.utc).minute)
+        if pd.notna(x) else -1)
+    rth = df[(mins >= 810) & (mins < 1200)]      # 13:30 - 20:00 UTC
+
+    msg = []
+    etat = "OK"
+    if "day_type" in df.columns and len(rth) >= 300:
+        fige = float((rth["day_type"] == 2.0).mean())
+        if fige >= 0.999:
+            etat = "CONNU"
+            msg.append("day_type fige a 2.0 sur tout le RTH (calcul absent ce jour)")
+        elif fige >= 0.95:
+            etat = "CONNU"
+            msg.append("day_type a 2.0 sur %.1f %% du RTH" % (100 * fige))
+
+    if "rvol" in df.columns and len(df) >= 300:
+        part = float((df["rvol"] == 1.0).mean())
+        # p90 mesure le 06/09 : 0,09 % ES / 0,15 % NQ ; max 0,22 %.
+        if part > 0.01:
+            etat = "ALERTE"
+            msg.append("rvol == 1.0 exactement sur %.2f %% des barres "
+                       "(p90 historique 0,15 %%) : ring buffer non pret" % (100 * part))
+
+    return _res("valeurs_par_defaut", etat,
+                " ; ".join(msg) if msg else "aucune valeur par defaut dominante")
+
+
 def surveiller(sym: str, jour: str, regles) -> list:
     df = charger_jour(sym, jour)
     if df.empty:
@@ -315,7 +368,8 @@ def surveiller(sym: str, jour: str, regles) -> list:
             controle_fenetre(df, sym, jour),
             controle_reset_vwap(df, sym, jour),
             controle_rollover(df, sym, jour),
-            controle_derive(df, sym, jour, regles)]
+            controle_derive(df, sym, jour, regles),
+            controle_valeurs_par_defaut(df, sym, jour)]
 
 
 def main() -> int:
