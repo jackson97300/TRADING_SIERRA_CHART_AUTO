@@ -33,6 +33,32 @@
 
 ---
 
+### 2026-09-05 — [VALIDATION_MISS] — 14/06 : les etudes rechargees sans redemarrage
+
+**Contexte** : production de `DOCS/features_stale.csv`, la liste des couples
+(colonne, jour) ou une valeur saute au redemarrage de l'enricher.
+
+**Ce qui a ete trouve** : 15 journees portent un saut. Quatorze coincident avec
+un changement de `boot_id` — comportement attendu. **Une seule ne coincide avec
+aucun redemarrage : le 14/06**, ou 124 colonnes sautent simultanement.
+
+**Cause racine** : inconnue a ce stade. Un rechargement des etudes Sierra sans
+redemarrage du processus Python — reconnexion du flux Denali, rechargement
+manuel de la DLL, ou `Reload Chart Data` — produirait exactement cette signature :
+les valeurs changent, `boot_id` ne bouge pas.
+
+**Lecon** : `boot_id` ne capture que les redemarrages du processus Python. Il ne
+dit rien des rechargements cote Sierra, qui reinitialisent pourtant les memes
+etudes. Un marqueur de rechargement cote C++ manquerait moins.
+
+**Trigger prevention** : quand une journee entiere de colonnes saute sans
+changement de `boot_id`, chercher du cote Sierra (reload DLL, reconnexion flux),
+pas du cote Python. Et ne jamais traiter `boot_id` comme la seule frontiere de
+reinitialisation.
+
+**Reviewed** : revue croisee Fable — c'est lui qui a demande de verifier que les
+jours de `stale.csv` etaient tous des jours de boot.
+
 ### 2026-09-05 — [VALIDATION_MISS] — 25 "regressions semantiques" dont la majorite etaient des artefacts de check
 
 **Contexte** : verification semantique avant construction du module de normalisation.

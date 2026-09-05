@@ -134,6 +134,15 @@ pour le bot.
 d'aucune etude Sierra : VWAP `_rth` / `_sess` et bandes, PDH/PDL, session
 high/low, IB, open cash, gap, momentum.
 
+**Tout cumul depuis une borne de session se recalcule, sans exception.** Un
+cumul repart de zero au redemarrage du processus, par construction : ce n'est
+pas un defaut de la colonne, c'est sa nature. Sept colonnes sont dans ce cas —
+`cvd_day`, `delta_day`, `cvd_session`, `ctx_cvd_session`, `ctx_delta_sum_3`,
+`ctx_delta_sum_10`, `cvd_bar_delta` — et elles franchissent le seuil de
+suspicion a des frequences differentes seulement parce qu'elles s'accumulent a
+des vitesses differentes. Mesure : `cvd_day` et `delta_day` suspects 8 jours
+sur 51, `cvd_session` 3, `ctx_delta_sum_3` 1.
+
 **Lues de Sierra, seules sources possibles** : VA / VPOC / VAH / VAL, orderflow,
 big prints, MenthorQ, VIX.
 
