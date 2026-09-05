@@ -269,8 +269,16 @@ def plausible(s, nom, jours, boots, close, masque=None):
             b = boots.reindex(med_j.index)
             chg = b.ne(b.shift()) & b.shift().notna()
             normal = float(saut[~chg].median())
-            if chg.any() and np.isfinite(normal) and normal > 1e-9:
-                au_boot = float(saut[chg].max())
+            if chg.sum() >= 3 and np.isfinite(normal) and normal > 1e-9:
+                # MEDIANE des sauts au boot, pas le maximum. Avec le max, un
+                # seul redemarrage exceptionnel classait toute une colonne en
+                # S : `dist_mq_put` sortait a « 10x la derive quotidienne »
+                # alors que la mediane de ses sauts au boot vaut 1 345 contre
+                # 985 les autres jours, soit 1,37x. Verifie au passage que ce
+                # n'est pas un effet de week-end : les lundis sans boot ont un
+                # saut median de 327, plus BAS que la normale.
+                # Et au moins trois boots, sinon la mediane n'en est pas une.
+                au_boot = float(saut[chg].median())
                 if np.isfinite(au_boot) and au_boot > 3.0 * normal * (1 + MAX_DERIVE_BOOT):
                     # Statut S, pas C. Un cumul de session ou une fenetre
                     # roulante repart de zero au redemarrage : la colonne
