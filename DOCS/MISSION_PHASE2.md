@@ -12,7 +12,7 @@ noyau v1 = 122 features communes (`DATA/feature_reduction.json`), conventions = 
 
 ## 0. Ce que cette mission décide, et ce qu'elle ne décide pas
 
-Elle répond à une question : **parmi sept hypotheses ecrites avant de regarder les donnees, lesquelles
+Elle répond à une question : **parmi six hypotheses ecrites avant de regarder les donnees, lesquelles
 survivent à un protocole qui ne peut pas fabriquer d'edge ?** Elle ne cherche pas « ce qui aurait marché ».
 Prior : cinq campagnes à zéro (0/26 zones, 0/64 stratégies, 0 feature prédictive, 3 bots NOGO).
 Résultat attendu : zéro à deux survivantes, espérance modeste. **Zéro est un résultat, et un livrable.**
@@ -27,6 +27,22 @@ en CANDIDATE jusqu'a 60 jours d'ombre : aucune n'est executee en reel a l'issue 
 **Source de verite unique : `DATA/live_enriched/sierra/`, fenetre w1 controlee par L6.** Aucune donnee
 externe n'entre dans une mesure. Databento est abandonne : ni ses datasets, ni les verdicts qui en
 viennent (batterie V5 du 27/04) ne sont admis comme argument, de selection comme d'exclusion.
+
+**Donnees COLLECTEES uniquement — regle Jackson du 06/09.** N'entre dans une mesure que ce qui a ete
+**collecte** et se trouve dans le fichier : le JSONL Sierra (`DATA/live_enriched/sierra/`) et le dump
+Sierra des niveaux MenthorQ (`DATA/mq_levels/`, schema `mq_levels_1.0` : `mq_call`, `mq_put`,
+`mq_hvl`, `mq_*_0dte`, `mq_1d_min/max`, `mq_gex[10]`, `mq_blind[10]`). Sont **exclus** :
+- toute colonne **reconstruite par proxy**, meme documentee — au premier chef
+  `mq_gamma_condition`, qui n'est pas dans le dump Sierra (il ne porte pas `net_gex`) et que
+  `enricher_chain.py:283` reconstruit depuis `bool_gex_flip_zone` depuis que le scraper est tombe
+  le 27/05 ;
+- toute colonne issue du **scraper MenthorQ** (`net_gex`, `total_gex`, `iv_30d`, CTA), mort depuis
+  le 27/05 et nul dans les fichiers (verifie sur le JSON du 14/06) ;
+- toute donnee externe, Databento compris.
+
+Motif : un proxy se comporte comme la donnee qu'il remplace juste assez pour qu'on l'oublie, et
+jamais assez pour qu'on puisse conclure. Une hypothese conditionnee a un proxy ne mesure pas ce
+qu'elle croit mesurer.
 
 **Cout par trade : MNQ 2,82 $ / MES 4,32 $** (Tradeify, le plus eleve des trois prop firms verifiees,
 plus 1 tick de slippage par cote), soit **~ 0,23 / 0,14 ATR-5m**. C'est la barre. Sur micro, un setup
@@ -176,7 +192,8 @@ TREND**, **REVERSAL** se lit sur DOUBLE / NEUTRE.
 
 - **TREND / BREAKOUT** (`ctx_ib_extension_ratio` > 1,5 OU `ctx_trend_day_score` haut ; gamma negatif)
   -> H6.
-- **RANGE / ROTATION** (IB tenu, `mq_gamma_condition` positif, profil symetrique) -> H1, H2, H3, H8.
+- **RANGE / ROTATION** (IB tenu, profil symetrique, `ib_range_atr` < 0,8) -> H2, H3, H8.
+  La lecture du gamma est retiree de la definition du regime : elle reposait sur un proxy.
 - **DOUBLE / NEUTRE / REVERSAL** (`is_double_dist`, POC migrant) -> H7, H8, taille x0,5.
 - **INDETERMINE** (IB non forme, qualite degradee) -> rien. H7 est explicitement exclue de ce regime.
 - **H4 est mesuree sans L2** : elle definit le regime, elle n'en depend pas.
@@ -188,7 +205,7 @@ colonnes A/B du noyau (`va_position_pct` est en C, `ctx_ib_extension_ratio` depe
 qu'ils soient assez peuples sur 57 jours pour etre compares. Un regime a moins de 5 journees rend la
 comparaison avec/sans L2 ininterpretable, et doit etre annonce comme tel.
 
-## 6. Les hypotheses — FERMEES (sept, apres retrait de H5)
+## 6. Les hypotheses — FERMEES (six, apres retrait de H5 et H1)
 
 Regles d'ecriture appliquees : **lieu + reaction** (une position n'est jamais un signal) ; seuils en
 ATR-5m ; colonnes du noyau uniquement ; entree a l'ouverture de t+1 (t+2 pour H7) ; un signal par
@@ -201,12 +218,31 @@ jours, `open_type` ne prend jamais ces valeurs (observees : 0 a 9). L'hypothese 
 c'est-a-dire le resultat exact d'un runner casse. La numerotation garde un trou en H5 : renumeroter
 ferait diverger toutes les references deja ecrites.
 
-**Bonferroni passe donc a 0,05 / 7.**
+**H1 (rejet de mur gamma) est RETIREE — decision Jackson, 06/09.** Deux motifs independants, chacun
+suffisant :
+1. **Sa condition de regime est un proxy.** `mq_gamma_condition` n'est pas dans le dump Sierra
+   (`mq_levels_1.0` ne porte pas `net_gex`) : `enricher_chain.py:283` la reconstruit depuis
+   `bool_gex_flip_zone` depuis la chute du scraper le 27/05. La regle « donnees collectees
+   uniquement » l'exclut.
+2. **Son lieu est inatteignable.** `dist_mq_call` mediane 338 ticks = 84 points ; 0,16 % des barres
+   a moins de 0,25 ATR-5m, 0,43 % a 0,50 ATR. Desserrer le seuil n'y change rien : le prix
+   n'approche pas ce niveau sur ce lot.
+
+Les **niveaux** MenthorQ eux-memes restent admis — ils sont collectes par le study Sierra et vivants
+(`mq_call` = 7 400 en mai avec ES a 7 350 ; 7 700 / 7 750 / 7 800 en aout-septembre avec ES a 7 700),
+et fixes intra-journee. C'est la condition de **gamma** qui est interdite, pas les distances aux murs.
+H8 peut donc continuer de lire F11 comme lieu.
+
+**H2 perd sa clause gamma** pour la meme raison, et garde `ib_range_atr` < 0,8 comme seule condition
+de regime. La consequence est ecrite d'avance : le rationnel de retour a la moyenne (les dealers
+long gamma vendent les hausses) n'est plus verifie par la donnee, seulement suppose. Si H2 survit,
+c'est la premiere chose a reprendre.
+
+**Bonferroni passe donc a 0,05 / 6.**
 
 | # | Nom | Regime L2 | LIEU (barre 5 min t) | REACTION (barre t) | Side | Colonnes (niveau) |
 |---|---|---|---|---|---|---|
-| **H1** | Rejet de mur gamma | ROTATION, `mq_gamma_condition` > 0 | `dist_mq_call` <= 0,10 ATR (short) / `dist_mq_put` >= -0,10 ATR (long) | meche cote mur >= 50 % du range ET `finish_delta_pct` < 0,4 (short) / > 0,6 (long) ET `ask_pct` < 0,45 (short) / `bid_pct` < 0,45 (long) | SHORT / LONG | `dist_mq_call/put` (B), `bar_upper/lower_wick_pct` (B), `finish_delta_pct` (A), `ask_pct`/`bid_pct` (A) |
-| **H2** | Fade des bandes VWAP-SD2 avec rejet | ROTATION, `mq_gamma_condition` > 0, `ib_range_atr` < 0,8 | `dist_vwap_rth_sd2u_r` dans [-0,15 ; +0,10] ATR (short) / `dist_vwap_rth_sd2d_r` dans [-0,10 ; +0,15] (long) | `delta_bar` < 0 ET `finish_delta_pct` < 0,4 (short) ; miroir (long) | SHORT / LONG | bandes recalculees par `recalc.vwap_bandes(..., n_sd=2.0)` (A), `delta_bar` (A), `finish_delta_pct` (A), `mq_gamma_condition` (B), `ib_range_atr` (B) |
+| **H2** | Fade des bandes VWAP-SD2 avec rejet | ROTATION, `ib_range_atr` < 0,8 (**clause gamma retiree** : proxy) | `dist_vwap_rth_sd2u_r` dans [-0,15 ; +0,10] ATR (short) / `dist_vwap_rth_sd2d_r` dans [-0,10 ; +0,15] (long) | `delta_bar` < 0 ET `finish_delta_pct` < 0,4 (short) ; miroir (long) | SHORT / LONG | bandes recalculees par `recalc.vwap_bandes(..., n_sd=2.0)` (A), `delta_bar` (A), `finish_delta_pct` (A), `ib_range_atr` (B) |
 | **H3** | Rejet a l'extreme de la VA courante | ROTATION | `dist_cur_vah` dans [-0,10 ; +0,10] ATR (short) / `dist_cur_val` (long) | barre t sort de la VA (high > VAH) ET cloture < VAH ET `finish_delta_pct` < 0,4 ; miroir | SHORT / LONG | `dist_cur_vah/val` (A), `inside_cur_va` (A), `finish_delta_pct` (A) |
 | **H4** | Regle des 80 % (Dalton) | definit le regime — mesuree sans L2 | ouverture cash hors VA veille puis retour : cloture 5 min dans [`prev_val_lvl` ; `prev_vah_lvl`] | maintien dans la VA pendant **6 barres 5 min consecutives** (= 2 x 30 min) | sens de la traversee | `open_within_prev_va` (B), `open_outside_prev_range` (B), `prev_vah/val_lvl` (N), `rule_80pct` (B, en information) |
 | **H6** | Retest de l'IB apres cassure acceptee | BREAKOUT, `ib_range_atr` < 0,4 | `ib_broken_up` = 1 ET `dist_ib_high` dans [-0,15 ; +0,05] ATR ; miroir bas | cloture 5 min au-dessus de l'IB high ET `finish_delta_pct` > 0,6 ; miroir | LONG / SHORT | `ib_broken_up/dn` (B), `dist_ib_high/low` (A), `finish_delta_pct` (A), `ib_range_atr` (B) |
@@ -214,7 +250,7 @@ ferait diverger toutes les references deja ecrites.
 | **H8** | Absorption a un niveau | ROTATION / REVERSAL | <= 0,20 ATR d'un niveau de F3/F10/F11/F12 (VA veille ou courante, mur, PDH/PDL, ONH/ONL) | `rvol_r` >= 2,0 ET `delta_pct` <= -0,30 (long) / >= +0,30 (short) ET `finish_delta_pct` contraire au delta (> 0,6 long / < 0,4 short) | LONG / SHORT | `rvol_r` (A, recalcule), `delta_pct` (A), `finish_delta_pct` (A), distances (A/B) |
 
 **H9 et H10 restent vides.** Aucun trade manuel avec trois occurrences nommees n'a ete fourni. Si
-Jackson en nomme un avant le tag, il devient H9 et le seuil repasse a /8.
+Jackson en nomme un avant le tag, il devient H9 et le seuil repasse a /7.
 
 **Sorti de la liste, avec le motif** — rejet baissier Bot 4 v2 (C3) : sa condition reelle
 (`distance_atr <= 1,5`, et `range_pos` qui est en C) est un trade sur position, et la corriger revient
@@ -228,21 +264,21 @@ superieure** de N, pas une prevision.
 
 | | ES | NQ | lecture |
 |---|---|---|---|
-| H1 mur gamma (gamma > 0) | 14 | 17 | **non testable** — le lieu lui-meme est inatteignable, cf mesure de proximite ci-dessous |
 | H4 `rule_80pct` actif | 16 | 16 | **sous-dimensionnee** — evenement rare par nature, ce n'est pas un defaut de mesure |
 | H3 extreme de VA | 807 | 728 | testable |
 | H6 `ib_broken_up` | 175 | 147 | testable |
 | H7 `sweep_low_this_bar` | 4 972 | 7 419 | testable, mais le detecteur seul declenche 87 a 130 fois par jour : **c'est la condition de reserve de liquidite (>= 0,10 ATR) qui fait tout le travail** |
 | H8 rvol >= 2 et \|delta\| >= 0,30 | 770 | 1 098 | testable |
 
-**H1 et H4 sont annoncees sous-dimensionnees AVANT de tourner**, conformement au §8 : leur resultat
-attendu est « non testable sur ce lot ». Elles sont conservees parce qu'elles ont un sens et que le
-statut le dira ; elles ne seront pas requalifiees apres coup.
+**H4 est annoncee sous-dimensionnee AVANT de tourner** (16 franchissements sur 57 jours),
+conformement au §8 : son resultat attendu est « non testable sur ce lot ». Elle est conservee parce
+que la regle des 80 % est un evenement rare par nature et que le statut le dira ; elle ne sera pas
+requalifiee apres coup.
 
-**Point a confirmer avant le tag** : `mq_gamma_condition` est **binaire** (0/1), actif sur 11,5 % des
-barres ES et 16,3 % NQ. H1 et H2 lisent « > 0 ». Il reste a etablir que `1` signifie *gamma positif*
-et non *condition renseignee* : c'est la difference entre un rationnel de mean reversion (dealers long
-gamma qui vendent les hausses) et son inverse exact.
+**Point ferme le 06/09** : `mq_gamma_condition` vaut bien 1 quand `net_gex` > 0
+(`menthorq_backfill_injector.py:148`), donc la lecture « > 0 » etait correcte — mais la colonne est un
+proxy depuis le 27/05, et la regle « donnees collectees uniquement » la retire. H1 et la clause gamma
+de H2 tombent avec elle.
 
 **Pour chaque hypothese, le runner rapporte en plus** : la **sortie naturelle** (VPOC, VWAP ou VA
 opposee atteinte avant la barriere) — mesure d'information, jamais un critere ; et `repose_sur_B`
@@ -291,14 +327,16 @@ pas substituee en silence.
 rationnel de retour a la moyenne est bien celui du code. **Mais** `enricher_chain.py:279-284` indique
 que le scraper MenthorQ est **down depuis le 27/05** : sur les 57 jours, la colonne est un **proxy**
 reconstruit depuis `bool_gex_flip_zone` Sierra natif, et non le `net_gex` de MenthorQ (verifie :
-`gamma_condition` et `net_gex` sont nuls dans le JSON MenthorQ du 14/06). H2 doit donc porter
-`repose_sur_B` pour cette condition, et une survivante conditionnee au gamma devra etre relue a la
-main avant toute suite.
+`gamma_condition` et `net_gex` sont nuls dans le JSON MenthorQ du 14/06).
+**C'est ce constat qui a fait retirer H1 et la clause gamma de H2** (regle « donnees collectees
+uniquement », §0). Le dump Sierra `mq_levels_1.0` porte les NIVEAUX (`mq_call`, `mq_put`, `mq_hvl`,
+`mq_*_0dte`, `mq_1d_min/max`, `mq_gex[10]`, `mq_blind[10]`) mais pas `net_gex` : les distances aux
+murs restent admises, la condition de gamma non.
 
 
 ## 7. Ce que le runner mesure, à l'aveugle
 
-Le runner calcule signaux et triple barriere pour les sept, ES et NQ, sur les 40 jours, **sans afficher de résultat
+Le runner calcule signaux et triple barriere pour les six, ES et NQ, sur les 40 jours, **sans afficher de résultat
 intermédiaire**. Le tableau de survie s'affiche une fois, complet. Pour chaque hypothèse × instrument :
 N signaux, espérance nette (ATR et $), WR, distribution par jour, courbe walk-forward (5 blocs), sensibilité
 ±30 % sur chaque seuil, et les quatre variantes : brute / avec L1 / avec L2 / avec L1+L2.
@@ -309,13 +347,13 @@ N signaux, espérance nette (ATR et $), WR, distribution par jour, courbe walk-f
 - Espérance nette > 0 en ATR **sur ES ET sur NQ**, séparément.
 - ≥ 5 jours distincts ; aucun jour ne porte > 60 % du gain.
 - Walk-forward positif sur ≥ 4 des 5 blocs.
-- Bootstrap **par jour** (blocs = journees entieres, jamais par barre), **p < 0,05 / 7**
-  (sept hypotheses apres le retrait de H5 ; se penaliser sur une hypothese qui rend N = 0 couterait
-  de la puissance sans rien acheter).
+- Bootstrap **par jour** (blocs = journees entieres, jamais par barre), **p < 0,05 / 6**
+  (six hypotheses apres le retrait de H5 et de H1 ; se penaliser sur des hypotheses qui ne peuvent
+  pas produire de signal couterait de la puissance sans rien acheter).
 - Robuste : ±30 % sur chaque seuil ne change pas le signe.
 Puis, et seulement pour les survivantes : lecture unique des jours 41–51, comparée aux 40.
 
-**Lecture du critere statistique — a ne pas confondre.** p < 0,05/7 sur 40 journees independantes est très exigeant : peu d'hypothèses réelles l'atteindront sur ce lot, et c'est voulu. Le tableau distingue donc trois sorties, pas deux :
+**Lecture du critere statistique — a ne pas confondre.** p < 0,05/6 sur 40 journees independantes est très exigeant : peu d'hypothèses réelles l'atteindront sur ce lot, et c'est voulu. Le tableau distingue donc trois sorties, pas deux :
 - **SURVIT** : tous les critères.
 - **MEURT** : espérance ≤ 0 sur un instrument, ou concentration, ou flip de signe, ou sensibilité.
 - **CANDIDATE** : espérance > 0 sur ES **et** NQ, ≥ 4/5 blocs, robuste — mais p au-dessus du seuil. Ne s'exécute pas ; passe en **mode ombre** le cycle suivant, où N s'accumule sans coût. C'est la seule voie par laquelle un critère exigeant ne tue pas un vrai edge trop rare pour 40 jours.
