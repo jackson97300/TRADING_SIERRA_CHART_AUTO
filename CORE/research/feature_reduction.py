@@ -132,6 +132,20 @@ BINAIRE_MAX = 0.98
 # du bruit de regime. On prefere alors ecarter la feature.
 MAX_DERIVE_PROFIL = 0.30
 
+# --- perimetre : sortie de CORE/research/classer_colonnes.py ---------------
+# A verifiee par identite | B plausible | N niveau de prix (entree de recalc)
+# R evenement rare (phase 2) | C disqualifiee. Seuls A et B sont clusterises.
+JOURS_EN_PANNE = {"20260612", "20260619", "20260624", "20260625", "20260630",
+                  "20260703", "20260803", "20260805", "20260810", "20260904"}
+PROVENANCE = {}
+try:
+    import pandas as _pd
+    _p = _pd.read_csv("DOCS/features_provenance.csv")
+    PROVENANCE = dict(zip(_p.colonne, _p.provenance))
+except Exception as _e:  # noqa: BLE001
+    print("[avert] features_provenance.csv illisible (%s) : perimetre non filtre" % _e)
+RETENUES = {c for c, n in PROVENANCE.items() if n in ("A", "B")}
+
 # Features dont la dependance a l'heure EST l'information. Les normaliser
 # reviendrait a retirer ce qu'elles disent : l'Initial Balance se construit
 # dans la premiere heure, un compteur de minutes depuis une news mesure un
@@ -197,7 +211,9 @@ def charger(symbole: str, jours: int, dossier: str,
     """
     lignes = []
     motif = os.path.join(dossier, symbole, "*.jsonl")
-    for chemin in sorted(glob.glob(motif))[-jours:]:
+    fichiers = [c for c in sorted(glob.glob(motif))
+                if os.path.basename(c)[:8] not in JOURS_EN_PANNE]
+    for chemin in fichiers[-jours:]:
         with open(chemin, "r", encoding="utf-8", errors="replace") as fh:
             for ligne in fh:
                 ligne = ligne.strip()
@@ -205,6 +221,10 @@ def charger(symbole: str, jours: int, dossier: str,
                     continue
                 bar = json.loads(ligne)
                 if rth_seul and not bar.get("is_cash_session"):
+                    continue
+                # Filtre unique de CONVENTIONS.md §4 : une ligne degraded a des
+                # colonnes derivees vides et des OHLC non fiables.
+                if bar.get("data_quality_flag") not in (None, "stable"):
                     continue
                 lignes.append(bar)
     if not lignes:
@@ -341,6 +361,13 @@ def nettoyer(df: pd.DataFrame, rth_seul: bool, part_train: float = 0.8):
 
     for c in df.columns:
         if c in _TECHNIQUES:
+            continue
+        # Perimetre arrete en amont (classer_colonnes.py) : seuls A et B sont
+        # clusterises. N = niveau de prix, entree de recalc.py ; R = evenement
+        # rare, garde pour la phase 2 ; C = disqualifiee.
+        if RETENUES and c not in RETENUES:
+            motifs["hors perimetre (%s)" % PROVENANCE.get(c, "?")].append(
+                (c, "niveau %s" % PROVENANCE.get(c, "inconnu")))
             continue
         fuite = est_fuite(c)
         if fuite:
@@ -497,7 +524,17 @@ def choisir_representant(membres, rho, df) -> str:
                        float(rho.loc[m, autres].abs().mean()),
                        float(df[m].notna().mean())))
     meilleure = max(s[1] for s in scores)
-    finalistes = [s for s in scores if s[1] >= meilleure - 0.02]
+    # PROVENANCE — une colonne verifiee par identite (niveau A) est preferee a
+    # une colonne seulement plausible (B), mais SEULEMENT parmi les candidats
+    # a moins de 10 % de la meilleure centralite : un A a 0,60 ne resume pas
+    # un cluster dont le B central est a 0,92.
+    proches = [s for s in scores if s[1] >= meilleure * 0.90]
+    niveau_a = [s for s in proches if PROVENANCE.get(s[0]) == "A"]
+    if niveau_a:
+        meilleure = max(s[1] for s in niveau_a)
+        finalistes = [s for s in niveau_a if s[1] >= meilleure - 0.02]
+    else:
+        finalistes = [s for s in scores if s[1] >= meilleure - 0.02]
     finalistes.sort(key=lambda s: (-s[2], len(s[0])))
     return finalistes[0][0]
 
