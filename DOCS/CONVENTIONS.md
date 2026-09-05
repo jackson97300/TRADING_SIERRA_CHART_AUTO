@@ -113,6 +113,29 @@ courtes par nature, attendues, comptees a part.
 
 Script : `CORE/research/valider_filtre_stable.py`.
 
+### 4.1 Source unique, et volumetrie mesuree le 05/09/2026
+
+**`DATA/live_enriched/sierra/` est la seule source.** Databento est abandonne
+pour ce projet : ne jamais le proposer, ne jamais s'appuyer sur un resultat qui
+en vient (cf memoire `project_source_data_unique_jsonl_live_20260523`).
+
+Comptage sur les barres `stable` **distinctes par minute** — jamais sur un ratio
+de lignes, certains fichiers portant jusqu'a 20 940 lignes pour 1 259 barres :
+
+| Jour | ES | NQ | lecture |
+|---|---|---|---|
+| lundi a jeudi | 1379 | 1379 | seance pleine |
+| vendredi | 1259 | 1260 | seance courte — attendu |
+| dimanche | 119 | 119 | ouverture du soir, pas une seance |
+
+**57 jours de seance utilisables** par instrument (lun-ven, >= 1000 barres),
+soit **114 jours-instruments**, ~76 000 barres stable chacun. Periode 10/06 au
+04/09/2026.
+
+Consequence pour toute hypothese : un declenchement par jour et par instrument
+rend ~110 signaux. En dessous de 55 attendus, le dire **avant** de tourner.
+
+
 ## 5. Independance aux frontieres de fichier
 
 Le DMP decoupe par journee de trading (22:01 → 20:58). L'enricher decoupe par
