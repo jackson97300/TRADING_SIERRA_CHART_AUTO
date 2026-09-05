@@ -67,6 +67,43 @@ jamais a un autre** (cf `DOCS/ECART_ES_NQ_PAR_FEATURE.csv`).
 l'unite : les deux membres peuvent partager le meme defaut. Toute colonne en unite
 physique doit avoir une borne de plausibilite verifiee independamment.
 
+### 3.1 Un defaut d'initialisation ne doit jamais etre une valeur valide du domaine
+
+`DMP_Transform.h:1355-1390` initialise les champs avant que leur module ne les calcule. Deux facons
+de le faire coexistent dans le meme bloc, a deux lignes d'intervalle :
+
+```c
+f.day_type             = 2.0f;         // "NormVar = le type le plus frequent (42%)"
+f.profile_hvn_dominant = DMP_INVALID;  // "Pas encore calcule"
+```
+
+La seconde est la bonne. La premiere rend « NormVar calcule » et « NormVar jamais calcule »
+**indistinguables** : aucun consommateur ne peut les separer, aucun controle ne peut le detecter
+sans comparer a une distribution attendue, et le champ ment sans jamais etre nul.
+
+**Regle** : si le module de calcul peut ne pas tourner, la valeur d'initialisation doit etre
+**hors du domaine** des valeurs mesurables (`DMP_INVALID`, ou un code « non calcule » ajoute a
+l'enum). Un defaut « raisonnable » est precisement celui qu'on ne remarquera pas.
+
+**Crible du bloc, mesure le 06/09** sur 53 jours de seance ES (RTH, dedoublonne). Neuf champs sont
+initialises a une valeur qui appartient a leur domaine ; un seul se materialise :
+
+| champ | defaut | jours figes | part du RTH |
+|---|---|---|---|
+| `day_type` | 2.0 (NormVar) | **33 / 53** | **82,1 %** |
+| `open_zone` | 4.0 (AT_POC) | 0 / 53 | 0,0 % |
+| `profile_shape` | 0.0 (D-shape) | 0 / 53 | 8,0 % |
+| `poc_separation_ticks` | 0.0 | 0 / 53 | 43,7 % (valeur reelle : pas de double distribution) |
+| `profile_skew`, `poc_position`, `volume_imbalance`, `rvol`, `rvol_zscore` | — | 0 / 53 | < 1 % |
+
+Le risque est donc structurel sur neuf champs et realise sur un seul. Ce n'est pas une raison de
+laisser les huit autres : ils sont a une panne de module de faire la meme chose, sans rien qui le
+signale. Correctif C++ (`DMP_INVALID` partout) porte dans `NEXT_CYCLE.md`.
+
+**Consequence de lecture** : `day_type` ne doit pas etre lu tel quel. Surveillance : controle L6
+n7 `valeurs_par_defaut`.
+
+
 ## 4. Lecture des barres : le filtre unique
 
 **Lire `ts`, jamais `ts_raw_ms`.** Le fichier porte les deux : `ts` est

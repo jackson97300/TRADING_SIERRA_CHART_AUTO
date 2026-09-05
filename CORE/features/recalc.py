@@ -383,3 +383,51 @@ def momentum(close, n):
     """
     c = pd.to_numeric(close, errors="coerce")
     return c - c.shift(n)
+
+
+# ---------------------------------------------------------------------------
+# 8. Dedoublonnage — le chemin correct doit etre le chemin court
+# ---------------------------------------------------------------------------
+
+def dedoublonner_par_minute(lignes, cle_ts="ts", garder="dernier"):
+    """Une ligne par minute. **A appeler dans tout script qui lit les JSONL brut.**
+
+    L'enricher reecrit des lignes deja ecrites : un fichier peut porter 20 940
+    lignes pour 1 259 barres reelles. Un comptage fait sans cette etape donne un
+    resultat plausible et faux — c'est arrive deux fois le 06/09, sur le nombre
+    de jours exploitables puis sur `day_type`, et une seule des deux a ete
+    rattrapee par un controle.
+
+    `charger_jour()` de la surveillance le fait deja, mais met deux minutes sur
+    57 jours ; la tentation d'un script « rapide » qui saute l'etape est la cause
+    racine des deux erreurs. Cette fonction existe pour que le chemin correct
+    tienne en une ligne.
+
+    Accepte une liste de dicts (JSONL) ou un DataFrame, et rend le meme type.
+    `garder` : "dernier" (la reecriture fait foi) ou "premier".
+
+    >>> lignes = [{"ts": 60000, "x": 1}, {"ts": 60000, "x": 2}, {"ts": 120000, "x": 3}]
+    >>> [d["x"] for d in dedoublonner_par_minute(lignes)]
+    [2, 3]
+    """
+    if isinstance(lignes, pd.DataFrame):
+        if lignes.empty or cle_ts not in lignes.columns:
+            return lignes
+        minute = pd.to_numeric(lignes[cle_ts], errors="coerce") // 60000
+        ordre = "last" if garder == "dernier" else "first"
+        return (lignes.assign(_minute=minute)
+                      .dropna(subset=["_minute"])
+                      .drop_duplicates("_minute", keep=ordre)
+                      .drop(columns="_minute")
+                      .sort_values(cle_ts)
+                      .reset_index(drop=True))
+
+    par_minute = {}
+    for d in lignes:
+        ts = d.get(cle_ts)
+        if ts is None:
+            continue
+        m = int(ts) // 60000
+        if garder == "dernier" or m not in par_minute:
+            par_minute[m] = d
+    return [par_minute[m] for m in sorted(par_minute)]
