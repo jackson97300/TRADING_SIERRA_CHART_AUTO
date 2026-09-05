@@ -93,7 +93,7 @@ def _res(nom, etat, message, **ctx):
     return {"controle": nom, "etat": etat, "message": message, **ctx}
 
 
-def controle_volumetrie(df, sym, jour):
+def controle_volumetrie(df, sym, jour, ecourtee=False):
     st = df[df.get("data_quality_flag", "stable") == "stable"]
     n = len(st)
     part = n / BARRES_SESSION
@@ -101,6 +101,16 @@ def controle_volumetrie(df, sym, jour):
     if dow == "Sunday":
         return _res("volumetrie", "INFO",
                     "dimanche : %d barres, seance courte attendue" % n,
+                    barres=n, part=round(part, 3))
+    if ecourtee:
+        # La CONTINUITE tranche, pas le compte de barres — c'est la regle du
+        # §4. Le 19/06 sur ES : bloc continu de 13:30 a 16:58 UTC, cloture
+        # anticipee de Juneteenth, et 209 barres cash sur 390. Sans cette
+        # subordination, chaque ferie CME leve une alerte, et une alerte qui se
+        # declenche sans action est une alerte qu'on finit par ignorer.
+        return _res("volumetrie", "INFO",
+                    "%d barres (%.0f %%) — seance ecourtee confirmee par la "
+                    "continuite, pas une panne" % (n, 100 * part),
                     barres=n, part=round(part, 3))
     etat = "OK" if part >= SEUIL_EXPLOITABLE else "ALERTE"
     return _res("volumetrie", etat,
@@ -233,14 +243,78 @@ def controle_derive(df, sym, jour, regles):
                 familles_en_derive=[f for f, _ in derives])
 
 
+def controle_rollover(df, sym, jour):
+    """Le contrat suivi change-t-il proprement, et tout suit-il le meme jour ?
+
+    Le roll CME sur indices se fait HUIT jours avant l'expiration : pour
+    ESU26/NQU26 qui expirent le 18/09, c'est le jeudi 10/09 que le volume
+    bascule. Trois choses doivent bouger ensemble ce jour-la — sinon l'une des
+    trois est restee sur l'ancien contrat :
+
+      `contract` change      sinon le dumper ne suit pas le front month
+      `is_roll_day` vaut 1   sinon le drapeau ne voit pas ce que la colonne dit
+      les niveaux F11 bougent sinon MenthorQ publie encore sur l'ancien contrat
+
+    Ce controle n'a de valeur que s'il existe AVANT le roll.
+    """
+    if "contract" not in df.columns:
+        return _res("rollover", "INFO", "colonne contract absente")
+    ct = sorted(set(df["contract"].dropna().astype(str)))
+    if len(ct) > 1:
+        return _res("rollover", "ALERTE",
+                    "deux contrats dans la meme journee : %s" % ", ".join(ct),
+                    contrats=ct)
+    veille = None
+    for f in sorted(glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym)):
+        if os.path.basename(f)[:8] >= jour:
+            continue
+        veille = f
+    if veille is None:
+        return _res("rollover", "INFO", "pas de veille disponible", contrat=ct[0])
+    ct_v = None
+    for ln in open(veille, encoding="utf-8", errors="ignore"):
+        ln = ln.strip()
+        if ln[:1] != "{":
+            continue
+        try:
+            ct_v = json.loads(ln).get("contract")
+        except ValueError:
+            continue
+        if ct_v:
+            break
+    if not ct_v or str(ct_v) == ct[0]:
+        return _res("rollover", "OK", "contrat inchange : %s" % ct[0],
+                    contrat=ct[0])
+    # Le contrat a change : les deux autres doivent suivre.
+    flag = pd.to_numeric(df.get("is_roll_day"), errors="coerce")
+    flag_ok = bool(flag is not None and (flag == 1).any())
+    mq = pd.to_numeric(df.get("dist_mq_call"), errors="coerce")
+    mq_bouge = bool(mq is not None and mq.notna().any())
+    manques = []
+    if not flag_ok:
+        manques.append("is_roll_day ne vaut jamais 1")
+    if not mq_bouge:
+        manques.append("dist_mq_call absente — MenthorQ n'a pas suivi")
+    return _res("rollover", "ALERTE" if manques else "INFO",
+                "ROLL %s -> %s%s" % (ct_v, ct[0],
+                                     " | " + " ; ".join(manques) if manques
+                                     else " — is_roll_day et MenthorQ suivent"),
+                contrat=ct[0], contrat_veille=str(ct_v), manques=manques)
+
+
 def surveiller(sym: str, jour: str, regles) -> list:
     df = charger_jour(sym, jour)
     if df.empty:
         return [_res("chargement", "ALERTE", "aucune donnee pour %s %s" % (sym, jour))]
-    return [controle_volumetrie(df, sym, jour),
-            controle_continuite(df, sym, jour),
+    # La continuite d'abord : c'est elle qui tranche entre seance ecourtee et
+    # panne, et la volumetrie s'y subordonne.
+    cont = controle_continuite(df, sym, jour)
+    ecourtee = "ecourtee" in cont["message"]
+    return [controle_volumetrie(df, sym, jour, ecourtee=ecourtee),
+            cont,
             controle_fenetre(df, sym, jour),
             controle_reset_vwap(df, sym, jour),
+            controle_rollover(df, sym, jour),
             controle_derive(df, sym, jour, regles)]
 
 

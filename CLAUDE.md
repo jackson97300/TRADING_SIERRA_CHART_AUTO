@@ -4,9 +4,25 @@
 
 **AVANT toute reponse substantive a Jackson** (nouvelle session ou apres `/compact`) :
 
-1. **Lire `DOCS/INCIDENT_LOG.md`** integralement (ordre anti-chronologique, dernier incident en haut)
-2. Identifier categories d'incidents recents : `CONTEXT_MISS`, `VALIDATION_MISS`, `AGENT_MISUSE`, `PATTERN_11`, `COMMENT_FALSE`, `SCOPE_CREEP`, `OVER_ENGINEERING`, `DEPLOY_UNSAFE`
-3. Mentalement flagger : "si Jackson demande X aujourd'hui → consulter Y AVANT d'agir"
+1. **Lire l'en-tete de `DOCS/INCIDENT_LOG.md`** — protocole, liste des categories, et les
+   5 derniers incidents (`head -235`, ordre anti-chronologique — verifie : 235 lignes = 5
+   entrees completes ; `head -120` n'en donne qu'UNE, tronquee).
+   **NE PAS le lire integralement** : 490 Ko / 5489 lignes, soit la moitie de la fenetre de
+   contexte brulee avant la premiere reponse. Une regle inapplicable finit par etre ignoree,
+   donc elle ne protege rien.
+2. **Grep par categorie AU MOMENT de l'action critique**, pas au demarrage :
+   `grep -n "^### .*CATEGORIE" DOCS/INCIDENT_LOG.md` puis lire les entrees qui matchent.
+   **NE PAS utiliser `grep "\[CATEGORIE\]"`** : 30 % des entrees ont une categorie composee
+   (`[DEPLOY_UNSAFE + PATTERN_11]`), que le crochet fermant fait rater. Mesure 04/09 :
+   DEPLOY_UNSAFE 5 trouves sur 15, PATTERN_11 9 sur 20, DATA_MINING_TRAP 3 sur 10.
+   Le motif `^### ` ancre sur les titres d'entree et rend 100 % des occurrences.
+   C'est le protocole que le fichier prescrit lui-meme ("Grep ce fichier pour la categorie
+   concernee", INCIDENT_LOG.md l.9).
+3. Categories (12 — source de verite : `DOCS/INCIDENT_LOG.md` l.13-25, resynchroniser si ajout) :
+   `CONTEXT_MISS`, `VALIDATION_MISS`, `AGENT_MISUSE`, `PATTERN_11`, `COMMENT_FALSE`, `SCOPE_CREEP`,
+   `OVER_ENGINEERING`, `DEPLOY_UNSAFE`, `LAZY_DELEGATION`, `DATA_MINING_TRAP`, `DECISION_SOUVERAINE`,
+   `SCALE_DRIFT`
+4. Mentalement flagger : "si Jackson demande X aujourd'hui → consulter Y AVANT d'agir"
 
 **Actions critiques declencheurs** du protocole (avant de les faire, consulter INCIDENT_LOG) :
 - Fix C++ (DMP_*, CPP/*)
@@ -25,9 +41,42 @@
 **Protocole complet** : `.claude/rules/incident-protocol.md`.
 **Trace factuelle** : `DOCS/INCIDENT_LOG.md` (jamais supprimer entrees).
 
-## DOCUMENTS DE REFERENCE A AUTO-CHARGER (30/04/2026)
+## DEUX REGLES DE METHODE (05/09/2026)
 
-**Au demarrage de chaque session**, en plus de INCIDENT_LOG.md :
+Etablies apres une semaine ou six « anomalies » sur sept se sont revelees etre
+des conventions, et ou cinq faux positifs de crible ont failli supprimer des
+features saines.
+
+**1. Mesurer avant d'annoncer, et qu'un autre lise.**
+Ne jamais qualifier un ecart de bug, de regression ou d'anomalie avant de
+l'avoir mesure sur les deux instruments et sur l'ensemble de la periode. Une
+observation ponctuelle n'est pas une propriete : une seule barre a champs nuls
+a failli faire conclure que MenthorQ etait absent des donnees, alors qu'il est
+renseigne a 97,8 %. La moitie des corrections de cette semaine ont ete trouvees
+par le relecteur, pas par l'auteur du code.
+
+**2. Avant de declarer une anomalie, chercher la seconde convention.**
+Dans ce depot, la coexistence de deux conventions est le cas NORMAL, pas
+l'exception. Mesure : deux horodatages (`ts` et `ts_raw_ms`, alignes a 100 % et
+68,8 %), deux bornes de `session_date` (04:01 et 21:59 UTC), deux colonnes par
+niveau (`prev_vpoc` et `prev_vpoc_lvl`), deux decoupages de journee (DMP par
+journee de trading, enricher par date UTC), deux unites d'ATR (`atr` en points,
+`atr_14m` en ticks). Un ecart soudain a une date coincide presque toujours avec
+un COMMIT DE CORRECTION, pas avec une regression : verifier `git log --since
+--until` sur la fenetre avant d'ecrire le mot « regression ».
+
+**Corollaire pour les cribles** : ne jamais appliquer une regle generale sans
+verifier qu'elle vaut pour le cas particulier. Les bornes du VIX appliquees a
+une distance au VIX, une derive absolue sur un niveau d'options qui change tous
+les jours, un `max()` la ou une mediane est attendue, un controle de nulls sur
+un booleen qui vaut 0 hors de sa fenetre — quatre faux positifs, quatre fois la
+meme forme.
+
+## DOCUMENTS DE REFERENCE — CONSULTATION SUR DECLENCHEUR (30/04, revise 04/09/2026)
+
+**Ne PAS charger au demarrage** (35 Ko + 23 Ko) — grep cible au moment du declencheur,
+liste en bas de section. Meme raison qu'INCIDENT_LOG : ce qui est trop gros pour etre lu
+finit par ne pas l'etre.
 
 1. **`DOCS/MANUEL_EDGE_JACKSON.md`** (838 lignes — lecture ciblee suffit)
    - Convention SC Alert Conditions ([-N]=passe, [+N]=futur)
@@ -78,15 +127,6 @@
 3. Si rollback : ne PAS supprimer l'entry, ajouter "Rolled back at ..." + raison
 
 **Regle souveraine** : toute modif du scoring/gates doit prouver via backtest que **les wins historiques restent wins** (preservation). Sinon rollback immediat.
-
-## Role
-Tu es mon mentor impitoyable et mon partenaire de reflexion. Ton role est de trouver la verite et de me la dire franchement, meme si cela doit blesser mes sentiments.
-- Ne sois JAMAIS d'accord juste pour etre agreable. Si j'ai tort, dis-le directement.
-- Trouve les faiblesses et angles morts. Signale-les meme si je n'ai pas demande.
-- Pas de flatterie. Pas de "bonne question !" Pas d'adoucissement inutile.
-- Si tu n'es pas sur, dis-le. Verifie par des recherches et fournis les sources.
-- Resiste fermement. Force-moi a defendre mes idees ou a abandonner les mauvaises.
-- Si j'ai l'air de vouloir de la validation plutot que la verite, fais-le remarquer.
 
 ## Projet
 MIA (Market Intelligence Advisor) — Systeme de trading automatise pour ES et NQ futures micros.
@@ -390,13 +430,22 @@ Claude orchestre automatiquement — tu parles normalement, le bon agent est dis
 /train        Pipeline complet DatasetBuilder v2 + LightGBM
 /vwap         Etude VWAP SD1-SD3 complete
 /audit-cpp    Verifie coherence schema C++ <-> Python
+/audit-features    Audit qualite des features du dataset (5 criteres V2)
+/verif-logs        Debug logs MIA V2 (errors -> events -> decisions -> signal_id)
+/bilan-session-jour  Bilan post-session multi-bots (4 agents + 1 meta)
+/etat              Fige l'etat de la session avant /compact ou fin de session
 ```
 
-## Hooks automatiques (settings.json)
+## Hooks (settings.json)
 
-| Hook | Declencheur | Action |
-|------|-------------|--------|
-| SessionStart | Ouverture Claude Code | Auto-sync JSONL du VPS via SCP |
+**AUCUN hook de session actif — et c'est volontaire.**
+
+`SessionStart` est neutralise en `_SessionStart_DISABLED` (settings.json l.33). Il faisait
+un auto-sync JSONL du VPS par scp : commande reseau bloquante -> MCP handshake timeout 30s
+-> Claude Code injouable (incident 12/04/2026, demi-journee perdue).
+
+**NE JAMAIS LE REACTIVER.** Auto-sync = `/sync` manuel ou tache planifiee Windows.
+Seul hook actif : un `PostToolUse` etroitement filtre sur `scp *ACS_Source*`.
 
 ## Commandes quotidiennes
 ```bash
@@ -458,182 +507,15 @@ Workflow:
   -> Jackson compile dans Sierra Chart (5 sec) -> Reload Charts 30/31
 ```
 
-## Site Web & Dashboard — Architecture CRITIQUE (ne pas oublier !)
+## Site Web & Dashboard
 
-### 2 produits distincts et COMPLEMENTAIRES
+2 produits distincts : **site marketing** (mia-ia-system.com, Vercel, repo PUBLIC
+`jackson97300/mia-website`) et **dashboard app** (dashboard.mia-ia-system.com,
+FastAPI port 8503 sur le VPS via Cloudflare Tunnel, repo PRIVE).
 
-| Produit | URL | Repo | Heberge sur | Type |
-|---------|-----|------|-------------|------|
-| **Site marketing** | https://mia-ia-system.com | `jackson97300/mia-website` (PUBLIC) | Vercel | Build statique Next.js (export) |
-| **Dashboard app** | https://dashboard.mia-ia-system.com | `jackson97300/TRADING_SIERRA_CHART_AUTO` (PRIVE) | VPS Windows via Cloudflare Tunnel | FastAPI/Uvicorn port 8503 |
-
-### Site marketing mia-ia-system.com
-
-**Repo local** : `D:\mia-website\` (git remote = jackson97300/mia-website)
-**Push via** : GitHub Desktop → Vercel auto-deploy sur push main
-**Framework Vercel** : "Other" (Build Command vide, Output Directory ".")
-**IMPORTANT** : Vercel **ne build PAS** — il sert les fichiers statiques tels quels
-
-**Contenu du repo `D:\mia-website\`** :
-- Seulement le **BUILD statique** (dossier `_next/`, pas de `package.json`, pas de `src/`)
-- Pages : `/`, `/register`, `/login`, `/calendar`, `/education`, `/legal`, `/privacy`, `/terms`, `/forgot-password`, `/risk`, `/coming-soon`
-- `mia-fixes.js` : **patch JavaScript critique** qui modifie le site apres chargement React (hide Google OAuth button, redirect submit, add footer links, etc.)
-- `mia-fixes.css` : fixes CSS (header opaque, body padding, ticker)
-- `ticker.js` : ticker SPY/QQQ/IWM + Mag 7
-- `vercel.json` : framework "Other"
-- `robots.txt`, `sitemap.xml`
-
-**Le SOURCE Next.js est PERDU ou INTROUVABLE** (verifie 09/04/2026).
-Les dossiers `D:\MIA_IA_system\website-nextjs\` et `website_nextjs\` contiennent un source **incomplet** (layout.tsx + page.tsx seulement, pas de register/login).
-Un source complet existe peut-etre dans `D:\$RECYCLE.BIN\S-1-5-21-...\$RJQSX6F\` (corbeille Windows).
-
-**Ce que fait `mia-fixes.js` (patches a froid sur le build)** :
-```js
-// Variables globales
-var DASHBOARD_URL = 'https://dashboard.mia-ia-system.com';
-
-// 1. Hide Google OAuth button (qui etait un placeholder "A implementer")
-function hideGoogleOAuth() { ... }
-
-// 2. Intercept form submit sur /register et /login → redirect vers dashboard
-function fixLoginRegister() {
-  if (path.indexOf('/register') !== -1 && loginForm) {
-    loginForm.addEventListener('submit', function(e) {
-      e.preventDefault();
-      window.location.href = DASHBOARD_URL + '/register';
-    });
-  }
-}
-
-// 3. Add footer links Dashboard + Discord
-function fixFooterDashboard() { ... }
-
-// 4. Redirect buttons pointing to localhost → DASHBOARD_URL
-// 5. Header opaque force (backdrop shield div)
-// 6. Pricing 3 tiers (hide+insert anti-React)
-// 7. Ticker retry 1s/3s/5s (anti React hydration)
-// 8. Section Resultats Verifies ($19,880 payouts, 3 prop firms)
-// 9. SEO meta descriptions
-```
-
-**Flow actuel signup (casse, a reparer)** :
-```
-User → mia-ia-system.com/register
-     → Next.js affiche form UI (mockup, pas de fetch natif)
-     → mia-fixes.js intercept submit event
-     → window.location = dashboard.mia-ia-system.com/register
-     → Dashboard n'a PAS de page /register dediee
-     → Dashboard home affiche le formulaire sidebar trial
-     → User doit RE-REMPLIR le form (mauvaise UX)
-```
-
-**Flow cible (a coder)** :
-```
-User → mia-ia-system.com/register
-     → Next.js affiche form (patche par mia-fixes.js)
-     → mia-fixes.js intercept submit + fait fetch cross-origin vers
-       https://dashboard.mia-ia-system.com/api/auth/trial
-     → Backend cree user, retourne JWT
-     → mia-fixes.js stocke token dans localStorage cross-domain (via iframe ou cookie .mia-ia-system.com)
-     → Redirect vers dashboard.mia-ia-system.com deja loggue
-```
-
-**CORS** : dashboard.mia-ia-system.com doit autoriser l'origine `https://mia-ia-system.com` dans les headers.
-
-### Dashboard dashboard.mia-ia-system.com
-
-**Repo** : `D:\TRADING_SIERRA_CHART_AUTO\` (sous-dossier `DASHBOARD/`)
-**Stack** : FastAPI + Uvicorn + HTML/JS/CSS statique (lightweight-charts, pas de framework)
-**Port VPS** : 8503 (Uvicorn --workers 1)
-**Tunnel** : Cloudflare Tunnel "tableau de bord Mia" → dashboard.mia-ia-system.com
-**users.json** : `DASHBOARD/users.json` (hors git — contient owner + trial users)
-**JWT secret** : `.jwt_secret` (hors git, persistant)
-
-**Endpoints auth** (DASHBOARD/api/auth.py) :
-- `POST /api/auth/register` — signup classique
-- `POST /api/auth/login` — login avec downgrade auto trial expire + tracking last_login
-- `POST /api/auth/trial` — signup trial 7j + capture IP/pays/langue/UA/UTM/RGPD + notif Discord
-- `GET /api/auth/verify?token=...` — confirme email (trial classique)
-- `POST /api/auth/resend-verification` — renvoie email verification (rate limit 60s)
-- `POST /api/auth/google` — OAuth Google (verifie ID token server-side + cree/login user)
-- `POST /api/auth/promo` — code promo
-
-**Endpoints admin (owner only)** :
-- `/api/bot/stop`, `/api/bot/start`, `/api/bot/status` — kill switch
-- `/api/admin/users/stats` — stats users par tier
-- `/api/admin/bot/health` — heartbeat bot
-- `/api/admin/bot/recent_trades`, `/api/admin/bot/rejections`
-- `/api/admin/discord/test`
-- `/api/admin/logs/tail`
-
-**Tiers users** :
-```
-TIER_LEVELS = {"free": 0, "starter": 1, "trial": 2, "pro": 2, "admin": 3, "owner": 3}
-```
-- **FREE** : chart OHLC sans niveaux, banner prix, pas de 4-big-boxes, pas de jauges, pas de MTF, pas de pages dediees
-- **STARTER (19$/mois)** : Overview complet + Niveaux & VWAP + Alertes (pas de pages PRO)
-- **PRO (49$/mois)** : tout accessible
-- **TRIAL** : acces PRO 7 jours
-- **OWNER (jackson)** : PRO + Admin Tools
-
-**Pattern UI tier gating (Pattern D - TradingView style)** :
-- Floutage leger 3px + badge coin discret "🔒 STARTER" / "🔒 PRO"
-- CTA global en bas d'Overview (FREE only)
-- Modal au click sur page PRO bloquee (pas d'overlay permanent)
-- Bandeau dore en haut (FREE only)
-- Navigation grise + badge PRO pour pages bloquees
-
-### Stack auth cible (en cours 09/04/2026)
-
-| Composant | Provider | Statut |
-|-----------|----------|--------|
-| Signup/Login classique | FastAPI + PBKDF2 + JWT | ✅ Fonctionnel |
-| Google OAuth | Google Identity Services | Backend ✅ / Frontend ⏳ / Client ID ⏳ |
-| Email verification | Brevo SMTP API (300/jour gratuit) | Module ✅ / API key ⏳ |
-| Captcha anti-bot | Cloudflare Turnstile | Non implemente ⏳ |
-| 2FA TOTP | - | BACKLOG (Jackson : "plus tard") |
-
-**Fichiers de secrets (tous dans .gitignore)** :
-- `.jwt_secret` : secret HMAC pour JWT
-- `.brevo_secret` : API key Brevo (format xkeysib-...)
-- `.google_oauth_secret` : Client ID Google OAuth
-- `.turnstile_secret` : site key + secret key Cloudflare Turnstile
-- `BOT/alert_config.json` : 12 webhooks Discord V1
-
-### Deploiement dashboard sur VPS
-
-```bash
-# Fichiers backend
-scp DASHBOARD/api/*.py Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/api/"
-
-# Fichiers frontend (statiques servis par FastAPI)
-scp DASHBOARD/static/index.html Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/static/"
-scp DASHBOARD/static/js/dashboard.js Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/static/js/"
-scp DASHBOARD/static/css/dashboard.css Administrator@212.28.179.199:"C:/TRADING_SIERRA_CHART_AUTO/DASHBOARD/static/css/"
-
-# Bump version dans index.html (dashboard.js?v=XX + dashboard.css?v=XX) pour casser le cache
-# Restart uvicorn uniquement si app.py ou auth.py modifie :
-ssh Administrator@212.28.179.199 'powershell -Command "Get-CimInstance Win32_Process -Filter \"Name like '\''python%'\''\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"'
-ssh Administrator@212.28.179.199 'cd C:/TRADING_SIERRA_CHART_AUTO && "C:/Program Files/Python311/python.exe" -m uvicorn DASHBOARD.api.app:app --host 0.0.0.0 --port 8503 --workers 1' &
-```
-
-**Le dashboard uvicorn n'est PAS persistant** — meurt quand la session SSH ferme. A rendre persistant avec nssm ou Task Scheduler (backlog).
-
-### Workflow modification site marketing
-
-```
-1. Si modification simple (patch CSS/JS) :
-   - Modifier D:\mia-website\mia-fixes.js ou mia-fixes.css
-   - GitHub Desktop : commit + push
-   - Vercel auto-deploy en 30-60s
-
-2. Si modification profonde (nouvelle page, formulaire) :
-   - PROBLEME : source Next.js perdu/introuvable
-   - Solution temporaire : patch via mia-fixes.js
-   - Solution propre : reconstruire source Next.js OU migrer vers du HTML statique simple
-
-3. NE JAMAIS push d'infos sensibles dans ce repo (il est PUBLIC)
-```
+Architecture detaillee, endpoints auth, tiers users, procedures de deploiement et
+workflow de modification du site : **`DOCS/DEPLOY_DASHBOARD_SITE.md`**.
+A lire avant toute intervention sur le site ou le dashboard.
 
 ## Feuille de route
 

@@ -33,6 +33,28 @@
 
 ---
 
+### 2026-09-05 — [ATTENDU] — 06/09 : fichier mixte w0/w1, ce n'est pas un defaut
+
+**Contexte** : la surveillance L6 leve une ALERTE quand un fichier melange deux
+`window_version` — un lot mixte sur une colonne de session doit etre refuse,
+pas moyenne.
+
+**Ce qui va se produire** : le fichier du 06/09 SERA mixte, par construction.
+Les fichiers sont decoupes par date UTC ; la bascule w0 -> w1 tombe a 21:00 UTC
+ce jour-la, a l'ouverture de la premiere session apres la correction des session
+times Sierra. Le controle a raison de le dire, et il n'y a rien a corriger.
+
+**Ce qu'il ne faut pas faire** : traiter cette alerte comme un incident, ni
+desactiver le controle. A partir du 07/09, `ALERTE fenetre` redevient un vrai
+signal — et c'est precisement pour cela qu'il faut savoir que celle-ci ne l'est
+pas.
+
+**Trigger prevention** : une seule journee est concernee. Si l'alerte se
+represente apres le 07/09, elle designe un vrai melange et doit etre traitee.
+
+**Reviewed** : revue croisee Fable, qui a signale le cas avant qu'il ne se
+produise.
+
 ### 2026-09-05 — [VALIDATION_MISS] — 14/06 : les etudes rechargees sans redemarrage
 
 **Contexte** : production de `DOCS/features_stale.csv`, la liste des couples
