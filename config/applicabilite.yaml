@@ -1,0 +1,65 @@
+# Fenetres d'applicabilite des features conditionnelles.
+#
+# Une feature qui ne vaut que dans une fenetre n'est pas defaillante hors de
+# celle-ci : elle est inapplicable. Le crible de `classer_colonnes.py` mesurait
+# ses nulls sur la journee entiere et l'ecartait — 21 colonnes ecartees a tort,
+# dont toute la famille INITIAL BALANCE dont dependent H4, H5, H6 et deux des
+# quatre regimes.
+#
+# La fenetre se DECLARE ici, elle ne se devine pas. Sans cela, chaque colonne
+# aurait son seuil ad hoc et le crible ne voudrait plus rien dire.
+#
+# Le test devient double :
+#   1. nulls < 10 % DANS la fenetre declaree
+#   2. >= 95 % de nulls HORS de la fenetre
+# La seconde moitie est le controle qui manquait : une feature d'Initial
+# Balance renseignee a 9h45 est un bug, pas une donnee.
+#
+# Le meme masque sert au runner de la mission : il ne lit jamais une feature
+# hors de sa fenetre.
+
+# Les fenetres sont implementees dans `classer_colonnes.py:_FENETRES`.
+# Ce fichier ne porte que le rattachement motif -> fenetre.
+regles:
+
+  - motif: "^ib_|^ctx_ib_|^dist_ib_|^range_extension_(above|below)_ib"
+    fenetre: apres_ib
+    raison: >
+      L'Initial Balance se construit de 9h30 a 10h30 ET. Avant sa cloture,
+      ni son etendue ni la position du prix en son sein n'existent.
+
+  - motif: "_0dte"
+    fenetre: jour_avec_0dte
+    raison: >
+      Il n'y a pas d'echeance du jour tous les jours. Hors de ces jours, les
+      niveaux 0DTE sont absents par nature, pas manquants.
+
+  - motif: "news"
+    fenetre: news_programmee
+    raison: >
+      Un delai jusqu'a la prochaine news n'a de valeur que s'il y a une news
+      programmee dans la journee.
+
+  - motif: "^dist_ny_open|^dist_after_"
+    fenetre: apres_ouverture_ny
+    raison: >
+      Une distance a l'ouverture de New York n'existe pas avant cette ouverture.
+
+  - motif: "^dist_london_open"
+    fenetre: apres_ouverture_londres
+    raison: >
+      Meme raisonnement pour l'ouverture europeenne.
+
+# Colonnes dont le vide n'est PAS conditionnel : la source ne les alimente pas.
+# Elles restent en C, et ce fichier sert a ne pas les confondre avec les
+# precedentes. Mesure 05/09 : nulls a 99 % par jour sur les 51 jours.
+vides_reels:
+  - dist_comp_20d_vpoc
+  - dist_comp_20d_vpoc_atr
+  - dist_comp_20d_vah
+  - dist_comp_20d_val
+  - dist_comp_20d_vwap
+  - inside_comp_20d_va
+  - inside_comp_50d_va
+  - comp_vpoc_align_20_50
+  - comp_vpoc_align_day_20
