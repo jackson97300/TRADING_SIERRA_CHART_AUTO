@@ -1,0 +1,91 @@
+check,%echec,n,ecart_median,%signe_inverse,exemple,note
+"high >= max(open,close)",0.0%,70676,0.0,0.0,,
+"low  <= min(open,close)",0.0%,70676,0.0,0.0,,
+range_size = high-low (pts),0.0%,70676,0.0,0.0,,
+bar_body_ticks = |close-open|/tick,49.2%,70676,0.0,47.4,2026-06-11 15:56:00 attendu=11.00 obtenu=-11.00,
+bar_body_pct = body/range*100,49.2%,70671,-0.005,49.2,2026-06-11 15:56:00 attendu=9.17 obtenu=-9.17,
+range_size_ticks = (high-low)/tick,99.9%,70673,409.0,0.0,2026-06-11 15:56:00 attendu=120.00 obtenu=1166.00,si echec massif: mesure autre chose que la barre
+volume = total_vol,0.0%,70676,0.0,0.0,,
+total_vol = buy+sell,0.0%,70676,0.0,0.0,,
+delta_bar = buy-sell,0.0%,70676,0.0,0.0,,
+ask_pct + bid_pct = 1,0.0%,70676,0.0,0.0,,
+ask_pct = buy/total,0.0%,70676,0.0,0.0,,
+delta_pct = delta/total,0.0%,70676,0.0,0.0,,
+delta_bar_vol_norm = delta_pct,0.0%,70676,0.0,0.0,,
+ask_bid_imbalance = ask_pct-bid_pct,0.0%,70676,0.0,0.0,,
+cvd_bar_delta = delta_bar,0.0%,70674,0.0,0.0,2026-09-02 22:41:00 attendu=5.00 obtenu=30.00,
+delta_day = cumsum(delta_bar) par session Sierra,24.5%,70676,0.0,4.2,2026-06-11 15:56:00 attendu=-90.00 obtenu=1328.00,si echec: autre borne de session ou autre source
+delta_day = cumsum par session_date (temoin),95.2%,70676,0.0,23.4,2026-06-11 15:56:00 attendu=-90.00 obtenu=1328.00,temoin : compare l'ancienne cle a la nouvelle
+cvd_day = delta_day,6.9%,70676,0.0,1.9,2026-06-11 15:56:00 attendu=1328.00 obtenu=7735.00,
+cvd_session = cumsum(delta) depuis 9h30 ET,100.0%,20131,337.0,21.2,2026-06-11 15:56:00 attendu=-90.00 obtenu=1317.00,
+dist_vwap_d = (vwap_d-close)/tick,0.0%,70675,0.0,0.0,,
+dist_vwap_w = (vwap_w-close)/tick,0.0%,70675,0.0,0.0,,
+dist_vwap_m = (vwap_m-close)/tick,0.0%,70675,0.0,0.0,,
+dist_cur_vpoc = (cur_vpoc_lvl-close)/tick,0.0%,70675,0.0,0.0,,source reelle: cur_vpoc_lvl
+dist_cur_vah = (cur_vah_lvl-close)/tick,0.0%,70675,0.0,0.0,,source reelle: cur_vah_lvl
+dist_cur_val = (cur_val_lvl-close)/tick,0.0%,70675,0.0,0.0,,source reelle: cur_val_lvl
+dist_prev_vpoc = (prev_vpoc_lvl-close)/tick,0.0%,70675,0.0,0.0,,source reelle: prev_vpoc_lvl
+dist_prev_vah = (prev_vah_lvl-close)/tick,0.0%,70675,0.0,0.0,,source reelle: prev_vah_lvl
+dist_prev_val = (prev_val_lvl-close)/tick,0.0%,70675,0.0,0.0,,source reelle: prev_val_lvl
+dist_prev_vwap = (pvwap-close)/tick,92.0%,70675,0.005,21.9,2026-06-18 20:59:00 attendu=-4444.62 obtenu=-1309.41,
+dist_prev_vwap_sd1u = (pvwap_sd1u-close)/tick,92.0%,70675,208.143,21.7,2026-06-18 20:59:00 attendu=-4203.42 obtenu=-532.71,
+dist_prev_vwap_sd1d = (pvwap_sd1d-close)/tick,92.0%,70675,-164.276,20.4,2026-06-18 20:59:00 attendu=-4685.82 obtenu=-2076.17,
+dist_vwap_d_sd1u = (vwap_d_sd1u-close)/tick,0.0%,70675,0.0,0.0,,
+dist_vwap_d_sd2u = (vwap_d_sd2u-close)/tick,0.0%,70675,0.0,0.0,,
+dist_vwap_d_sd1d = (vwap_d_sd1d-close)/tick,0.0%,70675,0.0,0.0,,
+dist_pdh = (pdh-close)/tick,0.0%,60780,0.0,0.0,,
+dist_pdl = (pdl-close)/tick,0.0%,60780,0.0,0.0,,
+dist_sess_high = (sess_high-close)/tick,51.8%,70675,0.0,0.3,2026-06-11 17:00:00 attendu=1078.00 obtenu=31.00,
+dist_sess_low = (sess_low-close)/tick,42.5%,70675,0.0,0.1,2026-06-11 15:56:00 attendu=-916.00 obtenu=-2163.00,
+dist_ovn_high = (ovn_high-close)/tick,0.0%,70676,0.0,0.0,,
+dist_ovn_low = (ovn_low-close)/tick,0.0%,70676,0.0,0.0,,
+dist_ib_high = (ib_high-close)/tick,0.0%,17020,0.0,0.0,,
+dist_ib_low = (ib_low-close)/tick,0.0%,17020,0.0,0.0,,
+dist_open_cash = (open_cash_lvl-close)/tick,0.0%,70675,0.0,0.0,,source reelle: open_cash_lvl
+dist_open_830 = (open_830_lvl-close)/tick,0.0%,70577,0.0,0.0,,source reelle: open_830_lvl
+dist_cash_high_atr = (cash_high-close)/atr_14m,98.7%,23248,-2.236,98.5,2026-06-11 15:56:00 attendu=1.63 obtenu=-0.35,teste atr_14m; sinon voir 'atr'
+dist_asia_high_pct = (asia_high-close)/close*100,99.1%,69705,-0.571,98.0,2026-06-11 22:01:00 attendu=0.04 obtenu=-0.04,
+dist_vwap_d_atr = dist_vwap_d/atr,0.0%,70675,-0.0,0.0,,formule retenue parmi 8 candidates
+dist_vwap_d_pct = dist_vwap_d*tick/close*100,0.0%,70675,0.0,0.0,,
+dist_vwap_w_atr = dist_vwap_w/atr,0.0%,70675,-0.0,0.0,,formule retenue parmi 8 candidates
+dist_vwap_w_pct = dist_vwap_w*tick/close*100,0.0%,70675,-0.0,0.0,,
+dist_vwap_m_atr = dist_vwap_m/atr,0.0%,70675,-0.0,0.0,,formule retenue parmi 8 candidates
+dist_vwap_m_pct = dist_vwap_m*tick/close*100,0.0%,70675,-0.0,0.0,,
+dist_prev_vpoc_atr = dist_prev_vpoc/atr,0.0%,70675,-0.0,0.0,,formule retenue parmi 8 candidates
+dist_prev_vpoc_pct = dist_prev_vpoc*tick/close*100,87.6%,70675,-0.004,23.3,2026-06-18 22:16:00 attendu=-0.49 obtenu=-0.07,
+dist_pdh_atr = -dist_pdh*tick/atr,0.0%,60780,0.0,0.0,2026-06-26 20:59:00 attendu=-1.08 obtenu=4.33,formule retenue parmi 8 candidates
+dist_pdh_pct = dist_pdh*tick/close*100,0.0%,60780,-0.0,0.0,,
+dist_pdl_atr = -dist_pdl*tick/atr,0.0%,60780,-0.0,0.0,2026-06-26 20:59:00 attendu=-0.01 obtenu=0.06,formule retenue parmi 8 candidates
+dist_pdl_pct = dist_pdl*tick/close*100,0.0%,60780,-0.0,0.0,,
+dist_cur_vwap_vp = dist_vwap_d,0.0%,70675,0.0,0.0,,
+prev_vah_lvl >= prev_vpoc_lvl,0.0%,70675,0.0,0.0,,
+prev_vpoc_lvl >= prev_val_lvl,0.0%,70675,0.0,0.0,,
+cur_vah >= cur_vpoc >= cur_val,0.0%,70675,0.0,0.0,,
+vwap_d_sd1u-vwap_d = vwap_d-vwap_d_sd1d (bandes symetriques),0.0%,70675,0.0,0.0,,
+vwap_d_sd2u-vwap_d = 2*(sd1u-vwap_d),0.0%,70675,0.0,0.0,,
+sess_high >= high (monotone),0.0%,70676,0.0,0.0,,
+sess_low <= low,0.0%,70676,0.0,0.0,,
+ib_range_ticks = (ib_high-ib_low)/tick,0.0%,17020,0.0,0.0,,
+ib_range constante apres IB (par jour),0.0%,17020,0.0,0.0,,
+ib_range_atr = ib_range_ticks*tick/atr_14m,98.8%,17020,-2.725,0.0,2026-06-11 15:56:00 attendu=2.68 obtenu=2.28,
+pdh = max(high) session Sierra precedente,32.9%,70372,0.0,0.0,2026-06-15 00:00:00 attendu=29499.25 obtenu=30042.00,echec: pdh defini sur une autre session (RTH ?)
+pdl = min(low) session Sierra precedente,32.7%,70372,0.0,0.0,2026-06-11 22:01:00 attendu=28678.50 obtenu=28577.50,
+open_cash = open 1ere barre cash,1.2%,20131,0.0,0.0,2026-06-11 15:56:00 attendu=28809.25 obtenu=28774.50,
+dist_open_cash utilise open_cash (pas 1ere cloture),100.0%,20131,-15.0,5.6,2026-06-11 15:56:00 attendu=11.00 obtenu=-128.00,si echec + 'dist_open_cash = close1' passe: utilise la 1ere CLOTURE
+dist_open_cash = (close_1ere_barre - close)/tick,1.2%,20131,0.0,0.1,2026-06-11 15:56:00 attendu=0.00 obtenu=-128.00,
+momentum_3b = close - close[-3] (pts),98.9%,70673,0.0,29.6,2026-06-11 15:59:00 attendu=51.50 obtenu=-5.50,
+momentum_5b = close - close[-5] (pts),99.1%,70671,0.0,27.0,2026-06-11 16:01:00 attendu=68.75 obtenu=17.25,
+momentum_3b en ticks ?,97.7%,70673,0.25,28.7,2026-06-11 15:59:00 attendu=206.00 obtenu=-5.50,l'un des deux doit passer
+ctx_delta_sum_3 = somme delta 3 barres,0.0%,70466,0.0,0.0,2026-06-15 00:00:00 attendu=54.00 obtenu=37.00,
+ctx_delta_sum_10 = somme delta 10 barres,0.9%,70667,0.0,0.2,2026-06-11 22:01:00 attendu=-201.00 obtenu=19.00,
+ctx_price_slope_5 = close - close[-5],96.4%,70463,0.1,13.9,2026-06-11 16:01:00 attendu=68.75 obtenu=6.35,definition supposee
+atr_14m_pct = atr_14m*tick/close*100,0.0%,70676,0.0,0.0,,
+vol_per_sec = total_vol/bar_duration,0.0%,70676,0.0,0.0,,
+"finish_delta_pct dans [0,1]",0.0%,70676,0.0,0.0,,
+dist_1d_max_ticks = (pdh - close)/tick ?,100.0%,70439,783.523,17.3,2026-06-11 15:56:00 attendu=1774.00 obtenu=1487.12,'ticks' mais valeurs fractionnaires petites
+dist_1d_max_ticks = (pdh-close)/atr_14m ?,100.0%,70439,1578.425,17.0,2026-06-11 15:56:00 attendu=2.98 obtenu=1487.12,
+dist_1d_max_ticks = (pdh-close)/atr ?,100.0%,70439,1584.506,13.5,2026-06-11 15:56:00 attendu=0.63 obtenu=1487.12,
+bool_above_vwap_d = (close > vwap_d),0.0%,70676,0.0,0.0,2026-07-10 19:22:00 attendu=0.00 obtenu=1.00,
+vwap_d_side = sign(close - vwap_d),0.0%,70675,0.0,0.0,2026-07-10 19:22:00 attendu=0.00 obtenu=1.00,
+inside_cur_va = val<=close<=vah,0.0%,70676,0.0,0.0,2026-08-17 16:59:00 attendu=1.00 obtenu=0.00,
+bool_above_pdh <-> dist_pdh<0,3.8%,70676,0.0,0.0,2026-06-11 17:42:59 attendu=0.00 obtenu=1.00,

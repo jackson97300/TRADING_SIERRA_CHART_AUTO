@@ -6,6 +6,9 @@ Convention testee : dist_<niveau> = (niveau - close) en ticks  (positif = niveau
 Sortie : un tableau check -> % de barres en echec, ecart median, exemple.
 """
 import glob, argparse, numpy as np, pandas as pd
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from CORE.features import recalc
 
 # Journees ecartees : trous internes massifs (15 a 122 minutes manquantes en
 # seance cash), pas seances courtes. 0619 et 0703 sont aussi des feries CME,
@@ -54,12 +57,11 @@ def main():
     n_dup = pd.concat([pd.read_json(f, lines=True) for f in sorted(glob.glob(a.path))]).ts.duplicated().sum()
     print(f"[load] {len(df)} barres uniques ({n_dup} doublons ts retires), {df.dt.min()} -> {df.dt.max()}")
     C = df.close.astype(float); R = []
-    # Cle de session Sierra : la session ouvre a 22:00 UTC (18h ET). On date
-    # chaque barre par la session a laquelle elle appartient, en decalant de
-    # deux heures avant d'extraire la date. `session_date` du fichier ne peut
-    # pas servir : elle bascule a 04:01 UTC dans 60 cas et a 21:59 dans 10,
-    # sur la meme periode.
-    SESS = (df.dt + pd.Timedelta(hours=2)).dt.date
+    # Cle de session : importee, jamais reimplementee. La version precedente
+    # codait `dt + 2h` en dur, soit 22:00 UTC — juste en heure d'hiver, faux en
+    # heure d'ete ou la session ouvre a 21:00. Les barres 21:00-22:00 etaient
+    # donc attribuees au jour suivant pendant tout l'ete.
+    SESS = pd.Series(recalc.session_sess(df.dt), index=df.index)
 
     def chk(name, expected, actual, tol, unit="", mask=None, note=""):
         e, o = pd.Series(expected, index=df.index).astype(float), pd.Series(actual, index=df.index).astype(float)
