@@ -16,6 +16,8 @@ survivent à un protocole qui ne peut pas fabriquer d'edge ?** Elle ne cherche p
 Prior : cinq campagnes à zéro (0/26 zones, 0/64 stratégies, 0 feature prédictive, 3 bots NOGO).
 Résultat attendu : zéro à deux survivantes, espérance modeste. **Zéro est un résultat, et un livrable.**
 
+**Survivantes attendues, ecrit avant de lancer : 0 a 2.** Si le runner en rend six, ce n est pas une bonne nouvelle : c est un critere qui fuit quelque part. Pre-enregistrer l attendu est ce qui distingue une recherche d une peche.
+
 ## 1. Prérequis bloquants (le runner refuse de tourner si l'un manque)
 
 | # | Prérequis | État |
@@ -25,6 +27,7 @@ Résultat attendu : zéro à deux survivantes, espérance modeste. **Zéro est u
 | 3 | Noyau v1 figé | ✔ b50b278 |
 | 3b | `window_version` **posée dans les données** (le §9 de CONVENTIONS la définit, rien ne l'écrit encore). En attendant le dumper : calculée au chargement — `w1` si `ts` ≥ 2026-09-06 21:00 UTC (première session après le changement de session times), `w0` avant. Le runner refuse un lot qui mélange w0 et w1 sur une colonne de session. | ☐ |
 | 3c | Table des familles dans le dépôt : `config/families.yaml` (feature → F1…F23, source = tableau §1.3 de `ANALYSE_RIGOUREUSE_REDUCTION_ET_COUCHES.md`, **pas** le JSON Kimi qui contient des fuites). Le runner résout F3, F10, F11… par ce fichier. | ☐ |
+| 3d | Le runner LIT DOCS/features_stale.csv et exclut les couples (colonne, jour) suspects pour toute hypothese qui lit la colonne concernee. 1 080 couples sur 18 jours ; 63 colonnes du noyau touchees, dont deux au-dela de 10 jours : cvd_day (19 j) et rvol (12 j). Consequence : H3 et H6 perdent pres de la moitie de l echantillon si ces deux colonnes ne sont pas recalculees (cvd_sess_r, rvol_r). | [ ] |
 | 4 | `direction()` C++ = Python, 0 mismatch sur 10 jours | ☐ — **bloque l'exécution live, pas la recherche sur l'historique** |
 | 5 | Ce fichier commité, daté, sans `[À TRANCHER]` restant | ☐ |
 
