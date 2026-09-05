@@ -1,283 +1,288 @@
-symbole,cluster,representant,provenance,n_membres,n_A,part_A,membres
-ES,62,atr,B,2,0,0.0,atr|gamma_threshold_ticks
-ES,72,dist_vwap_d,A,19,12,0.632,dist_vwap_d|dist_vwap_d_atr|dist_vwap_d_sd1u|dist_vwap_d_sd1d|dist_vwap_d_sd2u_hnorm|vwap_d_side|dist_cur_vpoc|dist_cur_vah|dist_cur_val_hnorm|dist_cur_vwap_vp|range_pos_va|bool_above_cur_vpoc|bool_above_vwap_d|dist_vwap_d_pct|premium_zone|discount_zone|dist_single_print_atr|single_print_above|single_print_below
-ES,75,dist_vwap_w,A,10,7,0.7,dist_vwap_w|dist_vwap_w_atr|vwap_w_side|dist_prev_vpoc|dist_prev_vpoc_atr|dist_prev_vah|dist_prev_val|bool_above_prev_vpoc|bool_above_vwap_w|dist_vwap_w_pct
-ES,63,dist_vwap_m,A,6,3,0.5,dist_vwap_m|dist_vwap_m_atr|vwap_m_side|dist_vix_put_0dte|bool_above_vwap_m|dist_vwap_m_pct
-ES,98,inside_cur_va,A,1,1,1.0,inside_cur_va
-ES,122,ask_pct,A,8,7,0.875,cvd_bar_delta|delta_bar|delta_bar_vol_norm|ask_pct|bid_pct|ask_bid_imbalance|buy_sell_ratio|delta_pct
-ES,55,inside_prev_va,B,1,0,0.0,inside_prev_va
-ES,34,next_wall_is_call,B,1,0,0.0,next_wall_is_call
-ES,90,gex_cluster_count,B,1,0,0.0,gex_cluster_count
-ES,65,vix_regime,B,1,0,0.0,vix_regime
-ES,81,vix_above_hvl_0dte,B,1,0,0.0,vix_above_hvl_0dte
-ES,47,dist_vix_gex_nearest_up,B,1,0,0.0,dist_vix_gex_nearest_up
-ES,71,dist_open_cash,A,4,3,0.75,dist_ib_high|dist_ib_low|dist_open_cash|above_open_cash
-ES,59,ib_range_ticks,A,2,2,1.0,ib_range_ticks|ib_range
-ES,53,ib_is_wide,B,1,0,0.0,ib_is_wide
-ES,83,ib_broken_up,B,1,0,0.0,ib_broken_up
-ES,70,ctx_day_type_intensity,B,3,0,0.0,ib_broken_down|ctx_day_type_intensity|ib_broken_dn
-ES,42,ib_complete,B,4,0,0.0,ib_complete|bool_session_early|is_ib_window|ctx_session_phase
-ES,76,dist_pdl,A,14,6,0.429,dist_open_830|dist_ovn_high|dist_ovn_low|pct_in_range|dist_pdl_pct|dist_pdl_atr|above_open_830|dist_asia_open_pct|dist_pvwap_pct|dist_pvwap_sd1u_pct|dist_pvwap_sd1d_pct|dist_pdl|fvg_up_active|fvg_dn_active
-ES,60,ovn_range_ticks,B,1,0,0.0,ovn_range_ticks
-ES,50,open_position,B,1,0,0.0,open_position
-ES,66,cvd_day_dir,B,2,0,0.0,delta_day_dir|cvd_day_dir
-ES,25,volume_hnorm,A,3,3,1.0,vol_per_sec_hnorm|total_vol_hnorm|volume_hnorm
-ES,30,bar_duration_sec,B,1,0,0.0,bar_duration_sec
-ES,123,finish_strength,B,1,0,0.0,finish_strength
-ES,4,rotation_up,B,1,0,0.0,rotation_up
-ES,5,rotation_dn,B,1,0,0.0,rotation_dn
-ES,126,rotation_zz_osc,B,1,0,0.0,rotation_zz_osc
-ES,104,finish_delta_pct,A,2,1,0.5,finish_delta_pct|high_ask_vol_pct
-ES,107,high_pullback_delta,B,1,0,0.0,high_pullback_delta
-ES,12,bn_color_up,B,3,0,0.0,bn_color_up|bn_score_bull|long_up_bar
-ES,6,bn_color_dn,B,2,0,0.0,bn_color_dn|long_dn_bar
-ES,15,bn_absorb_ask,B,1,0,0.0,bn_absorb_ask
-ES,8,bn_score_bear,B,2,0,0.0,bn_absorb_bid|bn_score_bear
-ES,9,bn_score_raw,B,1,0,0.0,bn_score_raw
-ES,1,n_big_ask_t1,B,4,0,0.0,n_big_ask_t1|n_big_bid_t1|n_big_ask_v2_t1|n_big_bid_v2_t1
-ES,35,n_big_ask_t3,B,4,0,0.0,n_big_ask_t3|n_big_bid_t3|n_big_ask_v2_t3|n_big_bid_v2_t3
-ES,114,big_ask_cluster_20t_t2,B,2,0,0.0,big_ask_cluster_20t_t2|big_bid_cluster_20t_t2
-ES,36,big_ask_cluster_20t_t3,B,1,0,0.0,big_ask_cluster_20t_t3
-ES,37,big_bid_cluster_20t_t3,B,1,0,0.0,big_bid_cluster_20t_t3
-ES,11,bar_color_up,B,2,0,0.0,bar_color_up|bar_long_up_bar
-ES,7,bar_color_dn,B,2,0,0.0,bar_color_dn|bar_long_dn_bar
-ES,102,bar_edge_buy,B,2,0,0.0,bar_edge_buy|bar_edge_buy_fire
-ES,105,bar_edge_sell,B,2,0,0.0,bar_edge_sell|bar_edge_sell_fire
-ES,125,dist_ext_edge_buy,B,1,0,0.0,dist_ext_edge_buy
-ES,118,dist_ext_edge_sell,B,1,0,0.0,dist_ext_edge_sell
-ES,13,bn_volume_up,B,1,0,0.0,bn_volume_up
-ES,10,bn_volume_dn,B,1,0,0.0,bn_volume_dn
-ES,103,fp_edge_buy,B,1,0,0.0,fp_edge_buy
-ES,108,fp_edge_sell,B,1,0,0.0,fp_edge_sell
-ES,115,price_vs_swing_mid,B,1,0,0.0,price_vs_swing_mid
-ES,40,open_type,B,1,0,0.0,open_type
-ES,44,open_zone,B,1,0,0.0,open_zone
-ES,43,open_bias_conf,B,1,0,0.0,open_bias_conf
-ES,78,open_direction,B,2,0,0.0,open_direction|im_cross_open_signal
-ES,38,day_type,B,1,0,0.0,day_type
-ES,85,rule_80pct,B,1,0,0.0,rule_80pct
-ES,61,ma_trend,B,1,0,0.0,ma_trend
-ES,82,vwap_ma_align,B,1,0,0.0,vwap_ma_align
-ES,73,vwap_slope_10_dir,B,1,0,0.0,vwap_slope_10_dir
-ES,52,bool_above_mq_call,B,1,0,0.0,bool_above_mq_call
-ES,100,bool_near_level,B,1,0,0.0,bool_near_level
-ES,84,bool_ib_inside,B,1,0,0.0,bool_ib_inside
-ES,89,bool_va_confluence,B,1,0,0.0,bool_va_confluence
-ES,51,bool_gex_flip_zone,B,3,0,0.0,bool_gex_flip_zone|mq_gamma_condition|div_regime_proxy_ok
-ES,21,session_hvn_count,B,3,0,0.0,session_hvn_count|session_lvn_count|lvn_confluence_count
-ES,49,profile_shape,B,2,0,0.0,profile_shape|is_double_dist
-ES,94,profile_skew,B,1,0,0.0,profile_skew
-ES,117,retest_low_count,B,1,0,0.0,retest_low_count
-ES,95,retest_high_delta_div,B,1,0,0.0,retest_high_delta_div
-ES,96,retest_low_delta_div,B,1,0,0.0,retest_low_delta_div
-ES,23,range_size_hnorm,A,1,1,1.0,range_size_hnorm
-ES,74,dist_pdh,A,3,3,1.0,dist_pdh_pct|dist_pdh_atr|dist_pdh
-ES,24,atr_14m_pct_hnorm,A,1,1,1.0,atr_14m_pct_hnorm
-ES,116,poc_migration_dir,B,1,0,0.0,poc_migration_dir
-ES,97,equal_highs_detected,B,1,0,0.0,equal_highs_detected
-ES,48,equal_lows_detected,B,1,0,0.0,equal_lows_detected
-ES,134,liquidity_sweep_high_lag5,B,1,0,0.0,liquidity_sweep_high_lag5
-ES,87,liquidity_sweep_low_lag5,B,1,0,0.0,liquidity_sweep_low_lag5
-ES,79,ovn_broken_up,B,1,0,0.0,ovn_broken_up
-ES,80,ovn_broken_dn,B,1,0,0.0,ovn_broken_dn
-ES,22,is_session_blocked,B,2,0,0.0,is_session_blocked|is_blocked_combined
-ES,112,delta_div_buy,B,6,0,0.0,delta_div_buy|delta_div_buy_clean|delta_divergence_clean|delta_div_slope_buy|delta_div_slope_buy_clean|delta_div_slope_clean
-ES,110,delta_div_sell,B,4,0,0.0,delta_div_sell|delta_div_sell_clean|delta_div_slope_sell|delta_div_slope_sell_clean
-ES,111,delta_divergence_any,B,3,0,0.0,delta_divergence_any|div_confluence_with_regime|div_confluence_dmp
-ES,56,n_delta_div_buy_zones_active,B,1,0,0.0,n_delta_div_buy_zones_active
-ES,57,n_delta_div_sell_zones_active,B,1,0,0.0,n_delta_div_sell_zones_active
-ES,58,ctx_div_density_20,B,1,0,0.0,ctx_div_density_20
-ES,28,ctx_climax_signal,B,1,0,0.0,ctx_climax_signal
-ES,19,ctx_failed_auction,B,1,0,0.0,ctx_failed_auction
-ES,16,ctx_absorption_score_5,B,1,0,0.0,ctx_absorption_score_5
-ES,14,ctx_absorption_streak_5,B,2,0,0.0,ctx_absorption_streak_5|ctx_instant_absorption
-ES,29,ctx_delta_exhaustion,B,1,0,0.0,ctx_delta_exhaustion
-ES,31,ctx_momentum_exhaustion,B,1,0,0.0,ctx_momentum_exhaustion
-ES,129,ctx_poor_high,B,1,0,0.0,ctx_poor_high
-ES,17,ctx_poor_low,B,1,0,0.0,ctx_poor_low
-ES,109,ctx_excess_low_bars,B,2,0,0.0,ctx_excess_high_bars|ctx_excess_low_bars
-ES,101,ctx_double_top_trap,B,1,0,0.0,ctx_double_top_trap
-ES,121,ctx_delta_sum_3,A,2,1,0.5,ctx_vol_sell_buy_ratio_5|ctx_delta_sum_3
-ES,27,ctx_vol_slope_5,B,1,0,0.0,ctx_vol_slope_5
-ES,119,ctx_vwap_slope_accel,B,1,0,0.0,ctx_vwap_slope_accel
-ES,2,ctx_side_flip_count_10,B,1,0,0.0,ctx_side_flip_count_10
-ES,124,ctx_delta_slope_5,B,1,0,0.0,ctx_delta_slope_5
-ES,92,n_long_up_cluster_within_0_2pct,B,1,0,0.0,n_long_up_cluster_within_0_2pct
-ES,32,n_long_dn_cluster_within_0_2pct,B,1,0,0.0,n_long_dn_cluster_within_0_2pct
-ES,93,n_color_up_cluster_within_0_2pct,B,1,0,0.0,n_color_up_cluster_within_0_2pct
-ES,33,n_color_dn_cluster_within_0_2pct,B,1,0,0.0,n_color_dn_cluster_within_0_2pct
-ES,128,ctx_price_delta_div_3,B,1,0,0.0,ctx_price_delta_div_3
-ES,99,ctx_rotation_factor_20,B,1,0,0.0,ctx_rotation_factor_20
-ES,113,ctx_div_at_swing,B,1,0,0.0,ctx_div_at_swing
-ES,106,n_edge_sell_active,B,1,0,0.0,n_edge_sell_active
-ES,26,rvol_regime,B,1,0,0.0,rvol_regime
-ES,133,is_new_sess_high,B,1,0,0.0,is_new_sess_high
-ES,3,im_cross_delta_agreement_5,B,1,0,0.0,im_cross_delta_agreement_5
-ES,127,im_smt_divergence,B,1,0,0.0,im_smt_divergence
-ES,67,im_delta_day_divergence,B,1,0,0.0,im_delta_day_divergence
-ES,46,im_open_type_agreement,B,1,0,0.0,im_open_type_agreement
-ES,69,open_above_prev_vah,B,2,0,0.0,open_above_prev_vah|open_below_prev_val
-ES,86,open_within_prev_va,B,1,0,0.0,open_within_prev_va
-ES,68,open_relation_type,B,2,0,0.0,open_outside_prev_range|open_relation_type
-ES,54,profile_overlap_above_pdh,B,1,0,0.0,profile_overlap_above_pdh
-ES,77,profile_overlap_below_pdl,B,1,0,0.0,profile_overlap_below_pdl
-ES,41,range_extension_above_ib_atr,B,1,0,0.0,range_extension_above_ib_atr
-ES,45,range_extension_below_ib_atr,B,1,0,0.0,range_extension_below_ib_atr
-ES,39,range_extension_completed,B,1,0,0.0,range_extension_completed
-ES,131,fvg_up_created_this_bar,B,1,0,0.0,fvg_up_created_this_bar
-ES,120,fvg_dn_created_this_bar,B,1,0,0.0,fvg_dn_created_this_bar
-ES,132,sweep_high_active,B,1,0,0.0,sweep_high_active
-ES,20,sweep_low_active,B,1,0,0.0,sweep_low_active
-ES,130,sweep_high_this_bar,B,1,0,0.0,sweep_high_this_bar
-ES,18,sweep_low_this_bar,B,1,0,0.0,sweep_low_this_bar
-ES,91,gamma_block_long,B,1,0,0.0,gamma_block_long
-ES,135,open_in_prev_va,B,1,0,0.0,open_in_prev_va
-ES,136,trend_day_probability_hnorm,B,1,0,0.0,trend_day_probability_hnorm
-ES,137,bool_above_mq_hvl,B,1,0,0.0,bool_above_mq_hvl
-ES,138,vwap_triple_align,B,1,0,0.0,vwap_triple_align
-NQ,92,atr,B,1,0,0.0,atr
-NQ,107,dist_vwap_d,A,16,9,0.562,dist_vwap_d|dist_vwap_d_atr|dist_vwap_d_sd1d|vwap_d_side|dist_cur_vpoc|dist_cur_val_hnorm|dist_cur_vwap_vp|range_pos_va|bool_above_cur_vpoc|bool_above_vwap_d|dist_vwap_d_pct|premium_zone|discount_zone|dist_single_print_atr|single_print_above|single_print_below
-NQ,106,dist_cur_vah,A,3,3,1.0,dist_vwap_d_sd1u|dist_vwap_d_sd2u|dist_cur_vah
-NQ,112,dist_pdh,A,22,14,0.636,dist_vwap_w|dist_vwap_w_atr|vwap_w_side|dist_prev_vpoc|dist_prev_vpoc_atr|dist_prev_vah|dist_prev_val|dist_ovn_high|bool_above_prev_vpoc|bool_above_vwap_w|dist_vwap_w_pct|dist_pdh_pct|dist_pdl_pct|dist_pdh_atr|dist_pdl_atr|above_open_830|dist_asia_open_pct|dist_pvwap_pct|dist_pvwap_sd1u_pct|dist_pvwap_sd1d_pct|dist_pdh|dist_pdl
-NQ,98,dist_vwap_m,A,6,3,0.5,dist_vwap_m|dist_vwap_m_atr|vwap_m_side|dist_vix_put_0dte|bool_above_vwap_m|dist_vwap_m_pct
-NQ,137,inside_cur_va,A,1,1,1.0,inside_cur_va
-NQ,39,ask_pct,A,8,7,0.875,cvd_bar_delta|delta_bar|delta_bar_vol_norm|ask_pct|bid_pct|ask_bid_imbalance|buy_sell_ratio|delta_pct
-NQ,133,inside_prev_va,B,1,0,0.0,inside_prev_va
-NQ,75,open_in_prev_va,B,2,0,0.0,open_in_prev_va|trend_day_probability
-NQ,140,next_wall_is_call,B,1,0,0.0,next_wall_is_call
-NQ,70,gex_cluster_count,B,1,0,0.0,gex_cluster_count
-NQ,96,vix_regime,B,1,0,0.0,vix_regime
-NQ,123,vix_above_hvl_0dte,B,1,0,0.0,vix_above_hvl_0dte
-NQ,73,dist_vix_gex_nearest_up,B,1,0,0.0,dist_vix_gex_nearest_up
-NQ,111,dist_open_cash,A,9,5,0.556,dist_ib_high|dist_ib_low|dist_open_cash|dist_open_830|dist_ovn_low|pct_in_range|above_open_cash|fvg_up_active|fvg_dn_active
-NQ,100,ib_range_ticks,A,2,2,1.0,ib_range_ticks|ib_range
-NQ,87,ib_is_wide,B,1,0,0.0,ib_is_wide
-NQ,121,ib_broken_up,B,1,0,0.0,ib_broken_up
-NQ,120,ctx_day_type_intensity,B,3,0,0.0,ib_broken_down|ctx_day_type_intensity|ib_broken_dn
-NQ,82,ib_complete,B,4,0,0.0,ib_complete|bool_session_early|is_ib_window|ctx_session_phase
-NQ,99,ovn_range_ticks,B,1,0,0.0,ovn_range_ticks
-NQ,105,open_position,B,1,0,0.0,open_position
-NQ,95,im_delta_day_divergence,B,3,0,0.0,delta_day_dir|cvd_day_dir|im_delta_day_divergence
-NQ,63,volume_hnorm,A,3,3,1.0,vol_per_sec_hnorm|total_vol_hnorm|volume_hnorm
-NQ,138,bar_duration_sec,B,1,0,0.0,bar_duration_sec
-NQ,40,finish_strength_hnorm,B,1,0,0.0,finish_strength_hnorm
-NQ,131,cvd_ohlc_range,B,1,0,0.0,cvd_ohlc_range
-NQ,11,rotation_up,B,1,0,0.0,rotation_up
-NQ,12,rotation_dn,B,1,0,0.0,rotation_dn
-NQ,46,rotation_zz_osc,B,1,0,0.0,rotation_zz_osc
-NQ,22,finish_delta_pct,A,2,1,0.5,finish_delta_pct|high_ask_vol_pct
-NQ,23,high_pullback_delta,B,1,0,0.0,high_pullback_delta
-NQ,33,bn_color_up,B,1,0,0.0,bn_color_up
-NQ,35,bn_color_dn,B,1,0,0.0,bn_color_dn
-NQ,36,bn_color_up_2,B,1,0,0.0,bn_color_up_2
-NQ,37,bn_color_dn_2,B,1,0,0.0,bn_color_dn_2
-NQ,32,bn_volume_up,B,5,0,0.0,bn_long_up|bn_score_raw|bn_score_bull|bn_volume_up|long_up_bar
-NQ,34,bn_volume_dn,B,4,0,0.0,bn_long_dn|bn_score_bear|bn_volume_dn|long_dn_bar
-NQ,7,bn_pressure_ask,B,1,0,0.0,bn_pressure_ask
-NQ,9,bn_pressure_bid,B,1,0,0.0,bn_pressure_bid
-NQ,130,n_big_ask_t3,B,2,0,0.0,n_big_ask_t3|n_big_ask_v2_t3
-NQ,129,n_big_bid_t3,B,2,0,0.0,n_big_bid_t3|n_big_bid_v2_t3
-NQ,52,big_ask_cluster_20t_t2,B,1,0,0.0,big_ask_cluster_20t_t2
-NQ,53,big_bid_cluster_20t_t2,B,1,0,0.0,big_bid_cluster_20t_t2
-NQ,54,big_ask_cluster_20t_t3,B,1,0,0.0,big_ask_cluster_20t_t3
-NQ,55,big_bid_cluster_20t_t3,B,1,0,0.0,big_bid_cluster_20t_t3
-NQ,30,bar_color_up,B,1,0,0.0,bar_color_up
-NQ,28,bar_color_dn,B,1,0,0.0,bar_color_dn
-NQ,31,bar_long_up_bar,B,1,0,0.0,bar_long_up_bar
-NQ,29,bar_long_dn_bar,B,1,0,0.0,bar_long_dn_bar
-NQ,26,bar_long_dn_up,B,1,0,0.0,bar_long_dn_up
-NQ,24,bar_long_up_dn,B,1,0,0.0,bar_long_up_dn
-NQ,50,bar_edge_buy,B,2,0,0.0,bar_edge_buy|bar_edge_buy_fire
-NQ,48,bar_edge_sell,B,2,0,0.0,bar_edge_sell|bar_edge_sell_fire
-NQ,8,bar_pressure_ask,B,1,0,0.0,bar_pressure_ask
-NQ,10,bar_pressure_bid,B,1,0,0.0,bar_pressure_bid
-NQ,51,dist_ext_edge_buy,B,1,0,0.0,dist_ext_edge_buy
-NQ,49,dist_ext_edge_sell,B,1,0,0.0,dist_ext_edge_sell
-NQ,3,fp_edge_buy,B,1,0,0.0,fp_edge_buy
-NQ,4,fp_edge_sell,B,1,0,0.0,fp_edge_sell
-NQ,90,price_vs_swing_mid,B,1,0,0.0,price_vs_swing_mid
-NQ,80,open_type,B,1,0,0.0,open_type
-NQ,84,open_zone,B,1,0,0.0,open_zone
-NQ,83,open_bias_conf,B,1,0,0.0,open_bias_conf
-NQ,110,open_direction,B,2,0,0.0,open_direction|im_cross_open_signal
-NQ,85,day_type,B,1,0,0.0,day_type
-NQ,76,rule_80pct,B,1,0,0.0,rule_80pct
-NQ,93,ma_trend,B,1,0,0.0,ma_trend
-NQ,119,vwap_ma_align,B,1,0,0.0,vwap_ma_align
-NQ,109,vwap_slope_10_dir,B,1,0,0.0,vwap_slope_10_dir
-NQ,114,bool_above_mq_hvl,B,1,0,0.0,bool_above_mq_hvl
-NQ,116,bool_above_mq_call,B,1,0,0.0,bool_above_mq_call
-NQ,71,bool_near_level,B,1,0,0.0,bool_near_level
-NQ,122,bool_ib_inside,B,1,0,0.0,bool_ib_inside
-NQ,108,vwap_triple_align,B,1,0,0.0,vwap_triple_align
-NQ,59,session_hvn_count,B,3,0,0.0,session_hvn_count|session_lvn_count|lvn_confluence_count
-NQ,72,profile_shape,B,2,0,0.0,profile_shape|is_double_dist
-NQ,94,profile_skew,B,1,0,0.0,profile_skew
-NQ,91,retest_low_count,B,1,0,0.0,retest_low_count
-NQ,88,retest_high_delta_div,B,1,0,0.0,retest_high_delta_div
-NQ,128,retest_low_delta_div,B,1,0,0.0,retest_low_delta_div
-NQ,14,poc_migration_dir,B,1,0,0.0,poc_migration_dir
-NQ,142,liquidity_sweep_high_lag5,B,1,0,0.0,liquidity_sweep_high_lag5
-NQ,139,liquidity_sweep_low_lag5,B,1,0,0.0,liquidity_sweep_low_lag5
-NQ,117,ovn_broken_up,B,1,0,0.0,ovn_broken_up
-NQ,113,ovn_broken_dn,B,1,0,0.0,ovn_broken_dn
-NQ,86,is_session_blocked,B,2,0,0.0,is_session_blocked|is_blocked_combined
-NQ,16,delta_div_buy,B,2,0,0.0,delta_div_buy|delta_div_slope_buy
-NQ,20,delta_div_sell,B,2,0,0.0,delta_div_sell|delta_div_slope_sell
-NQ,17,delta_divergence_any,B,1,0,0.0,delta_divergence_any
-NQ,15,delta_div_slope_clean,B,4,0,0.0,delta_div_buy_clean|delta_divergence_clean|delta_div_slope_buy_clean|delta_div_slope_clean
-NQ,19,delta_div_sell_clean,B,2,0,0.0,delta_div_sell_clean|delta_div_slope_sell_clean
-NQ,126,n_delta_div_buy_zones_active,B,1,0,0.0,n_delta_div_buy_zones_active
-NQ,89,n_delta_div_sell_zones_active,B,1,0,0.0,n_delta_div_sell_zones_active
-NQ,127,ctx_div_density_20,B,1,0,0.0,ctx_div_density_20
-NQ,66,ctx_climax_signal,B,1,0,0.0,ctx_climax_signal
-NQ,62,ctx_failed_auction,B,1,0,0.0,ctx_failed_auction
-NQ,2,ctx_absorption_score_5,B,1,0,0.0,ctx_absorption_score_5
-NQ,1,ctx_absorption_streak_5,B,2,0,0.0,ctx_absorption_streak_5|ctx_instant_absorption
-NQ,67,ctx_delta_exhaustion,B,1,0,0.0,ctx_delta_exhaustion
-NQ,68,ctx_momentum_exhaustion,B,1,0,0.0,ctx_momentum_exhaustion
-NQ,56,ctx_poor_high,B,1,0,0.0,ctx_poor_high
-NQ,60,ctx_poor_low,B,1,0,0.0,ctx_poor_low
-NQ,13,ctx_excess_low_bars,B,2,0,0.0,ctx_excess_high_bars|ctx_excess_low_bars
-NQ,141,ctx_double_top_trap,B,1,0,0.0,ctx_double_top_trap
-NQ,38,ctx_delta_sum_3,A,2,1,0.5,ctx_vol_sell_buy_ratio_5|ctx_delta_sum_3
-NQ,65,ctx_vol_slope_5_hnorm,B,1,0,0.0,ctx_vol_slope_5_hnorm
-NQ,43,ctx_vwap_slope_accel,B,1,0,0.0,ctx_vwap_slope_accel
-NQ,5,ctx_side_flip_count_10,B,1,0,0.0,ctx_side_flip_count_10
-NQ,41,ctx_delta_slope_5,B,1,0,0.0,ctx_delta_slope_5
-NQ,27,long_dn_up_pattern,B,1,0,0.0,long_dn_up_pattern
-NQ,25,long_up_dn_pattern,B,1,0,0.0,long_up_dn_pattern
-NQ,134,n_long_up_cluster_within_0_2pct,B,1,0,0.0,n_long_up_cluster_within_0_2pct
-NQ,124,n_long_dn_cluster_within_0_2pct_hnorm,B,1,0,0.0,n_long_dn_cluster_within_0_2pct_hnorm
-NQ,135,n_color_up_cluster_within_0_2pct,B,1,0,0.0,n_color_up_cluster_within_0_2pct
-NQ,125,n_color_dn_cluster_within_0_2pct,B,1,0,0.0,n_color_dn_cluster_within_0_2pct
-NQ,18,div_confluence_dmp,B,2,0,0.0,div_confluence_with_regime|div_confluence_dmp
-NQ,47,ctx_price_delta_div_3,B,1,0,0.0,ctx_price_delta_div_3
-NQ,132,ctx_rotation_factor_20,B,1,0,0.0,ctx_rotation_factor_20
-NQ,21,ctx_div_at_swing,B,1,0,0.0,ctx_div_at_swing
-NQ,118,n_edge_sell_active,B,1,0,0.0,n_edge_sell_active
-NQ,64,rvol_regime,B,1,0,0.0,rvol_regime
-NQ,136,is_new_sess_low,B,1,0,0.0,is_new_sess_low
-NQ,6,im_cross_delta_agreement_5,B,1,0,0.0,im_cross_delta_agreement_5
-NQ,42,im_smt_divergence,B,1,0,0.0,im_smt_divergence
-NQ,79,im_open_type_agreement,B,1,0,0.0,im_open_type_agreement
-NQ,103,open_within_prev_va,B,1,0,0.0,open_within_prev_va
-NQ,102,open_relation_type,B,2,0,0.0,open_outside_prev_range|open_relation_type
-NQ,97,profile_overlap_above_pdh,B,1,0,0.0,profile_overlap_above_pdh
-NQ,115,profile_overlap_below_pdl,B,1,0,0.0,profile_overlap_below_pdl
-NQ,81,range_extension_above_ib_atr,B,1,0,0.0,range_extension_above_ib_atr
-NQ,77,range_extension_below_ib_atr,B,1,0,0.0,range_extension_below_ib_atr
-NQ,78,range_extension_completed,B,1,0,0.0,range_extension_completed
-NQ,45,fvg_up_created_this_bar,B,1,0,0.0,fvg_up_created_this_bar
-NQ,44,fvg_dn_created_this_bar,B,1,0,0.0,fvg_dn_created_this_bar
-NQ,58,sweep_high_active,B,1,0,0.0,sweep_high_active
-NQ,69,sweep_low_active,B,1,0,0.0,sweep_low_active
-NQ,57,sweep_high_this_bar,B,1,0,0.0,sweep_high_this_bar
-NQ,61,sweep_low_this_bar,B,1,0,0.0,sweep_low_this_bar
-NQ,143,bool_gex_flip_zone,B,1,0,0.0,bool_gex_flip_zone
-NQ,144,mq_gamma_condition,B,1,0,0.0,mq_gamma_condition
-NQ,145,div_regime_proxy_ok,B,1,0,0.0,div_regime_proxy_ok
-NQ,146,range_size_hnorm,A,1,1,1.0,range_size_hnorm
-NQ,147,atr_14m_pct_hnorm,A,1,1,1.0,atr_14m_pct_hnorm
-NQ,148,open_above_prev_vah,B,1,0,0.0,open_above_prev_vah
-NQ,149,open_below_prev_val,B,1,0,0.0,open_below_prev_val
+symbole,cluster,representant,provenance,famille,n_membres,n_A,part_A,membres
+ES,59,atr,B,VOLATILITE / REGIME,2,0,0.0,atr|gamma_threshold_ticks
+ES,69,dist_vwap_d,A,VWAP,19,12,0.632,dist_vwap_d|dist_vwap_d_atr|dist_vwap_d_sd1u|dist_vwap_d_sd1d|dist_vwap_d_sd2u_hnorm|vwap_d_side|dist_cur_vpoc|dist_cur_vah|dist_cur_val_hnorm|dist_cur_vwap_vp|range_pos_va|bool_above_cur_vpoc|bool_above_vwap_d|dist_vwap_d_pct|premium_zone|discount_zone|dist_single_print_atr|single_print_above|single_print_below
+ES,73,dist_vwap_w,A,VWAP,10,7,0.7,dist_vwap_w|dist_vwap_w_atr|vwap_w_side|dist_prev_vpoc|dist_prev_vpoc_atr|dist_prev_vah|dist_prev_val|bool_above_prev_vpoc|bool_above_vwap_w|dist_vwap_w_pct
+ES,60,dist_vwap_m,A,VWAP,6,3,0.5,dist_vwap_m|dist_vwap_m_atr|vwap_m_side|dist_vix_put_0dte|bool_above_vwap_m|dist_vwap_m_pct
+ES,28,inside_cur_va,A,MARKET PROFILE,1,1,1.0,inside_cur_va
+ES,126,ask_pct,A,ORDER FLOW,8,7,0.875,cvd_bar_delta|delta_bar|delta_bar_vol_norm|ask_pct|bid_pct|ask_bid_imbalance|buy_sell_ratio|delta_pct
+ES,52,inside_prev_va,B,MARKET PROFILE,1,0,0.0,inside_prev_va
+ES,45,next_wall_is_call,B,AUTRES,1,0,0.0,next_wall_is_call
+ES,91,gex_cluster_count,B,OPTIONS / MENTHORQ,1,0,0.0,gex_cluster_count
+ES,62,vix_regime,B,OPTIONS / MENTHORQ,1,0,0.0,vix_regime
+ES,79,vix_above_hvl_0dte,B,OPTIONS / MENTHORQ,1,0,0.0,vix_above_hvl_0dte
+ES,46,dist_vix_gex_nearest_up,B,OPTIONS / MENTHORQ,1,0,0.0,dist_vix_gex_nearest_up
+ES,68,dist_vwap_rth_r,A,VWAP,7,6,0.857,dist_ib_high|dist_ib_low|dist_open_cash|above_open_cash|dist_vwap_rth_r|dist_vwap_rth_sd1u_r|dist_vwap_rth_sd1d_r
+ES,56,ib_range_ticks,A,INITIAL BALANCE,2,2,1.0,ib_range_ticks|ib_range
+ES,50,ib_is_wide,B,INITIAL BALANCE,1,0,0.0,ib_is_wide
+ES,82,ib_broken_up,B,INITIAL BALANCE,1,0,0.0,ib_broken_up
+ES,67,ctx_day_type_intensity,B,MARKET PROFILE,3,0,0.0,ib_broken_down|ctx_day_type_intensity|ib_broken_dn
+ES,38,ib_complete,B,INITIAL BALANCE,4,0,0.0,ib_complete|bool_session_early|is_ib_window|ctx_session_phase
+ES,71,dist_ovn_low,A,NIVEAUX VEILLE,14,6,0.429,dist_open_830|dist_ovn_high|dist_ovn_low|pct_in_range|dist_pdl_pct|dist_pdl_atr|above_open_830|dist_asia_open_pct|dist_pvwap_pct|dist_pvwap_sd1u_pct|dist_pvwap_sd1d_pct|dist_pdl|fvg_up_active|fvg_dn_active
+ES,57,ovn_range_ticks,B,VOLATILITE / REGIME,1,0,0.0,ovn_range_ticks
+ES,81,open_position,B,SESSION / TEMPS,1,0,0.0,open_position
+ES,63,cvd_day_dir,B,ORDER FLOW,2,0,0.0,delta_day_dir|cvd_day_dir
+ES,21,volume_hnorm,A,AUTRES,3,3,1.0,vol_per_sec_hnorm|total_vol_hnorm|volume_hnorm
+ES,26,bar_duration_sec,B,BARRE / OHLC,1,0,0.0,bar_duration_sec
+ES,127,finish_strength,B,AUTRES,1,0,0.0,finish_strength
+ES,4,rotation_up,B,AUTRES,1,0,0.0,rotation_up
+ES,5,rotation_dn,B,AUTRES,1,0,0.0,rotation_dn
+ES,132,rotation_zz_osc,B,AUTRES,1,0,0.0,rotation_zz_osc
+ES,102,finish_delta_pct,A,ORDER FLOW,2,1,0.5,finish_delta_pct|high_ask_vol_pct
+ES,105,high_pullback_delta,B,ORDER FLOW,1,0,0.0,high_pullback_delta
+ES,12,bn_color_up,B,BATTLE NAVALE,3,0,0.0,bn_color_up|bn_score_bull|long_up_bar
+ES,6,bn_color_dn,B,BATTLE NAVALE,2,0,0.0,bn_color_dn|long_dn_bar
+ES,15,bn_absorb_ask,B,ORDER FLOW,1,0,0.0,bn_absorb_ask
+ES,8,bn_score_bear,B,BATTLE NAVALE,2,0,0.0,bn_absorb_bid|bn_score_bear
+ES,9,bn_score_raw,B,BATTLE NAVALE,1,0,0.0,bn_score_raw
+ES,1,n_big_ask_t1,B,ORDER FLOW,4,0,0.0,n_big_ask_t1|n_big_bid_t1|n_big_ask_v2_t1|n_big_bid_v2_t1
+ES,31,n_big_ask_t3,B,ORDER FLOW,4,0,0.0,n_big_ask_t3|n_big_bid_t3|n_big_ask_v2_t3|n_big_bid_v2_t3
+ES,120,big_ask_cluster_20t_t2,B,ORDER FLOW,2,0,0.0,big_ask_cluster_20t_t2|big_bid_cluster_20t_t2
+ES,32,big_ask_cluster_20t_t3,B,ORDER FLOW,1,0,0.0,big_ask_cluster_20t_t3
+ES,33,big_bid_cluster_20t_t3,B,ORDER FLOW,1,0,0.0,big_bid_cluster_20t_t3
+ES,11,bar_color_up,B,BATTLE NAVALE,2,0,0.0,bar_color_up|bar_long_up_bar
+ES,7,bar_color_dn,B,BATTLE NAVALE,2,0,0.0,bar_color_dn|bar_long_dn_bar
+ES,100,bar_edge_buy,B,ORDER FLOW,2,0,0.0,bar_edge_buy|bar_edge_buy_fire
+ES,103,bar_edge_sell,B,ORDER FLOW,2,0,0.0,bar_edge_sell|bar_edge_sell_fire
+ES,122,dist_ext_edge_buy,B,ORDER FLOW,1,0,0.0,dist_ext_edge_buy
+ES,131,dist_ext_edge_sell,B,ORDER FLOW,1,0,0.0,dist_ext_edge_sell
+ES,13,bn_volume_up,B,BATTLE NAVALE,1,0,0.0,bn_volume_up
+ES,10,bn_volume_dn,B,BATTLE NAVALE,1,0,0.0,bn_volume_dn
+ES,101,fp_edge_buy,B,ORDER FLOW,1,0,0.0,fp_edge_buy
+ES,106,fp_edge_sell,B,ORDER FLOW,1,0,0.0,fp_edge_sell
+ES,121,price_vs_swing_mid,B,SWINGS / STRUCTURE,1,0,0.0,price_vs_swing_mid
+ES,36,open_type,B,MARKET PROFILE,1,0,0.0,open_type
+ES,40,open_zone,B,SESSION / TEMPS,1,0,0.0,open_zone
+ES,39,open_bias_conf,B,SESSION / TEMPS,1,0,0.0,open_bias_conf
+ES,76,open_direction,B,SESSION / TEMPS,2,0,0.0,open_direction|im_cross_open_signal
+ES,34,day_type,B,MARKET PROFILE,1,0,0.0,day_type
+ES,84,rule_80pct,B,AUTRES,1,0,0.0,rule_80pct
+ES,58,ma_trend,B,AUTRES,1,0,0.0,ma_trend
+ES,80,vwap_ma_align,B,VWAP,1,0,0.0,vwap_ma_align
+ES,70,vwap_slope_10_dir,B,VWAP,1,0,0.0,vwap_slope_10_dir
+ES,49,bool_above_mq_call,B,OPTIONS / MENTHORQ,1,0,0.0,bool_above_mq_call
+ES,30,bool_near_level,B,AUTRES,1,0,0.0,bool_near_level
+ES,83,bool_ib_inside,B,INITIAL BALANCE,1,0,0.0,bool_ib_inside
+ES,90,bool_va_confluence,B,MARKET PROFILE,1,0,0.0,bool_va_confluence
+ES,48,bool_gex_flip_zone,B,OPTIONS / MENTHORQ,3,0,0.0,bool_gex_flip_zone|mq_gamma_condition|div_regime_proxy_ok
+ES,17,session_hvn_count,B,VOLUME PROFILE,3,0,0.0,session_hvn_count|session_lvn_count|lvn_confluence_count
+ES,27,profile_shape,B,MARKET PROFILE,2,0,0.0,profile_shape|is_double_dist
+ES,95,profile_skew,B,MARKET PROFILE,1,0,0.0,profile_skew
+ES,123,retest_low_count,B,SWINGS / STRUCTURE,1,0,0.0,retest_low_count
+ES,96,retest_high_delta_div,B,ORDER FLOW,1,0,0.0,retest_high_delta_div
+ES,97,retest_low_delta_div,B,ORDER FLOW,1,0,0.0,retest_low_delta_div
+ES,19,range_size_hnorm,A,VOLATILITE / REGIME,1,1,1.0,range_size_hnorm
+ES,74,dist_pdh,A,NIVEAUX VEILLE,3,3,1.0,dist_pdh_pct|dist_pdh_atr|dist_pdh
+ES,20,atr_14m_pct_hnorm,A,VOLATILITE / REGIME,1,1,1.0,atr_14m_pct_hnorm
+ES,119,momentum_10b_r,A,SWINGS / STRUCTURE,2,1,0.5,poc_migration_dir|momentum_10b_r
+ES,98,equal_highs_detected,B,BARRE / OHLC,1,0,0.0,equal_highs_detected
+ES,47,equal_lows_detected,B,BARRE / OHLC,1,0,0.0,equal_lows_detected
+ES,135,liquidity_sweep_high_lag5,B,SWINGS / STRUCTURE,1,0,0.0,liquidity_sweep_high_lag5
+ES,87,liquidity_sweep_low_lag5,B,SWINGS / STRUCTURE,1,0,0.0,liquidity_sweep_low_lag5
+ES,77,ovn_broken_up,B,SESSION / TEMPS,1,0,0.0,ovn_broken_up
+ES,78,ovn_broken_dn,B,SESSION / TEMPS,1,0,0.0,ovn_broken_dn
+ES,18,is_session_blocked,B,SESSION / TEMPS,2,0,0.0,is_session_blocked|is_blocked_combined
+ES,114,delta_div_buy,B,ORDER FLOW,6,0,0.0,delta_div_buy|delta_div_buy_clean|delta_divergence_clean|delta_div_slope_buy|delta_div_slope_buy_clean|delta_div_slope_clean
+ES,112,delta_div_sell,B,ORDER FLOW,4,0,0.0,delta_div_sell|delta_div_sell_clean|delta_div_slope_sell|delta_div_slope_sell_clean
+ES,113,delta_divergence_any,B,AUTRES,3,0,0.0,delta_divergence_any|div_confluence_with_regime|div_confluence_dmp
+ES,53,n_delta_div_buy_zones_active,B,ORDER FLOW,1,0,0.0,n_delta_div_buy_zones_active
+ES,54,n_delta_div_sell_zones_active,B,ORDER FLOW,1,0,0.0,n_delta_div_sell_zones_active
+ES,55,ctx_div_density_20,B,CONTEXTE ROLLING,1,0,0.0,ctx_div_density_20
+ES,24,ctx_climax_signal,B,CONTEXTE ROLLING,1,0,0.0,ctx_climax_signal
+ES,109,ctx_failed_auction,B,CONTEXTE ROLLING,1,0,0.0,ctx_failed_auction
+ES,16,ctx_absorption_score_5,B,CONTEXTE ROLLING,1,0,0.0,ctx_absorption_score_5
+ES,14,ctx_absorption_streak_5,B,CONTEXTE ROLLING,2,0,0.0,ctx_absorption_streak_5|ctx_instant_absorption
+ES,25,ctx_delta_exhaustion,B,ORDER FLOW,1,0,0.0,ctx_delta_exhaustion
+ES,136,ctx_momentum_exhaustion,B,SWINGS / STRUCTURE,1,0,0.0,ctx_momentum_exhaustion
+ES,116,ctx_poor_high,B,CONTEXTE ROLLING,1,0,0.0,ctx_poor_high
+ES,107,ctx_poor_low,B,CONTEXTE ROLLING,1,0,0.0,ctx_poor_low
+ES,111,ctx_excess_low_bars,B,CONTEXTE ROLLING,2,0,0.0,ctx_excess_high_bars|ctx_excess_low_bars
+ES,99,ctx_double_top_trap,B,CONTEXTE ROLLING,1,0,0.0,ctx_double_top_trap
+ES,124,ctx_delta_sum_3,A,ORDER FLOW,2,1,0.5,ctx_vol_sell_buy_ratio_5|ctx_delta_sum_3
+ES,23,ctx_vol_slope_5,B,CONTEXTE ROLLING,1,0,0.0,ctx_vol_slope_5
+ES,129,ctx_vwap_slope_accel,B,VWAP,1,0,0.0,ctx_vwap_slope_accel
+ES,2,ctx_side_flip_count_10,B,CONTEXTE ROLLING,1,0,0.0,ctx_side_flip_count_10
+ES,128,ctx_delta_slope_5,B,ORDER FLOW,1,0,0.0,ctx_delta_slope_5
+ES,93,n_long_up_cluster_within_0_2pct,B,ORDER FLOW,1,0,0.0,n_long_up_cluster_within_0_2pct
+ES,43,n_long_dn_cluster_within_0_2pct,B,ORDER FLOW,1,0,0.0,n_long_dn_cluster_within_0_2pct
+ES,94,n_color_up_cluster_within_0_2pct,B,ORDER FLOW,1,0,0.0,n_color_up_cluster_within_0_2pct
+ES,44,n_color_dn_cluster_within_0_2pct,B,ORDER FLOW,1,0,0.0,n_color_dn_cluster_within_0_2pct
+ES,134,ctx_price_delta_div_3,B,ORDER FLOW,1,0,0.0,ctx_price_delta_div_3
+ES,29,ctx_rotation_factor_20,B,CONTEXTE ROLLING,1,0,0.0,ctx_rotation_factor_20
+ES,115,ctx_div_at_swing,B,SWINGS / STRUCTURE,1,0,0.0,ctx_div_at_swing
+ES,104,n_edge_sell_active,B,ORDER FLOW,1,0,0.0,n_edge_sell_active
+ES,22,rvol_regime,B,VOLATILITE / REGIME,1,0,0.0,rvol_regime
+ES,86,is_new_sess_high,B,BARRE / OHLC,1,0,0.0,is_new_sess_high
+ES,3,im_cross_delta_agreement_5,B,ORDER FLOW,1,0,0.0,im_cross_delta_agreement_5
+ES,133,im_smt_divergence,B,INTERMARKET,1,0,0.0,im_smt_divergence
+ES,64,im_delta_day_divergence,B,ORDER FLOW,1,0,0.0,im_delta_day_divergence
+ES,42,im_open_type_agreement,B,MARKET PROFILE,1,0,0.0,im_open_type_agreement
+ES,66,open_above_prev_vah,B,MARKET PROFILE,2,0,0.0,open_above_prev_vah|open_below_prev_val
+ES,85,open_within_prev_va,B,NIVEAUX VEILLE,1,0,0.0,open_within_prev_va
+ES,65,open_relation_type,B,SESSION / TEMPS,2,0,0.0,open_outside_prev_range|open_relation_type
+ES,51,profile_overlap_above_pdh,B,MARKET PROFILE,1,0,0.0,profile_overlap_above_pdh
+ES,72,profile_overlap_below_pdl,B,MARKET PROFILE,1,0,0.0,profile_overlap_below_pdl
+ES,37,range_extension_above_ib_atr,B,INITIAL BALANCE,1,0,0.0,range_extension_above_ib_atr
+ES,41,range_extension_below_ib_atr,B,INITIAL BALANCE,1,0,0.0,range_extension_below_ib_atr
+ES,35,range_extension_completed,B,VOLATILITE / REGIME,1,0,0.0,range_extension_completed
+ES,118,fvg_up_created_this_bar,B,SWINGS / STRUCTURE,1,0,0.0,fvg_up_created_this_bar
+ES,130,fvg_dn_created_this_bar,B,SWINGS / STRUCTURE,1,0,0.0,fvg_dn_created_this_bar
+ES,88,sweep_high_active,B,SWINGS / STRUCTURE,1,0,0.0,sweep_high_active
+ES,110,sweep_low_active,B,SWINGS / STRUCTURE,1,0,0.0,sweep_low_active
+ES,117,sweep_high_this_bar,B,SWINGS / STRUCTURE,1,0,0.0,sweep_high_this_bar
+ES,108,sweep_low_this_bar,B,SWINGS / STRUCTURE,1,0,0.0,sweep_low_this_bar
+ES,92,gamma_block_long,B,OPTIONS / MENTHORQ,1,0,0.0,gamma_block_long
+ES,75,dist_prev_vwap_rth_r,A,NIVEAUX VEILLE,3,3,1.0,dist_prev_vwap_rth_r|dist_pdh_rth_r|dist_pdl_rth_r
+ES,125,momentum_3b_r,A,SWINGS / STRUCTURE,2,2,1.0,momentum_3b_r|momentum_5b_r
+ES,137,open_in_prev_va,B,NIVEAUX VEILLE,1,0,0.0,open_in_prev_va
+ES,138,trend_day_probability_hnorm,B,AUTRES,1,0,0.0,trend_day_probability_hnorm
+ES,139,bool_above_mq_hvl,B,OPTIONS / MENTHORQ,1,0,0.0,bool_above_mq_hvl
+ES,140,vwap_triple_align,B,VWAP,1,0,0.0,vwap_triple_align
+NQ,139,atr,B,VOLATILITE / REGIME,1,0,0.0,atr
+NQ,124,dist_vwap_d,A,VWAP,16,9,0.562,dist_vwap_d|dist_vwap_d_atr|dist_vwap_d_sd1d|vwap_d_side|dist_cur_vpoc|dist_cur_val_hnorm|dist_cur_vwap_vp|range_pos_va|bool_above_cur_vpoc|bool_above_vwap_d|dist_vwap_d_pct|premium_zone|discount_zone|dist_single_print_atr|single_print_above|single_print_below
+NQ,123,dist_cur_vah,A,MARKET PROFILE,3,3,1.0,dist_vwap_d_sd1u|dist_vwap_d_sd2u|dist_cur_vah
+NQ,128,dist_prev_vwap_rth_r,A,NIVEAUX VEILLE,24,17,0.708,dist_vwap_w|dist_vwap_w_atr|vwap_w_side|dist_prev_vpoc|dist_prev_vpoc_atr|dist_prev_vah|dist_prev_val|dist_ovn_high|bool_above_prev_vpoc|bool_above_vwap_w|dist_vwap_w_pct|dist_pdh_pct|dist_pdl_pct|dist_pdh_atr|dist_pdl_atr|dist_asia_open_pct|dist_pvwap_pct|dist_pvwap_sd1u_pct|dist_pvwap_sd1d_pct|dist_pdh|dist_pdl|dist_prev_vwap_rth_r|dist_pdh_rth_r|dist_pdl_rth_r
+NQ,112,dist_vwap_m,A,VWAP,6,3,0.5,dist_vwap_m|dist_vwap_m_atr|vwap_m_side|dist_vix_put_0dte|bool_above_vwap_m|dist_vwap_m_pct
+NQ,88,inside_cur_va,A,MARKET PROFILE,1,1,1.0,inside_cur_va
+NQ,37,ask_pct,A,ORDER FLOW,8,7,0.875,cvd_bar_delta|delta_bar|delta_bar_vol_norm|ask_pct|bid_pct|ask_bid_imbalance|buy_sell_ratio|delta_pct
+NQ,84,inside_prev_va,B,MARKET PROFILE,1,0,0.0,inside_prev_va
+NQ,101,open_in_prev_va,B,AUTRES,2,0,0.0,open_in_prev_va|trend_day_probability
+NQ,143,next_wall_is_call,B,AUTRES,1,0,0.0,next_wall_is_call
+NQ,71,gex_cluster_count,B,OPTIONS / MENTHORQ,1,0,0.0,gex_cluster_count
+NQ,110,vix_regime,B,OPTIONS / MENTHORQ,1,0,0.0,vix_regime
+NQ,104,vix_above_hvl_0dte,B,OPTIONS / MENTHORQ,1,0,0.0,vix_above_hvl_0dte
+NQ,74,dist_vix_gex_nearest_up,B,OPTIONS / MENTHORQ,1,0,0.0,dist_vix_gex_nearest_up
+NQ,122,dist_vwap_rth_r,A,VWAP,7,6,0.857,dist_ib_high|dist_ib_low|dist_open_cash|above_open_cash|dist_vwap_rth_r|dist_vwap_rth_sd1u_r|dist_vwap_rth_sd1d_r
+NQ,114,ib_range_ticks,A,INITIAL BALANCE,2,2,1.0,ib_range_ticks|ib_range
+NQ,100,ib_is_wide,B,INITIAL BALANCE,1,0,0.0,ib_is_wide
+NQ,137,ib_broken_up,B,INITIAL BALANCE,1,0,0.0,ib_broken_up
+NQ,120,ctx_day_type_intensity,B,MARKET PROFILE,3,0,0.0,ib_broken_down|ctx_day_type_intensity|ib_broken_dn
+NQ,95,ib_complete,B,INITIAL BALANCE,4,0,0.0,ib_complete|bool_session_early|is_ib_window|ctx_session_phase
+NQ,121,dist_ovn_low,A,SESSION / TEMPS,5,2,0.4,dist_open_830|dist_ovn_low|pct_in_range|fvg_up_active|fvg_dn_active
+NQ,113,ovn_range_ticks,B,VOLATILITE / REGIME,1,0,0.0,ovn_range_ticks
+NQ,119,open_position,B,SESSION / TEMPS,1,0,0.0,open_position
+NQ,109,im_delta_day_divergence,B,ORDER FLOW,3,0,0.0,delta_day_dir|cvd_day_dir|im_delta_day_divergence
+NQ,65,volume_hnorm,A,AUTRES,3,3,1.0,vol_per_sec_hnorm|total_vol_hnorm|volume_hnorm
+NQ,89,bar_duration_sec,B,BARRE / OHLC,1,0,0.0,bar_duration_sec
+NQ,38,finish_strength_hnorm,B,AUTRES,1,0,0.0,finish_strength_hnorm
+NQ,82,cvd_ohlc_range,B,ORDER FLOW,1,0,0.0,cvd_ohlc_range
+NQ,17,rotation_up,B,AUTRES,1,0,0.0,rotation_up
+NQ,18,rotation_dn,B,AUTRES,1,0,0.0,rotation_dn
+NQ,44,rotation_zz_osc,B,AUTRES,1,0,0.0,rotation_zz_osc
+NQ,5,finish_delta_pct,A,ORDER FLOW,2,1,0.5,finish_delta_pct|high_ask_vol_pct
+NQ,6,high_pullback_delta,B,ORDER FLOW,1,0,0.0,high_pullback_delta
+NQ,28,bn_color_up,B,BATTLE NAVALE,1,0,0.0,bn_color_up
+NQ,30,bn_color_dn,B,BATTLE NAVALE,1,0,0.0,bn_color_dn
+NQ,31,bn_color_up_2,B,BATTLE NAVALE,1,0,0.0,bn_color_up_2
+NQ,32,bn_color_dn_2,B,BATTLE NAVALE,1,0,0.0,bn_color_dn_2
+NQ,27,bn_volume_up,B,BATTLE NAVALE,5,0,0.0,bn_long_up|bn_score_raw|bn_score_bull|bn_volume_up|long_up_bar
+NQ,29,bn_volume_dn,B,BATTLE NAVALE,4,0,0.0,bn_long_dn|bn_score_bear|bn_volume_dn|long_dn_bar
+NQ,13,bn_pressure_ask,B,BATTLE NAVALE,1,0,0.0,bn_pressure_ask
+NQ,15,bn_pressure_bid,B,BATTLE NAVALE,1,0,0.0,bn_pressure_bid
+NQ,81,n_big_ask_t3,B,ORDER FLOW,2,0,0.0,n_big_ask_t3|n_big_ask_v2_t3
+NQ,80,n_big_bid_t3,B,ORDER FLOW,2,0,0.0,n_big_bid_t3|n_big_bid_v2_t3
+NQ,54,big_ask_cluster_20t_t2,B,ORDER FLOW,1,0,0.0,big_ask_cluster_20t_t2
+NQ,55,big_bid_cluster_20t_t2,B,ORDER FLOW,1,0,0.0,big_bid_cluster_20t_t2
+NQ,56,big_ask_cluster_20t_t3,B,ORDER FLOW,1,0,0.0,big_ask_cluster_20t_t3
+NQ,57,big_bid_cluster_20t_t3,B,ORDER FLOW,1,0,0.0,big_bid_cluster_20t_t3
+NQ,25,bar_color_up,B,BATTLE NAVALE,1,0,0.0,bar_color_up
+NQ,23,bar_color_dn,B,BATTLE NAVALE,1,0,0.0,bar_color_dn
+NQ,26,bar_long_up_bar,B,BATTLE NAVALE,1,0,0.0,bar_long_up_bar
+NQ,24,bar_long_dn_bar,B,BATTLE NAVALE,1,0,0.0,bar_long_dn_bar
+NQ,21,bar_long_dn_up,B,BATTLE NAVALE,1,0,0.0,bar_long_dn_up
+NQ,19,bar_long_up_dn,B,BATTLE NAVALE,1,0,0.0,bar_long_up_dn
+NQ,11,bar_edge_buy,B,ORDER FLOW,2,0,0.0,bar_edge_buy|bar_edge_buy_fire
+NQ,9,bar_edge_sell,B,ORDER FLOW,2,0,0.0,bar_edge_sell|bar_edge_sell_fire
+NQ,14,bar_pressure_ask,B,BARRE / OHLC,1,0,0.0,bar_pressure_ask
+NQ,16,bar_pressure_bid,B,BARRE / OHLC,1,0,0.0,bar_pressure_bid
+NQ,12,dist_ext_edge_buy,B,ORDER FLOW,1,0,0.0,dist_ext_edge_buy
+NQ,10,dist_ext_edge_sell,B,ORDER FLOW,1,0,0.0,dist_ext_edge_sell
+NQ,7,fp_edge_buy,B,ORDER FLOW,1,0,0.0,fp_edge_buy
+NQ,8,fp_edge_sell,B,ORDER FLOW,1,0,0.0,fp_edge_sell
+NQ,107,price_vs_swing_mid,B,SWINGS / STRUCTURE,1,0,0.0,price_vs_swing_mid
+NQ,93,open_type,B,MARKET PROFILE,1,0,0.0,open_type
+NQ,97,open_zone,B,SESSION / TEMPS,1,0,0.0,open_zone
+NQ,96,open_bias_conf,B,SESSION / TEMPS,1,0,0.0,open_bias_conf
+NQ,127,open_direction,B,SESSION / TEMPS,2,0,0.0,open_direction|im_cross_open_signal
+NQ,98,day_type,B,MARKET PROFILE,1,0,0.0,day_type
+NQ,102,rule_80pct,B,AUTRES,1,0,0.0,rule_80pct
+NQ,140,ma_trend,B,AUTRES,1,0,0.0,ma_trend
+NQ,136,vwap_ma_align,B,VWAP,1,0,0.0,vwap_ma_align
+NQ,126,vwap_slope_10_dir,B,VWAP,1,0,0.0,vwap_slope_10_dir
+NQ,131,bool_above_mq_hvl,B,OPTIONS / MENTHORQ,1,0,0.0,bool_above_mq_hvl
+NQ,133,bool_above_mq_call,B,OPTIONS / MENTHORQ,1,0,0.0,bool_above_mq_call
+NQ,72,bool_near_level,B,AUTRES,1,0,0.0,bool_near_level
+NQ,138,bool_ib_inside,B,INITIAL BALANCE,1,0,0.0,bool_ib_inside
+NQ,125,vwap_triple_align,B,VWAP,1,0,0.0,vwap_triple_align
+NQ,64,session_hvn_count,B,VOLUME PROFILE,3,0,0.0,session_hvn_count|session_lvn_count|lvn_confluence_count
+NQ,73,profile_shape,B,MARKET PROFILE,2,0,0.0,profile_shape|is_double_dist
+NQ,141,profile_skew,B,MARKET PROFILE,1,0,0.0,profile_skew
+NQ,108,retest_low_count,B,SWINGS / STRUCTURE,1,0,0.0,retest_low_count
+NQ,105,retest_high_delta_div,B,ORDER FLOW,1,0,0.0,retest_high_delta_div
+NQ,79,retest_low_delta_div,B,ORDER FLOW,1,0,0.0,retest_low_delta_div
+NQ,40,momentum_10b_r,A,SWINGS / STRUCTURE,2,1,0.5,poc_migration_dir|momentum_10b_r
+NQ,145,liquidity_sweep_high_lag5,B,SWINGS / STRUCTURE,1,0,0.0,liquidity_sweep_high_lag5
+NQ,142,liquidity_sweep_low_lag5,B,SWINGS / STRUCTURE,1,0,0.0,liquidity_sweep_low_lag5
+NQ,130,above_open_830,B,SESSION / TEMPS,1,0,0.0,above_open_830
+NQ,134,ovn_broken_up,B,SESSION / TEMPS,1,0,0.0,ovn_broken_up
+NQ,129,ovn_broken_dn,B,SESSION / TEMPS,1,0,0.0,ovn_broken_dn
+NQ,99,is_session_blocked,B,SESSION / TEMPS,2,0,0.0,is_session_blocked|is_blocked_combined
+NQ,46,delta_div_buy,B,ORDER FLOW,2,0,0.0,delta_div_buy|delta_div_slope_buy
+NQ,50,delta_div_sell,B,ORDER FLOW,2,0,0.0,delta_div_sell|delta_div_slope_sell
+NQ,47,delta_divergence_any,B,ORDER FLOW,1,0,0.0,delta_divergence_any
+NQ,45,delta_div_slope_clean,B,ORDER FLOW,4,0,0.0,delta_div_buy_clean|delta_divergence_clean|delta_div_slope_buy_clean|delta_div_slope_clean
+NQ,49,delta_div_sell_clean,B,ORDER FLOW,2,0,0.0,delta_div_sell_clean|delta_div_slope_sell_clean
+NQ,77,n_delta_div_buy_zones_active,B,ORDER FLOW,1,0,0.0,n_delta_div_buy_zones_active
+NQ,106,n_delta_div_sell_zones_active,B,ORDER FLOW,1,0,0.0,n_delta_div_sell_zones_active
+NQ,78,ctx_div_density_20,B,CONTEXTE ROLLING,1,0,0.0,ctx_div_density_20
+NQ,68,ctx_climax_signal,B,CONTEXTE ROLLING,1,0,0.0,ctx_climax_signal
+NQ,62,ctx_failed_auction,B,CONTEXTE ROLLING,1,0,0.0,ctx_failed_auction
+NQ,4,ctx_absorption_score_5,B,CONTEXTE ROLLING,1,0,0.0,ctx_absorption_score_5
+NQ,3,ctx_absorption_streak_5,B,CONTEXTE ROLLING,2,0,0.0,ctx_absorption_streak_5|ctx_instant_absorption
+NQ,69,ctx_delta_exhaustion,B,ORDER FLOW,1,0,0.0,ctx_delta_exhaustion
+NQ,70,ctx_momentum_exhaustion,B,SWINGS / STRUCTURE,1,0,0.0,ctx_momentum_exhaustion
+NQ,58,ctx_poor_high,B,CONTEXTE ROLLING,1,0,0.0,ctx_poor_high
+NQ,60,ctx_poor_low,B,CONTEXTE ROLLING,1,0,0.0,ctx_poor_low
+NQ,51,ctx_excess_low_bars,B,CONTEXTE ROLLING,2,0,0.0,ctx_excess_high_bars|ctx_excess_low_bars
+NQ,144,ctx_double_top_trap,B,CONTEXTE ROLLING,1,0,0.0,ctx_double_top_trap
+NQ,41,ctx_delta_sum_3,A,ORDER FLOW,2,1,0.5,ctx_vol_sell_buy_ratio_5|ctx_delta_sum_3
+NQ,67,ctx_vol_slope_5_hnorm,B,CONTEXTE ROLLING,1,0,0.0,ctx_vol_slope_5_hnorm
+NQ,35,ctx_vwap_slope_accel,B,VWAP,1,0,0.0,ctx_vwap_slope_accel
+NQ,1,ctx_side_flip_count_10,B,CONTEXTE ROLLING,1,0,0.0,ctx_side_flip_count_10
+NQ,39,ctx_delta_slope_5,B,ORDER FLOW,1,0,0.0,ctx_delta_slope_5
+NQ,22,long_dn_up_pattern,B,BATTLE NAVALE,1,0,0.0,long_dn_up_pattern
+NQ,20,long_up_dn_pattern,B,BATTLE NAVALE,1,0,0.0,long_up_dn_pattern
+NQ,85,n_long_up_cluster_within_0_2pct,B,ORDER FLOW,1,0,0.0,n_long_up_cluster_within_0_2pct
+NQ,75,n_long_dn_cluster_within_0_2pct_hnorm,B,ORDER FLOW,1,0,0.0,n_long_dn_cluster_within_0_2pct_hnorm
+NQ,86,n_color_up_cluster_within_0_2pct,B,ORDER FLOW,1,0,0.0,n_color_up_cluster_within_0_2pct
+NQ,76,n_color_dn_cluster_within_0_2pct,B,ORDER FLOW,1,0,0.0,n_color_dn_cluster_within_0_2pct
+NQ,48,div_confluence_dmp,B,AUTRES,2,0,0.0,div_confluence_with_regime|div_confluence_dmp
+NQ,33,ctx_price_delta_div_3,B,ORDER FLOW,1,0,0.0,ctx_price_delta_div_3
+NQ,83,ctx_rotation_factor_20,B,CONTEXTE ROLLING,1,0,0.0,ctx_rotation_factor_20
+NQ,53,ctx_div_at_swing,B,SWINGS / STRUCTURE,1,0,0.0,ctx_div_at_swing
+NQ,135,n_edge_sell_active,B,ORDER FLOW,1,0,0.0,n_edge_sell_active
+NQ,66,rvol_regime,B,VOLATILITE / REGIME,1,0,0.0,rvol_regime
+NQ,87,is_new_sess_low,B,BARRE / OHLC,1,0,0.0,is_new_sess_low
+NQ,2,im_cross_delta_agreement_5,B,ORDER FLOW,1,0,0.0,im_cross_delta_agreement_5
+NQ,34,im_smt_divergence,B,INTERMARKET,1,0,0.0,im_smt_divergence
+NQ,92,im_open_type_agreement,B,MARKET PROFILE,1,0,0.0,im_open_type_agreement
+NQ,117,open_within_prev_va,B,NIVEAUX VEILLE,1,0,0.0,open_within_prev_va
+NQ,116,open_relation_type,B,SESSION / TEMPS,2,0,0.0,open_outside_prev_range|open_relation_type
+NQ,111,profile_overlap_above_pdh,B,MARKET PROFILE,1,0,0.0,profile_overlap_above_pdh
+NQ,132,profile_overlap_below_pdl,B,MARKET PROFILE,1,0,0.0,profile_overlap_below_pdl
+NQ,94,range_extension_above_ib_atr,B,INITIAL BALANCE,1,0,0.0,range_extension_above_ib_atr
+NQ,90,range_extension_below_ib_atr,B,INITIAL BALANCE,1,0,0.0,range_extension_below_ib_atr
+NQ,91,range_extension_completed,B,VOLATILITE / REGIME,1,0,0.0,range_extension_completed
+NQ,43,fvg_up_created_this_bar,B,SWINGS / STRUCTURE,1,0,0.0,fvg_up_created_this_bar
+NQ,36,fvg_dn_created_this_bar,B,SWINGS / STRUCTURE,1,0,0.0,fvg_dn_created_this_bar
+NQ,52,sweep_high_active,B,SWINGS / STRUCTURE,1,0,0.0,sweep_high_active
+NQ,63,sweep_low_active,B,SWINGS / STRUCTURE,1,0,0.0,sweep_low_active
+NQ,59,sweep_high_this_bar,B,SWINGS / STRUCTURE,1,0,0.0,sweep_high_this_bar
+NQ,61,sweep_low_this_bar,B,SWINGS / STRUCTURE,1,0,0.0,sweep_low_this_bar
+NQ,42,momentum_3b_r,A,SWINGS / STRUCTURE,2,2,1.0,momentum_3b_r|momentum_5b_r
+NQ,146,bool_gex_flip_zone,B,OPTIONS / MENTHORQ,1,0,0.0,bool_gex_flip_zone
+NQ,147,mq_gamma_condition,B,OPTIONS / MENTHORQ,1,0,0.0,mq_gamma_condition
+NQ,148,div_regime_proxy_ok,B,VOLATILITE / REGIME,1,0,0.0,div_regime_proxy_ok
+NQ,149,range_size_hnorm,A,VOLATILITE / REGIME,1,1,1.0,range_size_hnorm
+NQ,150,atr_14m_pct_hnorm,A,VOLATILITE / REGIME,1,1,1.0,atr_14m_pct_hnorm
+NQ,151,open_above_prev_vah,B,MARKET PROFILE,1,0,0.0,open_above_prev_vah
+NQ,152,open_below_prev_val,B,MARKET PROFILE,1,0,0.0,open_below_prev_val

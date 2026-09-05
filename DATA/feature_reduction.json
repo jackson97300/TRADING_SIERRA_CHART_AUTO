@@ -1,8 +1,8 @@
 {
   "ES": {
     "seuil": 0.7,
-    "n_depart": 609,
-    "n_apres_nettoyage": 241,
+    "n_depart": 618,
+    "n_apres_nettoyage": 250,
     "features_retenues": [
       "ask_pct",
       "atr",
@@ -55,12 +55,13 @@
       "delta_divergence_any",
       "dist_ext_edge_buy",
       "dist_ext_edge_sell",
-      "dist_open_cash",
+      "dist_ovn_low",
       "dist_pdh",
-      "dist_pdl",
+      "dist_prev_vwap_rth_r",
       "dist_vix_gex_nearest_up",
       "dist_vwap_d",
       "dist_vwap_m",
+      "dist_vwap_rth_r",
       "dist_vwap_w",
       "equal_highs_detected",
       "equal_lows_detected",
@@ -88,6 +89,8 @@
       "liquidity_sweep_high_lag5",
       "liquidity_sweep_low_lag5",
       "ma_trend",
+      "momentum_10b_r",
+      "momentum_3b_r",
       "n_big_ask_t1",
       "n_big_ask_t3",
       "n_color_dn_cluster_within_0_2pct",
@@ -110,7 +113,6 @@
       "ovn_broken_dn",
       "ovn_broken_up",
       "ovn_range_ticks",
-      "poc_migration_dir",
       "price_vs_swing_mid",
       "profile_overlap_above_pdh",
       "profile_overlap_below_pdl",
@@ -145,26 +147,26 @@
       {
         "seuil": 0.5,
         "clusters": 101,
-        "regroupements": 35
-      },
-      {
-        "seuil": 0.6,
-        "clusters": 115,
         "regroupements": 36
       },
       {
+        "seuil": 0.6,
+        "clusters": 116,
+        "regroupements": 38
+      },
+      {
         "seuil": 0.7,
-        "clusters": 134,
-        "regroupements": 39
+        "clusters": 136,
+        "regroupements": 42
       },
       {
         "seuil": 0.8,
-        "clusters": 155,
-        "regroupements": 38
+        "clusters": 159,
+        "regroupements": 41
       }
     ],
     "clusters": {
-      "62": {
+      "59": {
         "representant": "atr",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -179,7 +181,7 @@
           }
         ]
       },
-      "72": {
+      "69": {
         "representant": "dist_vwap_d",
         "famille": "VWAP",
         "membres": [
@@ -279,7 +281,7 @@
           }
         ]
       },
-      "75": {
+      "73": {
         "representant": "dist_vwap_w",
         "famille": "VWAP",
         "membres": [
@@ -334,7 +336,7 @@
           }
         ]
       },
-      "63": {
+      "60": {
         "representant": "dist_vwap_m",
         "famille": "VWAP",
         "membres": [
@@ -369,7 +371,7 @@
           }
         ]
       },
-      "98": {
+      "28": {
         "representant": "inside_cur_va",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -378,7 +380,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "122": {
+      "126": {
         "representant": "ask_pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -423,7 +425,7 @@
           }
         ]
       },
-      "55": {
+      "52": {
         "representant": "inside_prev_va",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -432,7 +434,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "34": {
+      "45": {
         "representant": "next_wall_is_call",
         "famille": "AUTRES",
         "membres": [
@@ -441,7 +443,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "90": {
+      "91": {
         "representant": "gex_cluster_count",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -450,7 +452,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "65": {
+      "62": {
         "representant": "vix_regime",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -459,7 +461,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "81": {
+      "79": {
         "representant": "vix_above_hvl_0dte",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -468,7 +470,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "47": {
+      "46": {
         "representant": "dist_vix_gex_nearest_up",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -477,32 +479,47 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "71": {
-        "representant": "dist_open_cash",
-        "famille": "SESSION / TEMPS",
+      "68": {
+        "representant": "dist_vwap_rth_r",
+        "famille": "VWAP",
         "membres": [
           "dist_ib_high",
           "dist_ib_low",
           "dist_open_cash",
-          "above_open_cash"
+          "above_open_cash",
+          "dist_vwap_rth_r",
+          "dist_vwap_rth_sd1u_r",
+          "dist_vwap_rth_sd1d_r"
         ],
-        "stabilite_test": 0.8335809904334188,
+        "stabilite_test": 0.8363970260705048,
         "remplaces": [
           {
-            "feature": "dist_ib_high",
-            "rho_avec_representant": 0.7968750041632631
+            "feature": "above_open_cash",
+            "rho_avec_representant": 0.6544865399314906
+          },
+          {
+            "feature": "dist_open_cash",
+            "rho_avec_representant": 0.8031224925077094
           },
           {
             "feature": "dist_ib_low",
-            "rho_avec_representant": 0.8272567787198865
+            "rho_avec_representant": 0.8370534242489546
           },
           {
-            "feature": "above_open_cash",
-            "rho_avec_representant": 0.8578334726837307
+            "feature": "dist_ib_high",
+            "rho_avec_representant": 0.8644589473510635
+          },
+          {
+            "feature": "dist_vwap_rth_sd1d_r",
+            "rho_avec_representant": 0.92470392381811
+          },
+          {
+            "feature": "dist_vwap_rth_sd1u_r",
+            "rho_avec_representant": 0.9363054579468209
           }
         ]
       },
-      "59": {
+      "56": {
         "representant": "ib_range_ticks",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -517,7 +534,7 @@
           }
         ]
       },
-      "53": {
+      "50": {
         "representant": "ib_is_wide",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -526,7 +543,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "83": {
+      "82": {
         "representant": "ib_broken_up",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -535,7 +552,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "70": {
+      "67": {
         "representant": "ctx_day_type_intensity",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -555,7 +572,7 @@
           }
         ]
       },
-      "42": {
+      "38": {
         "representant": "ib_complete",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -580,8 +597,8 @@
           }
         ]
       },
-      "76": {
-        "representant": "dist_pdl",
+      "71": {
+        "representant": "dist_ovn_low",
         "famille": "NIVEAUX VEILLE",
         "membres": [
           "dist_open_830",
@@ -655,7 +672,7 @@
           }
         ]
       },
-      "60": {
+      "57": {
         "representant": "ovn_range_ticks",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -664,7 +681,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "50": {
+      "81": {
         "representant": "open_position",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -673,7 +690,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "66": {
+      "63": {
         "representant": "cvd_day_dir",
         "famille": "ORDER FLOW",
         "membres": [
@@ -688,7 +705,7 @@
           }
         ]
       },
-      "25": {
+      "21": {
         "representant": "volume_hnorm",
         "famille": "AUTRES",
         "membres": [
@@ -708,7 +725,7 @@
           }
         ]
       },
-      "30": {
+      "26": {
         "representant": "bar_duration_sec",
         "famille": "BARRE / OHLC",
         "membres": [
@@ -717,7 +734,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "123": {
+      "127": {
         "representant": "finish_strength",
         "famille": "AUTRES",
         "membres": [
@@ -744,7 +761,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "126": {
+      "132": {
         "representant": "rotation_zz_osc",
         "famille": "AUTRES",
         "membres": [
@@ -753,7 +770,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "104": {
+      "102": {
         "representant": "finish_delta_pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -768,7 +785,7 @@
           }
         ]
       },
-      "107": {
+      "105": {
         "representant": "high_pullback_delta",
         "famille": "ORDER FLOW",
         "membres": [
@@ -870,7 +887,7 @@
           }
         ]
       },
-      "35": {
+      "31": {
         "representant": "n_big_ask_t3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -895,7 +912,7 @@
           }
         ]
       },
-      "114": {
+      "120": {
         "representant": "big_ask_cluster_20t_t2",
         "famille": "ORDER FLOW",
         "membres": [
@@ -910,7 +927,7 @@
           }
         ]
       },
-      "36": {
+      "32": {
         "representant": "big_ask_cluster_20t_t3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -919,7 +936,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "37": {
+      "33": {
         "representant": "big_bid_cluster_20t_t3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -958,7 +975,7 @@
           }
         ]
       },
-      "102": {
+      "100": {
         "representant": "bar_edge_buy",
         "famille": "ORDER FLOW",
         "membres": [
@@ -973,7 +990,7 @@
           }
         ]
       },
-      "105": {
+      "103": {
         "representant": "bar_edge_sell",
         "famille": "ORDER FLOW",
         "membres": [
@@ -988,7 +1005,7 @@
           }
         ]
       },
-      "125": {
+      "122": {
         "representant": "dist_ext_edge_buy",
         "famille": "ORDER FLOW",
         "membres": [
@@ -997,7 +1014,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "118": {
+      "131": {
         "representant": "dist_ext_edge_sell",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1024,7 +1041,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "103": {
+      "101": {
         "representant": "fp_edge_buy",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1033,7 +1050,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "108": {
+      "106": {
         "representant": "fp_edge_sell",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1042,7 +1059,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "115": {
+      "121": {
         "representant": "price_vs_swing_mid",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1051,7 +1068,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "40": {
+      "36": {
         "representant": "open_type",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -1060,7 +1077,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "44": {
+      "40": {
         "representant": "open_zone",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -1069,7 +1086,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "43": {
+      "39": {
         "representant": "open_bias_conf",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -1078,7 +1095,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "78": {
+      "76": {
         "representant": "open_direction",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -1093,7 +1110,7 @@
           }
         ]
       },
-      "38": {
+      "34": {
         "representant": "day_type",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -1102,7 +1119,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "85": {
+      "84": {
         "representant": "rule_80pct",
         "famille": "AUTRES",
         "membres": [
@@ -1111,7 +1128,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "61": {
+      "58": {
         "representant": "ma_trend",
         "famille": "AUTRES",
         "membres": [
@@ -1120,7 +1137,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "82": {
+      "80": {
         "representant": "vwap_ma_align",
         "famille": "VWAP",
         "membres": [
@@ -1129,7 +1146,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "73": {
+      "70": {
         "representant": "vwap_slope_10_dir",
         "famille": "VWAP",
         "membres": [
@@ -1138,7 +1155,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "52": {
+      "49": {
         "representant": "bool_above_mq_call",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -1147,7 +1164,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "100": {
+      "30": {
         "representant": "bool_near_level",
         "famille": "AUTRES",
         "membres": [
@@ -1156,7 +1173,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "84": {
+      "83": {
         "representant": "bool_ib_inside",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -1165,7 +1182,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "89": {
+      "90": {
         "representant": "bool_va_confluence",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -1174,7 +1191,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "51": {
+      "48": {
         "representant": "bool_gex_flip_zone",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -1194,7 +1211,7 @@
           }
         ]
       },
-      "21": {
+      "17": {
         "representant": "session_hvn_count",
         "famille": "VOLUME PROFILE",
         "membres": [
@@ -1214,7 +1231,7 @@
           }
         ]
       },
-      "49": {
+      "27": {
         "representant": "profile_shape",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -1229,7 +1246,7 @@
           }
         ]
       },
-      "94": {
+      "95": {
         "representant": "profile_skew",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -1238,7 +1255,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "117": {
+      "123": {
         "representant": "retest_low_count",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1247,7 +1264,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "95": {
+      "96": {
         "representant": "retest_high_delta_div",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1256,7 +1273,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "96": {
+      "97": {
         "representant": "retest_low_delta_div",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1265,7 +1282,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "23": {
+      "19": {
         "representant": "range_size_hnorm",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -1294,7 +1311,7 @@
           }
         ]
       },
-      "24": {
+      "20": {
         "representant": "atr_14m_pct_hnorm",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -1303,16 +1320,22 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "116": {
-        "representant": "poc_migration_dir",
-        "famille": "MARKET PROFILE",
+      "119": {
+        "representant": "momentum_10b_r",
+        "famille": "SWINGS / STRUCTURE",
         "membres": [
-          "poc_migration_dir"
+          "poc_migration_dir",
+          "momentum_10b_r"
         ],
-        "stabilite_test": null,
-        "remplaces": []
+        "stabilite_test": 0.7135974082288932,
+        "remplaces": [
+          {
+            "feature": "poc_migration_dir",
+            "rho_avec_representant": 0.7165711724851994
+          }
+        ]
       },
-      "97": {
+      "98": {
         "representant": "equal_highs_detected",
         "famille": "BARRE / OHLC",
         "membres": [
@@ -1321,7 +1344,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "48": {
+      "47": {
         "representant": "equal_lows_detected",
         "famille": "BARRE / OHLC",
         "membres": [
@@ -1330,7 +1353,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "134": {
+      "135": {
         "representant": "liquidity_sweep_high_lag5",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1348,7 +1371,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "79": {
+      "77": {
         "representant": "ovn_broken_up",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -1357,7 +1380,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "80": {
+      "78": {
         "representant": "ovn_broken_dn",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -1366,7 +1389,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "22": {
+      "18": {
         "representant": "is_session_blocked",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -1381,7 +1404,7 @@
           }
         ]
       },
-      "112": {
+      "114": {
         "representant": "delta_div_buy",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1416,7 +1439,7 @@
           }
         ]
       },
-      "110": {
+      "112": {
         "representant": "delta_div_sell",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1441,7 +1464,7 @@
           }
         ]
       },
-      "111": {
+      "113": {
         "representant": "delta_divergence_any",
         "famille": "AUTRES",
         "membres": [
@@ -1461,7 +1484,7 @@
           }
         ]
       },
-      "56": {
+      "53": {
         "representant": "n_delta_div_buy_zones_active",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1470,7 +1493,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "57": {
+      "54": {
         "representant": "n_delta_div_sell_zones_active",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1479,7 +1502,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "58": {
+      "55": {
         "representant": "ctx_div_density_20",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -1488,7 +1511,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "28": {
+      "24": {
         "representant": "ctx_climax_signal",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -1497,7 +1520,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "19": {
+      "109": {
         "representant": "ctx_failed_auction",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -1530,7 +1553,7 @@
           }
         ]
       },
-      "29": {
+      "25": {
         "representant": "ctx_delta_exhaustion",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1539,7 +1562,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "31": {
+      "136": {
         "representant": "ctx_momentum_exhaustion",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1548,7 +1571,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "129": {
+      "116": {
         "representant": "ctx_poor_high",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -1557,7 +1580,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "17": {
+      "107": {
         "representant": "ctx_poor_low",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -1566,7 +1589,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "109": {
+      "111": {
         "representant": "ctx_excess_low_bars",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -1581,7 +1604,7 @@
           }
         ]
       },
-      "101": {
+      "99": {
         "representant": "ctx_double_top_trap",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -1590,7 +1613,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "121": {
+      "124": {
         "representant": "ctx_delta_sum_3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1605,7 +1628,7 @@
           }
         ]
       },
-      "27": {
+      "23": {
         "representant": "ctx_vol_slope_5",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -1614,7 +1637,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "119": {
+      "129": {
         "representant": "ctx_vwap_slope_accel",
         "famille": "VWAP",
         "membres": [
@@ -1632,7 +1655,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "124": {
+      "128": {
         "representant": "ctx_delta_slope_5",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1641,7 +1664,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "92": {
+      "93": {
         "representant": "n_long_up_cluster_within_0_2pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1650,7 +1673,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "32": {
+      "43": {
         "representant": "n_long_dn_cluster_within_0_2pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1659,7 +1682,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "93": {
+      "94": {
         "representant": "n_color_up_cluster_within_0_2pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1668,7 +1691,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "33": {
+      "44": {
         "representant": "n_color_dn_cluster_within_0_2pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1677,7 +1700,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "128": {
+      "134": {
         "representant": "ctx_price_delta_div_3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1686,7 +1709,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "99": {
+      "29": {
         "representant": "ctx_rotation_factor_20",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -1695,7 +1718,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "113": {
+      "115": {
         "representant": "ctx_div_at_swing",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1704,7 +1727,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "106": {
+      "104": {
         "representant": "n_edge_sell_active",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1713,7 +1736,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "26": {
+      "22": {
         "representant": "rvol_regime",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -1722,7 +1745,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "133": {
+      "86": {
         "representant": "is_new_sess_high",
         "famille": "BARRE / OHLC",
         "membres": [
@@ -1740,7 +1763,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "127": {
+      "133": {
         "representant": "im_smt_divergence",
         "famille": "INTERMARKET",
         "membres": [
@@ -1749,7 +1772,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "67": {
+      "64": {
         "representant": "im_delta_day_divergence",
         "famille": "ORDER FLOW",
         "membres": [
@@ -1758,7 +1781,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "46": {
+      "42": {
         "representant": "im_open_type_agreement",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -1767,7 +1790,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "69": {
+      "66": {
         "representant": "open_above_prev_vah",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -1782,7 +1805,7 @@
           }
         ]
       },
-      "86": {
+      "85": {
         "representant": "open_within_prev_va",
         "famille": "NIVEAUX VEILLE",
         "membres": [
@@ -1791,7 +1814,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "68": {
+      "65": {
         "representant": "open_relation_type",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -1806,7 +1829,7 @@
           }
         ]
       },
-      "54": {
+      "51": {
         "representant": "profile_overlap_above_pdh",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -1815,7 +1838,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "77": {
+      "72": {
         "representant": "profile_overlap_below_pdl",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -1824,7 +1847,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "41": {
+      "37": {
         "representant": "range_extension_above_ib_atr",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -1833,7 +1856,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "45": {
+      "41": {
         "representant": "range_extension_below_ib_atr",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -1842,7 +1865,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "39": {
+      "35": {
         "representant": "range_extension_completed",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -1851,7 +1874,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "131": {
+      "118": {
         "representant": "fvg_up_created_this_bar",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1860,7 +1883,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "120": {
+      "130": {
         "representant": "fvg_dn_created_this_bar",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1869,7 +1892,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "132": {
+      "88": {
         "representant": "sweep_high_active",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1878,7 +1901,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "20": {
+      "110": {
         "representant": "sweep_low_active",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1887,7 +1910,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "130": {
+      "117": {
         "representant": "sweep_high_this_bar",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1896,7 +1919,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "18": {
+      "108": {
         "representant": "sweep_low_this_bar",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -1905,7 +1928,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "91": {
+      "92": {
         "representant": "gamma_block_long",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -1914,7 +1937,42 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "135": {
+      "75": {
+        "representant": "dist_prev_vwap_rth_r",
+        "famille": "NIVEAUX VEILLE",
+        "membres": [
+          "dist_prev_vwap_rth_r",
+          "dist_pdh_rth_r",
+          "dist_pdl_rth_r"
+        ],
+        "stabilite_test": 0.9805374123967708,
+        "remplaces": [
+          {
+            "feature": "dist_pdh_rth_r",
+            "rho_avec_representant": 0.9063997012585886
+          },
+          {
+            "feature": "dist_pdl_rth_r",
+            "rho_avec_representant": 0.9472025658935437
+          }
+        ]
+      },
+      "125": {
+        "representant": "momentum_3b_r",
+        "famille": "SWINGS / STRUCTURE",
+        "membres": [
+          "momentum_3b_r",
+          "momentum_5b_r"
+        ],
+        "stabilite_test": 0.7638958052777022,
+        "remplaces": [
+          {
+            "feature": "momentum_5b_r",
+            "rho_avec_representant": 0.7376863535279133
+          }
+        ]
+      },
+      "137": {
         "representant": "open_in_prev_va",
         "famille": "NIVEAUX VEILLE",
         "membres": [
@@ -1923,7 +1981,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "136": {
+      "138": {
         "representant": "trend_day_probability_hnorm",
         "famille": "AUTRES",
         "membres": [
@@ -1932,7 +1990,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "137": {
+      "139": {
         "representant": "bool_above_mq_hvl",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -1941,7 +1999,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "138": {
+      "140": {
         "representant": "vwap_triple_align",
         "famille": "VWAP",
         "membres": [
@@ -3399,6 +3457,18 @@
         {
           "feature": "dist_single_print_atr",
           "raison": "x6.2, derive train->test 273 % : l'heure ne la determine pas"
+        },
+        {
+          "feature": "momentum_3b_r",
+          "raison": "x2.6, derive train->test 200 % : l'heure ne la determine pas"
+        },
+        {
+          "feature": "momentum_5b_r",
+          "raison": "x2.3, derive train->test 300 % : l'heure ne la determine pas"
+        },
+        {
+          "feature": "momentum_10b_r",
+          "raison": "x2.3, derive train->test 300 % : l'heure ne la determine pas"
         }
       ],
       "hors perimetre (R)": [
@@ -3507,6 +3577,18 @@
         {
           "feature": "dist_open_cash",
           "raison": "x3.6"
+        },
+        {
+          "feature": "dist_vwap_rth_r",
+          "raison": "x3.0"
+        },
+        {
+          "feature": "dist_vwap_rth_sd1u_r",
+          "raison": "x2.8"
+        },
+        {
+          "feature": "dist_vwap_rth_sd1d_r",
+          "raison": "x3.0"
         }
       ],
       "prix absolu": [
@@ -3663,9 +3745,10 @@
   },
   "NQ": {
     "seuil": 0.7,
-    "n_depart": 609,
-    "n_apres_nettoyage": 243,
+    "n_depart": 618,
+    "n_apres_nettoyage": 252,
     "features_retenues": [
+      "above_open_830",
       "ask_pct",
       "atr",
       "atr_14m_pct_hnorm",
@@ -3727,11 +3810,12 @@
       "dist_cur_vah",
       "dist_ext_edge_buy",
       "dist_ext_edge_sell",
-      "dist_open_cash",
-      "dist_pdh",
+      "dist_ovn_low",
+      "dist_prev_vwap_rth_r",
       "dist_vix_gex_nearest_up",
       "dist_vwap_d",
       "dist_vwap_m",
+      "dist_vwap_rth_r",
       "div_confluence_dmp",
       "div_regime_proxy_ok",
       "finish_delta_pct",
@@ -3759,6 +3843,8 @@
       "long_dn_up_pattern",
       "long_up_dn_pattern",
       "ma_trend",
+      "momentum_10b_r",
+      "momentum_3b_r",
       "mq_gamma_condition",
       "n_big_ask_t3",
       "n_big_bid_t3",
@@ -3783,7 +3869,6 @@
       "ovn_broken_dn",
       "ovn_broken_up",
       "ovn_range_ticks",
-      "poc_migration_dir",
       "price_vs_swing_mid",
       "profile_overlap_above_pdh",
       "profile_overlap_below_pdl",
@@ -3817,26 +3902,26 @@
       {
         "seuil": 0.5,
         "clusters": 111,
-        "regroupements": 42
+        "regroupements": 43
       },
       {
         "seuil": 0.6,
         "clusters": 124,
-        "regroupements": 38
+        "regroupements": 39
       },
       {
         "seuil": 0.7,
-        "clusters": 142,
-        "regroupements": 35
+        "clusters": 145,
+        "regroupements": 38
       },
       {
         "seuil": 0.8,
-        "clusters": 163,
-        "regroupements": 39
+        "clusters": 166,
+        "regroupements": 41
       }
     ],
     "clusters": {
-      "92": {
+      "139": {
         "representant": "atr",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -3845,7 +3930,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "107": {
+      "124": {
         "representant": "dist_vwap_d",
         "famille": "VWAP",
         "membres": [
@@ -3930,7 +4015,7 @@
           }
         ]
       },
-      "106": {
+      "123": {
         "representant": "dist_cur_vah",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -3950,8 +4035,8 @@
           }
         ]
       },
-      "112": {
-        "representant": "dist_pdh",
+      "128": {
+        "representant": "dist_prev_vwap_rth_r",
         "famille": "NIVEAUX VEILLE",
         "membres": [
           "dist_vwap_w",
@@ -3969,23 +4054,21 @@
           "dist_pdl_pct",
           "dist_pdh_atr",
           "dist_pdl_atr",
-          "above_open_830",
           "dist_asia_open_pct",
           "dist_pvwap_pct",
           "dist_pvwap_sd1u_pct",
           "dist_pvwap_sd1d_pct",
           "dist_pdh",
-          "dist_pdl"
+          "dist_pdl",
+          "dist_prev_vwap_rth_r",
+          "dist_pdh_rth_r",
+          "dist_pdl_rth_r"
         ],
-        "stabilite_test": 0.7639671209493767,
+        "stabilite_test": 0.7903374258137325,
         "remplaces": [
           {
             "feature": "bool_above_prev_vpoc",
             "rho_avec_representant": 0.6897811566272376
-          },
-          {
-            "feature": "above_open_830",
-            "rho_avec_representant": 0.7189083572301396
           },
           {
             "feature": "vwap_w_side",
@@ -4018,6 +4101,18 @@
           {
             "feature": "dist_pdh",
             "rho_avec_representant": 0.7662915083701692
+          },
+          {
+            "feature": "dist_pdl_rth_r",
+            "rho_avec_representant": 0.7665987351459109
+          },
+          {
+            "feature": "dist_pdh_rth_r",
+            "rho_avec_representant": 0.7734141044273153
+          },
+          {
+            "feature": "dist_prev_vwap_rth_r",
+            "rho_avec_representant": 0.7985862369599754
           },
           {
             "feature": "dist_vwap_w_atr",
@@ -4065,7 +4160,7 @@
           }
         ]
       },
-      "98": {
+      "112": {
         "representant": "dist_vwap_m",
         "famille": "VWAP",
         "membres": [
@@ -4100,7 +4195,7 @@
           }
         ]
       },
-      "137": {
+      "88": {
         "representant": "inside_cur_va",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -4109,7 +4204,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "39": {
+      "37": {
         "representant": "ask_pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4154,7 +4249,7 @@
           }
         ]
       },
-      "133": {
+      "84": {
         "representant": "inside_prev_va",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -4163,7 +4258,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "75": {
+      "101": {
         "representant": "open_in_prev_va",
         "famille": "AUTRES",
         "membres": [
@@ -4178,7 +4273,7 @@
           }
         ]
       },
-      "140": {
+      "143": {
         "representant": "next_wall_is_call",
         "famille": "AUTRES",
         "membres": [
@@ -4187,7 +4282,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "70": {
+      "71": {
         "representant": "gex_cluster_count",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -4196,7 +4291,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "96": {
+      "110": {
         "representant": "vix_regime",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -4205,7 +4300,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "123": {
+      "104": {
         "representant": "vix_above_hvl_0dte",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -4214,7 +4309,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "73": {
+      "74": {
         "representant": "dist_vix_gex_nearest_up",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -4223,57 +4318,47 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "111": {
-        "representant": "dist_open_cash",
-        "famille": "SESSION / TEMPS",
+      "122": {
+        "representant": "dist_vwap_rth_r",
+        "famille": "VWAP",
         "membres": [
           "dist_ib_high",
           "dist_ib_low",
           "dist_open_cash",
-          "dist_open_830",
-          "dist_ovn_low",
-          "pct_in_range",
           "above_open_cash",
-          "fvg_up_active",
-          "fvg_dn_active"
+          "dist_vwap_rth_r",
+          "dist_vwap_rth_sd1u_r",
+          "dist_vwap_rth_sd1d_r"
         ],
-        "stabilite_test": 0.7486920876769664,
+        "stabilite_test": 0.8599116033260856,
         "remplaces": [
           {
             "feature": "above_open_cash",
-            "rho_avec_representant": 0.6358428276809622
-          },
-          {
-            "feature": "dist_ib_low",
-            "rho_avec_representant": 0.706863280661632
-          },
-          {
-            "feature": "dist_ib_high",
-            "rho_avec_representant": 0.7398684470853448
-          },
-          {
-            "feature": "fvg_up_active",
-            "rho_avec_representant": 0.7972666063702555
+            "rho_avec_representant": 0.6782359354519556
           },
           {
             "feature": "dist_open_cash",
-            "rho_avec_representant": 0.8102410216002411
+            "rho_avec_representant": 0.7956127371636986
           },
           {
-            "feature": "fvg_dn_active",
-            "rho_avec_representant": 0.8493737151301626
+            "feature": "dist_ib_high",
+            "rho_avec_representant": 0.8335650629481928
           },
           {
-            "feature": "pct_in_range",
-            "rho_avec_representant": 0.9032939088135985
+            "feature": "dist_ib_low",
+            "rho_avec_representant": 0.8903624152342199
           },
           {
-            "feature": "dist_open_830",
-            "rho_avec_representant": 0.9483598092914174
+            "feature": "dist_vwap_rth_sd1u_r",
+            "rho_avec_representant": 0.9183081707118765
+          },
+          {
+            "feature": "dist_vwap_rth_sd1d_r",
+            "rho_avec_representant": 0.9230269146946305
           }
         ]
       },
-      "100": {
+      "114": {
         "representant": "ib_range_ticks",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -4288,7 +4373,7 @@
           }
         ]
       },
-      "87": {
+      "100": {
         "representant": "ib_is_wide",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -4297,7 +4382,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "121": {
+      "137": {
         "representant": "ib_broken_up",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -4326,7 +4411,7 @@
           }
         ]
       },
-      "82": {
+      "95": {
         "representant": "ib_complete",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -4351,7 +4436,37 @@
           }
         ]
       },
-      "99": {
+      "121": {
+        "representant": "dist_ovn_low",
+        "famille": "SESSION / TEMPS",
+        "membres": [
+          "dist_open_830",
+          "dist_ovn_low",
+          "pct_in_range",
+          "fvg_up_active",
+          "fvg_dn_active"
+        ],
+        "stabilite_test": 0.8365244961863498,
+        "remplaces": [
+          {
+            "feature": "fvg_up_active",
+            "rho_avec_representant": 0.7972666063702555
+          },
+          {
+            "feature": "fvg_dn_active",
+            "rho_avec_representant": 0.8493737151301626
+          },
+          {
+            "feature": "pct_in_range",
+            "rho_avec_representant": 0.9032939088135985
+          },
+          {
+            "feature": "dist_open_830",
+            "rho_avec_representant": 0.9483598092914174
+          }
+        ]
+      },
+      "113": {
         "representant": "ovn_range_ticks",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -4360,7 +4475,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "105": {
+      "119": {
         "representant": "open_position",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -4369,7 +4484,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "95": {
+      "109": {
         "representant": "im_delta_day_divergence",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4389,7 +4504,7 @@
           }
         ]
       },
-      "63": {
+      "65": {
         "representant": "volume_hnorm",
         "famille": "AUTRES",
         "membres": [
@@ -4409,7 +4524,7 @@
           }
         ]
       },
-      "138": {
+      "89": {
         "representant": "bar_duration_sec",
         "famille": "BARRE / OHLC",
         "membres": [
@@ -4418,7 +4533,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "40": {
+      "38": {
         "representant": "finish_strength_hnorm",
         "famille": "AUTRES",
         "membres": [
@@ -4427,7 +4542,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "131": {
+      "82": {
         "representant": "cvd_ohlc_range",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4436,7 +4551,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "11": {
+      "17": {
         "representant": "rotation_up",
         "famille": "AUTRES",
         "membres": [
@@ -4445,7 +4560,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "12": {
+      "18": {
         "representant": "rotation_dn",
         "famille": "AUTRES",
         "membres": [
@@ -4454,7 +4569,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "46": {
+      "44": {
         "representant": "rotation_zz_osc",
         "famille": "AUTRES",
         "membres": [
@@ -4463,7 +4578,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "22": {
+      "5": {
         "representant": "finish_delta_pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4478,7 +4593,7 @@
           }
         ]
       },
-      "23": {
+      "6": {
         "representant": "high_pullback_delta",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4487,7 +4602,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "33": {
+      "28": {
         "representant": "bn_color_up",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4496,7 +4611,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "35": {
+      "30": {
         "representant": "bn_color_dn",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4505,7 +4620,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "36": {
+      "31": {
         "representant": "bn_color_up_2",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4514,7 +4629,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "37": {
+      "32": {
         "representant": "bn_color_dn_2",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4523,7 +4638,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "32": {
+      "27": {
         "representant": "bn_volume_up",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4553,7 +4668,7 @@
           }
         ]
       },
-      "34": {
+      "29": {
         "representant": "bn_volume_dn",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4578,7 +4693,7 @@
           }
         ]
       },
-      "7": {
+      "13": {
         "representant": "bn_pressure_ask",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4587,7 +4702,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "9": {
+      "15": {
         "representant": "bn_pressure_bid",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4596,7 +4711,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "130": {
+      "81": {
         "representant": "n_big_ask_t3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4611,7 +4726,7 @@
           }
         ]
       },
-      "129": {
+      "80": {
         "representant": "n_big_bid_t3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4626,7 +4741,7 @@
           }
         ]
       },
-      "52": {
+      "54": {
         "representant": "big_ask_cluster_20t_t2",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4635,7 +4750,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "53": {
+      "55": {
         "representant": "big_bid_cluster_20t_t2",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4644,7 +4759,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "54": {
+      "56": {
         "representant": "big_ask_cluster_20t_t3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4653,7 +4768,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "55": {
+      "57": {
         "representant": "big_bid_cluster_20t_t3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4662,7 +4777,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "30": {
+      "25": {
         "representant": "bar_color_up",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4671,7 +4786,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "28": {
+      "23": {
         "representant": "bar_color_dn",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4680,7 +4795,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "31": {
+      "26": {
         "representant": "bar_long_up_bar",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4689,7 +4804,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "29": {
+      "24": {
         "representant": "bar_long_dn_bar",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4698,7 +4813,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "26": {
+      "21": {
         "representant": "bar_long_dn_up",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4707,7 +4822,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "24": {
+      "19": {
         "representant": "bar_long_up_dn",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -4716,7 +4831,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "50": {
+      "11": {
         "representant": "bar_edge_buy",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4731,7 +4846,7 @@
           }
         ]
       },
-      "48": {
+      "9": {
         "representant": "bar_edge_sell",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4746,7 +4861,7 @@
           }
         ]
       },
-      "8": {
+      "14": {
         "representant": "bar_pressure_ask",
         "famille": "BARRE / OHLC",
         "membres": [
@@ -4755,7 +4870,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "10": {
+      "16": {
         "representant": "bar_pressure_bid",
         "famille": "BARRE / OHLC",
         "membres": [
@@ -4764,7 +4879,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "51": {
+      "12": {
         "representant": "dist_ext_edge_buy",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4773,7 +4888,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "49": {
+      "10": {
         "representant": "dist_ext_edge_sell",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4782,7 +4897,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "3": {
+      "7": {
         "representant": "fp_edge_buy",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4791,7 +4906,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "4": {
+      "8": {
         "representant": "fp_edge_sell",
         "famille": "ORDER FLOW",
         "membres": [
@@ -4800,7 +4915,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "90": {
+      "107": {
         "representant": "price_vs_swing_mid",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -4809,7 +4924,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "80": {
+      "93": {
         "representant": "open_type",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -4818,7 +4933,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "84": {
+      "97": {
         "representant": "open_zone",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -4827,7 +4942,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "83": {
+      "96": {
         "representant": "open_bias_conf",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -4836,7 +4951,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "110": {
+      "127": {
         "representant": "open_direction",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -4851,7 +4966,7 @@
           }
         ]
       },
-      "85": {
+      "98": {
         "representant": "day_type",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -4860,7 +4975,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "76": {
+      "102": {
         "representant": "rule_80pct",
         "famille": "AUTRES",
         "membres": [
@@ -4869,7 +4984,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "93": {
+      "140": {
         "representant": "ma_trend",
         "famille": "AUTRES",
         "membres": [
@@ -4878,7 +4993,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "119": {
+      "136": {
         "representant": "vwap_ma_align",
         "famille": "VWAP",
         "membres": [
@@ -4887,7 +5002,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "109": {
+      "126": {
         "representant": "vwap_slope_10_dir",
         "famille": "VWAP",
         "membres": [
@@ -4896,7 +5011,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "114": {
+      "131": {
         "representant": "bool_above_mq_hvl",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -4905,7 +5020,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "116": {
+      "133": {
         "representant": "bool_above_mq_call",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -4914,7 +5029,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "71": {
+      "72": {
         "representant": "bool_near_level",
         "famille": "AUTRES",
         "membres": [
@@ -4923,7 +5038,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "122": {
+      "138": {
         "representant": "bool_ib_inside",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -4932,7 +5047,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "108": {
+      "125": {
         "representant": "vwap_triple_align",
         "famille": "VWAP",
         "membres": [
@@ -4941,7 +5056,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "59": {
+      "64": {
         "representant": "session_hvn_count",
         "famille": "VOLUME PROFILE",
         "membres": [
@@ -4961,7 +5076,7 @@
           }
         ]
       },
-      "72": {
+      "73": {
         "representant": "profile_shape",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -4976,7 +5091,7 @@
           }
         ]
       },
-      "94": {
+      "141": {
         "representant": "profile_skew",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -4985,7 +5100,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "91": {
+      "108": {
         "representant": "retest_low_count",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -4994,7 +5109,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "88": {
+      "105": {
         "representant": "retest_high_delta_div",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5003,7 +5118,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "128": {
+      "79": {
         "representant": "retest_low_delta_div",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5012,16 +5127,22 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "14": {
-        "representant": "poc_migration_dir",
-        "famille": "MARKET PROFILE",
+      "40": {
+        "representant": "momentum_10b_r",
+        "famille": "SWINGS / STRUCTURE",
         "membres": [
-          "poc_migration_dir"
+          "poc_migration_dir",
+          "momentum_10b_r"
         ],
-        "stabilite_test": null,
-        "remplaces": []
+        "stabilite_test": 0.707197160166734,
+        "remplaces": [
+          {
+            "feature": "poc_migration_dir",
+            "rho_avec_representant": 0.7178547057524018
+          }
+        ]
       },
-      "142": {
+      "145": {
         "representant": "liquidity_sweep_high_lag5",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -5030,7 +5151,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "139": {
+      "142": {
         "representant": "liquidity_sweep_low_lag5",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -5039,7 +5160,16 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "117": {
+      "130": {
+        "representant": "above_open_830",
+        "famille": "SESSION / TEMPS",
+        "membres": [
+          "above_open_830"
+        ],
+        "stabilite_test": null,
+        "remplaces": []
+      },
+      "134": {
         "representant": "ovn_broken_up",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -5048,7 +5178,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "113": {
+      "129": {
         "representant": "ovn_broken_dn",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -5057,7 +5187,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "86": {
+      "99": {
         "representant": "is_session_blocked",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -5072,7 +5202,7 @@
           }
         ]
       },
-      "16": {
+      "46": {
         "representant": "delta_div_buy",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5087,7 +5217,7 @@
           }
         ]
       },
-      "20": {
+      "50": {
         "representant": "delta_div_sell",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5102,7 +5232,7 @@
           }
         ]
       },
-      "17": {
+      "47": {
         "representant": "delta_divergence_any",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5111,7 +5241,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "15": {
+      "45": {
         "representant": "delta_div_slope_clean",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5136,7 +5266,7 @@
           }
         ]
       },
-      "19": {
+      "49": {
         "representant": "delta_div_sell_clean",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5151,7 +5281,7 @@
           }
         ]
       },
-      "126": {
+      "77": {
         "representant": "n_delta_div_buy_zones_active",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5160,7 +5290,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "89": {
+      "106": {
         "representant": "n_delta_div_sell_zones_active",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5169,7 +5299,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "127": {
+      "78": {
         "representant": "ctx_div_density_20",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5178,7 +5308,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "66": {
+      "68": {
         "representant": "ctx_climax_signal",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5196,7 +5326,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "2": {
+      "4": {
         "representant": "ctx_absorption_score_5",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5205,7 +5335,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "1": {
+      "3": {
         "representant": "ctx_absorption_streak_5",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5220,7 +5350,7 @@
           }
         ]
       },
-      "67": {
+      "69": {
         "representant": "ctx_delta_exhaustion",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5229,7 +5359,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "68": {
+      "70": {
         "representant": "ctx_momentum_exhaustion",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -5238,7 +5368,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "56": {
+      "58": {
         "representant": "ctx_poor_high",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5256,7 +5386,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "13": {
+      "51": {
         "representant": "ctx_excess_low_bars",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5271,7 +5401,7 @@
           }
         ]
       },
-      "141": {
+      "144": {
         "representant": "ctx_double_top_trap",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5280,7 +5410,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "38": {
+      "41": {
         "representant": "ctx_delta_sum_3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5295,7 +5425,7 @@
           }
         ]
       },
-      "65": {
+      "67": {
         "representant": "ctx_vol_slope_5_hnorm",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5304,7 +5434,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "43": {
+      "35": {
         "representant": "ctx_vwap_slope_accel",
         "famille": "VWAP",
         "membres": [
@@ -5313,7 +5443,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "5": {
+      "1": {
         "representant": "ctx_side_flip_count_10",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5322,7 +5452,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "41": {
+      "39": {
         "representant": "ctx_delta_slope_5",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5331,7 +5461,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "27": {
+      "22": {
         "representant": "long_dn_up_pattern",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -5340,7 +5470,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "25": {
+      "20": {
         "representant": "long_up_dn_pattern",
         "famille": "BATTLE NAVALE",
         "membres": [
@@ -5349,7 +5479,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "134": {
+      "85": {
         "representant": "n_long_up_cluster_within_0_2pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5358,7 +5488,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "124": {
+      "75": {
         "representant": "n_long_dn_cluster_within_0_2pct_hnorm",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5367,7 +5497,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "135": {
+      "86": {
         "representant": "n_color_up_cluster_within_0_2pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5376,7 +5506,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "125": {
+      "76": {
         "representant": "n_color_dn_cluster_within_0_2pct",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5385,7 +5515,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "18": {
+      "48": {
         "representant": "div_confluence_dmp",
         "famille": "AUTRES",
         "membres": [
@@ -5400,7 +5530,7 @@
           }
         ]
       },
-      "47": {
+      "33": {
         "representant": "ctx_price_delta_div_3",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5409,7 +5539,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "132": {
+      "83": {
         "representant": "ctx_rotation_factor_20",
         "famille": "CONTEXTE ROLLING",
         "membres": [
@@ -5418,7 +5548,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "21": {
+      "53": {
         "representant": "ctx_div_at_swing",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -5427,7 +5557,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "118": {
+      "135": {
         "representant": "n_edge_sell_active",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5436,7 +5566,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "64": {
+      "66": {
         "representant": "rvol_regime",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -5445,7 +5575,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "136": {
+      "87": {
         "representant": "is_new_sess_low",
         "famille": "BARRE / OHLC",
         "membres": [
@@ -5454,7 +5584,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "6": {
+      "2": {
         "representant": "im_cross_delta_agreement_5",
         "famille": "ORDER FLOW",
         "membres": [
@@ -5463,7 +5593,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "42": {
+      "34": {
         "representant": "im_smt_divergence",
         "famille": "INTERMARKET",
         "membres": [
@@ -5472,7 +5602,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "79": {
+      "92": {
         "representant": "im_open_type_agreement",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -5481,7 +5611,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "103": {
+      "117": {
         "representant": "open_within_prev_va",
         "famille": "NIVEAUX VEILLE",
         "membres": [
@@ -5490,7 +5620,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "102": {
+      "116": {
         "representant": "open_relation_type",
         "famille": "SESSION / TEMPS",
         "membres": [
@@ -5505,7 +5635,7 @@
           }
         ]
       },
-      "97": {
+      "111": {
         "representant": "profile_overlap_above_pdh",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -5514,7 +5644,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "115": {
+      "132": {
         "representant": "profile_overlap_below_pdl",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -5523,7 +5653,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "81": {
+      "94": {
         "representant": "range_extension_above_ib_atr",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -5532,7 +5662,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "77": {
+      "90": {
         "representant": "range_extension_below_ib_atr",
         "famille": "INITIAL BALANCE",
         "membres": [
@@ -5541,7 +5671,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "78": {
+      "91": {
         "representant": "range_extension_completed",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -5550,7 +5680,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "45": {
+      "43": {
         "representant": "fvg_up_created_this_bar",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -5559,7 +5689,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "44": {
+      "36": {
         "representant": "fvg_dn_created_this_bar",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -5568,7 +5698,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "58": {
+      "52": {
         "representant": "sweep_high_active",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -5577,7 +5707,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "69": {
+      "63": {
         "representant": "sweep_low_active",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -5586,7 +5716,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "57": {
+      "59": {
         "representant": "sweep_high_this_bar",
         "famille": "SWINGS / STRUCTURE",
         "membres": [
@@ -5604,7 +5734,22 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "143": {
+      "42": {
+        "representant": "momentum_3b_r",
+        "famille": "SWINGS / STRUCTURE",
+        "membres": [
+          "momentum_3b_r",
+          "momentum_5b_r"
+        ],
+        "stabilite_test": 0.7471725457675031,
+        "remplaces": [
+          {
+            "feature": "momentum_5b_r",
+            "rho_avec_representant": 0.741688221796796
+          }
+        ]
+      },
+      "146": {
         "representant": "bool_gex_flip_zone",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -5613,7 +5758,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "144": {
+      "147": {
         "representant": "mq_gamma_condition",
         "famille": "OPTIONS / MENTHORQ",
         "membres": [
@@ -5622,7 +5767,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "145": {
+      "148": {
         "representant": "div_regime_proxy_ok",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -5631,7 +5776,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "146": {
+      "149": {
         "representant": "range_size_hnorm",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -5640,7 +5785,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "147": {
+      "150": {
         "representant": "atr_14m_pct_hnorm",
         "famille": "VOLATILITE / REGIME",
         "membres": [
@@ -5649,7 +5794,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "148": {
+      "151": {
         "representant": "open_above_prev_vah",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -5658,7 +5803,7 @@
         "stabilite_test": null,
         "remplaces": []
       },
-      "149": {
+      "152": {
         "representant": "open_below_prev_val",
         "famille": "MARKET PROFILE",
         "membres": [
@@ -7108,6 +7253,18 @@
         {
           "feature": "dist_single_print_atr",
           "raison": "x6.9, derive train->test 207 % : l'heure ne la determine pas"
+        },
+        {
+          "feature": "momentum_3b_r",
+          "raison": "x3.4, derive train->test 300 % : l'heure ne la determine pas"
+        },
+        {
+          "feature": "momentum_5b_r",
+          "raison": "x3.5, derive train->test 307 % : l'heure ne la determine pas"
+        },
+        {
+          "feature": "momentum_10b_r",
+          "raison": "x3.5, derive train->test 247 % : l'heure ne la determine pas"
         }
       ],
       "hors perimetre (R)": [
@@ -7212,6 +7369,14 @@
         {
           "feature": "dist_open_cash",
           "raison": "x2.1"
+        },
+        {
+          "feature": "dist_vwap_rth_r",
+          "raison": "x2.1"
+        },
+        {
+          "feature": "dist_vwap_rth_sd1d_r",
+          "raison": "x3.0"
         }
       ],
       "EVENEMENT RARE (a traiter a part, non jete)": [
@@ -7406,11 +7571,12 @@
     "delta_divergence_any",
     "dist_ext_edge_buy",
     "dist_ext_edge_sell",
-    "dist_open_cash",
-    "dist_pdh",
+    "dist_ovn_low",
+    "dist_prev_vwap_rth_r",
     "dist_vix_gex_nearest_up",
     "dist_vwap_d",
     "dist_vwap_m",
+    "dist_vwap_rth_r",
     "finish_delta_pct",
     "fp_edge_buy",
     "fp_edge_sell",
@@ -7432,6 +7598,8 @@
     "liquidity_sweep_high_lag5",
     "liquidity_sweep_low_lag5",
     "ma_trend",
+    "momentum_10b_r",
+    "momentum_3b_r",
     "n_big_ask_t3",
     "n_color_dn_cluster_within_0_2pct",
     "n_color_up_cluster_within_0_2pct",
@@ -7452,7 +7620,6 @@
     "ovn_broken_dn",
     "ovn_broken_up",
     "ovn_range_ticks",
-    "poc_migration_dir",
     "price_vs_swing_mid",
     "profile_overlap_above_pdh",
     "profile_overlap_below_pdl",

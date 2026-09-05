@@ -10,16 +10,16 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 ## ES
 
-609 colonnes au depart, 241 apres nettoyage, **136 features retenues** (11310 barres, 9048 train / 2262 test).
+618 colonnes au depart, 250 apres nettoyage, **138 features retenues** (11310 barres, 9048 train / 2262 test).
 
 ### Balayage de seuils
 
 | seuil de correlation | clusters | regroupements |
 |---|---|---|
-| 0.50 | 101 | 35 |
-| 0.60 | 115 | 36 |
-| 0.70 **(retenu)** | 134 | 39 |
-| 0.80 | 155 | 38 |
+| 0.50 | 101 | 36 |
+| 0.60 | 116 | 38 |
+| 0.70 **(retenu)** | 136 | 42 |
+| 0.80 | 159 | 41 |
 
 ### Ecartees au nettoyage
 
@@ -27,12 +27,12 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 |---|---|---|
 | hors perimetre (C) | 248 | `atr_14m` (niveau C), `dist_vwap_d_sd2d` (niveau C), `dist_vwap_d_sd3u` (niveau C) |
 | hors perimetre (N) | 70 | `price` (niveau N), `open` (niveau N), `single_print_mid` (niveau N) |
+| suspectee horloge, PROFIL INSTABLE -> gardee brute | 25 | `dist_vwap_d` (x7.1, derive train->test 446 % : l'heure ne la determine pas), `dist_vwap_d_atr` (x7.1, derive train->test 678 % : l'heure ne la determine pas), `dist_vwap_d_sd1u` (x5.6, derive train->test 74 % : l'heure ne la determine pas) |
 | hors perimetre (R) | 23 | `vix_above_hvl` (niveau R), `delta_divergence` (niveau R), `new_swing_high` (niveau R) |
-| suspectee horloge, PROFIL INSTABLE -> gardee brute | 22 | `dist_vwap_d` (x7.1, derive train->test 446 % : l'heure ne la determine pas), `dist_vwap_d_atr` (x7.1, derive train->test 678 % : l'heure ne la determine pas), `dist_vwap_d_sd1u` (x5.6, derive train->test 74 % : l'heure ne la determine pas) |
 | EVENEMENT RARE (a traiter a part, non jete) | 16 | `bn_color_up_2` (se declenche 0.28 % du temps), `bn_color_dn_2` (se declenche 0.37 % du temps), `bn_long_up` (se declenche 0.77 % du temps) |
 | NORMALISEE par l'heure (recuperee) | 8 | `atr_14m_pct_hnorm` (atr_14m_pct — ratio a la mediane par heure (x2.2 -> x1.1, derive 14 %)), `dist_cur_val_hnorm` (dist_cur_val — z-score robuste par heure (x9.9 -> x1.3, derive 29 %)), `dist_vwap_d_sd2u_hnorm` (dist_vwap_d_sd2u — z-score robuste par heure (x5.5 -> x1.1, derive 20 %)) |
 | constante | 7 | `is_in_us_cash` (1 valeur(s) distincte(s)), `is_in_asia` (1 valeur(s) distincte(s)), `is_in_london` (1 valeur(s) distincte(s)) |
-| horloge assumee (l'heure est l'information) | 3 | `dist_ib_high` (x2.6), `dist_ib_low` (x2.7), `dist_open_cash` (x3.6) |
+| horloge assumee (l'heure est l'information) | 6 | `dist_ib_high` (x2.6), `dist_ib_low` (x2.7), `dist_open_cash` (x3.6) |
 | hors perimetre (?) | 3 | `_mq_gamma_source` (niveau inconnu), `_aggressor_source` (niveau inconnu), `_phase3_enriched` (niveau inconnu) |
 | prix absolu | 1 | `cvd_ohlc_range` (mediane 8586.0 ~ prix 7676.8) |
 
@@ -50,7 +50,6 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 - `day_type`
 - `bool_va_confluence`
 - `profile_skew`
-- `poc_migration_dir`
 - `im_open_type_agreement`
 - `profile_overlap_above_pdh`
 - `profile_overlap_below_pdl`
@@ -61,8 +60,9 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 **NIVEAUX VEILLE**
 
-- `dist_pdl` — remplace 13 features (stabilite test 0.89) : `fvg_up_active`, `fvg_dn_active`, `dist_open_830`, `dist_ovn_low`, `above_open_830`, `dist_pvwap_sd1u_pct`, `pct_in_range`, `dist_pvwap_pct`, `dist_pvwap_sd1d_pct`, `dist_asia_open_pct`, `dist_ovn_high`, `dist_pdl_atr`, `dist_pdl_pct`
+- `dist_ovn_low` — remplace 13 features (stabilite test 0.89) : `fvg_up_active`, `fvg_dn_active`, `dist_open_830`, `dist_ovn_low`, `above_open_830`, `dist_pvwap_sd1u_pct`, `pct_in_range`, `dist_pvwap_pct`, `dist_pvwap_sd1d_pct`, `dist_asia_open_pct`, `dist_ovn_high`, `dist_pdl_atr`, `dist_pdl_pct`
 - `dist_pdh` — remplace 2 features (stabilite test 1.00) : `dist_pdh_atr`, `dist_pdh_pct`
+- `dist_prev_vwap_rth_r` — remplace 2 features (stabilite test 0.98) : `dist_pdh_rth_r`, `dist_pdl_rth_r`
 - `open_within_prev_va`
 - `open_in_prev_va`
 
@@ -70,6 +70,7 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 - `dist_vwap_d` — remplace 18 features (stabilite test 0.83) : `bool_above_cur_vpoc`, `dist_vwap_d_sd2u_hnorm`, `premium_zone`, `discount_zone`, `dist_cur_val_hnorm`, `single_print_below`, `single_print_above`, `dist_cur_vah`, `dist_cur_vpoc`, `dist_vwap_d_sd1d`, `bool_above_vwap_d`, `vwap_d_side`, `dist_vwap_d_sd1u`, `range_pos_va`, `dist_single_print_atr`, `dist_vwap_d_atr`, `dist_vwap_d_pct`, `dist_cur_vwap_vp`
 - `dist_vwap_w` — remplace 9 features (stabilite test 0.83) : `bool_above_prev_vpoc`, `dist_prev_val`, `dist_prev_vpoc_atr`, `dist_prev_vpoc`, `vwap_w_side`, `bool_above_vwap_w`, `dist_prev_vah`, `dist_vwap_w_atr`, `dist_vwap_w_pct`
+- `dist_vwap_rth_r` — remplace 6 features (stabilite test 0.84) : `above_open_cash`, `dist_open_cash`, `dist_ib_low`, `dist_ib_high`, `dist_vwap_rth_sd1d_r`, `dist_vwap_rth_sd1u_r`
 - `dist_vwap_m` — remplace 5 features (stabilite test 0.79) : `dist_vix_put_0dte`, `vwap_m_side`, `bool_above_vwap_m`, `dist_vwap_m_atr`, `dist_vwap_m_pct`
 - `vwap_ma_align`
 - `vwap_slope_10_dir`
@@ -135,6 +136,8 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 **SWINGS / STRUCTURE**
 
+- `momentum_10b_r` — remplace 1 features (stabilite test 0.71) : `poc_migration_dir`
+- `momentum_3b_r` — remplace 1 features (stabilite test 0.76) : `momentum_5b_r`
 - `price_vs_swing_mid`
 - `retest_low_count`
 - `liquidity_sweep_high_lag5`
@@ -189,7 +192,6 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 **SESSION / TEMPS**
 
-- `dist_open_cash` — remplace 3 features (stabilite test 0.83) : `dist_ib_high`, `dist_ib_low`, `above_open_cash`
 - `open_direction` — remplace 1 features (stabilite test 0.94) : `im_cross_open_signal`
 - `is_session_blocked` — remplace 1 features (stabilite test 0.84) : `is_blocked_combined`
 - `open_relation_type` — remplace 1 features (stabilite test 1.00) : `open_outside_prev_range`
@@ -222,16 +224,16 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 ## NQ
 
-609 colonnes au depart, 243 apres nettoyage, **146 features retenues** (11310 barres, 9048 train / 2262 test).
+618 colonnes au depart, 252 apres nettoyage, **149 features retenues** (11310 barres, 9048 train / 2262 test).
 
 ### Balayage de seuils
 
 | seuil de correlation | clusters | regroupements |
 |---|---|---|
-| 0.50 | 111 | 42 |
-| 0.60 | 124 | 38 |
-| 0.70 **(retenu)** | 142 | 35 |
-| 0.80 | 163 | 39 |
+| 0.50 | 111 | 43 |
+| 0.60 | 124 | 39 |
+| 0.70 **(retenu)** | 145 | 38 |
+| 0.80 | 166 | 41 |
 
 ### Ecartees au nettoyage
 
@@ -239,13 +241,13 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 |---|---|---|
 | hors perimetre (C) | 248 | `atr_14m` (niveau C), `dist_vwap_d_sd2d` (niveau C), `dist_vwap_d_sd3u` (niveau C) |
 | hors perimetre (N) | 70 | `price` (niveau N), `open` (niveau N), `single_print_mid` (niveau N) |
-| suspectee horloge, PROFIL INSTABLE -> gardee brute | 25 | `dist_vwap_d` (x8.2, derive train->test 110 % : l'heure ne la determine pas), `dist_vwap_d_atr` (x8.6, derive train->test 115 % : l'heure ne la determine pas), `dist_vwap_d_sd1u` (x7.6, derive train->test 56 % : l'heure ne la determine pas) |
+| suspectee horloge, PROFIL INSTABLE -> gardee brute | 28 | `dist_vwap_d` (x8.2, derive train->test 110 % : l'heure ne la determine pas), `dist_vwap_d_atr` (x8.6, derive train->test 115 % : l'heure ne la determine pas), `dist_vwap_d_sd1u` (x7.6, derive train->test 56 % : l'heure ne la determine pas) |
 | hors perimetre (R) | 23 | `vix_above_hvl` (niveau R), `delta_divergence` (niveau R), `new_swing_high` (niveau R) |
 | constante | 13 | `n_big_ask_t1` (1 valeur(s) distincte(s)), `n_big_bid_t1` (1 valeur(s) distincte(s)), `is_in_us_cash` (1 valeur(s) distincte(s)) |
 | EVENEMENT RARE (a traiter a part, non jete) | 9 | `bn_absorb_ask` (se declenche 1.10 % du temps), `bn_absorb_bid` (se declenche 1.00 % du temps), `bool_va_confluence` (se declenche 0.63 % du temps) |
 | NORMALISEE par l'heure (recuperee) | 9 | `atr_14m_pct_hnorm` (atr_14m_pct — ratio a la mediane par heure (x3.0 -> x1.0, derive 20 %)), `ctx_vol_slope_5_hnorm` (ctx_vol_slope_5 — z-score robuste par heure (x3.5 -> x1.1, derive 19 %)), `dist_cur_val_hnorm` (dist_cur_val — z-score robuste par heure (x11.1 -> x1.2, derive 24 %)) |
+| horloge assumee (l'heure est l'information) | 4 | `dist_ib_low` (x2.7), `dist_open_cash` (x2.1), `dist_vwap_rth_r` (x2.1) |
 | hors perimetre (?) | 3 | `_mq_gamma_source` (niveau inconnu), `_aggressor_source` (niveau inconnu), `_phase3_enriched` (niveau inconnu) |
-| horloge assumee (l'heure est l'information) | 2 | `dist_ib_low` (x2.7), `dist_open_cash` (x2.1) |
 
 ### Noyau retenu, par famille
 
@@ -260,7 +262,6 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 - `open_type`
 - `day_type`
 - `profile_skew`
-- `poc_migration_dir`
 - `im_open_type_agreement`
 - `profile_overlap_above_pdh`
 - `profile_overlap_below_pdl`
@@ -273,12 +274,13 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 **NIVEAUX VEILLE**
 
-- `dist_pdh` — remplace 21 features (stabilite test 0.76) : `bool_above_prev_vpoc`, `above_open_830`, `vwap_w_side`, `bool_above_vwap_w`, `dist_pdh_atr`, `dist_prev_val`, `dist_prev_vpoc_atr`, `dist_pdh_pct`, `dist_prev_vpoc`, `dist_pdh`, `dist_vwap_w_atr`, `dist_prev_vah`, `dist_vwap_w_pct`, `dist_vwap_w`, `dist_ovn_high`, `dist_pvwap_sd1u_pct`, `dist_asia_open_pct`, `dist_pvwap_pct`, `dist_pvwap_sd1d_pct`, `dist_pdl_atr`, `dist_pdl_pct`
+- `dist_prev_vwap_rth_r` — remplace 23 features (stabilite test 0.79) : `bool_above_prev_vpoc`, `vwap_w_side`, `bool_above_vwap_w`, `dist_pdh_atr`, `dist_prev_val`, `dist_prev_vpoc_atr`, `dist_pdh_pct`, `dist_prev_vpoc`, `dist_pdh`, `dist_pdl_rth_r`, `dist_pdh_rth_r`, `dist_prev_vwap_rth_r`, `dist_vwap_w_atr`, `dist_prev_vah`, `dist_vwap_w_pct`, `dist_vwap_w`, `dist_ovn_high`, `dist_pvwap_sd1u_pct`, `dist_asia_open_pct`, `dist_pvwap_pct`, `dist_pvwap_sd1d_pct`, `dist_pdl_atr`, `dist_pdl_pct`
 - `open_within_prev_va`
 
 **VWAP**
 
 - `dist_vwap_d` — remplace 15 features (stabilite test 0.81) : `bool_above_cur_vpoc`, `dist_cur_val_hnorm`, `premium_zone`, `discount_zone`, `single_print_below`, `single_print_above`, `dist_cur_vpoc`, `dist_vwap_d_sd1d`, `bool_above_vwap_d`, `vwap_d_side`, `range_pos_va`, `dist_single_print_atr`, `dist_vwap_d_atr`, `dist_vwap_d_pct`, `dist_cur_vwap_vp`
+- `dist_vwap_rth_r` — remplace 6 features (stabilite test 0.86) : `above_open_cash`, `dist_open_cash`, `dist_ib_high`, `dist_ib_low`, `dist_vwap_rth_sd1u_r`, `dist_vwap_rth_sd1d_r`
 - `dist_vwap_m` — remplace 5 features (stabilite test 0.79) : `vwap_m_side`, `bool_above_vwap_m`, `dist_vix_put_0dte`, `dist_vwap_m_atr`, `dist_vwap_m_pct`
 - `vwap_ma_align`
 - `vwap_slope_10_dir`
@@ -347,6 +349,8 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 **SWINGS / STRUCTURE**
 
+- `momentum_10b_r` — remplace 1 features (stabilite test 0.71) : `poc_migration_dir`
+- `momentum_3b_r` — remplace 1 features (stabilite test 0.75) : `momentum_5b_r`
 - `price_vs_swing_mid`
 - `retest_low_count`
 - `liquidity_sweep_high_lag5`
@@ -410,13 +414,14 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 **SESSION / TEMPS**
 
-- `dist_open_cash` — remplace 8 features (stabilite test 0.75) : `above_open_cash`, `dist_ib_low`, `dist_ib_high`, `fvg_up_active`, `dist_open_cash`, `fvg_dn_active`, `pct_in_range`, `dist_open_830`
+- `dist_ovn_low` — remplace 4 features (stabilite test 0.84) : `fvg_up_active`, `fvg_dn_active`, `pct_in_range`, `dist_open_830`
 - `open_direction` — remplace 1 features (stabilite test 0.96) : `im_cross_open_signal`
 - `is_session_blocked` — remplace 1 features (stabilite test 0.84) : `is_blocked_combined`
 - `open_relation_type` — remplace 1 features (stabilite test 0.96) : `open_outside_prev_range`
 - `open_position`
 - `open_zone`
 - `open_bias_conf`
+- `above_open_830`
 - `ovn_broken_up`
 - `ovn_broken_dn`
 
@@ -443,7 +448,7 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 
 ## Croisement ES / NQ
 
-**120 features communes** aux deux instruments — le socle : elles decrivent le marche, pas l'instrument.
+**122 features communes** aux deux instruments — le socle : elles decrivent le marche, pas l'instrument.
 
 - `ask_pct`
 - `atr`
@@ -490,11 +495,12 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 - `delta_divergence_any`
 - `dist_ext_edge_buy`
 - `dist_ext_edge_sell`
-- `dist_open_cash`
-- `dist_pdh`
+- `dist_ovn_low`
+- `dist_prev_vwap_rth_r`
 - `dist_vix_gex_nearest_up`
 - `dist_vwap_d`
 - `dist_vwap_m`
+- `dist_vwap_rth_r`
 - `finish_delta_pct`
 - `fp_edge_buy`
 - `fp_edge_sell`
@@ -516,6 +522,8 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 - `liquidity_sweep_high_lag5`
 - `liquidity_sweep_low_lag5`
 - `ma_trend`
+- `momentum_10b_r`
+- `momentum_3b_r`
 - `n_big_ask_t3`
 - `n_color_dn_cluster_within_0_2pct`
 - `n_color_up_cluster_within_0_2pct`
@@ -536,7 +544,6 @@ Methode : nettoyage (vides, constantes, prix absolus, horloges de session), dist
 - `ovn_broken_dn`
 - `ovn_broken_up`
 - `ovn_range_ticks`
-- `poc_migration_dir`
 - `price_vs_swing_mid`
 - `profile_overlap_above_pdh`
 - `profile_overlap_below_pdl`

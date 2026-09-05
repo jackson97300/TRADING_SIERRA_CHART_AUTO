@@ -213,7 +213,7 @@ def charger(symbole: str, jours: int, dossier: str,
     motif = os.path.join(dossier, symbole, "*.jsonl")
     fichiers = [c for c in sorted(glob.glob(motif))
                 if os.path.basename(c)[:8] not in JOURS_EN_PANNE]
-    for chemin in fichiers[-jours:]:
+    for chemin in (fichiers[-jours:] if jours else fichiers):
         with open(chemin, "r", encoding="utf-8", errors="replace") as fh:
             for ligne in fh:
                 ligne = ligne.strip()
@@ -240,7 +240,58 @@ def charger(symbole: str, jours: int, dossier: str,
                 .sort_values(["ts", "_r", "_n"], kind="mergesort")
                 .drop_duplicates("ts", keep="first")
                 .drop(columns=["_r", "_n"]).reset_index(drop=True))
-    return df.reset_index(drop=True)
+    return injecter_recalcul(df.reset_index(drop=True), symbole)
+
+
+def injecter_recalcul(df: pd.DataFrame, symbole: str) -> pd.DataFrame:
+    """Ajoute les colonnes recalculees par `recalc.py` au pool candidat.
+
+    Sans elles, le noyau n'a aucune distance a la VWAP de la veille ni aucun
+    momentum reel : leurs versions livrees sont en C (fausses) et rien ne les
+    remplacait. La famille NIVEAUX VEILLE etait amputee de son membre
+    principal, alors que trois des dix hypotheses en dependent.
+
+    Elles sont marquees provenance A : recalculees depuis OHLCV, c'est le
+    niveau le plus verifie qui soit.
+
+    LIMITE — `charger` filtre la seance cash a la lecture, donc les barres
+    d'Asie et de Londres ne sont pas en memoire : `dist_asia_*` et
+    `dist_london_*` ne peuvent pas etre recalculees ici. Elles restent hors
+    noyau tant que la reduction tourne en `--tout`.
+    """
+    if df.empty or "close" not in df.columns:
+        return df
+    from CORE.features import recalc as _rc
+    dt = pd.to_datetime(_rc.horodatage(df), unit="ms", utc=True)
+    close = pd.to_numeric(df["close"], errors="coerce")
+    jour = pd.Series(dt.dt.date, index=df.index)
+    ajouts = {}
+
+    # VWAP de seance cash et ses bandes, puis la valeur de la veille
+    if {"high", "low", "total_vol"} <= set(df.columns):
+        vw = _rc.vwap_cumule(df, jour)
+        ajouts["dist_vwap_rth_r"] = _rc.dist_ticks(vw, close, symbole)
+        b = _rc.vwap_bandes(df, jour, vw)
+        ajouts["dist_vwap_rth_sd1u_r"] = _rc.dist_ticks(b["sup"], close, symbole)
+        ajouts["dist_vwap_rth_sd1d_r"] = _rc.dist_ticks(b["inf"], close, symbole)
+        veille = vw.groupby(jour).last().shift(1)
+        ajouts["dist_prev_vwap_rth_r"] = _rc.dist_ticks(
+            jour.map(veille), close, symbole)
+        ext = _rc.extremes_veille(df, jour)
+        ajouts["dist_pdh_rth_r"] = _rc.dist_ticks(ext["pdh"], close, symbole)
+        ajouts["dist_pdl_rth_r"] = _rc.dist_ticks(ext["pdl"], close, symbole)
+
+    # Momentum aux vrais decalages, remis a zero a chaque seance pour ne pas
+    # enjamber la nuit.
+    for n in (3, 5, 10):
+        ajouts["momentum_%db_r" % n] = close.groupby(jour).transform(
+            lambda s, k=n: s - s.shift(k))
+
+    for nom, serie in ajouts.items():
+        df[nom] = pd.to_numeric(serie, errors="coerce")
+        PROVENANCE[nom] = "A"
+        RETENUES.add(nom)
+    return df
 
 
 def facteur_horloge(serie: pd.Series, heures: pd.Series) -> float | None:
@@ -689,7 +740,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--data", default="DATA/live_enriched_clean")
     ap.add_argument("--symbols", default="ES,NQ")
-    ap.add_argument("--jours", type=int, default=49)
+    ap.add_argument("--jours", type=int, default=0,
+                    help="0 = tous les jours restants apres exclusion des "
+                         "pannes ; 49 en prenait 49 sur 51, silencieusement")
     ap.add_argument("--seuil", type=float, default=0.7)
     ap.add_argument("--seuils", default="0.5,0.6,0.7,0.8")
     ap.add_argument("--part-train", type=float, default=0.8)
