@@ -69,6 +69,12 @@ physique doit avoir une borne de plausibilite verifiee independamment.
 
 ## 4. Lecture des barres : le filtre unique
 
+**Lire `ts`, jamais `ts_raw_ms`.** Le fichier porte les deux : `ts` est
+aligne sur la minute a 100 %, `ts_raw_ms` a 68,8 % seulement (31 % des lignes
+portent la fin de barre moins une seconde). Un groupby par minute sur
+`ts_raw_ms` perd 30 % des barres : 950 minutes distinctes au lieu de 1 379.
+Mesure sur 23 417 lignes ES + NQ. Helper : `recalc.horodatage(df)`.
+
 **Ne lire que les lignes `data_quality_flag == stable`.** Ce filtre elimine les
 lignes partielles et les doublons en une seule passe.
 

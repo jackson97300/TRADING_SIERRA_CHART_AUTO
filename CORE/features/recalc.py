@@ -20,29 +20,68 @@ try:
 except ImportError:  # lance depuis CORE/
     from constants import get_tick_size
 
-# Session Sierra : ouverture 17h ET. En UTC : 21:00 (EDT) / 22:00 (EST).
-OUVERTURE_SESS_UTC_EDT = 21
-# Cash : 9h30-16h00 ET. En UTC : 13:30-20:00 (EDT).
+# Cash : 9h30-16h00 ET. En UTC : 13:30-20:00 (EDT) / 14:30-21:00 (EST).
 CASH_DEBUT_MIN_EDT = 13 * 60 + 30
 CASH_FIN_MIN_EDT = 20 * 60
 BARRES_SESSION = 1380
+
+
+def _est_edt(d: pd.Timestamp) -> bool:
+    """Heure d'ete americaine : 2e dimanche de mars -> 1er dimanche de novembre."""
+    an = d.year
+    mars = pd.Timestamp(year=an, month=3, day=1, tz="UTC")
+    debut = mars + pd.Timedelta(days=(6 - mars.dayofweek) % 7 + 7)
+    nov = pd.Timestamp(year=an, month=11, day=1, tz="UTC")
+    fin = nov + pd.Timedelta(days=(6 - nov.dayofweek) % 7)
+    return debut <= d < fin
+
+
+def ouverture_sess_utc(dt) -> pd.Series:
+    """Heure UTC d'ouverture de la session Sierra (17h ET).
+
+    Fenetre : `_sess`. Unite : heure entiere UTC. Signe : sans objet.
+
+    Rend 21 en heure d'ete, 22 en heure d'hiver. Remplace la constante en dur
+    qui aurait fallu corriger a la main au 1er novembre — la dette DST de
+    `CONVENTIONS.md` §2 disparait le jour ou l'appelant utilise cette fonction.
+    """
+    d = pd.to_datetime(dt, utc=True)
+    return pd.Series([21 if _est_edt(x) else 22 for x in d], index=d.index)
 
 
 # ---------------------------------------------------------------------------
 # 0. Horodatage
 # ---------------------------------------------------------------------------
 
+def horodatage(df):
+    """Horodatage de reference d'une barre.
+
+    Fenetre : aucune. Unite : millisecondes epoch UTC. Signe : sans objet.
+
+    **Lire `ts`, pas `ts_raw_ms`.** Le fichier porte les deux : `ts` est aligne
+    sur la minute a 100 %, `ts_raw_ms` a 68,8 % seulement. Mesure sur 23 417
+    lignes ES + NQ.
+    """
+    if "ts" in df.columns and pd.to_numeric(df["ts"], errors="coerce").notna().any():
+        return pd.to_numeric(df["ts"], errors="coerce")
+    return normaliser_ts(df["ts_raw_ms"])
+
+
 def normaliser_ts(ts_ms):
-    """Aligne les horodatages sur le debut de minute.
+    """Aligne un `ts_raw_ms` sur le debut de minute.
 
     Fenetre : aucune (transformation ponctuelle).
     Unite : millisecondes epoch UTC.
     Signe : sans objet.
 
-    Deux conventions coexistent dans les donnees : `HH:MM:00` (debut de barre)
+    Deux conventions coexistent dans `ts_raw_ms` : `HH:MM:00` (debut de barre)
     et `HH:MM:59` (fin de barre moins une seconde), cette derniere sur 31 % des
     lignes. Sans normalisation, un groupby par minute perd 30 % des barres —
     mesure : 950 minutes distinctes au lieu de 1379.
+
+    Cette fonction reproduit exactement la colonne `ts` du fichier (100 % sur
+    23 417 lignes) : elle sert de repli quand `ts` est absent, et de preuve que
+    la convention est bien celle du dumper. Preferer `horodatage(df)`.
     """
     ts = pd.to_numeric(ts_ms, errors="coerce")
     sec = (ts // 1000) % 60
@@ -62,9 +101,12 @@ def session_sess(dt):
 
     Ne jamais utiliser `session_date` du fichier : elle bascule a 04:01 UTC dans
     60 cas et a 21:59 dans 10, sur la meme periode.
+
+    Le decalage suit l'heure d'ete : ouverture a 21:00 UTC en EDT, 22:00 en EST.
     """
     d = pd.to_datetime(dt, utc=True)
-    return (d + pd.Timedelta(hours=24 - OUVERTURE_SESS_UTC_EDT)).dt.date
+    h = ouverture_sess_utc(d)
+    return (d + pd.to_timedelta(24 - h, unit="h")).dt.date
 
 
 def est_cash(dt):
@@ -142,13 +184,29 @@ def extremes_veille(df, cle):
     """PDH / PDL : extremes de la fenetre precedente, diffuses sur la courante.
 
     Fenetre : `_sess`. Unite : POINTS. Signe : `pdh` >= `pdl`.
+
+    La "veille" est la session PRESENTE precedente, pas la date moins un jour :
+    le lundi renvoie au vendredi, ce qui est correct. Mais le lendemain d'une
+    journee absente, elle renvoie a l'avant-veille — d'ou la colonne
+    `veille_contigue` (booleen), a `False` quand l'ecart depasse trois jours
+    calendaires. Ne jamais consommer `pdh` sans la regarder.
+
+    Ne concorde qu'a 70 % avec le `pdh` de Sierra, dont la fenetre reste
+    inconnue (six testees, aucune au-dela de 70,4 %). C'est la raison pour
+    laquelle le §6 fait recalculer cette famille plutot que la lire.
     """
     agg = pd.DataFrame({
         "h": pd.to_numeric(df["high"], errors="coerce").groupby(cle).max(),
         "l": pd.to_numeric(df["low"], errors="coerce").groupby(cle).min(),
-    }).sort_index().shift(1)
+    }).sort_index()
+    prec = agg.shift(1)
+    jours = pd.Series(agg.index, index=agg.index)
+    ecart = (pd.to_datetime(jours) - pd.to_datetime(jours).shift(1)).dt.days
+    prec["contigue"] = (ecart <= 3).fillna(False)
     cle_s = pd.Series(list(cle), index=df.index)
-    return pd.DataFrame({"pdh": cle_s.map(agg["h"]), "pdl": cle_s.map(agg["l"])})
+    return pd.DataFrame({"pdh": cle_s.map(prec["h"]),
+                         "pdl": cle_s.map(prec["l"]),
+                         "veille_contigue": cle_s.map(prec["contigue"]).fillna(False)})
 
 
 def initial_balance(df, dt, minutes=60):
