@@ -4,14 +4,14 @@
 > dans `DECISIONS.md`. Ce document enonce des regles, pas des explications. Les
 > justifications vont dans `INCIDENT_LOG.md`.
 
-Etabli le 05/09/2026 sur 75 jours ES + NQ. Version `w1`.
+Etabli le 05/09/2026 sur 75 jours ES + NQ.
 
 ---
 
 ## 1. Fenetres de session
 
-Deux fenetres, jamais une seule. **Le suffixe porte la fenetre. Aucune colonne
-de ces familles ne doit exister sans suffixe.**
+Deux fenetres, jamais une seule. **Le suffixe porte la fenetre. Aucune colonne de
+ces familles ne doit exister sans suffixe.**
 
 | Suffixe | Fenetre | Familles concernees |
 |---|---|---|
@@ -34,26 +34,43 @@ lu par le C++ comme de l'UTC ; le modifier decale tous les `ts` de 4 heures.
 | Volume Profile (plage RTH) | `13:30–20:00` | `14:30–21:00` |
 
 **Bascule EST : premier dimanche de novembre 2026 (01/11).** A refaire sur chaque
-graphique alimentant le DMP. Sortie de dette : corriger le C++ pour convertir
-depuis le fuseau du graphique, puis passer le fuseau en ET.
+graphique alimentant le DMP.
+
+**Le check qui porte cette dette** : `vwap_reset_hour` dans `semantic_check`
+compare l'heure UTC du reset de `vwap_sess` a 17:00 ET converti au jour pres.
+Echec = integration bloquee. La date seule ne protege rien.
+
+Sortie de dette : corriger le C++ pour convertir depuis le fuseau du graphique,
+puis passer le fuseau en ET et laisser Sierra gerer le DST.
 
 ## 3. Unites
 
-| Colonne | Unite | Consequence |
+| Colonne | Unite | Controle de plausibilite |
 |---|---|---|
-| `atr` | POINTS | ATR journalier ; controle : 0,5–3 % du prix |
-| `atr_14m` | TICKS | multiplier par le tick pour des points ; controle : 0,02–0,15 % |
+| `atr` | POINTS | ATR journalier : 0,5–3 % du prix |
+| `atr_14m` | TICKS | 0,02–0,15 % du prix apres conversion |
 | `dist_*` sans suffixe | TICKS | convention `(niveau - close) / tick` |
+| `dist_*_atr` | multiples d'ATR | `(niveau - close) / atr` |
 | `dist_*_pct` | % du prix | |
 
-**Controle d'ordre de grandeur obligatoire.** Une identite qui passe ne prouve
-pas l'unite : les deux membres peuvent partager le meme defaut. Toute colonne en
-unite physique doit avoir une borne de plausibilite verifiee independamment.
+| Instrument | Tick | Valeur | Note |
+|---|---|---|---|
+| ES | 0,25 pt | 12,50 $ | E-mini ESM26, 50 $/pt |
+| NQ | 0,25 pt | 5,00 $ | E-mini NQM26, 20 $/pt |
+| MGC | 0,10 pt | 1,00 $ | Micro Gold |
+
+Source unique : `CORE/constants.py`. Le dashboard affiche en micro-equivalent ;
+les bots envoient du E-mini. **Un seuil calibre sur un instrument ne se transpose
+jamais a un autre** (cf `DOCS/ECART_ES_NQ_PAR_FEATURE.csv`).
+
+**Controle d'ordre de grandeur obligatoire.** Une identite qui passe ne prouve pas
+l'unite : les deux membres peuvent partager le meme defaut. Toute colonne en unite
+physique doit avoir une borne de plausibilite verifiee independamment.
 
 ## 4. Lecture des barres : le filtre unique
 
-**Ne lire que les lignes `data_quality_flag == stable`.** Ce filtre suffit : il
-elimine les lignes partielles et les doublons en une seule passe.
+**Ne lire que les lignes `data_quality_flag == stable`.** Ce filtre elimine les
+lignes partielles et les doublons en une seule passe.
 
 Mesure 04/09 NQ : 1 259 lignes `stable` pour 1 259 `ts` uniques, 731 `degraded`,
 9 `warmup`. Les 260 lignes a `dist_vwap_d` nul sont toutes `degraded`.
@@ -62,48 +79,64 @@ Mesure 04/09 NQ : 1 259 lignes `stable` pour 1 259 `ts` uniques, 731 `degraded`,
   mission, ni dans le bot. Elle reste dans le fichier brut, elle est exclue a la
   lecture. Le nombre de lignes exclues par jour est logue.
 - Repli, si plusieurs lignes `stable` partagent un `ts` : garder le dernier boot.
-- `seen_ts` **persiste sur disque, par jour**, et se recharge au demarrage. Il ne
-  vit plus en memoire du process.
+- `seen_ts` **persiste sur disque, par jour**, et se recharge au demarrage.
 
-**Controle de volumetrie** : session complete = 1 380 barres (23 h x 60), cash =
-390. Compte sur les lignes `stable`. Tout fichier hors de +/- 1 % est signale,
-jamais integre en silence.
+**Volumetrie** : session complete = 1 380 barres (23 h x 60), cash = 390. Compte
+sur les lignes `stable`. Hors de +/- 1 % → signale, jamais integre en silence.
+**Sauf dimanches et jours feries CME** (liste dans `sessions.yaml`) : ces sessions
+sont courtes par nature, signalees mais attendues.
 
-## 5. Reserve
+*Reserve* : filtre verifie sur le 04/09 seulement. A confirmer sur les 75 jours
+avant d'etre tenu pour invariant ; d'ici la, la volumetrie sert de garde-fou.
 
-Le filtre de la section 4 est verifie sur le 04/09. A confirmer sur les 75 jours
-avant d'etre considere comme invariant ; jusque-la, controler la volumetrie
-`stable` a chaque lecture.
-
-## 6. Independance aux frontieres de fichier
+## 5. Independance aux frontieres de fichier
 
 Le DMP decoupe par journee de trading (22:01 → 20:58). L'enricher decoupe par
 date UTC calendaire (00:00 → 23:58). Les deux conventions coexistent.
 
 **Regle** : aucun calcul ne depend jamais d'une frontiere de fichier. Les seules
-cles temporelles sont `ts` et les sessions qui en derivent (`_rth`, `_sess`). Un
-fichier peut commencer a 00:00, a 21:00 ou a un redemarrage : aucune valeur ne
-doit changer.
+cles temporelles sont `ts` et les sessions qui en derivent. Un fichier peut
+commencer a 00:00, a 21:00 ou a un redemarrage : aucune valeur ne doit changer.
 
 **Test de non-regression** : concatener deux jours, verifier que les colonnes
 produites sont identiques a celles produites fichier par fichier.
 
-## 7. Colonnes a definition non identifiee
+## 6. Source de verite par colonne
 
-Aucune n'est cassee : elles mesurent autre chose que ce que leur nom indique.
+C'est ce principe qui rend le fuseau et les frontieres de fichier inoffensifs
+pour le bot.
 
-| Colonne | Contenu reel | Statut |
+**Recalculees par l'enricher depuis les barres 1 min, et ecrasees** — ne dependent
+d'aucune etude Sierra : VWAP `_rth` / `_sess` et bandes, PDH/PDL, session
+high/low, IB, open cash, gap, momentum.
+
+**Lues de Sierra, seules sources possibles** : VA / VPOC / VAH / VAL, orderflow,
+big prints, MenthorQ, VIX.
+
+## 7. Colonnes dont le nom ne dit pas le contenu
+
+Aucune n'est aleatoire ; toutes mesurent autre chose que leur nom. C'est ce qui
+justifie le recalcul plutot que l'abandon.
+
+| Colonne | Contenu reel | Cible |
 |---|---|---|
-| `range_size_ticks` | largeur d'une zone de range detectee, pas la barre | renommer |
-| `dist_1d_max_ticks` | distance a `mq_1d_max` (niveau options) | renommer |
-| `momentum_3b` | `close - close[-1]` (lag 1, pas 3) | recalculer |
-| `momentum_5b` | `close - close[-2]` (lag 2, pas 5) | recalculer |
-| `dist_pdh_atr`, `dist_pdl_atr` | points / atr, **signe inverse** | recalculer |
-| `dist_*_atr` (autres) | ticks / atr en points → vaut 4x le vrai nombre d'ATR | recalculer |
+| `momentum_3b` | `close - close[-1]` (lag 1) | `close - close[-3]`, points |
+| `momentum_5b` | `close - close[-2]` (lag 2) | `close - close[-5]`, points |
+| `dist_*_atr` | ticks / atr en points → 4x le vrai | `(niveau - close) / atr` |
+| `dist_pdh_atr`, `dist_pdl_atr` | points / atr, signe inverse | `(pdh - close) / atr` |
+| `dist_prev_vwap` et bandes | etude au fuseau errone | `(prev_vwap_rth - close) / tick` |
+| `dist_asia_high_pct`, `dist_asia_low_pct` | `close - niveau` | `(niveau - close) / close * 100` |
+| `dist_london_high_pct`, `dist_london_low_pct` | `close - niveau` | idem |
+| `dist_cash_high_atr`, `dist_cash_low_atr` | `close - niveau` | `(niveau - close) / atr` |
+| `range_size_ticks` | largeur d'une zone de range detectee | renommer `range_zone_ticks` |
+| `dist_1d_max_ticks` | distance a `mq_1d_max` (options) | renommer `dist_mq_1d_max_ticks` |
+| `bar_body_ticks`, `bar_body_pct` | signes, pas absolus | renommer `bar_body_signed_*` |
 | `delta_day` | alias de `cvd_day` | hors noyau |
-| `cvd_session` | alias de `ctx_cvd_session`, repli sur `cvd_day` | hors noyau |
-| `bar_body_ticks`, `bar_body_pct` | signes, pas des valeurs absolues | renommer |
-| `dist_prev_vwap` et bandes | etude au fuseau errone | recalculer |
+| `cvd_session` | alias de `ctx_cvd_session`, repli `cvd_day` | hors noyau |
+
+Signes inverses verifies a 0,0 % de conformite sur ES **et** NQ, 75 jours filtres
+`stable`. Les variantes en ticks (`dist_ovn_*`, `dist_sess_*`, `dist_ib_*`) sont
+conformes : l'inversion ne touche pas les familles entieres.
 
 ## 8. Niveaux : lire le suffixe `_lvl`
 
@@ -113,6 +146,10 @@ l'etude courante (INCIDENT #76). Les distances livrees suivent deja `_lvl`.
 
 ## 9. Marquage de version
 
-Toute barre porte `window_version`. Valeur `w0` avant le 05/09/2026 (session a
-17:00 UTC), `w1` a partir du 05/09/2026 (session a 17h ET). Les VA anterieures au
-05/09 sont sur `w0` et ne sont pas comparables aux suivantes.
+Toute barre porte `window_version`, qui qualifie les **colonnes dumpees en live** :
+`w0` avant le 05/09/2026 (session a 17:00 UTC), `w1` a partir du 05/09/2026
+(session a 17h ET).
+
+Exception : les VA **exportees de l'historique** apres recalcul Sierra sont `w1`
+meme pour des dates anterieures au 05/09 — c'est precisement leur interet. La
+version qualifie la fenetre de calcul, pas la date de la barre.
