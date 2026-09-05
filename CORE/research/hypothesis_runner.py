@@ -67,6 +67,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 from CORE.features import recalc  # noqa: E402
 from CORE.research.semantic_check_fable import JOURS_EN_PANNE  # noqa: E402
+from CORE.research import hypotheses as HYP  # noqa: E402
 
 TP_ATR, SL_ATR, EXPIRATION = 1.5, -1.0, 20
 MINUTES_BARRE = 5
@@ -78,6 +79,9 @@ MAX_CONCENTRATION = 0.60
 N_HYPOTHESES = 6           # Bonferroni — six apres retrait de H5 et H1
                            # (tag mission-phase2-v1, 06/09/2026)
 N_BOOTSTRAP = 2000
+# Case 2 du tag : MNQ 2,82 $ ~ 0,23 ATR-5m, MES 4,32 $ ~ 0,14 ATR-5m
+# (Tradeify, le plus eleve des trois, plus 1 tick de slippage par cote).
+COUT_ATR = {"NQ": 0.23, "ES": 0.14}
 
 
 # ---------------------------------------------------------------------------
@@ -114,20 +118,55 @@ def charger(sym, cols=None):
     return df[recalc.est_cash(df["dt"])].reset_index(drop=True)
 
 
+# Colonnes lues par les six, classees par mode d'agregation (mission §2 :
+# "flux = somme, etats = dernier, extremes = max/min, ratios recalcules").
+FLUX = ["total_vol", "delta_bar", "buy_vol", "sell_vol"]
+ETATS = ["dist_cur_vah", "dist_cur_val", "inside_cur_va",
+         "dist_prev_vah", "dist_prev_val", "prev_vah_lvl", "prev_val_lvl",
+         "dist_ib_high", "dist_ib_low", "ib_range_atr", "ib_broken_up",
+         "ib_broken_dn", "dist_ovn_high", "dist_ovn_low", "dist_pdh", "dist_pdl",
+         "dist_mq_call", "dist_mq_put", "open_within_prev_va",
+         "open_outside_prev_range", "finish_delta_pct", "delta_pct", "atr_14m"]
+DRAPEAUX = ["sweep_high_this_bar", "sweep_low_this_bar"]   # un evenement dans
+#            la fenetre de 5 min suffit : max, jamais "dernier"
+
+
+def colonnes_utiles():
+    """Colonnes a charger : le strict necessaire aux six, plus le socle."""
+    return tuple(dict.fromkeys(
+        ["ts", "open", "high", "low", "close", "data_quality_flag"]
+        + FLUX + ETATS + DRAPEAUX))
+
+
 def agreger_5min(df):
-    """Barres 5 min alignees sur 9h30 ET. Flux sommes, extremes max/min,
-    etats pris a la derniere barre."""
+    """Barres 5 min alignees sur 9h30 ET.
+
+    Flux sommes, extremes max/min, etats pris a la DERNIERE barre de la fenetre,
+    drapeaux d'evenement pris au MAX — un sweep survenu a la deuxieme des cinq
+    minutes est un sweep de la barre de 5 min ; le prendre "au dernier" le
+    perdrait quatre fois sur cinq.
+
+    L'ATR-5m est recalcule ici, sur les barres agregees. Jamais l'ATR 1 min :
+    ils ne sont pas dans le meme rapport selon l'instrument, et normaliser par
+    le mauvais rend ES et NQ incomparables. Il est en POINTS (calcule sur des
+    prix) — la conversion en ticks est le role de `hypotheses.seuil_ticks`.
+    """
     d = df.set_index("dt")
     o = d.resample("5min", origin="start_day", label="left", closed="left")
-    out = pd.DataFrame({
-        "open": o["open"].first(), "high": o["high"].max(),
-        "low": o["low"].min(), "close": o["close"].last(),
-        "total_vol": o["total_vol"].sum() if "total_vol" in d else np.nan,
-        "delta_bar": o["delta_bar"].sum() if "delta_bar" in d else np.nan,
-    }).dropna(subset=["close"])
+    cols = {"open": o["open"].first(), "high": o["high"].max(),
+            "low": o["low"].min(), "close": o["close"].last()}
+    for c in FLUX:
+        if c in d.columns:
+            cols[c] = o[c].sum()
+    for c in ETATS:
+        if c in d.columns:
+            cols[c] = o[c].last()
+    for c in DRAPEAUX:
+        if c in d.columns:
+            cols[c] = o[c].max()
+    out = pd.DataFrame(cols).dropna(subset=["close"])
     out["ts"] = (out.index.astype("int64") // 1_000_000)
     out["jour"] = out.index.date
-    # ATR-5m recalcule sur les barres agregees : jamais l'ATR 1 min.
     tr = pd.concat([out["high"] - out["low"],
                     (out["high"] - out["close"].shift()).abs(),
                     (out["low"] - out["close"].shift()).abs()], axis=1).max(axis=1)
@@ -135,54 +174,37 @@ def agreger_5min(df):
     return out.reset_index(drop=True)
 
 
-def _exclusions_stale():
-    """Couples (colonne, jour) suspects, lus dans DOCS/features_stale.csv.
+def injecter_recalculs(brut_1min, cinq):
+    """Ajoute aux barres 5 min les deux colonnes que les six exigent recalculees.
 
-    1 080 couples sur 18 jours ; 63 colonnes du noyau touchees. Une hypothese
-    qui lit une colonne suspecte un jour donne ne doit pas produire de signal ce
-    jour-la : le prerequis 3d de la mission l'exige, et sans lui H3 et H6
-    perdraient pres de la moitie de leur echantillon sans le dire.
+    `rvol_r`  — H8. Le C++ initialise `f.rvol = 1.0f` et 1,0 est une valeur
+                valide de la variable : "normal mesure" et "jamais calcule" y
+                sont indistinguables (CONVENTIONS §3.1). Recalcule sur les
+                barres 1 min, puis pris au dernier de chaque fenetre.
+    `dist_vwap_rth_sd2u_r` / `..._sd2d_r` — H2. Bandes a 2 ecarts-types autour
+                de la VWAP RTH, en TICKS et signees `niveau - close`, comme
+                toutes les `dist_*` du lot.
     """
-    chemin = "DOCS/features_stale.csv"
-    if not os.path.exists(chemin):
-        return {}
-    par_cle = {}
-    with open(chemin, encoding="utf-8") as fh:
-        for r in csv.DictReader(fh):
-            sym = (r.get("symbole") or r.get("sym") or "").strip().upper()
-            col = (r.get("colonne") or r.get("feature") or "").strip()
-            jour = (r.get("jour") or r.get("date") or "").strip().replace("-", "")
-            if sym and col and jour:
-                # La cle porte le SYMBOLE : une colonne suspecte sur NQ le
-                # 15/06 ne dit rien de la meme colonne sur ES ce jour-la.
-                par_cle.setdefault((sym, col), set()).add(jour)
-    return par_cle
+    b = brut_1min.copy()
+    b["dt"] = pd.to_datetime(b["ts"], unit="ms", utc=True)
 
+    rv = recalc.rvol(b, b["dt"])
+    cle = recalc.session_rth(b["dt"])
+    vw = recalc.vwap_cumule(b, cle)
+    bandes = recalc.vwap_bandes(b, cle, vw, n_sd=2.0)
 
-_STALE = None
-
-
-def lire(colonne, df, sym):
-    """Seul acces autorise a une colonne du noyau.
-
-    Deux choses qu'un `df[colonne]` direct ne fait pas :
-      1. il applique la ligne `lecture` de `feature_reduction.json` — une
-         colonne `_atr` livree n'est JAMAIS lue telle quelle (mesure : le
-         rapport livre/vrai vaut 4,000 sur `dist_prev_vpoc_atr`) ;
-      2. il masque les jours ou la colonne est suspecte (`features_stale.csv`),
-         en rendant NaN plutot qu'une valeur qui se laisserait comparer.
-    """
-    global _STALE
-    if _STALE is None:
-        _STALE = _exclusions_stale()
-    if colonne not in df.columns:
-        raise KeyError("colonne absente du lot : %s" % colonne)
-    v = pd.to_numeric(df[colonne], errors="coerce")
-    jours = _STALE.get((str(sym).upper(), colonne))
-    if jours and "jour" in df.columns:
-        j = df["jour"].astype(str).str.replace("-", "", regex=False)
-        v = v.mask(j.isin(jours))
-    return v
+    aux = pd.DataFrame({
+        "dt": b["dt"], "rvol_r": rv,
+        "sd2u": bandes["sup"], "sd2d": bandes["inf"], "c": b["close"],
+    }).set_index("dt")
+    o = aux.resample("5min", origin="start_day", label="left", closed="left").last()
+    o = o.dropna(subset=["c"])
+    o["ts"] = (o.index.astype("int64") // 1_000_000)
+    # `niveau - close`, en ticks : meme convention et meme signe que dist_cur_vah
+    o["dist_vwap_rth_sd2u_r"] = (o["sd2u"] - o["c"]) / HYP.TICK
+    o["dist_vwap_rth_sd2d_r"] = (o["sd2d"] - o["c"]) / HYP.TICK
+    garde = ["ts", "rvol_r", "dist_vwap_rth_sd2u_r", "dist_vwap_rth_sd2d_r"]
+    return cinq.merge(o[garde], on="ts", how="left")
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +365,36 @@ def verdict(par_sym, jours_par_sym=None):
     return "SURVIT", "p=%.4f < %.4f" % (max(ps), seuil)
 
 
+HASH_MISSION = "8bec98eff0860e16a81a4804913ad31ff2f807f6"
+
+
+def verifier_le_tag():
+    """Le runner refuse de tourner si la mission a change depuis le tag.
+
+    Le tag `mission-phase2-v1` fige le TEXTE des hypotheses. Si le fichier a
+    bouge depuis, ce qui va tourner n'est plus ce qui a ete pre-enregistre, et
+    le resultat ne vaut rien — c'est la seule protection contre la retouche
+    d'apres-coup, celle qui transforme une recherche en peche.
+    """
+    import subprocess
+    try:
+        h = subprocess.run(["git", "hash-object", "DOCS/MISSION_PHASE2.md"],
+                           capture_output=True, text=True, timeout=30).stdout.strip()
+    except Exception as e:                      # pas de git : on le dit, on n'invente pas
+        print("[tag] verification impossible (%s) — resultat a considerer comme non "
+              "pre-enregistre" % e)
+        return False
+    if h != HASH_MISSION:
+        print("[tag] MISSION_PHASE2.md a change depuis le tag mission-phase2-v1.")
+        print("      attendu %s" % HASH_MISSION)
+        print("      trouve  %s" % h)
+        print("      Le runner ne tourne pas : ce qui serait mesure ne serait plus")
+        print("      ce qui a ete pre-enregistre. Toute idee nee depuis va dans")
+        print("      NEXT_CYCLE.md, pas dans la mission.")
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Hypotheses factices — le test du runner
 # ---------------------------------------------------------------------------
@@ -408,15 +460,101 @@ def tester_factices():
     return 0
 
 
+def preparer(sym):
+    """Barres 5 min pretes : agregees, recalculs injectes, 40 jours de recherche.
+
+    Rend (df, jours). Les jours 41-57 restent SCELLES : ils ne sont ouverts
+    qu'une fois, a la fin, et pour les survivantes seulement.
+    """
+    brut = charger(sym, cols=colonnes_utiles())
+    if brut.empty:
+        return pd.DataFrame(), []
+    cinq = injecter_recalculs(brut, agreger_5min(brut))
+    jours = sorted(cinq["jour"].unique())[:N_JOURS_RECHERCHE]
+    return cinq[cinq["jour"].isin(jours)].reset_index(drop=True), jours
+
+
+def entonnoir_par_etage(df, cond_lieu, cond_totale):
+    """N a chaque etage. Sans ces chiffres, « non testable » ne dit pas OU
+    l'hypothese perd ses signaux : si c'est le lieu qui est rare, ou la reaction
+    qui est trop stricte."""
+    lieu = int(len(signaux_par_franchissement(cond_lieu, df["jour"])))
+    tot = int(len(signaux_par_franchissement(cond_totale, df["jour"])))
+    return lieu, tot
+
+
+def lecture_unique():
+    """Les six sur les 40 jours de recherche. Un seul affichage, a la fin."""
+    if not verifier_le_tag():
+        return 1
+    print("MISSION PHASE 2 — lecture unique des six hypotheses.")
+    print("Tag mission-phase2-v1 verifie. Bonferroni 0,05 / %d.\n" % N_HYPOTHESES)
+
+    dfs, jours_lot = {}, {}
+    for sym in ("NQ", "ES"):
+        d, j = preparer(sym)
+        if d.empty:
+            print("[%s] aucune donnee" % sym)
+            return 1
+        dfs[sym], jours_lot[sym] = d, j
+        print("  %s : %d barres 5 min, %d jours" % (sym, len(d), len(j)))
+    print()
+
+    lignes = []
+    for nom, fn in HYP.LES_SIX.items():
+        par_sym, etages = {}, {}
+        for sym, d in dfs.items():
+            trades = []
+            for cote, (cond, side) in fn(d).items():
+                t_ = evaluer(d, cond, side, couts_atr=COUT_ATR[sym])
+                if len(t_):
+                    trades.append(t_)
+            par_sym[sym] = (pd.concat(trades, ignore_index=True)
+                            if trades else pd.DataFrame(columns=["jour", "etiquette", "pnl_atr"]))
+            etages[sym] = sum(len(signaux_par_franchissement(c, d["jour"]))
+                              for c, _ in fn(d).values())
+        v, pourquoi = verdict(par_sym, jours_lot)
+        lignes.append((nom, v, pourquoi, {s: len(x) for s, x in par_sym.items()},
+                       {s: (round(float(x["pnl_atr"].mean()), 3) if len(x) else None)
+                        for s, x in par_sym.items()}, etages))
+
+    print("%-5s %-14s %-11s %-17s %-13s %s"
+          % ("hyp", "verdict", "N (NQ/ES)", "esperance ATR", "lieu (NQ/ES)", "pourquoi"))
+    print("-" * 118)
+    for nom, v, p, n, e, et in lignes:
+        print("%-5s %-14s %-11s %-17s %-13s %s"
+              % (nom, v, "%d/%d" % (n.get("NQ", 0), n.get("ES", 0)),
+                 "%s / %s" % (e.get("NQ"), e.get("ES")),
+                 "%d/%d" % (et.get("NQ", 0), et.get("ES", 0)), p[:40]))
+
+    print()
+    for nom, v, _, _, _, _ in lignes:
+        if v == "NON TESTABLE" and nom in HYP.SOUS_DIMENSIONNEES:
+            print("%s : « NON TESTABLE » signifie TROP RARE POUR CE LOT, pas « le setup est"
+                  % nom)
+            print("     mauvais ». C'etait annonce avant de tourner. Sur 40 jours, une"
+                  " hypothese")
+            print("     a un signal par jour plafonne a 39 — sous le minimum de 40, quelle"
+                  " que")
+            print("     soit sa qualite. Le mode ombre est sa seule voie.")
+    print("\nJours 41-57 : SCELLES. Ouverts une seule fois, pour les survivantes"
+          " uniquement.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--factices", action="store_true",
                     help="teste le runner sur trois hypotheses factices")
+    ap.add_argument("--lecture", action="store_true",
+                    help="LECTURE UNIQUE des six. Ne se relance pas sans raison.")
     a = ap.parse_args()
     if a.factices:
         return tester_factices()
-    print("Les dix hypotheses ne sont pas encore figees "
-          "(MISSION_PHASE2.md, cases a trancher). Rien a executer.")
+    if a.lecture:
+        return lecture_unique()
+    print("Rien a executer. --factices pour valider l'instrument, --lecture pour"
+          " la lecture unique des six.")
     return 0
 
 
