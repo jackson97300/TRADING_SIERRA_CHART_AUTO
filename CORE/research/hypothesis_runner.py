@@ -144,7 +144,11 @@ ETATS = ["dist_cur_vah", "dist_cur_val", "inside_cur_va",
          "open_outside_prev_range", "finish_delta_pct", "delta_pct", "atr_14m",
          # cibles de la sortie naturelle (mission §7) — sans elles, la
          # mesure rend 0 %% partout, ce qui se lit comme un resultat.
-         "dist_cur_vpoc", "dist_cur_vwap_vp", "ib_range_ticks", "atr"]
+         "dist_cur_vpoc", "dist_cur_vwap_vp", "ib_range_ticks", "atr",
+         # les seize setups portes d edge_discovery (mode ombre)
+         "inside_prev_va", "dist_prev_vah", "cvd_day_dir",
+         "dist_gex_nearest_up", "dist_gex_nearest_dn", "vwap_slope_10",
+         "dist_vwap_d"]
 DRAPEAUX = ["sweep_high_this_bar", "sweep_low_this_bar"]   # un evenement dans
 #            la fenetre de 5 min suffit : max, jamais "dernier"
 
