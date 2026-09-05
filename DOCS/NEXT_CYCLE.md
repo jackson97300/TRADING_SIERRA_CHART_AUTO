@@ -94,6 +94,53 @@ reparera pas.
 
 ---
 
+## CYCLE 2 ET HORIZON 15 MIN — resultats du 06/09
+
+### Cycle 2 : zero survivante
+
+  H3-VPOC   MEURT          50/47   -0,016 / +0,017   TP 66 % / 57 %
+  H2p       NON TESTABLE   16/11
+  H6p       NON TESTABLE   15/12
+  H8p       NON TESTABLE    2/3
+
+La barriere par famille fait ce qui etait ecrit d avance : le taux de reussite
+monte a 66 %, l esperance ne suit pas. Le constat 0.1 avait raison sur le
+diagnostic, tort sur le remede — ce n est pas la barriere qui tuait H3.
+
+A ne pas retenir : H2p a +0,705 sur ES avec 73 % de TP. **N = 11.** Ecrit ici
+pour que personne ne le redecouvre en croyant avoir trouve quelque chose.
+
+### Horizon 15 min : le premier signe bilateral
+
+                 5 min (couts corriges)      15 min       N
+  H3    NQ +0,061 / ES -0,109        ->   +0,018 / +0,019   28/29
+  H7    NQ +0,012 / ES -0,270        ->   -0,006 / -0,033   119
+  sorties naturelles H3  66,7 %      ->   82,5 %
+
+**H3 est positive sur les DEUX instruments pour la premiere fois du projet.**
+Effet arithmetique predit : l ATR grandit, les frais ne bougent pas.
+
+**Mais N tombe a 28/29, sous 40. NON TESTABLE.** Trois fois moins de barres,
+trois fois moins de signaux. +0,018 ATR, c est 2 % d une barre, sans
+significativite.
+
+### Ce que cela dit, et la seule voie qui reste
+
+**Il manque des JOURS, pas des idees.** En 15 min sur 40 jours, H3 rend 28
+signaux ; il en faut 40. A raison de ~0,7 signal par jour et par instrument, il
+manque **environ 17 jours de seance** — trois a quatre semaines.
+
+Les 16 jours scelles ne servent pas a cela : ils sont la validation finale, et
+les ouvrir maintenant detruirait la seule chose qui protege encore ce projet.
+
+**Mode ombre H3 en 15 min, a partir de maintenant, jusqu a N = 40 par
+instrument.** Aucune execution, aucun capital. La decision se prend quand N est
+atteint, pas avant — vers la mi-octobre.
+
+**C etait le troisieme et dernier regard sur ce lot.** Le passage en 15 min etait
+pre-enregistre dans le critere d arret, donc legitime ; il n y en aura pas de
+quatrieme. A partir d ici, seulement les jours qui s ajoutent.
+
 ## CRITERE D'ARRET — ecrit le 06/09, avant le cycle 2
 
 Ecrit maintenant, pendant qu'il ne depend d'aucun resultat non encore lu. Sans

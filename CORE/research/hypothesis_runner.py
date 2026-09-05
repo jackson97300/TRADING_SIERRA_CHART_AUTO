@@ -156,7 +156,7 @@ def colonnes_utiles():
         + FLUX + ETATS + DRAPEAUX))
 
 
-def agreger_5min(df):
+def agreger_5min(df, minutes=None):
     """Barres 5 min alignees sur 9h30 ET.
 
     Flux sommes, extremes max/min, etats pris a la DERNIERE barre de la fenetre,
@@ -170,7 +170,8 @@ def agreger_5min(df):
     prix) — la conversion en ticks est le role de `hypotheses.seuil_ticks`.
     """
     d = df.set_index("dt")
-    o = d.resample("5min", origin="start_day", label="left", closed="left")
+    m = int(minutes or MINUTES_BARRE)
+    o = d.resample("%dmin" % m, origin="start_day", label="left", closed="left")
     cols = {"open": o["open"].first(), "high": o["high"].max(),
             "low": o["low"].min(), "close": o["close"].last()}
     for c in FLUX:
@@ -215,7 +216,8 @@ def injecter_recalculs(brut_1min, cinq):
         "dt": b["dt"], "rvol_r": rv,
         "sd2u": bandes["sup"], "sd2d": bandes["inf"], "c": b["close"],
     }).set_index("dt")
-    o = aux.resample("5min", origin="start_day", label="left", closed="left").last()
+    o = aux.resample("%dmin" % int(MINUTES_BARRE), origin="start_day",
+                     label="left", closed="left").last()
     o = o.dropna(subset=["c"])
     o["ts"] = (o.index.astype("int64") // 1_000_000)
     # `niveau - close`, en ticks : meme convention et meme signe que dist_cur_vah
