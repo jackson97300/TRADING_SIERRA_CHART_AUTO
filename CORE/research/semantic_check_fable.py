@@ -7,7 +7,14 @@ Sortie : un tableau check -> % de barres en echec, ecart median, exemple.
 """
 import glob, argparse, numpy as np, pandas as pd
 
-def load(path):
+# Journees ecartees : trous internes massifs (15 a 122 minutes manquantes en
+# seance cash), pas seances courtes. 0619 et 0703 sont aussi des feries CME,
+# mais ce n'est pas ce qui explique leurs donnees. Cf CONVENTIONS.md §4.
+JOURS_EN_PANNE = {"20260612", "20260619", "20260624", "20260625", "20260630",
+                  "20260703", "20260803", "20260805", "20260810", "20260904"}
+
+
+def load(path, tout=False):
     df = pd.concat([pd.read_json(f, lines=True) for f in sorted(glob.glob(path))], ignore_index=True)
     # Selection mesuree, pas raisonnee : la derniere occurrence est la moins
     # complete (548 champs contre 573 le 04/09) et porte les nulls.
@@ -19,6 +26,16 @@ def load(path):
             .drop_duplicates("ts", keep="first")
             .drop(columns=["_r", "_n"]).reset_index(drop=True))
     df["dt"] = pd.to_datetime(df.ts, unit="ms")
+    if not tout:
+        n0 = len(df)
+        # Le filtre unique de CONVENTIONS.md §4 : une ligne degraded a des
+        # colonnes derivees vides ET des OHLC non fiables (pdh recalcule tombe
+        # a 64,4 % contre 70,1 % quand on les inclut).
+        if "data_quality_flag" in df.columns:
+            df = df[df.data_quality_flag == "stable"]
+        df = df[~df.dt.dt.strftime("%Y%m%d").isin(JOURS_EN_PANNE)].reset_index(drop=True)
+        print("[filtre] %d -> %d lignes (stable + %d journees en panne ecartees)"
+              % (n0, len(df), len(JOURS_EN_PANNE)))
     return df
 
 def main():
@@ -175,7 +192,10 @@ def main():
     chk("ctx_delta_sum_3 = somme delta 3 barres", df.delta_bar.rolling(3).sum(), df.ctx_delta_sum_3, 1)
     chk("ctx_delta_sum_10 = somme delta 10 barres", df.delta_bar.rolling(10).sum(), df.ctx_delta_sum_10, 1)
     chk("ctx_price_slope_5 = close - close[-5]", C - C.shift(5), df.ctx_price_slope_5, 0.5, note="definition supposee")
-    chk("atr_14m_pct = atr_14m/close*100", 100*df.atr_14m/C, df.atr_14m_pct, 0.01)
+    # `atr_14m` est en TICKS (CONVENTIONS.md §3) : il faut le convertir en
+    # points avant de le rapporter au prix. Le check sans tick echouait a 100 %
+    # — c'etait la formule qui etait fausse, pas la colonne.
+    chk("atr_14m_pct = atr_14m*tick/close*100", 100*df.atr_14m*T/C, df.atr_14m_pct, 0.01)
     chk("vol_per_sec = total_vol/bar_duration", df.total_vol/df.bar_duration_sec.replace(0,np.nan), df.vol_per_sec, 0.05)
     chk("finish_delta_pct dans [0,1]", np.clip(df.finish_delta_pct,0,1), df.finish_delta_pct, 0)
     chk("rvol = volume / mediane(volume meme minute, jours precedents)", None, None, 0) if False else None

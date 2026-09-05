@@ -152,6 +152,8 @@ justifie le recalcul plutot que l'abandon.
 | `dist_asia_high_pct`, `dist_asia_low_pct` | `close - niveau` | `(niveau - close) / close * 100` |
 | `dist_london_high_pct`, `dist_london_low_pct` | `close - niveau` | idem |
 | `dist_cash_high_atr`, `dist_cash_low_atr` | `close - niveau` | `(niveau - close) / atr` |
+| `dist_prev_vpoc_pct` | calcule depuis l alias DMP, pas depuis `_lvl` | `(prev_vpoc_lvl - close) / close * 100` |
+| `ctx_price_slope_5` | definition inconnue (96 % NQ / 76 % ES d ecart) | hors noyau |
 | `range_size_ticks` | largeur d'une zone de range detectee | renommer `range_zone_ticks` |
 | `dist_1d_max_ticks` | distance a `mq_1d_max` (options) | renommer `dist_mq_1d_max_ticks` |
 | `bar_body_ticks`, `bar_body_pct` | signes, pas absolus | renommer `bar_body_signed_*` |
