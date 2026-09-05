@@ -292,6 +292,61 @@ def plausible(s, nom, jours, boots, close, masque=None):
     return "B", ""
 
 
+# Seuil du second livrable : au-dela, la valeur du jour est suspecte POUR CETTE
+# COLONNE, sans que la colonne soit malade. Plus haut que le seuil de statut
+# (4,5x) : on ne signale que les incidents francs.
+SEUIL_STALE = 5.0
+
+# Incidents dates connus, mesures ailleurs que par le crible. `cvd_day` ne
+# repartait pas de zero a chaque session avant le fix 56b1f56 du 18/06 :
+# 93,4 % d'ecart avec `delta_day` avant, 0,5 % apres (semantic_check).
+# Le defaut est reel et date — il n'est pas une propriete de la colonne.
+INCIDENTS_CONNUS = [
+    ("cvd_day", "2026-06-13", "2026-06-18",
+     "ne repartait pas de zero a chaque session (fix 56b1f56 le 18/06)"),
+    ("delta_day", "2026-06-13", "2026-06-18", "alias de cvd_day, meme defaut"),
+]
+
+
+def detecter_stale(df, jours, boots, sym):
+    """Couples (colonne, jour) ou la valeur est suspecte, sans que la colonne
+    le soit.
+
+    Une mediane de sauts au boot proche de la normale dit qu'une colonne n'est
+    pas malade ; elle ne dit pas qu'aucun redemarrage ne l'a laissee sur une
+    valeur perimee. Le 04/09, `dist_prev_*` a pointe sur J-2 toute la matinee
+    jusqu'au redemarrage. C'est le raisonnement des dix journees en panne, a la
+    granularite de la colonne : journee a trous, colonne saine.
+
+    Le runner exclut ces barres pour les hypotheses qui lisent la colonne.
+    """
+    lignes = []
+    if boots is None:
+        return pd.DataFrame(columns=["symbole", "colonne", "jour", "facteur", "motif"])
+    for c in df.columns:
+        if c.startswith("_") or FUITE.search(c) or c in ("close", "open",
+                                                          "high", "low"):
+            continue
+        x = pd.to_numeric(df[c], errors="coerce")
+        if x.notna().sum() < 500:
+            continue
+        med_j = x.groupby(jours).median()
+        if len(med_j) < 6:
+            continue
+        saut = med_j.diff().abs()
+        b = boots.reindex(med_j.index)
+        chg = b.ne(b.shift()) & b.shift().notna()
+        normal = float(saut[~chg].median())
+        if not (np.isfinite(normal) and normal > 1e-9):
+            continue
+        for jour, s in saut[chg].items():
+            if np.isfinite(s) and s > SEUIL_STALE * normal:
+                lignes.append({"symbole": sym, "colonne": c, "jour": str(jour),
+                               "facteur": round(float(s / normal), 1),
+                               "motif": "saut au redemarrage"})
+    return pd.DataFrame(lignes)
+
+
 def classer(sym, verifiees):
     df = charger(sym)
     close = pd.to_numeric(df["close"], errors="coerce")
@@ -341,9 +396,14 @@ def main():
                                     "DOCS/semantic_ES_v4.csv"])
     print("colonnes portees par un check a 0 %% sur ES et NQ : %d" % len(verifiees))
     res = {}
+    stale = []
     for sym in ("NQ", "ES"):
         r = classer(sym, verifiees)
         res[sym] = r.set_index("colonne")
+        _d = charger(sym)
+        _b = (_d.groupby("_jour")["boot_id"].first().astype(str)
+              if "boot_id" in _d.columns else None)
+        stale.append(detecter_stale(_d, _d["_jour"], _b, sym))
         print("\n%s — %d colonnes" % (sym, len(r)))
         print(r.provenance.value_counts().sort_index().to_string())
         c = r[r.provenance == "C"]
@@ -394,6 +454,22 @@ def main():
              (fin.provenance == "N").sum(), (fin.provenance == "R").sum(),
              (fin.provenance == "S").sum()))
     print("[ecrit] DOCS/features_provenance.csv")
+
+    # Second livrable : les incidents dates, a la granularite colonne-jour.
+    st = pd.concat([x for x in stale if len(x)], ignore_index=True) if any(
+        len(x) for x in stale) else pd.DataFrame(
+        columns=["symbole", "colonne", "jour", "facteur", "motif"])
+    for col, d1, d2, motif in INCIDENTS_CONNUS:
+        for sym in ("NQ", "ES"):
+            for j in pd.date_range(d1, d2, freq="D"):
+                st.loc[len(st)] = [sym, col, str(j.date()), float("nan"), motif]
+    st.to_csv("DOCS/features_stale.csv", index=False)
+    print("[ecrit] DOCS/features_stale.csv — %d couples (colonne, jour) suspects"
+          % len(st))
+    if len(st):
+        top = st.colonne.value_counts().head(6)
+        print("   colonnes les plus touchees : %s"
+              % ", ".join("%s (%d j)" % (k, v) for k, v in top.items()))
 
 
 if __name__ == "__main__":
