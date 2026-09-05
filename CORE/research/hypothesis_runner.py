@@ -319,7 +319,57 @@ def sortie_naturelle(df, i_entree, i_sortie, side):
     return None
 
 
-def evaluer(df, cond, side, couts_atr=0.0):
+def triple_barriere_vpoc(df, i_signal, side, couts_atr):
+    """Barriere PAR FAMILLE : la cible est le VPOC, pas +1,5 ATR.
+
+    Un setup de retour a la valeur vise le VPOC ou la VWAP, a une distance bien
+    inferieure a 1,5 ATR. Le juger sur une cible de continuation, c'est exiger
+    d'un retour a la moyenne qu'il devienne une tendance — constat 0.1, mesure au
+    cycle 1 : H3 atteint sa cible naturelle 66,7 % du temps et meurt quand meme.
+
+    Une seule chose change par rapport a `triple_barriere` : le TP.
+    SL a -1,0 ATR et expiration a 20 barres sont inchanges, pour que tout ecart
+    avec le cycle 1 s'impute a la cible et a rien d'autre.
+
+    A ne pas se raconter : une cible plus proche encaisse moins par trade. Le
+    taux de reussite montera mecaniquement ; l'esperance peut ne pas suivre.
+    """
+    j = i_signal + 1
+    if j >= len(df):
+        return None
+    atr = df["atr5"].iloc[i_signal]
+    if not np.isfinite(atr) or atr <= 0:
+        return None
+    if "dist_cur_vpoc" not in df.columns:
+        return None
+    d0 = pd.to_numeric(df["dist_cur_vpoc"], errors="coerce").iloc[i_signal]
+    if not np.isfinite(d0) or d0 == 0:
+        return None
+    if isinstance(couts_atr, tuple):
+        dollars, val_pt = couts_atr
+        couts_atr = dollars / (atr * val_pt)
+
+    entree = df["open"].iloc[j]
+    vpoc = entree + d0 * 0.25                 # dist_cur_vpoc est en TICKS
+    sl = entree + side * SL_ATR * atr
+    fin = min(j + EXPIRATION, len(df) - 1)
+    for k in range(j, fin + 1):
+        h, b = df["high"].iloc[k], df["low"].iloc[k]
+        if side > 0:
+            if b <= sl:
+                return -1, SL_ATR - couts_atr, k
+            if h >= vpoc:
+                return 1, (vpoc - entree) / atr - couts_atr, k
+        else:
+            if h >= sl:
+                return -1, SL_ATR - couts_atr, k
+            if b <= vpoc:
+                return 1, (entree - vpoc) / atr - couts_atr, k
+    pnl = side * (df["close"].iloc[fin] - entree) / atr - couts_atr
+    return 0, float(pnl), fin
+
+
+def evaluer(df, cond, side, couts_atr=0.0, barriere=None):
     """Rend un DataFrame de trades : jour, etiquette, pnl_atr, sortie_naturelle."""
     idx = signaux_par_franchissement(cond, df["jour"])
     trades = []
@@ -330,7 +380,7 @@ def evaluer(df, cond, side, couts_atr=0.0):
             libre_a, jour_libre = -1, jour_i
         if i <= libre_a:
             continue
-        r = triple_barriere(df, i, side, couts_atr)
+        r = (barriere or triple_barriere)(df, i, side, couts_atr)
         if r is None:
             continue
         etiq, pnl, k = r
@@ -606,17 +656,75 @@ def lecture_unique():
     return 0
 
 
+def lecture_cycle2():
+    """Cycle 2. Pre-enregistre dans DOCS/MISSION_CYCLE2.md, ecrit avant de lancer."""
+    print("MISSION CYCLE 2 — second regard declare sur les memes 40 jours.")
+    print("Bonferroni 0,05 / 4. Trois hypotheses sur quatre sont ANNONCEES non")
+    print("testables avant de tourner ; seule H3-VPOC peut conclure.\n")
+    dfs, jours_lot = {}, {}
+    for sym in ("NQ", "ES"):
+        d, j = preparer(sym)
+        if d.empty:
+            print("[%s] aucune donnee" % sym)
+            return 1
+        dfs[sym], jours_lot[sym] = d, j
+        print("  %s : %d barres 5 min, %d jours" % (sym, len(d), len(j)))
+    print()
+
+    lignes = []
+    for nom, fn in HYP.LES_QUATRE.items():
+        bar = triple_barriere_vpoc if nom in HYP.CIBLE_VPOC else None
+        par_sym = {}
+        for sym, d in dfs.items():
+            trades = []
+            for cote, (cond, side) in fn(d).items():
+                t_ = evaluer(d, cond, side,
+                             couts_atr=(COUT_DOLLARS[sym], VAL_POINT[sym]),
+                             barriere=bar)
+                if len(t_):
+                    trades.append(t_)
+            par_sym[sym] = (pd.concat(trades, ignore_index=True) if trades
+                            else pd.DataFrame(columns=["jour", "etiquette", "pnl_atr"]))
+        v, pourquoi = verdict(par_sym, jours_lot)
+        lignes.append((nom, v, pourquoi, {s: len(x) for s, x in par_sym.items()},
+                       {s: (round(float(x["pnl_atr"].mean()), 3) if len(x) else None)
+                        for s, x in par_sym.items()},
+                       {s: (round(float((x["etiquette"] == 1).mean()), 3) if len(x) else None)
+                        for s, x in par_sym.items()}))
+
+    print("%-9s %-14s %-11s %-17s %-13s %s"
+          % ("hyp", "verdict", "N (NQ/ES)", "esperance ATR", "taux TP", "pourquoi"))
+    print("-" * 118)
+    for nom, v, p, n, e, w in lignes:
+        print("%-9s %-14s %-11s %-17s %-13s %s"
+              % (nom, v, "%d/%d" % (n.get("NQ", 0), n.get("ES", 0)),
+                 "%s / %s" % (e.get("NQ"), e.get("ES")),
+                 "%s / %s" % (w.get("NQ"), w.get("ES")), p[:38]))
+
+    print()
+    for nom, v, _, _, _, _ in lignes:
+        if nom in HYP.NON_TESTABLES_ANNONCEES:
+            print("  %-9s non testable ANNONCE avant de tourner — dimensionnement mesure"
+                  " dans MISSION_CYCLE2 §1." % nom)
+    print("\nJours 42-57 : SCELLES, et fermes pour ce cycle aussi.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--factices", action="store_true",
                     help="teste le runner sur trois hypotheses factices")
     ap.add_argument("--lecture", action="store_true",
                     help="LECTURE UNIQUE des six. Ne se relance pas sans raison.")
+    ap.add_argument("--cycle2", action="store_true",
+                    help="Cycle 2 : H3-VPOC + les trois regimes recalcules.")
     a = ap.parse_args()
     if a.factices:
         return tester_factices()
     if a.lecture:
         return lecture_unique()
+    if a.cycle2:
+        return lecture_cycle2()
     print("Rien a executer. --factices pour valider l'instrument, --lecture pour"
           " la lecture unique des six.")
     return 0

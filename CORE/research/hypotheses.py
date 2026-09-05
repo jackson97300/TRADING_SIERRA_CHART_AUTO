@@ -344,3 +344,88 @@ LES_SIX = {"H2": h2, "H3": h3, "H4": h4, "H6": h6, "H7": h7, "H8": h8}
 # jours. « NON TESTABLE » y signifiera « trop rare pour ce lot », jamais « le
 # setup est mauvais ». Le mode ombre est sa seule voie.
 SOUS_DIMENSIONNEES = {"H4"}
+
+
+# ---------------------------------------------------------------------------
+# CYCLE 2 — pre-enregistre le 06/09 dans DOCS/MISSION_CYCLE2.md
+# ---------------------------------------------------------------------------
+
+def _ib_range_atr_r(df, tick=TICK):
+    """`ib_range_ticks x tick / atr` — points sur points.
+
+    La colonne livree `ib_range_atr` divise des TICKS par des POINTS (identique
+    au livre a 100 % sur 12 580 barres). Facteur 4. Voir `recalc.ib_range_atr_r`.
+    """
+    ir, at = _f(df, "ib_range_ticks"), _f(df, "atr")
+    return ir * tick / at.where(at > 0)
+
+
+def h2_prime(df, tick=TICK):
+    """H2' | Fade des bandes VWAP-SD2, regime RECALCULE.
+
+    Identique a H2 du cycle 1, sauf le regime : `ib_range_atr_r < 0,8` au lieu
+    de la colonne livree. Annoncee NON TESTABLE avant de tourner — au cycle 1 la
+    reaction ramenait 27 signaux a 3, et le regime corrige ne coupe presque plus
+    (141 sur 143).
+    """
+    p10 = seuil_ticks(df["atr5"], "P10", tick)
+    p15 = seuil_ticks(df["atr5"], "P15", tick)
+    regime = _ib_range_atr_r(df, tick) < 0.8
+    du, dd = _f(df, "dist_vwap_rth_sd2u_r"), _f(df, "dist_vwap_rth_sd2d_r")
+    delta, fin = _f(df, "delta_bar"), _f(df, "finish_delta_pct")
+    return {
+        "short": ((du >= -p15) & (du <= p10) & regime & (delta < 0) & (fin < 0.4), -1),
+        "long":  ((dd >= -p10) & (dd <= p15) & regime & (delta > 0) & (fin > 0.6), +1),
+    }
+
+
+def h6_prime(df, tick=TICK):
+    """H6' | Retest de l'IB, regime RECALCULE.
+
+    Identique a H6, regime `ib_range_atr_r < 0,4`. Le regime corrige couvre 56 %
+    des barres au lieu de 0,13 %, mais le LIEU ne rend que 58 signaux ES / 65 NQ,
+    ramenes a 37 / 35 par le regime — sous le seuil de 40 avant meme la reaction.
+    Annoncee NON TESTABLE.
+    """
+    p15 = seuil_ticks(df["atr5"], "P15", tick)
+    p05 = seuil_ticks(df["atr5"], "P05", tick)
+    regime = _ib_range_atr_r(df, tick) < 0.4
+    dh, dl = _f(df, "dist_ib_high"), _f(df, "dist_ib_low")
+    fin = _f(df, "finish_delta_pct")
+    return {
+        "long":  ((_f(df, "ib_broken_up") == 1) & (dh >= -p15) & (dh <= p05)
+                  & regime & (dh < 0) & (fin > 0.6), +1),
+        "short": ((_f(df, "ib_broken_dn") == 1) & (dl >= -p15) & (dl <= p05)
+                  & regime & (dl < 0) & (fin < 0.4), -1),
+    }
+
+
+def h8_prime(df, tick=TICK):
+    """H8' | Absorption, seuils recalibres sur LEUR DISTRIBUTION.
+
+    `rvol_r >= 1,8` et `|delta_pct| >= 0,18` — le p90 mesure de chaque colonne,
+    au lieu de 2,0 et 0,30 qui etaient hors distribution (`|delta_pct|` :
+    mediane 0,069, p90 0,175).
+
+    Annoncee NON TESTABLE, et pas seulement sous-dimensionnee : meme desserree a
+    1,5 / 0,15 elle ne rend que 8 signaux ES et 7 NQ. **Ce n'est pas un seuil a
+    corriger, c'est une conjonction impossible** — un rvol eleve, un delta fort
+    et un finish contraire ne coexistent presque jamais. Elle est lancee pour que
+    ce soit ecrit, pas parce qu'on l'espere.
+    """
+    p20 = seuil_ticks(df["atr5"], "P20", tick)
+    pres = pd.Series(False, index=df.index)
+    for c in NIVEAUX_H8:
+        pres = pres | (_f(df, c).abs() <= p20)
+    rvol, dp, fin = _f(df, "rvol_r"), _f(df, "delta_pct"), _f(df, "finish_delta_pct")
+    return {
+        "long":  (pres & (rvol >= 1.8) & (dp <= -0.18) & (fin > 0.6), +1),
+        "short": (pres & (rvol >= 1.8) & (dp >= 0.18) & (fin < 0.4), -1),
+    }
+
+
+# H3-VPOC utilise EXACTEMENT h3() : lieu et reaction inchanges, seule la cible
+# change, et c'est le runner qui la porte (barriere = VPOC atteint).
+LES_QUATRE = {"H3-VPOC": h3, "H2p": h2_prime, "H6p": h6_prime, "H8p": h8_prime}
+CIBLE_VPOC = {"H3-VPOC"}          # les seules a utiliser la barriere par famille
+NON_TESTABLES_ANNONCEES = {"H2p", "H6p", "H8p"}
