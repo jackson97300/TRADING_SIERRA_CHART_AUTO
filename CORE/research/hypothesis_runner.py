@@ -126,7 +126,10 @@ ETATS = ["dist_cur_vah", "dist_cur_val", "inside_cur_va",
          "dist_ib_high", "dist_ib_low", "ib_range_atr", "ib_broken_up",
          "ib_broken_dn", "dist_ovn_high", "dist_ovn_low", "dist_pdh", "dist_pdl",
          "dist_mq_call", "dist_mq_put", "open_within_prev_va",
-         "open_outside_prev_range", "finish_delta_pct", "delta_pct", "atr_14m"]
+         "open_outside_prev_range", "finish_delta_pct", "delta_pct", "atr_14m",
+         # cibles de la sortie naturelle (mission §7) — sans elles, la
+         # mesure rend 0 %% partout, ce qui se lit comme un resultat.
+         "dist_cur_vpoc", "dist_cur_vwap_vp", "ib_range_ticks", "atr"]
 DRAPEAUX = ["sweep_high_this_bar", "sweep_low_this_bar"]   # un evenement dans
 #            la fenetre de 5 min suffit : max, jamais "dernier"
 
@@ -270,8 +273,30 @@ def triple_barriere(df, i_signal, side, couts_atr):
     return 0, float(pnl), fin
 
 
+def sortie_naturelle(df, i_entree, i_sortie, side):
+    """La cible naturelle du setup a-t-elle ete atteinte avant la barriere ?
+
+    Mesure d'information, JAMAIS un critere (mission §7). Un setup de retour a
+    la valeur a pour cible le VPOC ou la VWAP, a une distance bien inferieure a
+    1,5 ATR : la barriere de continuation peut le tuer alors qu'il fait ce qu'on
+    lui demande. Si H3 atteint le VPOC dans 60 % des cas, le setup n'est pas
+    mort — c'est la barriere qui ne lui correspond pas (constat 0.1).
+    """
+    for col in ("dist_cur_vpoc", "dist_cur_vwap_vp"):
+        if col not in df.columns:
+            continue
+        d0 = pd.to_numeric(df[col], errors="coerce").iloc[i_entree]
+        if not np.isfinite(d0) or d0 == 0:
+            continue
+        # la cible est franchie quand la distance signee change de signe
+        seq = pd.to_numeric(df[col], errors="coerce").iloc[i_entree:i_sortie + 1]
+        if (np.sign(seq) != np.sign(d0)).any():
+            return col
+    return None
+
+
 def evaluer(df, cond, side, couts_atr=0.0):
-    """Rend un DataFrame de trades : jour, etiquette, pnl_atr."""
+    """Rend un DataFrame de trades : jour, etiquette, pnl_atr, sortie_naturelle."""
     idx = signaux_par_franchissement(cond, df["jour"])
     trades = []
     libre_a, jour_libre = -1, None
@@ -286,7 +311,8 @@ def evaluer(df, cond, side, couts_atr=0.0):
             continue
         etiq, pnl, k = r
         libre_a = k
-        trades.append({"jour": jour_i, "etiquette": etiq, "pnl_atr": pnl})
+        trades.append({"jour": jour_i, "etiquette": etiq, "pnl_atr": pnl,
+                       "sortie_naturelle": sortie_naturelle(df, i, k, side)})
     return pd.DataFrame(trades)
 
 
@@ -435,6 +461,8 @@ def tester_factices():
         for sym, d in dfs.items():
             cond, side = _factices(d, rng)[nom]
             par_sym[sym] = evaluer(d, cond, side)
+        tous = [x for x in par_sym.values() if len(x)]
+        naturelles[nom] = pd.concat(tous, ignore_index=True) if tous else None
         v, pourquoi = verdict(par_sym, jours_lot)
         resultats.append((nom, v, pourquoi,
                           {s: len(t) for s, t in par_sym.items()},
@@ -500,7 +528,7 @@ def lecture_unique():
         print("  %s : %d barres 5 min, %d jours" % (sym, len(d), len(j)))
     print()
 
-    lignes = []
+    lignes, naturelles = [], {}
     for nom, fn in HYP.LES_SIX.items():
         par_sym, etages = {}, {}
         for sym, d in dfs.items():
@@ -511,21 +539,32 @@ def lecture_unique():
                     trades.append(t_)
             par_sym[sym] = (pd.concat(trades, ignore_index=True)
                             if trades else pd.DataFrame(columns=["jour", "etiquette", "pnl_atr"]))
-            etages[sym] = sum(len(signaux_par_franchissement(c, d["jour"]))
-                              for c, _ in fn(d).values())
+            L, R = HYP.lieux(d), HYP.regimes(d)
+            n = lambda c: len(signaux_par_franchissement(c, d["jour"]))
+            etages[sym] = (n(L[nom]), n(L[nom] & R[nom]),
+                           sum(n(c) for c, _ in fn(d).values()))
+        tous = [x for x in par_sym.values() if len(x)]
+        naturelles[nom] = pd.concat(tous, ignore_index=True) if tous else None
         v, pourquoi = verdict(par_sym, jours_lot)
         lignes.append((nom, v, pourquoi, {s: len(x) for s, x in par_sym.items()},
                        {s: (round(float(x["pnl_atr"].mean()), 3) if len(x) else None)
                         for s, x in par_sym.items()}, etages))
 
-    print("%-5s %-14s %-11s %-17s %-13s %s"
-          % ("hyp", "verdict", "N (NQ/ES)", "esperance ATR", "lieu (NQ/ES)", "pourquoi"))
+    print("%-5s %-14s %-24s %-17s %s"
+          % ("hyp", "verdict", "ENTONNOIR ES  lieu>reg>reac", "esperance ATR", "pourquoi"))
     print("-" * 118)
     for nom, v, p, n, e, et in lignes:
-        print("%-5s %-14s %-11s %-17s %-13s %s"
-              % (nom, v, "%d/%d" % (n.get("NQ", 0), n.get("ES", 0)),
-                 "%s / %s" % (e.get("NQ"), e.get("ES")),
-                 "%d/%d" % (et.get("NQ", 0), et.get("ES", 0)), p[:40]))
+        a = et.get("ES", (0, 0, 0))
+        print("%-5s %-14s %-24s %-17s %s"
+              % (nom, v, "%d > %d > %d  (N=%d)" % (a[0], a[1], a[2], n.get("ES", 0)),
+                 "%s / %s" % (e.get("NQ"), e.get("ES")), p[:40]))
+    print()
+    print("Sorties naturelles atteintes avant la barriere (mesure, jamais un critere) :")
+    for nom, _, _, _, _, _ in lignes:
+        tr = naturelles.get(nom)
+        if tr is not None and len(tr):
+            part = 100 * tr["sortie_naturelle"].notna().mean()
+            print("  %-4s %5.1f %% des trades (N=%d)" % (nom, part, len(tr)))
 
     print()
     for nom, v, _, _, _, _ in lignes:

@@ -453,3 +453,32 @@ def dedoublonner_par_minute(lignes, cle_ts="ts"):
         if m not in best or cle < best[m][0]:
             best[m] = (cle, d)
     return [best[m][1] for m in sorted(best)]
+
+
+def ib_range_atr_r(df, tick=0.25):
+    """Largeur de l'IB en multiples d'ATR. **Ne pas lire `ib_range_atr` livre.**
+
+    La colonne livree vaut `ib_range_ticks / atr` : des TICKS divises par des
+    POINTS. Mesure du 06/09 sur 12 580 barres ES + NQ — la formule ci-dessous
+    reproduit le livre a 100 %, ce qui identifie le diviseur sans ambiguite :
+
+        livre            mediane  1,713 ES  /  1,775 NQ
+        ticks / atr      identique au livre a 100,0 %
+        ticks x 0,25 / atr (points / points)   mediane  0,428  /  0,444
+
+    Facteur 4 (= 1 / 0,25), le meme que sur les `dist_*_atr`. Quatrieme bug de
+    la famille ATR, et le premier sur une CONDITION DE REGIME : le tableau
+    tague de MISSION_PHASE2 lit « `ib_range_atr` < 0,4 » pour H6 et « < 0,8 »
+    pour H2. Avec la colonne livree, ces seuils couvrent 0,13 % et 5,9 % des
+    barres ; avec la formule juste, 52,9 % et 96,9 %. H6 n'a jamais pu
+    declencher — facteur 400 sur le lieu.
+
+    Les seuils du paradigme de Jackson (« < 0,40 = IB etroite, 0,40-0,80 =
+    rotation ») etaient donc JUSTES dans l'unite ou ils ont ete penses. La
+    mediane corrigee, 0,43, tombe exactement a leur frontiere.
+
+    Fenetre : constante apres 10h30 ET. Unite : sans dimension (points/points).
+    """
+    ir = pd.to_numeric(df.get("ib_range_ticks"), errors="coerce")
+    at = pd.to_numeric(df.get("atr"), errors="coerce")
+    return (ir * tick / at.where(at > 0))

@@ -289,6 +289,55 @@ def h8(df, tick=TICK):
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Les lieux seuls — pour l'entonnoir, jamais pour decider
+# ---------------------------------------------------------------------------
+
+def lieux(df, tick=TICK):
+    """Le LIEU de chaque hypothese, sans sa reaction et sans son regime.
+
+    Sert uniquement a l'entonnoir du rapport : `lieu seul -> + regime ->
+    + reaction`. Sans ces etages, « non testable » ne dit pas si c'est le lieu
+    qui est rare, le regime qui ne mord jamais, ou la reaction qui est stricte —
+    et c'est precisement ce qui a manque a la lecture du 06/09, ou H6 rendait
+    N = 0 sans qu'on voie que son regime couvrait 0,13 % des barres.
+    """
+    p05 = seuil_ticks(df["atr5"], "P05", tick)
+    p10 = seuil_ticks(df["atr5"], "P10", tick)
+    p15 = seuil_ticks(df["atr5"], "P15", tick)
+    p20 = seuil_ticks(df["atr5"], "P20", tick)
+    du, dd = _f(df, "dist_vwap_rth_sd2u_r"), _f(df, "dist_vwap_rth_sd2d_r")
+    dh, dl = _f(df, "dist_cur_vah"), _f(df, "dist_cur_val")
+    ih, il = _f(df, "dist_ib_high"), _f(df, "dist_ib_low")
+    pres = pd.Series(False, index=df.index)
+    for c in NIVEAUX_H8:
+        pres = pres | (_f(df, c).abs() <= p20)
+    c = _f(df, "close")
+    return {
+        "H2": ((du >= -p15) & (du <= p10)) | ((dd >= -p10) & (dd <= p15)),
+        "H3": (dh.abs() <= p10) | (dl.abs() <= p10),
+        "H4": (c >= _f(df, "prev_val_lvl")) & (c <= _f(df, "prev_vah_lvl")),
+        "H6": (((_f(df, "ib_broken_up") == 1) & (ih >= -p15) & (ih <= p05))
+               | ((_f(df, "ib_broken_dn") == 1) & (il >= -p15) & (il <= p05))),
+        "H7": (_f(df, "sweep_low_this_bar") == 1) | (_f(df, "sweep_high_this_bar") == 1),
+        "H8": pres,
+    }
+
+
+def regimes(df):
+    """La condition de REGIME de chaque hypothese, isolee.
+
+    H6 et H2 lisent `ib_range_atr`, dont la colonne livree divise des ticks par
+    des points (`recalc.ib_range_atr_r`). Le tag les fige ainsi : elles sont
+    donc evaluees sur la colonne LIVREE, comme ecrit, et l'entonnoir montre ce
+    que cela coute. La version corrigee appartient au cycle suivant.
+    """
+    ib = _f(df, "ib_range_atr")
+    vrai = pd.Series(True, index=df.index)
+    return {"H2": ib < 0.8, "H3": vrai, "H4": vrai,
+            "H6": ib < 0.4, "H7": vrai, "H8": vrai}
+
 LES_SIX = {"H2": h2, "H3": h3, "H4": h4, "H6": h6, "H7": h7, "H8": h8}
 
 # H4 est annoncee sous-dimensionnee AVANT de tourner : 16 franchissements sur 57
