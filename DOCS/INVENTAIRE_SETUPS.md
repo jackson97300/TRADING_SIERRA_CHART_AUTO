@@ -30,40 +30,100 @@ de Jackson et qui ait survecu a toutes les versions.
 
 ---
 
-## 1. LE CROISEMENT — cinq setups proposes ont deja ete testes
-
-C'est l'apport principal de la fusion, et il change la lecture de la proposition
-finale de Fable.
+## 1. LE CROISEMENT — et pourquoi les 28 NO-GO sont A RECONSIDERER
 
 **Source des verdicts** : `DOCS/STRATEGY_BATTERY_V5_FULL_REPORT.md`, 27/04/2026,
 `ES/NQ_dataset_v5.parquet`, 24 mois, 351 000 barres, triple barriere
 K_SL 1,5 / K_TP 2,0 / H 60, couts ES 2,3 t · NQ 5,2 t.
 
-| Setup propose | Code deja teste | PF NQ | PF ES | Verdict ecrit |
+### 1.1 Les donnees de ce test etaient fausses — c'est ecrit, mesure, et date
+
+`DOCS/DATA_SOURCES_V5.md`, 19/05/2026, tests de parite empirique sur 14 919
+barres. Taux d'**ACCORD** entre le calcul Python et le DMP C++ :
+
+| Feature | ES | NQ |
+|---|---|---|
+| `open_type` | 63,57 % | 58,82 % |
+| `day_type` | 74,58 % | 57,52 % |
+| `range_pos` | 30,50 % | 28,68 % |
+| `sess_range_atr` | **0,16 %** | **0,17 %** |
+| `cvd_day_dir` | 34,20 % | 21,92 % |
+
+Et un bug de seuil, cite dans le meme document : *« seuil unique
+`IB_NARROW_THRESHOLD = 0.40` copie de C++ sans verifier la convention Python
+(`ib_range_atr = ib_range_ticks / atr_1min_ticks`, moyenne ES 21,7 / NQ 30,8).
+Seuil 0,40 jamais atteint → critere ib_narrow inactif → `trend_day_probability`
+plafonne a 0,5. »*
+
+**C'est le Python qui etait faux, pas le DMP.** Les cinq features qui divergent
+sont exactement les cinq corrigees cote Python (`DATA_SOURCES_V5.md:236-239`) :
+
+```
+ ok   FIX #1  open_cash  close -> open              (19/05 fait)
+TODO  FIX #2  day_type progressif intra-session
+TODO  FIX #3  sess_range_atr  unite atr
+TODO  FIX #4  range_pos  investigation inputs
+```
+
+`open_cash` lisait le **close** de la barre de 09:30 au lieu de son **open** :
+toute strategie d'ouverture etait batie sur le mauvais prix. `sess_range_atr` :
+*« unite atr »* — le meme bug points/ticks retrouve cette semaine sur les
+`dist_*_atr` (facteur 4). Et **trois des quatre etaient encore TODO au 19/05** :
+non corriges meme a cette date.
+
+**Chronologie** :
+- 27/04 — la batterie tourne, 28 strategies, 41 resultats, aucun GO.
+- 15/05 — les datasets sont archives sous le nom `DATASETS_PRE_BUGDE_20260515`.
+- 19/05 — la parite est mesuree, les ecarts ci-dessus sont constates, et le
+  projet bascule sur *« Option C : Python = source de verite canonique 100 %
+  Databento, abandon parite DMP historique »*.
+
+### 1.2 Ce que cela change, strategie par strategie
+
+Une strategie testee sur une feature a 0,16 % d'accord n'a pas ete testee : elle
+a ete testee sur autre chose.
+
+| Code | Strategie | Feature centrale | Accord au 19/05 | Verdict a reconsiderer |
 |---|---|---|---|---|
-| **S3** extremes de la VA courante | **H5** Rejet VAH/VAL (Dalton) | 0,80 | 0,66 | NO-GO |
-| **S8** retour VWAP en tendance | **H1** VWAP mean reversion (Dalton/Chan) | 0,85 | 0,68 | NO-GO |
-| **S6** cassure IB + pullback | **SF** IB Breakout + GEX | 0,70 | 0,79 | NO-GO |
-| **S10** rebond niveaux veille | **JM** MenthorQ confluence 2+ | 0,91 | 0,64 | NO-GO |
-| **S1** rejet de mur gamma | **H4** 1D Magnetism (MenthorQ pinning) | 1,03 | 0,84 | NO-GO |
-| S7 ouverture / regle 80 % | **H2** Open Drive continuation | 0,67 (56 tr) | 0,58 (59 tr) | NO-GO |
-| S5 double top | **JT** Trapped traders cluster | 0,76 | 0,70 | NO-GO |
-| S4 exhaustion | **JL2** Long reversal pattern | 0,91 | **1,29** | NO-GO (PF<1,3) |
-| S9 sweep + reprise | *aucun equivalent teste* | — | — | — |
-| S2 absorption RVOL | *aucun equivalent teste* | — | — | — |
+| H2 | Open Drive continuation | `open_type` | 58-63 % | **oui** |
+| H5 | Rejet VAH/VAL | `range_pos`, VA | 29-31 % | **oui** |
+| SH | Composite Rotation | `day_type` | 57-75 % | **oui** |
+| H3 | Failed IB Poor High | IB, `ib_range_atr` | seuil inactif | **oui** |
+| SF | IB Breakout + GEX | IB | seuil inactif | **oui** |
+| H1 | VWAP mean reversion | VWAP, `cvd_day_dir` | 22-34 % sur le CVD | **oui** |
+| H8 | OFI residualise | order flow, CVD | 22-34 % | **oui** |
+| H9 | VPIN regime | volume, CVD | 22-34 % | **oui** |
+| JG | Game Changers composite | `composite_poc_*` | vide a 99 % aujourd'hui | **oui** |
+| H4, JM | MenthorQ | `dist_mq_*` | non mesure a l'epoque | probable |
+| JL, JL2, JC, JC2, JD, JS, JT, JE | patterns de barre et de cluster | OHLC, delta | non mesure | moins expose |
 
-> **Ce que ce tableau dit, et ce qu'il ne dit pas.** La triple barriere de ce
-> test (SL 1,5 / TP 2,0 / H 60) n'est PAS celle de la mission (TP 1,5 / SL 1,0 /
-> H 20), et les donnees non plus — 24 mois de Databento contre 51 jours de
-> `live_enriched`. **Un NO-GO la-bas n'est pas un NO-GO ici.** Ce qui se
-> transpose, c'est que ces idees ont deja ete essayees a grande echelle et n'ont
-> pas passe PF 1,3. Les reprendre est legitime ; les reprendre sans le savoir ne
-> l'est pas.
+**Aucune des vingt-huit ne peut etre consideree comme refutee.** Les seules dont
+le verdict resiste partiellement sont celles qui ne dependent que de l'OHLC et
+du delta de barre — et encore, `cvd_day_dir` a 22 % d'accord touche tout ce qui
+cumule.
 
-**Les deux seuls setups sans equivalent teste sont S2 (absorption RVOL) et S9
-(sweep + reprise).** Ce sont, a ce titre, les plus neufs de la liste.
+### 1.3 La correspondance avec les setups proposes
 
----
+Elle reste utile — non plus comme verdict, mais comme **carte de ce qui a deja
+ete tente**.
+
+| Setup propose | Code deja teste | PF mesure (sur donnees fausses) |
+|---|---|---|
+| S3 extremes de la VA | H5 Rejet VAH/VAL | 0,80 NQ / 0,66 ES |
+| S8 retour VWAP | H1 VWAP mean reversion | 0,85 / 0,68 |
+| S6 cassure IB + pullback | SF IB Breakout + GEX | 0,70 / 0,79 |
+| S10 niveaux veille | JM MenthorQ confluence | 0,91 / 0,64 |
+| S1 rejet de mur gamma | H4 1D Magnetism | 1,03 / 0,84 |
+| S7 ouverture / regle 80 % | H2 Open Drive | 0,67 / 0,58 |
+| S5 double top | JT Trapped traders | 0,76 / 0,70 |
+| S4 exhaustion | JL2 Long reversal | 0,91 / **1,29** |
+| S9 sweep + reprise | *aucun equivalent* | — |
+| S2 absorption RVOL | *aucun equivalent* | — |
+
+**Conclusion pour les dix** : la batterie V5 ne disqualifie aucune idee. Elle
+dit seulement lesquelles ont deja ete codees une fois — ce qui reste une
+information, mais pas un verdict. Un setup qui reapparait dans les dix n'est pas
+un doublon : c'est un premier vrai test.
 
 ## 2. STATUTS DE COLONNES — six corrections apres verification
 
@@ -295,9 +355,24 @@ revues de session, le journal, ou sa memoire.
 
 ## 9. POUR CHOISIR LES DIX — observations, sans recommandation
 
-1. **Cinq des neuf setups proposes par Fable ont un equivalent deja teste et NO-GO** sur 24 mois : S3≈H5, S8≈H1, S6≈SF, S10≈JM, S1≈H4. Sur une autre barriere et d'autres donnees — donc a reprendre en connaissance de cause, pas a ecarter.
-2. **Deux setups n'ont aucun equivalent teste** : S2 (absorption RVOL) et S9 (sweep + reprise). S9 a deja une version codee dans le depot courant (C4).
-3. **Trois setups portent un resultat positif ecrit et recent** : C1-A (PF 2,26 / 26,00 avec confluence, 8 j), C3 Bearish_Rejection (PF 5,05, N=55, 14 j), C2 avec filtre qualite (PF 2,62, 12 trades sur 37). Effectifs faibles, periodes courtes.
-4. **Un setup est bloque par ses colonnes** : S3, tant qu'il n'est pas reecrit sur `inside_cur_va` + `dist_cur_vah/val`.
-5. **La structure par regime du paradigme est la seule qui vienne de Jackson** et qui ait survecu a toutes les versions. Elle se superpose exactement a L2 → L3 → L4.
-6. **La dixieme hypothese n'est dans aucun depot.** Elle doit venir des trades reels — le niveau DEFENDU, ou ce qui a ete trade en Asie.
+1. **La batterie V5 ne refute rien.** Ses 28 strategies ont ete jugees le 27/04
+   sur des donnees dont `open_type` (58-63 % d'accord), `day_type` (57-75 %),
+   `range_pos` (29-31 %), `sess_range_atr` (0,16 %) et `cvd_day_dir` (22-34 %)
+   etaient faux, et ou `trend_day_probability` etait plafonne a 0,5 par un seuil
+   inactif. Les datasets ont ete archives trois semaines plus tard sous le nom
+   `PRE_BUGDE`. **Un setup qui reapparait dans les dix n'est pas un doublon :
+   c'est son premier vrai test.**
+2. **Deux setups n'ont aucun equivalent code** : S2 (absorption RVOL) et S9
+   (sweep + reprise). S9 a une version dans le depot courant (C4).
+3. **Trois setups portent un resultat positif ecrit et recent** : C1-A (PF 2,26
+   baseline / 26,00 avec confluence, 8 j), C3 Bearish_Rejection (PF 5,05, N=55,
+   14 j), C2 avec filtre qualite (PF 2,62, 12 trades sur 37). Effectifs faibles,
+   periodes courtes — et mesures sur `live_enriched` d'avant les corrections de
+   cette semaine.
+4. **Un setup est bloque par ses colonnes** : S3, tant qu'il n'est pas reecrit
+   sur `inside_cur_va` + `dist_cur_vah/val`.
+5. **La structure par regime du paradigme est la seule qui vienne de Jackson**
+   et qui ait survecu a toutes les versions. Elle se superpose exactement a
+   L2 → L3 → L4.
+6. **La dixieme hypothese n'est dans aucun depot.** Elle doit venir des trades
+   reels — le niveau DEFENDU, ou ce qui a ete trade en Asie.
