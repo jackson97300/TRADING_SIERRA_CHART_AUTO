@@ -146,6 +146,50 @@ except Exception as _e:  # noqa: BLE001
     print("[avert] features_provenance.csv illisible (%s) : perimetre non filtre" % _e)
 RETENUES = {c for c, n in PROVENANCE.items() if n in ("A", "B")}
 
+
+def lecture_de(nom: str, symbole: str) -> str | None:
+    """Expression a utiliser pour consommer une feature, ou None si la colonne
+    se lit telle quelle.
+
+    Les colonnes "_atr" livrees passent l'identite qui les definit mais pas le
+    controle d'unite : "dist_vwap_d_atr = dist_vwap_d / atr" divise des TICKS
+    par des POINTS et vaut donc 4x le vrai nombre d'ATR (mesure : rapport
+    4,000 exactement sur ES et NQ). "dist_pdh_atr" et "dist_pdl_atr" divisent
+    bien des points, mais avec le signe inverse.
+
+    Sans cette ligne, un seuil "moins d'un ATR" filtrerait a 0,25 ATR — le
+    mecanisme exact de l'incident Plan C. Le runner de la mission ne lit jamais
+    une colonne du noyau directement : il passe par "lire(feature, df)", qui
+    applique cette expression quand elle existe.
+    """
+    from CORE.constants import get_tick_size
+    base = nom[:-6] if nom.endswith("_hnorm") else nom
+    if base.endswith("_r"):
+        return None  # recalculee par recalc.py, deja juste
+    tick = get_tick_size(symbole)
+    # Liste NOMMEE, jamais deduite du suffixe. Une premiere version appliquait
+    # le facteur a toute colonne "_atr" : elle aurait casse
+    # `range_extension_above_ib_atr`, qui divise des POINTS par des points et
+    # est juste a 100 % sur ES et NQ. Le suffixe ne dit pas l'unite.
+    A_CORRIGER = {
+        "dist_vwap_d_atr": tick, "dist_vwap_w_atr": tick,
+        "dist_vwap_m_atr": tick, "dist_prev_vpoc_atr": tick,
+        "dist_pdh_atr": -1.0, "dist_pdl_atr": -1.0,
+    }
+    # Mesurees et JUSTES : elles divisent des points par des points.
+    # `range_extension_above_ib_atr = (sess_high - ib_high) / atr` a 100,0 %
+    # sur ES et NQ. Les corriger les casserait.
+    JUSTES = {"range_extension_above_ib_atr", "range_extension_below_ib_atr"}
+    if base not in A_CORRIGER:
+        if base.endswith("_atr") and base not in JUSTES:
+            return ("df['%s']  # unite NON MESUREE : verifier avant tout seuil"
+                    % base)
+        return None
+    f = A_CORRIGER[base]
+    raison = ("livree en ticks/atr : vaut 4x le vrai nombre d'ATR" if f == tick
+              else "livree en points/atr avec le signe inverse")
+    return "df['%s'] * %s  # %s" % (base, f, raison)
+
 # Features dont la dependance a l'heure EST l'information. Les normaliser
 # reviendrait a retirer ce qu'elles disent : l'Initial Balance se construit
 # dans la premiere heure, un compteur de minutes depuis une news mesure un
@@ -945,6 +989,8 @@ def main() -> int:
     js = {sym: {"seuil": args.seuil,
                 "n_depart": r["n_depart"], "n_apres_nettoyage": r["n_propre"],
                 "features_retenues": r["retenues"],
+                "lecture": {f: lecture_de(f, sym) for f in r["retenues"]
+                            if lecture_de(f, sym)},
                 "balayage_seuils": [{"seuil": s, "clusters": n, "regroupements": m}
                                     for s, n, m in r["balayage"]],
                 "clusters": {str(cid): {"representant": d["representant"],

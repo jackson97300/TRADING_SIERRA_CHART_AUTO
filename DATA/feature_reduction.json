@@ -143,6 +143,7 @@
       "vwap_slope_10_dir",
       "vwap_triple_align"
     ],
+    "lecture": {},
     "balayage_seuils": [
       {
         "seuil": 0.5,
@@ -3898,6 +3899,7 @@
       "vwap_slope_10_dir",
       "vwap_triple_align"
     ],
+    "lecture": {},
     "balayage_seuils": [
       {
         "seuil": 0.5,
