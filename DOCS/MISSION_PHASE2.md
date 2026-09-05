@@ -44,6 +44,27 @@ Motif : un proxy se comporte comme la donnee qu'il remplace juste assez pour qu'
 jamais assez pour qu'on puisse conclure. Une hypothese conditionnee a un proxy ne mesure pas ce
 qu'elle croit mesurer.
 
+**Derivee n'est pas proxy — la distinction qui rend la regle applicable.** Un **proxy** remplace une
+donnee absente par une autre grandeur (`mq_gamma_condition` reconstruit depuis `bool_gex_flip_zone`
+parce que `net_gex` n'existe plus) : il est **exclu**. Une colonne **derivee** applique une formule a
+une donnee presente (`ib_broken_up`, `sweep_*_this_bar`, `open_within_prev_va`, `rule_80pct`,
+`bar_upper_wick_pct` calcules par le dumper depuis l'OHLCV ; `rvol_r`, `cvd_sess_r`, les bandes
+VWAP-SD par `recalc.py`) : elle est **admise**, qu'elle vienne du C++ ou de Python. Sans cette
+distinction, la regle exclurait tout le niveau B et il ne resterait aucune hypothese.
+
+**Crible proxy passe sur les six le 06/09.** Recherche des chemins `proxy`, `fallback`, `default`
+dans `enricher_chain.py` et `DMP_Transform.h` pour chaque colonne des six hypotheses :
+- **Aucun proxy** sur les colonnes des six. Les deux autres proxys de l'enricher
+  (`diag_imbalance_ofi_proxy` l.511, `large_trader_max_size_proxy` l.516) ne sont lus par aucune.
+- Les `= 0.0f` de `DMP_Transform.h:1355-1390` sont des **initialisations** ecrasees par les modules
+  de calcul, pas des substitutions.
+- **Deux fallbacks inventent une valeur** : `f.day_type = 2.0f` (« NormVar = le type le plus frequent
+  (42 %) ») et **`f.rvol = 1.0f` (« Normal par defaut »)** quand le ring buffer n'est pas pret. Le
+  second concernait H8 : elle lit **`rvol_r`**, le recalcul de `recalc.py`, et non `rvol`. Le
+  recalcul de P1 la protege deja — c'est retrospectivement sa justification principale.
+- `rule_80pct` est initialise a 0 (= inactif). C'est un defaut **conservateur** : il peut faire
+  manquer un signal a H4, jamais en inventer un.
+
 **Cout par trade : MNQ 2,82 $ / MES 4,32 $** (Tradeify, le plus eleve des trois prop firms verifiees,
 plus 1 tick de slippage par cote), soit **~ 0,23 / 0,14 ATR-5m**. C'est la barre. Sur micro, un setup
 neutre avant frais perd ~0,2 ATR par trade. Elle ne bouge pas apres lecture des resultats.
@@ -242,12 +263,12 @@ c'est la premiere chose a reprendre.
 
 | # | Nom | Regime L2 | LIEU (barre 5 min t) | REACTION (barre t) | Side | Colonnes (niveau) |
 |---|---|---|---|---|---|---|
-| **H2** | Fade des bandes VWAP-SD2 avec rejet | ROTATION, `ib_range_atr` < 0,8 (**clause gamma retiree** : proxy) | `dist_vwap_rth_sd2u_r` dans [-0,15 ; +0,10] ATR (short) / `dist_vwap_rth_sd2d_r` dans [-0,10 ; +0,15] (long) | `delta_bar` < 0 ET `finish_delta_pct` < 0,4 (short) ; miroir (long) | SHORT / LONG | bandes recalculees par `recalc.vwap_bandes(..., n_sd=2.0)` (A), `delta_bar` (A), `finish_delta_pct` (A), `ib_range_atr` (B) |
-| **H3** | Rejet a l'extreme de la VA courante | ROTATION | `dist_cur_vah` dans [-0,10 ; +0,10] ATR (short) / `dist_cur_val` (long) | barre t sort de la VA (high > VAH) ET cloture < VAH ET `finish_delta_pct` < 0,4 ; miroir | SHORT / LONG | `dist_cur_vah/val` (A), `inside_cur_va` (A), `finish_delta_pct` (A) |
+| **H2** | Fade des bandes VWAP-SD2 avec rejet | ROTATION, `ib_range_atr` < 0,8 (**clause gamma retiree** : proxy) | `dist_vwap_rth_sd2u_r` dans [-P15 ; +P10] (short) / `dist_vwap_rth_sd2d_r` dans [-P10 ; +P15] (long), avec P10 = `max(0,10 ATR, 2 t)` et P15 = `max(0,15 ATR, 3 t)` | `delta_bar` < 0 ET `finish_delta_pct` < 0,4 (short) ; miroir (long) | SHORT / LONG | bandes recalculees par `recalc.vwap_bandes(..., n_sd=2.0)` (A), `delta_bar` (A), `finish_delta_pct` (A), `ib_range_atr` (B) |
+| **H3** | Rejet a l'extreme de la VA courante | ROTATION | `dist_cur_vah` dans +/- `max(0,10 ATR, 2 t)` (short) / `dist_cur_val` (long) | barre t sort de la VA (high > VAH) ET cloture < VAH ET `finish_delta_pct` < 0,4 ; miroir | SHORT / LONG | `dist_cur_vah/val` (A), `inside_cur_va` (A), `finish_delta_pct` (A) |
 | **H4** | Regle des 80 % (Dalton) | definit le regime — mesuree sans L2 | ouverture cash hors VA veille puis retour : cloture 5 min dans [`prev_val_lvl` ; `prev_vah_lvl`] | maintien dans la VA pendant **6 barres 5 min consecutives** (= 2 x 30 min) | sens de la traversee | `open_within_prev_va` (B), `open_outside_prev_range` (B), `prev_vah/val_lvl` (N), `rule_80pct` (B, en information) |
-| **H6** | Retest de l'IB apres cassure acceptee | BREAKOUT, `ib_range_atr` < 0,4 | `ib_broken_up` = 1 ET `dist_ib_high` dans [-0,15 ; +0,05] ATR ; miroir bas | cloture 5 min au-dessus de l'IB high ET `finish_delta_pct` > 0,6 ; miroir | LONG / SHORT | `ib_broken_up/dn` (B), `dist_ib_high/low` (A), `finish_delta_pct` (A), `ib_range_atr` (B) |
-| **H7** | Sweep de liquidite + reclaim N+1 | tous, **sauf INDETERMINE** | `sweep_low_this_bar` = 1 **et** le low de t depasse un niveau de reference (`dist_ovn_low`, `dist_pdl`, `dist_ib_low`) de >= 0,10 ATR ; miroir haut | cloture de t+1 au-dessus du low de t (**decision evaluee a la cloture de t+1, entree a l'ouverture de t+2**) | LONG / SHORT | `sweep_high/low_this_bar` (B), `dist_ovn_high/low` (A), `dist_pdh/pdl` (A), `dist_ib_high/low` (A) |
-| **H8** | Absorption a un niveau | ROTATION / REVERSAL | <= 0,20 ATR d'un niveau de F3/F10/F11/F12 (VA veille ou courante, mur, PDH/PDL, ONH/ONL) | `rvol_r` >= 2,0 ET `delta_pct` <= -0,30 (long) / >= +0,30 (short) ET `finish_delta_pct` contraire au delta (> 0,6 long / < 0,4 short) | LONG / SHORT | `rvol_r` (A, recalcule), `delta_pct` (A), `finish_delta_pct` (A), distances (A/B) |
+| **H6** | Retest de l'IB apres cassure acceptee | BREAKOUT, `ib_range_atr` < 0,4 | `ib_broken_up` = 1 ET `dist_ib_high` dans [-`max(0,15 ATR, 3 t)` ; +`max(0,05 ATR, 1 t)`] ; miroir bas | cloture 5 min au-dessus de l'IB high ET `finish_delta_pct` > 0,6 ; miroir | LONG / SHORT | `ib_broken_up/dn` (B), `dist_ib_high/low` (A), `finish_delta_pct` (A), `ib_range_atr` (B) |
+| **H7** | Sweep de liquidite + reclaim N+1 | tous, **sauf INDETERMINE** | `sweep_low_this_bar` = 1 **et** le low de t depasse un niveau de reference (`dist_ovn_low`, `dist_pdl`, `dist_ib_low`) de >= `max(0,10 ATR, 2 t)` ; miroir haut | cloture de t+1 au-dessus du low de t (**decision evaluee a la cloture de t+1, entree a l'ouverture de t+2**) | LONG / SHORT | `sweep_high/low_this_bar` (B), `dist_ovn_high/low` (A), `dist_pdh/pdl` (A), `dist_ib_high/low` (A) |
+| **H8** | Absorption a un niveau | ROTATION / REVERSAL | <= `max(0,20 ATR, 4 t)` d'un niveau de F3/F10/F11/F12 (VA veille ou courante, mur, PDH/PDL, ONH/ONL) | `rvol_r` >= 2,0 ET `delta_pct` <= -0,30 (long) / >= +0,30 (short) ET `finish_delta_pct` contraire au delta (> 0,6 long / < 0,4 short) | LONG / SHORT | `rvol_r` (A, recalcule), `delta_pct` (A), `finish_delta_pct` (A), distances (A/B) |
 
 **H9 et H10 restent vides.** Aucun trade manuel avec trois occurrences nommees n'a ete fourni. Si
 Jackson en nomme un avant le tag, il devient H9 et le seuil repasse a /7.
@@ -256,6 +277,27 @@ Jackson en nomme un avant le tag, il devient H9 et le seuil repasse a /7.
 (`distance_atr <= 1,5`, et `range_pos` qui est en C) est un trade sur position, et la corriger revient
 a H1/H3. Exhaustion (S4) : seuil cale sur un lag faux, cycle suivant. Retour VWAP en tendance (S8) :
 en reserve derriere H2. Double top et Battle Navale : boosters L3/L4, pas des hypotheses.
+
+### Planchers en ticks sur toute proximite — correction du 06/09, avant le tag
+
+Les unites mesurees le montrent sans le dire : ATR-5m ~ **11,3 ticks sur ES**, donc un seuil de
+0,10 ATR vaut **1,13 tick**. H3 exigerait d'etre a un tick du VAH ; la borne basse de H6
+(-0,15 ATR ... +0,05 ATR) vaut **0,6 tick**, plus fin que la grille de cotation. Sur NQ le meme
+seuil vaut 8 ticks et respire. Une definition qui n'est atteignable que sur un instrument n'est pas
+une hypothese, c'est un artefact d'unite.
+
+**Regle appliquee a toutes les hypotheses, symetrique entre instruments :**
+
+| notion | definition |
+|---|---|
+| **proximite** (etre « a » un niveau) | `max(0,10 x ATR-5m, 2 ticks)` |
+| **fenetre de retest** | `max(0,15 x ATR-5m, 3 ticks)` |
+| **depassement** (H7, reserve de liquidite) | `max(0,10 x ATR-5m, 2 ticks)` |
+
+Effet mesure : sur ES le plancher devient actif (2 ticks au lieu de 1,13) ; sur NQ il ne mord jamais
+(8 ticks > 2). Ce n'est pas un assouplissement cale sur un resultat — il est ecrit **avant** de
+tourner, il vaut pour les deux instruments, et son motif est la grille de cotation, pas le rendement.
+
 
 ### Dimensionnement mesure avant de lancer (06/09, 57 jours, source unique)
 
@@ -267,7 +309,7 @@ superieure** de N, pas une prevision.
 | H4 `rule_80pct` actif | 16 | 16 | **sous-dimensionnee** — evenement rare par nature, ce n'est pas un defaut de mesure |
 | H3 extreme de VA | 807 | 728 | testable |
 | H6 `ib_broken_up` | 175 | 147 | testable |
-| H7 `sweep_low_this_bar` | 4 972 | 7 419 | testable, mais le detecteur seul declenche 87 a 130 fois par jour : **c'est la condition de reserve de liquidite (>= 0,10 ATR) qui fait tout le travail** |
+| H7 `sweep_low_this_bar` | 4 972 | 7 419 | testable, mais le detecteur seul declenche 87 a 130 fois par jour : **c'est la condition de reserve de liquidite (>= max(0,10 ATR, 2 t)) qui fait tout le travail** |
 | H8 rvol >= 2 et \|delta\| >= 0,30 | 770 | 1 098 | testable |
 
 **H4 est annoncee sous-dimensionnee AVANT de tourner** (16 franchissements sur 57 jours),
@@ -341,6 +383,20 @@ intermédiaire**. Le tableau de survie s'affiche une fois, complet. Pour chaque 
 N signaux, espérance nette (ATR et $), WR, distribution par jour, courbe walk-forward (5 blocs), sensibilité
 ±30 % sur chaque seuil, et les quatre variantes : brute / avec L1 / avec L2 / avec L1+L2.
 
+**Entonnoir par hypothese — obligatoire, pas seulement le N final.** Pour chaque hypothese x
+instrument, le runner rapporte N a **chaque etage**, dans l'ordre :
+
+```
+  lieu seul  ->  lieu + reaction  ->  + regime L2  ->  + biais L1
+```
+
+Sans ces quatre chiffres, « non testable » ne dit pas **ou** l'hypothese perd ses signaux : si c'est
+le lieu qui est rare (rien a faire) ou la reaction qui est trop stricte (a rouvrir au cycle suivant).
+Le cas est deja visible avant de lancer : H7 declenche 4 972 fois sur le lieu seul, et c'est la
+condition de reserve de liquidite qui fera tout le travail ; H3 passe de 807 a peut-etre une centaine
+apres la reaction. C'est une colonne du rapport, pas une hypothese de plus.
+
+
 ## 8. Critères de survie — une hypothèse survit si TOUT est vrai
 
 - N ≥ 40 signaux sur les 40 jours, **sur chaque instrument** (sinon statut « non testable sur ce lot », pas « meurt »).
@@ -369,6 +425,11 @@ Puis, et seulement pour les survivantes : lecture unique des jours 41–51, comp
 - Ce que la méthode NE dit PAS.
 
 ## 9b. Le commit
+**Ce que le tag fige : le TEXTE de la mission, pas le code.** Les quatre corrections du runner
+(remise a zero a la frontiere de journee, blocs fixes de 8 jours, `lire()` + exclusions `stale`,
+ATR-5m dans l'entonnoir) restent a faire **avant de lancer**, pas avant de taguer. Le tag verrouille
+les hypotheses ; le code doit ensuite prouver qu'il les execute comme ecrites.
+
 Cases 1 a 4 tranchees le 06/09 ; **la case 5, le GO, est la seule qui reste**. Par Jackson : `git tag mission-phase2-v1` sur le commit, message « MISSION PHASE 2 v1 — hypothèses figées le <date> ». Le runner vérifie que le tag existe et que le fichier n'a pas changé depuis (hash) avant de tourner. Après ce tag, `NEXT_CYCLE.md`.
 
 ## 10. Règle de franchise
