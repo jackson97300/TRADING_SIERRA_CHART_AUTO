@@ -122,9 +122,25 @@ Mesure 04/09 NQ : 1 259 lignes `stable` pour 1 259 `ts` uniques, 731 `degraded`,
   mission, ni dans le bot. Elle reste dans le fichier brut, elle est exclue a la
   lecture. Le nombre de lignes exclues par jour est logue.
 - Repli, si plusieurs lignes partagent un `ts` : `stable` avant `warmup` avant
-  `degraded` ; a egalite la ligne la plus complete ; a egalite encore la
-  premiere. **Jamais `keep="last"`** : la derniere occurrence est la moins
-  complete (548 champs contre 573 le 04/09) et porte les nulls.
+  `degraded` ; a egalite **la ligne la plus complete** ; a egalite encore la
+  premiere, par convention, pour etre deterministe.
+  **Ni `keep="first"` ni `keep="last"`** — aucune position ne domine. Mesure du
+  06/09 sur les 524 minutes dupliquees des 57 jours, lignes `stable` :
+
+  | | premiere plus complete | derniere plus complete | a egalite |
+  |---|---|---|---|
+  | ES | 21,8 % | 18,4 % | 59,8 % |
+  | NQ | 28,9 % | 29,3 % | 41,8 % |
+
+  Mediane des champs non nuls : 515 / 516 sur ES, 513 / 512 sur NQ. L'ecart de
+  548 contre 573 observe le 04/09, qui avait motive un « jamais `keep=last` »,
+  etait une propriete de ce jour-la et non de la serie : la prescription reste
+  bonne, son motif etait faux. **C'est la completude qui departage, pas le
+  rang.** Choisir par position lit des nulls une fois sur cinq, et une hypothese
+  qui tombe sur un null a la barre t ne declenche pas sans le dire.
+- **Un seul ordre, une seule fonction** : `recalc.dedoublonner_par_minute()`.
+  Tout script qui lit les JSONL brut l'importe ; aucun ne reimplemente le
+  departage.
 - `seen_ts` **persiste sur disque, par jour**, et se recharge au demarrage.
 
 **Volumetrie** : session complete = 1 380 barres (23 h x 60), cash = 390. Compte

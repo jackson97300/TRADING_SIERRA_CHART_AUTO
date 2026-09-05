@@ -104,11 +104,12 @@ def charger(sym, cols=None):
         return pd.DataFrame()
     df = pd.DataFrame(lignes)
     df["ts"] = recalc.horodatage(df)
-    # La reecriture fait foi : l'enricher rejoue des lignes deja ecrites, et
-    # c'est la DERNIERE version d'une minute qui est la bonne. `drop_duplicates`
-    # garde la premiere par defaut — le contraire de ce qu'il faut.
+    # Ordre unique de CONVENTIONS §4 : `stable` d'abord, puis la ligne la plus
+    # COMPLETE, puis la premiere. Ni `keep="first"` ni `keep="last"` : la mesure
+    # du 06/09 sur 524 minutes dupliquees montre qu'aucune position ne domine
+    # (ES 21,8 / 18,4 %, NQ 28,9 / 29,3 %). C'est la completude qui departage.
     df = df.dropna(subset=["ts"]).sort_values("ts")
-    df = recalc.dedoublonner_par_minute(df, cle_ts="ts", garder="dernier")
+    df = recalc.dedoublonner_par_minute(df, cle_ts="ts")
     df["dt"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
     return df[recalc.est_cash(df["dt"])].reset_index(drop=True)
 

@@ -389,45 +389,67 @@ def momentum(close, n):
 # 8. Dedoublonnage — le chemin correct doit etre le chemin court
 # ---------------------------------------------------------------------------
 
-def dedoublonner_par_minute(lignes, cle_ts="ts", garder="dernier"):
-    """Une ligne par minute. **A appeler dans tout script qui lit les JSONL brut.**
+def dedoublonner_par_minute(lignes, cle_ts="ts"):
+    """Une ligne par minute, selon l'ordre de CONVENTIONS §4. **Seul ordre admis.**
 
     L'enricher reecrit des lignes deja ecrites : un fichier peut porter 20 940
     lignes pour 1 259 barres reelles. Un comptage fait sans cette etape donne un
     resultat plausible et faux — c'est arrive deux fois le 06/09, sur le nombre
-    de jours exploitables puis sur `day_type`, et une seule des deux a ete
-    rattrapee par un controle.
+    de jours exploitables puis sur `day_type`.
 
-    `charger_jour()` de la surveillance le fait deja, mais met deux minutes sur
-    57 jours ; la tentation d'un script « rapide » qui saute l'etape est la cause
-    racine des deux erreurs. Cette fonction existe pour que le chemin correct
-    tienne en une ligne.
+    ORDRE DE DEPARTAGE, mesure et non suppose :
+      1. `data_quality_flag == stable` avant `warmup` avant `degraded` ;
+      2. a egalite, **la ligne la plus complete** (le plus de champs non nuls) ;
+      3. a egalite encore, la premiere — par convention, pour etre deterministe.
+
+    Pourquoi pas « la derniere fait foi », et pourquoi pas « la premiere » non
+    plus : mesure du 06/09 sur les 524 minutes dupliquees des 57 jours, lignes
+    `stable` seulement —
+
+        ES   premiere plus complete 21,8 %   derniere 18,4 %   egalite 59,8 %
+        NQ   premiere plus complete 28,9 %   derniere 29,3 %   egalite 41,8 %
+
+    Aucune position ne domine. L'ecart de 548 contre 573 champs observe le 04/09,
+    qui avait motive le « jamais keep=last » du §4, etait une propriete de ce
+    jour-la, pas de la serie. **C'est la completude qui departage, pas le rang.**
+    Une politique par position lirait des nulls une fois sur cinq, et une
+    hypothese qui tombe sur un null a la barre t ne declenche pas sans le dire.
 
     Accepte une liste de dicts (JSONL) ou un DataFrame, et rend le meme type.
-    `garder` : "dernier" (la reecriture fait foi) ou "premier".
 
-    >>> lignes = [{"ts": 60000, "x": 1}, {"ts": 60000, "x": 2}, {"ts": 120000, "x": 3}]
-    >>> [d["x"] for d in dedoublonner_par_minute(lignes)]
-    [2, 3]
+    >>> l = [{"ts": 60000, "a": 1, "b": None}, {"ts": 60000, "a": 1, "b": 2},
+    ...      {"ts": 120000, "a": 3, "b": 4}]
+    >>> [d["b"] for d in dedoublonner_par_minute(l)]      # la plus complete gagne
+    [2, 4]
     """
+    rang = {"stable": 0, "warmup": 1, "degraded": 2}
+
     if isinstance(lignes, pd.DataFrame):
         if lignes.empty or cle_ts not in lignes.columns:
             return lignes
-        minute = pd.to_numeric(lignes[cle_ts], errors="coerce") // 60000
-        ordre = "last" if garder == "dernier" else "first"
-        return (lignes.assign(_minute=minute)
-                      .dropna(subset=["_minute"])
-                      .drop_duplicates("_minute", keep=ordre)
-                      .drop(columns="_minute")
-                      .sort_values(cle_ts)
-                      .reset_index(drop=True))
+        d = lignes.copy()
+        d["_minute"] = pd.to_numeric(d[cle_ts], errors="coerce") // 60000
+        d = d.dropna(subset=["_minute"])
+        d["_rang"] = (d["data_quality_flag"].map(rang).fillna(3)
+                      if "data_quality_flag" in d.columns else 0)
+        d["_plein"] = -d.notna().sum(axis=1)          # negatif : plus complet = plus petit
+        d["_ordre"] = range(len(d))
+        d = (d.sort_values(["_minute", "_rang", "_plein", "_ordre"])
+              .drop_duplicates("_minute", keep="first")
+              .drop(columns=["_minute", "_rang", "_plein", "_ordre"])
+              .sort_values(cle_ts)
+              .reset_index(drop=True))
+        return d
 
-    par_minute = {}
-    for d in lignes:
+    best = {}
+    for pos, d in enumerate(lignes):
         ts = d.get(cle_ts)
         if ts is None:
             continue
         m = int(ts) // 60000
-        if garder == "dernier" or m not in par_minute:
-            par_minute[m] = d
-    return [par_minute[m] for m in sorted(par_minute)]
+        cle = (rang.get(d.get("data_quality_flag"), 3),
+               -sum(1 for v in d.values() if v is not None),
+               pos)
+        if m not in best or cle < best[m][0]:
+            best[m] = (cle, d)
+    return [best[m][1] for m in sorted(best)]
