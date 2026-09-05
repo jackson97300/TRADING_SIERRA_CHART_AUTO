@@ -5,7 +5,7 @@ contract,C,moins de 100 valeurs
 price,N,"niveau de prix (entree de recalc, pas feature)"
 open,N,"niveau de prix (entree de recalc, pas feature)"
 atr,B,plausibilite OK
-atr_14m,C,desaccord structurel ES/NQ
+atr_14m,B,"desaccord de seuil, niveau permissif retenu"
 session,B,plausibilite OK
 session_id,C,metadonnee ou fuite
 dist_vwap_d,A,verifiee par identite
@@ -13,9 +13,9 @@ dist_vwap_d_atr,A,verifiee par identite
 dist_vwap_d_sd1u,A,verifiee par identite
 dist_vwap_d_sd1d,A,verifiee par identite
 dist_vwap_d_sd2u,A,verifiee par identite
-dist_vwap_d_sd2d,C,saut au boot 6x la derive quotidienne
-dist_vwap_d_sd3u,C,saut au boot 8x la derive quotidienne
-dist_vwap_d_sd3d,C,saut au boot 7x la derive quotidienne
+dist_vwap_d_sd2d,S,reinitialisee au boot : saut de 6x la derive quotidienne — a recalculer
+dist_vwap_d_sd3u,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
+dist_vwap_d_sd3d,S,reinitialisee au boot : saut de 7x la derive quotidienne — a recalculer
 dist_vwap_w,A,verifiee par identite
 dist_vwap_w_atr,A,verifiee par identite
 dist_vwap_m,A,verifiee par identite
@@ -34,9 +34,9 @@ range_size_ticks,C,remplacee par recalc.py
 momentum_3b,C,remplacee par recalc.py
 momentum_5b,C,remplacee par recalc.py
 cvd_bar_delta,A,verifiee par identite
-vah_touches_20b,C,desaccord structurel ES/NQ
-val_touches_20b,C,desaccord structurel ES/NQ
-bars_in_va,C,desaccord structurel ES/NQ
+vah_touches_20b,B,"desaccord de seuil, niveau permissif retenu"
+val_touches_20b,B,"desaccord de seuil, niveau permissif retenu"
+bars_in_va,B,"desaccord de seuil, niveau permissif retenu"
 dist_prev_vpoc,A,verifiee par identite
 dist_prev_vpoc_atr,A,verifiee par identite
 dist_prev_vah,A,verifiee par identite
@@ -46,53 +46,53 @@ dist_prev_vwap_sd1u,C,remplacee par recalc.py
 dist_prev_vwap_sd1d,C,remplacee par recalc.py
 inside_prev_va,B,plausibilite OK
 open_in_prev_va,B,plausibilite OK
-dist_1d_min_ticks,C,desaccord structurel ES/NQ
+dist_1d_min_ticks,B,"desaccord de seuil, niveau permissif retenu"
 dist_1d_max_ticks,C,remplacee par recalc.py
-next_wall_dist_ticks,C,saut au boot 5x la derive quotidienne
+next_wall_dist_ticks,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 next_wall_is_call,B,plausibilite OK
-dist_mq_call,C,desaccord structurel ES/NQ
-dist_mq_put,C,saut au boot 10x la derive quotidienne
-dist_mq_hvl,C,saut au boot 6x la derive quotidienne
-dist_mq_call_0dte,C,desaccord structurel ES/NQ
-dist_mq_put_0dte,C,desaccord structurel ES/NQ
+dist_mq_call,B,"desaccord de seuil, niveau permissif retenu"
+dist_mq_put,S,reinitialisee au boot : saut de 10x la derive quotidienne — a recalculer
+dist_mq_hvl,S,reinitialisee au boot : saut de 6x la derive quotidienne — a recalculer
+dist_mq_call_0dte,B,"desaccord de seuil, niveau permissif retenu"
+dist_mq_put_0dte,B,"desaccord de seuil, niveau permissif retenu"
 dist_mq_hvl_0dte,C,nulls 37% dans sa fenetre
-dist_gex_nearest_up,C,desaccord structurel ES/NQ
-dist_gex_nearest_dn,C,saut au boot 7x la derive quotidienne
+dist_gex_nearest_up,B,"desaccord de seuil, niveau permissif retenu"
+dist_gex_nearest_dn,S,reinitialisee au boot : saut de 7x la derive quotidienne — a recalculer
 gex_cluster_count,B,plausibilite OK
 dist_blind_nearest_up,C,moins de 100 valeurs
 dist_blind_nearest_dn,C,moins de 100 valeurs
-vix_level,C,desaccord structurel ES/NQ
-dist_vix_hvl,C,desaccord structurel ES/NQ
+vix_level,B,"desaccord de seuil, niveau permissif retenu"
+dist_vix_hvl,B,"desaccord de seuil, niveau permissif retenu"
 vix_regime,B,plausibilite OK
 vix_above_hvl,R,"evenement rare, actif 1.6%"
-dist_vix_call,C,saut au boot 17x la derive quotidienne
-dist_vix_put,C,saut au boot 5x la derive quotidienne
+dist_vix_call,S,reinitialisee au boot : saut de 17x la derive quotidienne — a recalculer
+dist_vix_put,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 dist_vix_call_0dte,C,nulls 26% dans sa fenetre
 dist_vix_put_0dte,B,plausibilite OK
-dist_vix_hvl_0dte,C,saut au boot 8x la derive quotidienne
+dist_vix_hvl_0dte,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
 vix_above_hvl_0dte,B,plausibilite OK
 dist_vix_gex_nearest_up,B,plausibilite OK
-dist_vix_gex_nearest_dn,C,saut au boot 25x la derive quotidienne
+dist_vix_gex_nearest_dn,S,reinitialisee au boot : saut de 25x la derive quotidienne — a recalculer
 dist_ib_high,A,verifiee par identite
 dist_ib_low,A,verifiee par identite
 ib_range_ticks,A,verifiee par identite
-ib_range_atr,C,renseignee hors de sa fenetre (6% de valeurs)
-ib_is_narrow,C,renseignee hors de sa fenetre (100% de valeurs)
-ib_is_wide,C,renseignee hors de sa fenetre (100% de valeurs)
+ib_range_atr,B,plausibilite OK
+ib_is_narrow,C,booleen actif 0.00% (mort)
+ib_is_wide,R,"evenement rare, actif 98.1%"
 ib_position_pct,C,nulls 39% dans sa fenetre
-ib_broken_up,C,renseignee hors de sa fenetre (100% de valeurs)
-ib_broken_down,C,renseignee hors de sa fenetre (100% de valeurs)
-ib_complete,C,renseignee hors de sa fenetre (100% de valeurs)
-dist_sess_high,C,saut au boot 10x la derive quotidienne
-dist_sess_low,C,saut au boot 6x la derive quotidienne
-sess_range_ticks,C,desaccord structurel ES/NQ
-sess_range_atr,C,desaccord structurel ES/NQ
+ib_broken_up,B,plausibilite OK
+ib_broken_down,B,plausibilite OK
+ib_complete,C,booleen actif 100.00% (mort)
+dist_sess_high,S,reinitialisee au boot : saut de 10x la derive quotidienne — a recalculer
+dist_sess_low,S,reinitialisee au boot : saut de 6x la derive quotidienne — a recalculer
+sess_range_ticks,B,"desaccord de seuil, niveau permissif retenu"
+sess_range_atr,B,"desaccord de seuil, niveau permissif retenu"
 dist_open_cash,A,verifiee par identite
 dist_open_830,A,verifiee par identite
 dist_ovn_high,A,verifiee par identite
 dist_ovn_low,A,verifiee par identite
 ovn_range_ticks,B,plausibilite OK
-open_gap_ticks,C,saut au boot 5x la derive quotidienne
+open_gap_ticks,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 open_position,B,plausibilite OK
 dist_comp_20d_vpoc,C,source non alimentee (vide reel declare)
 dist_comp_20d_vpoc_atr,C,source non alimentee (vide reel declare)
@@ -115,39 +115,39 @@ delta_day_dir,B,plausibilite OK
 ask_pct,A,verifiee par identite
 bid_pct,A,verifiee par identite
 ask_bid_imbalance,A,verifiee par identite
-avg_trade_size,C,saut au boot 9x la derive quotidienne
-avg_bid_size,C,saut au boot 8x la derive quotidienne
-avg_ask_size,C,saut au boot 7x la derive quotidienne
-large_trader_ratio,C,desaccord structurel ES/NQ
+avg_trade_size,S,reinitialisee au boot : saut de 9x la derive quotidienne — a recalculer
+avg_bid_size,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
+avg_ask_size,S,reinitialisee au boot : saut de 7x la derive quotidienne — a recalculer
+large_trader_ratio,B,"desaccord de seuil, niveau permissif retenu"
 vol_per_sec,A,verifiee par identite
 bar_duration_sec,B,plausibilite OK
 finish_strength,B,plausibilite OK
-poc_bar_dist,C,desaccord structurel ES/NQ
-cvd_day,C,saut au boot 23x la derive quotidienne
+poc_bar_dist,B,"desaccord de seuil, niveau permissif retenu"
+cvd_day,S,reinitialisee au boot : saut de 23x la derive quotidienne — a recalculer
 cvd_day_dir,B,plausibilite OK
 cvd_ohlc_range,B,"desaccord de seuil, niveau permissif retenu"
 rotation_up,B,plausibilite OK
 rotation_dn,B,plausibilite OK
 rotation_zz_osc,B,plausibilite OK
 delta_divergence,R,"evenement rare, actif 0.7%"
-buy_vol,C,saut au boot 34x la derive quotidienne
-sell_vol,C,saut au boot 32x la derive quotidienne
+buy_vol,S,reinitialisee au boot : saut de 34x la derive quotidienne — a recalculer
+sell_vol,S,reinitialisee au boot : saut de 32x la derive quotidienne — a recalculer
 buy_sell_ratio,B,plausibilite OK
 total_vol,A,verifiee par identite
 delta_pct,A,verifiee par identite
-ticks_count,C,saut au boot 30x la derive quotidienne
+ticks_count,S,reinitialisee au boot : saut de 30x la derive quotidienne — a recalculer
 finish_delta_pct,A,verifiee par identite
 high_pullback_delta,B,plausibilite OK
-low_pullback_delta,C,desaccord structurel ES/NQ
-diag_pos_delta,C,saut au boot 24x la derive quotidienne
-diag_neg_delta,C,saut au boot 21x la derive quotidienne
-diag_imbalance,C,desaccord structurel ES/NQ
-low_bid_vol_pct,C,desaccord structurel ES/NQ
+low_pullback_delta,B,"desaccord de seuil, niveau permissif retenu"
+diag_pos_delta,S,reinitialisee au boot : saut de 24x la derive quotidienne — a recalculer
+diag_neg_delta,S,reinitialisee au boot : saut de 21x la derive quotidienne — a recalculer
+diag_imbalance,B,"desaccord de seuil, niveau permissif retenu"
+low_bid_vol_pct,B,"desaccord de seuil, niveau permissif retenu"
 high_ask_vol_pct,B,plausibilite OK
-max_ask_vol_in_bar,C,saut au boot 14x la derive quotidienne
-max_bid_vol_in_bar,C,saut au boot 12x la derive quotidienne
-p99_trade_size_proxy,C,desaccord structurel ES/NQ
-large_trader_max_size,C,saut au boot 10x la derive quotidienne
+max_ask_vol_in_bar,S,reinitialisee au boot : saut de 14x la derive quotidienne — a recalculer
+max_bid_vol_in_bar,S,reinitialisee au boot : saut de 12x la derive quotidienne — a recalculer
+p99_trade_size_proxy,B,"desaccord de seuil, niveau permissif retenu"
+large_trader_max_size,S,reinitialisee au boot : saut de 10x la derive quotidienne — a recalculer
 bn_color_up,B,plausibilite OK
 bn_color_dn,B,plausibilite OK
 bn_color_up_2,B,"desaccord de seuil, niveau permissif retenu"
@@ -161,24 +161,24 @@ bn_pressure_bid,B,"desaccord de seuil, niveau permissif retenu"
 bn_score_raw,B,plausibilite OK
 bn_score_bull,B,plausibilite OK
 bn_score_bear,B,plausibilite OK
-dist_big_ask_nearest_up,C,saut au boot 27x la derive quotidienne
-dist_big_ask_nearest_dn,C,saut au boot 29x la derive quotidienne
+dist_big_ask_nearest_up,C,desaccord structurel ES/NQ
+dist_big_ask_nearest_dn,C,desaccord structurel ES/NQ
 dist_big_bid_nearest_up,C,nulls 10% par jour
-dist_big_bid_nearest_dn,C,saut au boot 14x la derive quotidienne
+dist_big_bid_nearest_dn,C,desaccord structurel ES/NQ
 n_big_ask_t1,B,plausibilite OK
 n_big_bid_t1,B,plausibilite OK
-n_big_ask_t2,C,saut au boot 18x la derive quotidienne
-n_big_bid_t2,C,saut au boot 18x la derive quotidienne
+n_big_ask_t2,S,reinitialisee au boot : saut de 18x la derive quotidienne — a recalculer
+n_big_bid_t2,S,reinitialisee au boot : saut de 18x la derive quotidienne — a recalculer
 n_big_ask_t3,B,plausibilite OK
 n_big_bid_t3,B,plausibilite OK
 n_big_ask_t4,C,desaccord structurel ES/NQ
 n_big_bid_t4,C,desaccord structurel ES/NQ
-big_ask_cluster_20t,C,saut au boot 9x la derive quotidienne
-big_bid_cluster_20t,C,saut au boot 8x la derive quotidienne
-big_ask_cluster_50t,C,saut au boot 9x la derive quotidienne
-big_bid_cluster_50t,C,saut au boot 9x la derive quotidienne
-big_ask_cluster_20t_t1,C,saut au boot 8x la derive quotidienne
-big_bid_cluster_20t_t1,C,saut au boot 7x la derive quotidienne
+big_ask_cluster_20t,S,reinitialisee au boot : saut de 9x la derive quotidienne — a recalculer
+big_bid_cluster_20t,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
+big_ask_cluster_50t,S,reinitialisee au boot : saut de 9x la derive quotidienne — a recalculer
+big_bid_cluster_50t,S,reinitialisee au boot : saut de 9x la derive quotidienne — a recalculer
+big_ask_cluster_20t_t1,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
+big_bid_cluster_20t_t1,S,reinitialisee au boot : saut de 7x la derive quotidienne — a recalculer
 big_ask_cluster_20t_t2,B,plausibilite OK
 big_bid_cluster_20t_t2,B,plausibilite OK
 big_ask_cluster_20t_t3,B,plausibilite OK
@@ -187,8 +187,8 @@ big_ask_cluster_20t_t4,C,desaccord structurel ES/NQ
 big_bid_cluster_20t_t4,C,desaccord structurel ES/NQ
 dist_cluster_nearest_up,C,nulls 13% par jour
 dist_cluster_nearest_dn,C,nulls 13% par jour
-n_clusters_20t,C,desaccord structurel ES/NQ
-n_clusters_50t,C,saut au boot 8x la derive quotidienne
+n_clusters_20t,B,"desaccord de seuil, niveau permissif retenu"
+n_clusters_50t,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
 bar_color_up,B,"desaccord de seuil, niveau permissif retenu"
 bar_color_dn,B,"desaccord de seuil, niveau permissif retenu"
 bar_long_up_bar,B,plausibilite OK
@@ -201,17 +201,17 @@ bar_pressure_ask,B,"desaccord de seuil, niveau permissif retenu"
 bar_pressure_bid,B,"desaccord de seuil, niveau permissif retenu"
 dist_ext_color_up,C,nulls 74% par jour
 dist_ext_color_dn,C,nulls 75% par jour
-dist_ext_long_up,C,nulls 42% par jour
-dist_ext_long_dn,C,nulls 42% par jour
+dist_ext_long_up,C,desaccord structurel ES/NQ
+dist_ext_long_dn,C,desaccord structurel ES/NQ
 dist_ext_edge_buy,B,plausibilite OK
 dist_ext_edge_sell,B,plausibilite OK
 bn_volume_up,B,plausibilite OK
 bn_volume_dn,B,plausibilite OK
 fp_edge_buy,B,plausibilite OK
 fp_edge_sell,B,plausibilite OK
-dist_swing_high,C,saut au boot 14x la derive quotidienne
-dist_swing_low,C,saut au boot 25x la derive quotidienne
-swing_range_ticks,C,saut au boot 10x la derive quotidienne
+dist_swing_high,S,reinitialisee au boot : saut de 14x la derive quotidienne — a recalculer
+dist_swing_low,S,reinitialisee au boot : saut de 25x la derive quotidienne — a recalculer
+swing_range_ticks,S,reinitialisee au boot : saut de 10x la derive quotidienne — a recalculer
 price_vs_swing_mid,B,plausibilite OK
 new_swing_high,R,"evenement rare, actif 1.6%"
 new_swing_low,R,"evenement rare, actif 1.6%"
@@ -224,8 +224,8 @@ rule_80pct,B,plausibilite OK
 trend_day_probability,B,plausibilite OK
 ma_trend,B,plausibilite OK
 vwap_ma_align,B,plausibilite OK
-vwap_slope_10,C,saut au boot 10x la derive quotidienne
-vwap_slope_30,C,saut au boot 18x la derive quotidienne
+vwap_slope_10,S,reinitialisee au boot : saut de 10x la derive quotidienne — a recalculer
+vwap_slope_30,S,reinitialisee au boot : saut de 18x la derive quotidienne — a recalculer
 vwap_slope_10_dir,B,plausibilite OK
 bool_above_cur_vpoc,B,plausibilite OK
 bool_above_prev_vpoc,B,plausibilite OK
@@ -242,8 +242,8 @@ bool_va_confluence,B,"desaccord de seuil, niveau permissif retenu"
 bool_gex_flip_zone,B,plausibilite OK
 dist_session_hvn_above,C,nulls 32% par jour
 dist_session_hvn_below,C,nulls 33% par jour
-dist_session_lvn_above,C,nulls 14% par jour
-dist_session_lvn_below,C,nulls 16% par jour
+dist_session_lvn_above,C,desaccord structurel ES/NQ
+dist_session_lvn_below,C,desaccord structurel ES/NQ
 session_hvn_count,B,plausibilite OK
 session_lvn_count,B,plausibilite OK
 lvn_between,C,booleen actif 0.00% (mort)
@@ -251,21 +251,21 @@ hvn_between,C,booleen actif 0.00% (mort)
 lvn_confluence_count,B,plausibilite OK
 profile_shape,B,plausibilite OK
 profile_skew,B,plausibilite OK
-poc_position,C,desaccord structurel ES/NQ
-volume_imbalance,C,saut au boot 13x la derive quotidienne
+poc_position,B,"desaccord de seuil, niveau permissif retenu"
+volume_imbalance,S,reinitialisee au boot : saut de 13x la derive quotidienne — a recalculer
 is_double_dist,B,plausibilite OK
-poc_separation_ticks,C,saut au boot 14x la derive quotidienne
+poc_separation_ticks,S,reinitialisee au boot : saut de 14x la derive quotidienne — a recalculer
 single_print_mid,N,"niveau de prix (entree de recalc, pas feature)"
-single_print_count,C,saut au boot 10x la derive quotidienne
+single_print_count,S,reinitialisee au boot : saut de 10x la derive quotidienne — a recalculer
 profile_hvn_dominant,N,"niveau de prix (entree de recalc, pas feature)"
-retest_high_count,C,desaccord structurel ES/NQ
+retest_high_count,B,"desaccord de seuil, niveau permissif retenu"
 retest_low_count,B,plausibilite OK
 retest_high_delta_div,B,plausibilite OK
 retest_low_delta_div,B,plausibilite OK
 bars_since_retest_high,C,nulls 77% par jour
 bars_since_retest_low,C,nulls 76% par jour
-rvol,C,saut au boot 9x la derive quotidienne
-rvol_zscore,C,desaccord structurel ES/NQ
+rvol,S,reinitialisee au boot : saut de 9x la derive quotidienne — a recalculer
+rvol_zscore,B,"desaccord de seuil, niveau permissif retenu"
 rvol_buy,B,plausibilite OK
 rvol_sell,B,plausibilite OK
 rvol_absorb_buy,R,"evenement rare, actif 1.0%"
@@ -273,42 +273,42 @@ rvol_absorb_sell,R,"evenement rare, actif 0.9%"
 bar_high,N,"niveau de prix (entree de recalc, pas feature)"
 bar_low,N,"niveau de prix (entree de recalc, pas feature)"
 dist_vwap_d_pct,A,verifiee par identite
-dist_vwap_d_sd1u_pct,C,saut au boot 6x la derive quotidienne
-dist_vwap_d_sd1d_pct,C,desaccord structurel ES/NQ
-dist_vwap_d_sd2u_pct,C,saut au boot 8x la derive quotidienne
-dist_vwap_d_sd2d_pct,C,saut au boot 6x la derive quotidienne
-dist_vwap_d_sd3u_pct,C,saut au boot 8x la derive quotidienne
-dist_vwap_d_sd3d_pct,C,saut au boot 7x la derive quotidienne
+dist_vwap_d_sd1u_pct,S,reinitialisee au boot : saut de 6x la derive quotidienne — a recalculer
+dist_vwap_d_sd1d_pct,B,"desaccord de seuil, niveau permissif retenu"
+dist_vwap_d_sd2u_pct,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
+dist_vwap_d_sd2d_pct,S,reinitialisee au boot : saut de 6x la derive quotidienne — a recalculer
+dist_vwap_d_sd3u_pct,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
+dist_vwap_d_sd3d_pct,S,reinitialisee au boot : saut de 7x la derive quotidienne — a recalculer
 dist_vwap_w_pct,A,verifiee par identite
-dist_vwap_w_sd1u_pct,C,saut au boot 8x la derive quotidienne
-dist_vwap_w_sd1d_pct,C,desaccord structurel ES/NQ
+dist_vwap_w_sd1u_pct,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
+dist_vwap_w_sd1d_pct,B,"desaccord de seuil, niveau permissif retenu"
 dist_vwap_m_pct,A,verifiee par identite
-dist_vwap_m_sd1u_pct,C,saut au boot 9x la derive quotidienne
-dist_vwap_m_sd1d_pct,C,saut au boot 8x la derive quotidienne
-dist_cur_vpoc_pct,C,desaccord structurel ES/NQ
-dist_cur_vah_pct,C,saut au boot 7x la derive quotidienne
-dist_cur_val_pct,C,saut au boot 5x la derive quotidienne
+dist_vwap_m_sd1u_pct,S,reinitialisee au boot : saut de 9x la derive quotidienne — a recalculer
+dist_vwap_m_sd1d_pct,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
+dist_cur_vpoc_pct,B,"desaccord de seuil, niveau permissif retenu"
+dist_cur_vah_pct,S,reinitialisee au boot : saut de 7x la derive quotidienne — a recalculer
+dist_cur_val_pct,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 dist_prev_vpoc_pct,C,remplacee par recalc.py
-dist_prev_vah_pct,C,saut au boot 5x la derive quotidienne
-dist_prev_val_pct,C,saut au boot 5x la derive quotidienne
-dist_sess_high_pct,C,saut au boot 10x la derive quotidienne
-dist_sess_low_pct,C,saut au boot 6x la derive quotidienne
-dist_mq_call_pct,C,desaccord structurel ES/NQ
-dist_mq_put_pct,C,saut au boot 10x la derive quotidienne
-dist_mq_hvl_pct,C,saut au boot 6x la derive quotidienne
-dist_mq_call_0dte_pct,C,desaccord structurel ES/NQ
-dist_mq_put_0dte_pct,C,nulls 11% dans sa fenetre
+dist_prev_vah_pct,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
+dist_prev_val_pct,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
+dist_sess_high_pct,S,reinitialisee au boot : saut de 10x la derive quotidienne — a recalculer
+dist_sess_low_pct,S,reinitialisee au boot : saut de 6x la derive quotidienne — a recalculer
+dist_mq_call_pct,B,"desaccord de seuil, niveau permissif retenu"
+dist_mq_put_pct,S,reinitialisee au boot : saut de 10x la derive quotidienne — a recalculer
+dist_mq_hvl_pct,S,reinitialisee au boot : saut de 6x la derive quotidienne — a recalculer
+dist_mq_call_0dte_pct,B,"desaccord de seuil, niveau permissif retenu"
+dist_mq_put_0dte_pct,C,desaccord structurel ES/NQ
 dist_mq_hvl_0dte_pct,C,nulls 37% dans sa fenetre
 dist_1d_max_ticks_pct,C,remplacee par recalc.py
-dist_1d_min_ticks_pct,C,desaccord structurel ES/NQ
-dist_long_up_nearest_pct,C,nulls 42% par jour
-dist_long_dn_nearest_pct,C,nulls 42% par jour
+dist_1d_min_ticks_pct,B,"desaccord de seuil, niveau permissif retenu"
+dist_long_up_nearest_pct,C,desaccord structurel ES/NQ
+dist_long_dn_nearest_pct,C,desaccord structurel ES/NQ
 dist_color_up_nearest_pct,C,nulls 74% par jour
 dist_color_dn_nearest_pct,C,nulls 75% par jour
-dist_edge_buy_nearest_pct,C,nulls 65% par jour
-dist_edge_sell_nearest_pct,C,nulls 65% par jour
-dist_gex_nearest_up_pct,C,desaccord structurel ES/NQ
-dist_gex_nearest_dn_pct,C,saut au boot 7x la derive quotidienne
+dist_edge_buy_nearest_pct,C,desaccord structurel ES/NQ
+dist_edge_sell_nearest_pct,C,desaccord structurel ES/NQ
+dist_gex_nearest_up_pct,B,"desaccord de seuil, niveau permissif retenu"
+dist_gex_nearest_dn_pct,S,reinitialisee au boot : saut de 7x la derive quotidienne — a recalculer
 vwap_d,N,"niveau de prix (entree de recalc, pas feature)"
 vwap_d_sd1u,N,"niveau de prix (entree de recalc, pas feature)"
 vwap_d_sd1d,N,"niveau de prix (entree de recalc, pas feature)"
@@ -350,29 +350,29 @@ prev_val_lvl,N,"niveau de prix (entree de recalc, pas feature)"
 pct_in_range,B,plausibilite OK
 premium_zone,B,plausibilite OK
 discount_zone,B,plausibilite OK
-position_in_range,C,desaccord structurel ES/NQ
+position_in_range,B,"desaccord de seuil, niveau permissif retenu"
 bar_body_pct,C,remplacee par recalc.py
 bar_body_ticks,C,remplacee par recalc.py
-bar_upper_wick_pct,C,saut au boot 16x la derive quotidienne
-bar_lower_wick_pct,C,saut au boot 11x la derive quotidienne
+bar_upper_wick_pct,S,reinitialisee au boot : saut de 16x la derive quotidienne — a recalculer
+bar_lower_wick_pct,S,reinitialisee au boot : saut de 11x la derive quotidienne — a recalculer
 bar_no_trade,C,booleen actif 0.00% (mort)
 range_size,A,verifiee par identite
-is_news_715,C,renseignee hors de sa fenetre (100% de valeurs)
-is_news_730,C,renseignee hors de sa fenetre (100% de valeurs)
-is_news_830,C,renseignee hors de sa fenetre (100% de valeurs)
-is_news_845,C,renseignee hors de sa fenetre (100% de valeurs)
-is_news_900,C,renseignee hors de sa fenetre (100% de valeurs)
-is_news_930,C,renseignee hors de sa fenetre (100% de valeurs)
-within_news_715_5m,C,renseignee hors de sa fenetre (100% de valeurs)
-within_news_730_5m,C,renseignee hors de sa fenetre (100% de valeurs)
-within_news_830_5m,C,renseignee hors de sa fenetre (100% de valeurs)
-within_news_845_5m,C,renseignee hors de sa fenetre (100% de valeurs)
-within_news_900_5m,C,renseignee hors de sa fenetre (100% de valeurs)
-within_news_930_5m,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_715,C,booleen actif 0.07% (mort)
+is_news_730,C,booleen actif 0.00% (mort)
+is_news_830,R,"evenement rare, actif 0.1%"
+is_news_845,C,booleen actif 0.07% (mort)
+is_news_900,C,booleen actif 0.00% (mort)
+is_news_930,C,booleen actif 0.07% (mort)
+within_news_715_5m,R,"evenement rare, actif 0.4%"
+within_news_730_5m,R,"evenement rare, actif 0.3%"
+within_news_830_5m,R,"evenement rare, actif 0.4%"
+within_news_845_5m,R,"evenement rare, actif 0.4%"
+within_news_900_5m,R,"evenement rare, actif 0.3%"
+within_news_930_5m,R,"evenement rare, actif 0.4%"
 mins_since_news,C,nulls 26% dans sa fenetre
 mins_to_next_news,C,nulls 66% dans sa fenetre
 is_roll_day,R,"evenement rare, actif 0.2%"
-mins_et,C,saut au boot 511x la derive quotidienne
+mins_et,S,reinitialisee au boot : saut de 511x la derive quotidienne — a recalculer
 is_in_us_cash,B,plausibilite OK
 dist_pdh_pct,A,verifiee par identite
 dist_pdl_pct,A,verifiee par identite
@@ -386,7 +386,7 @@ high,N,"niveau de prix (entree de recalc, pas feature)"
 low,N,"niveau de prix (entree de recalc, pas feature)"
 volume,A,verifiee par identite
 poc_migration_dir,B,plausibilite OK
-ctx_poc_migration_10,C,saut au boot 5x la derive quotidienne
+ctx_poc_migration_10,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 bars_since_last_swing_high,C,nulls 12% par jour
 bars_since_last_swing_low,C,nulls 16% par jour
 equal_highs_detected,B,"desaccord de seuil, niveau permissif retenu"
@@ -425,7 +425,7 @@ ny_open,N,"niveau de prix (entree de recalc, pas feature)"
 after_open,N,"niveau de prix (entree de recalc, pas feature)"
 dist_asia_open_pct,B,plausibilite OK
 dist_london_open_pct,C,nulls 25% dans sa fenetre
-dist_ny_open_pct,C,renseignee hors de sa fenetre (6% de valeurs)
+dist_ny_open_pct,B,"desaccord de seuil, niveau permissif retenu"
 dist_after_open_pct,C,moins de 100 valeurs dans sa fenetre
 dist_asia_high_pct,C,remplacee par recalc.py
 dist_asia_low_pct,C,remplacee par recalc.py
@@ -438,13 +438,13 @@ dist_after_low_pct,C,moins de 100 valeurs dans sa fenetre
 is_cash_session,B,plausibilite OK
 session_date,C,metadonnee ou fuite
 session_date_trading,C,moins de 100 valeurs
-days_since_roll,C,saut au boot 87x la derive quotidienne
+days_since_roll,S,reinitialisee au boot : saut de 87x la derive quotidienne — a recalculer
 roll_phase,B,plausibilite OK
-is_news_5m,C,renseignee hors de sa fenetre (100% de valeurs)
-is_news_15m,C,renseignee hors de sa fenetre (100% de valeurs)
-is_news_30m,C,renseignee hors de sa fenetre (100% de valeurs)
-is_news_60m,C,renseignee hors de sa fenetre (100% de valeurs)
-is_critical_news_60m,C,renseignee hors de sa fenetre (100% de valeurs)
+is_news_5m,R,"evenement rare, actif 0.2%"
+is_news_15m,R,"evenement rare, actif 0.6%"
+is_news_30m,R,"evenement rare, actif 1.2%"
+is_news_60m,B,plausibilite OK
+is_critical_news_60m,R,"evenement rare, actif 1.3%"
 news_seconds_until,C,nulls 15% dans sa fenetre
 news_minutes_until,C,nulls 15% dans sa fenetre
 is_eco_blocked,R,"evenement rare, actif 1.3%"
@@ -452,7 +452,7 @@ is_session_blocked,B,plausibilite OK
 is_blocked_combined,B,plausibilite OK
 delta_div_buy,B,plausibilite OK
 delta_div_sell,B,plausibilite OK
-delta_div_strength,C,desaccord structurel ES/NQ
+delta_div_strength,B,"desaccord de seuil, niveau permissif retenu"
 delta_divergence_any,B,plausibilite OK
 delta_div_buy_clean,B,plausibilite OK
 delta_div_sell_clean,B,plausibilite OK
@@ -476,59 +476,59 @@ ctx_excess_low_bars,B,plausibilite OK
 ctx_double_top_trap,B,plausibilite OK
 ctx_vol_sell_buy_ratio_5,B,plausibilite OK
 ctx_vol_slope_5,B,plausibilite OK
-ctx_vol_z_20,C,saut au boot 6x la derive quotidienne
-ctx_finish_strength_mean_5,C,desaccord structurel ES/NQ
-ctx_dist_vwap_velocity,C,desaccord structurel ES/NQ
+ctx_vol_z_20,S,reinitialisee au boot : saut de 6x la derive quotidienne — a recalculer
+ctx_finish_strength_mean_5,B,"desaccord de seuil, niveau permissif retenu"
+ctx_dist_vwap_velocity,B,"desaccord de seuil, niveau permissif retenu"
 ctx_vwap_slope_accel,B,plausibilite OK
-ctx_va_position_velocity,C,desaccord structurel ES/NQ
+ctx_va_position_velocity,B,"desaccord de seuil, niveau permissif retenu"
 ctx_side_flip_count_10,B,plausibilite OK
-ctx_range_vs_atr_10,C,desaccord structurel ES/NQ
+ctx_range_vs_atr_10,B,"desaccord de seuil, niveau permissif retenu"
 ctx_price_slope_5,C,hors noyau (alias ou §7)
 ctx_delta_sum_3,A,verifiee par identite
 ctx_delta_slope_5,B,plausibilite OK
-ctx_rvol_session,C,saut au boot 5x la derive quotidienne
+ctx_rvol_session,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 mq_gamma_condition,B,plausibilite OK
-aggressor_imbalance,C,desaccord structurel ES/NQ
+aggressor_imbalance,B,"desaccord de seuil, niveau permissif retenu"
 long_up_bar,B,plausibilite OK
 long_dn_bar,B,plausibilite OK
-range_h_minus_lprev_ticks,C,desaccord structurel ES/NQ
-range_hprev_minus_l_ticks,C,saut au boot 9x la derive quotidienne
+range_h_minus_lprev_ticks,B,"desaccord de seuil, niveau permissif retenu"
+range_hprev_minus_l_ticks,S,reinitialisee au boot : saut de 9x la derive quotidienne — a recalculer
 long_dn_up_pattern,B,"desaccord de seuil, niveau permissif retenu"
 long_up_dn_pattern,B,"desaccord de seuil, niveau permissif retenu"
-n_long_up_zones_active,C,saut au boot 5x la derive quotidienne
-n_long_dn_zones_active,C,desaccord structurel ES/NQ
+n_long_up_zones_active,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
+n_long_dn_zones_active,B,"desaccord de seuil, niveau permissif retenu"
 n_long_up_cluster_within_0_2pct,B,plausibilite OK
 n_long_dn_cluster_within_0_2pct,B,plausibilite OK
 bn_color_up_fwd1,C,metadonnee ou fuite
 bn_color_dn_fwd1,C,metadonnee ou fuite
 bn_color_up_2_fwd1,C,metadonnee ou fuite
 bn_color_dn_2_fwd1,C,metadonnee ou fuite
-n_color_up_zones_active,C,desaccord structurel ES/NQ
-n_color_dn_zones_active,C,saut au boot 5x la derive quotidienne
+n_color_up_zones_active,B,"desaccord de seuil, niveau permissif retenu"
+n_color_dn_zones_active,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 n_color_up_cluster_within_0_2pct,B,plausibilite OK
 n_color_dn_cluster_within_0_2pct,B,plausibilite OK
 ctx_session_phase,B,plausibilite OK
-ctx_ib_extension_ratio,C,renseignee hors de sa fenetre (6% de valeurs)
+ctx_ib_extension_ratio,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 ctx_ib_position_velocity,C,nulls 44% dans sa fenetre
 div_confluence_dmp,B,plausibilite OK
 delta_divergence_clean,B,plausibilite OK
-ctx_va_developing_10,C,desaccord structurel ES/NQ
-ctx_cvd_session,C,saut au boot 11x la derive quotidienne
+ctx_va_developing_10,B,"desaccord de seuil, niveau permissif retenu"
+ctx_cvd_session,S,reinitialisee au boot : saut de 11x la derive quotidienne — a recalculer
 ctx_div_at_swing,B,plausibilite OK
-ctx_delta_sum_10,C,saut au boot 10x la derive quotidienne
-ctx_vol_z_5,C,saut au boot 6x la derive quotidienne
+ctx_delta_sum_10,S,reinitialisee au boot : saut de 10x la derive quotidienne — a recalculer
+ctx_vol_z_5,S,reinitialisee au boot : saut de 6x la derive quotidienne — a recalculer
 ctx_rotation_factor_20,B,plausibilite OK
 div_confluence_with_regime,B,plausibilite OK
 ctx_price_delta_div_3,B,plausibilite OK
-ctx_cvd_recovery_rate,C,desaccord structurel ES/NQ
-ctx_mq_put_call_ratio,C,saut au boot 8x la derive quotidienne
+ctx_cvd_recovery_rate,B,"desaccord de seuil, niveau permissif retenu"
+ctx_mq_put_call_ratio,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
 div_regime_proxy_ok,B,plausibilite OK
-ctx_va_width,C,saut au boot 9x la derive quotidienne
-ctx_trend_day_score,C,desaccord structurel ES/NQ
+ctx_va_width,S,reinitialisee au boot : saut de 9x la derive quotidienne — a recalculer
+ctx_trend_day_score,B,"desaccord de seuil, niveau permissif retenu"
 div_at_key_level_ticks,C,nulls 93% par jour
 bar_edge_buy_fire,B,plausibilite OK
 bar_edge_sell_fire,B,plausibilite OK
-n_edge_buy_active,C,desaccord structurel ES/NQ
+n_edge_buy_active,B,"desaccord de seuil, niveau permissif retenu"
 n_edge_sell_active,B,plausibilite OK
 rvol_sell_strong,C,booleen actif 0.01% (mort)
 rvol_extreme,R,"evenement rare, actif 0.7%"
@@ -536,14 +536,14 @@ rvol_buy_strong,C,booleen actif 0.01% (mort)
 rvol_regime,B,plausibilite OK
 n_big_ask_v2_t1,B,plausibilite OK
 n_big_bid_v2_t1,B,plausibilite OK
-n_big_ask_v2_t2,C,saut au boot 18x la derive quotidienne
-n_big_bid_v2_t2,C,saut au boot 18x la derive quotidienne
+n_big_ask_v2_t2,S,reinitialisee au boot : saut de 18x la derive quotidienne — a recalculer
+n_big_bid_v2_t2,S,reinitialisee au boot : saut de 18x la derive quotidienne — a recalculer
 n_big_ask_v2_t3,B,plausibilite OK
 n_big_bid_v2_t3,B,plausibilite OK
 n_big_ask_v2_t4,C,desaccord structurel ES/NQ
 n_big_bid_v2_t4,C,desaccord structurel ES/NQ
-max_big_ask_vol_in_bar,C,saut au boot 14x la derive quotidienne
-max_big_bid_vol_in_bar,C,saut au boot 12x la derive quotidienne
+max_big_ask_vol_in_bar,S,reinitialisee au boot : saut de 14x la derive quotidienne — a recalculer
+max_big_bid_vol_in_bar,S,reinitialisee au boot : saut de 12x la derive quotidienne — a recalculer
 prev_vah,C,hors noyau (alias ou §7)
 prev_val,C,hors noyau (alias ou §7)
 prev_vpoc,C,hors noyau (alias ou §7)
@@ -561,29 +561,29 @@ date_et,C,metadonnee ou fuite
 dist_cash_low_pct,C,nulls 75% par jour
 open_cash,C,hors noyau (alias ou §7)
 ib_high,N,"niveau de prix (entree de recalc, pas feature)"
-dist_ib_low_pct,C,renseignee hors de sa fenetre (6% de valeurs)
+dist_ib_low_pct,B,plausibilite OK
 price_1030,N,"niveau de prix (entree de recalc, pas feature)"
-ib_broken_dn,C,renseignee hors de sa fenetre (100% de valeurs)
+ib_broken_dn,B,plausibilite OK
 sess_high,N,"niveau de prix (entree de recalc, pas feature)"
-dist_ib_high_pct,C,renseignee hors de sa fenetre (6% de valeurs)
+dist_ib_high_pct,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 dist_cash_high_pct,C,nulls 75% par jour
 im_cross_delta_agreement_5,B,plausibilite OK
-im_cross_delta_weighted_5,C,saut au boot 19x la derive quotidienne
+im_cross_delta_weighted_5,S,reinitialisee au boot : saut de 19x la derive quotidienne — a recalculer
 im_smt_divergence,B,plausibilite OK
 im_delta_day_divergence,B,plausibilite OK
-im_price_ratio_slope_10,C,saut au boot 5x la derive quotidienne
-im_volume_lead,C,saut au boot 42x la derive quotidienne
-im_rolling_correlation_10,C,desaccord structurel ES/NQ
-im_ltr_slope_diff,C,saut au boot 7x la derive quotidienne
+im_price_ratio_slope_10,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
+im_volume_lead,S,reinitialisee au boot : saut de 42x la derive quotidienne — a recalculer
+im_rolling_correlation_10,B,"desaccord de seuil, niveau permissif retenu"
+im_ltr_slope_diff,S,reinitialisee au boot : saut de 7x la derive quotidienne — a recalculer
 im_cross_open_signal,B,plausibilite OK
 im_open_type_agreement,B,plausibilite OK
 schema_version,C,metadonnee ou fuite
 boot_id,C,metadonnee ou fuite
-bars_since_boot,C,desaccord structurel ES/NQ
+bars_since_boot,S,"desaccord de seuil, niveau permissif retenu"
 data_quality_flag,C,moins de 100 valeurs
 delta_div_slope_buy,B,plausibilite OK
 delta_div_slope_sell,B,plausibilite OK
-delta_div_slope_strength,C,desaccord structurel ES/NQ
+delta_div_slope_strength,B,"desaccord de seuil, niveau permissif retenu"
 delta_div_slope_buy_clean,B,plausibilite OK
 delta_div_slope_sell_clean,B,plausibilite OK
 delta_div_slope_clean,B,plausibilite OK
@@ -595,7 +595,7 @@ open_within_prev_va,B,plausibilite OK
 open_below_prev_val,B,plausibilite OK
 open_outside_prev_range,B,plausibilite OK
 open_relation_type,B,plausibilite OK
-profile_overlap_pct,C,saut au boot 8x la derive quotidienne
+profile_overlap_pct,S,reinitialisee au boot : saut de 8x la derive quotidienne — a recalculer
 profile_overlap_above_pdh,B,plausibilite OK
 profile_overlap_below_pdl,B,plausibilite OK
 range_extension_above_ib_atr,C,renseignee hors de sa fenetre (100% de valeurs)
@@ -611,11 +611,11 @@ has_single_prints,C,booleen actif 99.91% (mort)
 dist_single_print_atr,B,plausibilite OK
 single_print_above,B,plausibilite OK
 single_print_below,B,plausibilite OK
-single_print_density,C,desaccord structurel ES/NQ
+single_print_density,B,"desaccord de seuil, niveau permissif retenu"
 composite_poc_5d,N,"niveau de prix (entree de recalc, pas feature)"
 composite_poc_20d,N,"niveau de prix (entree de recalc, pas feature)"
-dist_composite_poc_5d_atr,C,saut au boot 5x la derive quotidienne
-dist_composite_poc_20d_atr,C,saut au boot 5x la derive quotidienne
+dist_composite_poc_5d_atr,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
+dist_composite_poc_20d_atr,S,reinitialisee au boot : saut de 5x la derive quotidienne — a recalculer
 sweep_high_active,B,plausibilite OK
 sweep_low_active,B,plausibilite OK
 sweep_high_this_bar,B,plausibilite OK

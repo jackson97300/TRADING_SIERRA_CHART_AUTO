@@ -4,6 +4,11 @@
   B  non verifiable par identite — sa source n'est pas dans le fichier (MenthorQ,
      VIX, GEX, ctx_*, booleens, Battle Navale). Entre si elle passe quatre
      controles de plausibilite.
+  S  reinitialisee au boot      — feature A ETAT (cumul, fenetre roulante,
+     swing) qui repart de zero au redemarrage. Elle mesure bien ce qu'elle dit
+     entre deux boots : a recalculer depuis la source, pas a jeter.
+  N  niveau de prix absolu     — entree de recalc.py, jamais feature.
+  R  evenement rare            — mis a part pour la phase 2.
   C  disqualifiee                — §7 hors noyau, morte, fuite, ou remplacee
      par recalc.py
 
@@ -108,6 +113,15 @@ def charger(sym, n_jours=None):
 # Chaque fenetre rend un masque booleen indexe comme le DataFrame.
 
 def _f_apres_ib(df, dt):
+    """Fenetre post-Initial Balance.
+
+    L'applicabilite se lit sur le DRAPEAU que le systeme produit, jamais sur une
+    heure ecrite a la main. Premiere version : `mn >= 14h30 UTC` — devinee, et
+    fausse : `ib_range_atr` est renseignee des 13:30. Le crible en devenait plus
+    strict que celui qu'il corrigeait (341 colonnes retenues contre 360).
+    """
+    if "ib_complete" in df.columns:
+        return pd.to_numeric(df["ib_complete"], errors="coerce").eq(1)
     mn = dt.dt.hour * 60 + dt.dt.minute
     return recalc.est_cash(dt) & (mn >= 14 * 60 + 30)
 
@@ -208,8 +222,19 @@ def plausible(s, nom, jours, boots, close, masque=None):
         tx = float(dedans.isna().groupby(jours[masque]).mean().mean())
         if tx > MAX_NULLS_JOUR:
             return "C", "nulls %.0f%% dans sa fenetre" % (100 * tx)
-        # Controle symetrique : renseignee hors fenetre = bug, pas donnee.
-        if len(dehors) and float(dehors.isna().mean()) < 0.95:
+        # Controle symetrique, assoupli a 50 % apres mesure. L'idee — une
+        # feature renseignee hors de sa fenetre est un bug — est juste en
+        # theorie et fausse ici : `ib_range_atr` est renseignee des 13:30
+        # parce que l'IB COURANTE existe pendant sa construction, alors que
+        # `ib_complete` ne passe a 1 qu'a 14:31. A 95 % le controle ecartait
+        # toute la famille IB pour 6 % de valeurs parfaitement legitimes.
+        # A 50 % il n'attrape plus que les colonnes reellement hors sujet.
+        # ... et jamais sur un BOOLEEN : hors de sa fenetre il vaut 0, ce qui
+        # est sa valeur normale, pas une valeur renseignee a tort. Le controle
+        # ecartait `ib_broken_up`, `ib_complete` et `ib_is_narrow` a 100 % de
+        # « valeurs hors fenetre » — alors que `ib_broken_up` porte H6.
+        binaire = x.nunique(dropna=True) <= 2 and set(x.dropna().unique()) <= {0.0, 1.0}
+        if not binaire and len(dehors) and float(dehors.isna().mean()) < 0.50:
             return "C", ("renseignee hors de sa fenetre (%.0f%% de valeurs)"
                          % (100 * dehors.notna().mean()))
         x = dedans
@@ -247,8 +272,15 @@ def plausible(s, nom, jours, boots, close, masque=None):
             if chg.any() and np.isfinite(normal) and normal > 1e-9:
                 au_boot = float(saut[chg].max())
                 if np.isfinite(au_boot) and au_boot > 3.0 * normal * (1 + MAX_DERIVE_BOOT):
-                    return "C", ("saut au boot %.0fx la derive quotidienne"
-                                % (au_boot / normal))
+                    # Statut S, pas C. Un cumul de session ou une fenetre
+                    # roulante repart de zero au redemarrage : la colonne
+                    # mesure bien ce qu'elle dit ENTRE deux boots. Ce n'est pas
+                    # une feature fausse, c'est une feature A ETAT, et elle se
+                    # recalcule depuis la source (`cvd_day`, `rvol`,
+                    # `dist_swing_*` sont tous dans ce cas).
+                    return "S", ("reinitialisee au boot : saut de %.0fx la "
+                                 "derive quotidienne — a recalculer"
+                                 % (au_boot / normal))
     return "B", ""
 
 
@@ -319,13 +351,13 @@ def main():
     # au boot, effectif) : une colonne absente d'un cote ne sert a rien. Elle
     # ne vaut pas pour les motifs de SEUIL : un booleen a 1,8 % sur ES et 2,4 %
     # sur NQ n'est pas disqualifiable, il est rare des deux cotes.
-    STRUCT = re.compile(r"nulls|moins de 100|saut au boot|mort")
+    STRUCT = re.compile(r"nulls|moins de 100|mort|hors de sa fenetre")
     accord = com.provenance_NQ == com.provenance_ES
     struct = (com.motif_NQ.astype(str).str.contains(STRUCT)
               | com.motif_ES.astype(str).str.contains(STRUCT))
     # A defaut d'accord : C si le desaccord est structurel, sinon le niveau le
     # plus permissif des deux (A > B > R > N > C).
-    rang = {"A": 0, "B": 1, "R": 2, "N": 3, "C": 4}
+    rang = {"A": 0, "B": 1, "R": 2, "S": 3, "N": 4, "C": 5}
     permissif = com.apply(
         lambda r: min(r.provenance_NQ, r.provenance_ES, key=lambda v: rang[v]),
         axis=1)
@@ -346,7 +378,13 @@ def main():
     fin.to_csv("DOCS/features_provenance.csv", index=False)
     print("\n=== RETENU POUR LA REDUCTION ===")
     print(fin.provenance.value_counts().sort_index().to_string())
-    print("A + B = %d colonnes" % (fin.provenance != "C").sum())
+    # A + B seulement. N est une entree de recalc, R une mise a l'ecart, et S
+    # dit « a recalculer », pas « utilisable ». Le compteur precedent
+    # additionnait tout ce qui n'etait pas C et annoncait 476 au lieu de 307.
+    print("A + B = %d colonnes clusterisables (N %d, R %d, S %d exclus)"
+          % (fin.provenance.isin(["A", "B"]).sum(),
+             (fin.provenance == "N").sum(), (fin.provenance == "R").sum(),
+             (fin.provenance == "S").sum()))
     print("[ecrit] DOCS/features_provenance.csv")
 
 
