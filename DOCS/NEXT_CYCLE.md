@@ -94,6 +94,96 @@ reparera pas.
 
 ---
 
+## CRITERE D'ARRET — ecrit le 06/09, avant le cycle 2
+
+Ecrit maintenant, pendant qu'il ne depend d'aucun resultat non encore lu. Sans
+lui, chaque zero produit une raison de refaire un tour ; avec lui, un zero
+devient une decision.
+
+### Le fait qui a rendu ces reponses possibles
+
+Cinquieme confusion points/ticks de la semaine, et elle etait dans la case 2 des
+couts. « ATR-5m ~25 pts = 12,50 $ » pour MNQ : 25 POINTS de MNQ valent 50 $ ;
+12,50 $, c'est 25 TICKS. Mesure sur l'ATR-5m median du 06/09 :
+
+| | $/point | ATR-5m en $ | cout reel | ce qui etait applique |
+|---|---|---|---|---|
+| MNQ | 2,00 | 40,10 | **0,070 ATR** | 0,230 — surestime 3,3x |
+| MES | 5,00 | 14,15 | **0,305 ATR** | 0,140 — sous-estime 2,2x |
+
+**Sur MES, un aller-retour coute 30 % de l'ATR-5m** : 20 % du TP a +1,5 ATR,
+30 % du SL. Sur MNQ, 7 %. Ce n'est pas une hypothese, c'est de l'arithmetique :
+**le micro ES en intraday 5 min ne peut pas gagner.**
+
+La lecture recalculee avec le cout converti a chaque barre le confirme sans
+exception — les trois hypotheses qui produisent des trades sont **positives sur
+NQ et negatives sur ES** :
+
+| | NQ | ES | verdict |
+|---|---|---|---|
+| H3 | **+0,061** | -0,109 | MEURT (2/5 blocs sur NQ) |
+| H7 | **+0,012** | -0,270 | MEURT (3/5 blocs) |
+| H4 | **+0,003** | -0,446 | NON TESTABLE |
+
+Zero survivante reste le verdict : H3 meurt sur son walk-forward autant que sur
+ES. Mais l'ecart ES/NQ, de 0,17 a 0,45 ATR pour la meme strategie, est la
+signature de la taxe, pas du marche.
+
+### Q1 — Le critere d'echec du cycle 2
+
+> **Une hypothese passe si : esperance nette > 0, N >= 40, et >= 4/5 blocs
+> positifs — sur au moins un instrument dont le cout mesure est inferieur a
+> 10 % de son ATR-5m.**
+
+Ce que ce critere change par rapport au cycle 1 : il n'exige plus les DEUX
+instruments. Exiger ES et NQ etait juste tant qu'on les croyait comparables ; on
+sait maintenant qu'ils ne le sont pas, et la raison est chiffree, pas
+opportuniste. Sur ce lot, seul **NQ** satisfait la condition de cout (7 % contre
+30 %).
+
+Ce qu'il ne change pas : N >= 40, 4/5 blocs, bootstrap par jour, Bonferroni,
+16 jours scelles intacts. Le walk-forward reste le juge le plus dur, et c'est
+lui qui a tue H3 sur NQ malgre une esperance positive.
+
+**Si aucune hypothese du cycle 2 ne passe ce critere : il n'y a pas d'edge
+directionnel intraday 5 min exploitable dans ces 40 jours.** C'est une phrase a
+accepter, pas a contourner.
+
+### Q2 — Ce qu'on fait alors : l'horizon, pas la question
+
+La premiere voie n'est ni « changer de question » ni « arreter ». C'est
+**passer en barres de 15 minutes**.
+
+L'ATR croit en racine du temps : x1,7 environ de 5 a 15 min. Le cout par trade,
+lui, ne bouge pas. Le cout relatif tombe donc de **30 % a 18 % sur MES**, et de
+**7 % a 4 % sur MNQ**. C'est le seul levier qui repose sur de l'arithmetique et
+non sur un espoir, et il ne coute presque rien : memes donnees, meme noyau, meme
+code — le runner agrege deja, `MINUTES_BARRE` passe de 5 a 15.
+
+Les six hypotheses se rejouent telles quelles sur cet horizon. C'est **le
+dernier essai sur ce lot** ; ensuite, seulement les jours qui s'ajoutent.
+
+Voies suivantes, si le 15 min echoue aussi, par cout croissant :
+1. changer de cible — cesser de predire la DIRECTION, predire l'atteinte d'un
+   niveau ou la volatilite (memes donnees, meme infra) ;
+2. changer d'instrument — abandonner ES en micro, ne garder que NQ ;
+3. arreter le bot et ne garder que la collecte.
+
+### Q3 — La limite en temps
+
+**Cycle 2 clos le 20/09/2026.** Deux semaines. Puis, dans l'ordre et sans
+reouvrir ce qui precede : horizon 15 min, puis decision.
+
+### Ce que ce critere protege contre
+
+Pas contre l'echec — contre le fait de **perfectionner l'instrument
+indefiniment sans jamais accepter son verdict**. La semaine du 06/09 a compte 48
+commits, presque tous pour reparer des mesures : c'etait necessaire, et ca ne
+peut pas se repeter indefiniment. Si le cycle 2 rend zero et que la reponse est
+« il faut d'abord corriger telle colonne », c'est la qu'on tourne en rond — pas
+avant.
+
+
 ## Ce que la lecture du cycle 1 ouvre (06/09/2026)
 
 **Resultat du cycle 1 : zero survivante**, conforme a l'attendu pre-enregistre

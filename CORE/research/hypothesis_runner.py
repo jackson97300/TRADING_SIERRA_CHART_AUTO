@@ -79,9 +79,24 @@ MAX_CONCENTRATION = 0.60
 N_HYPOTHESES = 6           # Bonferroni — six apres retrait de H5 et H1
                            # (tag mission-phase2-v1, 06/09/2026)
 N_BOOTSTRAP = 2000
-# Case 2 du tag : MNQ 2,82 $ ~ 0,23 ATR-5m, MES 4,32 $ ~ 0,14 ATR-5m
-# (Tradeify, le plus eleve des trois, plus 1 tick de slippage par cote).
-COUT_ATR = {"NQ": 0.23, "ES": 0.14}
+# Case 2 du tag : cout par trade en DOLLARS, converti en ATR-5m a chaque trade
+# avec l'ATR de la barre — "jamais par une constante", dit le texte tague, et
+# c'est exactement ce que la premiere version faisait.
+#
+# Les constantes 0,23 / 0,14 de la case 2 etaient fausses : elles venaient de
+# "ATR-5m ~25 pts = 12,50 $" pour MNQ, or 25 POINTS de MNQ valent 50 $ — 12,50 $,
+# c'est 25 TICKS. Cinquieme confusion points/ticks de la semaine. Mesure du
+# 06/09 sur l'ATR-5m median :
+#     MNQ  ATR-5m 20,05 pts = 40,10 $  ->  2,82 $ = 0,070 ATR   (dit : 0,230)
+#     MES  ATR-5m  2,83 pts = 14,15 $  ->  4,32 $ = 0,305 ATR   (dit : 0,140)
+# Le cout etait surestime 3,3x sur NQ et sous-estime 2,2x sur ES.
+#
+# Consequence structurelle, et c'est la vraie decouverte : sur MES un
+# aller-retour coute 30 % de l'ATR-5m — 20 % du TP, 30 % du SL. Sur MNQ, 7 %.
+# Le micro ES en intraday 5 min ne peut pas gagner : ce n'est pas une hypothese,
+# c'est de l'arithmetique.
+COUT_DOLLARS = {"NQ": 2.82, "ES": 4.32}      # commissions Tradeify + 1 tick/cote
+VAL_POINT = {"NQ": 2.00, "ES": 5.00}         # micros : MNQ 0,50 $/tick, MES 1,25 $/tick
 
 
 # ---------------------------------------------------------------------------
@@ -246,13 +261,22 @@ def signaux_par_franchissement(cond, jours, sorties=None):
 
 
 def triple_barriere(df, i_signal, side, couts_atr):
-    """Entree a l'OUVERTURE de t+1. Rend (etiquette, pnl_atr, i_sortie)."""
+    """Entree a l'OUVERTURE de t+1. Rend (etiquette, pnl_atr, i_sortie).
+
+    `couts_atr` est ici un COUT EN DOLLARS accompagne de la valeur du point :
+    il est converti en multiples d'ATR avec l'ATR de CETTE barre, jamais par une
+    constante. Une barre calme paie proportionnellement plus cher qu'une barre
+    agitee, et c'est precisement ce qu'une constante efface.
+    """
     j = i_signal + 1
     if j >= len(df):
         return None
     atr = df["atr5"].iloc[i_signal]
     if not np.isfinite(atr) or atr <= 0:
         return None
+    if isinstance(couts_atr, tuple):             # (dollars, $/point)
+        dollars, val_pt = couts_atr
+        couts_atr = dollars / (atr * val_pt)
     entree = df["open"].iloc[j]
     tp = entree + side * TP_ATR * atr
     sl = entree + side * SL_ATR * atr
@@ -534,7 +558,8 @@ def lecture_unique():
         for sym, d in dfs.items():
             trades = []
             for cote, (cond, side) in fn(d).items():
-                t_ = evaluer(d, cond, side, couts_atr=COUT_ATR[sym])
+                t_ = evaluer(d, cond, side,
+                             couts_atr=(COUT_DOLLARS[sym], VAL_POINT[sym]))
                 if len(t_):
                     trades.append(t_)
             par_sym[sym] = (pd.concat(trades, ignore_index=True)
