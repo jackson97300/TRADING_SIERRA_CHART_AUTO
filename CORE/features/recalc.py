@@ -270,7 +270,105 @@ def dist_pct(niveau, close):
 
 
 # ---------------------------------------------------------------------------
-# 5. Momentum
+# 5. Cumuls de session — TOUS recalcules, sans exception
+# ---------------------------------------------------------------------------
+# Un cumul depuis une borne de session repart de zero au redemarrage du
+# processus, par construction : ce n'est pas un defaut de la colonne, c'est sa
+# nature. Sept colonnes livrees sont dans ce cas (`cvd_day`, `delta_day`,
+# `cvd_session`, `ctx_cvd_session`, `ctx_delta_sum_3`, `ctx_delta_sum_10`,
+# `cvd_bar_delta`) et elles franchissent le seuil de suspicion a des
+# frequences differentes seulement parce qu'elles s'accumulent a des vitesses
+# differentes. Mesure : `cvd_day` suspect 8 jours sur 51, `ctx_delta_sum_3` 1.
+
+def cumul_delta(df, cle, col_delta="delta_bar"):
+    """Cumul du delta depuis le debut de la fenetre portee par `cle`.
+
+    Fenetre : celle de `cle` — `session_sess` pour un cumul de session
+    complete, `session_rth` pour un cumul de seance cash.
+    Unite : contrats (meme unite que `delta_bar`).
+    Signe : positif quand les acheteurs dominent depuis la borne.
+
+    Les deux ne disent PAS la meme chose et ne doivent jamais porter le meme
+    nom : `cvd_sess_r` cumule depuis 17h ET, `cvd_rth_r` depuis 9h30 ET. La
+    colonne livree `cvd_day` melange les deux selon le moment du redemarrage.
+    """
+    d = pd.to_numeric(df[col_delta], errors="coerce").fillna(0.0)
+    return d.groupby(cle).cumsum()
+
+
+def rvol(df, dt, n_jours=20, col_vol="total_vol"):
+    """Volume relatif : volume de la barre / mediane de la MEME MINUTE de
+    session sur les `n_jours` precedents.
+
+    Fenetre : aucune (glissante sur l'historique).
+    Unite : ratio sans dimension, 1,0 = volume habituel de cette minute.
+    Signe : sans objet, toujours positif.
+
+    **La reference ne regarde que le PASSE** : les jours precedents
+    strictement, jamais le jour courant ni les suivants. Sans cette
+    contrainte, un volume anormal se normaliserait par lui-meme.
+
+    **Chauffe** : les `n_jours` premiers jours du lot n'ont pas de reference
+    complete et rendent NaN plutot qu'un ratio calcule sur trois jours. Pour
+    les couvrir, passer un `df` qui commence `n_jours` avant la periode
+    etudiee — les journees ecartees comme pannes restent utilisables ici : le
+    volume brut d'une journee a trous reste une reference valide pour les
+    minutes qu'elle couvre.
+    """
+    d = pd.to_datetime(dt, utc=True)
+    v = pd.to_numeric(df[col_vol], errors="coerce")
+    jour = pd.Series(d.dt.date, index=df.index)
+    minute = d.dt.hour * 60 + d.dt.minute
+
+    tab = pd.DataFrame({"j": jour, "m": minute, "v": v})
+    # Mediane du volume par (minute, jour), puis mediane glissante sur les
+    # jours STRICTEMENT PRECEDENTS. `shift(axis=1)` decale d'un jour avant le
+    # rolling : sans lui, le jour courant entrerait dans sa propre reference.
+    # Jours en LIGNES, minutes en colonnes : le rolling se fait alors sur l'axe
+    # standard. `rolling(axis=1)` est deprecie dans pandas 2 et rend du NaN en
+    # silence — le premier essai sortait zero valeur sur 33 826 barres.
+    par = tab.groupby(["j", "m"])["v"].median().unstack("m").sort_index()
+    # FENETRE de n_jours, mais seulement n_jours/2 OBSERVATIONS exigees. Les
+    # deux ne sont pas la meme chose : 18 % des couples (jour, minute) sont
+    # vides — des minutes overnight sans echange. Avec `min_periods=n_jours`,
+    # aucune cellule ne survit (mesure : 0 sur 41 400), parce qu'il faudrait
+    # vingt jours consecutifs sans le moindre trou sur cette minute precise.
+    # A la moitie, 24 413 cellules, et une mediane de dix jours reste robuste.
+    ref = par.shift(1).rolling(n_jours, min_periods=max(n_jours // 2, 5)).median()
+    ref = ref.stack(future_stack=True).rename("ref").reset_index()
+    ref.columns = ["j", "m", "ref"]
+    fusion = tab.reset_index().merge(ref, on=["m", "j"], how="left").set_index("index")
+    r = fusion["v"] / fusion["ref"].replace(0.0, np.nan)
+    return r.reindex(df.index).replace([np.inf, -np.inf], np.nan)
+
+
+# ---------------------------------------------------------------------------
+# 6. Version de fenetre
+# ---------------------------------------------------------------------------
+
+# Premiere session ecrite apres la correction des session times Sierra
+# (05/09/2026). Avant : les etudes se reinitialisaient a 17:00 UTC, soit 13h ET,
+# en pleine seance. Cf CONVENTIONS.md §9.
+BASCULE_W1_MS = 1788728400000  # 2026-09-06 21:00:00 UTC (verifie)
+
+
+def window_version(ts_ms):
+    """Version de fenetre de chaque barre : `w0` ou `w1`.
+
+    Fenetre : sans objet. Unite : chaine. Signe : sans objet.
+
+    Qualifie les colonnes DUMPEES EN LIVE, pas la date de la barre : des VA
+    exportees de l'historique apres recalcul Sierra sont `w1` meme pour des
+    dates anterieures. Un lot qui melange les deux sur une colonne de session
+    doit etre refuse, pas moyenne.
+    """
+    ts = pd.to_numeric(ts_ms, errors="coerce")
+    return pd.Series(np.where(ts >= BASCULE_W1_MS, "w1", "w0"),
+                     index=getattr(ts, "index", None))
+
+
+# ---------------------------------------------------------------------------
+# 7. Momentum
 # ---------------------------------------------------------------------------
 
 def momentum(close, n):
