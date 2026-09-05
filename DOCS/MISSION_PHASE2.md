@@ -228,7 +228,7 @@ superieure** de N, pas une prevision.
 
 | | ES | NQ | lecture |
 |---|---|---|---|
-| H1 mur gamma (gamma > 0) | 14 | 17 | **sous-dimensionnee** — il en restera ~5 apres la reaction |
+| H1 mur gamma (gamma > 0) | 14 | 17 | **non testable** — le lieu lui-meme est inatteignable, cf mesure de proximite ci-dessous |
 | H4 `rule_80pct` actif | 16 | 16 | **sous-dimensionnee** — evenement rare par nature, ce n'est pas un defaut de mesure |
 | H3 extreme de VA | 807 | 728 | testable |
 | H6 `ib_broken_up` | 175 | 147 | testable |
@@ -247,6 +247,54 @@ gamma qui vendent les hausses) et son inverse exact.
 **Pour chaque hypothese, le runner rapporte en plus** : la **sortie naturelle** (VPOC, VWAP ou VA
 opposee atteinte avant la barriere) — mesure d'information, jamais un critere ; et `repose_sur_B`
 quand une condition ne lit que du niveau B.
+
+### Unites et proximite des niveaux — mesure du 06/09, avant le tag
+
+**Unites etablies** (elles n'etaient ecrites nulle part, et c'est le piege qui a deja frappe deux fois) :
+
+| grandeur | unite | mesure ES | mesure NQ |
+|---|---|---|---|
+| `atr_14m` | TICKS | mediane 5,07 t | 35,86 t |
+| ATR-5m (= `atr_14m` x racine(5)) | TICKS | ~11,3 t = 2,83 pts | ~80,2 t = 20,05 pts |
+| `dist_mq_*`, `dist_cur_*` | TICKS | — | — |
+| **seuil 0,10 ATR-5m** | | **1,13 tick** | **8,02 ticks** |
+
+Verification de coherence : le niveau `mq_call` reconstruit par `close + dist_mq_call x 0,25` est
+**constant sur toute la journee** (un seul niveau distinct sur 1 260 barres) et prend des valeurs de
+strike rondes — 7 700 / 7 750 / 7 800 sur les vingt derniers jours ES. La colonne est vivante et
+correctement figee : elle n'a pas besoin du gel par session que la revue reclamait.
+
+**Proximite des niveaux MenthorQ au prix** (ES, 15 jours, 17 164 barres) — part des barres a
+**moins de 0,25 ATR-5m** du niveau :
+
+| colonne | mediane | <= 0,25 ATR |
+|---|---|---|
+| `dist_mq_call` | 338 t (84 pts) | **0,16 %** |
+| `dist_mq_put` | 293 t | 0,33 % |
+| `dist_mq_call_0dte` | 138 t | 0,64 % |
+| `dist_mq_put_0dte` | 135 t | 0,87 % |
+| `dist_mq_hvl` | 119 t (30 pts) | **1,65 %** |
+| `dist_cur_vah` (comparaison) | 29 t | 4,60 % |
+
+**Consequence pour H1.** Le prix n'approche pas le mur gamma : il en est a 84 points en mediane, et
+meme en desserrant le seuil a 0,50 ATR on ne touche que 0,43 % des barres. Ce n'est donc pas un
+probleme de calibrage de seuil — **le mur gamma n'est pas un lieu de test intraday sur ce lot**.
+H1 est conservee telle quelle et son resultat attendu est ecrit d'avance : **non testable**.
+
+Si Jackson veut un huitieme lieu options-driven, le seul candidat mesure est **`dist_mq_hvl`**
+(1,65 % des barres a 0,25 ATR, soit environ dix fois H1). Ce serait une **autre** hypothese — un
+rejet sur niveau de volume, pas un rejet de mur gamma — et elle devrait etre ecrite comme telle,
+pas substituee en silence.
+
+**Source de `mq_gamma_condition`** : `menthorq_backfill_injector.py:148` — vaut **1 si `net_gex` > 0**
+(dealers long gamma, stabilisant), 0 sinon. La lecture « > 0 » de H1 et H2 est donc correcte, et le
+rationnel de retour a la moyenne est bien celui du code. **Mais** `enricher_chain.py:279-284` indique
+que le scraper MenthorQ est **down depuis le 27/05** : sur les 57 jours, la colonne est un **proxy**
+reconstruit depuis `bool_gex_flip_zone` Sierra natif, et non le `net_gex` de MenthorQ (verifie :
+`gamma_condition` et `net_gex` sont nuls dans le JSON MenthorQ du 14/06). H2 doit donc porter
+`repose_sur_B` pour cette condition, et une survivante conditionnee au gamma devra etre relue a la
+main avant toute suite.
+
 
 ## 7. Ce que le runner mesure, à l'aveugle
 
