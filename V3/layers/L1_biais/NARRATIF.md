@@ -117,6 +117,62 @@ ask = (total_vol + delta_bar) / 2     identité vérifiée à 5e-05 près
                                        sur 1 378 barres
 ```
 
+## La troisième dimension : qui est resté coincé
+
+Après *l'effort* (qui s'est battu) et *le résultat* (ce que ça a donné), il
+manque **le carburant**.
+
+Un niveau cassé puis regagné n'est pas seulement une cassure ratée : c'est du
+monde qui a acheté la cassure et qui est maintenant en perte, **avec ses stops
+juste en dessous**. Ces stops sont le carburant du mouvement inverse. La
+question n'est pas « le niveau va-t-il tenir » mais **« combien de contrats sont
+piégés au-delà, et à quelle distance sont leurs stops »**.
+
+C'est ce qui fait marcher C4 (sweep + reclaim) et H7 (IB cassée qui échoue)
+quand ils marchent : ils exploitent une **mécanique** — des stops qui se
+déclenchent — pas une prédiction.
+
+| grandeur | comment on l'obtient | ce qu'elle dit |
+|---|---|---|
+| `volume_au_dela` | somme du volume des barres **1 min** échangées au-delà du niveau pendant la cassure, avant le regain | la taille du piège |
+| `delta_au_dela` | delta cumulé de ces mêmes barres | qui est piégé : acheteurs (delta +) ou vendeurs |
+| `duree_au_dela` | nombre de barres 1 min hors du niveau | plus c'est long, plus les mains sont faibles à l'intérieur |
+| `dist_piege` | distance du prix à l'extrême de la cassure, en ATR-15m | où sont les stops par rapport au prix |
+
+### Pourquoi on ne lit pas les colonnes F21 du C++
+
+Elles existent : `ctx_double_top_trap`, `ctx_failed_auction`, `ctx_poor_high`,
+`ctx_poor_low`, `ctx_excess_high_bars`, `ctx_excess_low_bars`. *(`ctx_trap` et
+`trapped_*` n'existent pas — ces noms étaient supposés.)*
+
+**Toutes en provenance B**, motif « plausibilité OK ». En clair : la valeur est
+plausible, **la formule n'a pas été vérifiée**. Fenêtre inconnue, seuils
+inconnus — exactement le statut de `vah_touches_20b`.
+
+Les quatre grandeurs se **recalculent** depuis les barres 1 min : `total_vol`,
+`delta_bar`, `high`, `low`, `close`, `ts` sont tous présents. C'est la règle qui
+a fait retirer `mq_gamma_condition`.
+
+### Ce que ça a imposé au chargement
+
+`charger_jour` agrégeait en 15 min et **jetait le 1 min**. Or le volume piégé se
+compte barre par minute : une barre de quinze minutes qui traverse un niveau et
+revient ne dit pas combien de monde est resté coincé. Le chargement rend
+désormais les deux échelles — 26 barres agrégées et 390 minutes sur une séance.
+
+### La mise en garde qui compte
+
+**« Piégé » est une lecture *a posteriori* qui a l'air évidente sur un
+graphique.** En temps réel, un regain ne se sait qu'à la **deuxième clôture**, et
+une partie des « pièges » sont des cassures qui reprennent plus tard.
+
+Donc, comme le reste : **en observation**, journalisé sur chaque signal, mesuré
+avec/sans à la lecture. Si les rejets avec `piege_proche` séparent mieux les
+devenirs que les rejets sans, ce sera la première preuve chiffrée que ce qui se
+lit à l'écran est dans les données.
+
+---
+
 ## Ce que la lecture expose — quatre scalaires
 
 Une porte ou une composante ne peut pas lire une liste. La fiche complète va

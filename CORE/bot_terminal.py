@@ -71,12 +71,26 @@ PLAGES = {                       # part de rejet attendue, par couche
 # Lecture
 # ---------------------------------------------------------------------------
 
-def charger_jour(sym, jour, minutes):
-    """Barres agregees d'une journee. Rend un DataFrame ou vide."""
+def charger_jour(sym, jour, minutes, avec_1min=False):
+    """Barres agregees d'une journee. Rend un DataFrame ou vide.
+
+    `avec_1min` rend `(agregees, minutes)` au lieu des seules agregees.
+
+    LE 1 MIN EST NECESSAIRE, il n'est pas un confort. La fiche de test de F23
+    a besoin des deux echelles : l'effort se lit sur la barre agregee (flux
+    sommes), mais le VOLUME PIEGE au-dela d'un niveau se compte barre par barre
+    d'une minute — combien de contrats se sont echanges de l'autre cote avant
+    le regain, et avec quel delta. Une barre de quinze minutes qui traverse un
+    niveau et revient ne dit pas combien de monde est reste coince.
+
+    La meche et le finish du test se lisent aussi mieux sur la minute qui a
+    touche : c'est le pont vers L4.
+    """
     motif = "DATA/live_enriched/sierra/%s/%s*.jsonl" % (sym, jour)
+    vide = (pd.DataFrame(), pd.DataFrame()) if avec_1min else pd.DataFrame()
     fichiers = sorted(glob.glob(motif))
     if not fichiers:
-        return pd.DataFrame()
+        return vide
     lignes = []
     for f in fichiers:
         for ln in open(f, encoding="utf-8", errors="ignore"):
@@ -90,7 +104,7 @@ def charger_jour(sym, jour, minutes):
             if d.get("data_quality_flag") == "stable":
                 lignes.append(d)
     if not lignes:
-        return pd.DataFrame()
+        return vide
     lignes = recalc.dedoublonner_par_minute(lignes)
     df = pd.DataFrame(lignes)
     df["ts"] = recalc.horodatage(df)
@@ -98,8 +112,9 @@ def charger_jour(sym, jour, minutes):
     df["dt"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
     df = df[recalc.est_cash(df["dt"])].reset_index(drop=True)
     if df.empty:
-        return df
-    return agreger(df, minutes)
+        return (df, df) if avec_1min else df
+    aggregees = agreger(df, minutes)
+    return (aggregees, df) if avec_1min else aggregees
 
 
 def agreger(df, minutes):
