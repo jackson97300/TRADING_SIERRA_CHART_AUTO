@@ -126,13 +126,22 @@ def agreger(df, minutes):
     for c in ("sweep_high_this_bar", "sweep_low_this_bar"):
         if c in d.columns:
             cols[c] = o[c].max()
+    # Combien de barres d'une minute composent chaque bloc : c'est ce qui dit
+    # si la barre agregee est ENTIERE. Une barre partielle en fin de seance
+    # fausse l'ATR, donc le SL et le TP — et rien d'autre ne la signale.
+    cols["minutes_reelles"] = o["open"].count()
     out = pd.DataFrame(cols).dropna(subset=["close"])
     out["ts"] = out.index.astype("int64") // 1_000_000
     out["jour"] = out.index.date
+    out["barre_complete"] = out["minutes_reelles"] >= minutes
+    # `window_version` se deduit du ts : elle qualifie les colonnes DUMPEES en
+    # live, pas la date de la barre. Elle ne survivait pas a l'agregation ; la
+    # porte L0_DATA_FENETRE ne pouvait donc rien voir hors ligne.
+    out["window_version"] = recalc.window_version(out["ts"])
     tr = pd.concat([out["high"] - out["low"],
                     (out["high"] - out["close"].shift()).abs(),
                     (out["low"] - out["close"].shift()).abs()], axis=1).max(axis=1)
-    out["atr5"] = tr.rolling(14, min_periods=7).mean()
+    out["atr_barre"] = tr.rolling(14, min_periods=7).mean()
     return out.reset_index(drop=True)
 
 
@@ -148,7 +157,7 @@ def regime_gamma(df, i, zone_morte_atr=1.0):
     (mesure du 06/09).
     """
     v = df["dist_mq_hvl"].iloc[i] if "dist_mq_hvl" in df.columns else None
-    atr = df["atr5"].iloc[i]
+    atr = df["atr_barre"].iloc[i]
     if v is None or pd.isna(v) or pd.isna(atr) or atr <= 0:
         return "indetermine"
     seuil = zone_morte_atr * atr / 0.25          # ATR en points -> ticks

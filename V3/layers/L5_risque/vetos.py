@@ -45,7 +45,7 @@ def _frais(lec, etat, s):
     seuil a 10 % ne ferme rien sur MNQ et ferme tout sur MES — la meme
     conclusion que le cout par trade, atteinte par un autre chemin.
     """
-    atr = lec["atr5"]
+    atr = lec["atr_barre"]
     if not atr or atr <= 0:
         return False
     tp_usd = s["tp_atr"] * atr * VAL_POINT.get(lec["sym"], 5.0)

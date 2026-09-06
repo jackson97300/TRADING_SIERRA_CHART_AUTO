@@ -48,11 +48,20 @@ def evaluer_toutes(lecture, etat, seuils, absentes=()):
     Une porte ABSENTE — donnee non collectee, seuil non mesure — rend `None`,
     jamais `False`. Un manque qui se lit comme un feu vert est un manque qu'on
     oublie.
+
+    UNE PORTE PEUT AUSSI RENDRE `None` D'ELLE-MEME : « je ne peux pas
+    repondre ». C'est le cas des portes de qualite des donnees quand la donnee
+    dont elles ont besoin est elle-meme absente — l'age d'une barre hors ligne,
+    l'etat du connecteur en backtest. Ce n'est ni un blocage ni un feu vert :
+    c'est un TROU, et il se journalise comme tel. Ce que la chaine en fait
+    depend du mode, cf `chaine.appliquer(strict=...)` : bloquant en live,
+    trace-mais-neutre hors ligne.
     """
     out = {}
     for nom, p in REGISTRE.items():
         if nom in absentes:
             out[nom] = None
             continue
-        out[nom] = bool(p["fn"](lecture, etat, seuils.get(nom, {})))
+        r = p["fn"](lecture, etat, seuils.get(nom, {}))
+        out[nom] = None if r is None else bool(r)
     return out

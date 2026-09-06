@@ -18,13 +18,29 @@ passe pas a la suivante. C'est le garde-fou que V1 n'a jamais eu — il embarqua
 
 | # | brique | etat | rejet mesure | plage attendue | note |
 |---|---|---|---|---|---|
-| L0 | interrupteur — 9 portes + 5 declarees absentes | **mesuree** | 77,9 % ES / 77,4 % NQ (22,1 % retenus) | 15-30 % | portes evaluees INDEPENDAMMENT ; `POSITION_OUVERTE` exposee et ses refuses simules en fantomes |
+| L0 | interrupteur — 25 portes + 5 declarees absentes | **mesuree** | **une ligne par porte** : `layers/L0_interrupteur/rapports/portes_57j.csv` | 15-30 % **par porte** | l'agregat a ete retire : domine par `POSITION_OUVERTE`, il se lisait comme un echec alors que la plage est par porte |
 | REG | regime (gamma HVL zone morte 1,0 ATR + largeur IB corrigee) | **mesuree** | — | 4 cases >= 5 jours | 99,7 % de couverture ES, 1,8 bascule/jour |
 | L1 | biais 1h/4h (B1, B4, B5, B5b) | **ecrite** | — | 20-50 % | B1 seul pour l'instant |
 | L3 | declencheurs 15 min | **ecrite** | — | N >= 40 par etage | 4 pre-enregistres + 16 en ombre |
 | L4 | confirmation order flow 1 min | **absente** | — | 30-50 % | la seule couche a construire |
-| L5 | risque — 3 vetos (gamma, rvol, frais/TP) | **mesuree** | cf `layers/L0_interrupteur/rapports/` | 10-25 % | PAS inerte : c'etait la mesure qui l'etait. Le veto SL mort remplace par la part des frais dans la distance au TP |
+| L5 | risque — 3 vetos (gamma, rvol, frais/TP) | **mesuree** | meme rapport, lignes `L5_*` | 10-25 % | PAS inerte : c'etait la mesure qui l'etait. Le veto SL mort remplace par la part des frais dans la distance au TP |
 | L6 | surveillance donnees | **passee** | — | — | 7 controles quotidiens en place |
+
+## Comment lire le rapport des portes
+
+Trois classes, trois lectures — les confondre donne le verdict inverse :
+
+| classe | ce que ca veut dire | comment la juger |
+|---|---|---|
+| **appliquee** | elle bloque | sa part de rejet, dans sa plage |
+| **observee** | elle journalise « j'aurais bloque » sans agir | le devenir de ce qu'elle aurait ferme |
+| **trou** | elle n'a pas pu repondre — la donnee n'existe pas ici | **jamais** sur la plage de rejet |
+
+**Sept portes sont muettes hors ligne** (`ROLLOVER`, `CONTRAT_INACTIF`,
+`DTC_DECONNECTE`, et quatre de la famille A). Elles ne sont pas inertes : leur
+terrain est le live, ou elles ont une vraie valeur a comparer — et ou un trou
+BLOQUE (`chaine.appliquer(strict=True)`). Les juger sur les plages de rejet
+donnait « dans la plage » a une porte qui ne repond jamais.
 
 ## Ou est quoi
 

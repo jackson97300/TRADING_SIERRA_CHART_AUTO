@@ -59,12 +59,12 @@ from CORE.research.hypotheses import TICK, _f, seuil_ticks
 
 def proche(df, tick=TICK):
     """« a » un niveau. Remplace `abs< 80` a `abs< 100` du fichier d'origine."""
-    return seuil_ticks(df["atr5"], "P20", tick)          # max(0,20 ATR, 4 t)
+    return seuil_ticks(df["atr_barre"], "P20", tick)          # max(0,20 ATR, 4 t)
 
 
 def loin(df, n_atr, tick=TICK):
     """« loin de » un niveau, en multiples d'ATR-5m, rendu en TICKS."""
-    return n_atr * pd.to_numeric(df["atr5"], errors="coerce") / tick
+    return n_atr * pd.to_numeric(df["atr_barre"], errors="coerce") / tick
 
 
 def range_pos_r(df):

@@ -65,7 +65,7 @@ def devenir(df, i, side, horizon=HORIZON):
     permette de dire « cette porte coute » ou « cette porte protege ».
     """
     j = min(i + horizon, len(df) - 1)
-    atr = df["atr5"].iloc[i]
+    atr = df["atr_barre"].iloc[i]
     if not np.isfinite(atr) or atr <= 0:
         return np.nan
     return float(side * (df["close"].iloc[j] - df["close"].iloc[i]) / atr)
@@ -153,17 +153,21 @@ def mesurer(sym, minutes, journal):
         par_motif.setdefault(nom, [])
     for m, devs in sorted(par_motif.items(), key=lambda x: -len(x[1])):
         v = [x for x in devs if np.isfinite(x)]
-        couche = m[:2] if m[:2] in ("L0", "L5") else "?"
-        applique = m in chaine._APPLIQUEES
+        trou = m.startswith("TROU_")
+        base = m[5:] if trou else m
+        couche = base[:2] if base[:2] in ("L0", "L5") else "?"
+        applique = base in chaine._APPLIQUEES
         part = len(devs) / max(tot_signaux, 1)
         lo, hi = PLAGES.get(couche, (0.0, 1.0))
         lignes.append({
             "sym": sym, "unite_min": minutes, "couche": couche, "motif": m,
-            "classe": "appliquee" if applique else "observee",
+            "classe": ("trou" if trou else
+                       "appliquee" if applique else "observee"),
             "n_rejetes": len(devs), "part_des_signaux": round(part, 4),
             "devenir_moyen_atr": round(float(np.mean(v)), 4) if v else None,
             "devenir_median_atr": round(float(np.median(v)), 4) if v else None,
-            "verdict": _verdict(part, lo, hi),
+            "verdict": (_verdict_trou(part) if trou
+                        else _verdict(part, lo, hi)),
         })
     v = [x for x in passes_dev if np.isfinite(x)]
     lignes.append({
@@ -176,6 +180,21 @@ def mesurer(sym, minutes, journal):
         "verdict": "-",
     })
     return lignes, cases, tot_signaux, sens
+
+
+def _verdict_trou(part):
+    """Un TROU n'est pas un rejet : la porte n'a pas pu repondre.
+
+    Le juger sur les plages de rejet donnait « dans la plage » a une porte qui
+    repond « je ne sais pas » sur 100 % des signaux — la lecture exactement
+    inverse de la verite. Une porte muette hors ligne n'est pas conforme, elle
+    est HORS DE SON TERRAIN : son terrain est le live.
+    """
+    if part >= 0.99:
+        return "MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+    if part <= 0.0001:
+        return "repond toujours"
+    return "repond « je ne sais pas » sur %.0f %% des signaux" % (100 * part)
 
 
 def _verdict(part, lo, hi):
@@ -194,7 +213,12 @@ def main():
     a = ap.parse_args()
 
     os.chdir(RACINE)
-    j = "LOGS/entonnoir/portes57_%dmin.jsonl" % a.minutes
+    # UN JOURNAL PAR PROCESSUS. Deux runs lances en parallele ecrivaient dans
+    # le meme fichier : les lignes du second polluaient le comptage du premier
+    # (ecart de 90 lignes sur NQ, detecte par `controler_effectifs` le 06/09).
+    # Un nom partage est un rendez-vous entre processus qui ne se connaissent
+    # pas — et rien dans le code ne le signalait.
+    j = "LOGS/entonnoir/portes57_%dmin_%d.jsonl" % (a.minutes, os.getpid())
     os.makedirs(os.path.dirname(j), exist_ok=True)
     if os.path.exists(j):
         os.remove(j)
@@ -239,7 +263,15 @@ def main():
             marque = "" if len(jours) >= 5 else "   <<< trop peu"
             print("  %-3s %-16s / %-12s %3d jours%s" % (sym, g, r, len(jours), marque))
 
-    print("\necrit : %s" % os.path.join(sortie, "portes_57j.csv"))
+    # Le journal du run, ecrit sous un nom porteur du PID pour qu'aucun autre
+    # run ne s'y melange, devient LE journal de reference sous un nom stable.
+    stable = "LOGS/entonnoir/portes57_%dmin.jsonl" % a.minutes
+    if os.path.exists(stable):
+        os.remove(stable)
+    os.replace(j, stable)
+
+    print("\necrit   : %s" % os.path.join(sortie, "portes_57j.csv"))
+    print("journal : %s" % stable)
     return 0
 
 

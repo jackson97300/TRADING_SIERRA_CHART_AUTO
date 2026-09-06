@@ -91,14 +91,18 @@ def journaliser(ts, sym, couche, hypothese, decision, motif="",
     return ligne
 
 
-def completer_devenir(chemin, prix_par_sym, horizon=HORIZON_BARRES, col_atr="atr5"):
+def completer_devenir(chemin, prix_par_sym, horizon=HORIZON_BARRES, col_atr="atr_barre"):
     """Remplit `devenir_atr` sur toutes les lignes qui l'ont a `null`.
 
     `prix_par_sym` : {"ES": df, "NQ": df} ou chaque df porte `ts`, `close` et
     la colonne d'ATR nommee par `col_atr`, trie par `ts`.
 
+    Le nom `atr_barre` remplace `atr5` depuis le 06/09 : la campagne agrege
+    en 15 minutes, pas en 5, et un nom qui annonce une echelle qu'il n'a
+    pas a deja coute une erreur de facteur cinq sur le cout par trade.
+
     **Les barres doivent etre celles de 5 min, et `col_atr` l'ATR-5m** — c'est
-    le defaut `atr5`, le nom que porte la colonne produite par
+    le defaut `atr_barre`, le nom que porte la colonne produite par
     `hypothesis_runner.agreger_5min`. Deux raisons de ne pas y toucher :
       - `horizon` compte des BARRES. Vingt barres de 1 min font vingt minutes,
         vingt barres de 5 min font cent minutes : le devenir mesure ne serait
@@ -131,7 +135,7 @@ def completer_devenir(chemin, prix_par_sym, horizon=HORIZON_BARRES, col_atr="atr
         if col_atr not in df.columns:
             raise KeyError(
                 "colonne d'ATR absente pour %s : %s. Le runner produit "
-                "'atr5' via agreger_5min ; ne pas retomber en silence "
+                "'atr_barre' via agreger_5min ; ne pas retomber en silence "
                 "sur l'ATR 1 min." % (sym, col_atr))
         d = df[["ts", "close", col_atr]].dropna(subset=["ts"]).sort_values("ts")
         d = d.rename(columns={col_atr: "atr"})

@@ -1,27 +1,68 @@
 sym,unite_min,couche,motif,classe,n_rejetes,part_des_signaux,devenir_moyen_atr,devenir_median_atr,verdict
-ES,15,L0,L0_POSITION_OUVERTE,appliquee,272,0.7253,0.0954,0.0,ETRANGLEUSE — au-dessus de 30 %
+ES,15,L0,TROU_L0_ROLLOVER,trou,375,1.0,0.0848,0.0,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+ES,15,L0,TROU_L0_CONTRAT_INACTIF,trou,375,1.0,0.0848,0.0,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+ES,15,L0,TROU_L0_DTC_DECONNECTE,trou,375,1.0,0.0848,0.0,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+ES,15,L0,TROU_L0_DATA_INSTABLE,trou,375,1.0,0.0848,0.0,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+ES,15,L0,TROU_L0_DATA_PERIMEE,trou,375,1.0,0.0848,0.0,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+ES,15,L0,TROU_L0_DATA_L6_ALERTE,trou,375,1.0,0.0848,0.0,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+ES,15,L0,TROU_L0_DATA_COLONNE_MORTE,trou,375,1.0,0.0848,0.0,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+ES,15,L0,L0_POSITION_OUVERTE,appliquee,268,0.7147,0.0901,0.0,ETRANGLEUSE — au-dessus de 30 %
 ES,15,L0,L0_SESSION_BLOQUEE,appliquee,37,0.0987,0.0729,0.0,sous la plage (15-30 %)
 ES,15,L5,L5_VETO_RVOL_EXTREME,appliquee,25,0.0667,-0.0086,0.0,sous la plage (10-25 %)
 ES,15,L5,L5_FRAIS_TROP_LOURDS,observee,22,0.0587,0.1512,0.201,sous la plage (10-25 %)
+ES,15,L0,L0_REGIME_INDETERMINE,observee,21,0.056,-0.1417,-0.1228,sous la plage (15-30 %)
+ES,15,L0,L0_RANG_DU_SIGNAL,observee,13,0.0347,0.2516,0.0,sous la plage (15-30 %)
 ES,15,L5,L5_VETO_GAMMA,appliquee,13,0.0347,-0.4012,-0.1478,sous la plage (10-25 %)
+ES,15,L0,L0_FERIE_CME,appliquee,6,0.016,0.6037,0.3417,sous la plage (15-30 %)
 ES,15,L0,L0_NEWS,appliquee,4,0.0107,-4.8184,-5.2615,sous la plage (15-30 %)
+ES,15,L0,L0_DATA_INCOMPLETE,appliquee,3,0.008,0.1762,0.0,sous la plage (15-30 %)
+ES,15,L0,L0_ROLLOVER,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,L0,L0_PREMIERE_BARRE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 ES,15,L0,L0_EOD_LOCKOUT,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
-ES,15,L0,L0_VIX_REGIME,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
-ES,15,L0,L0_MAX_TRADES_JOUR,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,L0,L0_VIX_REGIME,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,L0,L0_MAX_TRADES_PRIS,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 ES,15,L0,L0_STOP_JOURNALIER,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 ES,15,L0,L0_STOP_PROPFIRM,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 ES,15,L0,L0_COOLDOWN,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
-ES,15,PASSE,(retenus),-,83,0.2213,0.1341,0.1163,-
-NQ,15,L0,L0_POSITION_OUVERTE,appliquee,290,0.736,0.1757,0.0268,ETRANGLEUSE — au-dessus de 30 %
+ES,15,L0,L0_CONTRAT_INACTIF,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,L0,L0_DTC_DECONNECTE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,L0,L0_DATA_INSTABLE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,L0,L0_DATA_PERIMEE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,L0,L0_DATA_FENETRE_MELANGEE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,L0,L0_DATA_L6_ALERTE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,L0,L0_DATA_COLONNE_MORTE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+ES,15,PASSE,(retenus),-,80,0.2133,0.1235,0.1045,-
+NQ,15,L0,TROU_L0_ROLLOVER,trou,394,1.0,0.1802,0.0295,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+NQ,15,L0,TROU_L0_CONTRAT_INACTIF,trou,394,1.0,0.1802,0.0295,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+NQ,15,L0,TROU_L0_DTC_DECONNECTE,trou,394,1.0,0.1802,0.0295,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+NQ,15,L0,TROU_L0_DATA_INSTABLE,trou,394,1.0,0.1802,0.0295,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+NQ,15,L0,TROU_L0_DATA_PERIMEE,trou,394,1.0,0.1802,0.0295,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+NQ,15,L0,TROU_L0_DATA_L6_ALERTE,trou,394,1.0,0.1802,0.0295,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+NQ,15,L0,TROU_L0_DATA_COLONNE_MORTE,trou,394,1.0,0.1802,0.0295,"MUETTE hors ligne — ne repond jamais ici, son terrain est le live"
+NQ,15,L0,L0_POSITION_OUVERTE,appliquee,289,0.7335,0.1757,0.0257,ETRANGLEUSE — au-dessus de 30 %
 NQ,15,L0,L0_SESSION_BLOQUEE,appliquee,51,0.1294,0.1045,0.0,sous la plage (15-30 %)
+NQ,15,L0,L0_RANG_DU_SIGNAL,observee,30,0.0761,0.1874,0.0,sous la plage (15-30 %)
 NQ,15,L5,L5_VETO_RVOL_EXTREME,appliquee,25,0.0635,-0.0364,0.0,sous la plage (10-25 %)
+NQ,15,L0,L0_REGIME_INDETERMINE,observee,6,0.0152,0.0376,0.06,sous la plage (15-30 %)
+NQ,15,L0,TROU_L0_REGIME_INDETERMINE,trou,6,0.0152,-0.0957,-0.1306,repond « je ne sais pas » sur 2 % des signaux
+NQ,15,L0,L0_DATA_INCOMPLETE,appliquee,5,0.0127,-0.0338,0.0,sous la plage (15-30 %)
 NQ,15,L0,L0_NEWS,appliquee,4,0.0102,-1.1795,-0.8438,sous la plage (15-30 %)
+NQ,15,L0,L0_FERIE_CME,appliquee,3,0.0076,0.2237,0.1768,sous la plage (15-30 %)
+NQ,15,L0,L0_ROLLOVER,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_PREMIERE_BARRE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 NQ,15,L0,L0_EOD_LOCKOUT,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
-NQ,15,L0,L0_VIX_REGIME,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
-NQ,15,L0,L0_MAX_TRADES_JOUR,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_VIX_REGIME,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_MAX_TRADES_PRIS,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 NQ,15,L0,L0_STOP_JOURNALIER,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 NQ,15,L0,L0_STOP_PROPFIRM,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 NQ,15,L0,L0_COOLDOWN,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_CONTRAT_INACTIF,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_DTC_DECONNECTE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_DATA_INSTABLE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_DATA_PERIMEE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_DATA_FENETRE_MELANGEE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_DATA_L6_ALERTE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
+NQ,15,L0,L0_DATA_COLONNE_MORTE,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 NQ,15,L5,L5_VETO_GAMMA,appliquee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
 NQ,15,L5,L5_FRAIS_TROP_LOURDS,observee,0,0.0,,,"INERTE — ne rejette rien, ne protege de rien"
-NQ,15,PASSE,(retenus),-,87,0.2208,0.2531,0.2642,-
+NQ,15,PASSE,(retenus),-,85,0.2157,0.2532,0.2642,-

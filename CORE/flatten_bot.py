@@ -47,9 +47,11 @@ BOT_TO_ACCOUNT = {
 }
 
 SYMBOLS = {
-    "ES": "ESM26-CME",
-    "NQ": "NQM26-CME",    # Rollback 03/06 : 1 NQ E-mini
-    "MGC": "MGCM26-CME",
+    # FIX rollover 30/06 : Juin (M26) expire 3e vendredi juin 2026 = 19/06.
+    # Front month actuel = Septembre (U26). ES + NQ + MGC tous rollover same date.
+    "ES": "ESU26-CME",
+    "NQ": "NQU26-CME",
+    "MGC": "MGCU26-CME",
 }
 
 

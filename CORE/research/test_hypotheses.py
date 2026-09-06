@@ -44,10 +44,10 @@ def cas(nom, attendu, obtenu):
     print("   %-58s %s" % (nom, "OK" if bon else "ECHEC (attendu %s)" % attendu))
 
 
-def barres(n, atr5=ATR5_ES, jour="2026-07-01", **cols):
+def barres(n, atr_barre=ATR5_ES, jour="2026-07-01", **cols):
     """n barres d'une meme journee, colonnes par defaut neutres."""
     d = pd.DataFrame({
-        "jour": [jour] * n, "atr5": [atr5] * n,
+        "jour": [jour] * n, "atr_barre": [atr_barre] * n,
         "open": [7000.0] * n, "high": [7000.0] * n,
         "low": [7000.0] * n, "close": [7000.0] * n,
     })
@@ -83,7 +83,7 @@ cas("lieu faux (30 t du VAH) -> rien", False,
     sig(H.h3(barres(1, **{**b3, "dist_cur_vah": 30.0, "high": 7007.6})), "short"))
 #  LE CAS DU PLANCHER : 1,5 tick > 0,10 x 11,3 = 1,13, mais <= 2 ticks
 cas("PLANCHER ES : 1,5 t hors fenetre ATR, dans le plancher -> signal", True,
-    sig(H.h3(barres(1, atr5=ATR5_ES, **{**b3, "dist_cur_vah": 1.5, "high": 7000.6})), "short"))
+    sig(H.h3(barres(1, atr_barre=ATR5_ES, **{**b3, "dist_cur_vah": 1.5, "high": 7000.6})), "short"))
 cas("   le meme cas sans plancher serait rejete (0,10 ATR = 1,13 t)", True,
     1.5 > 0.10 * (ATR5_ES / H.TICK))
 cas("NQ : le plancher ne mord pas (0,10 ATR = 8,0 t > 2)", True,

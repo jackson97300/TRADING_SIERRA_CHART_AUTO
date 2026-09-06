@@ -122,6 +122,10 @@ try:
     from CORE.phase_d_prev_helpers_streaming import (
         add_phase_d_prev_helpers_streaming, make_prev_helpers_state,
     )
+    # P0.A 28/06 — 3 features regime manquantes Bot 4 v2 (audit weekend)
+    # atr_regime_zscore_60d + ib_formed_bool + range_pos
+    # Consumes : bot4_v2/core/regime_source.py vol_regime EXTREME blacklist
+    from CORE.sierra_atr_regime import AtrRegimeStreaming, derive_ib_formed_bool
 except ImportError:
     # Fallback si on lance depuis CORE/ directement
     from poc_migration import POCMigrationCalculator
@@ -146,6 +150,10 @@ except ImportError:
     # Phase D Bloc 2 - PrevHelpers streaming (INCIDENT #76 19/06)
     from phase_d_prev_helpers_streaming import (  # type: ignore
         add_phase_d_prev_helpers_streaming, make_prev_helpers_state,
+    )
+    # P0.A 28/06 — fallback CORE/ direct
+    from sierra_atr_regime import (  # type: ignore
+        AtrRegimeStreaming, derive_ib_formed_bool,
     )
     from eco_news_features import compute_eco_news_features
     from session_utils import get_trading_date_from_utc, utc_to_et
@@ -275,6 +283,23 @@ class SierraPipelineOrchestrator:
         # cumsum delta_bar reset par session. Reset au cross-day.
         # Cf rolling_features_streaming.py:1170-1179 (sera porte Group B).
         self._cvd_session_running: float = 0.0
+        # P0.A 28/06 — Welford rolling 60d ATR z-score (Bot 4 v2 vol_regime EXTREME)
+        # Warm-up 10j = 13800 bars avant emission. None tant que pas atteint.
+        self._atr_regime: AtrRegimeStreaming = AtrRegimeStreaming()
+        self._atr_regime_stale_emitted: bool = False  # idempotence emit STALE
+        # P0.A review code-reviewer 28/06 : warm-up post-restart = vol_regime
+        # force NORMAL pendant 10j RTH. Documenter audibly au boot.
+        if log_event is not None:
+            try:
+                from CORE.sierra_atr_regime import _ATR_Z_MIN_PERIODS as _W
+                log_event(
+                    "SIERRA_ATR_REGIME_BOOT_WARMUP",
+                    sym=symbol,
+                    warmup_bars=_W,
+                    warmup_days=int(_W / 1380),
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
         # Phase 1 Group A - portage modules Phase B+ streaming
         self._long_bar_state = make_long_bar_state(self.symbol)
@@ -636,6 +661,46 @@ class SierraPipelineOrchestrator:
         # Auto-detect scale : si max observe > 1.5 = [0,100], normaliser /100
         if range_pos is not None and range_pos > 1.5:
             range_pos = range_pos / 100.0
+
+        # P0.A 28/06 — Persiste range_pos [0,1] dans enriched (Bot 4 v2 + regime_source)
+        # Sans ca, regime_source.py:361 _get_field("range_pos", 0.5) renvoie default
+        # = mode RANGE genere favor NEUTRE en permanence (bug critique vol_regime).
+        if range_pos is not None:
+            enriched["range_pos"] = range_pos
+
+        # P0.A 28/06 — ib_formed_bool depuis ib_complete (Sierra natif canonique)
+        # Source priorite : `ib_complete` flag Sierra DMP (0/1, fiable).
+        # Fallback : `ib_range_ticks > 0`. NB : sur charts footprint, ib_range_ticks
+        # peut etre 0 a tort (CLAUDE.md bug IB High null sc.High footprint).
+        # CORE/ib_recalc.py recalcule correctement en post-processing batch
+        # mais N'EST PAS appele en live. Si ib_complete manque (cas hypothetique),
+        # le fallback ib_range_ticks degraderait gracieusement vers 0. Pas ideal
+        # mais Sierra DMP emet ib_complete sur 100% des bars confirmees.
+        enriched["ib_formed_bool"] = derive_ib_formed_bool(sierra_bar)
+
+        # P0.A 28/06 — atr_regime_zscore_60d Welford streaming
+        # Warm-up 10j avant valeur emise. Sinon None explicit (vs absent key).
+        # Sans ca, regime_source.py:412 atr_z NaN -> vol_regime NORMAL force =
+        # gate EXTREME jamais declenche -> news/FOMC sans garde-fou.
+        atr_v = sierra_bar.get("atr")
+        enriched["atr_regime_zscore_60d"] = self._atr_regime.update(atr_v)
+        # P0.A review code-reviewer 28/06 : emit PHASE_3C_C_ATR_STALE quand feed
+        # atr coupe 30 bars consec (alignement enricher_chain.py:1871-1873).
+        # Idempotence : emit une seule fois par episode stale.
+        if self._log_event is not None and self._atr_regime.is_stale:
+            if not self._atr_regime_stale_emitted:
+                try:
+                    self._log_event(
+                        "PHASE_3C_C_ATR_STALE",
+                        sym=self.symbol,
+                        n_bars=self._atr_regime.consec_none,
+                    )
+                    self._atr_regime_stale_emitted = True
+                except Exception:  # noqa: BLE001
+                    pass
+        elif self._atr_regime_stale_emitted and not self._atr_regime.is_stale:
+            # Reset flag quand feed revient
+            self._atr_regime_stale_emitted = False
 
         ctx_feats = self._ctx_rolling.update(
             close=close,
@@ -1189,6 +1254,41 @@ class SierraPipelineOrchestrator:
                                          err=str(_e)[:200])
                     except Exception:  # noqa: BLE001
                         pass
+
+        # ─── FIX audit ULTRATHINK 19/06 : dist_*_ticks pour dashboard_mirror ──
+        # schema-auditor + code-reviewer convergent : `dashboard_mirror._NEAR_LEVEL_KEYS`
+        # (CORE/bot1_v2/dashboard_mirror.py:355) cherche dist_pdh, dist_pdl,
+        # dist_prev_vah, dist_prev_val, dist_prev_vpoc en TICKS. Pipeline ne
+        # produit que les versions _pct. Resultat : 4 niveaux PRO morts (25%
+        # de _NEAR_LEVEL_KEYS) -> Bot 1 v2 ne peut valider SHORT au PDH ni LONG
+        # au PDL. Cf incident audit Bot 1 v2 19/06.
+        # Convention : dist_ticks = (level - close) / tick_size (sign-coherent).
+        # Politique : ECRIT seulement si dist_<key> n'existe pas deja (anti-overwrite).
+        if close is not None and close > 0 and self.tick_size > 0:
+            _level_pairs = (
+                ("dist_pdh", "pdh"),
+                ("dist_pdl", "pdl"),
+                ("dist_prev_vah", "prev_vah"),
+                ("dist_prev_val", "prev_val"),
+                # dist_prev_vpoc deja produit par DMP C++ (Sierra passthrough)
+                # mais on regenere a partir de prev_vpoc si NULL (cohérence).
+                ("dist_prev_vpoc", "prev_vpoc"),
+            )
+            for dist_key, raw_key in _level_pairs:
+                # Anti-overwrite : si deja non-NULL, skip
+                if enriched.get(dist_key) is not None:
+                    continue
+                raw_val = enriched.get(raw_key)
+                if raw_val is None:
+                    continue
+                try:
+                    raw_f = float(raw_val)
+                    if raw_f <= 0:
+                        continue  # garde-fou : pdh=3 (index Sierra) reject
+                    enriched[dist_key] = round(
+                        (raw_f - close) / self.tick_size, 4)
+                except (TypeError, ValueError, ZeroDivisionError):
+                    pass  # garde NULL si calcul echoue
 
         # ─── Phase 1 Group D - intermarket (10 features cross-sym ES/NQ) ────
         # Sierra DMP n'emet AUCUNE feature im_* native (0/10).

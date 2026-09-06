@@ -1,8 +1,15 @@
 # L0 — SPEC : les conditions sont-elles réunies pour trader ?
 
-*Écrit le 06/09/2026, Claude Code + Fable. Chaque porte porte sa source, sa
-classe et sa mesure. Ce document est la source de vérité de L0 ; le code en
-découle, jamais l'inverse.*
+*Écrit le 06/09/2026, Claude Code + Fable, révisé après revue. Chaque porte
+porte sa source et sa classe. Ce document est la source de vérité de L0 ; le
+code en découle, jamais l'inverse.*
+
+**Les taux mesurés ne sont pas dans ce document.** Ils vivent dans
+[`rapports/`](rapports/), datés, produits par `mesure_57j.py`. Un chiffre
+recopié dans une prose survit au run qui l'a invalidé : la version précédente
+annonçait 93,5 % pour `POSITION_OUVERTE` quand le CSV disait 72,5 %, et 41,6 %
+pour `MAX_TRADES` quand il disait 0. Ce qui reste ici, c'est **la question à
+laquelle chaque porte répond** — pas sa réponse du jour.
 
 ---
 
@@ -41,14 +48,29 @@ collectée n'existe pas.**
 
 | porte | source | classe | mesure |
 |---|---|---|---|
-| `data_quality_flag != stable` | JSONL | **appliquée** | filtre de lecture, pas de devenir à mesurer |
-| `window_version != w1` | `recalc.window_version` | **appliquée** | bascule w0→w1 le 06/09 21:00 UTC |
-| barre 15 min incomplète | agrégation | **appliquée** | une barre partielle en fin de session fausse l'ATR |
-| fraîcheur > 90 s | `ts` vs horloge | **appliquée** | règle héritée : pas de trade sur une barre morte |
-| colonne dans `stale.csv` | 1 080 couples (col, jour) | **appliquée** | 63 colonnes du noyau touchées, 18 jours |
-| verdict L6 du jour = ALERTE | `surveillance/l6.py` | **appliquée** | une alerte bloque l'intégration du jour |
-| âge des niveaux MenthorQ | `mq_levels_1.0` | **observée** | le dump Sierra est vivant, l'âge reste à mesurer |
+| porte | source | classe | ce qu'elle demande |
+|---|---|---|---|
+| `L0_DATA_INSTABLE` | `data_quality_flag` | **appliquée** | la barre est-elle `stable` — ni warmup, ni degraded ? |
+| `L0_DATA_FENETRE_MELANGEE` | `window_version` | **appliquée** | la journée mélange-t-elle `w0` et `w1` ? Exiger `w1` fermerait tout l'historique — le danger est le mélange, pas la valeur |
+| `L0_DATA_INCOMPLETE` | agrégation | **appliquée** | la barre agrégée est-elle entière ? |
+| `L0_DATA_PERIMEE` | `age_s` (live) | **appliquée** | la barre a-t-elle moins de 90 s ? |
+| `L0_DATA_COLONNE_MORTE` | `stale.csv` | **appliquée** | une colonne que je lis est-elle figée ce jour-là ? |
+| `L0_DATA_L6_ALERTE` | `surveillance_l6.py` | **appliquée** | la surveillance a-t-elle levé une alerte ? |
+| âge des niveaux MenthorQ | `mq_levels_1.0` | **absente** | le dump est vivant, sa fraîcheur n'est pas contrôlée |
 | horloge du VPS dérivée | à construire | **absente** | rien ne la mesure aujourd'hui |
+
+**Ces six portes ne rejettent presque rien hors ligne, et ce n'est pas un
+défaut.** `charger_jour` filtre les barres instables en amont : tout ce qui
+arrive à la décision est déjà propre. **En live, rien ne garantit ça** — le bot
+lit la dernière barre du fichier, et sans ces portes personne ne vérifie
+qu'elle est saine, fraîche, complète, dans la bonne fenêtre. Une porte de la
+famille A qui mesure 0 en backtest n'est pas inerte : elle est **hors de son
+terrain**, et son terrain est mardi 9h30.
+
+Trois d'entre elles lisent une information qui **n'existe pas hors ligne**
+(l'âge de la barre, le verdict L6, les colonnes figées). Elles répondent alors
+`None` — « je ne peux pas répondre » — jamais `False`. La chaîne journalise le
+trou sous `TROU_<porte>` ; en live (`strict=True`) le trou **bloque**.
 
 ---
 

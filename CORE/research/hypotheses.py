@@ -16,14 +16,14 @@ Quatre bugs d'unite en six mois : `sess_range_atr` en avril, les `dist_*_atr`
 livres (facteur 4) cette semaine, `atr` lu au lieu de `atr_14m`, et le seuil de
 0,10 ATR qui valait 1,13 tick sur ES. Donc, explicitement :
 
-    `atr5`            POINTS. Calcule sur high/low, qui sont des prix.
+    `atr_barre`            POINTS. Calcule sur high/low, qui sont des prix.
     `dist_*`          TICKS.  Mesure du 06/09 : le niveau reconstruit par
                               `close + dist x 0,25` est constant sur la journee
                               et tombe sur des strikes ronds.
-    conversion        `atr5_ticks = atr5 / tick`, tick = 0,25 sur ES et NQ.
+    conversion        `atr5_ticks = atr_barre / tick`, tick = 0,25 sur ES et NQ.
 
 **Toute comparaison entre une `dist_*` et un multiple d'ATR passe par
-`seuil_ticks()`.** Comparer une distance en ticks a `0,10 * atr5` en points
+`seuil_ticks()`.** Comparer une distance en ticks a `0,10 * atr_barre` en points
 donnerait un seuil quatre fois trop grand, silencieusement.
 
 
@@ -87,8 +87,8 @@ def h2(df, tick=TICK):
     COLONNES   : bandes recalculees par `recalc.vwap_bandes(..., n_sd=2.0)` (A),
                  `delta_bar` (A), `finish_delta_pct` (A), `ib_range_atr` (B)
     """
-    p10 = seuil_ticks(df["atr5"], "P10", tick)
-    p15 = seuil_ticks(df["atr5"], "P15", tick)
+    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
+    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
     regime = _f(df, "ib_range_atr") < 0.8
     du, dd = _f(df, "dist_vwap_rth_sd2u_r"), _f(df, "dist_vwap_rth_sd2d_r")
     delta, fin = _f(df, "delta_bar"), _f(df, "finish_delta_pct")
@@ -118,7 +118,7 @@ def h3(df, tick=TICK):
     revenir » se lit donc `high > VAH` (la meche depasse) et `dist_cur_vah > 0`
     (la cloture est revenue dessous).
     """
-    p10 = seuil_ticks(df["atr5"], "P10", tick)
+    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
     dh, dl = _f(df, "dist_cur_vah"), _f(df, "dist_cur_val")
     fin = _f(df, "finish_delta_pct")
     vah = _f(df, "close") + dh * tick
@@ -189,8 +189,8 @@ def h6(df, tick=TICK):
     AU-DESSUS de l'IB. C'est ce signe qui distingue le retest par le haut (on
     est repasse au-dessus) du retest par le bas.
     """
-    p15 = seuil_ticks(df["atr5"], "P15", tick)
-    p05 = seuil_ticks(df["atr5"], "P05", tick)
+    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
+    p05 = seuil_ticks(df["atr_barre"], "P05", tick)
     regime = _f(df, "ib_range_atr") < 0.4
     dh, dl = _f(df, "dist_ib_high"), _f(df, "dist_ib_low")
     fin = _f(df, "finish_delta_pct")
@@ -227,7 +227,7 @@ def h7(df, tick=TICK):
     condition de reserve de liquidite qui fait tout le travail. Elle est donc
     ecrite serree, et exige qu'un niveau de reference ait ete REELLEMENT depasse.
     """
-    p10 = seuil_ticks(df["atr5"], "P10", tick)
+    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
     low, high, close = _f(df, "low"), _f(df, "high"), _f(df, "close")
 
     def depasse(cols, sens):
@@ -278,7 +278,7 @@ def h8(df, tick=TICK):
     — « normal mesure » et « jamais calcule » y sont indistinguables
     (CONVENTIONS §3.1, incident du 06/09).
     """
-    p20 = seuil_ticks(df["atr5"], "P20", tick)
+    p20 = seuil_ticks(df["atr_barre"], "P20", tick)
     pres = pd.Series(False, index=df.index)
     for c in NIVEAUX_H8:
         pres = pres | (_f(df, c).abs() <= p20)
@@ -303,10 +303,10 @@ def lieux(df, tick=TICK):
     et c'est precisement ce qui a manque a la lecture du 06/09, ou H6 rendait
     N = 0 sans qu'on voie que son regime couvrait 0,13 % des barres.
     """
-    p05 = seuil_ticks(df["atr5"], "P05", tick)
-    p10 = seuil_ticks(df["atr5"], "P10", tick)
-    p15 = seuil_ticks(df["atr5"], "P15", tick)
-    p20 = seuil_ticks(df["atr5"], "P20", tick)
+    p05 = seuil_ticks(df["atr_barre"], "P05", tick)
+    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
+    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
+    p20 = seuil_ticks(df["atr_barre"], "P20", tick)
     du, dd = _f(df, "dist_vwap_rth_sd2u_r"), _f(df, "dist_vwap_rth_sd2d_r")
     dh, dl = _f(df, "dist_cur_vah"), _f(df, "dist_cur_val")
     ih, il = _f(df, "dist_ib_high"), _f(df, "dist_ib_low")
@@ -368,8 +368,8 @@ def h2_prime(df, tick=TICK):
     reaction ramenait 27 signaux a 3, et le regime corrige ne coupe presque plus
     (141 sur 143).
     """
-    p10 = seuil_ticks(df["atr5"], "P10", tick)
-    p15 = seuil_ticks(df["atr5"], "P15", tick)
+    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
+    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
     regime = _ib_range_atr_r(df, tick) < 0.8
     du, dd = _f(df, "dist_vwap_rth_sd2u_r"), _f(df, "dist_vwap_rth_sd2d_r")
     delta, fin = _f(df, "delta_bar"), _f(df, "finish_delta_pct")
@@ -387,8 +387,8 @@ def h6_prime(df, tick=TICK):
     ramenes a 37 / 35 par le regime — sous le seuil de 40 avant meme la reaction.
     Annoncee NON TESTABLE.
     """
-    p15 = seuil_ticks(df["atr5"], "P15", tick)
-    p05 = seuil_ticks(df["atr5"], "P05", tick)
+    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
+    p05 = seuil_ticks(df["atr_barre"], "P05", tick)
     regime = _ib_range_atr_r(df, tick) < 0.4
     dh, dl = _f(df, "dist_ib_high"), _f(df, "dist_ib_low")
     fin = _f(df, "finish_delta_pct")
@@ -413,7 +413,7 @@ def h8_prime(df, tick=TICK):
     et un finish contraire ne coexistent presque jamais. Elle est lancee pour que
     ce soit ecrit, pas parce qu'on l'espere.
     """
-    p20 = seuil_ticks(df["atr5"], "P20", tick)
+    p20 = seuil_ticks(df["atr_barre"], "P20", tick)
     pres = pd.Series(False, index=df.index)
     for c in NIVEAUX_H8:
         pres = pres | (_f(df, c).abs() <= p20)

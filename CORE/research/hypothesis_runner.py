@@ -193,7 +193,7 @@ def agreger_5min(df, minutes=None):
     tr = pd.concat([out["high"] - out["low"],
                     (out["high"] - out["close"].shift()).abs(),
                     (out["low"] - out["close"].shift()).abs()], axis=1).max(axis=1)
-    out["atr5"] = tr.rolling(14, min_periods=7).mean()
+    out["atr_barre"] = tr.rolling(14, min_periods=7).mean()
     return out.reset_index(drop=True)
 
 
@@ -277,7 +277,7 @@ def triple_barriere(df, i_signal, side, couts_atr):
     j = i_signal + 1
     if j >= len(df):
         return None
-    atr = df["atr5"].iloc[i_signal]
+    atr = df["atr_barre"].iloc[i_signal]
     if not np.isfinite(atr) or atr <= 0:
         return None
     if isinstance(couts_atr, tuple):             # (dollars, $/point)
@@ -343,7 +343,7 @@ def triple_barriere_vpoc(df, i_signal, side, couts_atr):
     j = i_signal + 1
     if j >= len(df):
         return None
-    atr = df["atr5"].iloc[i_signal]
+    atr = df["atr_barre"].iloc[i_signal]
     if not np.isfinite(atr) or atr <= 0:
         return None
     if "dist_cur_vpoc" not in df.columns:
@@ -512,7 +512,7 @@ def _factices(df, rng):
     return {
         "aleatoire": (pd.Series(rng.random(n) < 0.02, index=df.index), 1),
         "toujours_vraie": (pd.Series(True, index=df.index), 1),
-        "fuyante_LOOKAHEAD": (fwd > 0.5 * df["atr5"], 1),
+        "fuyante_LOOKAHEAD": (fwd > 0.5 * df["atr_barre"], 1),
     }
 
 

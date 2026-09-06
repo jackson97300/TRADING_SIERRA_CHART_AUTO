@@ -91,7 +91,7 @@ def conditions_flux(df):
 
 
 def conditions_lieu(df):
-    p = seuil_ticks(df["atr5"], "P20")
+    p = seuil_ticks(df["atr_barre"], "P20")
     out = []
     for nom, col in LIEUX.items():
         if col not in df.columns:

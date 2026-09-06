@@ -33,6 +33,77 @@
 
 ---
 
+### 2026-09-06 — [SCALE_DRIFT] — L'ATR-15m d'ES faux d'un facteur cinq, et ce qu'il a fait decider
+
+**Contexte** : le veto « les frais mangent-ils la cible ? » compare le cout aller-retour a la
+distance au TP, soit `tp_atr x atr_barre x valeur_du_point`. La grandeur decisive est l'ATR de la
+barre agregee.
+
+**Ce qui a mal tourne** : l'ATR-15m d'ES etait estime a **2,8 points**. Mesure sur 20 jours,
+barres 15 min : **15,11 points** en mediane (p10 8,11 / p90 28,43). **Facteur 5,4.**
+
+**Cause racine** : une extrapolation en racine de n depuis `atr_14m` (1 min) — la meme faute que
+l'estimation de l'ATR-5m du 05/09, deja documentee comme septieme confusion d'unites. L'echelle
+en racine de n ne tient pas aux horizons intraday courts : le controle de tete le montre en dix
+secondes, ATR journalier ES ~89 points / racine(26 barres) ~ 17 points, du bon ordre de grandeur.
+Le chiffre faux a ensuite ete recopie dans le champ `mesure` de `seuils.yaml`, ou il a survecu a
+sa propre invalidation.
+
+**Ce qu'il a fait decider** : la part des frais dans le TP etait annoncee a **~20 % sur MES et
+~5 % sur MNQ**. Le vrai chiffre est **3,8 % et 0,9 %**. La conclusion « le micro ES est
+arithmetiquement perdant en 15 min », ecrite deux fois et utilisee pour ecarter ES, est **FAUSSE**.
+Les fades sur ES redeviennent jugeables ; la campagne les juge sur les deux instruments.
+
+**Une erreur a deux auteurs** : l'extrapolation en racine de n est de Claude Code, le chiffre a ete
+repris et re-derive par Fable, et aucun des deux n'a mesure avant de conclure. C'est exactement la
+regle « mesurer avant d'annoncer, et qu'un autre lise » — sauf que le second lecteur a relu le
+raisonnement, pas la donnee.
+
+**Aggravant — le nom** : la colonne s'appelait `atr5` alors qu'elle porte l'ATR de la barre
+agregee, 15 minutes dans cette campagne. Un nom qui annonce une echelle qu'il n'a pas invite a
+l'erreur. Renommee `atr_barre` dans les onze fichiers concernes.
+
+**Trigger prevention** : (1) toute grandeur qui entre dans un seuil se MESURE — p10/mediane/p90 —
+jamais ne s'estime ; (2) un controle d'ordre de grandeur par un chemin independant avant d'ecrire
+le nombre ; (3) aucun nom de colonne ne porte une echelle qu'il ne garantit pas ; (4) les mesures
+vivent dans `rapports/`, datees, et jamais dans un commentaire.
+
+**Reviewed** : Fable (a signale l'ecart) + Claude Code (a mesure) — huitieme confusion d'echelle
+du chantier, sur le chiffre qui decidait quel instrument on avait le droit de trader.
+
+---
+
+### 2026-09-06 — [VALIDATION_MISS] — Deux runs, un seul journal : le controle a tenu
+
+**Contexte** : mesure des portes L0 relancee apres l'ajout de la famille A. J'ai lance le
+second run **sans arreter le premier** — les deux ecrivaient dans
+`LOGS/entonnoir/portes57_15min.jsonl`.
+
+**Ce qui s'est passe** : le controle d'effectifs ajoute une heure plus tot a REFUSE le rapport.
+Quinze ecarts sur NQ, dont `TROU_L0_FERIE_CME` a 394 dans le tableau contre 484 dans le journal.
+Le fichier portait meme une ligne tronquee en plein milieu — deux processus ecrivant en append
+sur le meme descripteur.
+
+**Cause racine** : un nom de fichier fixe est un rendez-vous entre processus qui ne se
+connaissent pas. Rien dans le code ne signalait que ce nom etait partage, et rien n'empechait
+deux runs de coexister.
+
+**Ce qui a bien fonctionne** : sans `controler_effectifs`, ce rapport partait en publication avec
+des effectifs gonfles de 23 % sur NQ — donc des intervalles de confiance trop serres, donc des
+resultats qui « sortent du bruit » sans en sortir. Le controle ecrit le matin meme a attrape le
+soir une pollution qu'aucune relecture n'aurait vue.
+
+**Lecon** : un garde-fou vaut par les cas qu'il attrape et qu'on n'avait pas prevus. Celui-ci
+avait ete ecrit pour un bug d'appariement de cles ; il a servi contre une collision de processus.
+
+**Trigger prevention** : un journal de run porte le PID (`portes57_15min_<pid>.jsonl`), renomme
+en nom stable a la fin. Et : ne jamais relancer un script long sans verifier que le precedent est
+termine — le fait qu'il tourne en arriere-plan ne le rend pas inoffensif.
+
+**Reviewed** : self (via le controle automatique, pas via une relecture)
+
+---
+
 ### 2026-09-06 — [VALIDATION_MISS] — Un chiffre publie que le journal ne portait pas
 
 **Contexte** : mesure des portes L0 sur les 57 jours (`V3/layers/L0_interrupteur/mesure_57j.py`),

@@ -352,6 +352,24 @@ def add_cvd_momentum_streaming(row: dict, state: CVDMomentumState) -> dict:
     # ne s'activait jamais. Seul chemin reel : cumsum running par
     # session_date_trading (produit par Pass 4c-prereq AVANT Pass 4a).
     sess_d = out.get("session_date_trading")
+    # FIX 18/06 : en live Sierra, session_date_trading peut etre ABSENT du payload
+    # au moment de cette passe (calcule plus loin dans la chaine malgre le commentaire
+    # "Pass 4c-prereq AVANT Pass 4a"). sess_d=None a chaque barre -> None != None = False
+    # -> reset JAMAIS -> cvd_day = cumul multi-session (bug cross-session, INCIDENT_LOG #66).
+    # Fallback robuste : deriver la session CME 18:00 ET depuis ts (meme helper que
+    # cvd_session_override, robuste a l'ordre des passes). Quand session_date_trading
+    # EST present (batch + Sierra post-metadata), on l'utilise -> parite preservee.
+    if sess_d is None:
+        ts_ms = out.get("ts")
+        if ts_ms is not None:
+            try:
+                from CORE.cvd_session_override import _cme_session_id_from_ts_ms
+            except ImportError:
+                from cvd_session_override import _cme_session_id_from_ts_ms  # type: ignore
+            try:
+                sess_d = _cme_session_id_from_ts_ms(int(ts_ms))
+            except (TypeError, ValueError):
+                sess_d = None
     if sess_d != state.current_session_date_trading:
         # Nouvelle session -> reset cumsum
         state.current_session_date_trading = sess_d

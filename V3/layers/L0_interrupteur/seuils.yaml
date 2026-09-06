@@ -5,6 +5,14 @@
 # une porte declaree ici n'existe pas dans le code : le controle va dans les
 # DEUX SENS, sinon la derive est silencieuse.
 #
+# AUCUNE MESURE DANS CE FICHIER — corrige le 06/09 apres revue.
+# Une mesure vit dans `rapports/`, datee ; ce fichier POINTE vers elle et ne la
+# recopie pas. La version precedente portait « ferme 93,5 % » pour
+# `POSITION_OUVERTE` (le CSV disait 72,5 %) et « 41,6 % » pour `MAX_TRADES`
+# (le CSV disait 0). Un chiffre recopie dans un commentaire est un chiffre qui
+# pourrit : il survit au run qui l'a invalide. Le champ `mesure` ne contient
+# donc plus que la QUESTION a laquelle le rapport repond.
+#
 # TROIS MODES
 #   appliquee : elle bloque. N'y entre que ce dont l'effet protecteur est
 #               mesure, ou ce qui releve de la securite elementaire.
@@ -12,84 +20,186 @@
 #               porte » est ce qui a tue decembre ; « la mettre en
 #               observation » est une mesure.
 #   absente   : la donnee n'est pas collectee, ou le seuil n'est pas mesure.
-#               Journalisee `null`, jamais `false` — un manque qui se lit
-#               comme un feu vert est un manque qu'on oublie.
+#               Journalisee `null`, jamais `false`.
 #
-# REGLE DURE : aucun seuil sans sa distribution mesuree ecrite a cote. Six
-# confusions d'unites en une semaine ; deux hypotheses rendues non testables
-# par des seuils hors distribution (ib_range_atr < 0,40 = 0,13 % des barres).
+# REGLE DURE : aucun seuil sans sa distribution mesuree — dans `rapports/`.
+
+# INSTRUMENTS — cout aller-retour et valeur du point. Ils etaient en dur dans
+# `chaine.py` et `vetos.py` : deux nombres dont on vient de mesurer qu'ils se
+# trompent facilement, ecrits a deux endroits. L'unite est notee parce qu'elle
+# a deja coute huit confusions d'echelle au chantier.
+instruments:
+  ES:
+    contrat: MES              # micro E-mini S&P 500
+    cout_aller_retour_usd: 4.32
+    valeur_du_point_usd: 5.00
+    tick: 0.25
+  NQ:
+    contrat: MNQ              # micro E-mini Nasdaq 100
+    cout_aller_retour_usd: 2.82
+    valeur_du_point_usd: 2.00
+    tick: 0.25
+
+rapports:
+  portes: rapports/portes_57j.csv        # taux de rejet et devenir, par porte
+  fantomes: rapports/fantomes_57j.txt    # ce que POSITION_OUVERTE coute
+  atr: rapports/distributions.csv        # distributions des grandeurs seuillees
 
 portes:
 
-  # --- famille B — TEMPS ET CALENDRIER -------------------------------------
+  # === FAMILLE A — QUALITE DES DONNEES : ce que je lis est-il vrai ? ========
+  # Ces portes ne rejettent presque rien HORS LIGNE : `charger_jour` filtre
+  # deja les barres instables en amont. Elles existent pour le LIVE, ou rien
+  # ne garantit que la derniere barre lue est saine. Une porte famille A qui
+  # mesure 0 en backtest n'est pas inerte — elle est hors de son terrain.
+  L0_DATA_INSTABLE:
+    mode: appliquee
+    seuils: {attendu: stable}
+    mesure: "combien de barres non stables atteignent la decision en live ?"
+  L0_DATA_PERIMEE:
+    mode: appliquee
+    seuils: {age_max_s: 90}
+    mesure: "distribution de l'age de la derniere barre au moment de decider"
+  L0_DATA_INCOMPLETE:
+    mode: appliquee
+    seuils: {}
+    mesure: "combien de barres partielles en fin de seance ?"
+  L0_DATA_FENETRE_MELANGEE:
+    mode: appliquee
+    seuils: {}
+    mesure: "combien de journees melangent w0 et w1 ? Le danger n'est pas w0 —
+             tout l'historique l'est — c'est le melange dans un meme calcul."
+  L0_DATA_L6_ALERTE:
+    mode: appliquee
+    seuils: {}
+    mesure: "combien de journees ou L6 a leve une alerte ?"
+  L0_DATA_COLONNE_MORTE:
+    mode: appliquee
+    seuils: {}
+    mesure: "1 080 couples (colonne, jour) dans stale.csv ; combien touchent
+             une colonne que la decision lit ?"
+
+  # === FAMILLE B — TEMPS ET CALENDRIER : est-ce un moment ou decider ? =====
   L0_NEWS:
     mode: appliquee
     seuils: {}
-    mesure: "ferme 1,0 % — devenir -4,82 ATR ES / -1,18 NQ. Trente ecarts-types
-             du hasard (-0,057 +/- 0,153). La meilleure porte du systeme."
+    mesure: "la meilleure porte du systeme — voir rapports/portes_57j.csv"
   L0_SESSION_BLOQUEE:
     mode: appliquee
     seuils: {}
-    mesure: "ferme 10,1 % ES / 14,0 % NQ — devenir +0,069 / +0,04, non significatif"
+    mesure: "ouverture US, close + overnight, week-end — cf CORE/eco_calendar.py"
+  L0_FERIE_CME:
+    mode: appliquee
+    seuils: {}
+    mesure: "JAMAIS deductible des donnees : le 19/06 avait 841 barres et 12 %
+             du volume, le marche etait pourtant ouvert. Seul le calendrier le
+             sait — cf ../../config/sessions.yaml"
+  L0_ROLLOVER:
+    mode: appliquee
+    seuils: {}
+    mesure: "premier passage le 10/09"
+  L0_PREMIERE_BARRE:
+    mode: appliquee
+    seuils: {rang_min: 4}      # 4 barres de 15 min = le regime est lisible
+    mesure: "aucune decision avant que le regime soit lisible"
   L0_EOD_LOCKOUT:
     mode: appliquee
     seuils: {cloture_utc_min: 1200, marge_min: 10}   # 20:00 UTC - 10 min
-    mesure: "ferme 1,5 % — 20h UTC est deja 100 % bloque par la session"
+    mesure: "REDONDANTE avec SESSION_BLOQUEE, pas inerte : 20h UTC est deja
+             100 % bloque en amont. Gardee car elle protege si le calendrier
+             economique tombe."
 
-  # --- famille C — CONDITIONS DE MARCHE ------------------------------------
+  # === FAMILLE C — CONDITIONS DE MARCHE : le marche est-il tradable ? ======
   L0_VIX_REGIME:
-    mode: observee
+    mode: appliquee
     seuils: {regime_max: 2}          # 0 <15 / 1 <=25 / 2 >25 / 3 >35
-    mesure: "DORMANTE : VIX plafonne a 22,01 sur 57 jours, les codes 2 et 3
-             n'ont jamais existe. Zero rejet — attendu, pas anormal."
+    mesure: "DORMANTE sur ce lot : le VIX a plafonne a 22,01 sur 57 jours, les
+             codes 2 et 3 n'ont jamais existe. APPLIQUEE quand meme (revue du
+             06/09) : elle dort, elle ne coute rien, et le jour ou elle se
+             reveille c'est de la securite elementaire."
+  L0_REGIME_INDETERMINE:
+    mode: observee
+    seuils: {zone_morte_atr: 1.0}
+    mesure: "zone morte autour du HVL — combien de barres sans regime lisible ?"
 
-  # --- famille D — ETAT DU RISQUE ------------------------------------------
-  L0_MAX_TRADES_JOUR:
+  # === FAMILLE D — ETAT DU RISQUE : ai-je encore le droit de perdre ? ======
+  # DEUX COMPTEURS, pas un — separes le 06/09 apres revue.
+  # `MAX_TRADES` lisait `n_jour`, incremente aux seuls signaux RETENUS : elle
+  # compte donc les TRADES PRIS. Quand elle fermait 40 %, la position ouverte
+  # n'etait pas suivie et beaucoup plus de signaux passaient ; le compteur
+  # montait vite. Sa definition n'a pas change, son CONTEXTE si — mais les deux
+  # grandeurs restent des informations differentes, et chacune merite son nom.
+  L0_MAX_TRADES_PRIS:
     mode: observee
     seuils: {max: 5}
-    mesure: "ferme 41,6 % ES / 47,9 % NQ — rejetes +0,196 / +0,253, MIEUX que
-             les retenus. Etrangleuse ET couteuse : elle ne s'applique pas."
+    mesure: "nombre de trades EXECUTES dans la journee"
+  L0_RANG_DU_SIGNAL:
+    mode: observee
+    seuils: {max: 12}
+    mesure: "rang du signal dans la journee, execute ou non — le 15e vaut-il
+             moins que le 3e ? Seuil provisoire : a caler sur la distribution."
   L0_STOP_JOURNALIER:
     mode: appliquee
     seuils: {usd: -1000.0}
-    mesure: "INERTE par construction : 31,8 pertes d'affilee sur ES contre ~7
-             signaux/jour. Assume — c'est un garde-fou de securite, pas un filtre."
+    mesure: "INERTE par construction en SIM et c'est assume : garde-fou de
+             securite, pas filtre. Voir rapports/ pour le nombre de pertes
+             d'affilee qu'il faudrait."
   L0_STOP_PROPFIRM:
     mode: observee
     seuils: {usd: -200.0}
-    mesure: "la vraie regle Douglas — a la lecture, combien de jours coupes"
+    mesure: "la vraie regle Douglas — combien de jours coupes ?"
   L0_COOLDOWN:
     mode: observee
     seuils: {apres_perte_min: 90, apres_gain_min: 60}
-    mesure: "jamais atteint en barres de 15 min sur 57 jours"
+    mesure: "90/60 min, PAS les 3/5 min de janvier. Raison : en barres de 15
+             min, un cooldown de 3 min ne saute meme pas une barre — il ne
+             pourrait rien empecher. 90 min = six barres. A trancher sur la
+             mesure quand il se declenchera : il ne l'a jamais fait en 57 jours."
 
-  # --- famille E — ETAT DE L'EXECUTION -------------------------------------
+  # === FAMILLE E — ETAT DE L'EXECUTION : puis-je passer l'ordre ? ==========
   L0_POSITION_OUVERTE:
     mode: appliquee
     seuils: {}
-    mesure: "ferme 93,5 % ES / 94,0 % NQ — de loin la plus fermee, et invisible
-             avant le 06/09. Bloque l'entree, ne bloque PAS la mesure : chaque
-             signal qu'elle ferme est simule en trade fantome complet."
+    mesure: "de loin la porte la plus fermee, et invisible avant le 06/09.
+             Bloque l'entree, ne bloque PAS la mesure : chaque signal qu'elle
+             ferme est simule en trade fantome complet — rapports/fantomes_57j.txt"
+  L0_CONTRAT_INACTIF:
+    mode: appliquee
+    seuils: {}
+    mesure: "contrat du JSONL != contrat du compte — a brancher avant le 10/09"
+  L0_DTC_DECONNECTE:
+    mode: appliquee
+    seuils: {}
+    mesure: "repli PAPER, jamais d'ordre a l'aveugle"
 
-  # --- L5 — RISQUE ----------------------------------------------------------
+  # === L5 — RISQUE ==========================================================
   L5_VETO_GAMMA:
     mode: appliquee
     seuils: {}
-    mesure: "ferme 3,4 % ES — devenir -0,401 ATR, elle protege"
+    mesure: "mur gamma dans le sens du TP — voir rapports/portes_57j.csv"
   L5_VETO_RVOL_EXTREME:
     mode: appliquee
     seuils: {zscore_max: 3.0}
-    mesure: "ferme 7,8 % ES — devenir -0,042, faible mais du bon cote"
+    mesure: "volume relatif aberrant : ce n'est plus le meme marche"
   L5_FRAIS_TROP_LOURDS:
     mode: observee
     seuils: {tp_atr: 1.5, part_max: 0.10}
-    mesure: "ferme 5,7 % ES / 0 % NQ — conforme au calcul (MES ~20 %, MNQ ~5 %).
-             Observee : fermer tout MES est peut-etre juste, ca se mesure."
+    # FORMULE, ecrite ici parce qu'un ecart d'echelle a deja coute un facteur 4 :
+    #     part = cout_aller_retour / (tp_atr * atr5 * valeur_du_point)
+    #     ES  cout 4,32 $  valeur du point 5,00 $  (MES, micro)
+    #     NQ  cout 2,82 $  valeur du point 2,00 $  (MNQ, micro)
+    # `atr5` est l'ATR de la barre AGREGEE, en POINTS — en 15 min, pas en 5.
+    mesure: "MESURE du 06/09 sur 20 jours, barres 15 min : atr5 ES median
+             15,11 pts (p10 8,11 / p90 28,43), part des frais MEDIANE 3,8 %,
+             au-dessus de 10 % sur 3,0 % des barres. NQ atr5 median 101,14 pts,
+             part 0,9 %, jamais au-dessus de 10 %.
+             CORRIGE UNE ERREUR : la version precedente annoncait ~20 % sur MES
+             a partir d'un ATR de 2,8 points. C'etait un ATR d'une autre echelle
+             — l'ATR 15 min reel est cinq fois plus grand. Huitieme confusion
+             d'echelle du chantier."
 
 # --- CE QUI N'EXISTE PAS, ET QUI NE SE DEVINE PAS --------------------------
-# Une condition non collectee n'existe pas. Aucun proxy : `mq_gamma_condition`
-# a ete retire pour cette raison. Ces trois portes sont declarees ABSENTES pour
-# rester visibles ; elles ne sont pas dans le registre du code.
+# Une condition non collectee n'existe pas. Aucun proxy.
 absentes:
   L0_SPREAD:
     raison: "aucune colonne de carnet dans le C++. `avg_bid_size`/`avg_ask_size`

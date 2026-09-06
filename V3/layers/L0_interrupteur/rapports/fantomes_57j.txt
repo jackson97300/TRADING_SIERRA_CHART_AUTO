@@ -1,31 +1,31 @@
 TRADES FANTOMES — ce que « une position par instrument » coute
 source : LOGS/entonnoir/portes57_15min.jsonl
 
-ES — 258 signaux refuses par POSITION_OUVERTE, tous simules
+ES — 254 signaux refuses par POSITION_OUVERTE, tous simules
 ------------------------------------------------------------------------------------------------
-  1. COUT DE LA REGLE (tous)         n=  258   moyenne -0.055  +/- 0.118   somme    -14.2
+  1. COUT DE LA REGLE (tous)         n=  254   moyenne -0.050  +/- 0.119   somme    -12.6
 
   2. contraires a la position        n=   22   moyenne -0.585  +/- 0.300   somme    -12.9
        ... quand la position finit SL n=    3   moyenne -0.885  +/- 0.279   somme     -2.7
        ... quand la position finit TP n=    8   moyenne -0.766  +/- 0.434   somme     -6.1
        ... quand la position finit EXPIRATION n=   11   moyenne -0.372  +/- 0.493   somme     -4.1
 
-  3. meme sens que la position       n=  236   moyenne -0.006  +/- 0.125   somme     -1.3
-       ... arrive tot (<= 3 barres)  n=  102   moyenne -0.097  +/- 0.196   somme     -9.9
+  3. meme sens que la position       n=  232   moyenne +0.001  +/- 0.126   somme     +0.2
+       ... arrive tot (<= 3 barres)  n=   98   moyenne -0.086  +/- 0.200   somme     -8.4
        ... arrive au milieu (4-10)   n=   94   moyenne +0.091  +/- 0.203   somme     +8.6
        ... arrive tard (> 10)        n=   40   moyenne +0.001  +/- 0.253   somme     +0.1
 
-NQ — 273 signaux refuses par POSITION_OUVERTE, tous simules
+NQ — 272 signaux refuses par POSITION_OUVERTE, tous simules
 ------------------------------------------------------------------------------------------------
-  1. COUT DE LA REGLE (tous)         n=  273   moyenne +0.094  +/- 0.109   somme    +25.7
+  1. COUT DE LA REGLE (tous)         n=  272   moyenne +0.094  +/- 0.110   somme    +25.6
 
   2. contraires a la position        n=   35   moyenne -0.143  +/- 0.297   somme     -5.0
        ... quand la position finit SL n=    4   moyenne +0.854  +/- 1.219   somme     +3.4
        ... quand la position finit TP n=    9   moyenne -1.018  +/- 0.002   somme     -9.2
        ... quand la position finit EXPIRATION n=   22   moyenne +0.034  +/- 0.305   somme     +0.7
 
-  3. meme sens que la position       n=  238   moyenne +0.129  +/- 0.117   somme    +30.7
-       ... arrive tot (<= 3 barres)  n=   94   moyenne +0.104  +/- 0.192   somme     +9.8
+  3. meme sens que la position       n=  237   moyenne +0.129  +/- 0.117   somme    +30.6
+       ... arrive tot (<= 3 barres)  n=   93   moyenne +0.103  +/- 0.194   somme     +9.6
        ... arrive au milieu (4-10)   n=  106   moyenne +0.087  +/- 0.173   somme     +9.2
        ... arrive tard (> 10)        n=   38   moyenne +0.309  +/- 0.276   somme    +11.8
 

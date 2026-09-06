@@ -26,6 +26,9 @@ class OrderResult:
     fill_price: float = 0.0
     error_msg: str = ""
     dry_run: bool = False
+    # FIX 18/06 B1 : True si la position est ouverte (fill OK) mais SANS SL pose
+    # (send_stop_order a echoue). Le caller DOIT close auto / alerter CRITIQUE.
+    naked: bool = False
 
 
 class OrderRouter:
@@ -94,96 +97,104 @@ class OrderRouter:
                 dry_run=False,
             )
 
+        # FIX 24/06 P0b : pre-check connexion DTC avant envoi. Avant ce fix, si
+        # SC restart silencieux laissait dtc.connected=False, send_market_with_stop_only
+        # retournait ("", "", 0.0) sans emit -> caller voyait DTC_NO_FILL_CONFIRMED
+        # sans cause visible. Incident 23/06 23:16 UTC : 1 setup A++ NQ LONG perdu
+        # apres bars stale 1h16. Emit fail-loud pour diagnostic + retour parlant.
+        dtc_connected = getattr(self.dtc, "connected", True)
+        if not dtc_connected:
+            return OrderResult(
+                success=False,
+                error_msg="DTC_NOT_CONNECTED_PRE_SEND",
+                dry_run=False,
+            )
+
         try:
             # Mapping direction str -> side int (1=BUY, 2=SELL)
             side = 1 if direction == "long" else 2
-            send_fn = getattr(self.dtc, "send_market_order", None)
+            # FIX 18/06 B1 : flow dedie MARKET + SL STOP (PAS de TP). Le legacy
+            # send_market_order conditionne le bloc SL a tp_price>0 -> BN V4
+            # (tp=0) ouvrait une position SANS SL. send_market_with_stop_only
+            # attend le fill puis pose le SL inconditionnellement.
+            send_fn = getattr(self.dtc, "send_market_with_stop_only", None)
             if send_fn is None:
                 return OrderResult(
                     success=False,
-                    error_msg="DTC_NO_SEND_MARKET_ORDER",
+                    error_msg="DTC_NO_SEND_MARKET_WITH_STOP_ONLY",
                     dry_run=False,
                 )
-            try:
-                from CORE.constants import get_tick_size
-            except ImportError:
-                from constants import get_tick_size  # type: ignore
-            tick = get_tick_size(symbol)
 
-            # BN V4 : pas de TP, on passe tp_price=0 (= ignore cote DTC).
-            # Le legacy connecteur signe (symbol, side, quantity, sl_price, tp_price,
-            # trade_account, signal_ref_price, sl_ticks, tp_ticks, tick_size).
-            sl_ticks_calc = abs(entry_price - sl_price) / tick
             result = send_fn(
                 symbol=symbol,
                 side=side,
                 quantity=n_micros,
                 sl_price=sl_price,
-                tp_price=0.0,
                 trade_account=self.cfg.TRADE_ACCOUNT,  # Sim3 explicite
                 signal_ref_price=entry_price,
-                sl_ticks=int(sl_ticks_calc),
-                tp_ticks=0,
-                tick_size=tick,
             )
 
-            # Le DTC connector retourne tuple : (parent, tp, sl, fill)
-            # FIX 16/06 : reproduit bug Bot MR fix matin. JAMAIS bool(result)
-            # comme fallback - tuple non-vide != fill reussi = position fantome.
-            # Tuple len=3 (parent, tp, sl) sans fill = abort confirme cote DTC.
-            parent_real, sl_real, fill_price = None, None, 0.0
-            if isinstance(result, tuple) and len(result) >= 4:
-                parent_real, _tp_real, sl_real, fill_price = result[:4]
-            elif isinstance(result, tuple) and len(result) == 3:
-                # Detection abort DTC : tp_cid="" + sl_cid="" => echec parent fill
-                p, t, s = result[:3]
-                if not p or (not t and not s):
-                    return OrderResult(
-                        success=False,
-                        error_msg=f"DTC_PARENT_FILL_ABORT:tuple3_no_brackets",
-                        dry_run=False,
-                    )
-                parent_real, sl_real = p, s
-            elif isinstance(result, dict):
-                fill_price = float(result.get("fill_price", 0.0))
-                parent_real = result.get("parent_cid")
-                sl_real = result.get("sl_cid")
-            else:
-                # Type non reconnu = abort (anti-pattern bool(result))
+            # Contrat strict : (parent_id, sl_cid, fill_price).
+            if not (isinstance(result, tuple) and len(result) == 3):
                 return OrderResult(
                     success=False,
                     error_msg=f"DTC_UNKNOWN_RESULT_TYPE:{type(result).__name__}",
                     dry_run=False,
                 )
+            parent_real, sl_real, fill_raw = result
 
-            if parent_real:
-                parent_cid = parent_real
-            if sl_real:
-                sl_cid = sl_real
-
-            # Verification fill_price reel via get_last_fill_price (fix Bot MR 16/06)
             try:
-                fp = float(fill_price) if fill_price else 0.0
+                fp = float(fill_raw) if fill_raw else 0.0
             except (TypeError, ValueError):
                 fp = 0.0
-            if fp <= 0 and parent_cid and hasattr(self.dtc, "get_last_fill_price"):
+            # Filet : si fill_price=0 mais parent connu, retenter via cache.
+            if fp <= 0 and parent_real and hasattr(self.dtc, "get_last_fill_price"):
                 try:
-                    fp = float(self.dtc.get_last_fill_price(parent_cid) or 0.0)
+                    fp = float(self.dtc.get_last_fill_price(parent_real) or 0.0)
                 except Exception:  # noqa: BLE001
                     fp = 0.0
 
-            # Success exige fill_price > 0 confirme (anti position fantome)
-            if fp <= 0:
+            # Pas de fill confirme -> aucune position ouverte (timeout/abort).
+            if not parent_real or fp <= 0:
                 return OrderResult(
                     success=False,
-                    error_msg=f"DTC_NO_FILL_CONFIRMED:parent={parent_cid}",
+                    error_msg=f"DTC_NO_FILL_CONFIRMED:parent={parent_real or parent_cid}",
+                    dry_run=False,
+                )
+
+            # Fill OK mais SL non pose -> position NUE. R1 (review B1) : on ne
+            # laisse JAMAIS une position nue ouverte. Flatten MARKET inverse
+            # immediat. success=False -> main.py ne track pas (la position est
+            # fermee / en cours de fermeture, pas active).
+            if not sl_real:
+                close_side = 2 if side == 1 else 1  # oppose a la position
+                flat_ok = False
+                if hasattr(self.dtc, "send_close_market"):
+                    try:
+                        close_id = self.dtc.send_close_market(
+                            symbol=symbol, side=close_side, quantity=n_micros,
+                            trade_account=self.cfg.TRADE_ACCOUNT,
+                        )
+                        flat_ok = bool(close_id)
+                    except Exception:  # noqa: BLE001
+                        flat_ok = False
+                return OrderResult(
+                    success=False,
+                    parent_cid=parent_real,
+                    sl_cid="",
+                    fill_price=fp,
+                    naked=True,
+                    error_msg=(
+                        "DTC_NAKED_FLATTENED" if flat_ok
+                        else "DTC_NAKED_CLOSE_FAILED"
+                    ),
                     dry_run=False,
                 )
 
             return OrderResult(
                 success=True,
-                parent_cid=parent_cid,
-                sl_cid=sl_cid,
+                parent_cid=parent_real,
+                sl_cid=sl_real,
                 fill_price=fp,
                 dry_run=False,
             )
@@ -241,6 +252,13 @@ class OrderRouter:
         cancel_fn = getattr(self.dtc, "cancel_order", None)
         send_fn = getattr(self.dtc, "send_stop_order", None)
         if cancel_fn is None:
+            return ""
+        # FIX 24/06 P0b corollaire (code-reviewer R1 BLOQUANT) : protection identique
+        # a send_entry pour trailing en cours quand DTC perd la connexion. Sans ce
+        # check, cancel sur socket dead -> exception -> "" -> position nue cote broker
+        # le temps que DTC revienne. Cf BOTBN_TRAILING_SL_REPLACE_FAIL emit existant
+        # main.py:351 qui catch le "" en retour.
+        if not getattr(self.dtc, "connected", True):
             return ""
         # 1. Cancel ancien SL — FIX 17/06 review R1 BLOQUANT : require_sid=True.
         # Sans ce flag, SC ignore silencieusement le cancel si SID pas encore

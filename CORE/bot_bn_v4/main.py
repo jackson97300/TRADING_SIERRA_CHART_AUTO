@@ -226,12 +226,31 @@ class BotBNV4:
         # si _ensure_dtc_connected() appele hors run() (tests, future on_demand).
         self._last_reconnect_attempt = 0.0
 
-    def _on_fill_close(self, sym: str, pnl_usd: float) -> None:
+    def _on_fill_close(
+        self,
+        sym: str,
+        pnl_usd: float,
+        exit_reason: str = "UNKNOWN",
+    ) -> None:
         """Callback DtcFillListener post-close : ajoute le PnL au cumul daily.
 
         FIX 18/06 B2 : apply_pnl (PAS update_after_trade) — le trade est deja
         compte a l'ouverture via register_open. update_after_trade double-compterait.
+
+        P0.B 28/06 audit weekend : emit BOTBN_TRADE_CLOSE pour observability.
+        Sans ce code, execution_*_botbn.jsonl restait vide cote close (logs
+        DTC_FILL_TP/SL emis sous namespace bot1_v2). Bloquant DSR Lopez J+30.
         """
+        # Emit close trace AVANT apply_pnl pour eviter perte log si exception PnL
+        try:
+            bot_log.emit(
+                "BOTBN_TRADE_CLOSE",
+                sym=sym,
+                pnl_usd=round(float(pnl_usd), 2),
+                exit_reason=exit_reason,
+            )
+        except Exception:  # noqa: BLE001
+            pass
         try:
             self.daily_gate.apply_pnl(pnl_usd)
             self._save_daily_state()
@@ -603,14 +622,26 @@ class BotBNV4:
                     pass
             else:
                 self.log.error(f"{sym} ORDER FAIL: {order_result.error_msg}")
-                try:
-                    bot_log.emit(
-                        "BOTBN_ORDER_FAIL",
-                        sym=sym, direction=decision.direction or "?",
-                        err_msg=order_result.error_msg,
-                    )
-                except Exception:
-                    pass
+                # FIX 24/06 P0b R5 review : log code dedie pour DTC_NOT_CONNECTED
+                # facilite grep J+1 vs noise BOTBN_ORDER_FAIL generique.
+                if "DTC_NOT_CONNECTED_PRE_SEND" in (order_result.error_msg or ""):
+                    try:
+                        bot_log.emit(
+                            "BOTBN_DTC_NOT_CONNECTED_PRE_SEND",
+                            sym=sym, direction=decision.direction or "?",
+                            grade=(setup or {}).get("grade", "?"),
+                        )
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        bot_log.emit(
+                            "BOTBN_ORDER_FAIL",
+                            sym=sym, direction=decision.direction or "?",
+                            err_msg=order_result.error_msg,
+                        )
+                    except Exception:
+                        pass
             log_decision_jsonl(
                 bar_ts=bar_ts, symbol=sym, direction=decision.direction,
                 setup=setup, tradable=True, executed=False,
@@ -629,6 +660,22 @@ class BotBNV4:
             )
         except Exception:
             pass
+
+        # P0.B 28/06 audit weekend : trace SL pose post-fill (B1 INCIDENT #67).
+        # send_market_with_stop_only pose le SL inconditionnellement apres fill.
+        # Si sl_cid manquant -> position NAKED deja gere ligne 596 (BOTBN_POSITION_NAKED).
+        # Ici on log le succes pour audit J+1 / verify_logs.md grep.
+        if order_result.sl_cid:
+            try:
+                bot_log.emit(
+                    "BOTBN_SL_SENT",
+                    sym=sym,
+                    direction=decision.direction or "?",
+                    sl_cid=order_result.sl_cid,
+                    sl_price=round(float(sl_price), 2),
+                )
+            except Exception:
+                pass
 
         # Start trailing manager
         start_err = self.trails[sym].start(

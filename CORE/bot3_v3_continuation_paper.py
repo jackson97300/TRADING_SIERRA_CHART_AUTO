@@ -178,6 +178,35 @@ class Bot3V3ContinuationPaper:
         for sym in self.symbols:
             self._logger_by_sym[sym] = Bot3V3Logger(symbol=sym)
 
+        # 16/06 Gate intermarket DIVERGENCE ES->NQ (confirmation continuation).
+        # OPT-IN (defaut OFF) : aucun impact sur le bot live tant que non valide
+        # forward (MIA_BOT3_V3_INTERMARKET_GATE=1). Edge backtest PF 1.13->1.45
+        # (in-sample databento, NON acquis). Reserves R2/R4/R5 review traitees :
+        # reader ES meme source-switch, skip update si stale, codes log distincts.
+        self._intermarket_enabled = (
+            os.environ.get("MIA_BOT3_V3_INTERMARKET_GATE", "0") == "1"
+        )
+        self._intermarket_gate = None
+        self._es_reader = None
+        self._es_last_ts_ns = 0
+        if self._intermarket_enabled:
+            try:
+                from intermarket_divergence_gate import IntermarketDivergenceGate
+            except ImportError:
+                from CORE.intermarket_divergence_gate import IntermarketDivergenceGate
+            im_window = int(os.environ.get("MIA_BOT3_V3_IM_WINDOW", "600"))
+            self._intermarket_gate = IntermarketDivergenceGate(
+                window=im_window, pct=13.0, min_samples=100, fail_safe_block=True,
+            )
+            # reader ES : LiveEnrichedReader herite du meme source-switch que NQ
+            # (sierra/live_enriched auto via l'import en tete de module).
+            self._es_reader = LiveEnrichedReader(
+                symbol="ES", window_bars=max(im_window + 100, 700),
+                warn_stale_sec=180,
+            )
+            _emit("BOT3_V3_INTERMARKET_GATE_ENABLED",
+                  window=im_window, pct=13.0, fail_safe=True)
+
         # Etat positions + lock
         self._position: Dict[str, Optional[dict]] = {s: None for s in self.symbols}
         self._current_signal_id: Dict[str, Optional[str]] = {s: None for s in self.symbols}
@@ -582,6 +611,9 @@ class Bot3V3ContinuationPaper:
         engine = self._engine_by_sym[sym]
         logger = self._logger_by_sym[sym]
 
+        # 0. MAJ buffer rolling ES du gate intermarket (avant tout traitement NQ).
+        self._update_intermarket_gate()
+
         # 1. Lecture rolling window
         df = reader.load_rolling_window()
         if df is None or len(df) < 5:
@@ -621,8 +653,67 @@ class Bot3V3ContinuationPaper:
         if decision is None:
             return
 
+        # 5b. Gate intermarket DIVERGENCE (opt-in) : veto si ES ne diverge pas.
+        if not self._intermarket_confirms(sym, decision):
+            return
+
         # Decision emise par engine → handle entry
         self._handle_entry_decision(sym, decision, last_bar)
+
+    def _update_intermarket_gate(self) -> None:
+        """Pousse les NOUVELLES barres ES dans le buffer rolling du gate.
+        Skip si gate desactive ou feed ES stale (R4 : pas de barre morte dans
+        la distribution). Idempotent via _es_last_ts_ns."""
+        if not self._intermarket_enabled or self._es_reader is None:
+            return
+        try:
+            df = self._es_reader.load_rolling_window()
+            if df is None or len(df) == 0:
+                return
+            # Skip si ES stale : ne pas polluer la distribution percentile.
+            if self._es_reader.get_last_bar_age_seconds() > self._es_reader.warn_stale_sec:
+                return
+            for _, row in df.iterrows():
+                ts = int(row.get("ts_event_ns", 0) or 0)
+                if ts <= self._es_last_ts_ns:
+                    continue
+                self._intermarket_gate.update(row.get("dist_vwap_w_pct"))
+                self._es_last_ts_ns = ts
+        except Exception as exc:  # noqa: BLE001 - degrade : gate failsafe gerera
+            _emit("BOT3_V3_BAR_STALE", sym="ES",
+                  age_sec=-1, threshold_sec=0)  # signal indirect feed ES KO
+            return
+
+    def _intermarket_confirms(self, sym: str, decision: EntryDecision) -> bool:
+        """True si le gate autorise (ES diverge OU gate desactive). Emit veto/pass."""
+        if not self._intermarket_enabled or self._intermarket_gate is None:
+            return True
+        es_dist = None
+        try:
+            df = self._es_reader.load_rolling_window()
+            if df is not None and len(df) > 0:
+                es_dist = df.iloc[-1].get("dist_vwap_w_pct")
+        except Exception:  # noqa: BLE001
+            es_dist = None
+        allow, reason = self._intermarket_gate.should_allow(decision.side, es_dist)
+        p_low, p_high = self._intermarket_gate.current_percentiles()
+        if allow:
+            _emit("BOT3_V3_ENTRY_PASS_INTERMARKET",
+                  sym=sym, side=decision.side, es_dist=es_dist,
+                  p_low=p_low, p_high=p_high, level=decision.level_name,
+                  signal_id="pre_entry")
+            return True
+        if reason.startswith("failsafe"):
+            _emit("BOT3_V3_ENTRY_VETO_INTERMARKET_FAILSAFE",
+                  sym=sym, side=decision.side,
+                  buf_len=self._intermarket_gate.stats()["buf_len"],
+                  level=decision.level_name, signal_id="pre_entry")
+        else:
+            _emit("BOT3_V3_ENTRY_VETO_INTERMARKET_DIVERGE",
+                  sym=sym, side=decision.side, es_dist=es_dist,
+                  p_low=p_low, p_high=p_high, level=decision.level_name,
+                  signal_id="pre_entry")
+        return False
 
     def _handle_entry_decision(
         self, sym: str, decision: EntryDecision, last_bar: Any,

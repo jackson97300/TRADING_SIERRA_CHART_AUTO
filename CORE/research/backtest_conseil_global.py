@@ -66,6 +66,56 @@ PARAMS = {
            "tick_value": 5.00},
 }
 
+# Zones de la methode Jackson : "ne jamais trader au milieu de nulle part".
+# Distances deja calculees par le pipeline, en TICKS signes.
+ZONES = (
+    "dist_cur_vpoc", "dist_cur_vah", "dist_cur_val",          # market profile jour
+    "dist_prev_vpoc", "dist_prev_vah", "dist_prev_val",       # niveaux veille
+    "dist_pdh", "dist_pdl",                                   # high/low veille
+    "dist_vwap_d", "dist_vwap_d_sd1u", "dist_vwap_d_sd1d",    # vwap + deviations
+    "dist_vwap_d_sd2u", "dist_vwap_d_sd2d",
+    "dist_swing_high", "dist_swing_low",                      # structure
+    "dist_ib_high", "dist_ib_low",                            # initial balance
+    "dist_ovn_high", "dist_ovn_low",                          # overnight
+    "dist_mq_call", "dist_mq_put", "dist_mq_hvl",             # options
+)
+
+# Seuil de proximite en TICKS, fixe A PRIORI (jamais optimise sur le resultat).
+# Ratio ES:NQ ~ 1:4, coherent avec la volatilite relative des deux instruments.
+PROXIMITE_TICKS = {"ES": 8, "NQ": 30}
+
+
+def distance_zone_min(bar: dict) -> float | None:
+    """Distance absolue (ticks) a la zone la plus proche. None si aucune zone."""
+    meilleures = [abs(float(bar[k])) for k in ZONES
+                  if isinstance(bar.get(k), (int, float))]
+    return min(meilleures) if meilleures else None
+
+
+def compter_confluence(bar: dict, seuil_ticks: float) -> int:
+    """Nombre de zones DISTINCTES a moins de `seuil_ticks` du prix.
+
+    C'est la mesure de "le prix est sur une confluence" — plusieurs niveaux
+    qui se superposent au meme endroit, pas un niveau isole. Le dashboard
+    affiche deja cette notion ("VPOC + Swing H  MODERE (2)").
+
+    Deux zones a la meme distance (a 1 tick pres) comptent pour UNE : sinon
+    on gonfle artificiellement la confluence quand deux niveaux coincident.
+    """
+    distances = sorted(abs(float(bar[k])) for k in ZONES
+                       if isinstance(bar.get(k), (int, float))
+                       and abs(float(bar[k])) <= seuil_ticks)
+    if not distances:
+        return 0
+    n = 1
+    ref = distances[0]
+    for d in distances[1:]:
+        if d - ref > 1.0:
+            n += 1
+            ref = d
+    return n
+
+
 ACTIONS_LONG = ("ACHAT", "ACHAT PRUDENT")
 ACTIONS_SHORT = ("VENTE", "VENTE PRUDENTE")
 
@@ -87,7 +137,8 @@ def charger_barres(sym: str, racine: str) -> list[dict]:
 
 
 def simuler(barres: list[dict], sym: str, decision_tf: int, timeout_bars: int,
-            rth_only: bool) -> list[dict]:
+            rth_only: bool, near_level: bool = False,
+            confluence_min: int = 0) -> list[dict]:
     """Rejoue le conseil et applique le Triple Barrier. Retourne les trades."""
     p = PARAMS[sym]
     tick = p["tick"]
@@ -124,6 +175,18 @@ def simuler(barres: list[dict], sym: str, decision_tf: int, timeout_bars: int,
 
         entree = bar.get("close")
         if not isinstance(entree, (int, float)) or entree <= 0:
+            i += 1
+            continue
+
+        # Filtre ZONE : "ne jamais trader au milieu de nulle part".
+        seuil = PROXIMITE_TICKS.get(sym, 8)
+        n_zones = compter_confluence(bar, seuil)
+        if near_level:
+            d = distance_zone_min(bar)
+            if d is None or d > seuil:
+                i += 1
+                continue
+        if confluence_min and n_zones < confluence_min:
             i += 1
             continue
 
@@ -167,6 +230,7 @@ def simuler(barres: list[dict], sym: str, decision_tf: int, timeout_bars: int,
             "usd": ticks_nets * p["tick_value"],
             "session": bar.get("session_segment", "?"),
             "barres_tenues": j - i,
+            "n_zones": n_zones,
         })
 
         # Une position a la fois : on reprend apres la sortie (realiste,
@@ -201,11 +265,16 @@ def main() -> int:
                     help="evalue une decision toutes les N barres 1-min (defaut 5)")
     ap.add_argument("--timeout-bars", type=int, default=60)
     ap.add_argument("--rth-only", action="store_true", help="restreint a la session US cash")
+    ap.add_argument("--near-level", action="store_true",
+                    help="ne prend le signal que si le prix est proche d'une zone")
+    ap.add_argument("--confluence-min", type=int, default=0,
+                    help="nombre minimum de zones superposees (0 = pas de filtre)")
     args = ap.parse_args()
 
     print("=" * 84)
     print(f"PF BRUT — CONSEIL GLOBAL | decision toutes les {args.decision_tf} barres "
-          f"| timeout {args.timeout_bars} barres | RTH_only={args.rth_only}")
+          f"| timeout {args.timeout_bars} barres | RTH_only={args.rth_only} "
+          f"| FILTRE_ZONE={args.near_level}")
     print("=" * 84)
 
     tous: list[dict] = []
@@ -220,7 +289,8 @@ def main() -> int:
         p = PARAMS[sym]
         print(f"\n### {sym} — {len(barres)} barres | SL {p['sl_ticks']}t / "
               f"TP {p['tp_ticks']}t / couts {p['cost_ticks']}t")
-        tr = simuler(barres, sym, args.decision_tf, args.timeout_bars, args.rth_only)
+        tr = simuler(barres, sym, args.decision_tf, args.timeout_bars,
+                     args.rth_only, args.near_level, args.confluence_min)
         tous.extend(tr)
 
         resumer(tr, f"  {sym} TOTAL")
