@@ -82,6 +82,7 @@ CAS = [
     # --- famille C : le marche est-il tradable ? ------------------------
     ("L0_VIX_REGIME", {"vix_regime": 2.0}, {}, True),
     ("L0_VIX_REGIME", {"vix_regime": 1.0}, {}, False),
+    ("L0_VIX_REGIME", {"vix_regime": None}, {}, None),
     ("L0_REGIME_INDETERMINE", {"dist_hvl_atr": 0.3}, {}, True),
     ("L0_REGIME_INDETERMINE", {"dist_hvl_atr": -2.0}, {}, False),
     ("L0_REGIME_INDETERMINE", {"dist_hvl_atr": None}, {}, None),

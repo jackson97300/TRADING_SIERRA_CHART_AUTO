@@ -108,9 +108,16 @@ def _vix(lec, etat, s):
     APPLIQUEE quand meme : elle dort, elle ne coute rien, et le jour ou elle se
     reveille c'est de la securite elementaire. Ce jour-la sera le PREMIER — a
     lire comme tel, pas comme une anomalie.
+
+    Elle rendait `False` quand la colonne etait absente : un FEU VERT INVENTE,
+    exactement ce qu'on interdit ailleurs. Et la colonne l'etait — `vix_regime`
+    ne survivait pas a l'agregation. Son verdict « INERTE, le VIX a plafonne a
+    22,01 » etait donc faux : elle etait inerte parce qu'elle ne lisait rien.
+    Troisieme colonne perdue au resample le meme jour, trouvee par
+    `lecture.verifier_colonnes` a son premier lancement.
     """
     v = lec["vix_regime"]
-    return v is not None and v >= s["regime_max"]
+    return None if v is None else v >= s["regime_max"]
 
 
 @porte("L0_REGIME_INDETERMINE", "L0")

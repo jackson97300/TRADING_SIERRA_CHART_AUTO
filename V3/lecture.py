@@ -28,6 +28,41 @@ import pandas as pd
 from V3 import calendrier
 
 
+# Les colonnes dont les couches DEPENDENT. Une absente n'est pas une donnee
+# manquante qu'on lira `None` : c'est un chainon rompu entre le JSONL et la
+# decision, et il est SILENCIEUX.
+#
+# Deux fois le 06/09, une colonne presente dans les donnees s'est perdue a
+# l'agregation sans que rien ne le signale :
+#   - `data_quality_flag` — la porte L0_DATA_INSTABLE aurait ferme la seance
+#     entiere en live, en repondant « je ne sais pas » sur chaque barre ;
+#   - `dist_vwap_w` — `biais()` rendait 0 EN PERMANENCE, donc B1 n'existait
+#     pas, et aucune mesure ne consultait sa sortie pour s'en apercevoir.
+#
+# `test_rien_de_cache` protege les portes contre ce genre de derive ; rien ne
+# protegeait les COLONNES. C'est ce que fait `verifier_colonnes`.
+REQUISES = {
+    "L0": ("ts", "high", "low", "close", "atr_barre", "data_quality_flag",
+           "window_version", "barre_complete", "is_news_60m",
+           "is_session_blocked", "vix_regime", "dist_mq_hvl"),
+    "L1": ("dist_vwap_w", "dist_cur_vah", "dist_cur_val", "dist_cur_vpoc",
+           "dist_prev_vah", "dist_prev_val", "dist_prev_vpoc",
+           "poc_migration_dir"),
+    "L5": ("gamma_block_long", "rvol_zscore"),
+}
+
+
+def verifier_colonnes(df, couches=("L0", "L5")):
+    """Rend la liste des colonnes manquantes pour les couches demandees.
+
+    A appeler apres le chargement, avant toute mesure. Une couche qui tourne
+    sur une colonne absente ne leve rien : elle rend un resultat d'apparence
+    normale, et c'est ce qui rend le defaut indetectable a la lecture.
+    """
+    return [(c, col) for c in couches
+            for col in REQUISES.get(c, ()) if col not in df.columns]
+
+
 def val(df, col, i):
     if col not in df.columns:
         return None

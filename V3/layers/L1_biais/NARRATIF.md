@@ -50,24 +50,98 @@ plausibles.
 La cassure à deux clôtures est l'**acceptation** de Dalton — la même règle que
 S-4. Une seule clôture de l'autre côté est un dépassement, pas une acceptation.
 
-**`z_touche` se pose sur la distribution mesurée**, jamais décrété. C'est écrit
-dans `seuils.yaml` avec sa distribution à côté : quatre seuils hors distribution
-ont déjà rendu des hypothèses non testables cette semaine.
+### Ce que la mesure a corrigé, avant le code
+
+Première définition : « la barre est à moins de `z_touche` ATR du niveau ».
+Mesurée : **38 à 53 % des barres**, soit **quatorze touches par jour** sur la VAH
+seule. Normal — la value area contient 70 % du volume : le prix y séjourne, il
+ne la teste pas. Une touche une barre sur deux décrit un endroit, pas un
+événement.
+
+**Correction par hystérésis** : il faut s'éloigner de `z_reset` ATR pour revenir
+tester. Même principe que la zone morte du HVL, qui a fait tomber les bascules
+de régime de 10,2 à 1,8 par jour.
+
+| `z_reset` | 0 test | 1 test | ≥ 2 tests | lecture |
+|---|---|---|---|---|
+| **0,5 ATR** | 30,2 % | 24,6 % | **45,2 %** | **le compteur distingue** |
+| 1,0 ATR | 30,2 % | 46,8 % | 23,0 % | se tasse sur 1 |
+| 1,5 ATR | 30,2 % | 59,5 % | 10,3 % | booléen déguisé |
+
+**`z_touche` = 0 ATR** (la barre englobe le niveau), **`z_reset` = 0,5 ATR.**
+Le critère n'est pas le nombre de touches mais la **discrimination** : un
+`n_tests` qui vaut toujours 0 ou 1 ne dira jamais « ce niveau a été défendu
+quatre fois ». À 0,5, deux, trois et quatre tests existent dans 45 % des cas.
+
+Effet : de 14 touches par jour à **1,2–1,6** par niveau. ES et NQ donnent 7,6 et
+7,4 au total — la normalisation par l'ATR tient, ce qui n'allait pas de soi.
 
 ---
 
-## Ce que la lecture expose
+## Une FICHE par test, pas un compteur
 
-Par niveau, et rien de plus — quatre mots, pas quinze états :
+Compter dit « le niveau a tenu deux fois ». Ça ne dit pas **comment** — et c'est
+le comment qui prédit le troisième test. Un trader ne lit pas « VAH tenue 2× »,
+il lit : *première défense sur deux fois le volume normal, delta vendeur net,
+mèche de 60 % ; seconde sur volume famélique, delta plat — ça faiblit, le
+troisième passe.* Wyckoff : **effort et résultat**, à chaque test.
 
-- `n_tests_niveau` — combien de fois testé depuis l'ouverture
-- `etat_niveau` ∈ {`tenu`, `casse`, `regagne`, `intact`}
-- `barres_depuis_test` — l'âge du dernier test
-- `signal_meme_lieu_recent` — un déclencheur a-t-il échoué à ≤ 0,2 ATR de ce
-  lieu depuis l'ouverture ?
+Chaque test produit donc une fiche. Les six dimensions, toutes vérifiées
+présentes le 06/09 :
 
-Plus **la migration du POC** (`poc_migration_dir`, `ctx_poc_migration_10`, niveau
-B) : où la valeur se déplace est une part du récit, pas seulement où le prix est.
+| dimension | colonnes | ce qu'elle dit |
+|---|---|---|
+| effort | `total_vol`, `rvol_r` | combien il a fallu se battre |
+| qui pousse | `delta_pct`, `ask_pct` / `bid_pct` | agression contre le niveau ou dans son sens |
+| contexte cumulé | `cvd_sess_r`, `cvd_day` | le delta du jour défend-il ou attaque-t-il |
+| forme | `bar_upper/lower_wick_pct`, `finish_delta_pct` | rejet franc ou clôture molle |
+| gros ordres | `dist_big_ask/bid_nearest_up/dn`, `max_big_*_vol_in_bar` | défense passive visible dans les prints |
+| **résultat** | excursion max dans le sens du rejet, k barres, en ATR | ce que la défense a **produit** |
+
+*Effort sans résultat = faiblesse. C'est la ligne qui compte, et la seule qui ne
+soit pas une colonne : elle se calcule.*
+
+**Deux échelles, nommées.** L'effort se lit sur la barre 15 min du test (flux
+sommés) ; la mèche et le finish se lisent mieux sur la barre **1 min** qui a
+touché — c'est le pont vers L4. La fiche garde les deux.
+
+### Ce qu'il a fallu réparer pour que la fiche existe
+
+Cinq colonnes se perdaient à l'agrégation, dont `ask_pct` et `bid_pct` en
+provenance **A**. Et deux ne s'agrègent pas du tout : `ask_pct` et les mèches
+sont des **rapports** — prendre la valeur de la dernière minute pour
+caractériser quinze minutes est faux. Elles se **reconstruisent exactement** :
+
+```
+ask = (total_vol + delta_bar) / 2     identité vérifiée à 5e-05 près
+                                       sur 1 378 barres
+```
+
+## Ce que la lecture expose — quatre scalaires
+
+Une porte ou une composante ne peut pas lire une liste. La fiche complète va
+dans le **snapshot de l'entonnoir** ; `lecture.py` n'expose que :
+
+- `n_tests` — le compte ;
+- `defense_derniere` — effort × résultat du dernier test, seuils sur
+  distribution ;
+- `defense_tendance` — réaction du dernier test rapportée au premier
+  (**< 1 = la défense s'use**) ;
+- `cvd_cote_defense` — le delta cumulé du jour est-il du côté de la défense.
+
+Plus **la migration du POC** (`poc_migration_dir`, niveau B) : où la valeur se
+déplace est une part du récit, pas seulement où le prix est.
+
+## Ce que ça rend mesurable, et qui ne l'était pas
+
+Au lieu de « le 3ᵉ test vaut-il moins que le 1ᵉʳ », on peut demander :
+
+> **le 3ᵉ test après deux défenses qui s'usent finit-il en cassure plus souvent
+> que le 3ᵉ après deux défenses franches ?**
+
+C'est une hypothèse de **L3** (rejet au niveau) *et* de **L1** (biais narratif :
+au-dessus de la VWAP semaine, testée trois fois par le dessous avec des défenses
+qui s'affermissent → long fort). **Les deux couches lisent la même fiche.**
 
 ---
 

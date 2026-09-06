@@ -121,7 +121,8 @@ def agreger(df, minutes):
               "dist_prev_vpoc", "dist_vwap_w", "poc_migration_dir",
               "atr", "atr_14m", "finish_delta_pct", "delta_pct", "rvol",
               "dist_vwap_w", "is_news_60m", "is_session_blocked",
-              "gamma_block_long", "rvol_zscore", "vix_level", "inside_prev_va",
+              "gamma_block_long", "rvol_zscore", "vix_level", "vix_regime",
+              "inside_prev_va",
               "dist_ib_high", "dist_ib_low", "ib_broken_up", "ib_broken_dn",
               # compteurs de touches — ils EXISTENT (niveau B) et la mission
               # affirmait a tort le contraire. Trois hypotheses ont ete
@@ -130,9 +131,19 @@ def agreger(df, minutes):
               "retest_high_count", "retest_low_count"):
         if c in d.columns:
             cols[c] = o[c].last()
-    for c in ("sweep_high_this_bar", "sweep_low_this_bar"):
+    for c in ("sweep_high_this_bar", "sweep_low_this_bar",
+              # gros ordres : le MAXIMUM du bloc, pas la derniere minute. Un
+              # print de 400 lots a la 3e minute compte encore a la 15e.
+              "max_big_ask_vol_in_bar", "max_big_bid_vol_in_bar",
+              "n_big_ask_t3", "n_big_ask_t4", "n_big_bid_t3", "n_big_bid_t4"):
         if c in d.columns:
             cols[c] = o[c].max()
+    # etats cumulatifs : la derniere valeur du bloc est la bonne
+    for c in ("cvd_day", "cvd_session", "dist_big_ask_nearest_up",
+              "dist_big_ask_nearest_dn", "dist_big_bid_nearest_up",
+              "dist_big_bid_nearest_dn"):
+        if c in d.columns:
+            cols[c] = o[c].last()
     # Combien de barres d'une minute composent chaque bloc : c'est ce qui dit
     # si la barre agregee est ENTIERE. Une barre partielle en fin de seance
     # fausse l'ATR, donc le SL et le TP — et rien d'autre ne la signale.
@@ -162,6 +173,21 @@ def agreger(df, minutes):
                     (out["high"] - out["close"].shift()).abs(),
                     (out["low"] - out["close"].shift()).abs()], axis=1).max(axis=1)
     out["atr_barre"] = tr.rolling(14, min_periods=7).mean()
+
+    # --- ce qui NE S'AGREGE PAS, et se RECALCULE -----------------------------
+    # `ask_pct` et les meches sont des RAPPORTS. Prendre leur derniere valeur
+    # d'une minute pour caracteriser quinze minutes est faux : `ask_pct` a
+    # 14h44 ne dit rien du bloc 14h30-14h45. Ils se reconstruisent exactement.
+    if "delta_bar" in out.columns and "total_vol" in out.columns:
+        # delta = ask - bid et total = ask + bid  =>  ask = (total + delta) / 2
+        v = out["total_vol"].replace(0, float("nan"))
+        out["ask_pct"] = ((v + out["delta_bar"]) / (2 * v)).clip(0, 1)
+        out["bid_pct"] = 1.0 - out["ask_pct"]
+    corps_haut = out[["open", "close"]].max(axis=1)
+    corps_bas = out[["open", "close"]].min(axis=1)
+    amplitude = (out["high"] - out["low"]).replace(0, float("nan"))
+    out["bar_upper_wick_pct"] = (out["high"] - corps_haut) / amplitude
+    out["bar_lower_wick_pct"] = (corps_bas - out["low"]) / amplitude
     return out.reset_index(drop=True)
 
 
