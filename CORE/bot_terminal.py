@@ -112,6 +112,13 @@ def agreger(df, minutes):
         if c in d.columns:
             cols[c] = o[c].sum()
     for c in ("dist_cur_vah", "dist_cur_val", "dist_mq_hvl", "ib_range_ticks",
+              # Les niveaux du NARRATIF (F23). Ils sont tous dans le JSONL et en
+              # provenance A — verifies par identite —, mais quatre d'entre eux
+              # ne survivaient pas a l'agregation : le compteur de touches
+              # n'aurait eu que deux niveaux sur six a observer, sans que rien
+              # ne le signale. Meme defaut que `data_quality_flag`, meme jour.
+              "dist_cur_vpoc", "dist_prev_vah", "dist_prev_val",
+              "dist_prev_vpoc", "dist_vwap_w", "poc_migration_dir",
               "atr", "atr_14m", "finish_delta_pct", "delta_pct", "rvol",
               "dist_vwap_w", "is_news_60m", "is_session_blocked",
               "gamma_block_long", "rvol_zscore", "vix_level", "inside_prev_va",
