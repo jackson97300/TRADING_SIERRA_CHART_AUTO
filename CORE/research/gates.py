@@ -1,67 +1,53 @@
-"""Les gates L0 / L5 de Bot 1 v2, appliques a des signaux et **mesures**.
+"""Les portes L0 / L5, evaluees INDEPENDAMMENT et mesurees.
 
-Ce que ce module n'est pas : un filtre qu'on applique et qu'on oublie. Ce qui a
-tue les trois bots precedents n'est pas d'avoir refuse des trades, c'est de
-n'avoir jamais su ce que les refuses seraient devenus. Chaque blocage est donc
-journalise dans `CORE/entonnoir.py` avec son motif, et `completer_devenir()`
-remplit vingt barres plus tard ce que le trade refuse aurait rendu.
+Ce module n'est pas un filtre qu'on applique et qu'on oublie. Ce qui a tue les
+trois bots precedents n'est pas d'avoir refuse des trades, c'est de n'avoir
+jamais su ce que les refuses seraient devenus. Chaque porte est journalisee avec
+son motif, et `entonnoir.completer_devenir()` remplit vingt barres plus tard ce
+que le trade refuse aurait rendu.
 
 **Une porte dont les rejetes ont un devenir favorable est une porte a rouvrir —
 et c'est mesure, pas debattu.**
 
 
-D'OU VIENNENT CES GATES
-------------------------
-`CORE/bot1_v2/config.py`, recopies tels quels. Ils sont notablement meilleurs que
-ceux de MIA-IA-SYSTEM-2026 (`launch_production_CLEAN_v2.py`), et surtout ils sont
-**conformes au mindset Douglas** au lieu de le contredire :
+POURQUOI INDEPENDAMMENT, ET PAS EN SERIE (Q7, corrigee le 06/09)
+-----------------------------------------------------------------
+La premiere version evaluait les portes en serie : le premier `if` qui fermait
+donnait le motif, et les portes suivantes ne voyaient jamais ce signal.
 
-    | | Bot 1 v2 | V1 |
-    |---|---|---|
-    | trades par jour | **5** | 50 |
-    | stop journalier | **-200 $** | -10 000 $ |
-    | drawdown max | — | 50 % |
+Consequence, relevee par Fable : si `max_trades` est evaluee avant `news`, elle
+« vole » les rejets de news — et le -4,82 ATR attribue a news etait mesure sur
+ce que `max_trades` avait laisse passer. Tous les chiffres du premier tableau
+dependaient d'un ordre arbitraire.
 
-Cinq trades et -200 $ sont exactement ce que la memoire Douglas prescrit. V1
-autorisait dix fois plus de trades et cinquante fois plus de perte : ce n'etait
-pas un reglage different, c'etait une autre philosophie, et c'est celle qui fait
-sauter les comptes.
-
-
-CE QUE LA PREMIERE MESURE DIT (06/09, 40 jours, signaux de H3 et H7)
---------------------------------------------------------------------
-    ES : 603 signaux bruts -> 271 passent   (55 % bloques)
-    NQ : 701 signaux bruts -> 288 passent   (59 % bloques)
-
-    L0_MAX_TRADES_JOUR   739 blocages
-    L0_EOD_LOCKOUT         6
-    tous les vetos L5       0
-
-**La limite de cinq trades par jour ecarte 57 % des signaux a elle seule.**
-C'est de tres loin la porte la plus fermee du systeme, et on ignore encore si
-elle ecarte les mauvais trades ou les bons — c'est exactement la question que
- repondra, en mode ombre, sur les jours a venir.
-
-Aucun veto L5 ne se declenche : ni rvol extreme, ni gamma, ni SL sous les frais.
-Sur ce lot ils sont inactifs — a savoir avant de croire qu'ils protegent.
-
-UNE LIMITE HONNETE DE CE MODULE
---------------------------------
- n'est jamais mis a jour dans la boucle : le P&L d'un trade n'est connu
-qu'apres sa cloture, donc apres le gate suivant. ** ne peut
-donc pas se declencher ici, et n'a pas ete teste.** Le brancher demande de boucler
-gate -> execution -> resultat, ce qui est le travail du mode ombre, pas d'une
-mesure sur historique. Ecrit pour que personne ne croie ce gate valide.
+Le remede n'est pas de trouver le bon ordre : **il n'y en a pas.** Toutes les
+portes sont evaluees sur chaque signal, une ligne de journal par porte qui
+aurait bloque. La decision appliquee reste le ET des portes APPLIQUEES ;
+l'attribution du devenir se fait par porte, sur tous les signaux qu'elle AURAIT
+fermes, quel que soit le sort des autres.
 
 
-UN DEFAUT CONSERVE, ET SIGNALE
--------------------------------
-`NEAR_LEVEL_MAX_TICKS` vaut 8 ticks sur ES et 16 sur NQ. En ATR-5m : **0,71 ATR
-sur ES contre 0,20 sur NQ** — le meme concept « pres d'un niveau » recouvre deux
-realites, facteur 3,5. C'est la meme maladie que les seuils d'`edge_discovery`
-(facteur 17), en plus benin. Les valeurs sont conservees telles quelles ici :
-elles sont recopiees, pas corrigees, et l'entonnoir dira ce qu'elles coutent.
-Les corriger avant de les avoir mesurees serait refaire l'erreur inverse.
+DEUX CLASSES DE PORTES
+-----------------------
+APPLIQUEES : elles bloquent. N'y entre que ce dont l'effet protecteur est mesure,
+             ou ce qui releve de la securite elementaire.
+OBSERVEES  : elles journalisent « j'aurais bloque » sans agir. « Ouvrir une
+             porte » est ce qui a tue decembre ; « la mettre en observation »
+             est une mesure.
+Source de verite : `V3/config/campagne.yaml`.
+
+
+D'OU VIENNENT CES SEUILS
+-------------------------
+`CORE/bot1_v2/config.py`, recopies. Ils sont conformes au mindset Douglas la ou
+ceux de MIA-IA-SYSTEM-2026 ne l'etaient pas : 5 trades par jour contre 50,
+-200 $ contre -10 000 $. Ce n'etait pas un reglage different, c'etait une autre
+philosophie — et c'est celle-la qui fait sauter les comptes.
+
+Le stop journalier est a -1000 $ en SIM, decision Jackson du 06/09 : il faut
+31,8 pertes d'affilee sur ES pour l'atteindre contre ~7 signaux par jour, donc
+il est INERTE par construction et c'est assume. Le stop reel (-200 $) est
+observe a cote.
 """
 
 from __future__ import annotations
@@ -71,100 +57,37 @@ import pandas as pd
 from CORE import entonnoir
 
 # --- CORE/bot1_v2/config.py, recopies ---------------------------------------
-MAX_TRADES_PAR_JOUR = 5           # MAX_TRADES_PER_DAY
-STOP_JOURNALIER_USD = -200.0      # DAILY_STOP_LOSS_USD
-COOLDOWN_APRES_CLOTURE_MIN = 60   # COOLDOWN_POST_CLOSE_MIN
-COOLDOWN_APRES_PERTE_MIN = 90     # COOLDOWN_POST_LOSS_MIN (plus strict apres SL)
-MAX_HOLD_MINUTES = 45             # MAX_HOLD_MINUTES
-EOD_LOCKOUT_MINUTES = 10          # EOD_LOCKOUT_MINUTES
-NEWS_LOCKOUT_MIN = 5              # NEWS_LOCKOUT_BEFORE_MIN / AFTER_MIN
-RVOL_ZSCORE_VETO = 3.0            # RVOL_ZSCORE_VETO_THRESHOLD
+MAX_TRADES_PAR_JOUR = 5           # ferme 36-43 % des signaux -> OBSERVEE
+STOP_JOURNALIER_USD = -1000.0     # SIM. Inerte par construction, cf campagne.yaml
+STOP_PROPFIRM_USD = -200.0        # la vraie regle Douglas -> OBSERVEE
+COOLDOWN_APRES_CLOTURE_MIN = 60
+COOLDOWN_APRES_PERTE_MIN = 90
+MAX_HOLD_MINUTES = 45
+EOD_LOCKOUT_MINUTES = 10
+RVOL_ZSCORE_VETO = 3.0
 SL_MIN_TICKS = {"ES": 6, "NQ": 10, "MGC": 12}
-NEAR_LEVEL_MAX_TICKS = {"ES": 8, "NQ": 16, "MGC": 8}
 
 # Cout par trade, pour le veto « SL trop serre » : un SL qui ne couvre pas deux
 # fois les frais est une position dont l'esperance est mangee avant d'exister.
 COUT_DOLLARS = {"NQ": 2.82, "ES": 4.32}
-VAL_POINT = {"NQ": 2.00, "ES": 5.00}          # micros
+VAL_POINT = {"NQ": 2.00, "ES": 5.00}          # micros MNQ / MES
+
+APPLIQUEES = {
+    "L0_NEWS",                    # -4,82 ATR sur ES : la meilleure porte
+    "L0_SESSION_BLOQUEE",
+    "L0_EOD_LOCKOUT",
+    "L0_STOP_JOURNALIER",
+    "L0_POSITION_OUVERTE",        # securite elementaire : une position a la fois
+    "L5_VETO_GAMMA",              # -0,48 ATR sur ES
+    "L5_VETO_RVOL_EXTREME",
+    "L5_VETO_SL_SOUS_2X_FRAIS",
+}
+# Tout le reste est OBSERVE : MAX_TRADES_JOUR, COOLDOWN, STOP_PROPFIRM.
 
 
 def _minutes(ts_ms):
     t = pd.Timestamp(int(ts_ms), unit="ms", tz="UTC")
     return t.hour * 60 + t.minute
-
-
-def appliquer(signaux, df, sym, journal=None, hypothese="?"):
-    """Passe une liste de signaux dans les gates, dans l'ordre chronologique.
-
-    `signaux` : indices de barres, croissants. `df` : les barres 5 min.
-    Rend la liste des indices qui PASSENT, et journalise tous les BLOQUE avec
-    leur motif — c'est la sortie qui compte.
-
-    Les gates sont sequentiels par nature : le nombre de trades du jour, le P&L
-    cumule et l'heure du dernier trade ne se lisent pas sur une barre isolee.
-    D'ou une boucle, et non un masque.
-    """
-    passes = []
-    jour_courant, n_jour, pnl_jour = None, 0, 0.0
-    fin_cooldown = -1
-
-    for i in signaux:
-        jour = str(df["jour"].iloc[i])
-        ts = int(df["ts"].iloc[i])
-        if jour != jour_courant:                       # remise a zero quotidienne
-            jour_courant, n_jour, pnl_jour, fin_cooldown = jour, 0, 0.0, -1
-
-        motif = None
-        m = _minutes(ts)
-
-        # --- L0 : les blocages en serie ------------------------------------
-        if n_jour >= MAX_TRADES_PAR_JOUR:
-            motif = "L0_MAX_TRADES_JOUR"
-        elif pnl_jour <= STOP_JOURNALIER_USD:
-            motif = "L0_STOP_JOURNALIER"
-        elif ts < fin_cooldown:
-            motif = "L0_COOLDOWN"
-        elif m >= (20 * 60 - EOD_LOCKOUT_MINUTES):     # 16:00 ET = 20:00 UTC ete
-            motif = "L0_EOD_LOCKOUT"
-        elif _vrai(df, "is_news_60m", i):
-            motif = "L0_NEWS"
-        elif _vrai(df, "is_session_blocked", i):
-            motif = "L0_SESSION_BLOQUEE"
-
-        # --- L5 : les vetos de risque ---------------------------------------
-        if motif is None:
-            z = _val(df, "rvol_zscore", i)
-            if z is not None and abs(z) >= RVOL_ZSCORE_VETO:
-                motif = "L5_VETO_RVOL_EXTREME"
-            elif _vrai(df, "gamma_block_long", i):
-                motif = "L5_VETO_GAMMA"
-            else:
-                # Le SL REEL de la mission est -1,0 ATR-5m, pas le plancher de
-                # config `SL_MIN_TICKS`. Comparer le plancher aux frais bloquait
-                # 100 % des signaux — arithmetiquement juste, semantiquement faux :
-                # 6 ticks ES = 7,50 $ contre 8,64 $ de frais doubles, alors que
-                # 1,0 ATR-5m vaut 14,15 $. Bug attrape par le test empirique.
-                atr = _val(df, "atr5", i) or 0.0
-                if atr > 0:
-                    sl_usd = atr * VAL_POINT.get(sym, 5.0)     # 1,0 ATR-5m, en $
-                    plancher = SL_MIN_TICKS.get(sym, 6) * 0.25 * VAL_POINT.get(sym, 5.0)
-                    sl_usd = max(sl_usd, plancher)             # le plancher est un MINIMUM
-                    if sl_usd < 2 * COUT_DOLLARS.get(sym, 4.32):
-                        motif = "L5_VETO_SL_SOUS_2X_FRAIS"
-
-        if journal is not None:
-            entonnoir.journaliser(
-                ts=ts, sym=sym, couche="L0" if (motif or "").startswith("L0") else
-                ("L5" if motif else "L5"),
-                hypothese=hypothese,
-                decision="BLOQUE" if motif else "PASSE",
-                motif=motif or "", snapshot_id="%s:%d" % (sym, i),
-                chemin=journal)
-
-        if motif is None:
-            passes.append(i)
-            n_jour += 1
-    return passes
 
 
 def _val(df, col, i):
@@ -177,3 +100,89 @@ def _val(df, col, i):
 def _vrai(df, col, i):
     v = _val(df, col, i)
     return v is not None and v != 0
+
+
+def evaluer_portes(df, i, sym, etat):
+    """Toutes les portes sur une barre. Rend {nom: True si elle bloquerait}.
+
+    `etat` porte ce qui ne se lit pas sur une barre isolee : nombre de trades du
+    jour, P&L cumule, fin de cooldown, position ouverte.
+    """
+    m = _minutes(int(df["ts"].iloc[i]))
+    p = {
+        # --- L0 : a-t-on le droit de trader, la, maintenant ? --------------
+        "L0_MAX_TRADES_JOUR": etat["n_jour"] >= MAX_TRADES_PAR_JOUR,
+        "L0_STOP_JOURNALIER": etat["pnl_jour"] <= STOP_JOURNALIER_USD,
+        "L0_STOP_PROPFIRM": etat["pnl_jour"] <= STOP_PROPFIRM_USD,
+        "L0_COOLDOWN": int(df["ts"].iloc[i]) < etat["fin_cooldown"],
+        "L0_POSITION_OUVERTE": bool(etat["position_ouverte"]),
+        "L0_EOD_LOCKOUT": m >= (20 * 60 - EOD_LOCKOUT_MINUTES),
+        "L0_NEWS": _vrai(df, "is_news_60m", i),
+        "L0_SESSION_BLOQUEE": _vrai(df, "is_session_blocked", i),
+        # --- L5 : combien, et ou est le stop ? ------------------------------
+        "L5_VETO_GAMMA": _vrai(df, "gamma_block_long", i),
+    }
+    z = _val(df, "rvol_zscore", i)
+    p["L5_VETO_RVOL_EXTREME"] = z is not None and abs(z) >= RVOL_ZSCORE_VETO
+
+    # Le SL REEL est -1,0 ATR-5m, pas le plancher de config. Comparer le
+    # plancher aux frais bloquait 100 % des signaux au premier essai :
+    # arithmetiquement juste, semantiquement faux.
+    atr = _val(df, "atr5", i) or 0.0
+    if atr > 0:
+        sl_usd = max(atr * VAL_POINT.get(sym, 5.0),
+                     SL_MIN_TICKS.get(sym, 6) * 0.25 * VAL_POINT.get(sym, 5.0))
+        p["L5_VETO_SL_SOUS_2X_FRAIS"] = sl_usd < 2 * COUT_DOLLARS.get(sym, 4.32)
+    else:
+        p["L5_VETO_SL_SOUS_2X_FRAIS"] = False
+    return p
+
+
+def appliquer(signaux, df, sym, journal=None, hypothese="?"):
+    """Rend les indices qui passent toutes les portes APPLIQUEES.
+
+    Journalise, pour chaque signal, une ligne par porte qui aurait bloque —
+    appliquee comme observee. Le `snapshot_id` porte un suffixe `:A` ou `:O`
+    pour les distinguer a la lecture.
+
+    L'etat reste sequentiel (trades du jour, P&L, cooldown, position) : il ne se
+    lit pas sur une barre isolee. Appeler cette fonction signal par signal
+    remettrait le compteur a zero a chaque appel — c'est le bug du premier run
+    du scrutateur, huit signaux retenus pour une limite de cinq.
+    """
+    passes = []
+    jour_courant = None
+    etat = {"n_jour": 0, "pnl_jour": 0.0, "fin_cooldown": -1,
+            "position_ouverte": False}
+
+    for i in signaux:
+        jour = str(df["jour"].iloc[i])
+        ts = int(df["ts"].iloc[i])
+        if jour != jour_courant:
+            jour_courant = jour
+            etat.update(n_jour=0, pnl_jour=0.0, fin_cooldown=-1,
+                        position_ouverte=False)
+
+        portes = evaluer_portes(df, i, sym, etat)
+        bloquantes = [k for k, v in portes.items() if v and k in APPLIQUEES]
+        observees = [k for k, v in portes.items() if v and k not in APPLIQUEES]
+
+        if journal is not None:
+            for k in bloquantes + observees:
+                entonnoir.journaliser(
+                    ts=ts, sym=sym,
+                    couche="L0" if k.startswith("L0") else "L5",
+                    hypothese=hypothese, decision="BLOQUE", motif=k,
+                    snapshot_id="%s:%d:%s" % (
+                        sym, i, "A" if k in APPLIQUEES else "O"),
+                    chemin=journal)
+            if not bloquantes:
+                entonnoir.journaliser(
+                    ts=ts, sym=sym, couche="L0", hypothese=hypothese,
+                    decision="PASSE", motif="",
+                    snapshot_id="%s:%d" % (sym, i), chemin=journal)
+
+        if not bloquantes:
+            passes.append(i)
+            etat["n_jour"] += 1
+    return passes

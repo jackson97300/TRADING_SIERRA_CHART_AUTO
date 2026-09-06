@@ -115,27 +115,32 @@ def mesurer(sym, minutes, journal):
 
         for _i, _n, _s in sig:
             sens["long" if _s > 0 else "short"] += 1
-        avant = _lire_journal(journal)
+        _, avant = _lire_journal(journal)
         retenus = set(gates.appliquer([s[0] for s in sig], df, sym,
                                       journal=journal, hypothese="portes57"))
-        motifs = _lire_journal(journal, depuis=avant)
+        motifs, _ = _lire_journal(journal, depuis=avant)
 
         for i, _nom, side in sig:
             d = devenir(df, i, side)
             if i in retenus:
                 passes_dev.append(d)
-            else:
-                m = motifs.get(int(df["ts"].iloc[i]), "porte inconnue")
+            # Chaque porte qui AURAIT ferme ce signal recoit son devenir —
+            # y compris si une autre l'a ferme aussi, et y compris si le signal
+            # est finalement passe (cas d'une porte OBSERVEE). C'est ce qui rend
+            # l'attribution independante de l'ordre.
+            for m in motifs.get(int(df["ts"].iloc[i]), []):
                 par_motif.setdefault(m, []).append(d)
 
     lignes = []
     for m, devs in sorted(par_motif.items(), key=lambda x: -len(x[1])):
         v = [x for x in devs if np.isfinite(x)]
-        couche = m.split("_")[0] if m[:2] in ("L0", "L5") else "?"
+        couche = m[:2] if m[:2] in ("L0", "L5") else "?"
+        applique = m in gates.APPLIQUEES
         part = len(devs) / max(tot_signaux, 1)
         lo, hi = PLAGES.get(couche, (0.0, 1.0))
         lignes.append({
             "sym": sym, "unite_min": minutes, "couche": couche, "motif": m,
+            "classe": "appliquee" if applique else "observee",
             "n_rejetes": len(devs), "part_des_signaux": round(part, 4),
             "devenir_moyen_atr": round(float(np.mean(v)), 4) if v else None,
             "devenir_median_atr": round(float(np.median(v)), 4) if v else None,
@@ -143,7 +148,8 @@ def mesurer(sym, minutes, journal):
         })
     v = [x for x in passes_dev if np.isfinite(x)]
     lignes.append({
-        "sym": sym, "unite_min": minutes, "couche": "PASSE", "motif": "(retenus)",
+        "sym": sym, "unite_min": minutes, "couche": "PASSE",
+        "motif": "(retenus)", "classe": "-",
         "n_rejetes": len(passes_dev),
         "part_des_signaux": round(len(passes_dev) / max(tot_signaux, 1), 4),
         "devenir_moyen_atr": round(float(np.mean(v)), 4) if v else None,
@@ -163,13 +169,25 @@ def _verdict(part, lo, hi):
     return "dans la plage"
 
 
-def _lire_journal(chemin, depuis=None):
+def _lire_journal(chemin, depuis=0):
+    """{ts: [portes qui auraient bloque]} — PLUSIEURS par signal desormais.
+
+    Depuis la correction de Q7, les portes sont evaluees independamment : un
+    signal peut etre ferme par news ET par max_trades, et les deux sont
+    journalisees. Ne garder qu'un motif par ts reintroduirait exactement le
+    biais d'ordre qu'on vient d'eliminer.
+
+    Rend aussi le nombre de lignes lues, pour que l'appelant reprenne au bon
+    endroit sans relire tout le fichier a chaque journee.
+    """
     import json
     out = {}
+    n = 0
     if not chemin or not os.path.exists(chemin):
-        return out
+        return out, 0
     for k, ln in enumerate(open(chemin, encoding="utf-8")):
-        if depuis is not None and k < len(depuis):
+        n = k + 1
+        if k < depuis:
             continue
         ln = ln.strip()
         if not ln:
@@ -179,8 +197,8 @@ def _lire_journal(chemin, depuis=None):
         except ValueError:
             continue
         if o.get("decision") == "BLOQUE":
-            out[int(o["ts"])] = o.get("motif", "?")
-    return out
+            out.setdefault(int(o["ts"]), []).append(o.get("motif", "?"))
+    return out, n
 
 
 def main():

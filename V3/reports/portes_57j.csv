@@ -1,12 +1,12 @@
-sym,unite_min,couche,motif,n_rejetes,part_des_signaux,devenir_moyen_atr,devenir_median_atr,verdict
-ES,15,L0,L0_MAX_TRADES_JOUR,140,0.3636,0.1782,0.0,ETRANGLEUSE — au-dessus de 30 %
-ES,15,L5,L5_VETO_GAMMA,11,0.0286,-0.4811,-0.1478,sous la plage (10-25 %)
-ES,15,L0,L0_SESSION_BLOQUEE,8,0.0208,0.1789,0.0,sous la plage (15-30 %)
-ES,15,L0,L0_NEWS,4,0.0104,-4.8184,-5.2615,sous la plage (15-30 %)
-ES,15,L5,L5_VETO_RVOL_EXTREME,1,0.0026,-0.9396,-0.9396,sous la plage (10-25 %)
-ES,15,PASSE,(retenus),221,0.574,0.1612,0.0928,-
-NQ,15,L0,L0_MAX_TRADES_JOUR,173,0.4336,0.2513,0.0848,ETRANGLEUSE — au-dessus de 30 %
-NQ,15,L0,L0_SESSION_BLOQUEE,17,0.0426,-0.0322,0.0,sous la plage (15-30 %)
-NQ,15,L0,L0_NEWS,4,0.01,-1.1795,-0.8438,sous la plage (15-30 %)
-NQ,15,L5,L5_VETO_RVOL_EXTREME,1,0.0025,-0.9093,-0.9093,sous la plage (10-25 %)
-NQ,15,PASSE,(retenus),204,0.5113,0.1763,0.0191,-
+sym,unite_min,couche,motif,classe,n_rejetes,part_des_signaux,devenir_moyen_atr,devenir_median_atr,verdict
+ES,15,L0,L0_MAX_TRADES_JOUR,observee,160,0.4156,0.1961,0.0102,ETRANGLEUSE — au-dessus de 30 %
+ES,15,L0,L0_SESSION_BLOQUEE,appliquee,39,0.1013,0.0691,0.0,sous la plage (15-30 %)
+ES,15,L5,L5_VETO_RVOL_EXTREME,appliquee,30,0.0779,-0.0416,0.0,sous la plage (10-25 %)
+ES,15,L5,L5_VETO_GAMMA,appliquee,13,0.0338,-0.4012,-0.1478,sous la plage (10-25 %)
+ES,15,L0,L0_NEWS,appliquee,4,0.0104,-4.8184,-5.2615,sous la plage (15-30 %)
+ES,15,PASSE,(retenus),-,326,0.8468,0.1808,0.1045,-
+NQ,15,L0,L0_MAX_TRADES_JOUR,observee,191,0.4787,0.2533,0.0848,ETRANGLEUSE — au-dessus de 30 %
+NQ,15,L0,L0_SESSION_BLOQUEE,appliquee,56,0.1404,0.0371,0.0,sous la plage (15-30 %)
+NQ,15,L5,L5_VETO_RVOL_EXTREME,appliquee,25,0.0627,-0.0364,0.0,sous la plage (10-25 %)
+NQ,15,L0,L0_NEWS,appliquee,4,0.01,-1.1795,-0.8438,sous la plage (15-30 %)
+NQ,15,PASSE,(retenus),-,342,0.8571,0.2183,0.1026,-
