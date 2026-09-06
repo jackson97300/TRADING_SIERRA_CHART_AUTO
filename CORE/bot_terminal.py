@@ -130,6 +130,19 @@ def agreger(df, minutes):
     # si la barre agregee est ENTIERE. Une barre partielle en fin de seance
     # fausse l'ATR, donc le SL et le TP — et rien d'autre ne la signale.
     cols["minutes_reelles"] = o["open"].count()
+    # La qualite de la PIRE minute du bloc. `charger_jour` ne garde deja que
+    # les barres `stable`, donc hors ligne la colonne vaut toujours `stable` —
+    # mais si elle disparait a l'agregation, la porte `L0_DATA_INSTABLE` n'a
+    # rien a lire et repond « je ne sais pas » sur chaque barre. En live, ou un
+    # trou bloque, cela fermerait la seance entiere. Detecte par le test de
+    # faux live, jamais par la mesure hors ligne.
+    if "data_quality_flag" in d.columns:
+        rang = {"stable": 0, "warmup": 1, "degraded": 2}
+        pire = d["data_quality_flag"].map(rang).fillna(2)
+        cols["data_quality_flag"] = (
+            pire.resample("%dmin" % minutes, origin="start_day",
+                          label="left", closed="left").max()
+            .map({0: "stable", 1: "warmup", 2: "degraded"}))
     out = pd.DataFrame(cols).dropna(subset=["close"])
     out["ts"] = out.index.astype("int64") // 1_000_000
     out["jour"] = out.index.date
