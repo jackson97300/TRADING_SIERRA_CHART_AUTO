@@ -37,6 +37,7 @@ V3/
       vetos.py           3 vetos, la seule couche qui lit le SENS du trade
     L6_surveillance/   les controles quotidiens sur les donnees
 
+  publier.sh           publie le miroir public (3 controles, puis subtree push)
   tests/test_structure.py   le garde-fou du miroir public, en pre-commit
 ```
 
