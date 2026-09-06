@@ -33,6 +33,50 @@
 
 ---
 
+### 2026-09-06 — [VALIDATION_MISS] — Un fail-closed non branche vaut zero, et il aurait ferme la seance
+
+**La porte** : `L0_DATA_INSTABLE` (V3/layers/L0_interrupteur/portes_donnees.py). Elle verifie que
+`data_quality_flag` vaut `stable` — ni `warmup`, ni `degraded`. Elle est APPLIQUEE, et en live un
+trou sur une porte appliquee BLOQUE (`chaine.appliquer(strict=True)`), par choix : une porte de
+qualite des donnees qui ne sait pas si la barre est saine ne doit pas laisser passer.
+
+**Ce qui a mal tourne** : `CORE/bot_terminal.agreger()` ne propageait pas `data_quality_flag` aux
+barres agregees. La colonne existe dans le JSONL 1 min, elle disparaissait au resample. La porte
+lisait donc `None` — « je ne peux pas repondre » — sur **chaque barre**, et en mode strict cela
+ferme **100 % des signaux**. Mardi 9h30, zero trade toute la seance, avec un journal disant
+« TROU_L0_DATA_INSTABLE » alors que rien n'etait casse cote donnees.
+
+**Pourquoi la mesure hors ligne ne pouvait pas le voir** : hors ligne, `strict=False` — un trou se
+journalise sans bloquer, exactement pour que l'age d'une barre ou l'etat du connecteur, qui
+n'existent pas dans un backtest, ne rendent aucune mesure impossible. Le rapport des 57 jours
+affichait donc `TROU_L0_DATA_INSTABLE` a 100 % **et tout paraissait normal**. Les deux modes ont
+des consequences opposees sur le meme etat : c'est precisement ce qu'aucune mesure hors ligne ne
+peut trancher.
+
+**Ce qui l'a attrape** : `test_faux_live.py`, ecrit le soir meme a la demande de Fable, au premier
+lancement, sur son cas NOMINAL — « un etat live sain doit laisser passer au moins un signal ».
+Sans ce cas-la, un test ou tout bloque serait passe sans rien prouver.
+
+**Cause racine** : un fail-closed est une decision de securite qui ne vaut que si la donnee arrive
+jusqu'a la porte. Personne n'avait verifie le CHEMIN — seulement la porte, avec un dictionnaire
+fabrique. `test_portes.py` la declarait conforme : il l'appelle directement.
+
+**Lecon** : tester une porte n'est pas tester le chemin qui l'alimente. Un fail-closed non branche
+est plus dangereux qu'une porte absente, parce qu'il donne l'illusion de la protection ET ferme
+tout quand il se declenche a tort.
+
+**Trigger prevention** : toute porte APPLIQUEE dont l'entree vient d'une transformation
+(agregation, jointure, resample) doit avoir un scenario dans `test_faux_live.py` qui passe par
+`chaine.appliquer`, jamais seulement un cas unitaire. Et le cas NOMINAL — « rien ne doit bloquer »
+— est obligatoire dans tout test de portes : c'est lui qui a trouve celle-ci.
+
+**Fix** : `agreger()` porte desormais `data_quality_flag` = la qualite de la PIRE minute du bloc
+(stable < warmup < degraded). Commit 2acc97f.
+
+**Reviewed** : Fable (a exige le faux live) + Claude Code (l'a ecrit, et il a echoue tout de suite)
+
+---
+
 ### 2026-09-06 — [SCALE_DRIFT] — L'ATR-15m d'ES faux d'un facteur cinq, et ce qu'il a fait decider
 
 **Contexte** : le veto « les frais mangent-ils la cible ? » compare le cout aller-retour a la
