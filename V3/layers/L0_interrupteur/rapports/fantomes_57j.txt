@@ -1,0 +1,40 @@
+TRADES FANTOMES — ce que « une position par instrument » coute
+source : LOGS/entonnoir/portes57_15min.jsonl
+
+ES — 258 signaux refuses par POSITION_OUVERTE, tous simules
+------------------------------------------------------------------------------------------------
+  1. COUT DE LA REGLE (tous)         n=  258   moyenne -0.055  +/- 0.118   somme    -14.2
+
+  2. contraires a la position        n=   22   moyenne -0.585  +/- 0.300   somme    -12.9
+       ... quand la position finit SL n=    3   moyenne -0.885  +/- 0.279   somme     -2.7
+       ... quand la position finit TP n=    8   moyenne -0.766  +/- 0.434   somme     -6.1
+       ... quand la position finit EXPIRATION n=   11   moyenne -0.372  +/- 0.493   somme     -4.1
+
+  3. meme sens que la position       n=  236   moyenne -0.006  +/- 0.125   somme     -1.3
+       ... arrive tot (<= 3 barres)  n=  102   moyenne -0.097  +/- 0.196   somme     -9.9
+       ... arrive au milieu (4-10)   n=   94   moyenne +0.091  +/- 0.203   somme     +8.6
+       ... arrive tard (> 10)        n=   40   moyenne +0.001  +/- 0.253   somme     +0.1
+
+NQ — 273 signaux refuses par POSITION_OUVERTE, tous simules
+------------------------------------------------------------------------------------------------
+  1. COUT DE LA REGLE (tous)         n=  273   moyenne +0.094  +/- 0.109   somme    +25.7
+
+  2. contraires a la position        n=   35   moyenne -0.143  +/- 0.297   somme     -5.0
+       ... quand la position finit SL n=    4   moyenne +0.854  +/- 1.219   somme     +3.4
+       ... quand la position finit TP n=    9   moyenne -1.018  +/- 0.002   somme     -9.2
+       ... quand la position finit EXPIRATION n=   22   moyenne +0.034  +/- 0.305   somme     +0.7
+
+  3. meme sens que la position       n=  238   moyenne +0.129  +/- 0.117   somme    +30.7
+       ... arrive tot (<= 3 barres)  n=   94   moyenne +0.104  +/- 0.192   somme     +9.8
+       ... arrive au milieu (4-10)   n=  106   moyenne +0.087  +/- 0.173   somme     +9.2
+       ... arrive tard (> 10)        n=   38   moyenne +0.309  +/- 0.276   somme    +11.8
+
+Lecture : une somme nettement positive en (1) dit que la regle coute.
+Un (2) profitable AVEC des positions qui finissent SL dit qu'un signal
+contraire est une SORTIE.
+
+VINGT COMPARAISONS SONT AFFICHEES CI-DESSUS. A 5 %, UNE SORT PAR HASARD.
+Un seul intervalle qui ne contient pas zero n'est donc PAS un resultat :
+c'est exactement ce qu'on attend du bruit. Comparer au controle negatif
+(ES -0,057 [-0,210 ; +0,096] ; NQ -0,000 [-0,134 ; +0,134]) avant de lire
+quoi que ce soit. Ces lectures ne se tranchent pas avant 60 jours.

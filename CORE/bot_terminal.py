@@ -48,7 +48,8 @@ import pandas as pd  # noqa: E402
 
 from CORE import entonnoir  # noqa: E402
 from CORE.features import recalc  # noqa: E402
-from CORE.research import gates, hypotheses as H  # noqa: E402
+from CORE.research import hypotheses as H  # noqa: E402
+from V3 import chaine  # noqa: E402
 
 # --- couleurs ANSI, desactivees si la sortie n'est pas un terminal -----------
 _TTY = sys.stdout.isatty()
@@ -204,12 +205,12 @@ def scruter(sym, jour, minutes=15, vitesse=0.0, journal=None):
             for cote, (cond, side) in paires.items():
                 try:
                     if bool(cond.iloc[i]):
-                        signaux.append((i, nom, cote))
+                        signaux.append((i, nom, cote, side))
                 except Exception:
                     continue
     signaux.sort(key=lambda x: x[0])
-    retenus = set(gates.appliquer([s[0] for s in signaux], df, sym,
-                                  journal=journal, hypothese="scrutateur"))
+    retenus = set(chaine.appliquer([(s[0], s[3]) for s in signaux], df, sym,
+                                   journal=journal, hypothese="scrutateur"))
     motifs = _motifs_par_barre(journal)
 
     entete(sym, jour, minutes, len(df))
@@ -226,7 +227,7 @@ def scruter(sym, jour, minutes=15, vitesse=0.0, journal=None):
                                     _c("%s / %s%s" % (rg, rib,
                                        "" if rib_v is None else " (%.2f)" % rib_v), CYAN)))
 
-        for (bi_, nom, cote) in [s for s in signaux if s[0] == i]:
+        for (bi_, nom, cote, _side) in [s for s in signaux if s[0] == i]:
             compte["signaux"] += 1
             if i in retenus:
                 compte["trades"] += 1

@@ -5,10 +5,10 @@ pas d'avoir refuse des trades : c'est de n'avoir jamais su ce que les refuses
 seraient devenus. Une porte dont les rejetes ont un devenir favorable est une
 porte a rouvrir — et c'est mesure, pas debattu.
 
-    python -X utf8 V3/research/portes_57j.py
-    python -X utf8 V3/research/portes_57j.py --minutes 5
+    python -X utf8 V3/layers/L0_interrupteur/mesure_57j.py
+    python -X utf8 V3/layers/L0_interrupteur/mesure_57j.py --minutes 5
 
-Sortie : `V3/reports/portes_57j.csv`, quelques Ko, versionne.
+Sortie : `rapports/portes_57j.csv`, a cote de ce fichier, quelques Ko, versionne.
 
 
 CE QUE CE SCRIPT MESURE, ET CE QU'IL NE MESURE PAS
@@ -41,11 +41,14 @@ import sys
 import numpy as np
 import pandas as pd
 
-RACINE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+RACINE = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 3))
 sys.path.insert(0, RACINE)
 
 from CORE.bot_terminal import charger_jour, regime_gamma, regime_ib  # noqa: E402
-from CORE.research import gates, hypotheses as H  # noqa: E402
+from CORE.research import hypotheses as H  # noqa: E402
+from V3 import chaine  # noqa: E402
+from V3.layers.L0_interrupteur.journal import (  # noqa: E402
+    _lire_journal, controler_effectifs)
 
 PLAGES = {"L0": (0.15, 0.30), "REGIME": (0.30, 0.70), "L5": (0.10, 0.25)}
 HORIZON = 20                       # barres, comme l'expiration de la barriere
@@ -109,6 +112,18 @@ def mesurer(sym, minutes, journal):
                     except Exception:
                         break
         sig.sort(key=lambda x: x[0])
+        # DEDUPLICATION PAR (barre, sens) — corrigee le 06/09.
+        # Deux declencheurs qui tirent LONG sur la meme barre, ce n'est pas deux
+        # trades : c'est un seul, que le bot ne prendrait qu'une fois. Sans cette
+        # ligne, `par_motif` comptait le devenir deux fois pour une seule ligne
+        # de journal — 312 rejets annonces pour 282 reellement journalises sur ES.
+        vus, uniques = set(), []
+        for s in sig:
+            cle = (s[0], s[2])
+            if cle not in vus:
+                vus.add(cle)
+                uniques.append(s)
+        sig = uniques
         if not sig:
             continue
         tot_signaux += len(sig)
@@ -116,8 +131,8 @@ def mesurer(sym, minutes, journal):
         for _i, _n, _s in sig:
             sens["long" if _s > 0 else "short"] += 1
         _, avant = _lire_journal(journal)
-        retenus = set(gates.appliquer([s[0] for s in sig], df, sym,
-                                      journal=journal, hypothese="portes57"))
+        retenus = set(chaine.appliquer([(s[0], s[2]) for s in sig], df, sym,
+                                       journal=journal, hypothese="portes57"))
         motifs, _ = _lire_journal(journal, depuis=avant)
 
         for i, _nom, side in sig:
@@ -128,14 +143,18 @@ def mesurer(sym, minutes, journal):
             # y compris si une autre l'a ferme aussi, et y compris si le signal
             # est finalement passe (cas d'une porte OBSERVEE). C'est ce qui rend
             # l'attribution independante de l'ordre.
-            for m in motifs.get(int(df["ts"].iloc[i]), []):
+            cle = "%s:%d:%s" % (sym, i, "L" if side > 0 else "S")
+            for m in motifs.get(cle, []):
                 par_motif.setdefault(m, []).append(d)
 
     lignes = []
+    from V3.registre import REGISTRE
+    for nom in REGISTRE:                    # les inertes AUSSI, avec n = 0
+        par_motif.setdefault(nom, [])
     for m, devs in sorted(par_motif.items(), key=lambda x: -len(x[1])):
         v = [x for x in devs if np.isfinite(x)]
         couche = m[:2] if m[:2] in ("L0", "L5") else "?"
-        applique = m in gates.APPLIQUEES
+        applique = m in chaine._APPLIQUEES
         part = len(devs) / max(tot_signaux, 1)
         lo, hi = PLAGES.get(couche, (0.0, 1.0))
         lignes.append({
@@ -169,38 +188,6 @@ def _verdict(part, lo, hi):
     return "dans la plage"
 
 
-def _lire_journal(chemin, depuis=0):
-    """{ts: [portes qui auraient bloque]} — PLUSIEURS par signal desormais.
-
-    Depuis la correction de Q7, les portes sont evaluees independamment : un
-    signal peut etre ferme par news ET par max_trades, et les deux sont
-    journalisees. Ne garder qu'un motif par ts reintroduirait exactement le
-    biais d'ordre qu'on vient d'eliminer.
-
-    Rend aussi le nombre de lignes lues, pour que l'appelant reprenne au bon
-    endroit sans relire tout le fichier a chaque journee.
-    """
-    import json
-    out = {}
-    n = 0
-    if not chemin or not os.path.exists(chemin):
-        return out, 0
-    for k, ln in enumerate(open(chemin, encoding="utf-8")):
-        n = k + 1
-        if k < depuis:
-            continue
-        ln = ln.strip()
-        if not ln:
-            continue
-        try:
-            o = json.loads(ln)
-        except ValueError:
-            continue
-        if o.get("decision") == "BLOQUE":
-            out.setdefault(int(o["ts"]), []).append(o.get("motif", "?"))
-    return out, n
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutes", type=int, default=15)
@@ -222,9 +209,19 @@ def main():
         print("  %s : %d signaux bruts | %d long / %d short"
               % (sym, n, sens["long"], sens["short"]))
 
+    ecarts = controler_effectifs(toutes, j)
+    if ecarts:
+        print("\n  EFFECTIFS FAUX — le tableau ne dit pas ce que le journal "
+              "porte :")
+        for e in ecarts:
+            print("     %s" % e)
+        print("  Rien de ce rapport n'est publiable en l'etat.")
+        return 1
+
     df = pd.DataFrame(toutes)
-    os.makedirs("V3/reports", exist_ok=True)
-    df.to_csv("V3/reports/portes_57j.csv", index=False, encoding="utf-8")
+    sortie = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rapports")
+    os.makedirs(sortie, exist_ok=True)
+    df.to_csv(os.path.join(sortie, "portes_57j.csv"), index=False, encoding="utf-8")
 
     print("\n%-4s %-28s %8s %9s %11s  %s"
           % ("sym", "porte", "rejetes", "part", "devenir", "verdict"))
@@ -242,7 +239,7 @@ def main():
             marque = "" if len(jours) >= 5 else "   <<< trop peu"
             print("  %-3s %-16s / %-12s %3d jours%s" % (sym, g, r, len(jours), marque))
 
-    print("\necrit : V3/reports/portes_57j.csv")
+    print("\necrit : %s" % os.path.join(sortie, "portes_57j.csv"))
     return 0
 
 

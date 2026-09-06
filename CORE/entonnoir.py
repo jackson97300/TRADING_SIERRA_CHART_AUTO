@@ -56,11 +56,17 @@ def chemin_du_jour(jour: str | None = None) -> str:
 
 
 def journaliser(ts, sym, couche, hypothese, decision, motif="",
-                snapshot_id=None, chemin=None):
+                snapshot_id=None, chemin=None, extra=None):
     """Ecrit une decision. Rend la ligne ecrite.
 
     Leve `ValueError` si un BLOQUE n'a pas de motif : c'est la seule regle
     dure de ce module.
+
+    `extra` ajoute des champs a la ligne, sans jamais ecraser les huit du
+    schema. Il sert aux TRADES FANTOMES : un signal bloque par une porte
+    d'existence — `L0_POSITION_OUVERTE` — est simule en entier, et porte alors
+    `fantome`, `meme_sens`, `barres_depuis_entree`, `issue_position_ouverte`.
+    Bloquer ne suffit pas : il faut savoir ce que la porte COUTE.
     """
     if couche not in COUCHES:
         raise ValueError("couche inconnue : %r" % couche)
@@ -74,6 +80,9 @@ def journaliser(ts, sym, couche, hypothese, decision, motif="",
              "hypothese": str(hypothese), "decision": decision,
              "motif": str(motif), "snapshot_id": snapshot_id,
              "devenir_atr": None}
+    for k, v in (extra or {}).items():
+        if k not in CHAMPS:                    # les huit du schema sont intouchables
+            ligne[k] = v
     c = chemin or chemin_du_jour(
         pd.Timestamp(int(ts), unit="ms", tz="UTC").strftime("%Y%m%d"))
     os.makedirs(os.path.dirname(c), exist_ok=True)

@@ -37,7 +37,7 @@ collectée n'existe pas.**
 
 ---
 
-## Famille 1 — QUALITÉ DES DONNÉES : *ce que je lis est-il vrai ?*
+## Famille A — QUALITÉ DES DONNÉES : *ce que je lis est-il vrai ?*
 
 | porte | source | classe | mesure |
 |---|---|---|---|
@@ -52,7 +52,7 @@ collectée n'existe pas.**
 
 ---
 
-## Famille 2 — TEMPS ET CALENDRIER : *est-ce un moment où décider ?*
+## Famille B — TEMPS ET CALENDRIER : *est-ce un moment où décider ?*
 
 | porte | source | classe | mesure |
 |---|---|---|---|
@@ -70,7 +70,7 @@ collectée n'existe pas.**
 
 ---
 
-## Famille 3 — CONDITIONS DE MARCHÉ : *le marché est-il tradable ?*
+## Famille C — CONDITIONS DE MARCHÉ : *le marché est-il tradable ?*
 
 | porte | source | classe | mesure |
 |---|---|---|---|
@@ -90,13 +90,13 @@ dans des conditions où le réel ne les aurait pas remplis au même prix.
 
 ---
 
-## Famille 4 — ÉTAT DU RISQUE : *ai-je encore le droit de perdre ?*
+## Famille D — ÉTAT DU RISQUE : *ai-je encore le droit de perdre ?*
 
 | porte | seuil | classe | mesure |
 |---|---|---|---|
 | stop journalier SIM | −1 000 $ | **appliquée** | **inerte par construction** : 31,8 pertes d'affilée sur ES contre ~7 signaux/jour. Assumé |
 | stop prop firm réel | −200 $ | **observée** | « aurait bloqué ici » — à la lecture, combien de jours coupés |
-| `max_trades/jour` | 5 / 10 / 20 | **observée** | **ferme 41,6 % ES / 47,9 % NQ**, devenir des rejetés **+0,196 / +0,253** — meilleur que les retenus |
+| `max_trades/jour` | 5 | **observée** | **devenue INERTE** : 0 rejet une fois `POSITION_OUVERTE` appliquée. Les 41,6 % mesurés le 06/09 venaient d'un état où la position n'était pas suivie — à ~1,5 trade retenu par jour, la limite de 5 n'est jamais atteinte |
 | rang du trade dans la journée | — | **observée** | le 15ᵉ est-il pire que le 3ᵉ ? |
 | pertes consécutives | ES 3 / NQ 2 | **observée** | jamais atteint sur 57 jours |
 | cooldown gain / perte | 60 / 90 min | **observée** | jamais atteint en 15 min |
@@ -104,14 +104,51 @@ dans des conditions où le réel ne les aurait pas remplis au même prix.
 
 ---
 
-## Famille 5 — ÉTAT DE L'EXÉCUTION : *puis-je physiquement passer l'ordre ?*
+## Famille E — ÉTAT DE L'EXÉCUTION : *puis-je physiquement passer l'ordre ?*
 
 | porte | source | classe | mesure |
 |---|---|---|---|
-| position déjà ouverte | état interne | **appliquée** | **journalisée depuis le 06/09.** Avec des trades de 20 barres, c'est probablement la porte la plus fermée — et elle n'apparaissait dans aucune mesure |
+| position déjà ouverte | état interne | **appliquée** | **ferme 72,5 % ES / 73,6 % NQ** — de loin la plus fermée, et elle n'apparaissait dans aucune mesure avant le 06/09. *Bloque l'entrée, ne bloque pas la mesure* |
 | DTC déconnecté | connecteur | **appliquée** | repli PAPER, jamais d'ordre à l'aveugle |
 | contrat JSONL ≠ contrat du compte | `contrats.py` | **appliquée** | à brancher avant le rollover du 10/09 |
 | marge insuffisante | compte | **appliquée** | sans objet en SIM |
+
+### « Bloque l'entrée, ne bloque pas la mesure »
+
+C'est la phrase qui résume tout l'esprit de L0, et elle s'applique d'abord à
+`POSITION_OUVERTE`. **Chaque signal qu'elle bloque est simulé en trade fantôme
+complet** — pas un devenir à 20 barres, la triple barrière entière : entrée à
+l'ouverture de t+1, TP +1,5 / SL −1,0 ATR, expiration, coûts déduits. Il produit
+un `pnl_atr` exactement comme un trade réel, étiqueté `fantome` dans l'entonnoir.
+
+Trois champs de plus, parce que c'est là qu'est l'information : `meme_sens`
+(le signal allait-il dans le sens de la position, ou contre ?),
+`barres_depuis_entree` (à quel moment de sa vie il arrive) et
+`issue_position_ouverte` (ce que la position en cours a finalement fait).
+
+Ce que ça permettra de lire à soixante jours, et qu'aucune campagne n'a su :
+- **le coût de « une position par instrument »** — somme des `pnl_atr` fantômes.
+  Si elle est nettement positive, le pyramidage devient une hypothèse mesurée,
+  pas une envie ;
+- **les signaux contraires comme sortie** — s'ils sont profitables *et* que la
+  position finit en SL dans ces cas-là, un signal contraire est une règle de
+  sortie. La meilleure façon d'en trouver une sans l'inventer ;
+- **les signaux même sens comme renfort** — tôt et la position finit en TP,
+  c'est un argument ; tard, pour rien.
+
+**Ce que ça ne fait pas** : ça ne change rien à l'exécution. Une position par
+instrument reste appliquée pendant toute la campagne. On mesure, on ne pyramide
+pas — la décision viendra de la lecture.
+
+**La position se ferme quand le trade se ferme, pas au bout de 20 barres.**
+Première version : `libre_a = i + 20`, un forfait. Or un trade qui touche son TP
+en trois barres libère la place en trois barres — le forfait fermait dix-sept
+barres pour rien. Corrigé le 06/09 : `libre_a` est l'indice de sortie **réel**
+de la triple barrière. Effet mesuré : `POSITION_OUVERTE` passe de **93,5 % à 72,5 %** et les signaux
+retenus de **13,2 % à 22,1 %** — l'écart venait d'un forfait, pas du marché.
+(Deux corrections sont dans ce chiffre : la sortie réelle, et la déduplication
+par (barre, sens) — deux déclencheurs qui tirent LONG sur la même barre ne font
+qu'un seul trade.)
 
 ---
 
@@ -134,8 +171,10 @@ dans des conditions où le réel ne les aurait pas remplis au même prix.
   chiffre qui **n'a pas bougé** entre l'évaluation en série et l'évaluation
   indépendante. Aucune autre porte ne fermait ces quatre signaux : sa mesure
   était déjà propre.
-- **`MAX_TRADES` coûte de l'argent** : ses rejetés font mieux que les retenus,
-  sur les deux instruments. Elle passe en observation.
+- **`MAX_TRADES` ne mesure plus rien** : elle fermait 41,6 % tant que la position
+  ouverte n'était pas suivie. Une fois `POSITION_OUVERTE` appliquée, elle tombe à
+  **zéro rejet** — la vraie contrainte de cadence, c'est la place occupée, pas le
+  compteur. Elle reste observée pour le jour où plusieurs positions coexisteront.
 - **L5 n'est pas inerte** — c'était ma mesure qui l'était. Trois vétos sur quatre
   se déclenchent une fois l'ordre éliminé. Seul le véto SL reste à zéro.
 - **La porte VIX n'est pas mesurable sur ce lot.** Période sans épisode de

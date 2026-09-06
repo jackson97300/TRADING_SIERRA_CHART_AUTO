@@ -33,6 +33,35 @@
 
 ---
 
+### 2026-09-06 — [VALIDATION_MISS] — Un chiffre publie que le journal ne portait pas
+
+**Contexte** : mesure des portes L0 sur les 57 jours (`V3/layers/L0_interrupteur/mesure_57j.py`),
+apres exposition de `POSITION_OUVERTE` et ajout des trades fantomes.
+
+**Ce qui a mal tourne** : le tableau annoncait **312 rejets ES** pour `L0_POSITION_OUVERTE`. Le
+journal JSONL, lui, n'en portait que **282**. J'ai publie le 312 dans une reponse a Jackson AVANT
+de compter les lignes du journal — le meme geste que l'incident precedent, a un jour d'intervalle.
+
+**Cause racine** : DEUX defauts qui se cumulaient.
+1. `_lire_journal` indexait les motifs par `ts` seul. Deux signaux de sens OPPOSES sur la meme
+   barre ont le meme `ts` : chacun recevait les motifs de l'autre, et le devenir etait compte deux
+   fois pour chaque.
+2. Le `snapshot_id` valait `SYM:barre:A` — sans le SENS. Deux decisions distinctes portaient donc
+   le meme identifiant : rien dans le journal ne permettait de les separer.
+
+**Lecon** : l'identite d'une decision, c'est instrument + barre + SENS. Un identifiant qui ne
+distingue pas deux decisions distinctes rend toute mesure d'attribution fausse — et le sur-comptage
+est SILENCIEUX : il gonfle les effectifs, resserre les intervalles de confiance, et fait sortir du
+bruit des resultats qui n'en sortent pas.
+
+**Trigger prevention** : avant de publier un effectif tire d'un agregat, compter les lignes du
+journal source et verifier l'egalite. `grep -c` coute dix secondes ; un effectif faux se propage
+dans toutes les conclusions qui en dependent.
+
+**Reviewed** : self (detecte en verifiant les chiffres avant commit, pas apres)
+
+---
+
 ### 2026-09-06 — [VALIDATION_MISS] — Un defaut d'initialisation qui est une valeur valide de l'enum
 
 **Contexte** : crible « proxy / fallback / default » passe sur les colonnes des six hypotheses de

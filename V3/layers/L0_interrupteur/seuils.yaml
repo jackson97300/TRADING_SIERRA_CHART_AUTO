@@ -1,0 +1,107 @@
+# SEUILS L0 + L5 — la source UNIQUE des nombres et des classes.
+#
+# Aucun seuil dans le code. Une porte se change ici, par commit, jamais dans
+# une fonction. `test_portes.py` echoue si une porte du code manque ici, ET si
+# une porte declaree ici n'existe pas dans le code : le controle va dans les
+# DEUX SENS, sinon la derive est silencieuse.
+#
+# TROIS MODES
+#   appliquee : elle bloque. N'y entre que ce dont l'effet protecteur est
+#               mesure, ou ce qui releve de la securite elementaire.
+#   observee  : elle journalise « j'aurais bloque » sans agir. « Ouvrir une
+#               porte » est ce qui a tue decembre ; « la mettre en
+#               observation » est une mesure.
+#   absente   : la donnee n'est pas collectee, ou le seuil n'est pas mesure.
+#               Journalisee `null`, jamais `false` — un manque qui se lit
+#               comme un feu vert est un manque qu'on oublie.
+#
+# REGLE DURE : aucun seuil sans sa distribution mesuree ecrite a cote. Six
+# confusions d'unites en une semaine ; deux hypotheses rendues non testables
+# par des seuils hors distribution (ib_range_atr < 0,40 = 0,13 % des barres).
+
+portes:
+
+  # --- famille B — TEMPS ET CALENDRIER -------------------------------------
+  L0_NEWS:
+    mode: appliquee
+    seuils: {}
+    mesure: "ferme 1,0 % — devenir -4,82 ATR ES / -1,18 NQ. Trente ecarts-types
+             du hasard (-0,057 +/- 0,153). La meilleure porte du systeme."
+  L0_SESSION_BLOQUEE:
+    mode: appliquee
+    seuils: {}
+    mesure: "ferme 10,1 % ES / 14,0 % NQ — devenir +0,069 / +0,04, non significatif"
+  L0_EOD_LOCKOUT:
+    mode: appliquee
+    seuils: {cloture_utc_min: 1200, marge_min: 10}   # 20:00 UTC - 10 min
+    mesure: "ferme 1,5 % — 20h UTC est deja 100 % bloque par la session"
+
+  # --- famille C — CONDITIONS DE MARCHE ------------------------------------
+  L0_VIX_REGIME:
+    mode: observee
+    seuils: {regime_max: 2}          # 0 <15 / 1 <=25 / 2 >25 / 3 >35
+    mesure: "DORMANTE : VIX plafonne a 22,01 sur 57 jours, les codes 2 et 3
+             n'ont jamais existe. Zero rejet — attendu, pas anormal."
+
+  # --- famille D — ETAT DU RISQUE ------------------------------------------
+  L0_MAX_TRADES_JOUR:
+    mode: observee
+    seuils: {max: 5}
+    mesure: "ferme 41,6 % ES / 47,9 % NQ — rejetes +0,196 / +0,253, MIEUX que
+             les retenus. Etrangleuse ET couteuse : elle ne s'applique pas."
+  L0_STOP_JOURNALIER:
+    mode: appliquee
+    seuils: {usd: -1000.0}
+    mesure: "INERTE par construction : 31,8 pertes d'affilee sur ES contre ~7
+             signaux/jour. Assume — c'est un garde-fou de securite, pas un filtre."
+  L0_STOP_PROPFIRM:
+    mode: observee
+    seuils: {usd: -200.0}
+    mesure: "la vraie regle Douglas — a la lecture, combien de jours coupes"
+  L0_COOLDOWN:
+    mode: observee
+    seuils: {apres_perte_min: 90, apres_gain_min: 60}
+    mesure: "jamais atteint en barres de 15 min sur 57 jours"
+
+  # --- famille E — ETAT DE L'EXECUTION -------------------------------------
+  L0_POSITION_OUVERTE:
+    mode: appliquee
+    seuils: {}
+    mesure: "ferme 93,5 % ES / 94,0 % NQ — de loin la plus fermee, et invisible
+             avant le 06/09. Bloque l'entree, ne bloque PAS la mesure : chaque
+             signal qu'elle ferme est simule en trade fantome complet."
+
+  # --- L5 — RISQUE ----------------------------------------------------------
+  L5_VETO_GAMMA:
+    mode: appliquee
+    seuils: {}
+    mesure: "ferme 3,4 % ES — devenir -0,401 ATR, elle protege"
+  L5_VETO_RVOL_EXTREME:
+    mode: appliquee
+    seuils: {zscore_max: 3.0}
+    mesure: "ferme 7,8 % ES — devenir -0,042, faible mais du bon cote"
+  L5_FRAIS_TROP_LOURDS:
+    mode: observee
+    seuils: {tp_atr: 1.5, part_max: 0.10}
+    mesure: "ferme 5,7 % ES / 0 % NQ — conforme au calcul (MES ~20 %, MNQ ~5 %).
+             Observee : fermer tout MES est peut-etre juste, ca se mesure."
+
+# --- CE QUI N'EXISTE PAS, ET QUI NE SE DEVINE PAS --------------------------
+# Une condition non collectee n'existe pas. Aucun proxy : `mq_gamma_condition`
+# a ete retire pour cette raison. Ces trois portes sont declarees ABSENTES pour
+# rester visibles ; elles ne sont pas dans le registre du code.
+absentes:
+  L0_SPREAD:
+    raison: "aucune colonne de carnet dans le C++. `avg_bid_size`/`avg_ask_size`
+             sont des tailles VAP, pas des cotations. Une ligne de C++ a ajouter
+             au dumper — sans elle, L0 vit avec une porte de liquidite en moins."
+  L0_HORLOGE_VPS:
+    raison: "aucune mesure de derive aujourd'hui"
+  L0_AGE_NIVEAUX_MQ:
+    raison: "le dump Sierra est vivant, sa fraicheur n'est pas controlee"
+  L0_VOL_EXTREME:
+    raison: "`atr_hnorm_r` a recalculer dans recalc.py — `atr_14m_hnorm` est
+             creee par feature_reduction, JAMAIS collectee. Seuil non mesure."
+  L0_VIX_CHOC:
+    raison: "ratio vix_level / valeur a 9h30 — distribution non mesuree.
+             Un seuil sans sa distribution est une porte qu'on ne sait pas lire."
