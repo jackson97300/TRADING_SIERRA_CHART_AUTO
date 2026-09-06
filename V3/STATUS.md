@@ -26,6 +26,18 @@ passe pas a la suivante. C'est le garde-fou que V1 n'a jamais eu — il embarqua
 | L5 | risque (veto mur, veto SL, taille) | **mesuree** | **0 %** | 10-25 % | **inerte** : aucun veto sur 1 300 signaux |
 | L6 | surveillance donnees | **passee** | — | — | 7 controles quotidiens en place |
 
+## Calendrier immediat
+
+**LUNDI 07/09/2026 — LABOR DAY.** 1er lundi de septembre, verifie. Le marche est
+OUVERT mais ferme a 13:00 ET au lieu de 16:00 : seance raccourcie, aucun trade.
+
+Deux consequences :
+- la campagne d'ombre demarre le **mardi 08/09**, elle n'est pas touchee ;
+- la surveillance L6 etait prevue lundi 21:01 UTC sur la premiere journee `w1`.
+  **Une demi-seance est une mauvaise reference** — volumetrie, reset VWAP et
+  fenetre seront tous atypiques. A decaler au mardi, ou a lire en sachant que
+  les ecarts sont attendus.
+
 ## Prochain pas
 
 Etape 1 : passer chaque couche existante sur les 57 jours, mesurer le taux de

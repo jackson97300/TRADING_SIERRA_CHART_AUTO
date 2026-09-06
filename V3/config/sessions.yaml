@@ -15,6 +15,17 @@
 # ---------------------------------------------------------------------------
 # FERIES — regles de calcul, pas dates en dur
 # ---------------------------------------------------------------------------
+# CORRECTION DU 06/09 (Jackson) : un ferie US n'est PAS une fermeture du CME.
+# Le marche reste OUVERT et ferme PLUS TOT — session raccourcie, cloture a
+# 13:00 ET au lieu de 16:00. Ma premiere version separait « feries » et
+# « demi-seances » comme deux categories : c'est faux, la plupart des feries US
+# SONT des demi-seances sur le CME.
+#
+# Ce que ca change concretement : le bot verra des donnees, un volume, des
+# barres — et croira a une journee normale. Rien dans les donnees ne dit
+# « aujourd'hui c'est ferie ». Seul le calendrier le sait.
+#
+# La regle est la meme dans tous les cas : CES JOURS-LA, ON NE TRADE PAS.
 # Des dates en dur perimeraient au 1er janvier. Les regles, non.
 # A VERIFIER chaque annee contre le calendrier officiel CME Equity Index :
 # les regles ci-dessous sont celles du marche US, mais le CME publie sa propre
@@ -40,6 +51,8 @@ feries:
       confirme_par_la_mesure: "2026-07-03 : 10 % du volume median, 1019 barres"
     - nom: Labor Day
       regle: "1er lundi de septembre"
+      prochain: "2026-09-07 — VERIFIE : c'est bien un lundi et le 1er du mois.
+                 Seance raccourcie, cloture 13:00 ET. Aucun trade."
     - nom: Thanksgiving
       regle: "4e jeudi de novembre"
     - nom: Christmas Day
@@ -48,6 +61,7 @@ feries:
   # Ce que le bot fait un jour ferie : AUCUN NOUVEAU TRADE.
   # Les TP/SL en cours restent actifs — meme regle que les fenetres de session.
   action: bloquer_nouveaux_trades
+  cloture_anticipee_et: "13:00"   # au lieu de 16:00 — le marche ferme plus tot
 
 # ---------------------------------------------------------------------------
 # DEMI-SEANCES — cloture anticipee a 13:00 ET
@@ -56,6 +70,7 @@ feries:
 # Les objets de reference (IB etendue, VA du jour) n'ont pas le temps de se
 # former : les declencheurs qui les lisent n'ont rien a lire.
 
+# Demi-seances QUI NE SONT PAS DES FERIES — les veilles et lendemains.
 demi_seances:
   regles:
     - nom: Veille d'Independence Day
