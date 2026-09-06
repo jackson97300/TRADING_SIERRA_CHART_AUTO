@@ -2037,39 +2037,55 @@
         var nearSupport = clusters.filter(function (c) { return c.side === "SUPPORT" && Math.abs(c.dist) <= 30; });
         var nearResist = clusters.filter(function (c) { return c.side === "RESISTANCE" && Math.abs(c.dist) <= 30; });
         if (nearSupport.length > 0) {
-            checks.push({ name: "Support proche: " + nearSupport[0].price.toFixed(2) + " (" + nearSupport[0].count + " niveaux)", ok: true, bull: true });
-            bullPoints++;
+            // INFORMATIF depuis le 06/09 : le backend build_conseil_global ne
+            // connait pas les clusters (calcules cote navigateur). Compter un
+            // point ici creait un verdict que le bot ne pouvait pas reproduire.
+            checks.push({ name: "Support proche: " + nearSupport[0].price.toFixed(2) + " (" + nearSupport[0].count + " niveaux) — informatif", ok: true, bull: true });
         }
         if (nearResist.length > 0) {
-            checks.push({ name: "Resistance proche: " + nearResist[0].price.toFixed(2) + " (" + nearResist[0].count + " niveaux)", ok: true, bull: false });
-            bearPoints++;
+            checks.push({ name: "Resistance proche: " + nearResist[0].price.toFixed(2) + " (" + nearResist[0].count + " niveaux) — informatif", ok: true, bull: false });
         }
 
         // 5. Position range
         var rangePos = (reg && typeof reg.range_pos === "number") ? reg.range_pos : 50;  // fix #99 : 0 || 50 = 50
-        var rpLabel = rangePos >= 70 ? "HAUT (favorise vente)" : rangePos <= 30 ? "BAS (favorise achat)" : "MILIEU";
-        checks.push({ name: "Position range: " + Math.round(rangePos) + "% — " + rpLabel, ok: rangePos <= 30 || rangePos >= 70, bull: rangePos <= 30 });
-        if (rangePos <= 30) bullPoints++;
-        if (rangePos >= 70) bearPoints++;
+        // ALIGNEMENT BACKEND 06/09/2026 : seuils 20/80, identiques a
+        // build_conseil_global (builders.py) et build_regime_context. Le
+        // frontend utilisait 30/70 : mesure sur 2 379 barres ES, cet ecart
+        // faisait dire "VENTE PRUDENTE" a l'ecran quand le bot disait
+        // "ATTENDRE" — 253 desaccords sur 258 dans ce sens.
+        var rpLabel = rangePos >= 80 ? "HAUT (favorise vente)" : rangePos <= 20 ? "BAS (favorise achat)" : "MILIEU";
+        checks.push({ name: "Position range: " + Math.round(rangePos) + "% — " + rpLabel, ok: rangePos <= 20 || rangePos >= 80, bull: rangePos <= 20 });
+        if (rangePos <= 20) bullPoints++;
+        if (rangePos >= 80) bearPoints++;
 
         // 6. MTF Confluence (poids 2 si 4/4, 1 si 3/4)
         var mtfBulls = reg.mtf_bulls || 0;
         var mtfBears = reg.mtf_bears || 0;
         var mtfVerdict = reg.mtf_verdict || "N/A";
-        if (mtfBulls >= 3 || mtfBears >= 3) {
-            var mtfWeight = (mtfBulls === 4 || mtfBears === 4) ? 2 : 1;
-            checks.push({ name: "MTF: " + mtfVerdict, ok: true, bull: mtfBulls >= 3 });
-            if (mtfBulls >= 3) bullPoints += mtfWeight;
-            if (mtfBears >= 3) bearPoints += mtfWeight;
+        // FIX BUG #4 porte au frontend le 06/09/2026 — il n'existait que cote
+        // Python depuis le 08/06. Poids 1 MAX, seuil 2 : un MTF 4/4 peut faire
+        // basculer le bias (2 pts) ET etre recompte ici ; a poids 2 cela faisait
+        // 4 points pour UN SEUL signal, et declenchait ACHAT PRUDENT sur du MTF
+        // seul. C'est ce qui produisait les faux LONG NQ sur dead cat bounce.
+        if (mtfBulls >= 2 || mtfBears >= 2) {
+            var mtfWeight = 1;
+            checks.push({ name: "MTF: " + mtfVerdict, ok: true, bull: mtfBulls >= 2 });
+            if (mtfBulls >= 2) bullPoints += mtfWeight;
+            if (mtfBears >= 2) bearPoints += mtfWeight;
         }
 
         // 7. Divergence forte = signal contrarian
         var divGrade = reg.div_grade || "NONE";
         var divQ = reg.div_quality || 0;
+        // ALIGNEMENT BACKEND 06/09/2026 — la divergence ne compte qu'aux
+        // EXTREMES du range, comme build_conseil_global (pos <= 20 ou >= 80).
+        // Le frontend donnait +2 SYSTEMATIQUEMENT a un cote (divBull = pos<=30,
+        // sinon bear), donc +2 bear en plein milieu de range. C'etait la
+        // principale source du "l'ecran dit VENTE PRUDENTE, le bot ATTEND".
         if (divGrade === "EXTREME" || divGrade === "FORTE") {
-            var divBull = rangePos <= 30; // div au bottom = bull
-            checks.push({ name: "DIV " + divGrade + " (" + fmt(divQ, 0) + "/10)", ok: true, bull: divBull });
-            if (divBull) bullPoints += 2; else bearPoints += 2;
+            checks.push({ name: "DIV " + divGrade + " (" + fmt(divQ, 0) + "/10)", ok: true, bull: rangePos <= 20 });
+            if (rangePos <= 20) bullPoints += 2;
+            else if (rangePos >= 80) bearPoints += 2;
         }
 
         // Verdict — seuils ajustes pour les nouveaux facteurs
@@ -2099,8 +2115,39 @@
         var freshness = cgBackend ? (cgBackend.freshness || "IDLE") : "IDLE";
         var ageBars = cgBackend ? (cgBackend.age_bars || 0) : 0;
 
-        var displayAction = action;
-        var displayColor = actionColor;
+        // ────────────────────────────────────────────────────────────────
+        // SOURCE UNIQUE DE VERITE — 06/09/2026.
+        // Le verdict AFFICHE est desormais celui du BACKEND, pas le calcul JS.
+        //
+        // Pourquoi : les deux implementations avaient diverge. Mesure sur
+        // 2 379 barres ES et 2 380 NQ (10 derniers jours) : 10,6 % et 6,7 % de
+        // desaccord sur l'ACTION, et 253 des 258 ecarts ES allaient dans le
+        // meme sens — l'ecran disait "VENTE PRUDENTE" ou "ACHAT PRUDENT" quand
+        // le bot disait "ATTENDRE". Quatre causes identifiees (seuils range_pos
+        // 30/70 vs 20/80, MTF poids 2 vs 1 — le fix BUG #4 du 08/06 n'avait
+        // jamais ete porte au frontend, bonus cluster inexistant cote backend,
+        // divergence comptee hors des extremes) ; une cinquieme, le gamma gate
+        // MenthorQ, n'est pas portable ici car elle depend des options.
+        //
+        // Aligner deux calculs qui derivent est une course perdue : on en
+        // supprime un. Le calcul local ne sert plus qu'a la checklist de detail.
+        var cgAction = cgBackend && cgBackend.action ? cgBackend.action : action;
+        var cgReason = cgBackend && typeof cgBackend.bull_points === "number"
+            ? (cgBackend.bull_points + " signaux bull / " + cgBackend.bear_points + " signaux bear")
+            : reason;
+        if (cgAction !== action) {
+            // Le detail affiche vient du calcul local : le signaler plutot que
+            // de laisser croire qu'il explique le verdict.
+            checks.push({ name: "(detail local — verdict rendu par le moteur backend)", ok: false, bull: true });
+        }
+        var ACTION_COLORS = {
+            "ACHAT": "var(--green)", "ACHAT PRUDENT": "var(--green)",
+            "VENTE": "var(--red)", "VENTE PRUDENTE": "var(--red)",
+            "CONFLIT": "var(--orange)", "ATTENDRE": "var(--yellow)"
+        };
+        var displayAction = cgAction;
+        var displayColor = ACTION_COLORS[cgAction] || actionColor;
+        reason = cgReason;
         var freshBadge = "";
 
         if (freshness === "EXPIRED") {
@@ -2109,7 +2156,7 @@
             freshBadge = ' <span style="font-size:0.75rem;color:var(--red);background:rgba(213,0,0,0.15);padding:2px 8px;border-radius:4px;margin-left:8px;">&#9888; EXPIRE (' + ageBars + ' barres)</span>';
         } else if (freshness === "PERSISTENT") {
             freshBadge = ' <span style="font-size:0.75rem;color:var(--text-secondary);background:rgba(148,163,184,0.15);padding:2px 8px;border-radius:4px;margin-left:8px;">&#9203; ' + ageBars + ' barre' + (ageBars > 1 ? 's' : '') + '</span>';
-        } else if (freshness === "NEW" && (action === "ACHAT" || action === "VENTE" || action === "ACHAT PRUDENT" || action === "VENTE PRUDENTE")) {
+        } else if (freshness === "NEW" && (cgAction === "ACHAT" || cgAction === "VENTE" || cgAction === "ACHAT PRUDENT" || cgAction === "VENTE PRUDENTE")) {
             freshBadge = ' <span style="font-size:0.75rem;color:var(--green);background:rgba(0,200,83,0.15);padding:2px 8px;border-radius:4px;margin-left:8px;font-weight:700;animation:pulse 1.2s infinite;">&#9889; NOUVEAU</span>';
         }
 
