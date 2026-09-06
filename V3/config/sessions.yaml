@@ -1,0 +1,103 @@
+# SESSIONS — feries CME, demi-seances, journees en panne
+#
+# Ecrit le 06/09/2026. Il manquait : `CORE/eco_calendar.py:116` porte
+# `"holiday": (0, 0)` — la cle existe, sa valeur ne bloque rien. Thanksgiving,
+# Noel et les demi-seances etaient trades comme des jours normaux.
+#
+# DEUX CHOSES A NE PAS CONFONDRE, et elles ont les memes symptomes :
+#   FERIE  : le marche est ouvert mais vide. Les donnees sont BONNES, le marche
+#            ne l'est pas. Les seuils calibres sur un marche normal n'y ont
+#            aucun sens.
+#   PANNE  : la collecte a echoue. Les donnees sont MAUVAISES.
+# La premiere se bloque, la seconde s'exclut de toute mesure. Confondre les deux
+# revient soit a jeter des journees valides, soit a calibrer sur du vide.
+
+# ---------------------------------------------------------------------------
+# FERIES — regles de calcul, pas dates en dur
+# ---------------------------------------------------------------------------
+# Des dates en dur perimeraient au 1er janvier. Les regles, non.
+# A VERIFIER chaque annee contre le calendrier officiel CME Equity Index :
+# les regles ci-dessous sont celles du marche US, mais le CME publie sa propre
+# liste et peut s'en ecarter (fermetures exceptionnelles, deuils nationaux).
+
+feries:
+  regles:
+    - nom: New Year's Day
+      regle: "1 janvier (reporte au lundi si dimanche)"
+    - nom: Martin Luther King Jr. Day
+      regle: "3e lundi de janvier"
+    - nom: Presidents Day
+      regle: "3e lundi de fevrier"
+    - nom: Good Friday
+      regle: "vendredi precedant Paques"
+    - nom: Memorial Day
+      regle: "dernier lundi de mai"
+    - nom: Juneteenth
+      regle: "19 juin"
+      confirme_par_la_mesure: "2026-06-19 : 12 % du volume median, 841 barres"
+    - nom: Independence Day
+      regle: "4 juillet ; si samedi, observe le vendredi ; si dimanche, le lundi"
+      confirme_par_la_mesure: "2026-07-03 : 10 % du volume median, 1019 barres"
+    - nom: Labor Day
+      regle: "1er lundi de septembre"
+    - nom: Thanksgiving
+      regle: "4e jeudi de novembre"
+    - nom: Christmas Day
+      regle: "25 decembre (reporte au lundi si dimanche)"
+
+  # Ce que le bot fait un jour ferie : AUCUN NOUVEAU TRADE.
+  # Les TP/SL en cours restent actifs — meme regle que les fenetres de session.
+  action: bloquer_nouveaux_trades
+
+# ---------------------------------------------------------------------------
+# DEMI-SEANCES — cloture anticipee a 13:00 ET
+# ---------------------------------------------------------------------------
+# Le volume s'effondre apres 11:00 ET et la cloture arrive avant la Power Hour.
+# Les objets de reference (IB etendue, VA du jour) n'ont pas le temps de se
+# former : les declencheurs qui les lisent n'ont rien a lire.
+
+demi_seances:
+  regles:
+    - nom: Veille d'Independence Day
+      regle: "3 juillet, si jour de semaine"
+    - nom: Lendemain de Thanksgiving
+      regle: "vendredi suivant le 4e jeudi de novembre"
+    - nom: Veille de Noel
+      regle: "24 decembre, si jour de semaine"
+  action: bloquer_nouveaux_trades
+
+# ---------------------------------------------------------------------------
+# JOURNEES EN PANNE — donnees inexploitables, EXCLUES de toute mesure
+# ---------------------------------------------------------------------------
+# Detectees le 06/09 sur ES : moins de 1 250 barres `stable` distinctes ET moins
+# de 55 % du volume median. Une seance pleine fait 1 379 barres (1 259 le
+# vendredi, cloture courte). Le critere est le NOMBRE DE BARRES DISTINCTES,
+# jamais un ratio de lignes : certains fichiers portent 20 940 lignes pour
+# 1 259 barres reelles.
+
+pannes:
+  detectees_2026:
+    - {jour: 2026-06-24, barres: 683,  volume_vs_median: "12 %", note: "collecte interrompue"}
+    - {jour: 2026-08-03, barres: 302,  volume_vs_median: "34 %", note: "collecte interrompue"}
+    - {jour: 2026-09-04, barres: 859,  volume_vs_median: "31 %", note: "dernier jour du lot, collecte partielle"}
+  action: exclure_de_toute_mesure
+  # A NE PAS confondre avec les feries ci-dessus : le 19/06 et le 03/07 ont
+  # 841 et 1019 barres avec un volume a 10-12 %. Peu de barres ET peu de volume
+  # ressemble a une panne, mais le marche etait bel et bien ouvert.
+  # Le depart se fait sur le CALENDRIER, pas sur le volume seul.
+
+# ---------------------------------------------------------------------------
+# CE QUI EXISTE DEJA, ET QU'ON NE REECRIT PAS
+# ---------------------------------------------------------------------------
+# `CORE/eco_calendar.py` porte deja, et c'est applique dans les donnees
+# (verifie le 06/09 : 13h UTC 51,7 % bloque, 19h 50,0 %, 20h 100 %) :
+#   - fenetre d'ouverture US    09:15-09:45 ET
+#   - close US + overnight      15:30 -> 18:15 ET
+#   - week-end                  vendredi 15:30 -> dimanche 18:15 ET
+#   - events CRITIQUES          -15 / +30 min  (FOMC, NFP, CPI, PCE, PPI)
+#   - events ELEVES             -5 min
+# Ce fichier ne fait qu'ajouter ce qui manquait : les feries et les demi-seances.
+#
+# Le module est ne d'une perte de 1 156 $ sur NQ pendant un FOMC
+# (`eco_calendar.py:17`). C'est la meilleure porte du systeme : devenir des
+# rejetes -4,82 ATR sur ES, contre un hasard a -0,06 +/- 0,08.
