@@ -180,7 +180,23 @@ portes:
   L5_VETO_RVOL_EXTREME:
     mode: appliquee
     seuils: {zscore_max: 3.0}
-    mesure: "volume relatif aberrant : ce n'est plus le meme marche"
+    # DEUX DEFINITIONS EXISTENT, ET ELLES NE SE REMPLACENT PAS.
+    #   `rvol_zscore`  volume inhabituel par rapport au passe RECENT (intraday)
+    #   `rvol_r`       volume inhabituel pour CETTE MINUTE de seance, contre
+    #                  les 20 jours precedents — de la saisonnalite
+    # Mesure du 06/09 : sur les 59 barres ES ou |rvol_zscore| >= 3, la mediane
+    # de `rvol_r` vaut 0,99 — un volume parfaitement normal. Les deux ferment
+    # des ensembles quasi disjoints : 25 et 17 signaux, 2 en commun.
+    # Transposer le seuil 3,0 sur `rvol_r` fermerait 0,5 % : inerte. Le
+    # calibrer a 1,71 pour retrouver 6,7 % fermerait D'AUTRES barres.
+    mesure: "volume relatif aberrant : ce n'est plus le meme marche.
+             BASCULE VERS `rvol_r` REFUSEE PAR LA MESURE : devenir des rejetes
+             `rvol_zscore` -0,009 ES / -0,036 NQ, contre `rvol_r` +0,785 /
+             +0,543 — la version saisonniere fermerait des trades gagnants.
+             `rvol_zscore` n'a par ailleurs aucun defaut mesurable sur ce lot :
+             1 zero exact sur 21 601 barres ES brutes, 4 sur 25 999 NQ.
+             `rvol_r` demande 20 jours de chauffe : 17 % des barres seraient
+             incalculables, donc autant de trous supplementaires en live."
   L5_FRAIS_TROP_LOURDS:
     mode: observee
     seuils: {tp_atr: 1.5, part_max: 0.10}
