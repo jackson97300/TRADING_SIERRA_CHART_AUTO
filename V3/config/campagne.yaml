@@ -1,0 +1,178 @@
+# CAMPAGNE D'OMBRE 1 — ce qui est fige avant de lancer
+#
+# Ecrit le 06/09/2026. Chaque nombre porte la mesure qui le justifie.
+# Regle : aucun seuil sans sa distribution mesuree a cote. Six confusions
+# d'unites en une semaine, et deux hypotheses rendues non testables par des
+# seuils hors distribution — on n'ecrit plus un nombre sans l'avoir mesure.
+
+campagne:
+  nom: ombre-1
+  debut: 2026-09-08
+  duree_jours_seance: 60
+  mode: SIM                      # aucun capital reel avant la lecture
+  date_lecture_unique: jour 61   # personne n'ouvre le tableau avant
+  attendu_pre_enregistre: "0 a 1 declencheur positif net de frais sur NQ"
+
+# Les COMPTES ne sont jamais versionnes : ils vivent dans comptes.local.yaml,
+# ignore par git. Le garde-fou a refuse le premier commit de ce fichier parce
+# qu'il contenait un nom de compte — il a eu raison. Voir comptes.example.yaml.
+instruments:
+  ES:
+    compte: ${COMPTE_ES}
+    valeur_point_usd: 5.00       # MES micro
+    cout_aller_retour_usd: 4.32  # Tradeify 1,82 + 1 tick/cote
+    # mesure 06/09 : ATR-5m median 6,29 pts = 31,43 $ -> cout 0,1375 ATR (9,2 % du TP)
+  NQ:
+    compte: ${COMPTE_NQ}
+    valeur_point_usd: 2.00       # MNQ micro
+    cout_aller_retour_usd: 2.82
+    # mesure 06/09 : ATR-5m median 41,38 pts = 82,75 $ -> cout 0,0341 ATR (2,3 % du TP)
+  # MGC arrivera sur son propre compte quand ES et NQ seront stables. Zero ligne a changer :
+  # le connecteur prend le compte par ORDRE.
+
+# ---------------------------------------------------------------------------
+# PORTES APPLIQUEES — elles bloquent
+# ---------------------------------------------------------------------------
+# N'entre ici que ce dont l'effet protecteur est mesure, ou ce qui releve de la
+# securite elementaire (qualite des donnees, une position par instrument).
+
+portes_appliquees:
+
+  news_calendrier:
+    actif: true
+    source: CORE/eco_calendar.py -> is_news_60m (niveau B)
+    mesure: |
+      LA MEILLEURE PORTE DU SYSTEME, et de tres loin. Devenir des rejetes :
+      -4,82 ATR sur ES, -1,18 sur NQ. Le hasard rend -0,06 +/- 0,08 : elle est
+      a trente ecarts-types du bruit. Elle ne ferme que 1,0 % des signaux.
+      Reserve : 4 occurrences seulement sur 57 jours.
+
+  qualite_donnees:
+    actif: true
+    regle: data_quality_flag == stable, window_version == w1
+    mesure: "securite elementaire — pas de devenir a mesurer"
+
+  session_cash:
+    actif: true
+    fenetre: 09:30-16:00 ET
+    mesure: |
+      Devenir des rejetes +0,18 ES / -0,03 NQ, non significatif. Conservee parce
+      que hors cash les objets de reference (VA, IB, VWAP RTH) n'existent pas.
+
+  une_position_par_instrument:
+    actif: true
+
+  stop_journalier_sim:
+    actif: true
+    seuil_usd: -1000
+    mesure: |
+      INERTE PAR CONSTRUCTION, et c'est assume. Un SL de 1,0 ATR vaut 31 $ sur
+      MES et 83 $ sur MNQ en 5 min : il faut 31,8 pertes d'affilee sur ES et
+      12,1 sur NQ pour l'atteindre, alors qu'on mesure ~7 signaux par jour.
+      Il protege le SIM, il ne sera pas mesure. Le stop reel est en observation.
+
+  veto_gamma:
+    actif: true
+    source: gamma_block_long / gamma_block_short (niveau B)
+    mesure: "devenir des rejetes -0,48 ATR sur ES. Ne se declenche jamais sur NQ."
+
+# ---------------------------------------------------------------------------
+# PORTES OBSERVEES — elles journalisent « aurait bloque », elles n'agissent pas
+# ---------------------------------------------------------------------------
+# « Ouvrir une porte » est ce qui a tue decembre. « La mettre en observation »
+# est une mesure. Un booleen par porte, et dans 60 jours on saura.
+
+portes_observees:
+
+  max_trades_par_jour:
+    valeurs_observees: [5, 10, 20]
+    mesure: |
+      ETRANGLEUSE ET COUTEUSE. Elle ferme 36,4 % des signaux sur ES et 43,4 %
+      sur NQ, et ses rejetes ont un devenir MEILLEUR que les retenus :
+      +0,178 contre +0,161 sur ES, +0,251 contre +0,176 sur NQ.
+      La regle Douglas des cinq trades vise le sur-trading emotionnel ; un bot
+      n'a pas cette faille, et la porte coute. On ne bloque plus, on observe.
+      Reserve : ces devenirs tombent dans l'intervalle du hasard [-0,21 ; +0,10].
+
+  rang_du_trade_dans_la_journee:
+    mesure: |
+      Journalise « 6e, 11e, 21e trade du jour » sur chaque signal, sans agir.
+      Dans 60 jours on saura si le 15e trade est reellement pire que le 3e —
+      la question a laquelle la regle des cinq repondait sans l'avoir posee.
+
+  defenses_du_niveau:
+    source: compteur d'approches par niveau, + vah_touches_20b / retest_*_count
+    mesure: |
+      NON MESURABLE SUR 57 JOURS, et c'est le resultat. En 15 min : 1re 133 /
+      2e 53 / 3e 12 sur ES, rien de significatif. Refait en 5 min avec le seuil
+      de defense calibre (p75 = 1,73 ATR, mesure) : 1re 258 / 2e 100 sur ES,
+      273 / 58 sur NQ — toujours rien, et les deux instruments sont en desaccord
+      de signe. La 3e approche n'atteint jamais 15 occurrences.
+      L'intuition « on trade un niveau deja defendu sans le savoir » n'est pas
+      invalidee : elle n'est pas mesurable ici. 60 jours de plus la trancheront.
+
+  streak_et_circuit_breaker:
+    valeurs_observees: {ES: 3, NQ: 2}
+    mesure: "ne se declenche jamais sur 57 jours — nombre de pertes consecutives insuffisant"
+
+  cooldowns:
+    apres_gain_min: 60
+    apres_perte_min: 90
+    mesure: "non mesure — jamais atteint, les signaux sont trop espaces en 15 min"
+
+  post_close_lock:
+    apres_gain_s: 15
+    apres_perte_s: 30
+
+  stop_prop_firm_reel:
+    seuil_usd: -200            # la vraie regle Douglas
+    mesure: |
+      Journalise « aurait bloque ici », sans agir. A la lecture on saura combien
+      de jours il aurait coupes, et ce que les trades suivants auraient donne.
+
+  fenetre_news_elargie:
+    avant_min: 15
+    apres_min: 30
+    mesure: |
+      La fenetre actuelle (is_news_60m) couvre 1,7 % des barres et n'a attrape
+      que 4 signaux. Vu son efficacite (-4,82 ATR), l'elargir couterait peu.
+      A mesurer avant d'appliquer.
+
+# ---------------------------------------------------------------------------
+# SUIVI — ce qu'on regarde chaque jour, et ce qu'on ne regarde pas
+# ---------------------------------------------------------------------------
+
+suivi:
+  quotidien: [L6, entonnoir, portes hors plage]
+  jamais_pendant_la_campagne: [P&L des declencheurs]
+
+  par_session:
+    decoupage_utc:
+      ASIA:       "22:00-07:00"
+      LONDON:     "07:00-13:30"
+      US_MORNING: "13:30-16:00"
+      US_MIDDAY:  "16:00-18:00"
+      POWER_HOUR: "18:00-20:00"
+      POST:       "20:00-22:00"
+    metriques: [pnl, nombre_de_trades, win_rate, devenir_moyen]
+    mesure: |
+      Mesure 06/09, journee complete, 57 jours :
+        ES  US_MIDDAY  169 sig  +0,276  SIGNIFICATIF
+        NQ  US_MIDDAY  166 sig  +0,275  SIGNIFICATIF
+        -> identiques a la troisieme decimale sur deux instruments.
+        ES  POWER_HOUR 161 sig  -0,171   |  NQ  182 sig  -0,120
+        -> le creneau que V1 privilegiait est le pire des deux.
+        LONDON : 12 signaux, err-type 2,6 — VIDE. Les declencheurs lisent la VA,
+        l'IB et le VWAP RTH, objets qui n'existent pas encore a cette heure.
+        Ce n'est pas que Londres soit mauvais : rien ne le regarde.
+
+# ---------------------------------------------------------------------------
+# INTERDITS PENDANT LA CAMPAGNE
+# ---------------------------------------------------------------------------
+
+interdits:
+  - toucher un seuil
+  - ajouter un declencheur
+  - changer une convention
+  - lire le P&L avant la date de lecture
+# Les idees nees pendant la campagne vont dans NEXT_CYCLE.md, pas dans le code.

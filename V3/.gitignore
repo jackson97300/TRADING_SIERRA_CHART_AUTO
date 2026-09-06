@@ -34,3 +34,6 @@ htmlcov/
 # --- niveaux MenthorQ : donnees sous licence, jamais publiees ---
 mq_levels/
 MENTHORQ/
+
+# comptes de trading : jamais versionnes
+config/comptes.local.yaml

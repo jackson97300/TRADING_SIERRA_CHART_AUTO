@@ -114,7 +114,12 @@ def agreger(df, minutes):
               "atr", "atr_14m", "finish_delta_pct", "delta_pct", "rvol",
               "dist_vwap_w", "is_news_60m", "is_session_blocked",
               "gamma_block_long", "rvol_zscore", "vix_level", "inside_prev_va",
-              "dist_ib_high", "dist_ib_low", "ib_broken_up", "ib_broken_dn"):
+              "dist_ib_high", "dist_ib_low", "ib_broken_up", "ib_broken_dn",
+              # compteurs de touches — ils EXISTENT (niveau B) et la mission
+              # affirmait a tort le contraire. Trois hypotheses ont ete
+              # ecrites sans eux pour cette raison.
+              "vah_touches_20b", "val_touches_20b",
+              "retest_high_count", "retest_low_count"):
         if c in d.columns:
             cols[c] = o[c].last()
     for c in ("sweep_high_this_bar", "sweep_low_this_bar"):

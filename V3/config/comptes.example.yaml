@@ -1,0 +1,9 @@
+# Modele. Copier en `comptes.local.yaml` et renseigner — ce dernier est ignore
+# par git et ne part JAMAIS dans le miroir public.
+#
+# Un nom de compte de trading n'a rien a faire dans un depot public, meme
+# simule : le jour ou il passe en reel, il serait deja expose.
+
+COMPTE_ES: "<compte de simulation pour ES>"
+COMPTE_NQ: "<compte de simulation pour NQ>"
+# COMPTE_MGC: "<plus tard>"

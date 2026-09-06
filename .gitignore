@@ -97,3 +97,12 @@ DASHBOARD/AUDIT/
 .turnstile_secret
 .turnstile_site_key
 .stripe_webhook_secret
+
+# Worktrees d agents : 209 Mo, duplique ~41% des resultats de recherche.
+# La branche reste intacte (git worktree list) — seule la recherche les ignore.
+.claude/worktrees/
+
+# V3/config : configuration versionnee du chantier V3, PAS le CONFIG/ historique.
+# Windows est insensible a la casse, donc "CONFIG/" attrapait aussi "config/".
+!V3/config/
+!V3/config/**

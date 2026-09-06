@@ -41,12 +41,32 @@ LIGNES_MAX = 300                # regle du chantier : un fichier se relit
 
 
 def fichiers():
-    for base, dirs, noms in os.walk(RACINE):
-        dirs[:] = [d for d in dirs if d not in
-                   {".git", "__pycache__", ".venv", "venv", "node_modules"}]
-        for n in noms:
-            p = os.path.join(base, n)
-            yield p, os.path.relpath(p, RACINE).replace("\\", "/")
+    """Seuls les fichiers que GIT SUIVRAIT. Un fichier ignore ne part jamais
+    dans le miroir public : le scanner produit des faux positifs, et un faux
+    positif qui bloque un commit legitime finit par faire desactiver le
+    garde-fou. `comptes.local.yaml` a declenche ce cas des le premier usage.
+    """
+    import subprocess
+    try:
+        r = subprocess.run(["git", "ls-files", "--cached", "--others",
+                            "--exclude-standard", "V3/"],
+                           capture_output=True, text=True, timeout=30,
+                           cwd=os.path.dirname(RACINE))
+        rels = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    except Exception:
+        rels = []
+    if not rels:                       # pas de git : on scanne tout, prudence
+        for base, dirs, noms in os.walk(RACINE):
+            dirs[:] = [d for d in dirs if d not in
+                       {".git", "__pycache__", ".venv", "venv", "node_modules"}]
+            for n in noms:
+                p = os.path.join(base, n)
+                yield p, os.path.relpath(p, RACINE).replace("\\", "/")
+        return
+    for rel in rels:                   # rel est relatif a la racine du depot
+        p = os.path.join(os.path.dirname(RACINE), rel)
+        if os.path.exists(p):
+            yield p, rel[3:] if rel.startswith("V3/") else rel
 
 
 def controler():
