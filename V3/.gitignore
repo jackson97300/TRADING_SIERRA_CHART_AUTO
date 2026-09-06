@@ -1,0 +1,36 @@
+# Miroir public : RIEN de sensible, rien de volumineux, rien sous licence.
+# Ce qui sort : du code, des conventions, des rapports agreges en CSV/MD.
+
+# --- donnees ---
+DATA/
+LOGS/
+*.jsonl
+*.parquet
+*.scid
+*.dbn
+*.zst
+
+# --- secrets et identifiants ---
+.env
+.env.*
+*.pem
+*.key
+.jwt_secret
+users*.json
+*credential*
+*secret*
+*token*
+
+# --- specifique a cette machine ---
+*.pyc
+__pycache__/
+.venv/
+venv/
+htmlcov/
+.coverage
+*.bak
+*.backup*
+
+# --- niveaux MenthorQ : donnees sous licence, jamais publiees ---
+mq_levels/
+MENTHORQ/
