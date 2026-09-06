@@ -136,15 +136,87 @@ l'ordre — et la mesure du devenir par porte s'en trouve faussée.
 
 ---
 
-## 7. Critère de scellement
+## 7. Critère de scellement — réécrit le 06/09
 
-L0 est scellée quand :
-- chaque porte a une classe, un seuil et une distribution mesurée ;
-- chaque porte appliquée est dans sa plage de rejet, ou son écart est justifié ;
-- les deux versions (Claude Code / Fable) ont été comparées et les désaccords
-  tranchés par une mesure, pas par un arbitrage ;
-- le code passe ses tests et le garde-fou du miroir public ;
-- `STATUS.md` porte L0 en **passée**.
+**Une porte a le droit d'entrer dans la chaîne si on sait ce qu'elle ferme, ce
+que ça coûte, et pourquoi elle dort quand elle dort.**
 
-**Après scellement, L0 ne se rouvre plus.** Ce qui naîtra ensuite ira dans
-`NEXT_CYCLE.md`.
+*L'ancien critère — une plage de rejet de 15–30 % **par porte** — était
+arithmétiquement contradictoire. À dix-neuf portes appliquées fermant chacune
+15 %, il resterait **4,56 %** des signaux : il demandait à chaque porte d'être un
+étranglement. Il avait été écrit quand L0 en comptait quatre. Mesure du 06/09 :
+**zéro porte sur dix-neuf** dans sa plage. Corrigé avant de sceller dessus les
+yeux fermés — c'est le premier critère du chantier qu'on répare au lieu de le
+déclarer rempli.*
+
+### Sur l'agrégat — la seule plage
+
+- **15 à 30 % des signaux retenus** après toute la couche. Mesuré 21,3 % ES /
+  21,6 % NQ.
+- **Le devenir des retenus doit être au moins celui du contrôle négatif**, sinon
+  la couche filtre dans le mauvais sens. Mesuré +0,124 ES contre −0,057
+  [−0,210 ; +0,096] ; +0,253 NQ contre −0,000 [−0,134 ; +0,134].
+
+Ajouter une porte se justifie **par la porte**, jamais par l'agrégat qui bouge.
+
+### Par porte — trois verdicts, chacun avec son test
+
+**Elle mord.** Elle ferme au moins un signal, et son devenir est lisible avec son
+intervalle — soit par l'effectif (n ≥ 10), soit parce que **l'effet sort de
+l'intervalle du contrôle négatif**. *Le seuil d'effectif sert la lisibilité
+statistique, pas la vérité : `NEWS` ferme quatre signaux pour un devenir de
+−4,82 ATR, trente écarts-types du hasard. Un critère qui la classerait
+« dormante » manquerait la meilleure porte du système.*
+
+- Devenir **négatif ou indiscernable du hasard** → elle entre **appliquée** :
+  elle protège, ou ne coûte rien de mesurable.
+- Rejetés **meilleurs que les retenus, hors de l'intervalle** → elle entre
+  **observée, jamais appliquée**. C'est le cas de `MAX_TRADES`, et c'est la
+  règle qui empêche de refaire décembre.
+
+**Elle dort, et on sait pourquoi.** Peu ou pas de rejets, avec une raison écrite
+parmi quatre, chacune portant sa preuve :
+
+| raison | preuve exigée | exemples |
+|---|---|---|
+| sécurité élémentaire | elle ne coûte rien en dormant, et un cas de test la réveille | `STOP_JOURNALIER` |
+| hors terrain | le faux live la fait fermer | les sept muettes |
+| redondante par une **autre** source | les deux voies lisent des sources différentes | `EOD_LOCKOUT` (horloge) vs `SESSION_BLOQUEE` (colonne) |
+| le cas ne s'est pas présenté | **la distribution de la grandeur**, qui montre que le seuil n'a jamais été approché | `VIX_REGIME` (VIX plafonné à 22,01), `DATA_FENETRE_MELANGEE`, `PREMIERE_BARRE` |
+
+*La quatrième raison est la plus exigeante à prouver, et c'est voulu : un seuil
+jamais approché peut être hors distribution — quatre fois cette semaine. La
+distribution départage « elle dort » de « elle est mal réglée ».*
+
+Une redondance qui lit la **même** source qu'une autre porte se retire.
+
+**Elle se retire.** Zéro rejet sans raison écrite, ou une raison que rien ne
+prouve. *Une porte à zéro n'est pas un échec ; une porte à zéro dont personne ne
+sait pourquoi en est un.*
+
+### Deux exigences transversales
+
+Ce sont celles qui ont cédé cette semaine.
+
+1. **Aucun seuil sans sa distribution datée dans `rapports/`.**
+2. **Toute porte appliquée doit fermer quelque chose quelque part** : un signal
+   du lot, un scénario de faux live, **ou un cas de test**. Une porte qui n'a
+   jamais rien fermé, nulle part, n'a pas le droit d'être appliquée. *Cette
+   exigence est déjà mécanique : `couverture()` dans `test_portes.py` échoue si
+   une porte n'a pas sa barre qui passe **et** sa barre qui bloque.*
+
+### L0 sous ce critère
+
+L'agrégat est dans la plage et les retenus battent le contrôle négatif. `NEWS`,
+`VETO_GAMMA` mordent et protègent. `POSITION_OUVERTE` mord, et son coût est
+indiscernable de zéro — les fantômes le prouvent. `MAX_TRADES` est observée pour
+la bonne raison. Les douze dormantes ont chacune sa raison et sa preuve.
+
+**Rien à changer au code.**
+
+---
+
+*Écrit par Fable, amendé sur trois points par Claude Code après mesure : le
+seuil d'effectif qui manquait `NEWS`, la quatrième raison de dormance, et la
+preuve par cas de test là où le faux live ne couvre que six portes sur
+vingt-cinq.*

@@ -6,7 +6,12 @@
 |---|---|
 | **ecrite** | le code existe, rien n'est mesure |
 | **mesuree** | on sait ce qu'elle rejette et ce que ses rejetes deviennent |
-| **passee** | sa mesure est dans sa plage attendue — elle peut entrer dans la chaine |
+| **passee** | elle remplit son critere de scellement — elle entre dans la chaine |
+
+**L0 est SCELLEE le 06/09.** Elle ne se rouvre plus : ce qui naitra ensuite ira
+dans `NEXT_CYCLE.md`. Son critere est au paragraphe 7 de
+`layers/L0_interrupteur/BRIEF.md` — reecrit le jour meme, l'ancien etant
+arithmetiquement contradictoire a 25 portes.
 
 **Regle du chantier** : une brique qui ne rejette rien, ou qui rejette tout, ne
 passe pas a la suivante. C'est le garde-fou que V1 n'a jamais eu — il embarquait
@@ -18,14 +23,14 @@ passe pas a la suivante. C'est le garde-fou que V1 n'a jamais eu — il embarqua
 
 | # | brique | etat | rejet mesure | plage attendue | note |
 |---|---|---|---|---|---|
-| L0 | interrupteur — 25 portes + 5 declarees absentes | **mesuree** | **une ligne par porte** : `layers/L0_interrupteur/rapports/portes_57j.csv` | 15-30 % **par porte** | l'agregat a ete retire : domine par `POSITION_OUVERTE`, il se lisait comme un echec alors que la plage est par porte |
+| L0 | interrupteur — 25 portes + 5 declarees absentes | **PASSEE** | **une ligne par porte** : `layers/L0_interrupteur/rapports/portes_57j.csv` | 15-30 % **par porte** | l'agregat a ete retire : domine par `POSITION_OUVERTE`, il se lisait comme un echec alors que la plage est par porte |
 | REG | regime (gamma HVL zone morte 1,0 ATR + largeur IB corrigee) | **mesuree** | — | 4 cases >= 5 jours | 99,7 % de couverture ES, 1,8 bascule/jour |
 | L1 | biais 1h/4h (B1, B4, B5, B5b) | **ecrite** | — | 20-50 % | B1 seul pour l'instant |
 | L3 | declencheurs 15 min | **ecrite** | — | N >= 40 par etage | 4 pre-enregistres + 16 en ombre |
 | L4 | confirmation order flow 1 min | **absente** | — | 30-50 % | la seule couche a construire |
 | L5 | risque — 3 vetos (gamma, rvol, frais/TP) | **mesuree** | meme rapport, lignes `L5_*` | 10-25 % | PAS inerte : c'etait la mesure qui l'etait. Le veto SL mort remplace par la part des frais dans la distance au TP |
 | L6 | surveillance donnees | **passee** | — | — | 7 controles quotidiens en place |
-| L0-live | le branchement live de L0 : `strict=True` + etat du connecteur | **mesuree** | 14 scenarios de faux live passent | — | brique SEPAREE : sceller une couche dont la moitie n'a jamais tourne n'aurait rien scelle |
+| L0-live | le branchement live de L0 : `strict=True` + etat du connecteur | **PASSEE** | 14 scenarios de faux live passent | — | brique SEPAREE : sceller une couche dont la moitie n'a jamais tourne n'aurait rien scelle |
 
 ## Comment lire le rapport des portes
 
@@ -62,6 +67,11 @@ Deux consequences :
 
 ## Prochain pas
 
-Etape 1 : passer chaque couche existante sur les 57 jours, mesurer le taux de
-rejet **et le devenir des rejetes**. Ce qui sort de sa plage est repare avant
-d'aller plus loin.
+**L1 — le biais 1 h / 4 h.** Meme methode : ecrire, mesurer le taux de rejet et
+le devenir des rejetes, confronter les deux versions, sceller. Le critere de L0
+sert de modele, pas de copie : une couche de BIAIS ne se juge pas comme un
+interrupteur, et sa plage reste a etablir sur sa propre mesure.
+
+**Avant mardi 9h30** : brancher le bot sur `chaine.appliquer(strict=True,
+live={...})`. Le faux live prouve que le chemin fonctionne ; le bot ne l'emprunte
+pas encore.
