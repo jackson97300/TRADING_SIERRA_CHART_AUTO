@@ -176,6 +176,28 @@ Zero survivante reste le verdict : H3 meurt sur son walk-forward autant que sur
 ES. Mais l'ecart ES/NQ, de 0,17 a 0,45 ATR pour la meme strategie, est la
 signature de la taxe, pas du marche.
 
+**Correction du 06/09 (fin de journee).** Les couts annonces plus haut
+(0,070 ATR sur MNQ, 0,305 sur MES) etaient **deux fois trop eleves** : l'ATR-5m
+avait ete ESTIME par `atr_14m x racine(5)` au lieu d'etre MESURE sur les barres
+agregees. Mesure directe :
+
+| | ATR-5m median | en $ | cout par trade | % du TP a 1,5 ATR |
+|---|---|---|---|---|
+| MES 5 min | 6,29 pts | 31,43 $ | **0,1375 ATR** | 9,2 % |
+| MES 15 min | 11,82 pts | 59,11 $ | 0,0731 ATR | 4,9 % |
+| MNQ 5 min | 41,38 pts | 82,75 $ | **0,0341 ATR** | 2,3 % |
+| MNQ 15 min | 79,96 pts | 159,93 $ | 0,0176 ATR | 1,2 % |
+
+**Ce que cela invalide** : « le micro ES en 5 min ne peut pas gagner,
+arithmetiquement » est trop fort. A 9,2 % du TP, le cout est significatif mais
+non redhibitoire. Le constat EMPIRIQUE tient — les trois hypotheses qui ont
+produit des trades sont negatives sur ES et positives sur NQ — mais son
+explication par le seul cout etait deux fois trop severe.
+
+**Ce que cela ne touche pas** : les resultats des cycles 1 et 2. `triple_barriere`
+lit `df["atr5"]`, l'ATR-5m reel de chaque barre, et convertit le cout dessus. Les
+P&L sont justes ; seule la communication etait fausse.
+
 ### Q1 — Le critere d'echec du cycle 2
 
 > **Une hypothese passe si : esperance nette > 0, N >= 40, et >= 4/5 blocs
