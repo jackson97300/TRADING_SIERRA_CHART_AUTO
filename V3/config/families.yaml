@@ -1,0 +1,139 @@
+# config/families.yaml — table de reference feature -> famille (F1..F23)
+# Source : tableau §1.3 de ANALYSE_RIGOUREUSE_REDUCTION_ET_COUCHES.md (Fable, 05/09/2026).
+# Regles : regex Python, PREMIERE REGLE QUI MATCHE gagne — l'ordre compte, les plus specifiques d'abord.
+# Une colonne qui ne matche rien tombe dans AUTRES et doit etre rangee a la main (le runner le signale).
+# Les colonnes recalculees (_r) suivent le meme prefixe que leur origine.
+# Aucune colonne technique/fuite ici : elles sont C dans features_provenance.csv et n'ont pas de famille.
+
+familles:
+  F1:  {nom: "Position multi-jours",       question: "Ou est le prix vs les references lentes ?",          couche: [L1]}
+  F2:  {nom: "Structure des swings",       question: "HH/HL ou LH/LL ?",                                    couche: [L1]}
+  F3:  {nom: "Relation a la veille",       question: "Ouverture dans/hors VA veille, overlap ?",            couche: [L2]}
+  F4:  {nom: "Type de journee",            question: "Tendance / normal / neutre / double ?",               couche: [L2]}
+  F5:  {nom: "Initial Balance",            question: "IB forme, large, casse, extension ?",                 couche: [L2]}
+  F6:  {nom: "Profil du jour",             question: "Forme, skew, migration POC, single prints ?",         couche: [L2]}
+  F7:  {nom: "Regime de volatilite",       question: "Calme / normal / agite, relatif a l'heure ?",         couche: [L2, L5]}
+  F8:  {nom: "Regime gamma",               question: "Gamma positif (range) / negatif (trend), flip ?",     couche: [L2]}
+  F9:  {nom: "Calendrier / blocages",      question: "News, roll, fenetres interdites ?",                   couche: [L0]}
+  F10: {nom: "Position intrajour",         question: "Vs VWAP jour et bandes, VA courante, range du jour ?", couche: [L3]}
+  F11: {nom: "Niveaux options",            question: "Distance aux walls, 0DTE, GEX nearest ?",             couche: [L3]}
+  F12: {nom: "Niveaux de session",         question: "Overnight, Asie, Londres, opens ?",                   couche: [L3]}
+  F13: {nom: "Agressivite",                question: "Qui pousse : delta, ratio ask/bid, cumul ?",          couche: [L3, L4]}
+  F14: {nom: "Absorption / exhaustion",    question: "Effort sans resultat ?",                              couche: [L3, L4]}
+  F15: {nom: "Divergences delta",          question: "Prix vs delta aux extremes ?",                        couche: [L3]}
+  F16: {nom: "Big prints / clusters",      question: "Gros ordres, ou, combien ?",                          couche: [L4]}
+  F17: {nom: "Sweeps / liquidite",         question: "Balayage d'un extreme puis reprise ?",                couche: [L3]}
+  F18: {nom: "Battle Navale",              question: "Score composite proprietaire Vikings/Defenseurs ?",   couche: [L3, L4]}
+  F19: {nom: "Barre courante",             question: "Corps signe, meches, finish, duree, momentum ?",      couche: [L4]}
+  F20: {nom: "Intermarket ES/NQ",          question: "Accord ou divergence entre les deux ?",               couche: [L1, L3]}
+  F21: {nom: "Auction failures / traps",   question: "Failed auction, poor high/low, double top trap ?",    couche: [L3]}
+  F22: {nom: "Risque / distance au TP",    question: "Le TP est-il atteignable avant un mur ?",             couche: [L5]}
+  F23: {nom: "Trajectoire depuis l'ouverture", question: "Par ou le prix est-il passe depuis 9h30 ?",       couche: [L2, L3], statut: "a construire"}
+
+regles:
+  # ---- F20 intermarket : prefixe unique, avant tout ----
+  - {motif: "^im_",                                        famille: F20}
+
+  # ---- F9 calendrier / blocages ----
+  - {motif: "^is_news_|^news_|^mins_since_news|^mins_to_next_news|^is_critical_news", famille: F9}
+  - {motif: "^is_eco_blocked|^is_session_blocked|^is_blocked_combined|^is_roll_day|^roll_phase|^days_since_roll", famille: F9}
+
+  # ---- F22 risque (avant F8/F11 : gamma_block est un blocage de risque, pas un niveau) ----
+  - {motif: "^gamma_block_|^gamma_threshold|^daily_loss|^dist_1d_(max|min)", famille: F22}
+  - {motif: "^atr$|^atr_14m$",                             famille: F22}
+
+  # ---- F15 divergences delta (avant F13 : delta_div_* n'est pas de l'agressivite) ----
+  - {motif: "^delta_div|^ctx_div_|^div_|^n_delta_div|^dist_delta_div|^retest_(high|low)_delta_div|^ctx_price_delta_div", famille: F15}
+
+  # ---- F14 absorption / exhaustion (avant F7 : rvol_absorb_* est de l'absorption) ----
+  - {motif: "absor|^ctx_delta_exhaustion|^ctx_momentum_exhaustion|^ctx_climax|^ctx_instant_absor", famille: F14}   # `absorb` ratait `absorption` : le mot s'ecrit `absorp`
+
+  # ---- F8 regime gamma (avant F11 : hvl/flip/condition sont du regime, pas des niveaux) ----
+  - {motif: "^bool_gex_flip_zone|^mq_gamma_condition|^dist_mq_hvl|^bool_above_mq_hvl|^gex_cluster_count|^ctx_mq_put_call_ratio|^_mq_gamma_source", famille: F8}
+
+  # ---- F11 niveaux options ----
+  - {motif: "^dist_mq_|^dist_gex_|^next_wall_|^bool_above_mq_", famille: F11}
+
+  # ---- F7 regime de volatilite (VIX inclus) ----
+  - {motif: "^vix|^dist_vix_|^atr_14m_|^atr_regime|^rvol|^ctx_rvol|^sess_range|^iv_", famille: F7}
+
+  # ---- F5 initial balance ----
+  - {motif: "^ib_|^dist_ib_|^range_extension_|^is_ib_window|^bool_ib_", famille: F5}
+
+  # ---- F4 type de journee ----
+  - {motif: "^day_type|^open_type|^ctx_trend_day|^trend_day_prob|^ctx_ib_extension|^rule_80pct|^ctx_day_type", famille: F4}
+
+  # ---- F3 relation a la veille ----
+  - {motif: "^open_relation|^open_within_prev|^open_outside_prev|^open_(above|below|in)_prev|^inside_prev_va|^profile_overlap|^bool_above_prev_", famille: F3}
+  - {motif: "^dist_prev_|^dist_pvwap|^prev_(vpoc|vah|val|vwap)", famille: F3}
+
+  # ---- F6 profil du jour ----
+  - {motif: "^profile_|^poc_|^single_print|^has_single|^dist_session_(hvn|lvn)|^session_(hvn|lvn)|^lvn_|^hvn_|^is_double_dist|^naked_poc|^tpo|^bars_in_va|^composite_poc_\\d+d$", famille: F6}
+
+  # ---- F1 position multi-jours ----
+  - {motif: "^dist_vwap_[wm]|^vwap_[wm]_side|^bool_above_vwap_[wm]|^vwap_triple_align|^dist_composite|^dist_comp_|^dist_pdh|^dist_pdl|^pdh|^pdl|^bool_above_pd", famille: F1}
+
+  # ---- F2 structure des swings ----
+  - {motif: "swing|^equal_(highs|lows)|^bos_|^structure", famille: F2}
+
+  # ---- F17 sweeps / liquidite ----
+  - {motif: "sweep|^judas|^liquidity|^fvg|^dist_fvg", famille: F17}
+
+  # ---- F21 auction failures / traps ----
+  - {motif: "^ctx_failed_auction|^ctx_poor_|^ctx_double_top|^ctx_excess|^retest_|^ctx_trap|^trapped", famille: F21}
+
+  # ---- F16 big prints / clusters ----
+  - {motif: "^n_big_|^big_|^dist_big_|^dist_cluster|cluster|^p99_trade_size|^avg_trade_size|^max_(ask|bid)_vol", famille: F16}
+
+  # ---- F18 battle navale ----
+  - {motif: "^bn_|^bar_edge_|^fp_edge|^bar_pressure|^long_(up|dn)_bar|^dist_ext_|^dist_color|^n_edge_|^n_long_|^bar_(color|long)", famille: F18}
+
+  # ---- F13 agressivite ----
+  - {motif: "^ask_pct|^bid_pct|^ask_bid_imbalance|^buy_sell_ratio|^buy_vol|^sell_vol|^delta_bar|^delta_pct|^delta_day|^cvd_|^ctx_cvd|^ctx_delta_|^aggressor", famille: F13}
+
+  # ---- F12 niveaux de session ----
+  - {motif: "^dist_ovn|^ovn_|^dist_open_(cash|830)|^open_(cash|830)|^dist_asia|^dist_london|^dist_us_|^dist_cash_|^dist_ny_open|^open_gap|^asia_|^london_|^us_(high|low)|^after_", famille: F12}
+
+  # ---- F10 position intrajour ----
+  - {motif: "^dist_vwap_d|^dist_vwap_rth|^dist_cur_vwap|^vwap_d_side|^bool_above_vwap_d|^range_pos|^va_position|^dist_cur_|^inside_cur_va|^pct_in_range|^position_in_range|^vwap_slope|^dist_sess_(high|low)|^bool_above_(vah|val|vpoc)|^cur_(vpoc|vah|val)", famille: F10}
+
+  # ---- F19 barre courante ----
+  - {motif: "^bar_|^finish_|^(high|low)_pullback|^momentum_|^range_size|^ticks_count|^vol_per_sec|^total_vol|^volume$|^wick|^body|^open$|^high$|^low$|^close$|^price$", famille: F19}
+
+  # ---- F7 (reste) : ctx_ generiques de volatilite ----
+  - {motif: "^ctx_(range|volatility|atr)", famille: F7}
+
+  # ---- COMPLEMENTS 05/09 : les 64 colonnes A/B qui tombaient dans AUTRES ----
+  # Ajoutees apres passage des 626 noms dans le fichier. Aucune ne matchait une
+  # regle existante, donc l'ordre importe peu ici.
+
+  # fenetres de session : ce sont des drapeaux de calendrier, pas des niveaux
+  - {motif: "^is_in_(asia|london|us_after|us_cash)|^is_cash_session|^session$|^bool_session_|^ctx_session_phase", famille: F9}
+
+  # ouverture : type et direction du jour
+  - {motif: "^open_(zone|position|bias_conf|direction)", famille: F4}
+  - {motif: "^above_open_(cash|830)", famille: F12}
+
+  # agressivite : tailles moyennes, gros intervenants, desequilibres diagonaux
+  - {motif: "^avg_(bid|ask)_size|^large_trader|^diag_|^volume_imbalance|^(low_bid|high_ask)_vol_pct", famille: F13}
+  - {motif: "^max_big_(ask|bid)_vol_in_bar", famille: F16}
+
+  # profil : rotations, largeur et developpement de la VA, migration du POC
+  - {motif: "^rotation_|^ctx_rotation|^ctx_va_(width|developing)|^ctx_poc_migration|^dist_single_print", famille: F6}
+
+  # position intrajour : touches des bornes de VA, zones premium/discount,
+  # vitesses relatives a la VWAP, nouveaux extremes de session
+  - {motif: "^(vah|val)_touches|^bool_above_cur_vpoc|^(premium|discount)_zone|^is_new_sess_(high|low)|^bool_(near_level|va_confluence)", famille: F10}
+  - {motif: "^ctx_(dist_vwap_velocity|vwap_slope_accel|va_position_velocity)|^ma_trend|^vwap_ma_align", famille: F10}
+
+  # volatilite : pentes et z-scores de volume
+  - {motif: "^ctx_vol_(slope|z_\\d+|sell_buy_ratio)", famille: F7}
+
+  # barre courante : force de finish, alternances de cote, ranges croises
+  - {motif: "^ctx_finish_strength|^ctx_side_flip|^range_h(prev)?_minus_l", famille: F19}
+
+  # battle navale : motifs de couleur et zones actives
+  - {motif: "^long_(dn_up|up_dn)_pattern|^n_color_(up|dn)_zones", famille: F18}
+
+  # ---- F23 trajectoire : a construire, prefixe reserve ----
+  - {motif: "^traj_|^n_vwap_tests|^n_va_reentr|^path_from_open|^net_from_open|^time_(in_va|above_vwap)", famille: F23}

@@ -1,0 +1,641 @@
+colonne,provenance,motif
+ts,C,metadonnee ou fuite
+sym,C,moins de 100 valeurs
+contract,C,moins de 100 valeurs
+price,N,"niveau de prix (entree de recalc, pas feature)"
+open,N,"niveau de prix (entree de recalc, pas feature)"
+atr,B,plausibilite OK
+atr_14m,B,plausibilite OK
+session,B,plausibilite OK
+session_id,C,metadonnee ou fuite
+dist_vwap_d,A,verifiee par identite
+dist_vwap_d_atr,A,verifiee par identite
+dist_vwap_d_sd1u,A,verifiee par identite
+dist_vwap_d_sd1d,A,verifiee par identite
+dist_vwap_d_sd2u,A,verifiee par identite
+dist_vwap_d_sd2d,B,plausibilite OK
+dist_vwap_d_sd3u,B,plausibilite OK
+dist_vwap_d_sd3d,B,plausibilite OK
+dist_vwap_w,A,verifiee par identite
+dist_vwap_w_atr,A,verifiee par identite
+dist_vwap_m,A,verifiee par identite
+dist_vwap_m_atr,A,verifiee par identite
+vwap_d_side,A,verifiee par identite
+vwap_w_side,B,plausibilite OK
+vwap_m_side,B,plausibilite OK
+dist_cur_vpoc,A,verifiee par identite
+dist_cur_vah,A,verifiee par identite
+dist_cur_val,A,verifiee par identite
+dist_cur_vwap_vp,A,verifiee par identite
+va_position_pct,C,nulls 53% par jour
+inside_cur_va,A,verifiee par identite
+range_pos_va,B,plausibilite OK
+range_size_ticks,C,remplacee par recalc.py
+momentum_3b,C,remplacee par recalc.py
+momentum_5b,C,remplacee par recalc.py
+cvd_bar_delta,A,verifiee par identite
+vah_touches_20b,B,plausibilite OK
+val_touches_20b,B,"desaccord de seuil, niveau permissif retenu"
+bars_in_va,B,plausibilite OK
+dist_prev_vpoc,A,verifiee par identite
+dist_prev_vpoc_atr,A,verifiee par identite
+dist_prev_vah,A,verifiee par identite
+dist_prev_val,A,verifiee par identite
+dist_prev_vwap,C,remplacee par recalc.py
+dist_prev_vwap_sd1u,C,remplacee par recalc.py
+dist_prev_vwap_sd1d,C,remplacee par recalc.py
+inside_prev_va,B,plausibilite OK
+open_in_prev_va,B,plausibilite OK
+dist_1d_min_ticks,B,plausibilite OK
+dist_1d_max_ticks,C,remplacee par recalc.py
+next_wall_dist_ticks,B,plausibilite OK
+next_wall_is_call,B,plausibilite OK
+dist_mq_call,B,plausibilite OK
+dist_mq_put,B,plausibilite OK
+dist_mq_hvl,B,plausibilite OK
+dist_mq_call_0dte,B,plausibilite OK
+dist_mq_put_0dte,B,plausibilite OK
+dist_mq_hvl_0dte,C,nulls 37% dans sa fenetre
+dist_gex_nearest_up,B,plausibilite OK
+dist_gex_nearest_dn,B,plausibilite OK
+gex_cluster_count,B,plausibilite OK
+dist_blind_nearest_up,C,moins de 100 valeurs
+dist_blind_nearest_dn,C,moins de 100 valeurs
+vix_level,B,plausibilite OK
+dist_vix_hvl,B,plausibilite OK
+vix_regime,B,plausibilite OK
+vix_above_hvl,R,"evenement rare, actif 1.6%"
+dist_vix_call,B,plausibilite OK
+dist_vix_put,B,plausibilite OK
+dist_vix_call_0dte,C,nulls 26% dans sa fenetre
+dist_vix_put_0dte,B,plausibilite OK
+dist_vix_hvl_0dte,B,plausibilite OK
+vix_above_hvl_0dte,B,plausibilite OK
+dist_vix_gex_nearest_up,B,plausibilite OK
+dist_vix_gex_nearest_dn,B,plausibilite OK
+dist_ib_high,A,verifiee par identite
+dist_ib_low,A,verifiee par identite
+ib_range_ticks,A,verifiee par identite
+ib_range_atr,B,plausibilite OK
+ib_is_narrow,C,booleen actif 0.00% (mort)
+ib_is_wide,R,"evenement rare, actif 98.1%"
+ib_position_pct,C,nulls 39% dans sa fenetre
+ib_broken_up,B,plausibilite OK
+ib_broken_down,B,plausibilite OK
+ib_complete,C,booleen actif 100.00% (mort)
+dist_sess_high,B,plausibilite OK
+dist_sess_low,B,plausibilite OK
+sess_range_ticks,B,plausibilite OK
+sess_range_atr,B,plausibilite OK
+dist_open_cash,A,verifiee par identite
+dist_open_830,A,verifiee par identite
+dist_ovn_high,A,verifiee par identite
+dist_ovn_low,A,verifiee par identite
+ovn_range_ticks,B,plausibilite OK
+open_gap_ticks,B,plausibilite OK
+open_position,B,plausibilite OK
+dist_comp_20d_vpoc,C,source non alimentee (vide reel declare)
+dist_comp_20d_vpoc_atr,C,source non alimentee (vide reel declare)
+dist_comp_20d_vah,C,source non alimentee (vide reel declare)
+dist_comp_20d_val,C,source non alimentee (vide reel declare)
+dist_comp_20d_vwap,C,source non alimentee (vide reel declare)
+dist_comp_50d_vpoc,C,moins de 100 valeurs
+dist_comp_50d_vpoc_atr,C,moins de 100 valeurs
+dist_comp_50d_vah,C,moins de 100 valeurs
+dist_comp_50d_val,C,moins de 100 valeurs
+dist_comp_50d_vwap,C,moins de 100 valeurs
+inside_comp_20d_va,C,source non alimentee (vide reel declare)
+inside_comp_50d_va,C,source non alimentee (vide reel declare)
+comp_vpoc_align_20_50,C,source non alimentee (vide reel declare)
+comp_vpoc_align_day_20,C,source non alimentee (vide reel declare)
+delta_bar,A,verifiee par identite
+delta_bar_vol_norm,A,verifiee par identite
+delta_day,C,hors noyau (alias ou §7)
+delta_day_dir,B,plausibilite OK
+ask_pct,A,verifiee par identite
+bid_pct,A,verifiee par identite
+ask_bid_imbalance,A,verifiee par identite
+avg_trade_size,B,plausibilite OK
+avg_bid_size,B,plausibilite OK
+avg_ask_size,B,plausibilite OK
+large_trader_ratio,B,plausibilite OK
+vol_per_sec,A,verifiee par identite
+bar_duration_sec,B,plausibilite OK
+finish_strength,B,plausibilite OK
+poc_bar_dist,B,plausibilite OK
+cvd_day,B,plausibilite OK
+cvd_day_dir,B,plausibilite OK
+cvd_ohlc_range,B,"desaccord de seuil, niveau permissif retenu"
+rotation_up,B,plausibilite OK
+rotation_dn,B,plausibilite OK
+rotation_zz_osc,B,plausibilite OK
+delta_divergence,R,"evenement rare, actif 0.7%"
+buy_vol,B,plausibilite OK
+sell_vol,B,plausibilite OK
+buy_sell_ratio,B,plausibilite OK
+total_vol,A,verifiee par identite
+delta_pct,A,verifiee par identite
+ticks_count,B,plausibilite OK
+finish_delta_pct,A,verifiee par identite
+high_pullback_delta,B,plausibilite OK
+low_pullback_delta,B,plausibilite OK
+diag_pos_delta,B,plausibilite OK
+diag_neg_delta,B,plausibilite OK
+diag_imbalance,B,plausibilite OK
+low_bid_vol_pct,B,plausibilite OK
+high_ask_vol_pct,B,plausibilite OK
+max_ask_vol_in_bar,B,plausibilite OK
+max_bid_vol_in_bar,B,plausibilite OK
+p99_trade_size_proxy,B,plausibilite OK
+large_trader_max_size,B,plausibilite OK
+bn_color_up,B,plausibilite OK
+bn_color_dn,B,plausibilite OK
+bn_color_up_2,B,"desaccord de seuil, niveau permissif retenu"
+bn_color_dn_2,B,"desaccord de seuil, niveau permissif retenu"
+bn_absorb_ask,B,"desaccord de seuil, niveau permissif retenu"
+bn_absorb_bid,B,"desaccord de seuil, niveau permissif retenu"
+bn_long_up,B,"desaccord de seuil, niveau permissif retenu"
+bn_long_dn,B,"desaccord de seuil, niveau permissif retenu"
+bn_pressure_ask,B,"desaccord de seuil, niveau permissif retenu"
+bn_pressure_bid,B,"desaccord de seuil, niveau permissif retenu"
+bn_score_raw,B,plausibilite OK
+bn_score_bull,B,plausibilite OK
+bn_score_bear,B,plausibilite OK
+dist_big_ask_nearest_up,C,desaccord structurel ES/NQ
+dist_big_ask_nearest_dn,C,desaccord structurel ES/NQ
+dist_big_bid_nearest_up,C,nulls 10% par jour
+dist_big_bid_nearest_dn,C,desaccord structurel ES/NQ
+n_big_ask_t1,B,plausibilite OK
+n_big_bid_t1,B,plausibilite OK
+n_big_ask_t2,B,plausibilite OK
+n_big_bid_t2,B,plausibilite OK
+n_big_ask_t3,B,plausibilite OK
+n_big_bid_t3,B,plausibilite OK
+n_big_ask_t4,C,desaccord structurel ES/NQ
+n_big_bid_t4,C,desaccord structurel ES/NQ
+big_ask_cluster_20t,B,plausibilite OK
+big_bid_cluster_20t,B,plausibilite OK
+big_ask_cluster_50t,B,plausibilite OK
+big_bid_cluster_50t,B,plausibilite OK
+big_ask_cluster_20t_t1,B,plausibilite OK
+big_bid_cluster_20t_t1,B,plausibilite OK
+big_ask_cluster_20t_t2,B,plausibilite OK
+big_bid_cluster_20t_t2,B,plausibilite OK
+big_ask_cluster_20t_t3,B,plausibilite OK
+big_bid_cluster_20t_t3,B,plausibilite OK
+big_ask_cluster_20t_t4,C,desaccord structurel ES/NQ
+big_bid_cluster_20t_t4,C,desaccord structurel ES/NQ
+dist_cluster_nearest_up,C,nulls 13% par jour
+dist_cluster_nearest_dn,C,nulls 13% par jour
+n_clusters_20t,B,plausibilite OK
+n_clusters_50t,B,plausibilite OK
+bar_color_up,B,"desaccord de seuil, niveau permissif retenu"
+bar_color_dn,B,"desaccord de seuil, niveau permissif retenu"
+bar_long_up_bar,B,plausibilite OK
+bar_long_dn_bar,B,plausibilite OK
+bar_long_dn_up,B,"desaccord de seuil, niveau permissif retenu"
+bar_long_up_dn,B,"desaccord de seuil, niveau permissif retenu"
+bar_edge_buy,B,plausibilite OK
+bar_edge_sell,B,plausibilite OK
+bar_pressure_ask,B,"desaccord de seuil, niveau permissif retenu"
+bar_pressure_bid,B,"desaccord de seuil, niveau permissif retenu"
+dist_ext_color_up,C,nulls 74% par jour
+dist_ext_color_dn,C,nulls 75% par jour
+dist_ext_long_up,C,desaccord structurel ES/NQ
+dist_ext_long_dn,C,desaccord structurel ES/NQ
+dist_ext_edge_buy,B,plausibilite OK
+dist_ext_edge_sell,B,plausibilite OK
+bn_volume_up,B,plausibilite OK
+bn_volume_dn,B,plausibilite OK
+fp_edge_buy,B,plausibilite OK
+fp_edge_sell,B,plausibilite OK
+dist_swing_high,B,plausibilite OK
+dist_swing_low,B,plausibilite OK
+swing_range_ticks,B,plausibilite OK
+price_vs_swing_mid,B,plausibilite OK
+new_swing_high,R,"evenement rare, actif 1.6%"
+new_swing_low,R,"evenement rare, actif 1.6%"
+open_type,B,plausibilite OK
+open_zone,B,plausibilite OK
+open_bias_conf,B,plausibilite OK
+open_direction,B,plausibilite OK
+day_type,B,plausibilite OK
+rule_80pct,B,plausibilite OK
+trend_day_probability,B,plausibilite OK
+ma_trend,B,plausibilite OK
+vwap_ma_align,B,plausibilite OK
+vwap_slope_10,B,plausibilite OK
+vwap_slope_30,B,plausibilite OK
+vwap_slope_10_dir,B,plausibilite OK
+bool_above_cur_vpoc,B,plausibilite OK
+bool_above_prev_vpoc,B,plausibilite OK
+bool_above_vwap_d,A,verifiee par identite
+bool_above_vwap_w,B,plausibilite OK
+bool_above_vwap_m,B,plausibilite OK
+bool_above_mq_hvl,B,plausibilite OK
+bool_above_mq_call,B,plausibilite OK
+bool_near_level,B,plausibilite OK
+bool_ib_inside,B,plausibilite OK
+bool_session_early,B,plausibilite OK
+vwap_triple_align,B,plausibilite OK
+bool_va_confluence,B,"desaccord de seuil, niveau permissif retenu"
+bool_gex_flip_zone,B,plausibilite OK
+dist_session_hvn_above,C,nulls 32% par jour
+dist_session_hvn_below,C,nulls 33% par jour
+dist_session_lvn_above,C,desaccord structurel ES/NQ
+dist_session_lvn_below,C,desaccord structurel ES/NQ
+session_hvn_count,B,plausibilite OK
+session_lvn_count,B,plausibilite OK
+lvn_between,C,booleen actif 0.00% (mort)
+hvn_between,C,booleen actif 0.00% (mort)
+lvn_confluence_count,B,plausibilite OK
+profile_shape,B,plausibilite OK
+profile_skew,B,plausibilite OK
+poc_position,B,plausibilite OK
+volume_imbalance,B,plausibilite OK
+is_double_dist,B,plausibilite OK
+poc_separation_ticks,B,plausibilite OK
+single_print_mid,N,"niveau de prix (entree de recalc, pas feature)"
+single_print_count,B,plausibilite OK
+profile_hvn_dominant,N,"niveau de prix (entree de recalc, pas feature)"
+retest_high_count,B,plausibilite OK
+retest_low_count,B,plausibilite OK
+retest_high_delta_div,B,plausibilite OK
+retest_low_delta_div,B,plausibilite OK
+bars_since_retest_high,C,nulls 77% par jour
+bars_since_retest_low,C,nulls 76% par jour
+rvol,B,"desaccord de seuil, niveau permissif retenu"
+rvol_zscore,B,plausibilite OK
+rvol_buy,B,plausibilite OK
+rvol_sell,B,plausibilite OK
+rvol_absorb_buy,R,"evenement rare, actif 1.0%"
+rvol_absorb_sell,R,"evenement rare, actif 0.9%"
+bar_high,N,"niveau de prix (entree de recalc, pas feature)"
+bar_low,N,"niveau de prix (entree de recalc, pas feature)"
+dist_vwap_d_pct,A,verifiee par identite
+dist_vwap_d_sd1u_pct,B,plausibilite OK
+dist_vwap_d_sd1d_pct,B,plausibilite OK
+dist_vwap_d_sd2u_pct,B,plausibilite OK
+dist_vwap_d_sd2d_pct,B,plausibilite OK
+dist_vwap_d_sd3u_pct,B,plausibilite OK
+dist_vwap_d_sd3d_pct,B,plausibilite OK
+dist_vwap_w_pct,A,verifiee par identite
+dist_vwap_w_sd1u_pct,B,plausibilite OK
+dist_vwap_w_sd1d_pct,B,plausibilite OK
+dist_vwap_m_pct,A,verifiee par identite
+dist_vwap_m_sd1u_pct,B,plausibilite OK
+dist_vwap_m_sd1d_pct,B,plausibilite OK
+dist_cur_vpoc_pct,B,plausibilite OK
+dist_cur_vah_pct,B,plausibilite OK
+dist_cur_val_pct,B,plausibilite OK
+dist_prev_vpoc_pct,C,remplacee par recalc.py
+dist_prev_vah_pct,B,plausibilite OK
+dist_prev_val_pct,B,plausibilite OK
+dist_sess_high_pct,B,plausibilite OK
+dist_sess_low_pct,B,plausibilite OK
+dist_mq_call_pct,B,plausibilite OK
+dist_mq_put_pct,B,plausibilite OK
+dist_mq_hvl_pct,B,plausibilite OK
+dist_mq_call_0dte_pct,B,plausibilite OK
+dist_mq_put_0dte_pct,C,desaccord structurel ES/NQ
+dist_mq_hvl_0dte_pct,C,nulls 37% dans sa fenetre
+dist_1d_max_ticks_pct,C,remplacee par recalc.py
+dist_1d_min_ticks_pct,B,plausibilite OK
+dist_long_up_nearest_pct,C,desaccord structurel ES/NQ
+dist_long_dn_nearest_pct,C,desaccord structurel ES/NQ
+dist_color_up_nearest_pct,C,nulls 74% par jour
+dist_color_dn_nearest_pct,C,nulls 75% par jour
+dist_edge_buy_nearest_pct,C,desaccord structurel ES/NQ
+dist_edge_sell_nearest_pct,C,desaccord structurel ES/NQ
+dist_gex_nearest_up_pct,B,plausibilite OK
+dist_gex_nearest_dn_pct,B,plausibilite OK
+vwap_d,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_d_sd1u,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_d_sd1d,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_d_sd2u,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_d_sd2d,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_d_sd3u,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_d_sd3d,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_w,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_w_sd1u,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_w_sd1d,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_w_sd2u,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_w_sd2d,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_w_sd3u,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_w_sd3d,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_m,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_m_sd1u,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_m_sd1d,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_m_sd2u,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_m_sd2d,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_m_sd3u,N,"niveau de prix (entree de recalc, pas feature)"
+vwap_m_sd3d,N,"niveau de prix (entree de recalc, pas feature)"
+pvwap,N,"niveau de prix (entree de recalc, pas feature)"
+pvwap_sd1u,N,"niveau de prix (entree de recalc, pas feature)"
+pvwap_sd1d,N,"niveau de prix (entree de recalc, pas feature)"
+pdh,N,"niveau de prix (entree de recalc, pas feature)"
+pdl,N,"niveau de prix (entree de recalc, pas feature)"
+cash_high,N,"niveau de prix (entree de recalc, pas feature)"
+cash_low,N,"niveau de prix (entree de recalc, pas feature)"
+open_cash_lvl,N,"niveau de prix (entree de recalc, pas feature)"
+open_830_lvl,N,"niveau de prix (entree de recalc, pas feature)"
+ovn_high_lvl,C,moins de 100 valeurs
+ovn_low_lvl,C,moins de 100 valeurs
+cur_vpoc_lvl,N,"niveau de prix (entree de recalc, pas feature)"
+cur_vah_lvl,N,"niveau de prix (entree de recalc, pas feature)"
+cur_val_lvl,N,"niveau de prix (entree de recalc, pas feature)"
+prev_vpoc_lvl,N,"niveau de prix (entree de recalc, pas feature)"
+prev_vah_lvl,N,"niveau de prix (entree de recalc, pas feature)"
+prev_val_lvl,N,"niveau de prix (entree de recalc, pas feature)"
+pct_in_range,B,plausibilite OK
+premium_zone,B,plausibilite OK
+discount_zone,B,plausibilite OK
+position_in_range,B,plausibilite OK
+bar_body_pct,C,remplacee par recalc.py
+bar_body_ticks,C,remplacee par recalc.py
+bar_upper_wick_pct,B,"desaccord de seuil, niveau permissif retenu"
+bar_lower_wick_pct,B,"desaccord de seuil, niveau permissif retenu"
+bar_no_trade,C,booleen actif 0.00% (mort)
+range_size,A,verifiee par identite
+is_news_715,C,booleen actif 0.07% (mort)
+is_news_730,C,booleen actif 0.00% (mort)
+is_news_830,R,"evenement rare, actif 0.1%"
+is_news_845,C,booleen actif 0.07% (mort)
+is_news_900,C,booleen actif 0.00% (mort)
+is_news_930,C,booleen actif 0.07% (mort)
+within_news_715_5m,R,"evenement rare, actif 0.4%"
+within_news_730_5m,R,"evenement rare, actif 0.3%"
+within_news_830_5m,R,"evenement rare, actif 0.4%"
+within_news_845_5m,R,"evenement rare, actif 0.4%"
+within_news_900_5m,R,"evenement rare, actif 0.3%"
+within_news_930_5m,R,"evenement rare, actif 0.4%"
+mins_since_news,C,nulls 26% dans sa fenetre
+mins_to_next_news,C,nulls 66% dans sa fenetre
+is_roll_day,R,"evenement rare, actif 0.2%"
+mins_et,S,reinitialisee au boot : saut de 328x la derive quotidienne — a recalculer
+is_in_us_cash,B,plausibilite OK
+dist_pdh_pct,A,verifiee par identite
+dist_pdl_pct,A,verifiee par identite
+atr_14m_pct,A,verifiee par identite
+cvd_session,C,hors noyau (alias ou §7)
+ctx_day_type_intensity,B,plausibilite OK
+ts_event,C,metadonnee ou fuite
+ts_event_ns,C,metadonnee ou fuite
+close,N,"niveau de prix (entree de recalc, pas feature)"
+high,N,"niveau de prix (entree de recalc, pas feature)"
+low,N,"niveau de prix (entree de recalc, pas feature)"
+volume,A,verifiee par identite
+poc_migration_dir,B,plausibilite OK
+ctx_poc_migration_10,B,plausibilite OK
+bars_since_last_swing_high,C,nulls 12% par jour
+bars_since_last_swing_low,C,nulls 16% par jour
+equal_highs_detected,B,"desaccord de seuil, niveau permissif retenu"
+equal_lows_detected,B,"desaccord de seuil, niveau permissif retenu"
+liquidity_sweep_high_lag5,B,plausibilite OK
+liquidity_sweep_low_lag5,B,plausibilite OK
+dist_pdh_atr,A,verifiee par identite
+dist_pdl_atr,A,verifiee par identite
+is_new_cash_high,R,"evenement rare, actif 1.3%"
+is_new_cash_low,R,"evenement rare, actif 1.2%"
+dist_cash_high_atr,C,remplacee par recalc.py
+dist_cash_low_atr,C,remplacee par recalc.py
+above_open_cash,B,plausibilite OK
+open_830_et,N,"niveau de prix (entree de recalc, pas feature)"
+above_open_830,B,plausibilite OK
+ovn_high,N,"niveau de prix (entree de recalc, pas feature)"
+ovn_low,N,"niveau de prix (entree de recalc, pas feature)"
+ovn_broken_up,B,plausibilite OK
+ovn_broken_dn,B,plausibilite OK
+is_in_asia,B,plausibilite OK
+is_in_london,B,plausibilite OK
+is_in_us_after,B,plausibilite OK
+is_ib_window,B,plausibilite OK
+session_segment,C,moins de 100 valeurs
+asia_high,N,"niveau de prix (entree de recalc, pas feature)"
+asia_low,N,"niveau de prix (entree de recalc, pas feature)"
+london_high,N,"niveau de prix (entree de recalc, pas feature)"
+london_low,N,"niveau de prix (entree de recalc, pas feature)"
+us_high,N,"niveau de prix (entree de recalc, pas feature)"
+us_low,N,"niveau de prix (entree de recalc, pas feature)"
+after_high,N,"niveau de prix (entree de recalc, pas feature)"
+after_low,N,"niveau de prix (entree de recalc, pas feature)"
+asia_open,N,"niveau de prix (entree de recalc, pas feature)"
+london_open,N,"niveau de prix (entree de recalc, pas feature)"
+ny_open,N,"niveau de prix (entree de recalc, pas feature)"
+after_open,N,"niveau de prix (entree de recalc, pas feature)"
+dist_asia_open_pct,B,plausibilite OK
+dist_london_open_pct,C,nulls 25% dans sa fenetre
+dist_ny_open_pct,B,plausibilite OK
+dist_after_open_pct,C,moins de 100 valeurs dans sa fenetre
+dist_asia_high_pct,C,remplacee par recalc.py
+dist_asia_low_pct,C,remplacee par recalc.py
+dist_london_high_pct,C,remplacee par recalc.py
+dist_london_low_pct,C,remplacee par recalc.py
+dist_us_high_pct,C,nulls 71% par jour
+dist_us_low_pct,C,nulls 71% par jour
+dist_after_high_pct,C,moins de 100 valeurs dans sa fenetre
+dist_after_low_pct,C,moins de 100 valeurs dans sa fenetre
+is_cash_session,B,plausibilite OK
+session_date,C,metadonnee ou fuite
+session_date_trading,C,moins de 100 valeurs
+days_since_roll,B,plausibilite OK
+roll_phase,B,plausibilite OK
+is_news_5m,R,"evenement rare, actif 0.2%"
+is_news_15m,R,"evenement rare, actif 0.6%"
+is_news_30m,R,"evenement rare, actif 1.2%"
+is_news_60m,B,plausibilite OK
+is_critical_news_60m,R,"evenement rare, actif 1.3%"
+news_seconds_until,C,nulls 15% dans sa fenetre
+news_minutes_until,C,nulls 15% dans sa fenetre
+is_eco_blocked,R,"evenement rare, actif 1.3%"
+is_session_blocked,B,plausibilite OK
+is_blocked_combined,B,plausibilite OK
+delta_div_buy,B,plausibilite OK
+delta_div_sell,B,plausibilite OK
+delta_div_strength,B,plausibilite OK
+delta_divergence_any,B,plausibilite OK
+delta_div_buy_clean,B,plausibilite OK
+delta_div_sell_clean,B,plausibilite OK
+n_delta_div_buy_zones_active,B,plausibilite OK
+n_delta_div_sell_zones_active,B,plausibilite OK
+dist_delta_div_buy_nearest_atr,C,nulls 54% par jour
+dist_delta_div_sell_nearest_atr,C,nulls 57% par jour
+ctx_div_density_20,B,plausibilite OK
+ctx_bars_since_div,C,nulls 13% par jour
+ctx_climax_signal,B,plausibilite OK
+ctx_failed_auction,B,plausibilite OK
+ctx_absorption_score_5,B,plausibilite OK
+ctx_absorption_streak_5,B,plausibilite OK
+ctx_instant_absorption,B,"desaccord de seuil, niveau permissif retenu"
+ctx_delta_exhaustion,B,plausibilite OK
+ctx_momentum_exhaustion,B,plausibilite OK
+ctx_poor_high,B,plausibilite OK
+ctx_poor_low,B,plausibilite OK
+ctx_excess_high_bars,B,plausibilite OK
+ctx_excess_low_bars,B,plausibilite OK
+ctx_double_top_trap,B,plausibilite OK
+ctx_vol_sell_buy_ratio_5,B,plausibilite OK
+ctx_vol_slope_5,B,plausibilite OK
+ctx_vol_z_20,B,"desaccord de seuil, niveau permissif retenu"
+ctx_finish_strength_mean_5,B,plausibilite OK
+ctx_dist_vwap_velocity,B,plausibilite OK
+ctx_vwap_slope_accel,B,plausibilite OK
+ctx_va_position_velocity,B,plausibilite OK
+ctx_side_flip_count_10,B,plausibilite OK
+ctx_range_vs_atr_10,B,plausibilite OK
+ctx_price_slope_5,C,hors noyau (alias ou §7)
+ctx_delta_sum_3,A,verifiee par identite
+ctx_delta_slope_5,B,plausibilite OK
+ctx_rvol_session,B,plausibilite OK
+mq_gamma_condition,B,plausibilite OK
+aggressor_imbalance,B,plausibilite OK
+long_up_bar,B,plausibilite OK
+long_dn_bar,B,plausibilite OK
+range_h_minus_lprev_ticks,B,plausibilite OK
+range_hprev_minus_l_ticks,B,plausibilite OK
+long_dn_up_pattern,B,"desaccord de seuil, niveau permissif retenu"
+long_up_dn_pattern,B,"desaccord de seuil, niveau permissif retenu"
+n_long_up_zones_active,B,plausibilite OK
+n_long_dn_zones_active,B,plausibilite OK
+n_long_up_cluster_within_0_2pct,B,plausibilite OK
+n_long_dn_cluster_within_0_2pct,B,plausibilite OK
+bn_color_up_fwd1,C,metadonnee ou fuite
+bn_color_dn_fwd1,C,metadonnee ou fuite
+bn_color_up_2_fwd1,C,metadonnee ou fuite
+bn_color_dn_2_fwd1,C,metadonnee ou fuite
+n_color_up_zones_active,B,plausibilite OK
+n_color_dn_zones_active,B,plausibilite OK
+n_color_up_cluster_within_0_2pct,B,plausibilite OK
+n_color_dn_cluster_within_0_2pct,B,plausibilite OK
+ctx_session_phase,B,plausibilite OK
+ctx_ib_extension_ratio,B,plausibilite OK
+ctx_ib_position_velocity,C,nulls 44% dans sa fenetre
+div_confluence_dmp,B,plausibilite OK
+delta_divergence_clean,B,plausibilite OK
+ctx_va_developing_10,B,plausibilite OK
+ctx_cvd_session,B,plausibilite OK
+ctx_div_at_swing,B,plausibilite OK
+ctx_delta_sum_10,B,plausibilite OK
+ctx_vol_z_5,B,plausibilite OK
+ctx_rotation_factor_20,B,plausibilite OK
+div_confluence_with_regime,B,plausibilite OK
+ctx_price_delta_div_3,B,plausibilite OK
+ctx_cvd_recovery_rate,B,plausibilite OK
+ctx_mq_put_call_ratio,B,"desaccord de seuil, niveau permissif retenu"
+div_regime_proxy_ok,B,plausibilite OK
+ctx_va_width,B,plausibilite OK
+ctx_trend_day_score,B,plausibilite OK
+div_at_key_level_ticks,C,nulls 93% par jour
+bar_edge_buy_fire,B,plausibilite OK
+bar_edge_sell_fire,B,plausibilite OK
+n_edge_buy_active,B,plausibilite OK
+n_edge_sell_active,B,plausibilite OK
+rvol_sell_strong,C,booleen actif 0.01% (mort)
+rvol_extreme,R,"evenement rare, actif 0.7%"
+rvol_buy_strong,C,booleen actif 0.01% (mort)
+rvol_regime,B,plausibilite OK
+n_big_ask_v2_t1,B,plausibilite OK
+n_big_bid_v2_t1,B,plausibilite OK
+n_big_ask_v2_t2,B,plausibilite OK
+n_big_bid_v2_t2,B,plausibilite OK
+n_big_ask_v2_t3,B,plausibilite OK
+n_big_bid_v2_t3,B,plausibilite OK
+n_big_ask_v2_t4,C,desaccord structurel ES/NQ
+n_big_bid_v2_t4,C,desaccord structurel ES/NQ
+max_big_ask_vol_in_bar,B,plausibilite OK
+max_big_bid_vol_in_bar,B,plausibilite OK
+prev_vah,C,hors noyau (alias ou §7)
+prev_val,C,hors noyau (alias ou §7)
+prev_vpoc,C,hors noyau (alias ou §7)
+cur_vah,N,"niveau de prix (entree de recalc, pas feature)"
+cur_val,N,"niveau de prix (entree de recalc, pas feature)"
+cur_vpoc,N,"niveau de prix (entree de recalc, pas feature)"
+open_830,C,hors noyau (alias ou §7)
+ib_atr,C,nulls 42% dans sa fenetre
+is_new_sess_high,B,plausibilite OK
+ib_range,A,verifiee par identite
+is_new_sess_low,B,plausibilite OK
+sess_low,N,"niveau de prix (entree de recalc, pas feature)"
+ib_low,N,"niveau de prix (entree de recalc, pas feature)"
+date_et,C,metadonnee ou fuite
+dist_cash_low_pct,C,nulls 75% par jour
+open_cash,C,hors noyau (alias ou §7)
+ib_high,N,"niveau de prix (entree de recalc, pas feature)"
+dist_ib_low_pct,B,plausibilite OK
+price_1030,N,"niveau de prix (entree de recalc, pas feature)"
+ib_broken_dn,B,plausibilite OK
+sess_high,N,"niveau de prix (entree de recalc, pas feature)"
+dist_ib_high_pct,B,plausibilite OK
+dist_cash_high_pct,C,nulls 75% par jour
+im_cross_delta_agreement_5,B,plausibilite OK
+im_cross_delta_weighted_5,B,plausibilite OK
+im_smt_divergence,B,plausibilite OK
+im_delta_day_divergence,B,plausibilite OK
+im_price_ratio_slope_10,B,plausibilite OK
+im_volume_lead,B,plausibilite OK
+im_rolling_correlation_10,B,plausibilite OK
+im_ltr_slope_diff,B,plausibilite OK
+im_cross_open_signal,B,plausibilite OK
+im_open_type_agreement,B,plausibilite OK
+schema_version,C,metadonnee ou fuite
+boot_id,C,metadonnee ou fuite
+bars_since_boot,B,"desaccord de seuil, niveau permissif retenu"
+data_quality_flag,C,moins de 100 valeurs
+delta_div_slope_buy,B,plausibilite OK
+delta_div_slope_sell,B,plausibilite OK
+delta_div_slope_strength,B,plausibilite OK
+delta_div_slope_buy_clean,B,plausibilite OK
+delta_div_slope_sell_clean,B,plausibilite OK
+delta_div_slope_clean,B,plausibilite OK
+ts_raw_ms,C,metadonnee ou fuite
+prev_vwap_sd2u,C,moins de 100 valeurs
+prev_vwap_sd2d,C,moins de 100 valeurs
+open_above_prev_vah,B,plausibilite OK
+open_within_prev_va,B,plausibilite OK
+open_below_prev_val,B,plausibilite OK
+open_outside_prev_range,B,plausibilite OK
+open_relation_type,B,plausibilite OK
+profile_overlap_pct,B,plausibilite OK
+profile_overlap_above_pdh,B,plausibilite OK
+profile_overlap_below_pdl,B,plausibilite OK
+range_extension_above_ib_atr,C,renseignee hors de sa fenetre (100% de valeurs)
+range_extension_below_ib_atr,C,renseignee hors de sa fenetre (100% de valeurs)
+range_extension_completed,B,plausibilite OK
+fvg_up_active,B,plausibilite OK
+fvg_dn_active,B,plausibilite OK
+fvg_up_created_this_bar,B,plausibilite OK
+fvg_dn_created_this_bar,B,plausibilite OK
+dist_fvg_up_nearest_atr,C,nulls 100% par jour
+dist_fvg_dn_nearest_atr,C,nulls 100% par jour
+has_single_prints,C,booleen actif 99.91% (mort)
+dist_single_print_atr,B,plausibilite OK
+single_print_above,B,plausibilite OK
+single_print_below,B,plausibilite OK
+single_print_density,B,plausibilite OK
+composite_poc_5d,N,"niveau de prix (entree de recalc, pas feature)"
+composite_poc_20d,N,"niveau de prix (entree de recalc, pas feature)"
+dist_composite_poc_5d_atr,B,plausibilite OK
+dist_composite_poc_20d_atr,B,plausibilite OK
+sweep_high_active,B,plausibilite OK
+sweep_low_active,B,plausibilite OK
+sweep_high_this_bar,B,plausibilite OK
+sweep_low_this_bar,B,plausibilite OK
+bars_since_last_sweep_high,C,nulls 44% par jour
+bars_since_last_sweep_low,C,nulls 40% par jour
+judas_swing_active,B,"desaccord de seuil, niveau permissif retenu"
+judas_swing_direction,B,plausibilite OK
+london_first_hour_direction,C,nulls 80% par jour
+bars_since_london_open,C,nulls 76% par jour
+gamma_block_long,B,"desaccord de seuil, niveau permissif retenu"
+gamma_block_short,B,"desaccord de seuil, niveau permissif retenu"
+gamma_threshold_ticks,B,plausibilite OK
+gamma_block_reasons_long,C,moins de 100 valeurs
+gamma_block_reasons_short,C,moins de 100 valeurs
+dist_pvwap_pct,B,plausibilite OK
+dist_pvwap_sd1u_pct,B,plausibilite OK
+dist_pvwap_sd1d_pct,B,plausibilite OK
+range_pos,C,nulls 15% par jour
+ib_formed_bool,C,nulls 15% dans sa fenetre
+atr_regime_zscore_60d,C,nulls 91% par jour
+dist_pdh,A,verifiee par identite
+dist_pdl,A,verifiee par identite
