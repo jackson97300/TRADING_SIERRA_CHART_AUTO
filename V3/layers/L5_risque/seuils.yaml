@@ -33,6 +33,7 @@ barrieres:
     # identiques : par instrument quand meme, re-mesures au jour 61.
     buffer_sweep_atr: {ES: 0.33, NQ: 0.27}
     plafond_sl_atr: 1.5
+    plafond_tp_atr: 1.5   # le TP de reference B-ATR — un TP au-dela serait une autre barriere
     # CANDIDATS v1 : niveaux FIGES au signal, ELIGIBILITE = provenance A ou
     # reproduite SEULEMENT (revue Fable : les tiers V1 melangaient A, B non
     # reproduits — HVN/LVN, EXT_EDGE, SWING — et un quarantaine, CUR_VAH en
@@ -60,6 +61,7 @@ barrieres:
       H6p: ib_mid
       H8p: va_opposee
     sl_atr: 1.0                # le SL reste B-ATR — seule la cible change
+    plafond_tp_atr: 1.5        # le defaut quand la cible manque
 
 frais:
   source: config/campagne.yaml -> instruments    # jamais recopie
