@@ -23,24 +23,32 @@ barrieres:
     # TP : premier niveau DANS le sens au-dela de tp_min, moins la marge.
     tp_min_atr: 0.5
     marge_tp_ticks: 1
-    # BUFFER DE BALAYAGE, par instrument (rapport §2) : p75 de l'excursion
-    # des episodes <= 15 min au-dela des niveaux prev_* REGAGNES, sur 1 min.
-    # ES 20 t / NQ 109 t (ratio 5,45 — un buffer partage se serait trompe
-    # d'un facteur cinq, meme piege que g1). Le repli du brief : les fiches
-    # F23 `regagne` sont en quarantaine cur_*, les prev_* recalcules directs.
-    buffer_sweep_ticks: {ES: 20, NQ: 109}
+    # BUFFER DE BALAYAGE, par instrument, EN ATR (revue Fable 07/09 : la
+    # grandeur est dimensionnellement une distance — un buffer en ATR est
+    # une PART, et une part voyage ; en ticks il ne voyageait pas, ratio
+    # 5,45 aux trois quarts explique par les points-par-ATR). Mesure §2 du
+    # rapport, CONVERSION EXPLICITE (huit confusions points/ticks au
+    # chantier) : ES 20 t = 5,00 pts ; 5,00 / 15,11 = 0,33.
+    # NQ 109 t = 27,25 pts ; 27,25 / 101,14 = 0,27. Proches, PAS
+    # identiques : par instrument quand meme, re-mesures au jour 61.
+    buffer_sweep_atr: {ES: 0.33, NQ: 0.27}
     plafond_sl_atr: 1.5
-    # CANDIDATS v1 : niveaux FIGES au signal. Les cur_* sont EXCLUS — meme
-    # quarantaine que F23 (un niveau qui bouge entre le signal et l'issue
-    # n'est pas un niveau) ; leur entree attend une regle de stabilite posee
-    # sur le rapport §3 (derive de cur_vah par heure). Jamais gamma_block_*
-    # (proxy, un test l'interdit).
+    # CANDIDATS v1 : niveaux FIGES au signal, ELIGIBILITE = provenance A ou
+    # reproduite SEULEMENT (revue Fable : les tiers V1 melangaient A, B non
+    # reproduits — HVN/LVN, EXT_EDGE, SWING — et un quarantaine, CUR_VAH en
+    # Tier 2). Les cur_* sont EXCLUS — meme quarantaine que F23 ; leur
+    # entree attend une regle de stabilite (rapport §3). Jamais
+    # gamma_block_* (proxy, un test l'interdit). Les tiers V1 n'informent
+    # que l'ORDRE des candidats ; F23 les re-notera (`issue = tenu` par
+    # niveau, donnees V3) — jamais recopies de mars.
     niveaux: [prev_vah, prev_val, prev_vpoc, ib_high, ib_low,
               pdh, pdl, ovn_high, ovn_low, mq_call, mq_put, mq_hvl]
-    # L'ORDRE V1 de Jackson (mia_sltp.py, audit 07/03) classait par SOLIDITE
-    # mesuree (Tiers). v1 mecanique : le plus proche eligible dans la
-    # fenetre ; la mesure par TYPE de niveau du jour 61 re-notera les tiers
-    # sur les donnees V3 — les scores de mars (1 min) ne se recopient pas.
+    # CONTROLE INTERNE (revue Fable) : avec quinze niveaux le voisinage est
+    # DENSE (p50 0,23 ATR) — « part de vrais niveaux » sera haute PARCE QUE
+    # la liste est longue. La meme mesure tourne aussi sur la liste REDUITE
+    # aux A figes ; si la solidite vient des niveaux C++, ca se verra la.
+    niveaux_reduits: [prev_vah, prev_val, prev_vpoc, pdh, pdl,
+                      ovn_high, ovn_low, mq_call, mq_put]
     stabilite_cur_barres: null
     mesure: "rapports/distributions_niveaux_20260907.md"
 

@@ -43,7 +43,7 @@ from CORE.research import hypotheses as H                        # noqa: E402
 from CORE.research.hypothesis_runner import (                    # noqa: E402
     injecter_recalculs, signaux_par_franchissement)
 from V3 import calendrier, chaine, lecture                       # noqa: E402
-from V3.layers.L3_declencheurs import ombre16                    # noqa: E402
+from V3.layers.L3_declencheurs import ombre16, ombre_c2          # noqa: E402
 
 # Ce que `injecter_recalculs` consomme du 1 min : hlc3 + volume + horodatage
 # + delta (cvd_sess_r, prerequis L4).
@@ -150,6 +150,9 @@ def courir(jour, strict=False, minutes=15):
     # Les SEIZE en ombre : leur journal SEPARE, meme politique de rejeu.
     chemin16 = "LOGS/entonnoir/ombre16_%s.jsonl" % jour
     open(chemin16, "w").close()
+    # Les C2 actifs (brief OMBRE_C2, regle 15) : troisieme journal.
+    chemin_c2 = "LOGS/entonnoir/ombre_c2_%s.jsonl" % jour
+    open(chemin_c2, "w").close()
     total = 0
     for sym in ("ES", "NQ"):
         df, brut = charger_jour(sym, jour, minutes, avec_1min=True)
@@ -184,8 +187,15 @@ def courir(jour, strict=False, minutes=15):
         if absentes16:
             print("  %s : OMBRE16 AVEUGLE sur %s — colonnes perdues, un setup"
                   " mort en silence" % (sym, absentes16))
-        print("  %s : %d signaux L3 (%s), %d retenus par L0/L5, %d ombre16"
-              " -> %s" % (sym, len(sig), detail, len(retenus), n16, chemin))
+        n_c2, muets_c2, absentes_c2 = ombre_c2.journaliser(df, sym, jour,
+                                                           chemin_c2)
+        if absentes_c2:
+            print("  %s : OMBRE_C2 AVEUGLE sur %s — colonnes perdues, un"
+                  " setup mort en silence" % (sym, absentes_c2))
+        print("  %s : %d signaux L3 (%s), %d retenus par L0/L5, %d ombre16,"
+              " %d C2 (+%d lieux muets) -> %s"
+              % (sym, len(sig), detail, len(retenus), n16, n_c2, muets_c2,
+                 chemin))
     if total == 0:
         print("  AUCUN SIGNAL sur la journee — le journal VIDE est ecrit : la")
         print("  preuve que le jour a ete couru. Verifier avec pourquoi.py que")

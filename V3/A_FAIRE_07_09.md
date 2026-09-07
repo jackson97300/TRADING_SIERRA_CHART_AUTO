@@ -183,3 +183,13 @@ etait bonne, les « ecarts » etaient TROIS conventions, prouvees une a une :
 re-emission (220 barres fausses par instrument le 04/09, 17:19→20:58, ratio
 ~0,46 : l'accumulateur de session compte les lignes re-emises). INTERDITE
 pour L4. Correction : avec la dette C++/pipeline groupee (point 6 de la nuit).
+
+## 18. RESTES DE LA REVIEW C2 DU SOIR (R3/S1/S4) — demain matin
+- R3 : lire prev_vah_lvl/prev_val_lvl/open_cash_lvl (A) directement au lieu
+  de reconstruire depuis dist_* ; a minima assert de concordance au bar 0.
+  Ajouter lieu_prix, colonnes_lues{}, regime aux lignes signal du journal C2.
+- S1 : acceptation (VA reconstruite) et lieu (flag C++ inside_prev_va) sont
+  deux definitions — un desaccord d'un tick fragmente l'episode, N gonfle.
+  Documenter ou unifier le predicat.
+- S4 : test ACTIFS ⊆ LES_C2 + les 8 cas par setup actif (brief §0) — a
+  livrer AVANT l'activation du prochain setup (C2_EOD, J+1).

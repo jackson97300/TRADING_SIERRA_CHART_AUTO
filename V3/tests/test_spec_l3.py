@@ -84,10 +84,23 @@ def main():
     campagne_src = open(os.path.join(RACINE, "V3", "campagne.py"),
                         encoding="utf-8").read()
     for coureur, jeu in (("signaux_l3", "les quatre"),
-                         ("ombre16", "les seize")):
+                         ("ombre16", "les seize"),
+                         ("ombre_c2", "les C2 actifs")):
         if coureur not in campagne_src:
             echecs.append("campagne.py n'execute plus « %s » (%s) — "
                           "pre-enregistrement sans coureur" % (coureur, jeu))
+
+    # 6. le brief C2 : chaque nom du registre est dans OMBRE_C2.md, chaque
+    #    ACTIF a sa fonction, et un actif sans coureur casse a l'import.
+    from V3.layers.L3_declencheurs import ombre_c2 as OC2
+    c2_md = open(os.path.join(RACINE, "V3", "layers", "L3_declencheurs",
+                              "OMBRE_C2.md"), encoding="utf-8").read()
+    for nom in OC2.LES_C2:
+        if nom not in c2_md:
+            echecs.append("« %s » absent d'OMBRE_C2.md" % nom)
+    for nom in OC2.ACTIFS:
+        if nom not in OC2.SETUPS:
+            echecs.append("C2 actif « %s » sans fonction — regle 15" % nom)
 
     print("  parite SPEC L3 <-> code — planchers, les quatre, %d seuils, "
           "les seize en ombre" % len(controles))

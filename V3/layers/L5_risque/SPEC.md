@@ -49,10 +49,11 @@ un `null` seul est un bug. Écrit par un script SÉPARÉ après le rejeu de
 
 Par instrument et par déclencheur, `stats.py`, bloc semaine, apparié,
 contrôle hasard : part de vrais niveaux au SL (attendu 60-80 %) et au TP
-(50-70 %) ; B-NIV touche MOINS de SL ; ses TP sont PLUS COURTS ; l'espérance
-nette **inconnue — c'est la question** ; les « défaut » se comportent comme
-B-ATR (contrôle interne) ; B-NAT vs B-ATR reproduit ou infirme le
-constat 0.1. Trois verdicts au jour 61 : barrière du cycle 2 / reste
+(50-70 %) — **mesurée AUSSI sur la liste réduite aux A figés** (le voisinage
+est dense, une liste longue rend la part haute mécaniquement) ; B-NIV touche
+MOINS de SL ; ses TP sont PLUS COURTS ; l'espérance nette **inconnue —
+c'est la question** ; les « défaut » se comportent comme B-ATR (contrôle
+interne) ; B-NAT vs B-ATR reproduit ou infirme le constat 0.1. Trois verdicts au jour 61 : barrière du cycle 2 / reste
 observée / retirée — et si elle perd, le SL trop loin et le TP trop court
 se lisent SÉPARÉMENT.
 
