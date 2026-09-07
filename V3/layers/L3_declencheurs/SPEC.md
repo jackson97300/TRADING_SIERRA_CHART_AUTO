@@ -33,6 +33,14 @@ La source d'erreur n° 1 du dépôt (huit confusions d'échelle) :
 Une colonne absente rend NaN : une hypothèse **ne déclenche jamais sur une
 donnée manquante**, et ne lève pas non plus — le rapport dit `N = 0`.
 
+**LIMITATION COMMUNE AUX QUATRE (audit Fable, étendue le 07/09)** : les quatre
+lisent `finish_delta_pct` — une colonne C++ à formule inconnue, **binaire sur
+NQ**, dont le seuil 0,4/0,6 vient du cycle 1 et n'a jamais vu de distribution
+sur ES. Si cette colonne est cassée, la couche l'est. La limitation écrite
+plus bas pour H3-NQ vaut donc pour L3 ENTIÈRE ; la distribution du seuil est
+dans `rapports/`, et `finish_r` recalculé depuis OHLC est la première ligne
+de `NEXT_CYCLE.md`.
+
 ---
 
 ## H3-VPOC — rejet à l'extrême de la VA courante, cible VPOC

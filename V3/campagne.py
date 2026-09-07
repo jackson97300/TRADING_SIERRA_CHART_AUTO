@@ -43,6 +43,7 @@ from CORE.research import hypotheses as H                        # noqa: E402
 from CORE.research.hypothesis_runner import (                    # noqa: E402
     injecter_recalculs, signaux_par_franchissement)
 from V3 import calendrier, chaine, lecture                       # noqa: E402
+from V3.layers.L3_declencheurs import ombre16                    # noqa: E402
 
 # Ce que `injecter_recalculs` consomme du 1 min : hlc3 + volume + horodatage
 # + delta (cvd_sess_r, prerequis L4).
@@ -146,6 +147,9 @@ def courir(jour, strict=False, minutes=15):
     # cette distinction, la majorité des 60 jours (signaux rares par
     # construction) n'aurait AUCUNE preuve d'avoir eu lieu.
     open(chemin, "w").close()
+    # Les SEIZE en ombre : leur journal SEPARE, meme politique de rejeu.
+    chemin16 = "LOGS/entonnoir/ombre16_%s.jsonl" % jour
+    open(chemin16, "w").close()
     total = 0
     for sym in ("ES", "NQ"):
         df, brut = charger_jour(sym, jour, minutes, avec_1min=True)
@@ -174,8 +178,14 @@ def courir(jour, strict=False, minutes=15):
                                    strict=strict, live=live)
         total += len(sig)
         detail = " ".join("%s=%d" % (n, comptes[n]) for n in H.LES_QUATRE)
-        print("  %s : %d signaux L3 (%s), %d retenus par L0/L5 -> %s"
-              % (sym, len(sig), detail, len(retenus), chemin))
+        # Les seize accumulent leur N dans leur propre journal — jamais par
+        # la chaine (ils fausseraient la position virtuelle des quatre).
+        n16, absentes16 = ombre16.journaliser(df, sym, jour, chemin16)
+        if absentes16:
+            print("  %s : OMBRE16 AVEUGLE sur %s — colonnes perdues, un setup"
+                  " mort en silence" % (sym, absentes16))
+        print("  %s : %d signaux L3 (%s), %d retenus par L0/L5, %d ombre16"
+              " -> %s" % (sym, len(sig), detail, len(retenus), n16, chemin))
     if total == 0:
         print("  AUCUN SIGNAL sur la journee — le journal VIDE est ecrit : la")
         print("  preuve que le jour a ete couru. Verifier avec pourquoi.py que")

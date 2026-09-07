@@ -21,8 +21,10 @@ if RACINE not in sys.path:
     sys.path.insert(0, RACINE)
 
 from CORE.research import hypotheses as H                     # noqa: E402
+from CORE.research.hypotheses_ed import LES_SEIZE             # noqa: E402
 
 CHEMIN_SPEC = os.path.join(RACINE, "V3", "layers", "L3_declencheurs", "SPEC.md")
+CHEMIN_OMBRE = os.path.join(RACINE, "V3", "layers", "L3_declencheurs", "OMBRE.md")
 
 
 def main():
@@ -66,8 +68,16 @@ def main():
         if dans_spec not in spec:
             echecs.append("%s : « %s » absent de la SPEC" % (quoi, dans_spec))
 
-    print("  parite SPEC L3 <-> code — planchers, les quatre, %d seuils"
-          % len(controles))
+    # 4. les SEIZE en ombre : la liste du miroir = LES_SEIZE du code
+    ombre = open(CHEMIN_OMBRE, encoding="utf-8").read()
+    for nom in LES_SEIZE:
+        if nom not in ombre:
+            echecs.append("« %s » absent d'OMBRE.md — le miroir ment" % nom)
+    if len(LES_SEIZE) != 16:
+        echecs.append("LES_SEIZE n'en compte pas seize : %d" % len(LES_SEIZE))
+
+    print("  parite SPEC L3 <-> code — planchers, les quatre, %d seuils, "
+          "les seize en ombre" % len(controles))
     if echecs:
         print("  %d DIVERGENCE(S) — corriger la SPEC par commit, le code "
               "tague a raison :" % len(echecs))

@@ -148,6 +148,12 @@ def agreger(df, minutes):
               # des proxys (lecture.SOURCES_DECLAREES) ne voit rien sur le
               # frame agrege — la ou les portes lisent.
               "_mq_gamma_source", "_aggressor_source",
+              # Les SEIZE en ombre (hypotheses_ed) : cinq colonnes que leur
+              # pre-enregistrement lit et qui ne survivaient pas — un N=0 de
+              # colonne absente aurait passe 60 jours pour de la rarete
+              # (audit Fable 07/09, cablage ombre16).
+              "dist_vwap_d", "dist_gex_nearest_up", "dist_gex_nearest_dn",
+              "cvd_day_dir", "vwap_slope_10",
               "atr", "atr_14m", "finish_delta_pct", "delta_pct", "rvol",
               "dist_vwap_w", "is_news_60m", "is_session_blocked",
               "gamma_block_long", "rvol_zscore", "vix_level", "vix_regime",
