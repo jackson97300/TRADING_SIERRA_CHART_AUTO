@@ -8,8 +8,12 @@
 # lecture du jour 61.
 
 fenetre:
-  k_barres_1min: null        # 1, 2 ou 3 — choisi sur la mesure du GLISSEMENT,
-                             # ecrit dans DECISIONS.md, jamais retouche en ombre
+  # CHOISI le 07/09 sur la mesure (rapports/mesure_l4_20260907) : la
+  # separation est DANS LE BRUIT aux trois k (le controle hasard contient
+  # chaque valeur) ; k=2 est le moins mauvais COMBINE (gain net ES +0,009 /
+  # NQ -0,030 ; k=3 meilleur ES mais pire NQ). Ecrit dans DECISIONS.md,
+  # jamais retouche en ombre — L4 tourne OBSERVEE et se rejuge au jour 61.
+  k_barres_1min: 2
 
 vetos:
 
