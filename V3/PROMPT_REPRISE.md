@@ -56,6 +56,15 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
 
 ## 3. Le travail, dans l'ordre
 
+**OBJECTIF DE LA SEMAINE (decide par Jackson le 08/09) : tout construire EN
+OBSERVATION, fige vendredi 12/09** — pour que les 60 jours d'ombre soient
+homogenes. Ordre : coureur live (strict reel) -> prerequis L4 -> L4 J2 ->
+scalaires F23 (prev_* seulement) -> carte + recap Discord (nouveaux webhooks,
+jamais le P&L) -> pont DTC (ordres de TEST Sim, hors chaine decisionnelle) ->
+tache planifiee 21:01. Apres vendredi : on n'ajoute plus, on regarde tourner.
+Au jour 61 on ne « corrige » pas : on bascule observee->appliquee pour ce qui
+a survecu. Branchement decisionnel Sim : cycle 2, ~mi-decembre.
+
 0. **Le coureur LIVE** — la brique L0-live version branchée, et la réponse à
    la question 1 du constat qui reste NON : une boucle sur le fichier vivant
    avec `age_s` réel, L6 du jour et l'état du connecteur, passée à
