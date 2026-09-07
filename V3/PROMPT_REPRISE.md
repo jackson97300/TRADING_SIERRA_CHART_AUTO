@@ -101,6 +101,16 @@ a survecu. Branchement decisionnel Sim : cycle 2, ~mi-decembre.
 2. **F23 étape par étape** selon `REPONSES_NARRATIF.md` §ordre — PAS avant L4.
 3. La carte (`carte.py`, point 13) vient APRÈS L4 — le point 14 le dit : le
    narratif a déjà mangé une journée.
+4. **Les vides de la photo structurelle** (revue Fable, 07/09 au soir) —
+   par ordre : ~~L4 J2~~ (socle fait, reste la mesure) ; **SPEC L5 avant
+   EXEC** (la couche qui parle d'argent est la moins documentée du dépôt,
+   et EXEC lui obéira) ; **le pont DTC** (aucun ordre nulle part — jeudi
+   10/09 le rollover passera par `L0_CONTRAT_INACTIF`, test gratuit à
+   REGARDER) ; **les règles PROP FIRM n'ont pas de nom** (seule la porte
+   `L0_STOP_PROPFIRM` −200 $ existe — la brique complète est à nommer dans
+   `NEXT_CYCLE.md`) ; les mesures de REG citées dans son README (99,7 %,
+   1,8 bascule/jour) ne sont dans aucun `rapports/`. Et le RAPPORT_SESSION
+   du jour 1 (08/09) — le pire jour pour le manquer.
 
 ## 4. Les règles qu'on ne re-négocie pas (chacune a coûté)
 
