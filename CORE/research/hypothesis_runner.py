@@ -197,8 +197,12 @@ def agreger_5min(df, minutes=None):
     return out.reset_index(drop=True)
 
 
-def injecter_recalculs(brut_1min, cinq):
+def injecter_recalculs(brut_1min, cinq, minutes=None):
     """Ajoute aux barres 5 min les deux colonnes que les six exigent recalculees.
+
+    `minutes` : taille de la barre agregee cible (defaut `MINUTES_BARRE`, comme
+    `agreger_5min`). La campagne 15 min passe 15 — sans quoi le merge sur `ts`
+    prendrait `rvol_r` et les bandes au TIERS de la fenetre, pas au dernier.
 
     `rvol_r`  — H8. Le C++ initialise `f.rvol = 1.0f` et 1,0 est une valeur
                 valide de la variable : "normal mesure" et "jamais calcule" y
@@ -220,7 +224,7 @@ def injecter_recalculs(brut_1min, cinq):
         "dt": b["dt"], "rvol_r": rv,
         "sd2u": bandes["sup"], "sd2d": bandes["inf"], "c": b["close"],
     }).set_index("dt")
-    o = aux.resample("%dmin" % int(MINUTES_BARRE), origin="start_day",
+    o = aux.resample("%dmin" % int(minutes or MINUTES_BARRE), origin="start_day",
                      label="left", closed="left").last()
     o = o.dropna(subset=["c"])
     o["ts"] = (o.index.astype("int64") // 1_000_000)

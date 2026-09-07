@@ -40,32 +40,81 @@ if RACINE not in sys.path:
 from CORE import entonnoir                                       # noqa: E402
 from CORE.bot_terminal import charger_jour                       # noqa: E402
 from CORE.research import hypotheses as H                        # noqa: E402
+from CORE.research.hypothesis_runner import (                    # noqa: E402
+    injecter_recalculs, signaux_par_franchissement)
 from V3 import chaine, lecture                                   # noqa: E402
 
 CONTRATS_ATTENDUS = ("U26", "Z26")      # a mettre a jour au rollover
+# Ce que `injecter_recalculs` consomme du 1 min : hlc3 + volume + horodatage.
+COLS_RECALC = ["ts", "high", "low", "close", "total_vol"]
+# = `n_jours` de recalc.rvol — les deux bougent ensemble, sinon la chauffe
+# devient trop courte en silence. Le plancher 10 = son `min_periods`.
+N_JOURS_CHAUFFE, MIN_JOURS_CHAUFFE = 20, 10
+
+
+def jours_disponibles(sym):
+    js = {re.search(r"(\d{8})", os.path.basename(f)).group(1)
+          for f in glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym)
+          if re.search(r"(\d{8})", os.path.basename(f))}
+    return sorted(js)
 
 
 def dernier_jour(sym="ES"):
-    js = [re.search(r"(\d{8})", os.path.basename(f)).group(1)
-          for f in glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym)
-          if re.search(r"(\d{8})", os.path.basename(f))]
-    return max(js) if js else None
+    js = jours_disponibles(sym)
+    return js[-1] if js else None
+
+
+def chauffe_1min(sym, jour, n_jours=N_JOURS_CHAUFFE):
+    """Le 1 min des `n_jours` journées PRÉCÉDANT `jour` — la chauffe de
+    `rvol_r`, qui est saisonnier (cette minute de séance contre les 20 jours
+    d'avant, strictement passés). Sans elle, la colonne rend NaN sur une
+    journée chargée seule, et H8p est structurellement muette : le N=0 de
+    colonne vide, pas la rareté annoncée.
+
+    Un fichier HISTORIQUE malformé est écarté avec son motif : un vieux jour ne
+    doit pas tuer le run officiel du jour. Le brut du jour courant, lui, doit
+    crasher — fail-loud."""
+    prev = [j for j in jours_disponibles(sym) if j < jour][-n_jours:]
+    morceaux = []
+    for j in prev:
+        _, b = charger_jour(sym, j, 15, avec_1min=True)
+        if b.empty:
+            continue
+        if not all(c in b.columns for c in COLS_RECALC):
+            print("  chauffe : %s %s écarté (colonnes manquantes)" % (sym, j))
+            continue
+        morceaux.append(b[COLS_RECALC])
+    return morceaux
 
 
 def signaux_l3(df):
-    """Les déclencheurs de la SPEC gelée. H3-VPOC seule testable ; les autres
-    tournent en ombre — tous journalisés, dédoublonnés par (barre, sens)."""
+    """Les déclencheurs de la SPEC gelée — `LES_QUATRE` pré-enregistrés
+    (MISSION_CYCLE2, Bonferroni 0,05/4) : H3-VPOC seule testable, H2p/H6p/H8p
+    annoncées non testables. Tous journalisés, dédoublonnés par (barre, sens).
+
+    Comptés par FRANCHISSEMENT (faux → vrai dans la journée, la fonction même
+    du cycle 1) : six barres vraies d'affilée font UN signal, pas six — c'est
+    sur ce comptage que le critère N ≥ 40 est défini.
+
+    Rend `(signaux, comptes)` : les signaux dédoublonnés par (barre, sens) pour
+    la chaîne — son état séquentiel exige UN appel — et les comptes PAR
+    HYPOTHÈSE avant dédoublonnage : un chevauchement (i, side) ne doit pas
+    sous-compter la seconde hypothèse à l'affichage.
+
+    La première version courait {h3, h6, h7, h8} du cycle 1 — H7 non
+    pré-enregistrée, H2p absente, h6/h8 dans leurs variantes disqualifiées —
+    et comptait chaque barre vraie. Corrigé AVANT le premier journal officiel :
+    le jour 61 lit LES_QUATRE."""
     out, vus = [], set()
-    for nom, fn in {"H3": H.h3, "H6": H.h6, "H7": H.h7, "H8": H.h8}.items():
+    comptes = {n: 0 for n in H.LES_QUATRE}
+    for nom, fn in H.LES_QUATRE.items():
         for _c, (cond, side) in fn(df).items():
-            for i in range(len(df)):
-                try:
-                    if bool(cond.iloc[i]) and (i, side) not in vus:
-                        vus.add((i, side))
-                        out.append((i, side, nom))
-                except Exception:
-                    break
-    return sorted(out)
+            for i in signaux_par_franchissement(cond, df["jour"]):
+                comptes[nom] += 1
+                if (i, side) not in vus:
+                    vus.add((i, side))
+                    out.append((i, side, nom))
+    return sorted(out), comptes
 
 
 def contrat_ok(sym, jour):
@@ -86,30 +135,45 @@ def contrat_ok(sym, jour):
 def courir(jour, strict=False, minutes=15):
     chemin = "LOGS/entonnoir/entonnoir_%s.jsonl" % jour
     os.makedirs(os.path.dirname(chemin), exist_ok=True)
-    if os.path.exists(chemin):
-        os.remove(chemin)          # le jour se rejoue entier, jamais en append
+    # Le jour se rejoue entier, jamais en append — et le fichier EXISTE même
+    # sans signal : vide = jour couru muet, absent = jour jamais couru. Sans
+    # cette distinction, la majorité des 60 jours (signaux rares par
+    # construction) n'aurait AUCUNE preuve d'avoir eu lieu.
+    open(chemin, "w").close()
     total = 0
     for sym in ("ES", "NQ"):
-        df = charger_jour(sym, jour, minutes)
+        df, brut = charger_jour(sym, jour, minutes, avec_1min=True)
         if df.empty or len(df) < 6:
             print("  %s : pas de barres cash exploitables" % sym)
             continue
+        # Les colonnes que LES_QUATRE exigent RECALCULEES (rvol_r, bandes SD2) :
+        # sans l'injection, H2p et H8p ne peuvent structurellement jamais
+        # déclencher — un N=0 de colonne absente, pas de rareté. La chauffe
+        # rvol_r ne regarde que le passé ; le merge ne garde que le jour.
+        ch = chauffe_1min(sym, jour)
+        if len(ch) < MIN_JOURS_CHAUFFE:
+            print("  %s : CHAUFFE INSUFFISANTE (%d j < %d) — rvol_r rendra NaN,"
+                  " H8p non évaluable ce jour" % (sym, len(ch), MIN_JOURS_CHAUFFE))
+        brut = pd.concat(ch + [brut[COLS_RECALC]], ignore_index=True)
+        df = injecter_recalculs(brut, df, minutes=minutes)
         manquantes = lecture.verifier_colonnes(df, ("L0", "L5"))
         if manquantes:
             print("  %s : COLONNES MANQUANTES %s — jour NON couru, incident"
                   % (sym, manquantes))
             continue
         live = {"contrat_actif": contrat_ok(sym, jour), "rollover": False}
-        sig = signaux_l3(df)
+        sig, comptes = signaux_l3(df)
         retenus = chaine.appliquer([(i, s) for i, s, _n in sig], df, sym,
                                    journal=chemin, hypothese="ombre1",
                                    strict=strict, live=live)
         total += len(sig)
-        print("  %s : %d signaux L3, %d retenus par L0/L5 -> %s"
-              % (sym, len(sig), len(retenus), chemin))
+        detail = " ".join("%s=%d" % (n, comptes[n]) for n in H.LES_QUATRE)
+        print("  %s : %d signaux L3 (%s), %d retenus par L0/L5 -> %s"
+              % (sym, len(sig), detail, len(retenus), chemin))
     if total == 0:
-        print("  AUCUN SIGNAL sur la journee — verifier avec pourquoi.py que ce")
-        print("  n'est pas une couche muette (le journal existe quand meme).")
+        print("  AUCUN SIGNAL sur la journee — le journal VIDE est ecrit : la")
+        print("  preuve que le jour a ete couru. Verifier avec pourquoi.py que")
+        print("  ce n'est pas une couche muette.")
     return chemin
 
 

@@ -1,7 +1,8 @@
 # PROMPT DE REPRISE — à coller au début de la prochaine session
 *Écrit le 08/09/2026 en fin de session, révisé le 08/09 après relecture Fable
-(ordre du §3 inversé, constat du §5, trois points de la nuit ajoutés). Se met à
-jour à chaque fin de session si l'état a bougé.*
+(ordre du §3 inversé, constat du §5, trois points de la nuit ajoutés), puis au
+soir : coureur `campagne.py` corrigé et validé (cf INCIDENT_LOG 08/09). Se met
+à jour à chaque fin de session si l'état a bougé.*
 
 ---
 
@@ -16,9 +17,11 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
 
 1. `V3/METHODE.md` — les rôles, la brique en 8 étapes, les 14 règles dures.
 2. `V3/STATUS.md` — l'état des briques.
-3. `V3/A_FAIRE_08_09.md` — points 1-14 : les bloqueurs de revue (1-5, TRAITÉS
+3. `V3/A_FAIRE_08_09.md` — points 1-15 : les bloqueurs de revue (1-5, TRAITÉS
    le 08/09), la lecture des barres de nuit (points 1-10), la quarantaine F23
-   (11), le récit (12), la carte (13), l'audit du narratif (14).
+   (11), le récit (12), la carte (13), l'audit du narratif (14), l'audit
+   direction (15 : H3+H7 contre-tendance 95-97 % les jours de tendance — le
+   mode de mort de V1 ; B5 est l'antidote mesuré, H-B5TREND pré-enregistrée).
 4. `V3/REPONSES_NARRATIF.md` — l'ordre en 7 étapes qui décidera si F23 devient
    une feature.
 5. `V3/DECISIONS.md` + `git log --oneline -15` — ce qui est tranché.
@@ -41,14 +44,24 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
 - **Campagne d'ombre** : démarrée le 08/09, **tag `campagne-ombre-1` posé**
   (bloqueurs 1-5 de la revue Fable traités le 08/09 : unités 15 min dans
   `campagne.yaml`, source news unique, défenses_du_niveau → fiches F23,
-  SPEC L3 gelée, STATUS cohérent). Rythme quotidien 21:01 UTC = L6 +
-  `V3/pourquoi.py` + journal MANUEL. Jamais le P&L. Rollover à contrôler
-  le 10/09.
+  SPEC L3 gelée, STATUS cohérent). Le coureur `V3/campagne.py` fait EXISTER
+  la journée — corrigé et validé le 08/09 au soir : il court LES_QUATRE
+  pré-enregistrées (pas le cycle 1), injecte `rvol_r` + bandes SD2 (chauffe
+  20 j), compte par franchissement, et un journal VIDE est la preuve d'un
+  jour couru muet (absent = incident). Rythme quotidien 21:01 UTC =
+  `campagne.py` puis `pourquoi.py` + journal MANUEL. Jamais le P&L.
+  Rollover à contrôler le 10/09.
 - **BLOQUEUR JACKSON** : 3 webhooks Discord actifs dans le dépôt principal
   public ; 75+ commits locaux attendent. Troisième jour. Dix minutes.
 
 ## 3. Le travail, dans l'ordre
 
+0. **Le coureur LIVE** — la brique L0-live version branchée, et la réponse à
+   la question 1 du constat qui reste NON : une boucle sur le fichier vivant
+   avec `age_s` réel, L6 du jour et l'état du connecteur, passée à
+   `chaine.appliquer(strict=True, live={...})`. Le mode `--strict` de
+   `campagne.py` existe mais bloquerait tout par les trous DTC — c'est voulu
+   (fail-closed), c'est le coureur qui manque. Toutes les pièces existent.
 1. **L4 J2** (spec : `layers/L4_orderflow/SPEC.md`, seuils mesurés dans son
    `seuils.yaml`) : bloc `l4` de `lecture.py` + test anti-fuite → `vetos.py`
    (5 vetos en SÉRIE, jamais un compte) → glissement → mesure k=1/2/3 →

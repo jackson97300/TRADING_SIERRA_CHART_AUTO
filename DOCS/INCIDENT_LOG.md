@@ -33,6 +33,15 @@
 
 ---
 
+### 2026-09-08 — [VALIDATION_MISS] — campagne.py affirmait courir la SPEC gelee, sans verification
+
+**Constat** : le coureur de campagne (aa3224f) declarait « les declencheurs de la SPEC gelee » mais courait {h3, h6, h7, h8} du cycle 1 — H7 non pre-enregistree, H2p absente, h6/h8 disqualifiees. En plus : colonnes recalculees (rvol_r, bandes SD2) jamais injectees → H2p/H8p structurellement muettes ; comptage par barre vraie au lieu du franchissement (le N>=40 est defini dessus) ; journal absent les jours a 0 signal alors que le print affirmait « le journal existe quand meme ».
+**Cause racine** : docstring ecrite d'apres l'intention, jamais confrontee a LES_QUATRE ni a MISSION_CYCLE2 ; zero test empirique multi-jours avant commit.
+**Detection** : relecture pre-publication + code-reviewer (sa reserve 1 — 6 niveaux H8p sur 10 perdus dans bot_terminal.agreger — etait la MEME classe de defaut que celui corrige).
+**Lecon** : un coureur de campagne se valide contre le PRE-ENREGISTREMENT (set de fonctions + comptage + `notna()` des colonnes exigees), jamais contre sa docstring.
+**Trigger prevention** : avant tout premier run officiel d'une campagne → comparer le set execute au pre-enregistrement + balayage multi-jours avec comptes par hypothese + verif colonnes `_r` non-nulles.
+**Reviewed** : code-reviewer (GO-AVEC-RESERVES, corrigees + re-mesurees) / Claude.
+
 ### 2026-09-07 — [VALIDATION_MISS] — `finish_delta_pct` 15 min est la DERNIERE MINUTE, pas la barre
 
 **Constat** : l'agregation 15 min reprend `finish_delta_pct` par `.last()` — la valeur de la
@@ -5868,7 +5877,7 @@ Resultat : recompile aurait donne **ZERO changement observable** sur les 4 featu
 | Categorie | Occurrences | Promoted en memoire ? |
 |---|---|---|
 | CONTEXT_MISS | **6** | **OUI** `feedback_context_miss.md` (deja promu, renforce 22/04 avec trigger "grep enum existant" + "batch add = grep chaque nouveau nom") |
-| VALIDATION_MISS | **10** | **OUI** (10 occurrences post +1 entry #79 le 20/06 hardcode 'long' fallback Bot 3) — promu `feedback_validation_miss_patterns.md` : **27/04 leak structurel session features + 03/06 trigger renforce : "tout changement broker symbol + tout guard CRITIQUE empirique audit > 100/24h" + 20/06 trigger : "tout modif default config -> grep consumers cross-codebase"** |
+| VALIDATION_MISS | **12** | **OUI** (+1 le 07/09 `finish_delta_pct` derniere minute, +1 le 08/09 campagne.py set non verifie contre pre-enregistrement) — promu `feedback_validation_miss_patterns.md` : **27/04 leak structurel session features + 03/06 trigger renforce : "tout changement broker symbol + tout guard CRITIQUE empirique audit > 100/24h" + 20/06 trigger : "tout modif default config -> grep consumers cross-codebase" + 08/09 trigger : "coureur de campagne -> comparer set execute au pre-enregistrement + verif notna() colonnes exigees"** |
 | AGENT_MISUSE | 1 | **OUI preventivement** `feedback_agent_brief_verify.md` |
 | SCOPE_CREEP | 1 | Pas encore |
 | COMMENT_FALSE | **2** | Pas encore (seuil 3+) — trigger nouveau 22/04 : "grep empirique toute reference file:line header" |

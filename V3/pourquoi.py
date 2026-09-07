@@ -116,8 +116,13 @@ def main():
     os.chdir(RACINE)
 
     chemin = a.journal or "LOGS/entonnoir/entonnoir_%s.jsonl" % a.date
+    # VIDE et ABSENT ne disent pas la meme chose : vide = le jour a ete couru
+    # et n'a rien produit (les declencheurs sont rares par construction) ;
+    # absent = le jour n'a jamais ete couru, et LUI est un incident. Les
+    # confondre ferait crier « incident » presque chaque soir de campagne.
+    existe = os.path.exists(chemin)
     lignes = charger(chemin)
-    if not lignes:
+    if not existe:
         # repli : le dernier journal de mesure, pour que la commande reponde
         # toujours quelque chose de verifiable
         cands = sorted(glob.glob("LOGS/entonnoir/*.jsonl"),
@@ -125,13 +130,19 @@ def main():
         if cands and a.journal is None:
             chemin = cands[-1]
             lignes = charger(chemin)
+            existe = True
             print("POURQUOI — pas de journal pour %s ; lecture du plus recent :"
                   % a.date)
     print("source : %s (%d lignes)\n" % (chemin, len(lignes)))
-    if not lignes:
+    if not existe:
         print("  AUCUN JOURNAL. Un jour de campagne sans entonnoir est un "
               "incident (METHODE.md §7), pas une journee calme.")
         return 1
+    if not lignes:
+        print("  JOURNAL VIDE : le jour a ete couru, zero signal L3. Normal")
+        print("  quand les declencheurs sont rares par construction — un jour")
+        print("  NON couru serait un fichier ABSENT, et lui est un incident.")
+        return 0
     for sym in ("ES", "NQ"):
         afficher(resumer(lignes, sym), sym)
         print()

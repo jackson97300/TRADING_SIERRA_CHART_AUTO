@@ -134,6 +134,11 @@ def agreger(df, minutes):
               # ne le signale. Meme defaut que `data_quality_flag`, meme jour.
               "dist_cur_vpoc", "dist_prev_vah", "dist_prev_val",
               "dist_prev_vpoc", "dist_vwap_w", "poc_migration_dir",
+              # NIVEAUX_H8 (hypotheses.py) : les DIX doivent survivre a
+              # l'agregation. Six manquaient — H8p etait evaluee sur 4 niveaux
+              # sur 10, en silence (review campagne.py 08/09, reserve 1).
+              "dist_mq_call", "dist_mq_put", "dist_pdh", "dist_pdl",
+              "dist_ovn_high", "dist_ovn_low",
               "atr", "atr_14m", "finish_delta_pct", "delta_pct", "rvol",
               "dist_vwap_w", "is_news_60m", "is_session_blocked",
               "gamma_block_long", "rvol_zscore", "vix_level", "vix_regime",
