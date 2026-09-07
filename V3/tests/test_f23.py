@@ -8,11 +8,19 @@ graphique**. Une fiche plausible qui décrit autre chose que la réalité est
 exactement le genre de sortie qui traverse un chantier entier sans se faire
 prendre.
 
-Quatre contrôles, un par définition :
-    touche    la barre englobe bien le niveau (écart <= z_touche)
+Sept contrôles :
+    touche      la barre englobe bien le niveau (écart <= z_touche)
     hystérésis  entre deux touches, le prix s'est écarté d'au moins z_reset
-    cassure   DEUX clôtures de l'autre côté, jamais une seule
-    piège     le volume au-delà est bien la somme des barres 1 min concernées
+    cassure     DEUX clôtures de l'autre côté, jamais une seule
+    piège       du volume au-delà seulement si le niveau a cédé
+    scalaires   n_tests suit les fiches
+    AVENIR      rien de ce qui n'est pas encore connu n'est révélé
+    regain      DEUX clôtures revenues, symétrique de la cassure
+
+**Le sixième est le plus important.** Mesuré le 07/09 sur ES : cinq fiches sur
+six ont une issue différée, dont une de cinq barres et une de six. Sans ce
+contrôle, une couche lisant à la barre du test verrait « cassé » **soixante-quinze
+à quatre-vingt-dix minutes avant que la cassure existe**.
 """
 
 from __future__ import annotations
@@ -98,7 +106,7 @@ def controler(sym, jour):
                 if not f.get("duree_au_dela"):
                     e.append("%s %s %s i=%d : du volume piege mais aucune barre "
                              "1 min comptee" % (sym, jour, col, i))
-            if f["issue"] == "tenu" and f.get("volume_au_dela"):
+            if f["issue"] in ("tenu", "indetermine") and f.get("volume_au_dela"):
                 e.append("%s %s %s i=%d : issue=tenu mais du volume au-dela — "
                          "un niveau qui tient n'a personne de l'autre cote"
                          % (sym, jour, col, i))
@@ -109,6 +117,32 @@ def controler(sym, jour):
             if s["n_tests"] != attendu:
                 e.append("%s %s %s i=%d : n_tests=%d, attendu %d"
                          % (sym, jour, col, i, s["n_tests"], attendu))
+
+            # --- 6. AUCUNE FUITE D'AVENIR ---------------------------------
+            # A la barre du test, l'issue n'est pas encore connue : elle tombe
+            # a i_connu, jusqu'a huit barres plus tard. Une couche qui lirait
+            # « casse » ici lirait deux heures dans le futur.
+            if f["i_connu"] > i:
+                if s["issue"] != "en_cours":
+                    e.append("%s %s %s i=%d : issue=%s revelee alors qu'elle "
+                             "n'est connue qu'a i=%d — FUITE D'AVENIR"
+                             % (sym, jour, col, i, s["issue"], f["i_connu"]))
+                for cle in ("resultat_dernier", "piege_volume"):
+                    if s[cle] is not None:
+                        e.append("%s %s %s i=%d : %s revele avant i_connu=%d"
+                                 % (sym, jour, col, i, cle, f["i_connu"]))
+
+            # --- 7. REGAIN SYMETRIQUE : deux clotures revenues -------------
+            if f["issue"] == "regagne":
+                d = pd.to_numeric(df15[col], errors="coerce")
+                k = f["i_connu"]
+                revenus = [(d.iloc[j] > 0) == (f["cote"] > 0)
+                           for j in (k - 1, k) if 0 <= j < len(df15)
+                           and np.isfinite(d.iloc[j])]
+                if len(revenus) < 2 or not all(revenus):
+                    e.append("%s %s %s i=%d : regagne avec moins de DEUX "
+                             "clotures revenues — asymetrique avec la cassure"
+                             % (sym, jour, col, i))
     return e, n
 
 
@@ -121,7 +155,7 @@ def main():
         print("  %s %s : %d fiches" % (sym, jour, n))
     if total == 0:
         echecs.append("aucune fiche produite sur deux journees — F23 est muet")
-    print("  F23 au tick — %d fiches sur %d journees, 5 controles chacune"
+    print("  F23 au tick — %d fiches sur %d journees, 7 controles chacune"
           % (total, len(JOURS)))
     if echecs:
         print("  %d ECHEC(S) :" % len(echecs))
@@ -129,8 +163,9 @@ def main():
             print("     %s" % x)
         return 1
     print("  OK : chaque touche englobe son niveau, l'hysteresis joue entre")
-    print("       deux touches, une cassure fait bien DEUX cloture, et le")
-    print("       volume piege ne sort que quand le niveau a cede.")
+    print("       deux touches, cassure et regain font DEUX clotures chacun,")
+    print("       le volume piege ne sort que si le niveau a cede, et AUCUNE")
+    print("       issue n'est revelee avant d'etre connue.")
     return 0
 
 
