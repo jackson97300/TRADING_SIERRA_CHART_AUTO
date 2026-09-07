@@ -1,4 +1,23 @@
-# A faire — 08/09, tire de la lecture des barres de nuit (Fable)
+# A faire — 08/09
+
+## REVUE FABLE (commit 01cb645) — 5 bloqueurs AVANT le tag campagne-ombre-1
+
+1. **campagne.yaml fige sur des chiffres 5 min** : ajouter `unite_decision: 15min`,
+   couts en ATR-15m (MES 3,8 %, MNQ 0,9 %, mesures 06/09). AVANT le tag.
+2. **news_calendrier.source** : campagne.yaml POINTE vers
+   layers/L0_interrupteur/seuils.yaml, il ne redecrit pas. Une seule verite.
+3. **defenses_du_niveau lit les compteurs C++ faux** (vah_touches_20b=20/20
+   dans une VA de 7 pts) : la porte observee lit les fiches F23, sinon 60 jours
+   d'un compteur qu'on sait faux. Peut attendre la semaine 1 SI ecrit ici.
+4. **L3 absente du miroir** : les 4 declencheurs vivent dans
+   CORE/research/hypotheses.py. Minimum : layers/L3_declencheurs/SPEC.md avec
+   les 4 definitions GELEES + H6/H8 marques non testables ce cycle.
+5. **STATUS contradictoire** : L0-live « PASSEE » ET « le bot ne l'emprunte
+   pas ». Le faux live prouve un CHEMIN, pas un branchement -> L0-live repasse
+   « mesuree » tant que rien ne l'emprunte. Et L4 n'est plus « absente ».
+   (fait ce 08/09 : pourquoi.py L2 -> REG ; vix_level=0 -> TROU, commit 01cb645+)
+
+# — lecture des barres de nuit —, tire de la lecture des barres de nuit (Fable)
 
 *Treize barres NQ + quatorze ES, 07:36-07:51 UTC, session Londres. Chaque point
 vient d'une donnee reelle, pas d'un synthetique. La prochaine session commence ici.*

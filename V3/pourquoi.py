@@ -27,7 +27,7 @@ import sys
 from datetime import datetime, timezone
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-COUCHES = ("L0", "L1", "L2", "L3", "L4", "L5", "L6")
+COUCHES = ("L0", "REG", "L1", "L3", "L4", "L5", "L6")
 
 
 def charger(chemin):

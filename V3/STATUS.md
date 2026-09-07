@@ -28,10 +28,10 @@ passe pas a la suivante. C'est le garde-fou que V1 n'a jamais eu — il embarqua
 | L1 | biais — B1p mesuree, B1n en attente de F23 | **mesuree** | — | a etablir sur la mesure | ne se juge PAS sur un taux de rejet : couverture, separation, cout de l'obeissance. Cf `layers/L1_biais/BRIEF.md` |
 | L3 | declencheurs 15 min | **ecrite** | — | N >= 40 par etage | 4 pre-enregistres + 16 en ombre |
 | F23 | memoire de session — fiches par test, partagee L1/L3 | **ecrite** | 9 fiches sur 2 jours, test au tick vert | — | debloque B1n et trois declencheurs de L3 |
-| L4 | confirmation order flow 1 min | **absente** | — | 30-50 % | la seule couche a construire |
+| L4 | confirmation order flow 1 min | **J1 fait** | — | 30-50 % | la seule couche a construire |
 | L5 | risque — 3 vetos (gamma, rvol, frais/TP) | **mesuree** | meme rapport, lignes `L5_*` | 10-25 % | PAS inerte : c'etait la mesure qui l'etait. Le veto SL mort remplace par la part des frais dans la distance au TP |
 | L6 | surveillance donnees | **passee** | — | — | 7 controles quotidiens en place |
-| L0-live | le branchement live de L0 : `strict=True` + etat du connecteur | **PASSEE** | 14 scenarios de faux live passent | — | brique SEPAREE : sceller une couche dont la moitie n'a jamais tourne n'aurait rien scelle |
+| L0-live | le branchement live de L0 : `strict=True` + etat du connecteur | **mesuree** | 14 scenarios de faux live passent | — | brique SEPAREE : sceller une couche dont la moitie n'a jamais tourne n'aurait rien scelle |
 
 ## Comment lire le rapport des portes
 
