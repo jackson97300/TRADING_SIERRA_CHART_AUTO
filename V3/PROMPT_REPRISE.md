@@ -1,7 +1,7 @@
 # PROMPT DE REPRISE — à coller au début de la prochaine session
-*Écrit le 08/09/2026 en fin de session, révisé le 08/09 après relecture Fable
+*Écrit le 07/09/2026 (les documents portaient d abord la date du lendemain), révisé le 07/09 après relecture Fable
 (ordre du §3 inversé, constat du §5, trois points de la nuit ajoutés), puis au
-soir : coureur `campagne.py` corrigé et validé (cf INCIDENT_LOG 08/09). Se met
+soir : coureur `campagne.py` corrigé et validé (cf INCIDENT_LOG 07/09). Se met
 à jour à chaque fin de session si l'état a bougé.*
 
 ---
@@ -17,8 +17,8 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
 
 1. `V3/METHODE.md` — les rôles, la brique en 8 étapes, les 14 règles dures.
 2. `V3/STATUS.md` — l'état des briques.
-3. `V3/A_FAIRE_08_09.md` — points 1-15 : les bloqueurs de revue (1-5, TRAITÉS
-   le 08/09), la lecture des barres de nuit (points 1-10), la quarantaine F23
+3. `V3/A_FAIRE_07_09.md` — points 1-15 : les bloqueurs de revue (1-5, TRAITÉS
+   le 07/09), la lecture des barres de nuit (points 1-10), la quarantaine F23
    (11), le récit (12), la carte (13), l'audit du narratif (14), l'audit
    direction (15 : H3+H7 contre-tendance 95-97 % les jours de tendance — le
    mode de mort de V1 ; B5 est l'antidote mesuré, H-B5TREND pré-enregistrée).
@@ -26,7 +26,7 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
    une feature.
 5. `V3/DECISIONS.md` + `git log --oneline -15` — ce qui est tranché.
 
-## 2. L'état en six lignes (08/09 au soir)
+## 2. L'état en six lignes (07/09 au soir)
 
 - **L0 + L0-live** : scellée / mesurée (14 scénarios de faux live — un CHEMIN
   prouvé, pas un branchement : le bot n'emprunte pas encore
@@ -42,10 +42,10 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
   est séduisant, les vetos sont arides, et c'est le narratif qui a mangé la
   dernière journée.
 - **Campagne d'ombre** : démarrée le 08/09, **tag `campagne-ombre-1` posé**
-  (bloqueurs 1-5 de la revue Fable traités le 08/09 : unités 15 min dans
+  (bloqueurs 1-5 de la revue Fable traités le 07/09 : unités 15 min dans
   `campagne.yaml`, source news unique, défenses_du_niveau → fiches F23,
   SPEC L3 gelée, STATUS cohérent). Le coureur `V3/campagne.py` fait EXISTER
-  la journée — corrigé et validé le 08/09 au soir : il court LES_QUATRE
+  la journée — corrigé et validé le 07/09 au soir : il court LES_QUATRE
   pré-enregistrées (pas le cycle 1), injecte `rvol_r` + bandes SD2 (chauffe
   20 j), compte par franchissement, et un journal VIDE est la preuve d'un
   jour couru muet (absent = incident). Rythme quotidien 21:01 UTC =
@@ -56,7 +56,7 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
 
 ## 3. Le travail, dans l'ordre
 
-**OBJECTIF DE LA SEMAINE (decide par Jackson le 08/09) : tout construire EN
+**OBJECTIF DE LA SEMAINE (decide par Jackson le 07/09) : tout construire EN
 OBSERVATION, fige vendredi 12/09** — pour que les 60 jours d'ombre soient
 homogenes. Ordre : coureur live (strict reel) -> prerequis L4 -> L4 J2 ->
 scalaires F23 (prev_* seulement) -> carte + recap Discord (nouveaux webhooks,
@@ -110,7 +110,7 @@ a survecu. Branchement decisionnel Sim : cycle 2, ~mi-decembre.
   semaine pour ce qui est hebdo) ; signe avant magnitude ; deux conventions
   avant une anomalie ; un incident écrit le jour même ; rien ne change pendant
   la campagne ; **mesurer avant d'annoncer, et qu'un autre lise**.
-- Publier = `sh V3/publier.sh` (6 contrôles). Jamais de push direct.
+- Publier = `sh V3/publier.sh` (DIX contrôles). Jamais de push direct.
 - Le dépôt public est `github.com/jackson97300/mia-v3` (V3 seul). Le dépôt
   principal ne se pousse PAS tant que les webhooks ne sont pas révoqués.
 

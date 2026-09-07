@@ -52,6 +52,20 @@ CAS = [
     ("20261120", None, "vendredi avant Thanksgiving"),
 ]
 
+# (date, contrat attendu, pourquoi) — le roll est HUIT jours avant la 3e
+# vendredi du mois d'echeance, et a partir du jour de roll INCLUS c'est le
+# contrat suivant. Sans ces cas, le rollover du 10/09 reposait sur un tuple
+# en dur dans campagne.py et une instruction manuelle.
+CAS_CONTRAT = [
+    ("20260907", "U26", "aujourd'hui — le fichier porte ESU26"),
+    ("20260909", "U26", "veille du roll : l'ancien contrat tient"),
+    ("20260910", "Z26", "jour du roll U26 -> Z26 (3e vendredi 18/09 - 8 j)"),
+    ("20260311", "H26", "veille du roll de mars (3e vendredi 20/03, roll 12/03)"),
+    ("20260312", "M26", "roll de mars"),
+    ("20261209", "Z26", "veille du roll de decembre"),
+    ("20261210", "H27", "roll de decembre : le contrat change d'ANNEE"),
+]
+
 
 def _controle_jour_semaine():
     """Les feries a regle « n-ieme lundi » doivent TOMBER un lundi.
@@ -92,9 +106,15 @@ def main():
         if obtenu != attendu:
             echecs.append("%s : attendu %r, obtenu %r  (%s)"
                           % (texte, attendu, obtenu, pourquoi))
+    for texte, attendu, pourquoi in CAS_CONTRAT:
+        obtenu = calendrier.contrat_actif(texte)
+        if obtenu != attendu:
+            echecs.append("contrat %s : attendu %s, obtenu %s  (%s)"
+                          % (texte, attendu, obtenu, pourquoi))
     echecs += _controle_jour_semaine() + _controle_aucun_week_end()
 
-    print("  calendrier — %d cas, plus 10 annees controlees en bloc" % len(CAS))
+    print("  calendrier — %d cas feries + %d cas contrat, plus 10 annees "
+          "controlees en bloc" % (len(CAS), len(CAS_CONTRAT)))
     if echecs:
         print("  %d ECHEC(S) :" % len(echecs))
         for e in echecs:

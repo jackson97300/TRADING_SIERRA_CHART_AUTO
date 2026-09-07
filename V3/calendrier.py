@@ -121,6 +121,33 @@ def est_ferie(jour):
     return feries(d.year).get(d)
 
 
+def contrat_actif(jour):
+    """Le contrat trimestriel actif (« U26 », « Z26 »...) pour ES/NQ.
+
+    Regle CME equity index : echeance le 3e vendredi de mars/juin/septembre/
+    decembre ; le ROLL a lieu HUIT jours avant — le jeudi de la semaine
+    precedente (10/09/2026 pour U26 -> Z26). A partir du jour de roll INCLUS,
+    l'actif est le contrat suivant : c'est ce jour-la que le volume bascule
+    et que le fichier doit changer de contrat.
+
+    Vivait en dur dans campagne.py (« a mettre a jour au rollover ») — un
+    nombre dans le code avec une instruction manuelle, deux jours avant le
+    roll. Revue Fable du 07/09 : c'est le calendrier qui sait, comme les
+    feries — une regle en francais que rien n'execute n'est pas une regle.
+    """
+    d = _en_date(jour)
+    codes = {3: "H", 6: "M", 9: "U", 12: "Z"}
+    for saut in range(6):
+        mois_i = ((d.month - 1) // 3) * 3 + 3 + 3 * saut
+        annee = d.year + (mois_i - 1) // 12
+        mois = (mois_i - 1) % 12 + 1
+        echeance = _nieme_jour(annee, mois, 4, 3)          # 3e vendredi
+        roll = echeance - _dt.timedelta(days=8)
+        if d < roll:
+            return "%s%02d" % (codes[mois], annee % 100)
+    raise ValueError("contrat introuvable pour %s" % jour)   # inatteignable
+
+
 def _en_date(jour):
     if isinstance(jour, _dt.datetime):
         return jour.date()

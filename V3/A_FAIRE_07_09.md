@@ -1,4 +1,11 @@
-# A faire — 08/09
+# A faire — 07/09
+
+*Fichier d'abord nomme `A_FAIRE_08_09` : les documents portaient la date du
+lendemain alors que l'horloge etait au lundi 07/09 (le rapport de session le
+dit). Renomme le 07/09 a la revue Fable — une date de fichier qui ment est le
+genre de chose que `pourquoi.py` cherchera un jour a 21:01. Les mentions
+« nuit du 08/09 » dans le corps datent de la meme confusion : c'etait la nuit
+du 06 au 07/09.*
 
 ## REVUE FABLE (commit 01cb645) — 5 bloqueurs AVANT le tag campagne-ombre-1
 

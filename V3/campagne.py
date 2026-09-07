@@ -42,9 +42,8 @@ from CORE.bot_terminal import charger_jour                       # noqa: E402
 from CORE.research import hypotheses as H                        # noqa: E402
 from CORE.research.hypothesis_runner import (                    # noqa: E402
     injecter_recalculs, signaux_par_franchissement)
-from V3 import chaine, lecture                                   # noqa: E402
+from V3 import calendrier, chaine, lecture                       # noqa: E402
 
-CONTRATS_ATTENDUS = ("U26", "Z26")      # a mettre a jour au rollover
 # Ce que `injecter_recalculs` consomme du 1 min : hlc3 + volume + horodatage
 # + delta (cvd_sess_r, prerequis L4).
 COLS_RECALC = ["ts", "high", "low", "close", "total_vol", "delta_bar"]
@@ -119,17 +118,23 @@ def signaux_l3(df):
 
 
 def contrat_ok(sym, jour):
-    """Le contrat du fichier est-il un contrat attendu ? Lu, pas suppose."""
+    """Le contrat du fichier est-il LE contrat actif du calendrier ?
+
+    Lu dans le fichier, calcule par `calendrier.contrat_actif` — plus de
+    tuple en dur « a mettre a jour au rollover » : le jour du roll, si le
+    fichier porte encore l'ancien contrat, la porte L0_CONTRAT_INACTIF le
+    dira, et c'est exactement son travail."""
     fs = sorted(glob.glob("DATA/live_enriched/sierra/%s/%s*.jsonl" % (sym, jour)))
     if not fs:
         return None
+    attendu = calendrier.contrat_actif(jour)
     for ln in open(fs[0], encoding="utf-8", errors="ignore"):
         if ln[:1] == "{":
             try:
                 c = json.loads(ln).get("contract", "")
             except ValueError:
                 continue
-            return any(x in str(c) for x in CONTRATS_ATTENDUS)
+            return attendu in str(c)
     return None
 
 

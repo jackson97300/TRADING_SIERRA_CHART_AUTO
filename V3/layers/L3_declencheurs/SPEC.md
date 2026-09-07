@@ -1,6 +1,6 @@
 # SPEC L3 — les quatre déclencheurs du cycle, GELÉS
 
-*Gelée le 08/09/2026 — bloqueur n° 4 de la revue Fable (`A_FAIRE_08_09.md` §1) :
+*Gelée le 07/09/2026 — bloqueur n° 4 de la revue Fable (`A_FAIRE_07_09.md` §1) :
 « les déclencheurs vivent hors du miroir » n'est pas un état publiable. La
 source de vérité EXÉCUTABLE reste `CORE/research/hypotheses.py` du dépôt privé
 (`LES_QUATRE`, protégée par le tag `mission-phase2-v1` et le pré-enregistrement
@@ -51,6 +51,13 @@ donnée manquante**, et ne lève pas non plus — le rapport dit `N = 0`.
 - **CIBLE** : lieu et réaction sont EXACTEMENT ceux de H3 du cycle 1 ; seule la
   cible change, et c'est le runner qui la porte — barrière par famille =
   **VPOC atteint** (la seule des quatre à l'utiliser).
+- **LIMITATION CONNUE (07/09, gelée avec la spec)** : `finish_delta_pct` est
+  **binaire sur NQ et graduée sur ES** (dénominateurs 5/8 vs 3/7, lecture des
+  barres de nuit). Sur NQ, « < 0,4 » se lit « == 0 » — la moitié des barres.
+  La règle « rien ne change pendant la campagne » tient : on ne touche pas au
+  code. Mais **la lecture du jour 61 sera SÉPARÉE ES/NQ, et H3-NQ ne peut pas
+  passer seule** sur cette colonne. Sans cette phrase, un résultat NQ se
+  lirait comme s'il voulait dire quelque chose.
 
 ## H2p — fade des bandes VWAP-SD2, régime RECALCULÉ
 
