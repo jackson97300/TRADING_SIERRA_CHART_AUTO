@@ -59,13 +59,13 @@ REQUISES = {
 # colonnes ; c'est donc le seul endroit qui peut refuser MECANIQUEMENT.
 # Une colonne refusee se lit None — un TROU, jamais un faux « tout va bien ».
 SOURCES_DECLAREES = {
-    "_mq_gamma_source": ("mq_gamma_condition", "gamma_block_long",
-                         "gamma_block_short", "gamma_block_reasons_long",
-                         "gamma_block_reasons_short", "gamma_threshold_ticks"),
-    # sierra_proxy_count — gouverne `aggressor_imbalance`, que la decision ne
-    # consomme pas aujourd'hui. La table est la pour le jour ou une couche
-    # voudra la lire : elle se refusera toute seule.
-    "_aggressor_source": ("aggressor_imbalance",),
+    # CORRIGE le 07/09 au soir (DECISIONS) : le proxy ne produit QUE le label
+    # mq_gamma_condition. Les gamma_block_* viennent de gamma_veto_engine
+    # (murs A + atr + bool_gex_flip_zone DMP natif) — REPRODUITS, 0 ecart
+    # sur 7 313 barres (5 275 + 2 038 independantes). La table du matin les
+    # condamnait par association de famille.
+    "_mq_gamma_source": ("mq_gamma_condition",),
+    "_aggressor_source": ("aggressor_imbalance",),   # non consommee ce jour
 }
 
 

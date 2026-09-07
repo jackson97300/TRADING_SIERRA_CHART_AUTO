@@ -29,7 +29,8 @@ JOUR, SYM = "20260903", "ES"     # la meme journee que test_faux_live
 
 
 def _df(source):
-    d = {"ts": [1000], "gamma_block_long": [1.0], "rvol_zscore": [0.5]}
+    d = {"ts": [1000], "mq_gamma_condition": [2.0],
+         "gamma_block_long": [1.0], "rvol_zscore": [0.5]}
     if source is not None:
         d["_mq_gamma_source"] = [source]
     return pd.DataFrame(d)
@@ -39,33 +40,39 @@ def main():
     echecs = []
     os.chdir(RACINE)
 
-    # 1. proxy declare -> refus, en val() ET dans la lecture complete
+    # 1. proxy declare -> la colonne GOUVERNEE se refuse en val()
     df = _df("sierra_proxy_v2")
-    if lecture.val(df, "gamma_block_long", 0) is not None:
+    if lecture.val(df, "mq_gamma_condition", 0) is not None:
         echecs.append("proxy declare : val() rend une valeur au lieu de None")
-    if lecture.lire(df, 0, SYM)["gamma_block_long"] is not None:
-        echecs.append("proxy declare : lire() rend %r au lieu de None (trou)"
-                      % lecture.lire(df, 0, SYM)["gamma_block_long"])
 
     # 2. source SAINE -> aucune refusee (sinon le test ne prouve rien)
     df = _df("sierra_direct_v1")
-    if lecture.val(df, "gamma_block_long", 0) != 1.0:
+    if lecture.val(df, "mq_gamma_condition", 0) != 2.0:
         echecs.append("source saine : la colonne devrait se lire normalement")
-    if lecture.lire(df, 0, SYM)["gamma_block_long"] is not True:
-        echecs.append("source saine : lire() devrait rendre True")
 
     # 3. pas de champ _source du tout -> comportement historique inchange
     df = _df(None)
-    if lecture.val(df, "gamma_block_long", 0) != 1.0:
+    if lecture.val(df, "mq_gamma_condition", 0) != 2.0:
         echecs.append("sans _source : la colonne devrait se lire normalement")
 
-    # 4. une colonne NON gouvernee ne se refuse jamais, meme proxy present
+    # 4. les colonnes NON gouvernees ne se refusent jamais, meme proxy
+    #    present — gamma_block_long EST le cas d'ecole depuis le 07/09 au
+    #    soir : derive de dist_mq_call/put (A) + atr + bool_gex_flip_zone
+    #    (DMP natif) par gamma_veto_engine, REPRODUIT 5 275 barres 0 ecart.
+    #    La table du matin le condamnait par association de famille.
     df = _df("sierra_proxy_v2")
+    if lecture.val(df, "gamma_block_long", 0) != 1.0:
+        echecs.append("gamma_block_long refuse a tort — il est derive de "
+                      "donnees collectees, pas du proxy")
+    if lecture.lire(df, 0, SYM)["gamma_block_long"] is not True:
+        echecs.append("lire() devrait rendre True pour gamma_block_long")
     if lecture.val(df, "rvol_zscore", 0) != 0.5:
         echecs.append("colonne non gouvernee refusee a tort")
 
-    # 5. le chemin REEL : journee agregee, la _source doit avoir survecu
-    reel = charger_jour(SYM, JOUR, 15)
+    # 5. le chemin REEL, dans les DEUX sens : sur le 1 min (qui porte le
+    #    label proxy), mq_gamma_condition se refuse ; sur l'agrege (ou les
+    #    portes lisent), gamma_block_long se lit.
+    reel, brut = charger_jour(SYM, JOUR, 15, avec_1min=True)
     if reel.empty:
         echecs.append("journee %s indisponible — le chemin reel n'est pas prouve"
                       % JOUR)
@@ -73,9 +80,16 @@ def main():
         if "_mq_gamma_source" not in reel.columns:
             echecs.append("_mq_gamma_source ne survit pas a l'agregation : le "
                           "refus est aveugle la ou les portes lisent")
-        elif lecture.val(reel, "gamma_block_long", len(reel) // 2) is not None:
-            echecs.append("journee reelle : gamma_block_long se lit encore "
+        if ("mq_gamma_condition" in brut.columns
+                and lecture.val(brut, "mq_gamma_condition", len(brut) // 2)
+                is not None):
+            echecs.append("journee reelle : mq_gamma_condition se lit encore "
                           "malgre sa source proxy")
+        lus = [lecture.val(reel, "gamma_block_long", i)
+               for i in range(len(reel))]
+        if all(v is None for v in lus):
+            echecs.append("journee reelle : gamma_block_long illisible partout"
+                          " — le sur-blocage du matin est revenu")
 
     print("  proxys — 5 controles (refus, source saine, sans source, "
           "non gouvernee, chemin reel)")

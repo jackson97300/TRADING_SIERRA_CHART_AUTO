@@ -152,7 +152,24 @@ MESURE sur 60 jours, quintile superieur de |direction| (12 jours de tendance par
   niveau (3e test, defense qui s'use, B1n). Le test « F23 aide-t-il » est
   l'etape 5 de REPONSES_NARRATIF : avec/sans dans B1n et H7.
 
-## 16. ARBITRAGE JACKSON avant le gel du 12/09 — le veto gamma lisait un proxy
+## 16. ARBITRAGE JACKSON — le veto gamma : ENQUETE CLOSE le 07/09 au soir, le dossier est RETOURNE
+L'enquete (option 3 de Fable, executee) : gamma_block_* n'est PAS un proxy.
+`gamma_veto_engine` (SSoT 18/06, reviewe) le calcule depuis dist_mq_call/put
+(murs collectes, A) + atr (threshold = clamp(0,5 x ATR, [10, 80]) — d'ou ES
+~28 t variable et NQ fige au cap 80) + bool_gex_flip_zone (DMP natif,
+DMP_Transform.h:1731). Le proxy sierra_proxy_v2 ne produit que le label
+`mq_gamma_condition`, DERIVE de bool_gex_flip_zone — le proxy va dans CE
+sens, jamais l'inverse. REPRODUCTION : 5 275 barres stables dedoublonnees
+(2 j x 2 sym), 0 ecart. Le -0,48 ATR a ete mesure sur une entree PROPRE ;
+la condamnation du matin etait une association de famille, corrigee dans
+SOURCES_DECLAREES (mesure a l'appui). La « confrontation aux 11 signaux »
+est la reproduction elle-meme : les signaux fermes l'ont ete par EXACTEMENT
+cette formule sur ces entrees.
+RESTE TON MOT : repasser la porte `appliquee` = une ligne de seuils.yaml,
+un commit. Aucune exemption, aucune attente de source : il n'y a rien a
+exempter.
+
+## 16bis. (HISTORIQUE du matin, garde tel quel) — le veto gamma lisait un proxy
 Le point 7 est execute : `lecture.py` refuse mecaniquement toute colonne
 gouvernee par une `_source` contenant « proxy » (`SOURCES_DECLAREES`), et les
 champs `_mq_gamma_source` / `_aggressor_source` survivent a l'agregation.

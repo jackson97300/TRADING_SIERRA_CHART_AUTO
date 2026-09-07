@@ -174,14 +174,16 @@ portes:
 
   # === L5 — RISQUE ==========================================================
   L5_VETO_GAMMA:
-    # PASSEE appliquee -> observee le 07/09 (point 7 de la nuit) : sa seule
-    # entree est `gamma_block_long`, gouvernee par `_mq_gamma_source =
-    # sierra_proxy_v2` — un PROXY (scraper mort le 27/05), que lecture.py
-    # refuse desormais mecaniquement. La porte rend donc un TROU permanent ;
-    # en appliquee + strict, ce trou fermait 100 % du live, et son effet
-    # mesure (-0,48 ATR ES) avait ete mesure SUR le proxy. ARBITRAGE JACKSON
-    # avant le gel de vendredi 12/09 : exemption explicite du proxy pour ce
-    # veto, ou attente d'une source propre. Cf A_FAIRE point 16.
+    # OBSERVEE depuis le 07/09 — et l'enquete du soir a RETOURNE le dossier :
+    # gamma_block_long n'est PAS un proxy. Il est calcule par
+    # gamma_veto_engine depuis dist_mq_call/put (murs collectes, A) + atr +
+    # bool_gex_flip_zone (DMP natif) — REPRODUIT sur 5 275 barres stables,
+    # 0 ecart. Le proxy (sierra_proxy_v2) ne produit que le label
+    # mq_gamma_condition, DERIVE de bool_gex_flip_zone — jamais l'inverse.
+    # Le -0,48 ATR a donc ete mesure sur une entree PROPRE. La condamnation
+    # du matin etait une association de famille (SOURCES_DECLAREES corrigee).
+    # RESTE LE MOT DE JACKSON : repasser appliquee = changer cette ligne,
+    # un commit. Cf A_FAIRE point 16, DECISIONS 07/09 soir.
     mode: observee
     seuils: {}
     mesure: "mur gamma dans le sens du TP — voir rapports/portes_57j.csv"
