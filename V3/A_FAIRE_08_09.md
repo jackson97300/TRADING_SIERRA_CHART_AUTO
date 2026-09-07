@@ -118,3 +118,29 @@ Un desk ne lit pas de la prose : il tient une CARTE DES STOCKS. Livrable
 6. **Le piege de la facilite EN PROCESSUS** : aujourd'hui 3 briques de recit,
    0 pas sur L4 J2 — le narratif est seduisant et demontrable, les vetos sont
    arides. La priorite de la semaine reste L4, la carte vient APRES.
+
+## 15. AUDIT DIRECTION (Jackson 08/09) — le mode de mort de V1 est REPRODUIT, et l'antidote est mesure
+Question : « NQ prend +400 points et le bot short toute la journee » — sommes-nous proteges ?
+MESURE sur 60 jours, quintile superieur de |direction| (12 jours de tendance par instrument) :
+- **NON par les declencheurs** : H3+H7 tirent a 97 % (ES) / 95 % (NQ) CONTRE le
+  sens du jour les jours de tendance. Devenir des contre-tendance : -0,940 ATR
+  (ES) / -0,540 (NQ) contre +1,31 / +0,67 pour les rares avec-tendance.
+  C'est structurel : des fades vendent le haut — un jour de tendance haussiere,
+  le haut ne cesse de monter. V1 est mort de ca ; nos declencheurs seuls le
+  reproduiraient.
+- **OUI par B5, et c'est mesure** : l'ouverture hors de la VA de la veille
+  (regle des 80 % de Dalton, disponible a 9h30 SANS fuite) a donne le bon sens
+  du jour **8/8 fois sur ES et 7/7 sur NQ** les jours de tendance ou elle avait
+  un avis. Sur l'ensemble des jours elle n'est qu'a 62 % — sa valeur n'est pas
+  de predire tous les jours, c'est de flaguer LES JOURS DE TENDANCE, exactement
+  la protection qui manquait.
+- RESERVES ecrites : n=8 et n=7 (binomial : 8/8 sous p=0,5 = 0,4 %, mais ES/NQ
+  correles ~0,9 comptent pour un) ; mesure sur le lot qui a deja servi.
+- **H-B5TREND pre-enregistree pour le jour 61** : les jours ou l'ouverture est
+  hors VA veille, les signaux CONTRE le cote de B5 ont un devenir negatif ;
+  attendu directionnel ecrit. Si elle survit, elle devient au cycle 2 la porte
+  L1 « pas de fade contre B5 un jour d'ouverture hors valeur » — JAMAIS cablee
+  avant.
+- Ou F23 aide le biais : PAS a l'echelle du jour (c'est L1/B5) — a l'echelle du
+  niveau (3e test, defense qui s'use, B1n). Le test « F23 aide-t-il » est
+  l'etape 5 de REPONSES_NARRATIF : avec/sans dans B1n et H7.
