@@ -65,12 +65,16 @@ tache planifiee 21:01. Apres vendredi : on n'ajoute plus, on regarde tourner.
 Au jour 61 on ne « corrige » pas : on bascule observee->appliquee pour ce qui
 a survecu. Branchement decisionnel Sim : cycle 2, ~mi-decembre.
 
-0. **Le coureur LIVE** — la brique L0-live version branchée, et la réponse à
-   la question 1 du constat qui reste NON : une boucle sur le fichier vivant
-   avec `age_s` réel, L6 du jour et l'état du connecteur, passée à
-   `chaine.appliquer(strict=True, live={...})`. Le mode `--strict` de
-   `campagne.py` existe mais bloquerait tout par les trous DTC — c'est voulu
-   (fail-closed), c'est le coureur qui manque. Toutes les pièces existent.
+0. **Le coureur LIVE — FAIT le 07/09** (`V3/execution/coureur_live.py`, avec
+   `sync_vps.py` et `etat_live.py`) : boucle sur le fichier vivant, `age_s`
+   réel (~90 s via `--sync`), battements + signaux dans
+   `LOGS/entonnoir/live_<jour>.jsonl` (append-only, SÉPARÉ de l'entonnoir
+   officiel du rejeu). Testé en réel le 07/09 (férié) : `L0_FERIE_CME` bloque,
+   trous DTC/colonnes_mortes bloquent en strict — attendu pré-enregistré tenu.
+   **Reste : le LANCER en continu** (`python -X utf8
+   V3/execution/coureur_live.py --sync`) — la nuit doit montrer
+   SESSION_BLOQUEE + TROU_VIX (question 3 du constat) ; puis le pont DTC et la
+   tâche planifiée (plus tard cette semaine, cf objectif).
 1. **L4 J2** (spec : `layers/L4_orderflow/SPEC.md`, seuils mesurés dans son
    `seuils.yaml`) : bloc `l4` de `lecture.py` + test anti-fuite → `vetos.py`
    (5 vetos en SÉRIE, jamais un compte) → glissement → mesure k=1/2/3 →

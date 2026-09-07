@@ -31,7 +31,7 @@ passe pas a la suivante. C'est le garde-fou que V1 n'a jamais eu — il embarqua
 | L4 | confirmation order flow 1 min | **J1 fait** | — | 30-50 % | la seule couche a construire |
 | L5 | risque — 3 vetos (gamma, rvol, frais/TP) | **mesuree** | meme rapport, lignes `L5_*` | 10-25 % | PAS inerte : c'etait la mesure qui l'etait. Le veto SL mort remplace par la part des frais dans la distance au TP |
 | L6 | surveillance donnees | **passee** | — | — | 7 controles quotidiens en place |
-| L0-live | le branchement live de L0 : `strict=True` + etat du connecteur | **mesuree** | 14 scenarios de faux live passent | — | brique SEPAREE : sceller une couche dont la moitie n'a jamais tourne n'aurait rien scelle |
+| L0-live | le branchement live de L0 : `strict=True` + etat du connecteur | **mesuree, BRANCHEE 07/09** | 14 scenarios de faux live + coureur reel (`execution/coureur_live.py`) : battements journalises en seance ferie, age_s ~90 s via --sync, FERIE_CME + trous DTC conformes a l'attendu pre-enregistre | — | reste avant scellement : un jour OUVRE complet + le pont DTC (dtc_connecte est un trou voulu) |
 
 ## Comment lire le rapport des portes
 
@@ -73,6 +73,8 @@ le devenir des rejetes, confronter les deux versions, sceller. Le critere de L0
 sert de modele, pas de copie : une couche de BIAIS ne se juge pas comme un
 interrupteur, et sa plage reste a etablir sur sa propre mesure.
 
-**Avant mardi 9h30** : brancher le bot sur `chaine.appliquer(strict=True,
-live={...})`. Le faux live prouve que le chemin fonctionne ; le bot ne l'emprunte
-pas encore.
+**Fait le 07/09** : le coureur live (`V3/execution/coureur_live.py`) emprunte
+`chaine.appliquer(strict=True, live={...})` sur le fichier vivant — teste en
+reel pendant la seance ecourtee de Labor Day. Avant mardi 9h30 : le LANCER
+(`--sync`), et le laisser tourner la nuit pour voir SESSION_BLOQUEE + TROU_VIX
+sur les barres de nuit (question 3 du constat).

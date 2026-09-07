@@ -7,3 +7,9 @@
 COMPTE_ES: "<compte de simulation pour ES>"
 COMPTE_NQ: "<compte de simulation pour NQ>"
 # COMPTE_MGC: "<plus tard>"
+
+# Hote SSH du VPS pour --sync du coureur live. La VRAIE valeur (user@ip) vit
+# dans comptes.local.yaml, ignore par git : une IP dans le miroir public est
+# refusee par le garde-fou, et il a raison.
+VPS_HOTE: "<utilisateur@hote-du-vps>"
+VPS_CHEMIN_DONNEES: "<chemin des donnees live sur le VPS, forward slashes>"

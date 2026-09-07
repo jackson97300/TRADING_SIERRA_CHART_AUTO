@@ -71,10 +71,14 @@ PLAGES = {                       # part de rejet attendue, par couche
 # Lecture
 # ---------------------------------------------------------------------------
 
-def charger_jour(sym, jour, minutes, avec_1min=False):
+def charger_jour(sym, jour, minutes, avec_1min=False, cash_only=True):
     """Barres agregees d'une journee. Rend un DataFrame ou vide.
 
     `avec_1min` rend `(agregees, minutes)` au lieu des seules agregees.
+
+    `cash_only=False` garde la SESSION ENTIERE : le coureur live evalue les
+    portes aussi la nuit (SESSION bloquee, TROU_VIX quand vix_level==0) — la
+    detection de signaux L3, elle, reste sur le cash, comme le rejeu.
 
     LE 1 MIN EST NECESSAIRE, il n'est pas un confort. La fiche de test de F23
     a besoin des deux echelles : l'effort se lit sur la barre agregee (flux
@@ -110,7 +114,8 @@ def charger_jour(sym, jour, minutes, avec_1min=False):
     df["ts"] = recalc.horodatage(df)
     df = df.dropna(subset=["ts"]).sort_values("ts").reset_index(drop=True)
     df["dt"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
-    df = df[recalc.est_cash(df["dt"])].reset_index(drop=True)
+    if cash_only:
+        df = df[recalc.est_cash(df["dt"])].reset_index(drop=True)
     if df.empty:
         return (df, df) if avec_1min else df
     aggregees = agreger(df, minutes)
