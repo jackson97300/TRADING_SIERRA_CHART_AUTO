@@ -1,0 +1,57 @@
+# SEUILS L5 — BARRIERES. Mesures du 07/09 (rapports/distributions_niveaux),
+# 20 jours par instrument. Chaque nombre porte son origine ; un `null` sous
+# `observee` est admis, sous `appliquee` le code refuse de tourner.
+#
+# Les PORTES L5 (veto gamma/rvol/frais) restent dans
+# layers/L0_interrupteur/seuils.yaml — une seule verite, on ne demenage pas
+# un fichier que la chaine lit. Ce fichier-ci ne porte que les BARRIERES.
+
+barrieres:
+
+  B-ATR:                       # la reference qui tourne — triple_barriere()
+    mode: appliquee
+    seuils: {sl_atr: 1.0, tp_atr: 1.5, expiration_barres: 20}
+
+  B-NIV:                       # H-L5-NIVEAUX — la regle de Jackson (V1)
+    mode: observee
+    # Fenetre du SL : le premier niveau CONTRE dans [min, max] ATR.
+    # Mesure 07/09 : le plus proche niveau est a p50 ~0,23 ATR, p75 ~0,5 —
+    # QUINZE niveaux rendent le voisinage dense ; le plancher 0,5 est ce qui
+    # empeche le stop d'aller dans le bruit (la lecon V1 : SL_MIN_TICKS,
+    # « trop pres = sorti par le bruit »). Le plafond 1,5 = le SL budget.
+    sl_fenetre_atr: [0.5, 1.5]
+    # TP : premier niveau DANS le sens au-dela de tp_min, moins la marge.
+    tp_min_atr: 0.5
+    marge_tp_ticks: 1
+    # BUFFER DE BALAYAGE, par instrument (rapport §2) : p75 de l'excursion
+    # des episodes <= 15 min au-dela des niveaux prev_* REGAGNES, sur 1 min.
+    # ES 20 t / NQ 109 t (ratio 5,45 — un buffer partage se serait trompe
+    # d'un facteur cinq, meme piege que g1). Le repli du brief : les fiches
+    # F23 `regagne` sont en quarantaine cur_*, les prev_* recalcules directs.
+    buffer_sweep_ticks: {ES: 20, NQ: 109}
+    plafond_sl_atr: 1.5
+    # CANDIDATS v1 : niveaux FIGES au signal. Les cur_* sont EXCLUS — meme
+    # quarantaine que F23 (un niveau qui bouge entre le signal et l'issue
+    # n'est pas un niveau) ; leur entree attend une regle de stabilite posee
+    # sur le rapport §3 (derive de cur_vah par heure). Jamais gamma_block_*
+    # (proxy, un test l'interdit).
+    niveaux: [prev_vah, prev_val, prev_vpoc, ib_high, ib_low,
+              pdh, pdl, ovn_high, ovn_low, mq_call, mq_put, mq_hvl]
+    # L'ORDRE V1 de Jackson (mia_sltp.py, audit 07/03) classait par SOLIDITE
+    # mesuree (Tiers). v1 mecanique : le plus proche eligible dans la
+    # fenetre ; la mesure par TYPE de niveau du jour 61 re-notera les tiers
+    # sur les donnees V3 — les scores de mars (1 min) ne se recopient pas.
+    stabilite_cur_barres: null
+    mesure: "rapports/distributions_niveaux_20260907.md"
+
+  B-NAT:                       # la sortie naturelle par famille (constat 0.1)
+    mode: observee
+    cible_par_famille:
+      H3-VPOC: cur_vpoc_fige   # deja la barriere du runner, FIGEE (DECISIONS)
+      H2p: vwap_rth
+      H6p: ib_mid
+      H8p: va_opposee
+    sl_atr: 1.0                # le SL reste B-ATR — seule la cible change
+
+frais:
+  source: config/campagne.yaml -> instruments    # jamais recopie

@@ -102,9 +102,12 @@ a survecu. Branchement decisionnel Sim : cycle 2, ~mi-decembre.
 3. La carte (`carte.py`, point 13) vient APRÈS L4 — le point 14 le dit : le
    narratif a déjà mangé une journée.
 4. **Les vides de la photo structurelle** (revue Fable, 07/09 au soir) —
-   par ordre : ~~L4 J2~~ (socle fait, reste la mesure) ; **SPEC L5 avant
-   EXEC** (la couche qui parle d'argent est la moins documentée du dépôt,
-   et EXEC lui obéira) ; **le pont DTC** (aucun ordre nulle part — jeudi
+   par ordre : ~~L4 J2~~ (socle fait, reste la mesure) ; ~~SPEC L5~~ — **FAITE le 07/09** avec le chantier BARRIÈRES :
+   brief Fable déposé (`L5_risque/BRIEF_NIVEAUX.md`), H-L5-NIVEAUX
+   pré-enregistrée (le concept V1 de Jackson : SL derrière un niveau +
+   buffer, TP devant), distributions mesurées, `seuils.yaml` L5 rempli.
+   **Reste J2** : `barrieres.py` + tests + journal + mesure 57 j — hors
+   ligne, rien ne touche au bot ; **le pont DTC** (aucun ordre nulle part — jeudi
    10/09 le rollover passera par `L0_CONTRAT_INACTIF`, test gratuit à
    REGARDER) ; **les règles PROP FIRM n'ont pas de nom** (seule la porte
    `L0_STOP_PROPFIRM` −200 $ existe — la brique complète est à nommer dans
