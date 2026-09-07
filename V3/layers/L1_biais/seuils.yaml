@@ -15,16 +15,36 @@ composantes:
 
   B1p:
     mode: observee
-    seuils: {z1_atr: null}
+    seuils: {z1_atr: 1.0}
     role: candidat
-    mesure: "zone morte autour de la VWAP semaine, en ATR-15m. Distribution de
-             `dist_vwap_w / atr_barre` a produire. Sans zone morte, le cote
-             bascule des que le prix effleure la reference — c'est ce qui
-             faisait changer le regime gamma dix fois par jour."
+    # MESURE du 07/09, 60 jours, |dist_vwap_w| en ATR-15m :
+    #   ES  p10 0,49  mediane 2,13  p90 5,63     NQ  p10 0,71  mediane 2,75
+    #
+    # DEUX CHOSES QUE LA DISTRIBUTION A MONTREES, ET QUI NE S'ATTENDAIENT PAS :
+    #
+    # 1. La zone morte ne sert pas a ce pour quoi elle avait ete introduite.
+    #    Les bascules de cote sont DEJA rares a z1=0 : 0,65 par jour sur ES,
+    #    0,52 sur NQ. Le prix reste du meme cote de la VWAP semaine presque
+    #    toute la journee. Le ballottement du regime gamma — 10,2 bascules par
+    #    jour — n'a pas d'equivalent ici.
+    #
+    # 2. B1-photo A UN AVIS TOUS LES JOURS : 60/60 a z1=0,0, a 0,5 et a 1,0.
+    #    Il faut monter a z1=2,0 pour descendre a 52/60 — mais 2,0 ATR EST la
+    #    mediane, une zone morte qui jette la moitie des observations.
+    #
+    # z1 = 1,0 est retenu pour la STABILITE (0,10 bascule/jour sur ES) et non
+    # pour l'abstention, qu'aucune valeur raisonnable ne produit.
+    mesure: "voir rapports/. La COUVERTURE de B1-photo est hors plage PAR
+             NATURE : la spec exige moins de 95 % des jours, elle en fait
+             100 %. Ce n'est pas le seuil qui est mal pose, c'est la
+             composante qui ne sait pas dire « je ne sais pas » — elle decrit
+             ou le prix est, elle n'oriente pas. C'est le premier argument
+             mesure en faveur de B1n : un narratif PEUT s'abstenir, quand la
+             reference a ete cassee sans regain."
 
   B1n:
     mode: observee
-    seuils: {z1_atr: null, tendance_fort: 1.0}
+    seuils: {z1_atr: 1.0, tendance_fort: 1.0}
     role: candidat
     mesure: "meme cote que la photo SI le dernier test a tenu. Depend de F23.
              DUEL avec B1p : si le narratif n'ameliore pas la separation hors

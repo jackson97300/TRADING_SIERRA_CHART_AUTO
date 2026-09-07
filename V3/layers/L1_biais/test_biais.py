@@ -97,6 +97,7 @@ def _seuils_null():
     cfg = yaml.safe_load(open(os.path.join(ICI, "seuils.yaml"),
                               encoding="utf-8"))
     cfg["composantes"]["B1p"]["mode"] = "appliquee"
+    cfg["composantes"]["B1p"]["seuils"]["z1_atr"] = None
     tmp = os.path.join(ICI, "_seuils_test.yaml")
     with open(tmp, "w", encoding="utf-8") as fh:
         yaml.safe_dump(cfg, fh)

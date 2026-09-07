@@ -1,3 +1,3 @@
-sym,unite_min,seuil,regles,jours,barres,signaux,couverture,n_dans,devenir_dans,n_contre,devenir_contre,separation,ic_separation,separation_hasard,cout_obeissance_somme,cout_obeissance_moyen,n_fantomes,colonnes_manquantes
-ES,15,2,b1+b5+b5b,60,1483,375,0.5725,12,0.7383,195,-0.0837,0.822,0.646,0.3275,-31.61,-0.1728,183,
-NQ,15,2,b1+b5+b5b,60,1482,394,0.558,23,0.2166,202,-0.0521,0.2687,0.3057,0.42,-17.55,-0.0938,187,
+sym,jours,couverture,n_avec,jours_avec,n_contre,jours_contre,devenir_avec,devenir_contre,separation,ic_par_jour,separation_hasard,cout_obeissance,n_fantomes
+ES,60,0.7,165,29,117,19,-0.0914,0.6889,-0.7803,0.771,-0.305,19.56,110
+NQ,60,0.8333,257,40,89,26,0.1081,0.3683,-0.2602,0.5432,-0.0665,26.91,84

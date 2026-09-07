@@ -76,10 +76,29 @@ def signaux(df):
     return sorted(out)
 
 
-def lire_l1(df, i, sym):
-    """Le dict que les composantes attendent. `lecture.py` fera ça en propre ;
-    ici on le construit au plus court pour mesurer."""
-    a = df["atr_barre"].iloc[i]
+def lire_l1(df, i, sym, atr_ref=None):
+    """Le dict que les composantes attendent.
+
+    `atr_ref` est l'ATR DE LA VEILLE, et ce n'est pas un detail.
+
+    `atr_barre` est NaN avant la 7e barre (`min_periods=7`) : le biais doit se
+    lire a 9h30, l'ATR agrege n'existe qu'a 11h15. Prendre la valeur de 11h15
+    pour juger 9h30 serait une FUITE — on normaliserait l'ouverture par la
+    volatilite de la matinee qui la suit.
+
+    L'ATR de la veille est ce qu'un desk utilise a l'ouverture : disponible,
+    stable, connu avant que la seance commence.
+
+    POURQUOI PAS `atr` OU `atr_14m` DU DUMPER, qui eux sont remplis des la
+    premiere barre : mesure du 07/09, medianes sur une journee ES —
+    `atr` 65,29 · `atr_14m` 7,07 · `atr_barre` 10,86 (points, formule connue).
+    Les rapports valent 6,03 et 0,62 : ce ne sont NI des conversions
+    ticks/points (4), NI la meme grandeur a une echelle pres. Trois ATR
+    coexistent avec des formules qu'on ne connait pas pour deux d'entre eux.
+    Normaliser par l'un des deux donnerait un facteur 10,7 d'ecart — la
+    neuvieme confusion d'echelle du chantier, evitee en la mesurant.
+    """
+    a = atr_ref if atr_ref is not None else df["atr_barre"].iloc[i]
     d = pd.to_numeric(pd.Series([df["dist_vwap_w"].iloc[i]]),
                       errors="coerce").iloc[0] if "dist_vwap_w" in df.columns else np.nan
     # `dist` est en TICKS, l'ATR en POINTS : sans le tick, le rapport est faux
@@ -116,13 +135,21 @@ def mesurer(sym, minutes, cfg):
     n_jours_avis = n_jours = 0
     rng = np.random.default_rng(4242)
 
+    atr_veille = None
     for jour in jours_du_lot(sym):
         df = charger_jour(sym, jour, minutes)
         if df.empty or len(df) < 6:
             continue
         n_jours += 1
-        # le biais se lit UNE FOIS par jour, a la 4e barre (le regime est lisible)
-        b = biais.evaluer(lire_l1(df, min(4, len(df) - 1), sym), cfg)
+        # le biais se lit UNE FOIS par jour, tot, et normalise par l'ATR de la
+        # VEILLE : celui du jour n'existe pas encore, et l'attendre serait lire
+        # l'ouverture a la lumiere de ce qui l'a suivie.
+        b = (biais.evaluer(lire_l1(df, min(4, len(df) - 1), sym, atr_veille), cfg)
+             if atr_veille else dict(biais.AUCUN, composantes={}, trous=["atr_veille"],
+                                     motif="premier_jour"))
+        derniers = df["atr_barre"].dropna()
+        if len(derniers):
+            atr_veille = float(derniers.iloc[-1])
         if b["cote"] != "AUCUN":
             n_jours_avis += 1
         faux = {"cote": "LONG" if rng.random() < 0.5 else "SHORT"}
@@ -178,9 +205,18 @@ def verdict(r):
     if s is None or ic is None or not np.isfinite(ic):
         return "NON CALCULABLE"
     if abs(s) - ic <= 0:
-        return "LE BIAIS N'INFORME PAS — separation %.3f +/- %.3f, zero dedans" % (s, ic)
+        return "N'INFORME PAS — separation %.3f +/- %.3f, zero dedans" % (s, ic)
     if sh is not None and abs(s) <= abs(sh):
         return "pas mieux que le hasard (%.3f contre %.3f)" % (s, sh)
+    # LE SIGNE, avant la magnitude. Une premiere version testait `abs(s) - ic`
+    # et declarait ORIENTE un biais dont la separation valait -0,78 : les
+    # signaux CONTRE faisaient mieux que ceux qui le suivaient. Un controle qui
+    # valide l'amplitude en oubliant la direction est le meme defaut que celui
+    # qui a rendu `False` la ou il fallait `None`.
+    if s < 0:
+        return ("ORIENTE A L'ENVERS — separation %.3f +/- %.3f : les signaux "
+                "CONTRE le biais font MIEUX que ceux qui le suivent. Le suivre "
+                "couterait." % (s, ic))
     return "ORIENTE — separation %.3f +/- %.3f, hasard %.3f" % (s, ic, sh)
 
 
