@@ -62,3 +62,19 @@ vient d'une donnee reelle, pas d'un synthetique. La prochaine session commence i
 - ACTION : test au tick de F23 etendu a une session de NUIT + la fiche porte le niveau
   reconstruit en prix. Tant que ce n'est pas vert, les fiches ne nourrissent NI le
   discretionnaire NI B1n.
+
+## 12. LE RECIT F23 — demande Jackson 08/09 : F23 raconte EXACTEMENT, sans grain de sel
+Principe : une fiche = des FAITS contre-lisibles ; le recit = un rendu mecanique
+des fiches, aucune interpretation libre.
+- chaque fiche porte : le NIVEAU EN PRIX (reconstruit, verifiable), la fenetre
+  [ts_debut, ts_fin] en clair, le volume/delta RECOMPTABLES a la main ;
+- chaque phrase du recit porte sa preuve entre parentheses : « VAL 7712,50
+  testee 03:00 (plus bas 7712,75, 0 volume dessous) — PAS de cassure » ;
+- le lexique est FERME et defini une fois (touche/tenue/cassure/regain/piege,
+  les 4 definitions existantes) — aucun mot hors lexique dans le recit ;
+- « piege » ne se dit que si volume_au_dela est recomptable ; sinon le recit
+  dit « cassure sans volume mesurable au-dela » ;
+- un mode --verifier recompte chaque chiffre du recit depuis les barres brutes
+  et echoue au premier ecart : LE RECIT EST UN TEST, pas une prose.
+Livrable : `V3/recit.py` (lit les fiches, rend le recit du jour) + extension du
+test au tick. C'est la brique qui sert le discretionnaire (briefing 9h25).
