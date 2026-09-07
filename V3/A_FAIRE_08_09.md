@@ -50,3 +50,15 @@ vient d'une donnee reelle, pas d'un synthetique. La prochaine session commence i
 9. `vah_touches_20b = 20/20 barres` dans une VA de 7 pts : le compteur C++ dit
    « touche » pour « proximite » — confirmation que F23 recalcule a raison.
 10. Reset hebdo confirme sur les DEUX instruments (vwap_w = vwap_d un lundi).
+
+## 11. CONTRE-LECTURE F23 sur la nuit du 08/09 : DEUX ECARTS, a diagnostiquer AVANT de se servir des fiches
+- F23 dit « prev_val cassee 03:00, 2540 contrats pieges » ; les barres brutes montrent
+  ZERO cloture ni volume sous 7712,50 entre 03:00 et 04:00. Suspect n.1 : la reference
+  « veille » CHANGE pendant la nuit (limite de journee de trading) — dist_prev_val a 03:00
+  ne pointe peut-etre pas le meme jour qu'a 09:35. Regle 13 : deux conventions d'abord.
+- Piege VPOC : F23 dit 8526/+498, la main dit 1376/+252 — la fenetre i_debut->i_connu et
+  le niveau reconstruit (close+dist*tick a i_debut) doivent etre JOURNALISES dans la fiche
+  pour etre verifiables. Sans ca, une fiche n'est pas contre-lisible.
+- ACTION : test au tick de F23 etendu a une session de NUIT + la fiche porte le niveau
+  reconstruit en prix. Tant que ce n'est pas vert, les fiches ne nourrissent NI le
+  discretionnaire NI B1n.
