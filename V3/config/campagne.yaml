@@ -9,6 +9,10 @@ campagne:
   nom: ombre-1
   debut: 2026-09-08
   duree_jours_seance: 60
+  unite_decision: 15min          # barres de DECISION 15 min — tout cout ou seuil
+                                 # de ce fichier se lit dans cette unite. Ajoute
+                                 # le 08/09 (revue Fable, bloqueur n.1) : le
+                                 # fichier etait fige sur des chiffres 5 min.
   mode: SIM                      # aucun capital reel avant la lecture
   date_lecture_unique: jour 61   # personne n'ouvre le tableau avant
   attendu_pre_enregistre: "0 a 1 declencheur positif net de frais sur NQ"
@@ -21,12 +25,14 @@ instruments:
     compte: ${COMPTE_ES}
     valeur_point_usd: 5.00       # MES micro
     cout_aller_retour_usd: 4.32  # Tradeify 1,82 + 1 tick/cote
-    # mesure 06/09 : ATR-5m median 6,29 pts = 31,43 $ -> cout 0,1375 ATR (9,2 % du TP)
+    # mesure 06/09, ATR-15m median 15,11 pts = 75,55 $ -> cout 0,057 ATR-15m,
+    # part MEDIANE du TP (1,5 ATR) : 3,8 % — cf seuils.yaml L5_FRAIS_TROP_LOURDS
   NQ:
     compte: ${COMPTE_NQ}
     valeur_point_usd: 2.00       # MNQ micro
     cout_aller_retour_usd: 2.82
-    # mesure 06/09 : ATR-5m median 41,38 pts = 82,75 $ -> cout 0,0341 ATR (2,3 % du TP)
+    # mesure 06/09, ATR-15m median 101,14 pts = 202,28 $ -> cout 0,014 ATR-15m,
+    # part MEDIANE du TP (1,5 ATR) : 0,9 % — cf seuils.yaml L5_FRAIS_TROP_LOURDS
   # MGC arrivera sur son propre compte quand ES et NQ seront stables. Zero ligne a changer :
   # le connecteur prend le compte par ORDRE.
 
@@ -40,7 +46,10 @@ portes_appliquees:
 
   news_calendrier:
     actif: true
-    source: CORE/eco_calendar.py -> is_news_60m (niveau B)
+    # UNE SEULE VERITE (revue Fable, bloqueur n.2) : la porte est definie dans
+    # layers/L0_interrupteur/seuils.yaml (L0_NEWS). Ce fichier POINTE, il ne
+    # redecrit pas l'implementation.
+    source: layers/L0_interrupteur/seuils.yaml -> porte L0_NEWS
     mesure: |
       LA MEILLEURE PORTE DU SYSTEME, et de tres loin. Devenir des rejetes :
       -4,82 ATR sur ES, -1,18 sur NQ. Le hasard rend -0,06 +/- 0,08 : elle est
@@ -66,10 +75,11 @@ portes_appliquees:
     actif: true
     seuil_usd: -1000
     mesure: |
-      INERTE PAR CONSTRUCTION, et c'est assume. Un SL de 1,0 ATR vaut 31 $ sur
-      MES et 83 $ sur MNQ en 5 min : il faut 31,8 pertes d'affilee sur ES et
-      12,1 sur NQ pour l'atteindre, alors qu'on mesure ~7 signaux par jour.
-      Il protege le SIM, il ne sera pas mesure. Le stop reel est en observation.
+      INERTE PAR CONSTRUCTION, et c'est assume. Un SL de 1,0 ATR-15m vaut
+      75,55 $ sur MES et 202,28 $ sur MNQ (medians 06/09) : il faut 13,2 pertes
+      d'affilee sur ES et 4,9 sur NQ pour l'atteindre, alors qu'on mesure ~7
+      signaux par jour. Il protege le SIM, il ne sera pas mesure. Le stop reel
+      est en observation.
 
   veto_gamma:
     actif: true
@@ -101,7 +111,13 @@ portes_observees:
       la question a laquelle la regle des cinq repondait sans l'avoir posee.
 
   defenses_du_niveau:
-    source: compteur d'approches par niveau, + vah_touches_20b / retest_*_count
+    # SOURCE CHANGEE le 08/09 (revue Fable, bloqueur n.3) : les compteurs C++
+    # vah_touches_20b / retest_*_count disent « touche » pour « proximite »
+    # (mesure : 20/20 barres touchees dans une VA de 7 pts). Observer 60 jours
+    # d'un compteur qu'on sait faux ne mesurerait rien.
+    # Branchement des fiches en SEMAINE 1 de la campagne — engagement ecrit ici,
+    # comme la revue l'exige.
+    source: fiches F23 (recalcul au tick), PAS les compteurs C++
     mesure: |
       NON MESURABLE SUR 57 JOURS, et c'est le resultat. En 15 min : 1re 133 /
       2e 53 / 3e 12 sur ES, rien de significatif. Refait en 5 min avec le seuil
