@@ -78,16 +78,18 @@ a survecu. Branchement decisionnel Sim : cycle 2, ~mi-decembre.
 1. **L4 J2** (spec : `layers/L4_orderflow/SPEC.md`, seuils mesurés dans son
    `seuils.yaml`) : bloc `l4` de `lecture.py` + test anti-fuite → `vetos.py`
    (5 vetos en SÉRIE, jamais un compte) → glissement → mesure k=1/2/3 →
-   `k` dans DECISIONS.md. Prérequis à traiter en passant, chacun avec son
-   test — les trois points de la nuit qui n'en ont pas encore :
-   - `rvol_r` / `cvd_sess_r` dans l'agrégation ;
+   `k` dans DECISIONS.md. Prérequis (chacun avec son test) — état au 07/09 :
+   - `rvol_r` / `cvd_sess_r` dans l'agrégation — À FAIRE ;
    - **reproduction des `ctx_*`** sur 2 jours, mismatch = 0, comme la parité
-     `direction()` (point 4 de la nuit) — sans ce test, J2 « recalcule selon
-     la formule » contre une formule qu'on sait fausse ;
-   - **B4 lit UNE seule colonne `im_smt`**, toujours la même (ES −1 / NQ 0 au
-     même ts : elles divergent), écrite dans le `seuils.yaml` de L1 (point 5) ;
-   - **`lecture.py` refuse mécaniquement** toute colonne dont la `_source`
-     contient `proxy` (point 7 — `_mq_gamma_source: sierra_proxy_v2`).
+     `direction()` (point 4 de la nuit) — À FAIRE ; sans ce test, J2
+     « recalcule selon la formule » contre une formule qu'on sait fausse ;
+   - ~~B4 lit UNE colonne `im_smt`~~ — **FAIT** (seuils L1 : `colonne_smt:
+     im_smt_divergence, instrument_smt: ES`, et la mesure 57 j ne fabrique
+     plus d'accord) ;
+   - ~~`lecture.py` refuse les `_source` proxy~~ — **FAIT** (test_proxys.py,
+     7e contrôle de publier.sh). CONSÉQUENCE : le veto gamma lisait un proxy
+     → porte passée OBSERVEE — **ARBITRAGE JACKSON avant vendredi, A_FAIRE
+     point 16**.
 2. **F23 étape par étape** selon `REPONSES_NARRATIF.md` §ordre — PAS avant L4.
 3. La carte (`carte.py`, point 13) vient APRÈS L4 — le point 14 le dit : le
    narratif a déjà mangé une journée.
