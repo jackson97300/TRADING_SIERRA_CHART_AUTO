@@ -45,8 +45,9 @@ from CORE.research.hypothesis_runner import (                    # noqa: E402
 from V3 import chaine, lecture                                   # noqa: E402
 
 CONTRATS_ATTENDUS = ("U26", "Z26")      # a mettre a jour au rollover
-# Ce que `injecter_recalculs` consomme du 1 min : hlc3 + volume + horodatage.
-COLS_RECALC = ["ts", "high", "low", "close", "total_vol"]
+# Ce que `injecter_recalculs` consomme du 1 min : hlc3 + volume + horodatage
+# + delta (cvd_sess_r, prerequis L4).
+COLS_RECALC = ["ts", "high", "low", "close", "total_vol", "delta_bar"]
 # = `n_jours` de recalc.rvol — les deux bougent ensemble, sinon la chauffe
 # devient trop courte en silence. Le plancher 10 = son `min_periods`.
 N_JOURS_CHAUFFE, MIN_JOURS_CHAUFFE = 20, 10

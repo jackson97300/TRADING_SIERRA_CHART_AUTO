@@ -78,8 +78,12 @@ a survecu. Branchement decisionnel Sim : cycle 2, ~mi-decembre.
 1. **L4 J2** (spec : `layers/L4_orderflow/SPEC.md`, seuils mesurés dans son
    `seuils.yaml`) : bloc `l4` de `lecture.py` + test anti-fuite → `vetos.py`
    (5 vetos en SÉRIE, jamais un compte) → glissement → mesure k=1/2/3 →
-   `k` dans DECISIONS.md. Prérequis (chacun avec son test) — état au 07/09 :
-   - `rvol_r` / `cvd_sess_r` dans l'agrégation — À FAIRE (le dernier) ;
+   `k` dans DECISIONS.md. **Les QUATRE prérequis sont FAITS (07/09 au soir),
+   chacun avec son test — plus aucun verrou devant J2** :
+   - ~~`rvol_r` / `cvd_sess_r` dans l'agrégation~~ — **FAIT**
+     (`injecter_recalculs` porte `cvd_sess_r` = cumul de session 17h ET via
+     `recalc.cumul_delta`, jamais `cvd_day` ; `test_recalc_agg.py`,
+     9e contrôle) ;
    - ~~reproduction des `ctx_*`~~ — **FAIT, mismatch = 0** (`test_ctx.py`,
      8e contrôle de publier.sh). La formule du code était bonne : les
      « écarts » étaient TROIS conventions (arrondi 6 décimales, fichier par

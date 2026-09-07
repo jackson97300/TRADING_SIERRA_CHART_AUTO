@@ -204,6 +204,12 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
     `agreger_5min`). La campagne 15 min passe 15 — sans quoi le merge sur `ts`
     prendrait `rvol_r` et les bandes au TIERS de la fenetre, pas au dernier.
 
+    `cvd_sess_r` (prerequis L4, 07/09) : cumul du delta depuis 17h ET
+    (`recalc.cumul_delta` sur cle `session_sess`), pris au dernier de chaque
+    fenetre — JAMAIS la colonne livree `cvd_day`, qui repart de zero au
+    redemarrage du processus. Si le 1 min ne porte pas `delta_bar`, la
+    colonne rend NaN — un trou, jamais un zero invente.
+
     `rvol_r`  — H8. Le C++ initialise `f.rvol = 1.0f` et 1,0 est une valeur
                 valide de la variable : "normal mesure" et "jamais calcule" y
                 sont indistinguables (CONVENTIONS §3.1). Recalcule sur les
@@ -219,9 +225,12 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
     cle = recalc.session_rth(b["dt"])
     vw = recalc.vwap_cumule(b, cle)
     bandes = recalc.vwap_bandes(b, cle, vw, n_sd=2.0)
+    cvd = (recalc.cumul_delta(b, recalc.session_sess(b["dt"]))
+           if "delta_bar" in b.columns
+           else pd.Series(np.nan, index=b.index))
 
     aux = pd.DataFrame({
-        "dt": b["dt"], "rvol_r": rv,
+        "dt": b["dt"], "rvol_r": rv, "cvd_sess_r": cvd,
         "sd2u": bandes["sup"], "sd2d": bandes["inf"], "c": b["close"],
     }).set_index("dt")
     o = aux.resample("%dmin" % int(minutes or MINUTES_BARRE), origin="start_day",
@@ -231,7 +240,8 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
     # `niveau - close`, en ticks : meme convention et meme signe que dist_cur_vah
     o["dist_vwap_rth_sd2u_r"] = (o["sd2u"] - o["c"]) / HYP.TICK
     o["dist_vwap_rth_sd2d_r"] = (o["sd2d"] - o["c"]) / HYP.TICK
-    garde = ["ts", "rvol_r", "dist_vwap_rth_sd2u_r", "dist_vwap_rth_sd2d_r"]
+    garde = ["ts", "rvol_r", "cvd_sess_r",
+             "dist_vwap_rth_sd2u_r", "dist_vwap_rth_sd2d_r"]
     return cinq.merge(o[garde], on="ts", how="left")
 
 
