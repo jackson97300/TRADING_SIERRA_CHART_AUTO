@@ -5,6 +5,10 @@
 
 C2_80PCT: {}          # aucun seuil — acceptation = 2 clôtures (définition F23)
 
+C2_DIV_DELTA: {}      # aucun seuil numérique : le lieu lit P10 (planchers
+                      # SPEC L3, déjà mesurés), la divergence est une
+                      # COMPARAISON entre deux extrêmes, pas un seuil.
+
 C2_EOD:
   # r_min : |rendement_r| minimal — rendement du jour à la clôture 15h30 ET,
   # normalisé par le RANGE CASH du même instant (OHLC, provenance A). Écart
