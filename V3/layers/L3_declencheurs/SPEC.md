@@ -33,13 +33,16 @@ La source d'erreur n° 1 du dépôt (huit confusions d'échelle) :
 Une colonne absente rend NaN : une hypothèse **ne déclenche jamais sur une
 donnée manquante**, et ne lève pas non plus — le rapport dit `N = 0`.
 
-**LIMITATION COMMUNE AUX QUATRE (audit Fable, étendue le 07/09)** : les quatre
-lisent `finish_delta_pct` — une colonne C++ à formule inconnue, **binaire sur
-NQ**, dont le seuil 0,4/0,6 vient du cycle 1 et n'a jamais vu de distribution
-sur ES. Si cette colonne est cassée, la couche l'est. La limitation écrite
-plus bas pour H3-NQ vaut donc pour L3 ENTIÈRE ; la distribution du seuil est
-dans `rapports/`, et `finish_r` recalculé depuis OHLC est la première ligne
-de `NEXT_CYCLE.md`.
+**LIMITATION COMMUNE AUX QUATRE (audit Fable, étendue puis CORRIGÉE le
+07/09)** : les quatre lisent `finish_delta_pct` — une colonne C++ à formule
+inconnue, dont le seuil 0,4/0,6 vient du cycle 1. La mesure du 07/09
+(`rapports/finish_lieu_h3`) dit ce qu'il vaut au site de décision : la
+colonne y est GRADUÉE sur les deux instruments (la binarité constatée la
+nuit vivait sur le 1 min — l'agrégation prend la dernière minute), et le
+seuil garde ~55 % des barres de lieu sur ES, 41 % sur NQ — **un filtre mou,
+pas un rasoir**. Si la formule est cassée, la couche l'est : lecture
+SÉPARÉE ES/NQ au jour 61, et `finish_r` recalculé depuis OHLC est la
+première ligne de `NEXT_CYCLE.md`.
 
 ---
 
@@ -59,9 +62,12 @@ de `NEXT_CYCLE.md`.
 - **CIBLE** : lieu et réaction sont EXACTEMENT ceux de H3 du cycle 1 ; seule la
   cible change, et c'est le runner qui la porte — barrière par famille =
   **VPOC atteint** (la seule des quatre à l'utiliser).
-- **LIMITATION CONNUE (07/09, gelée avec la spec)** : `finish_delta_pct` est
-  **binaire sur NQ et graduée sur ES** (dénominateurs 5/8 vs 3/7, lecture des
-  barres de nuit). Sur NQ, « < 0,4 » se lit « == 0 » — la moitié des barres.
+- **LIMITATION CONNUE (07/09, corrigée le jour même par la mesure)** : la
+  lecture de nuit voyait `finish_delta_pct` binaire sur NQ — c'était vrai sur
+  le 1 MIN, pas au site de décision : sur les barres de lieu 15 min, 61
+  valeurs distinctes sur 61 (NQ), graduée sur les deux instruments
+  (`rapports/finish_lieu_h3`). Ce qui tient : formule C++ inconnue, seuil
+  hérité jamais posé — 0,4 garde 41 % des barres de lieu NQ, un filtre mou.
   La règle « rien ne change pendant la campagne » tient : on ne touche pas au
   code. Mais **la lecture du jour 61 sera SÉPARÉE ES/NQ, et H3-NQ ne peut pas
   passer seule** sur cette colonne. Sans cette phrase, un résultat NQ se

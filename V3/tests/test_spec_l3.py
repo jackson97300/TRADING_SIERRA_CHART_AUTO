@@ -76,6 +76,19 @@ def main():
     if len(LES_SEIZE) != 16:
         echecs.append("LES_SEIZE n'en compte pas seize : %d" % len(LES_SEIZE))
 
+    # 5. REGLE 15 de METHODE : un pre-enregistrement sans coureur est un
+    #    pre-enregistrement de rien. Le rejeu quotidien DOIT executer les
+    #    deux jeux — les quatre (signaux_l3) et les seize (ombre16). C'est le
+    #    test qui manquait le 07/09 : seize setups promis « des le 08/09 »
+    #    et executes par personne, attrapes par une question, pas par un test.
+    campagne_src = open(os.path.join(RACINE, "V3", "campagne.py"),
+                        encoding="utf-8").read()
+    for coureur, jeu in (("signaux_l3", "les quatre"),
+                         ("ombre16", "les seize")):
+        if coureur not in campagne_src:
+            echecs.append("campagne.py n'execute plus « %s » (%s) — "
+                          "pre-enregistrement sans coureur" % (coureur, jeu))
+
     print("  parite SPEC L3 <-> code — planchers, les quatre, %d seuils, "
           "les seize en ombre" % len(controles))
     if echecs:

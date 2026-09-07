@@ -14,8 +14,13 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
    11h00 ET (l'âge de la VA), régime ROTATION confirmé. Rien d'autre.
 2. **ES et NQ comptent pour 1,3 test, pas 2** (corrélation ~0,9) — déjà la
    règle du cycle 1, rappelée parce que N sera petit.
-3. **H3-NQ ne passe jamais seule** : `finish_delta_pct` y est binaire
-   (limitation gelée dans la SPEC L3). Lecture SÉPARÉE ES/NQ.
+3. **Lecture SÉPARÉE ES/NQ, et H3-NQ jamais seule** — parce que la colonne
+   `finish_delta_pct` a une formule inconnue et que son seuil est un filtre
+   MOU : 0,4 garde 55 % des barres de lieu sur ES et 41 % sur NQ
+   (`rapports/finish_lieu_h3`). PAS parce qu'elle serait binaire : la mesure
+   du même jour l'a démenti au site de décision (61 valeurs distinctes sur
+   61 barres NQ) — la binarité vivait sur le 1 min. Règle corrigée le 07/09,
+   avant le jour 61, comme ce fichier l'autorise.
 4. **H2p, H3 et H-EXT se lisent comme UN phénomène** — la réversion vers la
    valeur, testée trois fois sous trois noms. Bonferroni ne le sait pas ; la
    lecture le sait. Si H-EXT survit et H2p non, la conclusion est « la

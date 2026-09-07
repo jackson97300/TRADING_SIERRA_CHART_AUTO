@@ -73,6 +73,13 @@ Après scellement, la brique **ne se rouvre pas**. Ce qui naît va dans
     (fuseau, unité, borne) avant de déclarer un bug.
 14. **Chaque incident est daté** dans `INCIDENT_LOG.md` avec sa catégorie, son
     impact par couche et son action — le jour même.
+15. **Un pré-enregistrement sans coureur est un pré-enregistrement de rien.**
+    Toute hypothèse pré-enregistrée qui doit ACCUMULER du N a un coureur qui
+    l'exécute, et un test de parité qui refuse de publier sans lui. Échec
+    daté : les seize d'`OMBRE_ED16`, promis « dès le 08/09 », portés, testés
+    — et exécutés par personne. Soixante jours de N = 0 se seraient lus comme
+    de la rareté, le piège H6 du cycle 1 à l'échelle seize (07/09, attrapé
+    par une question de liste, pas par un test — d'où cette règle).
 
 ---
 
