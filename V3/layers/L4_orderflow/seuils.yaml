@@ -1,0 +1,80 @@
+# SEUILS L4 — mesures du 07/09, 25 jours, 7 643 barres 1 min cash par instrument.
+#
+# Aucune mesure recopiable ailleurs : ce fichier POINTE vers rapports/, les
+# chiffres ci-dessous sont les seuils retenus avec leur origine.
+#
+# REGLE DURE : un `null` en mode `appliquee` refuse de tourner. Tous les vetos
+# naissent `observee` — ils journalisent, ils ne bloquent pas, jusqu'a la
+# lecture du jour 61.
+
+fenetre:
+  k_barres_1min: null        # 1, 2 ou 3 — choisi sur la mesure du GLISSEMENT,
+                             # ecrit dans DECISIONS.md, jamais retouche en ombre
+
+vetos:
+
+  V1:                        # personne n'achete (LONG) / ne vend (SHORT)
+    mode: observee
+    seuils: {a1: 0.462}      # p25 de ask_pct 1 min — IDENTIQUE ES/NQ (0.462),
+                             # une part est sans dimension, elle voyage
+    mesure: "distribution quasi confondue ES/NQ : p10 0,428/0,427, p25
+             0,462/0,462. La spec demandait le p25 sur signaux L3 — celui-ci
+             est le p25 global, a re-poser sur les signaux quand la mesure
+             tournera. Ecart attendu faible."
+
+  V2:                        # le flux pousse contre
+    mode: observee
+    seuils: {d1: 0.126}      # p75 de |delta/vol| par barre — ES 0,126 / NQ 0,139,
+                             # retenu le plus bas des deux en attendant la
+                             # distribution SUR FENETRE (k barres agregees)
+    mesure: "delta rapporte au volume de la fenetre, jamais en contrats"
+
+  V3:                        # un print adverse pendant la confirmation
+    mode: observee
+    # REFORMULE le 07/09 : `dist_big_*_nearest` est en provenance C
+    # (desaccord structurel ES/NQ, 10 % de nulls) — la distance au print ne
+    # peut pas se lire. Mais un print DANS les barres de la fenetre de
+    # confirmation est a portee PAR CONSTRUCTION : la fenetre fait 1 a 3
+    # minutes. `dist_big_contre` et `z_mur` disparaissent ; V3 devient
+    # « un print adverse >= g1 est apparu pendant la confirmation ».
+    seuils: {g1_ES: 542, g1_NQ: 71}    # p95 des prints, PAR INSTRUMENT
+    mesure: "le rapport g1_ES / g1_NQ vaut 7,6 : une constante partagee se
+             serait trompee d'un facteur huit. Le test exige g1_ES != g1_NQ."
+
+  V4:                        # epuisement dans le sens — RECALCULE
+    mode: observee
+    # La formule heritee (`ctx_climax_signal`, rolling_features.py:196) lit
+    # |vol_z| > 1,0 : MESURE a 29,8 % ES / 29,4 % NQ des barres. Un climax qui
+    # arrive un tiers du temps n'est pas un climax — c'est la borne de la
+    # normalite (32 %). Le commentaire du code dit « calibre: r=-0.100 » :
+    # choisi sur une correlation, c'est-a-dire par data mining.
+    seuils: {vol_p99_ES: 8826, vol_p99_NQ: 3901,
+             range_p95_ES: 4.75, range_p95_NQ: 33.0}   # points 1 min
+    mesure: "recalcul : volume >= p99 ET range >= p95 ET finish contraire.
+             Trois conditions, chacune sur SA distribution par instrument."
+
+  V5:                        # la reaction se renie
+    mode: observee
+    # DEUX PIEGES TROUVES EN MESURANT, cf rapports/ :
+    # 1. `finish_delta_pct` SATURE a 1,0 — mediane ES 1,000, p25 NQ 1,000.
+    #    Plus de la moitie des barres NQ valent exactement 1,0 : un seuil p25
+    #    y serait 1,0, soit « veto tout ce qui n'est pas au maximum ».
+    #    Le f1 de la spec n'est pas posable sur cette colonne en 1 min.
+    # 2. `bar_upper_wick_pct` mediane 0,006 : ce n'est PAS une part du range
+    #    (les meches feraient 0,6 % des barres), c'est une part du PRIX
+    #    (0,006 % de 6600 = 0,4 pt, plausible). Le nom ment sur la base.
+    #    La meche se RECALCULE depuis OHLC, comme dans l'agregation 15 min.
+    seuils: {f1: null, m1: null}
+    mesure: "f1 et m1 restent null : leurs colonnes sources sont l'une saturee,
+             l'autre d'unite trompeuse. A re-poser sur la meche recalculee
+             (fraction du range) et sur la distribution de finish PAR FENETRE."
+
+info:
+  absorption:
+    # La formule heritee (`ctx_instant_absorption`, rolling_features.py:175)
+    # lit |delta_bar| > 30 CONTRATS — un seuil en dur partage ES/NQ, l'exact
+    # anti-pattern SCALE_DRIFT. Mesure : 15,5 % ES / 10,3 % NQ des barres.
+    # Un « signal institutionnel » une barre sur sept est un generateur de
+    # bruit. Recalcul en delta/vol, journalise comme INFO, jamais decisionnel.
+    delta_vol_min: 0.3
+    rvol_r_min: 2.0

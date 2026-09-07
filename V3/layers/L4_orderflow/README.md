@@ -2,7 +2,8 @@
 
 **la confirmation order flow 1 min**
 
-Etat : **absente** — cf `../../STATUS.md`.
+Etat : **J1 fait** — provenance, relecture des formules, distributions par
+instrument. Cf `seuils.yaml`, chaque seuil porte son origine.
 
-Ce dossier porte tout ce qui concerne cette couche : sa spec, ses seuils, son
-code, ses tests et ses rapports de mesure. Rien de cette couche ne vit ailleurs.
+J2 : `vetos.py`, `confirmation.py` (+ glissement), tests, mesure k=1/2/3.
+Spec complete de Fable du 07/09 — cinq vetos en SERIE, jamais un compte.
