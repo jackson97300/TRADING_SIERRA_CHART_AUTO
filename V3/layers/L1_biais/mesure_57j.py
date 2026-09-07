@@ -1,22 +1,35 @@
-"""L1 — couverture, séparation, coût de l'obéissance, sur les 57 jours.
+"""L1 v2 — la mesure refaite après l'audit du 07/09.
 
     python -X utf8 V3/layers/L1_biais/mesure_57j.py
-    python -X utf8 V3/layers/L1_biais/mesure_57j.py --distributions
 
-`--distributions` produit les seuils manquants (`z1_atr`) au lieu de mesurer.
+Sortie : `rapports/biais_57j_v2.csv`. La v1 reste dans `rapports/`, annotée.
 
-TROIS GRANDEURS, PAS UN TAUX DE REJET. Un biais ne rejette pas, il oriente.
+QUATRE CORRECTIONS, toutes venues de l'audit, toutes dans le même sens : la v1
+donnait des intervalles trop étroits.
 
-L'IC est bootstrappé **par jour**, pas par signal : les signaux d'une même
-journée partagent le même biais et le même marché. Un IC qui les suppose
-indépendants sous-estime l'intervalle — et fait sortir du bruit ce qui n'en
-sort pas.
+1. **Bootstrap par BLOC SEMAINE**, pas par jour. B1 lit la VWAP *semaine* : le
+   prix y reste du lundi au vendredi. 60 jours, ce sont 9 semaines.
+2. **Bootstrap APPARIÉ** : `avec` et `contre` partagent les jours en sens
+   opposés. `hypot` supposait l'indépendance et sous-estimait l'IC.
+3. **Contrôle négatif à 1 000 tirages**, un côté par SEMAINE. Un tirage unique
+   est un exemple, pas une distribution.
+4. **Le test SANS DÉCLENCHEUR** — la seule mesure d'un biais qui ne dépende
+   d'aucun setup : devenir d'un long hypothétique sur toutes les barres cash,
+   jours LONG contre jours SHORT.
 
-LA COUVERTURE CROISÉE est affichée par déclencheur, parce que la mesure du
-06/09 a montré que le groupe « avec » peut être un résidu : 12 signaux contre
-195 sur ES. Nos quatre déclencheurs sont des FADES ; un biais de tendance les
-contredit par construction. Une séparation calculée sur douze cas n'est pas une
-séparation.
+LE CONFONDANT QUE CES TESTS CHERCHENT. `|dist_vwap_w|` médian vaut 2,13 ATR :
+le côté de B1 mesure surtout **dans quel sens le prix est étiré**. Les signaux
+« contre » sont à 91 % des sweep + reclaim — un fade. « Fader un prix étiré
+marche mieux que le suivre » n'est pas un biais à l'envers, c'est de la
+réversion intrajour lue à travers un déclencheur de réversion.
+
+ATTENDU, ÉCRIT AVANT LA RELANCE (sinon ce n'est pas une prédiction) :
+    - l'IC contient zéro sur les deux instruments ;
+    - le test sans déclencheur est nul ;
+    - l'effet ES, s'il existe, vit dans le tercile « loin ».
+
+**Quoi qu'ils disent, rien n'est inversé.** Inverser B1 sur les 60 jours qui
+l'ont produit, c'est `optimal_config.json`.
 """
 
 from __future__ import annotations
@@ -36,11 +49,10 @@ if RACINE not in sys.path:
 
 from CORE.bot_terminal import charger_jour                       # noqa: E402
 from CORE.research import hypotheses as H                        # noqa: E402
-from CORE.research.hypothesis_runner import triple_barriere      # noqa: E402
+from V3 import stats                                             # noqa: E402
 from V3.layers.L1_biais import biais                             # noqa: E402
 
 HORIZON = 20
-COUTS = {"NQ": (2.82, 2.00), "ES": (4.32, 5.00)}
 DECLENCHEURS = {"H3": H.h3, "H6": H.h6, "H7": H.h7, "H8": H.h8}
 
 
@@ -62,10 +74,9 @@ def devenir(df, i, side):
 
 
 def signaux(df):
-    """(barre, sens, déclencheur), dédoublonnés par (barre, sens)."""
     out, vus = [], set()
     for nom, fn in DECLENCHEURS.items():
-        for _cote, (cond, side) in fn(df).items():
+        for _c, (cond, side) in fn(df).items():
             for i in range(len(df)):
                 try:
                     if bool(cond.iloc[i]) and (i, side) not in vus:
@@ -76,148 +87,127 @@ def signaux(df):
     return sorted(out)
 
 
-def lire_l1(df, i, sym, atr_ref=None):
-    """Le dict que les composantes attendent.
+def _num(df, col, i):
+    if col not in df.columns:
+        return np.nan
+    return pd.to_numeric(pd.Series([df[col].iloc[i]]), errors="coerce").iloc[0]
 
-    `atr_ref` est l'ATR DE LA VEILLE, et ce n'est pas un detail.
 
-    `atr_barre` est NaN avant la 7e barre (`min_periods=7`) : le biais doit se
-    lire a 9h30, l'ATR agrege n'existe qu'a 11h15. Prendre la valeur de 11h15
-    pour juger 9h30 serait une FUITE — on normaliserait l'ouverture par la
-    volatilite de la matinee qui la suit.
+def lire_l1(df, i, atr_ref):
+    """Le dict des composantes. `atr_ref` est l'ATR DE LA VEILLE.
 
-    L'ATR de la veille est ce qu'un desk utilise a l'ouverture : disponible,
-    stable, connu avant que la seance commence.
+    `atr_barre` est NaN avant la 7e barre : lire le biais plus tard
+    normaliserait l'ouverture par la matinée qui la suit — une fuite. L'ATR de
+    la veille est ce qu'un desk a sous les yeux à l'ouverture.
 
-    POURQUOI PAS `atr` OU `atr_14m` DU DUMPER, qui eux sont remplis des la
-    premiere barre : mesure du 07/09, medianes sur une journee ES —
-    `atr` 65,29 · `atr_14m` 7,07 · `atr_barre` 10,86 (points, formule connue).
-    Les rapports valent 6,03 et 0,62 : ce ne sont NI des conversions
-    ticks/points (4), NI la meme grandeur a une echelle pres. Trois ATR
-    coexistent avec des formules qu'on ne connait pas pour deux d'entre eux.
-    Normaliser par l'un des deux donnerait un facteur 10,7 d'ecart — la
-    neuvieme confusion d'echelle du chantier, evitee en la mesurant.
+    Les deux autres ATR du dumper ont été identifiés le 07/09 :
+    `atr_14m` = ATR-14 sur barres 1 min en TICKS (5,21 mesuré contre 5,29
+    recalculé, écart 1,5 %) ; `atr` = 60,62 ticks, une fenêtre plus large que
+    15 min (rapport 1,40 à l'ATR-15m converti). Aucun des deux n'est
+    interchangeable avec `atr_barre`, qui est en POINTS sur la barre agrégée.
     """
-    a = atr_ref if atr_ref is not None else df["atr_barre"].iloc[i]
-    d = pd.to_numeric(pd.Series([df["dist_vwap_w"].iloc[i]]),
-                      errors="coerce").iloc[0] if "dist_vwap_w" in df.columns else np.nan
-    # `dist` est en TICKS, l'ATR en POINTS : sans le tick, le rapport est faux
-    # d'un facteur quatre — la confusion qui a coûté huit incidents.
-    dv = (float(d) * 0.25 / float(a)) if np.isfinite(d) and np.isfinite(a) and a > 0 else None
-    vah = pd.to_numeric(pd.Series([df["dist_prev_vah"].iloc[i]]), errors="coerce").iloc[0] \
-        if "dist_prev_vah" in df.columns else np.nan
-    val = pd.to_numeric(pd.Series([df["dist_prev_val"].iloc[i]]), errors="coerce").iloc[0] \
-        if "dist_prev_val" in df.columns else np.nan
+    d = _num(df, "dist_vwap_w", i)
+    dv = (float(d) * 0.25 / atr_ref) if np.isfinite(d) and atr_ref else None
+    vah, val = _num(df, "dist_prev_vah", i), _num(df, "dist_prev_val", i)
     ouv = None
     if np.isfinite(vah) and np.isfinite(val):
         ouv = 1 if vah < 0 else (-1 if val > 0 else 0)
     return {"d_vwap_w": dv, "d_vwap_w_autre": dv, "smt_div": False,
             "issue_vwap_w": "tenu", "open_vs_va": ouv,
-            "barres_inside_prev_va": 0}
+            "barres_inside_prev_va": 0, "_absdist": abs(dv) if dv else None}
 
 
-def _ic_par_jour(par_jour, n=2000, graine=7):
-    """Moyenne et IC 95 % bootstrappés sur les JOURS, pas sur les signaux."""
-    jours = [np.mean(v) for v in par_jour.values() if len(v)]
-    if len(jours) < 3:
-        return (float(np.mean(jours)) if jours else np.nan), np.nan, len(jours)
-    a = np.array(jours, dtype=float)
-    rng = np.random.default_rng(graine)
-    tirages = rng.choice(a, size=(n, len(a)), replace=True).mean(axis=1)
-    lo, hi = np.percentile(tirages, [2.5, 97.5])
-    return float(a.mean()), float((hi - lo) / 2), len(a)
-
-
-def mesurer(sym, minutes, cfg):
-    avec, contre, fantomes = {}, {}, []
-    h_avec, h_contre = {}, {}
-    croise = {n: [0, 0, 0] for n in DECLENCHEURS}     # avec, contre, sans
-    n_jours_avis = n_jours = 0
-    rng = np.random.default_rng(4242)
-
+def collecter(sym, minutes, cfg):
+    """Une passe sur le lot. Rend tout ce dont les mesures ont besoin."""
+    par_jour = {}
     atr_veille = None
     for jour in jours_du_lot(sym):
         df = charger_jour(sym, jour, minutes)
         if df.empty or len(df) < 6:
             continue
-        n_jours += 1
-        # le biais se lit UNE FOIS par jour, tot, et normalise par l'ATR de la
-        # VEILLE : celui du jour n'existe pas encore, et l'attendre serait lire
-        # l'ouverture a la lumiere de ce qui l'a suivie.
-        b = (biais.evaluer(lire_l1(df, min(4, len(df) - 1), sym, atr_veille), cfg)
-             if atr_veille else dict(biais.AUCUN, composantes={}, trous=["atr_veille"],
-                                     motif="premier_jour"))
-        derniers = df["atr_barre"].dropna()
-        if len(derniers):
-            atr_veille = float(derniers.iloc[-1])
-        if b["cote"] != "AUCUN":
-            n_jours_avis += 1
-        faux = {"cote": "LONG" if rng.random() < 0.5 else "SHORT"}
+        # B1 est lu a la PREMIERE barre : avec l'ATR de la veille, rien
+        # n'oblige a attendre. La v1 lisait a i=4, un decalage avec la spec.
+        lec = lire_l1(df, 0, atr_veille)
+        b = (biais.evaluer(lec, cfg) if atr_veille
+             else dict(biais.AUCUN, trous=["atr_veille"], motif="premier_jour"))
+        d = df["atr_barre"].dropna()
+        if len(d):
+            atr_veille = float(d.iloc[-1])
+        par_jour[jour] = {
+            "biais": b, "df": df, "absdist": lec.get("_absdist"),
+            "trou": bool(b.get("trous")),
+            "signaux": [(i, s, n, devenir(df, i, s)) for i, s, n in signaux(df)],
+        }
+    return par_jour
 
-        for i, side, nom in signaux(df):
-            d = devenir(df, i, side)
+
+def sans_declencheur(par_jour, blocs):
+    """LA mesure d'un biais qui ne dépend d'aucun setup.
+
+    Devenir d'un LONG hypothétique sur **toutes** les barres cash, les jours où
+    B1 dit LONG contre les jours où il dit SHORT. Si c'est nul, B1 n'oriente
+    pas — et toute séparation par déclencheur est un artefact de sélection.
+    """
+    lg, sh = {}, {}
+    for jour, p in par_jour.items():
+        c = p["biais"]["cote"]
+        if c not in ("LONG", "SHORT"):
+            continue
+        df = p["df"]
+        v = [devenir(df, i, 1) for i in range(len(df))]
+        v = [x for x in v if np.isfinite(x)]
+        (lg if c == "LONG" else sh)[jour] = v
+    return stats.difference_appariee(lg, sh, blocs)
+
+
+def separation(par_jour, blocs, garder=None):
+    """E[devenir | avec] − E[devenir | contre], IC apparié par bloc semaine.
+
+    `garder(nom_declencheur, absdist)` filtre les signaux — sert aux terciles
+    et à la lecture par déclencheur.
+    """
+    a, c, pour_hasard = {}, {}, {}
+    for jour, p in par_jour.items():
+        b = p["biais"]
+        for i, side, nom, dev in p["signaux"]:
+            if not np.isfinite(dev) or (garder and not garder(nom, p["absdist"])):
+                continue
+            pour_hasard.setdefault(jour, []).append((side, dev))
             r = biais.relation(b, side)
-            croise[nom][0 if r == "avec" else 1 if r == "contre" else 2] += 1
             if r == "avec":
-                avec.setdefault(jour, []).append(d)
+                a.setdefault(jour, []).append(dev)
             elif r == "contre":
-                contre.setdefault(jour, []).append(d)
-                t = triple_barriere(df, i, side, COUTS.get(sym, COUTS["ES"]))
-                if t is not None:
-                    fantomes.append(float(t[1]))
-            rh = biais.relation(faux, side)
-            (h_avec if rh == "avec" else h_contre).setdefault(jour, []).append(d)
+                c.setdefault(jour, []).append(dev)
+    s, ic, nb = stats.difference_appariee(a, c, blocs)
+    h = stats.distribution_hasard(pour_hasard, blocs)
+    n_a = sum(len(v) for v in a.values())
+    n_c = sum(len(v) for v in c.values())
+    return {"separation": s, "ic": ic, "blocs": nb, "n_avec": n_a,
+            "n_contre": n_c, "hasard_p5": h[0], "hasard_p50": h[1],
+            "hasard_p95": h[2]}
 
-    m_a, ic_a, nj_a = _ic_par_jour(avec)
-    m_c, ic_c, nj_c = _ic_par_jour(contre)
-    hm_a, _x, _y = _ic_par_jour(h_avec)
-    hm_c, _z, _w = _ic_par_jour(h_contre)
-    sep = m_a - m_c if np.isfinite(m_a) and np.isfinite(m_c) else np.nan
-    ic = float(np.hypot(ic_a, ic_c)) if np.isfinite(ic_a) and np.isfinite(ic_c) else np.nan
-    sep_h = hm_a - hm_c if np.isfinite(hm_a) and np.isfinite(hm_c) else np.nan
-    f = np.array(fantomes, dtype=float)
-    n_avec = sum(len(v) for v in avec.values())
-    n_contre = sum(len(v) for v in contre.values())
 
-    return {
-        "sym": sym, "jours": n_jours,
-        "couverture": round(n_jours_avis / max(n_jours, 1), 4),
-        "n_avec": n_avec, "jours_avec": nj_a,
-        "n_contre": n_contre, "jours_contre": nj_c,
-        "devenir_avec": round(m_a, 4) if np.isfinite(m_a) else None,
-        "devenir_contre": round(m_c, 4) if np.isfinite(m_c) else None,
-        "separation": round(sep, 4) if np.isfinite(sep) else None,
-        "ic_par_jour": round(ic, 4) if np.isfinite(ic) else None,
-        "separation_hasard": round(sep_h, 4) if np.isfinite(sep_h) else None,
-        "cout_obeissance": round(float(f.sum()), 2) if len(f) else None,
-        "n_fantomes": int(len(f)),
-        "croise": croise,
-    }
+def _f(x, n=3):
+    return "None" if x is None or not np.isfinite(x) else ("%+.*f" % (n, x))
 
 
 def verdict(r):
-    n_a, n_c = r["n_avec"], r["n_contre"]
-    if n_a < 30 or n_c < 30:
-        return ("NON MESURABLE — %d signaux « avec » contre %d « contre ». Le "
-                "groupe minoritaire est un residu, pas un echantillon."
-                % (n_a, n_c))
-    s, ic, sh = r["separation"], r["ic_par_jour"], r["separation_hasard"]
+    s, ic = r["separation"], r["ic"]
+    if r["n_avec"] < 30 or r["n_contre"] < 30:
+        return "NON MESURABLE — %d avec / %d contre" % (r["n_avec"], r["n_contre"])
     if s is None or ic is None or not np.isfinite(ic):
         return "NON CALCULABLE"
     if abs(s) - ic <= 0:
-        return "N'INFORME PAS — separation %.3f +/- %.3f, zero dedans" % (s, ic)
-    if sh is not None and abs(s) <= abs(sh):
-        return "pas mieux que le hasard (%.3f contre %.3f)" % (s, sh)
-    # LE SIGNE, avant la magnitude. Une premiere version testait `abs(s) - ic`
-    # et declarait ORIENTE un biais dont la separation valait -0,78 : les
-    # signaux CONTRE faisaient mieux que ceux qui le suivaient. Un controle qui
-    # valide l'amplitude en oubliant la direction est le meme defaut que celui
-    # qui a rendu `False` la ou il fallait `None`.
+        return "N'INFORME PAS — %s +/- %.3f, zero dedans" % (_f(s), ic)
+    p5, p95 = r["hasard_p5"], r["hasard_p95"]
+    if np.isfinite(p5) and p5 <= s <= p95:
+        return ("DANS LE HASARD — %s, la distribution aleatoire va de %s a %s"
+                % (_f(s), _f(p5), _f(p95)))
+    # le SIGNE avant la magnitude : la v1 declarait ORIENTE une separation de
+    # -0,78, ou les signaux CONTRE faisaient mieux que ceux qui suivaient.
     if s < 0:
-        return ("ORIENTE A L'ENVERS — separation %.3f +/- %.3f : les signaux "
-                "CONTRE le biais font MIEUX que ceux qui le suivent. Le suivre "
-                "couterait." % (s, ic))
-    return "ORIENTE — separation %.3f +/- %.3f, hasard %.3f" % (s, ic, sh)
+        return "ORIENTE A L'ENVERS — %s : le suivre couterait" % _f(s)
+    return "ORIENTE — %s +/- %.3f, hors du hasard [%s ; %s]" % (_f(s), ic, _f(p5), _f(p95))
 
 
 def main():
@@ -229,32 +219,60 @@ def main():
     seuils = {n: (d or {}).get("seuils") or {}
               for n, d in (cfg.get("composantes") or {}).items()}
     seuils["b1_actif"] = cfg.get("b1_actif", "B1p")
-    if seuils.get("B1p", {}).get("z1_atr") is None:
-        print("  z1_atr est null — lancer d'abord --distributions.\n")
+
+    print("L1 v2 — bootstrap par BLOC SEMAINE, apparie, hasard sur 1 000 tirages\n")
     lignes = []
-    print("L1 — couverture, separation (IC par JOUR), cout de l'obeissance\n")
     for sym in ("ES", "NQ"):
-        r = mesurer(sym, a.minutes, seuils)
-        lignes.append({k: v for k, v in r.items() if k != "croise"})
-        print("  %s : %d jours, couverture %.0f %%"
-              % (sym, r["jours"], 100 * r["couverture"]))
-        print("     avec   n=%4d sur %2d jours  devenir %s"
-              % (r["n_avec"], r["jours_avec"], r["devenir_avec"]))
-        print("     contre n=%4d sur %2d jours  devenir %s"
-              % (r["n_contre"], r["jours_contre"], r["devenir_contre"]))
-        print("     couverture croisee par declencheur (avec / contre / sans) :")
-        for nom, (x, y, z) in r["croise"].items():
-            t = x + y + z
-            print("        %-4s %4d / %4d / %4d   %5.1f %% avec"
-                  % (nom, x, y, z, 100 * x / max(t, 1)))
-        print("     %s\n" % verdict(r))
+        pj = collecter(sym, a.minutes, seuils)
+        blocs = stats.blocs_semaine(list(pj))
+        n_trous = sum(1 for p in pj.values() if p["trou"])
+        n_avis = sum(1 for p in pj.values()
+                     if p["biais"]["cote"] != "AUCUN")
+        n_sans_trou = len(pj) - n_trous
+        print("  %s : %d jours, %d semaines" % (sym, len(pj), len(set(blocs.values()))))
+        print("     couverture %d/%d jours SANS TROU (%.0f %%) ; %d trous a part"
+              % (n_avis, n_sans_trou, 100 * n_avis / max(n_sans_trou, 1), n_trous))
+
+        g = separation(pj, blocs)
+        print("     TOUS declencheurs   %s" % verdict(g))
+
+        # --- le test qui ne depend d'aucun setup --------------------------
+        sd, sd_ic, sd_n = sans_declencheur(pj, blocs)
+        etat = ("nul" if not np.isfinite(sd_ic) or abs(sd) - sd_ic <= 0
+                else "NON NUL")
+        print("     SANS DECLENCHEUR    %s +/- %s sur %d semaines -> %s"
+              % (_f(sd), _f(sd_ic), sd_n, etat))
+
+        # --- terciles d'extension : l'effet vit-il « loin » ? --------------
+        ad = sorted(p["absdist"] for p in pj.values() if p["absdist"])
+        if len(ad) >= 9:
+            t1, t2 = np.percentile(ad, [33, 67])
+            for nom, f in (("pres", lambda n, d: d is not None and d <= t1),
+                           ("milieu", lambda n, d: d is not None and t1 < d <= t2),
+                           ("loin", lambda n, d: d is not None and d > t2)):
+                r = separation(pj, blocs, f)
+                print("     tercile %-7s %s" % (nom, verdict(r)))
+
+        # --- par declencheur ----------------------------------------------
+        for nom in DECLENCHEURS:
+            r = separation(pj, blocs, lambda n, d, _n=nom: n == _n)
+            if r["n_avec"] or r["n_contre"]:
+                print("     %-4s                %s" % (nom, verdict(r)))
+        print()
+        lignes.append({"sym": sym, "jours": len(pj),
+                       "semaines": len(set(blocs.values())), "trous": n_trous,
+                       "couverture_sans_trou": round(n_avis / max(n_sans_trou, 1), 4),
+                       "separation": g["separation"], "ic_bloc_semaine": g["ic"],
+                       "hasard_p5": g["hasard_p5"], "hasard_p95": g["hasard_p95"],
+                       "sans_declencheur": sd, "sans_declencheur_ic": sd_ic,
+                       "verdict": verdict(g)})
+
     sortie = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rapports")
     os.makedirs(sortie, exist_ok=True)
-    pd.DataFrame(lignes).to_csv(os.path.join(sortie, "biais_57j.csv"),
+    pd.DataFrame(lignes).to_csv(os.path.join(sortie, "biais_57j_v2.csv"),
                                 index=False, encoding="utf-8")
-    print("Douze comparaisons sont affichees. A 5 %, une sort par hasard :")
-    print("aucune lecture sur un seul intervalle.")
-    print("\necrit : %s" % os.path.join(sortie, "biais_57j.csv"))
+    print("Quinze comparaisons affichees. A 5 %, une sort par hasard.")
+    print("ecrit : %s" % os.path.join(sortie, "biais_57j_v2.csv"))
     return 0
 
 

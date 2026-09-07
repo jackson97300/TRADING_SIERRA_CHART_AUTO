@@ -111,6 +111,31 @@ def _seuils_null():
         os.remove(tmp)
 
 
+def _signe_change_le_verdict():
+    """« Meme magnitude, signe oppose » DOIT changer le verdict.
+
+    Ajoute apres la troisieme occurrence de la meme faute : un controle qui
+    valide l'amplitude en oubliant la direction. La v1 de la mesure declarait
+    ORIENTE une separation de -0,78, ou les signaux CONTRE le biais faisaient
+    mieux que ceux qui le suivaient.
+
+    Meme famille que `pas_de_feu_vert_invente` : deux lignes, et cette forme de
+    bug ne repasse plus.
+    """
+    from V3.layers.L1_biais import mesure_57j as M
+    base = {"n_avec": 100, "n_contre": 100, "ic": 0.2,
+            "hasard_p5": -0.1, "hasard_p50": 0.0, "hasard_p95": 0.1}
+    plus = M.verdict(dict(base, separation=+0.78))
+    moins = M.verdict(dict(base, separation=-0.78))
+    if plus == moins:
+        return ["verdict() rend le meme texte pour +0,78 et -0,78 : il valide "
+                "la magnitude et oublie la direction"]
+    if "ENVERS" not in moins:
+        return ["verdict(-0,78) devrait dire ORIENTE A L'ENVERS, il dit : %s"
+                % moins]
+    return []
+
+
 def main():
     echecs = []
     for nom, comp, mod, attendu in CAS:
@@ -125,7 +150,7 @@ def main():
             echecs.append("%s : attendu %s/%s, obtenu %s/%s"
                           % (nom, cote, force, r["cote"], r["force"]))
 
-    echecs += _anti_score() + _seuils_null()
+    echecs += _anti_score() + _seuils_null() + _signe_change_le_verdict()
 
     # la relation portee par chaque signal L3
     if biais.relation({"cote": "LONG"}, 1) != "avec":
@@ -141,6 +166,7 @@ def main():
             print("     %s" % e)
         return 1
     print("  OK : aucune composante n'invente d'avis sur une donnee absente,")
+    print("       un signe oppose change le verdict,")
     print("       B5 contre le candidat rend FAIBLE et jamais l'autre cote,")
     print("       et il n'y a pas une seule addition entre composantes.")
     return 0
