@@ -217,6 +217,15 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
     `dist_vwap_rth_sd2u_r` / `..._sd2d_r` — H2. Bandes a 2 ecarts-types autour
                 de la VWAP RTH, en TICKS et signees `niveau - close`, comme
                 toutes les `dist_*` du lot.
+    `vwap_rth_r` / `dist_vwap_rth_r` — brief OMBRE_C2 §3 (08/09). La VWAP RTH
+                elle-meme (points, prise au dernier de chaque fenetre) et sa
+                distance en ticks, meme convention signee que les bandes.
+    `finish_r`  — position de la cloture dans le range de la BARRE AGREGEE
+                (`recalc.finish` sur le frame cible, PAS sur le 1 min — c'est
+                l'erreur de `finish_delta_pct`, VALIDATION_MISS 07/09).
+    `vwap_slope_r` — pente de `vwap_rth_r` sur 4 barres agregees, en ATR
+                (`recalc.pente_vwap`, cle `jour` : jamais de pente entre deux
+                sessions ; NaN AU MOINS les 4 premieres barres — un trou).
     """
     b = brut_1min.copy()
     b["dt"] = pd.to_datetime(b["ts"], unit="ms", utc=True)
@@ -230,7 +239,7 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
            else pd.Series(np.nan, index=b.index))
 
     aux = pd.DataFrame({
-        "dt": b["dt"], "rvol_r": rv, "cvd_sess_r": cvd,
+        "dt": b["dt"], "rvol_r": rv, "cvd_sess_r": cvd, "vwap": vw,
         "sd2u": bandes["sup"], "sd2d": bandes["inf"], "c": b["close"],
     }).set_index("dt")
     o = aux.resample("%dmin" % int(minutes or MINUTES_BARRE), origin="start_day",
@@ -240,9 +249,19 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
     # `niveau - close`, en ticks : meme convention et meme signe que dist_cur_vah
     o["dist_vwap_rth_sd2u_r"] = (o["sd2u"] - o["c"]) / HYP.TICK
     o["dist_vwap_rth_sd2d_r"] = (o["sd2d"] - o["c"]) / HYP.TICK
-    garde = ["ts", "rvol_r", "cvd_sess_r",
-             "dist_vwap_rth_sd2u_r", "dist_vwap_rth_sd2d_r"]
-    return cinq.merge(o[garde], on="ts", how="left")
+    o["dist_vwap_rth_r"] = (o["vwap"] - o["c"]) / HYP.TICK
+    garde = ["ts", "rvol_r", "cvd_sess_r", "vwap_rth_r",
+             "dist_vwap_rth_r", "dist_vwap_rth_sd2u_r", "dist_vwap_rth_sd2d_r"]
+    out = cinq.merge(o.rename(columns={"vwap": "vwap_rth_r"})[garde],
+                     on="ts", how="left")
+    # Sur le frame CIBLE, pas sur le 1 min : finish de la barre agregee et
+    # pente de la VWAP en unites d'ATR de barre (NaN si atr_barre absent).
+    out["finish_r"] = recalc.finish(out)
+    atr_b = (out["atr_barre"] if "atr_barre" in out.columns
+             else pd.Series(np.nan, index=out.index))
+    out["vwap_slope_r"] = recalc.pente_vwap(out["vwap_rth_r"], atr_b, n=4,
+                                            jours=out.get("jour"))
+    return out
 
 
 # ---------------------------------------------------------------------------

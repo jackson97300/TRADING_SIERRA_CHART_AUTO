@@ -404,6 +404,45 @@ def momentum(close, n):
     return c - c.shift(n)
 
 
+def finish(df):
+    """Position de la cloture dans le range de la barre : (close-low)/(high-low).
+
+    Fenetre : la barre elle-meme, a l'echelle du frame passe (1 min ou 15 min).
+    Unite : sans dimension, [0 ; 1]. Signe : 1 = cloture au plus haut.
+
+    Remplace `finish_delta_pct` livre : mesure du 07/09 (INCIDENT
+    VALIDATION_MISS), la colonne 15 min est calculee sur la DERNIERE MINUTE
+    de la fenetre, pas sur la barre agregee. NaN quand high == low — un trou,
+    jamais un 0,5 invente.
+    """
+    h = pd.to_numeric(df["high"], errors="coerce")
+    bas = pd.to_numeric(df["low"], errors="coerce")
+    c = pd.to_numeric(df["close"], errors="coerce")
+    rng = h - bas
+    return (c - bas) / rng.where(rng > 0)
+
+
+def pente_vwap(vwap, atr, n=4, jours=None):
+    """Pente de la VWAP sur n barres, en multiples d'ATR.
+
+    Fenetre : n barres du frame passe (defaut 4, brief OMBRE_C2 §3 — quatre
+    barres de 15 min). Unite : ATR, sans dimension. Signe : positif quand la
+    VWAP monte.
+
+    Remplace `vwap_slope_10/30` livrees (provenance B, jamais reproduites) :
+    le brief exige la pente RECALCULEE de `vwap_rth_r`. AU MOINS les n
+    premieres barres rendent NaN (l'ATR ajoute les siens) — un trou, jamais
+    un zero. `jours` : cle de journee ; sans elle, un frame multi-jours
+    calculerait une pente entre DEUX sessions RTH sans rapport — la valeur
+    fausse et non-NaN, la classe de bug que le franchissement a deja reglee
+    par sa remise a zero (review 08/09).
+    """
+    v = pd.to_numeric(vwap, errors="coerce")
+    a = pd.to_numeric(atr, errors="coerce")
+    prec = v.groupby(jours).shift(n) if jours is not None else v.shift(n)
+    return (v - prec) / a.where(a > 0)
+
+
 # ---------------------------------------------------------------------------
 # 8. Dedoublonnage — le chemin correct doit etre le chemin court
 # ---------------------------------------------------------------------------
