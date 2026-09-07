@@ -140,6 +140,9 @@ def contrat_ok(sym, jour):
 
 
 def courir(jour, strict=False, minutes=15):
+    # Fail-loud AVANT la troncature (review 08/09, R2) : un seuil C2 manquant
+    # ne doit jamais laisser un entonnoir officiel PARTIEL passer pour couru.
+    ombre_c2.verifier_seuils()
     chemin = "LOGS/entonnoir/entonnoir_%s.jsonl" % jour
     os.makedirs(os.path.dirname(chemin), exist_ok=True)
     # Le jour se rejoue entier, jamais en append — et le fichier EXISTE même

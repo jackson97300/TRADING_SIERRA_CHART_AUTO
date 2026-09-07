@@ -27,7 +27,11 @@ BARRES_SESSION = 1380
 
 
 def _est_edt(d: pd.Timestamp) -> bool:
-    """Heure d'ete americaine : 2e dimanche de mars -> 1er dimanche de novembre."""
+    """Heure d'ete americaine : 2e dimanche de mars -> 1er dimanche de novembre.
+
+    Bascule a MINUIT UTC du dimanche de transition, pas a 2h locales — la
+    fenetre d'ecart tombe le samedi soir ET, sans barre cash : sans
+    consequence sur les colonnes, mais assume ici (review 08/09)."""
     an = d.year
     mars = pd.Timestamp(year=an, month=3, day=1, tz="UTC")
     debut = mars + pd.Timedelta(days=(6 - mars.dayofweek) % 7 + 7)
@@ -47,6 +51,21 @@ def ouverture_sess_utc(dt) -> pd.Series:
     """
     d = pd.to_datetime(dt, utc=True)
     return pd.Series([21 if _est_edt(x) else 22 for x in d], index=d.index)
+
+
+def minutes_et(dt):
+    """Minutes depuis minuit, HEURE DE L'EST (9h30 cash = 570, 15h15 = 915).
+
+    Fenetre : aucune. Unite : minutes [0, 1440). Signe : sans objet.
+
+    Suit l'heure d'ete via `ouverture_sess_utc` (decalage 4 h EDT / 5 h EST) —
+    jamais de constante UTC en dur : la campagne traverse le 1er novembre, et
+    la barre « 15h15 ET » saute de 19:15 a 20:15 UTC ce jour-la. C'est la
+    meme dette DST que `est_cash` (CONVENTIONS §2), reglee ici a la source.
+    """
+    d = pd.to_datetime(dt, utc=True)
+    dec = (ouverture_sess_utc(d) - 17) * 60
+    return (d.dt.hour * 60 + d.dt.minute - dec) % 1440
 
 
 # ---------------------------------------------------------------------------

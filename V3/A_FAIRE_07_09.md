@@ -211,5 +211,16 @@ pour L4. Correction : avec la dette C++/pipeline groupee (point 6 de la nuit).
   C++ masquait). Le message du commit 6050ae0 disait « inchange » : FAUX,
   corrige au commit suivant. Lecon : re-mesurer APRES l'unification d'un
   predicat, pas avant.
-- S4 : test ACTIFS ⊆ LES_C2 + les 8 cas par setup actif (brief §0) — a
-  livrer AVANT l'activation du prochain setup (C2_EOD, J+1).
+- S4 : FAIT le 08/09 — test ACTIFS ⊆ LES_C2 + 8 cas par setup actif
+  (test_ombre_c2.py, filtrage PAR SETUP), livre AVEC l'activation de C2_EOD.
+
+## 19. DETTE est_cash DST — DEADLINE DURE 31/10 (review C2_EOD 08/09, R1)
+`recalc.est_cash` est fige EDT (13:30-20:00 UTC toute l'annee). Des le
+2/11 : la barre EOD 15h15 ET (20:15 UTC) est COUPEE par `charger_jour`
+avant d'atteindre les setups (motif `barre_eod_absente` FAUX chaque jour),
+l'open cash glisse a 8h30 ET (la definition de `rendement_r` casse), et le
+N de C2_EOD plafonne sous 40 — invalidation structurelle silencieuse.
+Fix : reecrire `est_cash` sur `minutes_et` (fenetre ET [570, 960)). Tache
+SEPAREE cross-module (les quatre officiels, ombre16, VWAP RTH, F23, IB
+lisent tous ce filtre) : review obligatoire + test de parite sur le lot
+AVANT/APRES (attendu : zero barre changee tant qu'on est en EDT).

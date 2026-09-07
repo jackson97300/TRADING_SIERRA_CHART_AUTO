@@ -1,0 +1,26 @@
+# SEUILS C2 — brief OMBRE_C2 §0 : un seuil reste `null` tant que sa
+# distribution n'est pas dans rapports/ ; un setup ACTIF avec un seuil null
+# refuse de tourner (fail-loud, la convention L4). Chaque nombre porte son
+# origine. Par instrument, jamais recopié (règle calibration 04/09).
+
+C2_80PCT: {}          # aucun seuil — acceptation = 2 clôtures (définition F23)
+
+C2_EOD:
+  # r_min : |rendement_r| minimal — rendement du jour à la clôture 15h30 ET,
+  # normalisé par le RANGE CASH du même instant (OHLC, provenance A). Écart
+  # assumé au « ATR-jour » du brief : pas d'ATR quotidien reproductible dans
+  # un coureur mono-jour (colonne C++ `atr` non reproduite, provenance B) —
+  # documenté dans mesure_c2.py, flaggé DECISIONS.md, arbitrage Fable ouvert.
+  # Les points bruts (rendement, range) sont journalisés avec chaque ligne :
+  # le jour 61 peut re-normaliser.
+  # Mesure 07/09 (rapports/mesure_c2_eod_20260907.md, 56 jours/instrument) :
+  # p25 PRÉ-DÉCLARÉ avant mesure — ES 0,273, NQ 0,275 (attendu 0,2-0,3 :
+  # tenu ; p50 0,46/0,48, attendu ~0,4 : tenu).
+  r_min: {ES: 0.273, NQ: 0.275}
+  # Sortie HORAIRE 16h00 ET, pas de barrière prix (brief §2). L'exception L0
+  # SESSION_CLOTURE (`exceptions: [C2_EOD]`) est NOTÉE ici, PAS câblée dans
+  # L0 : la couche est SCELLÉE et l'ombre ne passe jamais par la chaîne — le
+  # câblage L0 n'aurait d'objet que si C2_EOD entrait dans la chaîne
+  # (cycle 2+, après lecture N = 40).
+  sortie: 1600_ET
+  exception_l0_prevue: SESSION_CLOTURE
