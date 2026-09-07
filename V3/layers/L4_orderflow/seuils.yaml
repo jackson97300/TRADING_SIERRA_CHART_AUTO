@@ -55,7 +55,10 @@ vetos:
     seuils: {vol_p99_ES: 8826, vol_p99_NQ: 3901,
              range_p95_ES: 4.75, range_p95_NQ: 33.0}   # points 1 min
     mesure: "recalcul : volume >= p99 ET range >= p95 ET finish contraire.
-             Trois conditions, chacune sur SA distribution par instrument."
+             Trois conditions, chacune sur SA distribution par instrument.
+             « Finish contraire » = la barre cloture dans la MOITIE opposee
+             de son range (frontiere de SIGNE, pas un seuil calibrable) :
+             finish_delta_pct sature a 1,0 et ne porte aucun seuil posable."
 
   V5:                        # la reaction se renie
     mode: observee

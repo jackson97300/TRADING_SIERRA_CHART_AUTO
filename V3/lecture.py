@@ -201,3 +201,99 @@ def _dist_hvl_atr(df, i):
     if d is None or not a or a <= 0:
         return None
     return d / a
+
+
+# --- bloc l4 : la fenetre de confirmation (SPEC L4 §2) ----------------------
+
+# `finish_delta_pct` n'y est PAS : saturee a 1,0 et de formule inconnue
+# (seuils.yaml V5), elle est hors du chemin decisionnel — le finish de la
+# fenetre se RECALCULE depuis OHLC (position de la cloture dans le range).
+REQUISES_L4 = ("ts", "open", "high", "low", "close", "total_vol", "delta_bar",
+               "ask_pct", "bid_pct",
+               "max_big_ask_vol_in_bar", "max_big_bid_vol_in_bar")
+REQUISES["L4"] = REQUISES_L4      # verifier_colonnes declare le bloc (SPEC §9.1)
+                                  # — a appeler sur le frame 1 MIN, pas le 15
+
+
+def lire_l4(b, i_debut, k):
+    """Les `k` premieres barres 1 MIN de t+1 — la matiere des cinq vetos.
+
+    `b` : le frame 1 min de la journee, trie, dedoublonne (charger_jour).
+    Rend None si la fenetre n'existe pas en entier (fin de fichier, journee
+    de trading differente) : la confirmation sera INDISPONIBLE, jamais devinee.
+
+    UNE FENETRE TROUEE EST UN TROU : un seul NaN dans une colonne rend le
+    champ None — agreger le reste fabriquerait un faux veto (ask_pct moyenne
+    sur un volume qui reste au denominateur) ou un faux feu vert (le delta
+    contraire cache par le NaN). Demontre a la review du 07/09, R1.
+
+    Lecture SEULEMENT : les vetos comparent aux seuils, ce bloc ne connait
+    aucun nombre. La meche, le momentum ET le finish sont RECALCULES depuis
+    OHLC — `bar_upper_wick_pct` est une part du PRIX, `finish_delta_pct`
+    sature (pieges des mesures du 07/09, cf seuils.yaml V5)."""
+    fin = i_debut + k
+    if i_debut < 0 or fin > len(b) or "ts" not in b.columns:
+        return None
+    f = b.iloc[i_debut:fin]
+    # La fenetre ne traverse pas la nuit — lu du ts (22:00 UTC ouvre la
+    # journee de trading suivante), pas d'une colonne `jour` que le frame
+    # 1 min reel ne porte pas (garde mort detecte a la review, R5).
+    t0 = pd.Timestamp(int(f["ts"].iloc[0]), unit="ms", tz="UTC")
+    t1 = pd.Timestamp(int(f["ts"].iloc[-1]), unit="ms", tz="UTC")
+    if ((t0 + pd.Timedelta(hours=2)).date()
+            != (t1 + pd.Timedelta(hours=2)).date()):
+        return None
+
+    def _serie(col):
+        """La colonne de la fenetre, ENTIERE ou rien : un NaN rend None."""
+        if col not in f.columns:
+            return None
+        v = pd.to_numeric(f[col], errors="coerce")
+        return None if v.isna().any() else v
+
+    vols = _serie("total_vol")
+    vol_total = float(vols.sum()) if vols is not None else None
+
+    def _pondere(col):
+        v = _serie(col)
+        if v is None or vols is None or not vol_total:
+            return None
+        return float((v * vols).sum() / vol_total)
+
+    d = _serie("delta_bar")
+    delta_k = float(d.sum() / vol_total) if d is not None and vol_total else None
+    o, c = val(f, "open", 0), val(f, "close", len(f) - 1)
+    hs, ls = _serie("high"), _serie("low")
+    h = float(hs.max()) if hs is not None else None
+    lo = float(ls.min()) if ls is not None else None
+    etendue = (h - lo) if (h is not None and lo is not None and h > lo) else None
+    barres = []
+    for j in range(len(f)):
+        bh, bl, bc = val(f, "high", j), val(f, "low", j), val(f, "close", j)
+        bv = val(f, "total_vol", j)
+        rng = (bh - bl) if (bh is not None and bl is not None) else None
+        pos = ((bc - bl) / rng if rng else None) if bc is not None else None
+        barres.append({"vol": bv, "range_pts": rng, "range_pos": pos})
+    big_ask = _serie("max_big_ask_vol_in_bar")
+    big_bid = _serie("max_big_bid_vol_in_bar")
+    return {
+        "k": int(k), "ts_fin": int(f["ts"].iloc[-1]),
+        "vol_k": vol_total,
+        "ask_pct_k": _pondere("ask_pct"), "bid_pct_k": _pondere("bid_pct"),
+        "delta_k": delta_k,
+        # le finish RECALCULE : position de la cloture de la derniere barre
+        # dans SON range — jamais `finish_delta_pct` (saturee, condamnee)
+        "finish_k": barres[-1]["range_pos"] if barres else None,
+        "meche_haute_k": ((h - max(o, c)) / etendue
+                          if etendue and o is not None and c is not None
+                          else None),
+        "meche_basse_k": ((min(o, c) - lo) / etendue
+                          if etendue and o is not None and c is not None
+                          else None),
+        "momentum_k": ((c - o) / etendue
+                       if etendue and o is not None and c is not None else None),
+        "big_ask_max_k": float(big_ask.max()) if big_ask is not None else None,
+        "big_bid_max_k": float(big_bid.max()) if big_bid is not None else None,
+        "barres": barres,
+        "ouverture_t1": o, "prix_entree_l4": c,
+    }
