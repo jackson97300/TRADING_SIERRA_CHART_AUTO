@@ -160,3 +160,19 @@ nominal — la preuve). La porte est donc passee **observee** (seuils.yaml) et
    laisser le veto en observation pendant la campagne.
 Revert trivial par commit si desaccord. Rien d'autre ne change : rvol/frais
 inchanges, la campagne demarre le 08/09 avec ce jeu de portes.
+
+## 17. REPRODUCTION ctx_* PROUVEE (07/09) — et une colonne condamnee
+Le point 4 est execute : `V3/tests/test_ctx.py` (8e controle de publier.sh),
+mismatch = 0 sur 2 jours x 2 instruments x 24 colonnes. La relecture de la
+nuit avait rate les conditions COMPOSEES (climax = vol_z > 2 ET range_pos
+extreme ; absorption lit `bn_absorb_*`, pas le delta) — la formule du code
+etait bonne, les « ecarts » etaient TROIS conventions, prouvees une a une :
+1. le JSONL arrondit a 6 decimales ;
+2. fichier decoupe par DATE UTC, pipeline par JOURNEE DE TRADING (reset
+   22:00 UTC) — la reproduction exige chauffe veille + reset au boundary ;
+3. blocs RE-EMIS (2 000 lignes pour 1 260 minutes le 04/09) → dedoublonner,
+   comparer les barres `stable` seulement (la decision ne lit qu'elles).
+**CONDAMNEE : `ctx_rvol_session`** — le producteur la contamine les jours a
+re-emission (220 barres fausses par instrument le 04/09, 17:19→20:58, ratio
+~0,46 : l'accumulateur de session compte les lignes re-emises). INTERDITE
+pour L4. Correction : avec la dette C++/pipeline groupee (point 6 de la nuit).

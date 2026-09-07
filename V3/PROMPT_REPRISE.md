@@ -79,10 +79,14 @@ a survecu. Branchement decisionnel Sim : cycle 2, ~mi-decembre.
    `seuils.yaml`) : bloc `l4` de `lecture.py` + test anti-fuite → `vetos.py`
    (5 vetos en SÉRIE, jamais un compte) → glissement → mesure k=1/2/3 →
    `k` dans DECISIONS.md. Prérequis (chacun avec son test) — état au 07/09 :
-   - `rvol_r` / `cvd_sess_r` dans l'agrégation — À FAIRE ;
-   - **reproduction des `ctx_*`** sur 2 jours, mismatch = 0, comme la parité
-     `direction()` (point 4 de la nuit) — À FAIRE ; sans ce test, J2
-     « recalcule selon la formule » contre une formule qu'on sait fausse ;
+   - `rvol_r` / `cvd_sess_r` dans l'agrégation — À FAIRE (le dernier) ;
+   - ~~reproduction des `ctx_*`~~ — **FAIT, mismatch = 0** (`test_ctx.py`,
+     8e contrôle de publier.sh). La formule du code était bonne : les
+     « écarts » étaient TROIS conventions (arrondi 6 décimales, fichier par
+     date UTC vs pipeline par journée de trading, blocs ré-émis →
+     dédoublonner + stable seulement). **`ctx_rvol_session` CONDAMNÉE**
+     (contaminée par le producteur les jours à ré-émission) — INTERDITE
+     pour L4, cf A_FAIRE point 17 ;
    - ~~B4 lit UNE colonne `im_smt`~~ — **FAIT** (seuils L1 : `colonne_smt:
      im_smt_divergence, instrument_smt: ES`, et la mesure 57 j ne fabrique
      plus d'accord) ;
