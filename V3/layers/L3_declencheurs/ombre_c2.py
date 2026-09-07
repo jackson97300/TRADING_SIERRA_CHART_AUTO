@@ -83,7 +83,7 @@ def _c2_80pct(df):
         return {"short": (vide, -1), "long": (vide, +1),
                 "_lieu": vide, "_cibles": {}}
     dedans = (close >= val_j) & (close <= vah_j)
-    acceptation = dedans & dedans.shift(1).fillna(False)
+    acceptation = dedans & dedans.shift(1, fill_value=False)
     return {
         "short": (acceptation & (ouverture > vah_j), -1),
         "long": (acceptation & (ouverture < val_j), +1),

@@ -188,8 +188,11 @@ pour L4. Correction : avec la dette C++/pipeline groupee (point 6 de la nuit).
 - R3 : lire prev_vah_lvl/prev_val_lvl/open_cash_lvl (A) directement au lieu
   de reconstruire depuis dist_* ; a minima assert de concordance au bar 0.
   Ajouter lieu_prix, colonnes_lues{}, regime aux lignes signal du journal C2.
-- S1 : acceptation (VA reconstruite) et lieu (flag C++ inside_prev_va) sont
-  deux definitions — un desaccord d'un tick fragmente l'episode, N gonfle.
-  Documenter ou unifier le predicat.
+- S1 : FAIT le soir meme (predicat unifie sur la VA reconstruite). EFFET
+  MESURE et il n'est pas neutre : le rejeu ES 04/09 passe de 1 a 3 signaux
+  (15:00, 17:30, 19:15 UTC — trois episodes de re-acceptation que le flag
+  C++ masquait). Le message du commit 6050ae0 disait « inchange » : FAUX,
+  corrige au commit suivant. Lecon : re-mesurer APRES l'unification d'un
+  predicat, pas avant.
 - S4 : test ACTIFS ⊆ LES_C2 + les 8 cas par setup actif (brief §0) — a
   livrer AVANT l'activation du prochain setup (C2_EOD, J+1).
