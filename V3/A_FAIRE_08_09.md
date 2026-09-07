@@ -78,3 +78,22 @@ des fiches, aucune interpretation libre.
   et echoue au premier ecart : LE RECIT EST UN TEST, pas une prose.
 Livrable : `V3/recit.py` (lit les fiches, rend le recit du jour) + extension du
 test au tick. C'est la brique qui sert le discretionnaire (briefing 9h25).
+
+## 13. LA CARTE — comment le recit se CONSOMME (Jackson 08/09, ultra-think)
+Un desk ne lit pas de la prose : il tient une CARTE DES STOCKS. Livrable
+`V3/carte.py`, meme fiches que le recit, autre rendu :
+- une ligne par niveau, triee par distance au prix, A L'INSTANT t :
+  `VAL_veille 7712,50 | -0,8 ATR | 3 tests, 2 tenus, defense s'use (0,4) |
+   1 900 shorts pieges dessous (04:15, age 5h)`
+- l'INVENTAIRE est la colonne decisionnelle : des longs pieges au-dessus =
+  vendeurs sur tout retour (carburant baissier) ; des shorts pieges dessous =
+  acheteurs en dessous. C'est ce que les pros lisent : pas « que va faire le
+  prix » mais « qui DOIT faire quoi ».
+- le recit (prose) = piste d'audit ; la carte = surface de decision. MEMES
+  fiches, deux rendus — jamais deux calculs.
+- consommation MACHINE : les scalaires F23 dans L1/L3 (deja specifie).
+  consommation DISCRETIONNAIRE : carte a 9h25 + maj a chaque fiche nouvelle ;
+  le journal MANUEL note l'etat de la carte au moment du clic — c'est ainsi
+  que l'instinct devient mesurable au jour 61.
+- REGLE : la carte n'ordonne rien, elle decrit. Tout passage « la carte
+  influence une couche » est une hypothese pre-enregistree, jamais un cablage.
