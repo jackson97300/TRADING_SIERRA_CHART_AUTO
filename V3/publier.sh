@@ -16,19 +16,22 @@ set -e
 
 DEPOT=https://github.com/jackson97300/mia-v3.git
 
-echo "1/5  les portes repondent-elles ce qu'on attend ?"
+echo "1/6  les portes repondent-elles ce qu'on attend ?"
 python -X utf8 V3/layers/L0_interrupteur/test_portes.py
 
-echo "2/5  et sur le vrai chemin de code, en faux live ?"
+echo "2/6  et sur le vrai chemin de code, en faux live ?"
 python -X utf8 V3/layers/L0_interrupteur/test_faux_live.py
 
-echo "3/5  le calendrier bloque-t-il les bons jours ?"
+echo "3/6  le calendrier bloque-t-il les bons jours ?"
 python -X utf8 V3/tests/test_calendrier.py
 
-echo "4/5  rien de sensible, nulle part, dans aucune version ?"
+echo "4/6  les fiches F23 decrivent-elles ce qui s'est passe ?"
+python -X utf8 V3/tests/test_f23.py
+
+echo "5/6  rien de sensible, nulle part, dans aucune version ?"
 python -X utf8 V3/tests/test_structure.py
 
-echo "5/5  le travail est-il commite ?"
+echo "6/6  le travail est-il commite ?"
 if ! git diff --quiet -- V3/ || ! git diff --cached --quiet -- V3/; then
     echo "     REFUS : des modifications de V3/ ne sont pas commitees."
     echo "     Le miroir doit refleter un etat scelle, pas un brouillon."

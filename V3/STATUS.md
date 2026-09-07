@@ -25,8 +25,9 @@ passe pas a la suivante. C'est le garde-fou que V1 n'a jamais eu — il embarqua
 |---|---|---|---|---|---|
 | L0 | interrupteur — 25 portes + 5 declarees absentes | **PASSEE** | **une ligne par porte** : `layers/L0_interrupteur/rapports/portes_57j.csv` | 15-30 % **par porte** | l'agregat a ete retire : domine par `POSITION_OUVERTE`, il se lisait comme un echec alors que la plage est par porte |
 | REG | regime (gamma HVL zone morte 1,0 ATR + largeur IB corrigee) | **mesuree** | — | 4 cases >= 5 jours | 99,7 % de couverture ES, 1,8 bascule/jour |
-| L1 | biais 1h/4h — B1 d'abord | **cadree** | — | a etablir sur la mesure | ne se juge PAS sur un taux de rejet : couverture, separation, cout de l'obeissance. Cf `layers/L1_biais/BRIEF.md` |
+| L1 | biais — B1p mesuree, B1n en attente de F23 | **mesuree** | — | a etablir sur la mesure | ne se juge PAS sur un taux de rejet : couverture, separation, cout de l'obeissance. Cf `layers/L1_biais/BRIEF.md` |
 | L3 | declencheurs 15 min | **ecrite** | — | N >= 40 par etage | 4 pre-enregistres + 16 en ombre |
+| F23 | memoire de session — fiches par test, partagee L1/L3 | **ecrite** | 9 fiches sur 2 jours, test au tick vert | — | debloque B1n et trois declencheurs de L3 |
 | L4 | confirmation order flow 1 min | **absente** | — | 30-50 % | la seule couche a construire |
 | L5 | risque — 3 vetos (gamma, rvol, frais/TP) | **mesuree** | meme rapport, lignes `L5_*` | 10-25 % | PAS inerte : c'etait la mesure qui l'etait. Le veto SL mort remplace par la part des frais dans la distance au TP |
 | L6 | surveillance donnees | **passee** | — | — | 7 controles quotidiens en place |
