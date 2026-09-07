@@ -80,6 +80,10 @@ Après scellement, la brique **ne se rouvre pas**. Ce qui naît va dans
     — et exécutés par personne. Soixante jours de N = 0 se seraient lus comme
     de la rareté, le piège H6 du cycle 1 à l'échelle seize (07/09, attrapé
     par une question de liste, pas par un test — d'où cette règle).
+    **Complément du même jour (revue C2)** : actif = coureur le soir même
+    **ET huit cas verts** (LONG/SHORT miroir × lieu seul, lieu + réaction,
+    lieu sans réaction, colonne absente → None). Sans les huit cas, le
+    setup activé n'a pas de preuve.
 
 ---
 

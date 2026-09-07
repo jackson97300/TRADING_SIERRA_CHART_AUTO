@@ -41,8 +41,7 @@ TICK = 0.25   # default ES/NQ. MGC=0,10 — hors perimetre du cycle.
 
 # Ce que les setups ACTIFS lisent — une colonne perdue = un setup mort en
 # silence pendant 60 jours (le piege ombre16, R1 de la review du 07/09).
-COLONNES_C2 = ("ts", "open", "close", "dist_prev_vah", "dist_prev_val",
-               "inside_prev_va")
+COLONNES_C2 = ("ts", "open", "close", "dist_prev_vah", "dist_prev_val")
 
 # Le registre COMPLET du brief (les familles #3 et #12 comptent pour 2 et 3
 # setups journalisés). La parité avec OMBRE_C2.md est testée.
@@ -61,9 +60,13 @@ def _c2_80pct(df):
 
     Régime B5 : l'ouverture cash HORS de la VA veille (recalculé depuis
     l'open de la première barre cash vs les niveaux reconstruits — jamais le
-    flag C++ `rule_80pct`). Lieu : le prix est rentré (`inside_prev_va`).
-    Réaction : DEUX clôtures 15 min consécutives dans la VA. Side : vers le
-    bord opposé (ouverture au-dessus → SHORT vers VAL ; miroir).
+    flag C++ `rule_80pct`). Lieu ET acceptation sur le MÊME prédicat : la VA
+    reconstruite figée (S1 de la review — le brief lisait le flag C++
+    `inside_prev_va` pour le lieu : deux définitions de « dedans », un
+    désaccord d'un tick fragmentait l'épisode et gonflait N ; unifié sur la
+    provenance A, l'écart est documenté ici). Réaction : DEUX clôtures
+    15 min consécutives dans la VA. Side : vers le bord opposé (ouverture
+    au-dessus → SHORT vers VAL ; miroir).
 
     Rend {"short": (cond, -1), "long": (cond, +1), "_lieu": cond_lieu,
     "_cibles": {...}} — le lieu sert aux lignes `lieu_sans_reaction`."""
@@ -81,11 +84,10 @@ def _c2_80pct(df):
                 "_lieu": vide, "_cibles": {}}
     dedans = (close >= val_j) & (close <= vah_j)
     acceptation = dedans & dedans.shift(1).fillna(False)
-    lieu = pd.to_numeric(df.get("inside_prev_va"), errors="coerce") == 1
     return {
-        "short": (acceptation & lieu & (ouverture > vah_j), -1),
-        "long": (acceptation & lieu & (ouverture < val_j), +1),
-        "_lieu": lieu & ((ouverture > vah_j) | (ouverture < val_j)),
+        "short": (acceptation & (ouverture > vah_j), -1),
+        "long": (acceptation & (ouverture < val_j), +1),
+        "_lieu": dedans & ((ouverture > vah_j) | (ouverture < val_j)),
         "_cibles": {-1: val_j, +1: vah_j},   # le bord opposé (B-NAT de L5)
     }
 
