@@ -173,17 +173,31 @@ lit à l'écran est dans les données.
 
 ---
 
-## Ce que la lecture expose — quatre scalaires
+## Ce que la lecture expose — et à quelle couche
 
 Une porte ou une composante ne peut pas lire une liste. La fiche complète va
-dans le **snapshot de l'entonnoir** ; `lecture.py` n'expose que :
+dans le **snapshot de l'entonnoir** ; `lecture.py` en expose des scalaires.
 
-- `n_tests` — le compte ;
-- `defense_derniere` — effort × résultat du dernier test, seuils sur
-  distribution ;
-- `defense_tendance` — réaction du dernier test rapportée au premier
-  (**< 1 = la défense s'use**) ;
-- `cvd_cote_defense` — le delta cumulé du jour est-il du côté de la défense.
+**Le critère de répartition est la durée de vie**, pas le sujet. Une grandeur
+appartient à la couche dont elle partage la durée de validité.
+
+| couche | scalaire | pourquoi elle |
+|---|---|---|
+| **L1** | `n_tests` | combien de fois testé depuis l'ouverture |
+| **L1** | `defense_tendance` | réaction du dernier test rapportée au premier (**< 1 = la défense s'use**) — décrit l'usure d'une **structure**, encore vraie à 15h |
+| **L1** | `cvd_cote_defense` | le delta cumulé du jour est-il du côté de la défense |
+| **L3** | `defense_derniere` | effort × résultat du **dernier** test — une photo locale |
+| **L3** | `piege_proche` | du monde coincé à ≤ `z` ATR — **faux dans dix minutes** |
+| **L3** | `dist_piege` | distance **au prix courant**, elle change à chaque barre |
+
+**Le piège est L3, pas L1.** Un biais vaut pour la séance ; un piège **se
+consomme** — dès que les stops sautent, le carburant est brûlé. C4 et H7 sont
+d'ailleurs des déclencheurs, pas des biais : le piège appartient à la même
+couche qu'eux.
+
+*Ce critère est réutilisable pour les couches à venir, et il manquait quand la
+plage de rejet de L0 a été transposée à L1 : on raisonnait sur la forme, pas sur
+la nature.*
 
 Plus **la migration du POC** (`poc_migration_dir`, niveau B) : où la valeur se
 déplace est une part du récit, pas seulement où le prix est.

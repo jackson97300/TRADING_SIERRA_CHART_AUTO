@@ -1,0 +1,94 @@
+# SEUILS L1 — la source unique des nombres du biais.
+#
+# Aucun seuil dans le code. AUCUNE MESURE ici non plus : les mesures vivent
+# dans `rapports/`, datees. Le champ `mesure` ne porte que la QUESTION a
+# laquelle le rapport repond.
+#
+# TOUT `null` EST UN SEUIL QUE LA MESURE N'A PAS ENCORE PRODUIT.
+# `biais.charger_seuils` LEVE si un `null` est en mode `appliquee` : decider
+# avec un nombre qui n'existe pas, c'est ce que le code ferait en silence
+# autrement.
+
+b1_actif: B1p          # B1p ou B1n — tranche par la SEPARATION, pas par l'elegance
+
+composantes:
+
+  B1p:
+    mode: observee
+    seuils: {z1_atr: null}
+    role: candidat
+    mesure: "zone morte autour de la VWAP semaine, en ATR-15m. Distribution de
+             `dist_vwap_w / atr_barre` a produire. Sans zone morte, le cote
+             bascule des que le prix effleure la reference — c'est ce qui
+             faisait changer le regime gamma dix fois par jour."
+
+  B1n:
+    mode: observee
+    seuils: {z1_atr: null, tendance_fort: 1.0}
+    role: candidat
+    mesure: "meme cote que la photo SI le dernier test a tenu. Depend de F23.
+             DUEL avec B1p : si le narratif n'ameliore pas la separation hors
+             bruit, B1 reste une photo et F23 ne sert que L3."
+
+  B4:
+    mode: observee
+    seuils: {}
+    role: veto            # peut ANNULER, jamais orienter ni inverser
+    mesure: "accord ES/NQ. Part de jours vetoes a mesurer. Rend 1 pour
+             « accord » et 0 pour « desaccord » — ce n'est PAS un cote."
+
+  B5:
+    mode: observee
+    seuils: {heure_et: "10:30"}
+    role: qualificateur   # peut dire fort/faible, jamais creer ni annuler
+    mesure: "ouverture contre la valeur de la veille, lue UNE FOIS a 10h30 ET :
+             avant, la valeur du jour n'est pas formee et la comparaison n'a
+             pas de sens. EXCLUE DE S-4 : cette regle EST la relation a la
+             veille, la lire deux fois serait une fuite."
+
+  B5b:
+    mode: observee
+    seuils: {barres_acceptation: 3}
+    role: annulateur      # annule B5, ne dit rien d'autre
+    mesure: "si le prix est reste dans la VA veille, l'ouverture hors valeur
+             n'a pas ete acceptee. Rend 1 ou 0, jamais un cote."
+
+# --- F23 : la memoire de session, partagee avec L3 -------------------------
+f23:
+  z_touche_atr: 0.0          # MESURE : la barre englobe le niveau
+  z_reset_atr: 0.5           # MESURE : hysteresis, cf rapports
+  k_reaction_barres: 4
+  defense_forte: {rvol_r_min: null, reaction_atr_min: null}
+  piege_volume_min: null
+  mesure: "z_touche et z_reset sont MESURES (06/09) : sans hysteresis, 38 a
+           53 % des barres « touchent », soit quatorze fois par jour sur la VAH
+           seule — la value area contient 70 % du volume, le prix y sejourne.
+           z_reset choisi sur la DISCRIMINATION : a 0,5 ATR, « deux, trois,
+           quatre tests » existe dans 45,2 % des cas ; a 1,5 le compteur est un
+           booleen deguise. Les seuils de defense et de piege restent null."
+
+# --- CE QUI RESTE A ETABLIR SUR LA MESURE ----------------------------------
+a_mesurer:
+  couverture:
+    question: "part des jours avec un cote"
+    plage: [0.30, 0.95]
+    pourquoi: "au-dessus de 95 % c'est un habillage du sens du marche ; en
+               dessous de 30 % le biais ne sera jamais consulte."
+  separation:
+    question: "E[devenir | avec] - E[devenir | contre], IC bootstrap PAR JOUR"
+    pourquoi_par_jour: "les signaux d'une meme journee sont correles. Un IC qui
+                        les suppose independants sous-estime l'intervalle."
+    etalon: "controle negatif — biais tire au sort UNE FOIS PAR JOUR, meme
+             couverture. Un faux biais qui changerait a chaque barre serait
+             plus facile a battre, et l'etalon trop clement."
+    regle: "l'IC mesure doit exclure zero ET l'IC du controle negatif doit le
+            contenir. Sinon LE BIAIS N'INFORME PAS."
+  obstacle_mesure_06_09:
+    constat: "les quatre declencheurs sont TOUS des fades — H3 rejet a
+              l'extreme de la VA, H6 retest d'IB, H7 sweep + reclaim, H8
+              absorption. Ils vendent le haut et achetent le bas ; un biais de
+              tendance dit long quand le prix est haut."
+    mesure: "195 signaux CONTRE pour 12 AVEC sur ES ; 202 pour 23 sur NQ."
+    consequence: "la separation n'est pas mesurable sur ce lot de declencheurs :
+                  le groupe « avec » est un residu de douze cas. A traiter
+                  AVANT de conclure quoi que ce soit sur B1."
