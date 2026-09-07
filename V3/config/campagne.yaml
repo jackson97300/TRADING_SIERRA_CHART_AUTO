@@ -82,9 +82,15 @@ portes_appliquees:
       est en observation.
 
   veto_gamma:
-    actif: true
-    source: gamma_block_long / gamma_block_short (niveau B)
-    mesure: "devenir des rejetes -0,48 ATR sur ES. Ne se declenche jamais sur NQ."
+    # PASSE EN OBSERVATION le 07/09, avant le jour 1 : gamma_block_* est
+    # gouverne par `_mq_gamma_source = sierra_proxy_v2` — un PROXY, refuse
+    # mecaniquement par lecture.py (point 7 de la nuit, decision souveraine
+    # 06/09 « aucun proxy »). Le -0,48 ATR avait ete mesure SUR le proxy.
+    # La porte journalise desormais TROU_L5_VETO_GAMMA. Arbitrage Jackson
+    # avant le gel du 12/09 — cf seuils.yaml L5_VETO_GAMMA + A_FAIRE pt 16.
+    actif: false
+    source: layers/L0_interrupteur/seuils.yaml -> porte L5_VETO_GAMMA
+    mesure: "devenir des rejetes -0,48 ATR sur ES (mesure SUR le proxy). Ne se declenche jamais sur NQ."
 
 # ---------------------------------------------------------------------------
 # PORTES OBSERVEES — elles journalisent « aurait bloque », elles n'agissent pas

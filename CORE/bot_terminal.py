@@ -144,6 +144,10 @@ def agreger(df, minutes):
               # sur 10, en silence (review campagne.py 08/09, reserve 1).
               "dist_mq_call", "dist_mq_put", "dist_pdh", "dist_pdl",
               "dist_ovn_high", "dist_ovn_low",
+              # Provenances auto-declarees : sans elles, le refus mecanique
+              # des proxys (lecture.SOURCES_DECLAREES) ne voit rien sur le
+              # frame agrege — la ou les portes lisent.
+              "_mq_gamma_source", "_aggressor_source",
               "atr", "atr_14m", "finish_delta_pct", "delta_pct", "rvol",
               "dist_vwap_w", "is_news_60m", "is_session_blocked",
               "gamma_block_long", "rvol_zscore", "vix_level", "vix_regime",

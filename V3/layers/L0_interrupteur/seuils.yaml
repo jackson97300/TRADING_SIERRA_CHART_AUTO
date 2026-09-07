@@ -174,7 +174,15 @@ portes:
 
   # === L5 — RISQUE ==========================================================
   L5_VETO_GAMMA:
-    mode: appliquee
+    # PASSEE appliquee -> observee le 07/09 (point 7 de la nuit) : sa seule
+    # entree est `gamma_block_long`, gouvernee par `_mq_gamma_source =
+    # sierra_proxy_v2` — un PROXY (scraper mort le 27/05), que lecture.py
+    # refuse desormais mecaniquement. La porte rend donc un TROU permanent ;
+    # en appliquee + strict, ce trou fermait 100 % du live, et son effet
+    # mesure (-0,48 ATR ES) avait ete mesure SUR le proxy. ARBITRAGE JACKSON
+    # avant le gel de vendredi 12/09 : exemption explicite du proxy pour ce
+    # veto, ou attente d'une source propre. Cf A_FAIRE point 16.
+    mode: observee
     seuils: {}
     mesure: "mur gamma dans le sens du TP — voir rapports/portes_57j.csv"
   L5_VETO_RVOL_EXTREME:

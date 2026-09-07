@@ -144,3 +144,19 @@ MESURE sur 60 jours, quintile superieur de |direction| (12 jours de tendance par
 - Ou F23 aide le biais : PAS a l'echelle du jour (c'est L1/B5) — a l'echelle du
   niveau (3e test, defense qui s'use, B1n). Le test « F23 aide-t-il » est
   l'etape 5 de REPONSES_NARRATIF : avec/sans dans B1n et H7.
+
+## 16. ARBITRAGE JACKSON avant le gel du 12/09 — le veto gamma lisait un proxy
+Le point 7 est execute : `lecture.py` refuse mecaniquement toute colonne
+gouvernee par une `_source` contenant « proxy » (`SOURCES_DECLAREES`), et les
+champs `_mq_gamma_source` / `_aggressor_source` survivent a l'agregation.
+Consequence MESUREE : `gamma_block_long` (proxy sierra_proxy_v2, scraper mort
+le 27/05) rend None -> `L5_VETO_GAMMA` rend un TROU permanent. En appliquee +
+strict, ce trou fermait 100 % du live (test_faux_live cassait sur son cas
+nominal — la preuve). La porte est donc passee **observee** (seuils.yaml) et
+`campagne.yaml` dit desormais la meme chose. A trancher AVANT vendredi :
+1. exemption explicite du proxy pour CE veto (le -0,48 ATR a ete mesure SUR le
+   proxy — il peut proteger quand meme), documentee dans SOURCES_DECLAREES ;
+2. ou attendre une source gamma propre (API MenthorQ morte — cf memoire) et
+   laisser le veto en observation pendant la campagne.
+Revert trivial par commit si desaccord. Rien d'autre ne change : rvol/frais
+inchanges, la campagne demarre le 08/09 avec ce jeu de portes.

@@ -51,6 +51,33 @@ REQUISES = {
     "L5": ("gamma_block_long", "rvol_zscore"),
 }
 
+# Les PROVENANCES AUTO-DECLAREES du flux : un champ `_X_source` gouverne des
+# colonnes, et quand il contient « proxy », ces colonnes se REFUSENT — point 7
+# de la nuit du 08/09 (`_mq_gamma_source: sierra_proxy_v2` : le gamma est
+# reconstruit depuis un scraper mort le 27/05, decision souveraine du 06/09 :
+# aucun proxy). lecture.py est le seul endroit qui connait les noms de
+# colonnes ; c'est donc le seul endroit qui peut refuser MECANIQUEMENT.
+# Une colonne refusee se lit None — un TROU, jamais un faux « tout va bien ».
+SOURCES_DECLAREES = {
+    "_mq_gamma_source": ("mq_gamma_condition", "gamma_block_long",
+                         "gamma_block_short", "gamma_block_reasons_long",
+                         "gamma_block_reasons_short", "gamma_threshold_ticks"),
+    # sierra_proxy_count — gouverne `aggressor_imbalance`, que la decision ne
+    # consomme pas aujourd'hui. La table est la pour le jour ou une couche
+    # voudra la lire : elle se refusera toute seule.
+    "_aggressor_source": ("aggressor_imbalance",),
+}
+
+
+def _refusee_proxy(df, col, i):
+    """True si `col` est gouvernee par une `_source` qui contient « proxy »."""
+    for src, cols in SOURCES_DECLAREES.items():
+        if col in cols and src in df.columns:
+            v = df[src].iloc[i]
+            if v is not None and not pd.isna(v) and "proxy" in str(v).lower():
+                return True
+    return False
+
 
 def verifier_colonnes(df, couches=("L0", "L5")):
     """Rend la liste des colonnes manquantes pour les couches demandees.
@@ -64,7 +91,7 @@ def verifier_colonnes(df, couches=("L0", "L5")):
 
 
 def val(df, col, i):
-    if col not in df.columns:
+    if col not in df.columns or _refusee_proxy(df, col, i):
         return None
     v = pd.to_numeric(pd.Series([df[col].iloc[i]]), errors="coerce").iloc[0]
     return None if pd.isna(v) else float(v)
@@ -132,7 +159,11 @@ def lire(df, i, sym="ES", live=None):
         "dtc_connecte": live.get("dtc_connecte"),
         "contrat_actif": live.get("contrat_actif"),
         # --- L5 ------------------------------------------------------------
-        "gamma_block_long": vrai(df, "gamma_block_long", i),
+        # Tri-etat : None (absent OU refuse proxy) doit rester None jusqu'au
+        # veto, qui rendra un TROU — `vrai()` l'ecraserait en False, le faux
+        # feu vert du pattern « gamma hardcode a 0.0 ».
+        "gamma_block_long": (None if val(df, "gamma_block_long", i) is None
+                             else vrai(df, "gamma_block_long", i)),
         "rvol_zscore": val(df, "rvol_zscore", i),
         "atr_barre": val(df, "atr_barre", i),
     }
