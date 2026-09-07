@@ -97,3 +97,24 @@ Un desk ne lit pas de la prose : il tient une CARTE DES STOCKS. Livrable
   que l'instinct devient mesurable au jour 61.
 - REGLE : la carte n'ordonne rien, elle decrit. Tout passage « la carte
   influence une couche » est une hypothese pre-enregistree, jamais un cablage.
+
+## 14. AUDIT DU RECIT (Jackson 08/09) — six trous, dont un prouve par nos donnees
+1. **« PIEGE » ment sur 200 538 contrats.** ES 04/09, prev_vah : volume 200 538,
+   delta -534 -> |d|/vol = 0,27 %. C'est une ROTATION a deux sens, personne n'est
+   net coince — et notre lexique a appele ca un piege. Un piege exige un
+   DESEQUILIBRE : seuil |delta|/volume a poser sur distribution, PAR EPISODE.
+   Renommer le champ `volume_au_dela` (fait) et n'ecrire « piege » dans le recit
+   QUE si le desequilibre passe le seuil. Sinon : « rotation au-dela ».
+2. **L'inventaire est une HYPOTHESE, pas une lecture** : on voit le volume
+   echange au-dela, pas qui tient encore la position (pas d'open interest).
+   H-PIEGE a pre-enregistrer : les regains a fort desequilibre produisent-ils
+   des reactions plus fortes ? Mesure au jour 61, jamais crue avant.
+3. **Le carburant expire** : age du piege non teste (stops retires, clotures).
+4. **Selection** : le recit ne parle QUE des 6 niveaux qu'on regarde. La carte
+   montre TOUS les niveaux, y compris ceux ou il ne s'est rien passe — sinon
+   c'est une machine a confirmation.
+5. **Multiplicite** : ~6 niveaux x 5-8 fiches/jour = une histoire aura toujours
+   l'air prophetique. Aucune lecture sur un episode isole.
+6. **Le piege de la facilite EN PROCESSUS** : aujourd'hui 3 briques de recit,
+   0 pas sur L4 J2 — le narratif est seduisant et demontrable, les vetos sont
+   arides. La priorite de la semaine reste L4, la carte vient APRES.
