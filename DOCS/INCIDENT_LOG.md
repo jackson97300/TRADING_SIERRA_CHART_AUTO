@@ -33,6 +33,37 @@
 
 ---
 
+### 2026-09-07 — [VALIDATION_MISS] — `finish_delta_pct` 15 min est la DERNIERE MINUTE, pas la barre
+
+**Constat** : l'agregation 15 min reprend `finish_delta_pct` par `.last()` — la valeur de la
+derniere barre 1 min du bloc. Or la colonne 1 min SATURE (mediane ES 1,000 ; p25 NQ 1,000) et sa
+correlation avec la position du close dans le range de la barre 15 min vaut **0,158**.
+
+**Impact par couche** :
+- **H3** (`finish_delta_pct < 0,4`, seul declencheur 15 min juge sur sa REACTION au cycle 1) a lu
+  la derniere minute au lieu de la barre. Le filtre REACTION a opere sur une grandeur quasi
+  decorrelee de ce qu'il croyait mesurer.
+- **F23** : le champ `finish` des fiches porte la meme valeur. Les 11 fiches validees au tick sont
+  justes sur touche/issue/piege ; leur dimension FORME est a regenerer.
+- La formule exacte de la colonne (delta ? position du close ?) n'est pas relue : le nom suggere
+  du delta, la comparaison ci-dessus vaut pour l'usage qu'en fait H3 (position de cloture).
+
+**En revanche, POINT REFUTE de la revue** : les meches de F23 ne sont PAS fausses d'un facteur 100.
+`agreger()` RECALCULE `bar_upper/lower_wick_pct` depuis OHLC en part du range (verifie : ecart
+0,00e+00 au recalcul manuel, mediane 0,2208). Le piege — part du PRIX, mediane 0,0064 — n'existe
+que sur la colonne 1 MIN brute, que L4 lira : la meche 1 min se recalcule comme la 15 min.
+
+**Verifie aussi** : a1 ES = 0,462000 vs NQ = 0,462200 — differents a la 4e decimale, n=7643
+chacun. Plausible pour une part sans dimension, pas un artefact de copie.
+
+**Trigger prevention** : `.last()` sur un RAPPORT (finish, ask_pct, meche) est presque toujours
+faux — un rapport se recalcule sur le bloc, il ne se preleve pas. Meme regle que ask_pct/meches,
+appliquee desormais au finish : recalcul 15 min depuis OHLC, et H3 a re-mesurer au cycle 2.
+
+**Reviewed** : Fable (a souleve les deux points) + Claude Code (a mesure : un confirme, un refute)
+
+---
+
 ### 2026-09-06 — [VALIDATION_MISS] — Un fail-closed non branche vaut zero, et il aurait ferme la seance
 
 **La porte** : `L0_DATA_INSTABLE` (V3/layers/L0_interrupteur/portes_donnees.py). Elle verifie que

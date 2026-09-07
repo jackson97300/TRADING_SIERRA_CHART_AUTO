@@ -37,6 +37,10 @@ vetos:
     # confirmation est a portee PAR CONSTRUCTION : la fenetre fait 1 a 3
     # minutes. `dist_big_contre` et `z_mur` disparaissent ; V3 devient
     # « un print adverse >= g1 est apparu pendant la confirmation ».
+    # LE SENS, ecrit avant le code (condition de la revue du 07/09) :
+    #   volume au ASK = acheteurs agressifs -> adverse a un SHORT
+    #   volume au BID = vendeurs agressifs  -> adverse a un LONG
+    # Un test miroir LONG/SHORT echoue si cette convention s'inverse.
     seuils: {g1_ES: 542, g1_NQ: 71}    # p95 des prints, PAR INSTRUMENT
     mesure: "le rapport g1_ES / g1_NQ vaut 7,6 : une constante partagee se
              serait trompee d'un facteur huit. Le test exige g1_ES != g1_NQ."

@@ -203,6 +203,10 @@ def agreger(df, minutes):
     amplitude = (out["high"] - out["low"]).replace(0, float("nan"))
     out["bar_upper_wick_pct"] = (out["high"] - corps_haut) / amplitude
     out["bar_lower_wick_pct"] = (corps_bas - out["low"]) / amplitude
+    # Le finish aussi : `.last()` prelevait la DERNIERE MINUTE (saturee a 1,0
+    # plus d'une fois sur trois), correlation 0,158 avec la barre. H3 a juge
+    # sa REACTION la-dessus au cycle 1 — INCIDENT_LOG 07/09.
+    out["finish_delta_pct"] = (out["close"] - out["low"]) / amplitude
     return out.reset_index(drop=True)
 
 
