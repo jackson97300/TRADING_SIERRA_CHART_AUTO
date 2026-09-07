@@ -112,7 +112,12 @@ def lire_l1(df, i, atr_ref):
     ouv = None
     if np.isfinite(vah) and np.isfinite(val):
         ouv = 1 if vah < 0 else (-1 if val > 0 else 0)
-    return {"d_vwap_w": dv, "d_vwap_w_autre": dv, "smt_div": False,
+    # B4 exige l'AUTRE instrument et la colonne SMT declaree (seuils.yaml B4 :
+    # im_smt_divergence, reference ES). Cette passe est MONO-instrument : on
+    # ne fabrique ni un accord (`d_vwap_w_autre = dv` comparait l'instrument
+    # a lui-meme) ni une absence de divergence (`smt_div = False` en dur) —
+    # des TROUS, et B4 rend None, qui ne vaut pas veto (biais.py).
+    return {"d_vwap_w": dv, "d_vwap_w_autre": None, "smt_div": None,
             "issue_vwap_w": "tenu", "open_vs_va": ouv,
             "barres_inside_prev_va": 0, "_absdist": abs(dv) if dv else None}
 

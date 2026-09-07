@@ -52,7 +52,13 @@ composantes:
 
   B4:
     mode: observee
-    seuils: {}
+    # UNE colonne SMT, TOUJOURS la meme (point 5 de la nuit du 08/09) : les
+    # deux fichiers portent chacun leur `im_smt_divergence` et ils DIVERGENT
+    # (ES -1, NQ 0 au meme ts). Reference = ES : c'est sa colonne qui a
+    # detecte la divergence observee, et l'indice large est la reference
+    # naturelle du spread. Revisable par commit avant le gel du 12/09 —
+    # jamais « celle de l'instrument courant », qui ferait deux B4.
+    seuils: {colonne_smt: im_smt_divergence, instrument_smt: ES}
     role: veto            # peut ANNULER, jamais orienter ni inverser
     mesure: "accord ES/NQ. Part de jours vetoes a mesurer. Rend 1 pour
              « accord » et 0 pour « desaccord » — ce n'est PAS un cote."
