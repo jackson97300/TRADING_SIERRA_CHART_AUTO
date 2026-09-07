@@ -229,8 +229,18 @@ def fiches(df15, df1=None, col="dist_cur_vah", tick=0.25, z_touche=0.0,
         if cote == 0:
             continue
         issue, i_connu, i_debut = _issue(df15, col, i, cote)
+        # CONTRE-LISIBILITE (08/09) : la fiche porte son niveau EN PRIX et ses
+        # bornes en ts. Sans eux, le recit attribuait la cassure a l'heure du
+        # TEST — « cassee 03:00 » pour une cassure de 04:15 — et le piege
+        # etait invérifiable a la main.
+        _d = _val(df15, col, i)
         f = {
             "i": i, "i_connu": i_connu, "ts": int(df15["ts"].iloc[i]),
+            "ts_connu": int(df15["ts"].iloc[min(i_connu, len(df15) - 1)]),
+            "ts_casse": (int(df15["ts"].iloc[i_debut])
+                         if i_debut is not None else None),
+            "niveau_prix": (round(float(df15["close"].iloc[i]) + _d * tick, 2)
+                            if _d is not None else None),
             "niveau": col, "cote": cote,
             "rvol_r": _val(df15, "rvol_r", i),
             "total_vol": _val(df15, "total_vol", i),
