@@ -33,6 +33,15 @@
 
 ---
 
+### 2026-09-08 — [VALIDATION_MISS] — les emissions log du dashboard etaient MORTES depuis 3 mois : AttributeError avalee a chaque appel
+
+**Constat** : `from CORE import logging_v2 as _v2log` puis `_v2log.emit(...)` — le module n'a pas de emit() module-level (seulement Logger.emit via get_logger). Chaque appel levait AttributeError, avalee par les `except Exception: pass` des sites. ZERO emission depuis le 08/06 : `CONSEIL_MTF_PERFECT_DOWNWEIGHT` et `BIAS_NEUTRAL_ZONE_FALLBACK` n'ont jamais ecrit une ligne — les audits J+7 des fixes BUG#1/#4 n'ont JAMAIS eu de donnees, et personne ne l'a vu. Les 2 codes du 08/09 (zone/veto) ont herite du pattern mort.
+**Cause racine** : le fail-safe (`except: pass`) sans test d'EMISSION — les reviews validaient les verdicts, jamais qu'une ligne existe ; et la verif post-deploy J+1 (critical-tasks-review §E) n'a pas ete faite le 09/06.
+**Detection** : audit 3-agents du 08/09 — le grep J+1 des nouveaux codes a trouve zero fichier, la repro a isole l'AttributeError.
+**Lecon** : un emit dans un try/except silencieux N'EXISTE PAS tant qu'un test n'a pas asserte le FICHIER ; « le pattern du voisin » peut etre mort depuis des mois.
+**Trigger prevention** : `DASHBOARD/tests/test_log_emission.py` (logger reel + fichier cree + code present) ; fix get_logger deploye + restart 08/09 ; verif J+1 : `decisions_*_dashboard.jsonl` sur le VPS.
+**Reviewed** : audit multi-agents / Claude.
+
 ### 2026-09-08 — [VALIDATION_MISS] — « le coureur bascule a 22:00 » etait une intention, pas une ligne de code : aucune preuve live pour la nuit du 07 au 08
 
 **Constat** : coureur_live calculait `jour = journee_courante()` UNE fois au demarrage puis bouclait dessus pour toujours. Lance le 07/09 a 19:47 UTC, il a fige 20260907 ; a 00:00 UTC le fichier de la veille s'est termine et il a tourne 8 h sur une journee morte (re-scp du fichier d'hier chaque minute, zero ecriture) — sans crash, donc sans bruit. La preuve live de la nuit du jour 1 (SESSION_BLOQUEE + TROU_VIX) n'a jamais pu exister.
