@@ -35,7 +35,12 @@ ATTENDU PRÉ-ENREGISTRÉ (écrit le 07/09 AVANT le premier run, règle 5) :
   - la nuit : `L0_SESSION_BLOQUEE` bloque, et `TROU_L0_VIX_REGIME` apparaît
     quand `vix_level == 0` ;
   - fichier non synchronisé depuis > 90 s : `L0_DATA_PERIMEE` bloque ;
-  - aucun signal ni battement n'est journalisé deux fois (relance comprise).
+  - aucun signal ni battement n'est journalisé deux fois (relance comprise) ;
+  - à 22:00 UTC la boucle BASCULE de journée (ajout 08/09, INCIDENT
+    VALIDATION_MISS : « bascule à 22:00 » était une intention, pas une
+    ligne de code — la nuit du 07 au 08 n'a aucune preuve live) et
+    `LOGS/heartbeat_coureur.json` bat à chaque cycle (le garde relance
+    au-delà de 3 min — `garde_coureur.py`).
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -103,7 +109,12 @@ def relire_journal(chemin):
         ln = ln.strip()
         if not ln:
             continue
-        o = json.loads(ln)
+        try:
+            o = json.loads(ln)
+        except ValueError:      # ligne tronquee par un kill en plein append
+            print("  reprise : ligne illisible IGNOREE (kill en plein"
+                  " append ?) — elle sera re-emise, jamais doublee")
+            continue
         base = _base_id(o)
         morceaux = base.split(":")
         if o.get("hypothese") == "battement":
@@ -125,13 +136,49 @@ def _sans_barre_partielle_finale(agg):
     return agg.reset_index(drop=True)
 
 
-def cycle(sym, jour, chauffe, vus, battues, chemin, sync=None):
+def rouler_si_nouvelle_journee(jour, chemin, vus, battues, chauffe):
+    """La bascule que la nuit du 07 au 08 n'a PAS eue (INCIDENT 08/09,
+    VALIDATION_MISS : « bascule à 22:00 » était une intention, jamais une
+    ligne de code — `jour` était calculé une fois au démarrage, le coureur
+    a tourné 8 h sur une journée morte, aucune preuve live de la nuit).
+    À chaque tour de boucle : si la journée de trading a changé — nouveau
+    journal, reprise relue, chauffe recalculée. Un `jour` forcé en CLI ne
+    roule jamais (l'appelant garde la main pour les tests)."""
+    j = journee_courante()
+    if j == jour:
+        return jour, chemin, vus, battues, chauffe
+    print("  bascule %s -> %s : nouveau journal, reprise et chauffe"
+          " recalculees" % (jour, j))
+    chemin = "LOGS/entonnoir/live_%s.jsonl" % j
+    vus, battues = relire_journal(chemin)
+    chauffe = {sym: chauffe_1min(sym, j) for sym in ("ES", "NQ")}
+    return j, chemin, vus, battues, chauffe
+
+
+def battre_coeur(jour, coeur):
+    """`LOGS/heartbeat_coureur.json` réécrit à chaque cycle (écriture
+    ATOMIQUE — le garde le lit pendant qu'on écrit). Sans lui, un arrêt
+    est invisible autrement qu'en regardant une console : la leçon des 8 h
+    silencieuses du 08/09. `garde_coureur.py` relance au-delà de 3 min."""
+    d = {"quand_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+         "jour": jour}
+    d.update(coeur)
+    tmp = "LOGS/heartbeat_coureur.json.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(d, fh, ensure_ascii=False)
+    os.replace(tmp, "LOGS/heartbeat_coureur.json")
+
+
+def cycle(sym, jour, chauffe, vus, battues, chemin, sync=None, coeur=None):
     sync_rate = bool(sync) and not synchroniser(sym, jour, *sync)
     full_agg, full_1min = charger_jour(sym, jour, MINUTES, avec_1min=True,
                                        cash_only=False)
     if full_1min.empty:
         return "%s : pas de fichier pour %s" % (sym, jour)
     live = etat_live(sym, jour, full_1min)
+    if coeur is not None:                    # le battement de coeur (garde)
+        coeur[sym] = {"age_s": live["age_s"],
+                      "dernier_ts": int(full_1min["ts"].iloc[-1])}
 
     # --- battement : la derniere barre complete pas encore battue -----------
     nb_batt = 0
@@ -213,17 +260,23 @@ def main():
             print("  %s : CHAUFFE INSUFFISANTE (%d j < %d) — rvol_r rendra "
                   "NaN, H8p non évaluable" % (sym, len(ch), MIN_JOURS_CHAUFFE))
 
+    roule = a.jour is None       # un jour force (test) ne bascule jamais
+    coeur = {}
     while True:
         debut = time.time()
+        if roule:
+            jour, chemin, vus, battues, chauffe = rouler_si_nouvelle_journee(
+                jour, chemin, vus, battues, chauffe)
         for sym in ("ES", "NQ"):
             try:
                 print("  " + cycle(sym, jour, chauffe, vus, battues, chemin,
-                                   sync=sync))
+                                   sync=sync, coeur=coeur))
             except KeyboardInterrupt:
                 raise
             except Exception as e:                    # un cycle rate se dit,
                 print("  %s : CYCLE EN ECHEC — %s: %s"     # jamais muet
                       % (sym, type(e).__name__, e))
+        battre_coeur(jour, coeur)
         if a.une_fois:
             return 0
         time.sleep(max(1.0, CYCLE_S - (time.time() - debut)))

@@ -92,6 +92,12 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     (4,9 SL de 1 ATR sur NQ) — si une séance ferme dessus, ses signaux
     post-fermeture n'existent pas dans le journal officiel, et la comparer
     aux journées pleines fausserait les deux.
+17. **La nuit du jour 1 n'a PAS de preuve live** (INCIDENT 08/09 : le
+    coureur ne basculait pas de journée — le journal live du 08 commence
+    vers 10:30 UTC, pas à 22:00 la veille). Elle se lit comme un TROU,
+    jamais comme une nuit calme. Le rejeu de 21:01, lui, couvre la journée
+    entière — c'est pour ça qu'il est LA mesure et que le live n'est que
+    la preuve.
 
 ## Ce que le jour 61 NE fait pas
 

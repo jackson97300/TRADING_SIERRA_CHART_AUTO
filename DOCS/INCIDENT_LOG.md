@@ -33,6 +33,15 @@
 
 ---
 
+### 2026-09-08 — [VALIDATION_MISS] — « le coureur bascule a 22:00 » etait une intention, pas une ligne de code : aucune preuve live pour la nuit du 07 au 08
+
+**Constat** : coureur_live calculait `jour = journee_courante()` UNE fois au demarrage puis bouclait dessus pour toujours. Lance le 07/09 a 19:47 UTC, il a fige 20260907 ; a 00:00 UTC le fichier de la veille s'est termine et il a tourne 8 h sur une journee morte (re-scp du fichier d'hier chaque minute, zero ecriture) — sans crash, donc sans bruit. La preuve live de la nuit du jour 1 (SESSION_BLOQUEE + TROU_VIX) n'a jamais pu exister.
+**Cause racine** : la bascule de journee annoncee dans le message de lancement n'existait dans aucune ligne de code ; et AUCUN battement de coeur — un processus 23 h/24 sans surveillant (l'etape 2 du plan de janvier, jamais copiee).
+**Detection** : analyse de la nuit du 08/09 (aucun live_20260908.jsonl) + diagnostic Fable independant, identique.
+**Lecon** : une affirmation sur le COMPORTEMENT D'UNE BOUCLE se verifie dans la boucle, pas dans le message qui la lance ; et un processus longue duree exige battement + garde AVANT son premier soir.
+**Trigger prevention** : bascule testee a horloge simulee (test_coureur_live), heartbeat atomique a chaque cycle, garde_coureur toutes les 5 min (kill + relance au-dela de 3 min) ; LECTURE_JOUR_61 regle 17 — la nuit du jour 1 se lit comme un TROU.
+**Reviewed** : code-reviewer / Fable (diagnostic croise) / Claude.
+
 ### 2026-09-07 — [VALIDATION_MISS] — campagne.py affirmait courir la SPEC gelee, sans verification
 
 **Constat** : le coureur de campagne (aa3224f) declarait « les declencheurs de la SPEC gelee » mais courait {h3, h6, h7, h8} du cycle 1 — H7 non pre-enregistree, H2p absente, h6/h8 disqualifiees. En plus : colonnes recalculees (rvol_r, bandes SD2) jamais injectees → H2p/H8p structurellement muettes ; comptage par barre vraie au lieu du franchissement (le N>=40 est defini dessus) ; journal absent les jours a 0 signal alors que le print affirmait « le journal existe quand meme ».
