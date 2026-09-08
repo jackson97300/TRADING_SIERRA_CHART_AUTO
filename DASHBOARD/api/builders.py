@@ -1298,10 +1298,23 @@ def build_conseil_global(
     # checks ; retro-compat : sans `zone` dans le regime, rien ne change.
     zone = (regime or {}).get("zone") or {}
     if action not in ("ATTENDRE", "CONFLIT") and zone and not zone.get("en_zone", True):
-        checks.append(
-            "HORS ZONE — plus proche %s %.2f a %st (seuil %st) : direction %s NON tradable ICI, attendre la zone"
-            % (zone.get("niveau"), zone.get("prix") or 0.0,
-               zone.get("dist_ticks"), zone.get("seuil_ticks"), action))
+        if zone.get("niveau") is None:     # donnees mortes : fail-closed lisible (S5)
+            checks.append("HORS ZONE — niveaux INDISPONIBLES (fail-closed) :"
+                          " direction %s NON tradable" % action)
+        else:
+            checks.append(
+                "HORS ZONE — plus proche %s %.2f a %st (seuil %st) : direction %s NON tradable ICI, attendre la zone"
+                % (zone.get("niveau"), zone.get("prix") or 0.0,
+                   zone.get("dist_ticks"), zone.get("seuil_ticks"), action))
+        if _v2log:
+            try:
+                _v2log.emit("CONSEIL_ZONE_GATE_BLOCK",
+                            sym=str(bar.get("sym", "?")).upper(), action=action,
+                            niveau=str(zone.get("niveau")),
+                            dist_ticks=zone.get("dist_ticks"),
+                            seuil_ticks=zone.get("seuil_ticks"))
+            except Exception:
+                pass
         action = "ATTENDRE"
 
     # VETO DE COHERENCE MTF (Jackson 08/09, cas LIVE : « VENTE PRUDENTE »
@@ -1312,13 +1325,21 @@ def build_conseil_global(
     # verdict directionnel CONTREDIT par un alignement 4/4 OPPOSE n'est
     # pas tradable : CONFLIT, pas inversion. On ne suit pas le MTF, on
     # refuse de trader CONTRE lui quand il est unanime.
+    veto_sens = None
     if action in ("ACHAT", "ACHAT PRUDENT") and mtf_bears == 4:
-        checks.append("VETO MTF — verdict %s contre un alignement 4/4 BEAR :"
-                      " CONFLIT, pas d'entree" % action)
-        action = "CONFLIT"
+        veto_sens = "BEAR"
     elif action in ("VENTE", "VENTE PRUDENTE") and mtf_bulls == 4:
-        checks.append("VETO MTF — verdict %s contre un alignement 4/4 BULL :"
-                      " CONFLIT, pas d'entree" % action)
+        veto_sens = "BULL"
+    if veto_sens:
+        checks.append("VETO MTF — verdict %s contre un alignement 4/4 %s :"
+                      " CONFLIT, pas d'entree" % (action, veto_sens))
+        if _v2log:
+            try:
+                _v2log.emit("CONSEIL_MTF_VETO_CONFLIT",
+                            sym=str(bar.get("sym", "?")).upper(),
+                            action=action, sens=veto_sens)
+            except Exception:
+                pass
         action = "CONFLIT"
 
     # PATCH 22/04/2026 → LEVE 24/04/2026 : SELL ré-activé (paper seulement).

@@ -2,6 +2,71 @@
 
 **Journal permanent de toutes les modifications apportees au bot** : gates, features, fixes, configs, refactos. Ordre **anti-chronologique** (dernier en haut).
 
+## 2026-09-08 — [MOTEUR DE CONSEIL] Porte de lieu + veto de coherence MTF : le dashboard ne dit plus acheter/vendre partout
+
+**Categorie** : GATE (soustractif — ne peut que RETIRER un conseil, jamais en creer)
+**Impact prod** : DASHBOARD (Conseil Global + carte FAVORISER), champ
+`executable_action` lu par le paper trader (aucun bot actif — campagne V3 en
+ombre, bots V2 stoppes). Aucune colonne de donnees ne change.
+
+### Quoi
+
+Deux defauts structurels prouves EN SEANCE par Jackson (08/09) :
+
+1. **Porte de lieu** (`zone_info`, stabilizers.py) : le detecteur de cassures
+   exige >= 8 t AU-DELA du niveau (anti-bruit) — un conseil declenche par
+   evenement n'est donc JAMAIS a la zone, par construction. Cas reel :
+   « Breakdown SWING_H » conseille 17 pts sous la zone, dans un aimant a
+   10 pts (R:R 0,23 contre 1,7 a la zone). Fix : verdict directionnel a plus
+   du seuil P10 du niveau le plus proche -> ATTENDRE + motif HORS ZONE.
+   Seuils PAR instrument (ES 6 t / NQ 40 t = 0,10 x atr_barre median,
+   mesures 06-07/09, jamais recopies).
+2. **Veto MTF** (build_conseil_global) : cas reel « VENTE PRUDENTE » avec
+   1m/5m/15m/1h TOUS acheteurs sur cassure de pVAH — le vote
+   `range_pos >= 80 -> +1 vendeur` est inconditionnel (fade force sur un
+   breakout) et le MTF est plafonne a 1 pt (BUG#4). Fix : verdict
+   directionnel contredit par un alignement 4/4 OPPOSE -> CONFLIT. Le MTF ne
+   force JAMAIS un sens (feedback_mtf_no_override respecte) — il refuse le
+   contre-sens unanime.
+
+### Validation pre-deploy
+
+- `DASHBOARD/tests/test_zone_gate.py` : 15/15 (zone_info, gate, veto,
+  retro-compat sans cle `zone`, 4/4 sans verdict oppose = pas d'override).
+- Non-regression : test_signal_freshness OK ; echecs gamma/tier PREEXISTANTS
+  (verifie par checkout du HEAD sans les modifs).
+- **Taux de declenchement MESURE avant deploy** (10 j, barres cash 1 min) :
+  la porte bloquerait 36,7 % des moments directionnels ES, 30,0 % NQ —
+  filtre reel, pas etranglement (63-70 % des barres a <= P10 d'un des
+  20 niveaux, coherent densite L5).
+- Diff local vs VPS sur app.py AVANT scp : 13 lignes ajoutees / 0 retiree =
+  exactement les 3 blocs de la porte (rien d'autre n'entre ni ne sort).
+- Review code-reviewer : GO-AVEC-RESERVES, 4/4 reserves levees (cette entry,
+  logs, mesure, diff VPS) + S1/S4/S5 appliquees.
+
+### Nouveaux logs
+
+`CONSEIL_ZONE_GATE_BLOCK` (MAJEUR, decisions), `CONSEIL_MTF_VETO_CONFLIT`
+(MAJEUR, decisions) — audit J+1 : grep ces codes, comparer au 36,7/30,0 %
+attendu (feedback_scale_drift : un seuil sans mesure de declenchement se
+perime en silence).
+
+### Revert plan
+
+`git revert` du commit + scp des 3 fichiers precedents + `nssm restart
+MIA-Dashboard` (~5 s). Les gardes etant soustractives, le revert ne peut que
+RE-elargir les conseils — aucun etat persistant a nettoyer.
+
+### Suivi
+
+- J+1 : grep des 2 codes dans LOGS/decisions, taux reel vs attendu.
+- Backlog (IDEAS) : motif HORS ZONE visible dans l'UI sous le verdict (les
+  checks backend ne sont pas rendus par dashboard.js — S2) ; hysteresis de
+  sortie de zone (S3) ; unifier bar vs bar_enr entre detect_level_breaks et
+  zone_info.
+
+**Deployed at** : EN ATTENTE DU GO JACKSON (seance en cours).
+
 ## 2026-09-04 — [MOTEUR DE DECISION] Regime : le vote MODE ne garde que des etats Market Profile + fix range_pos + garde-fou anti-derive
 
 **Categorie** : BUG FIX (INCIDENT_LOG #100, categorie `SCALE_DRIFT`) + OBSERVABILITE

@@ -221,7 +221,8 @@ def zone_info(bar: dict) -> dict:
         return {"en_zone": False, "niveau": None, "prix": None,
                 "dist_ticks": None, "seuil_ticks": None}
     nom, lvl = min(levels.items(), key=lambda kv: abs(price - kv[1]))
-    dist_t = round(abs(price - lvl) / 0.25)
+    from DASHBOARD.api.readers import TICK_SIZE   # jamais un 0.25 en dur (S1)
+    dist_t = round(abs(price - lvl) / TICK_SIZE)
     seuil = SEUIL_ZONE_TICKS.get(str(bar.get("sym", "")).upper(), 8)
     return {"en_zone": dist_t <= seuil, "niveau": nom, "prix": lvl,
             "dist_ticks": dist_t, "seuil_ticks": seuil}

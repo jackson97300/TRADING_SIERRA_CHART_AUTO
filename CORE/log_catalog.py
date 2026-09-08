@@ -241,6 +241,13 @@ LOG_CODES = {
     # Audit J+7 : grep CONSEIL_MTF_PERFECT_DOWNWEIGHT pour mesurer combien de cas seraient
     # auparavant declenches ACHAT/VENTE PRUDENT a tort via MTF 4/4 SEUL.
     "CONSEIL_MTF_PERFECT_DOWNWEIGHT": (LogLevel.INFO, "decisions", "MTF perfect attenue : {sym} bulls={mtf_bulls} bears={mtf_bears} bull_pts={bull_pts} bear_pts={bear_pts} (poids 2->1 anti double-comptage BUG#4)"),
+    # 08/09 — PORTE DE LIEU + VETO MTF dashboard (Jackson : « les achats se
+    # font aux zones, pas au milieu » ; cas live VENTE PRUDENTE vs MTF 4/4
+    # BULL sur cassure pVAH). Audit J+1 : grep ces codes pour mesurer le
+    # taux de blocage reel (feedback_scale_drift : un seuil en dur se
+    # perime en silence sans mesure).
+    "CONSEIL_ZONE_GATE_BLOCK": (LogLevel.MAJEUR, "decisions", "Porte de lieu : {sym} verdict {action} -> ATTENDRE, plus proche {niveau} a {dist_ticks}t (seuil {seuil_ticks}t)"),
+    "CONSEIL_MTF_VETO_CONFLIT": (LogLevel.MAJEUR, "decisions", "Veto MTF : {sym} verdict {action} contre alignement 4/4 {sens} -> CONFLIT"),
     # 09/06 — FIX #54 Veto ATR Bot 1 Continuation (Bot 3 v3 + Bot 3 MP).
     # Aligne avec mia_paper_trader.py STEP 2 VOL_VETO_HIGH_ATR (deja existant Bot 1 Paper).
     # Incident 08/06 19:08 NQ ATR=580t > 400 limit -> trade pris -$500 + slippage 75t.

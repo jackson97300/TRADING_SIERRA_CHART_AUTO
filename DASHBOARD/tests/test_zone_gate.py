@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from DASHBOARD.api.builders import build_conseil_global
+from DASHBOARD.api.builders import _SIGNAL_STATE, build_conseil_global
 from DASHBOARD.api.stabilizers import SEUIL_ZONE_TICKS, zone_info
 
 PASSED = 0
@@ -89,6 +89,7 @@ r = build_conseil_global({"sym": "ES", "ts": 900000, "delta_day_dir": 1,
 check("retro_compat", r["action"] == "ACHAT", r["action"])
 
 # ─── 3. veto de coherence MTF (cas live 08/09) ───────────────────
+_SIGNAL_STATE.clear()   # etat freshness isole par section (review S4)
 
 # VENTE PRUDENTE (bias BEARISH 2 + delta -1 + range 97% = 4 bear) CONTRE
 # un MTF 4/4 BULL -> CONFLIT, jamais une vente contre l'unanimite
