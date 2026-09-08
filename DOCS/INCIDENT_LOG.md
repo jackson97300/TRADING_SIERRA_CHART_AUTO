@@ -41,7 +41,8 @@
 **Cause racine** : deploiement de V3 sur une machine a pandas 3.0.1 sans JAMAIS y executer la suite de tests. Les tests etaient verts en local — sur un pandas different. Un depot valide n'existe pas sans son environnement.
 **Lecon** : apres tout deploiement Python sur une nouvelle machine, executer la suite de tests SUR CETTE MACHINE avant de declarer le composant vivant. Verifier les versions des libs critiques (pandas, numpy) des deux cotes. Et tout `astype("int64")` sur un datetime doit passer par `as_unit("ns")` — grep preventif fait, 3 sites du chemin vivant corriges.
 **Trigger prevention** : deploy VPS d'un composant Python -> `python -X utf8 <suite de tests> ` en SSH sur le VPS = partie du deploy, pas une option. Categorie VALIDATION_MISS 9+ : la verification post-deploy sur l'environnement CIBLE est LA recidive.
-**Reviewed** : code-reviewer (NOGO puis conditions appliquees) / self (mesure VPS)
+**Verdict Fable (08/09 soir)** : GO + 2 reserves APPLIQUEES le soir meme — (1) invariant d'unite a l'execution (`recalc.ts_plage`/`ts_ms`, fail-loud hors [2017..2065] ms : couvre les sites qu'on n'a pas relus) ; (2) alerte de VIVACITE dans le garde (K=3 tournees de battement cash toutes bloquees donnees/calendrier -> fichier ALERTE_VIVACITE + console : « un bot qui dit non a tout n'est pas prudent, il est casse »). Arbitrages : pas de downgrade pandas, env dans le battement, warn-and-continue au boot, sites hors chemin traces NEXT_CYCLE 5 sexies, jour 1 live = rodage (LECTURE regle 18), fichier empoisonne renomme `_rodage`. Et la phrase qui vaut plus que le fix : « La suite de tests sur la machine cible n'est pas une etape du deploiement, c'est la definition du mot "deploye". »
+**Reviewed** : code-reviewer (NOGO puis conditions appliquees, GO) / Fable (GO + 2 reserves) / self (mesure VPS)
 
 ### 2026-09-08 — [VALIDATION_MISS + COMMENT_FALSE] — le chart 15 (VIX) est MORT depuis le 04/09 et personne ne l'a vu : quatre jours de vix_level = 0
 

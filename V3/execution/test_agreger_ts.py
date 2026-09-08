@@ -76,6 +76,21 @@ _cas("merge _r non vide",
 _cas("ts merge en ms", int(out["ts"].iloc[0]) == TS0,
      "ts=%s" % int(out["ts"].iloc[0]))
 
-print("agreger/injecter ts : %s"
-      % ("5 PASS" if not echecs else "%d FAIL" % echecs))
+# 3. l'invariant FAIL-LOUD (reserve 1 Fable) : hors plage ms -> refus
+#    qui NOMME l'unite probable — couvre les sites qu'on n'a pas relus.
+from CORE.features import recalc  # noqa: E402
+
+for valeur, attendu in ((1788883200, "secondes"),      # epoch s
+                        (1788883, "mega-secondes"),     # le bug du 08/09
+                        (TS0 * 1000, "microsecondes")):
+    try:
+        recalc.ts_plage(pd.Series([float(valeur)]))
+        _cas("ts_plage %s" % attendu, False, "aurait du lever")
+    except ValueError as e:
+        _cas("ts_plage %s" % attendu, attendu in str(e), str(e)[:60])
+_cas("ts_plage ms passe", recalc.ts_plage(pd.Series([float(TS0)])) is None)
+_cas("ts_plage vide passe", recalc.ts_plage(pd.Series(dtype="float64")) is None)
+
+print("agreger/injecter/invariant ts : %s"
+      % ("10 PASS" if not echecs else "%d FAIL" % echecs))
 sys.exit(1 if echecs else 0)

@@ -87,6 +87,73 @@ def relancer(args):
     os.replace(tmp, os.path.join(RACINE, "LOGS", "heartbeat_coureur.json"))
 
 
+# Reserve 2 revue Fable 08/09 : 443 battements bloques pendant des heures de
+# cash et rien n'a alerte — le garde voyait un heartbeat vivant, L0 fermait
+# avec un motif FAUX (ferie fantome 1970). Un bot qui dit non a tout n'est
+# pas prudent, il est casse. Si les K dernieres tournees de battement en
+# CASH sont toutes bloquees par une porte de DONNEES ou de CALENDRIER, on
+# l'ecrit — une fois par jour, dans un fichier qu'un humain regarde.
+FAMILLE_VIVACITE = ("L0_FERIE_CME", "L0_DATA_PERIMEE",
+                    "L0_DATA_COLONNE_MORTE", "L0_DATA_FENETRE_MELANGEE",
+                    "L0_DATA_L6_ALERTE")
+K_TOURNEES = 3
+
+
+def alerte_vivacite(jour):
+    """K tournees consecutives bloquees donnees/calendrier en cash -> alerte."""
+    if not jour:
+        return
+    marque = os.path.join(RACINE, "LOGS", "ALERTE_VIVACITE_%s.txt" % jour)
+    if os.path.exists(marque):
+        return                        # deja alerte aujourd'hui, pas de spam
+    chemin = os.path.join(RACINE, "LOGS", "entonnoir", "live_%s.jsonl" % jour)
+    if not os.path.exists(chemin):
+        return
+    if RACINE not in sys.path:        # schtasks ne garantit pas le cwd
+        sys.path.insert(0, RACINE)
+    import pandas as pd               # import tardif : le tick nominal du
+    from CORE.features import recalc  # garde reste leger
+    tours = {}                        # (sym, idx) -> {ts, famille}
+    for ln in open(chemin, encoding="utf-8"):
+        try:
+            e = json.loads(ln)
+        except ValueError:
+            continue
+        if e.get("hypothese") != "battement" or e.get("decision") != "BLOQUE":
+            continue
+        bouts = (e.get("snapshot_id") or "").split(":")
+        if len(bouts) < 3:
+            continue
+        cle = (bouts[0], int(bouts[1]) if bouts[1].isdigit() else -1)
+        t = tours.setdefault(cle, {"ts": e.get("ts"), "motifs": set()})
+        if e.get("motif") in FAMILLE_VIVACITE:
+            t["motifs"].add(e["motif"])
+    for sym in ("ES", "NQ"):
+        derniers = sorted(k for k in tours if k[0] == sym)[-K_TOURNEES:]
+        if len(derniers) < K_TOURNEES:
+            continue
+        if not all(tours[k]["motifs"] for k in derniers):
+            continue
+        ts = pd.Series([tours[k]["ts"] for k in derniers], dtype="float64")
+        dt = pd.to_datetime(ts, unit="ms", utc=True)
+        minutes = recalc.minutes_et(dt)
+        if not ((minutes >= recalc.CASH_DEBUT_MIN_ET)
+                & (minutes < recalc.CASH_FIN_MIN_ET)).all():
+            continue                  # au moins une tournee hors cash : non
+        motifs = sorted(set().union(*(tours[k]["motifs"] for k in derniers)))
+        msg = ("%s UTC — VIVACITE %s : %d tournees de battement en cash "
+               "toutes bloquees donnees/calendrier (indices %s, motifs %s)."
+               " Un bot qui dit non a tout est casse — diagnostiquer." % (
+                   datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                   sym, K_TOURNEES, [k[1] for k in derniers], motifs))
+        with open(marque, "a", encoding="utf-8") as fh:
+            fh.write(msg + "\n")
+        with open(os.path.join(RACINE, "LOGS", "coureur_console.log"),
+                  "a", encoding="utf-8") as fh:
+            fh.write("\n!!! " + msg + "\n")
+        print(msg)
+
+
 def main():
     # Un jour POSITIONNEL transmis au coureur l'epinglerait pour toujours
     # (roule=False) — c'est l'incident meme qu'on corrige. Flags seulement.
@@ -98,6 +165,12 @@ def main():
     age = age_heartbeat()
     if age is not None and age <= MAX_AGE_S:
         print("coureur vivant — battement il y a %.0f s" % age)
+        try:
+            chemin = os.path.join(RACINE, "LOGS", "heartbeat_coureur.json")
+            jour = json.load(open(chemin, encoding="utf-8")).get("jour")
+            alerte_vivacite(jour)
+        except Exception as e:        # la vivacite ne doit JAMAIS casser le
+            print("vivacite KO : %s: %s" % (type(e).__name__, e))  # garde
         return 0
     print("battement %s — kill puis relance"
           % ("ABSENT" if age is None else "vieux de %.0f s" % age))

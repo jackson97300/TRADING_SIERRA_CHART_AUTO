@@ -113,6 +113,7 @@ def charger_jour(sym, jour, minutes, avec_1min=False, cash_only=True):
     df = pd.DataFrame(lignes)
     df["ts"] = recalc.horodatage(df)
     df = df.dropna(subset=["ts"]).sort_values("ts").reset_index(drop=True)
+    recalc.ts_plage(df["ts"])  # invariant fichier : ms ou refus (Fable r1)
     df["dt"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
     if cash_only:
         df = df[recalc.est_cash(df["dt"])].reset_index(drop=True)
@@ -202,12 +203,11 @@ def agreger(df, minutes):
                           label="left", closed="left").max()
             .map({0: "stable", 1: "warmup", 2: "degraded"}))
     out = pd.DataFrame(cols).dropna(subset=["close"])
-    # as_unit("ns") OBLIGATOIRE : pandas 3 garde l'unite ms de to_datetime
-    # (unit="ms") jusque dans l'index resample — astype("int64") rend alors des
-    # ms, et //1e6 des MEGA-secondes, soit 1970-01-01 pour toute la chaine
-    # (ferie fantome "New Year's Day", VPS 08/09). Meme piege que le FIX us/ns
-    # de replay_enricher_batch. Local pandas 2 = ns, le bug etait invisible.
-    out["ts"] = out.index.as_unit("ns").astype("int64") // 1_000_000
+    # recalc.ts_ms : unite normalisee (pandas 3 garde le ms de to_datetime
+    # jusque dans l'index resample — astype nu rendait des MEGA-secondes,
+    # ferie fantome 1970 sur le VPS, INCIDENT_LOG 08/09) + invariant de plage
+    # FAIL-LOUD (reserve 1 Fable : couvre aussi les sites qu'on n'a pas relus).
+    out["ts"] = recalc.ts_ms(out.index)
     out["jour"] = out.index.date
     out["barre_complete"] = out["minutes_reelles"] >= minutes
     # `window_version` se deduit du ts : elle qualifie les colonnes DUMPEES en

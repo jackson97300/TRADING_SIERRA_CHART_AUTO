@@ -137,6 +137,19 @@ Gao-Han-Li-Zhou 2018, Wu 2019, Bogousslavsky-Muravyev 2023,
 Cushing-Madhavan 2000, Wood-McInish-Ord 1985, Admati-Pfleiderer 1988,
 Dalton Mind over Markets.
 
+## 5 sexies. Sites `astype("int64")` sur datetime NON traités (Fable 08/09, arb. 3)
+
+Le chemin VIVANT (coureur + rejeu) est corrigé et couvert par l'invariant
+`recalc.ts_ms`/`ts_plage` (fail-loud hors [2017..2065] ms). Les scripts hors
+chemin gardent le vieux motif — ils ne tournent qu'en local pandas 2. S'ils
+montent un jour sur le VPS (pandas 3), ils rendront des méga-secondes.
+Motif à grep : `astype("int64")` sur un index/série datetime SANS
+`as_unit("ns")`. Sites connus au 08/09 : `dataset_builder.py:916`,
+`label_v4_dataset.py:223`, `label_v5_dataset.py:206`,
+`build_dataset_v4_phase_b.py:894`, `phase_b_helpers.py:1384-1386`,
+`train_v4_pure_lightgbm.py:218`. Condition de sortie : brancher
+`recalc.ts_plage` en tête de chacun, ou les migrer vers `recalc.ts_ms`.
+
 ## 6. Confirmations positives, footprint, L4 en sortie
 
 Reportés de la SPEC L4 §10, inchangés : modificateur de taille après 200

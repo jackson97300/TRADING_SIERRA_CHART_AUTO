@@ -188,9 +188,8 @@ def agreger_5min(df, minutes=None):
         if c in d.columns:
             cols[c] = o[c].max()
     out = pd.DataFrame(cols).dropna(subset=["close"])
-    # as_unit("ns") : pandas 3 garde l'unite ms jusque dans l'index resample —
-    # sans lui, ts sort en MEGA-secondes. Cf commentaire bot_terminal.agreger.
-    out["ts"] = (out.index.as_unit("ns").astype("int64") // 1_000_000)
+    # ts_ms : unite normalisee + invariant de plage. Cf bot_terminal.agreger.
+    out["ts"] = recalc.ts_ms(out.index)
     out["jour"] = out.index.date
     tr = pd.concat([out["high"] - out["low"],
                     (out["high"] - out["close"].shift()).abs(),
@@ -252,10 +251,10 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
     o = aux.resample("%dmin" % int(minutes or MINUTES_BARRE), origin="start_day",
                      label="left", closed="left").last()
     o = o.dropna(subset=["c"])
-    # as_unit("ns") OBLIGATOIRE ici aussi : cette cle sert au merge(on="ts")
-    # avec `cinq` — une unite differente ne casse pas, elle rend TOUTES les
-    # colonnes _r NaN en silence. Cf commentaire bot_terminal.agreger.
-    o["ts"] = (o.index.as_unit("ns").astype("int64") // 1_000_000)
+    # ts_ms OBLIGATOIRE ici : cette cle sert au merge(on="ts") avec `cinq` —
+    # une unite differente ne casse pas, elle rend TOUTES les colonnes _r NaN
+    # en silence. L'invariant de ts_ms rend ce mode BRUYANT.
+    o["ts"] = recalc.ts_ms(o.index)
     # `niveau - close`, en ticks : meme convention et meme signe que dist_cur_vah
     o["dist_vwap_rth_sd2u_r"] = (o["sd2u"] - o["c"]) / HYP.TICK
     o["dist_vwap_rth_sd2d_r"] = (o["sd2d"] - o["c"]) / HYP.TICK

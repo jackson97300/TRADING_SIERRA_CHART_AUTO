@@ -98,6 +98,14 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     jamais comme une nuit calme. Le rejeu de 21:01, lui, couvre la journée
     entière — c'est pour ça qu'il est LA mesure et que le live n'est que
     la preuve.
+18. **Jour 1 (08/09) : le journal live est un RODAGE — il ne fait pas foi**
+    (verdict Fable 08/09). `ts` empoisonné (méga-secondes, pandas 3 VPS),
+    motifs faux (`L0_FERIE_CME` fantôme du 1er janvier 1970,
+    `L0_DATA_PERIMEE` d'un âge de 56 ans) jusqu'au fix de ~16:30 UTC. Seul
+    le rejeu 21:01 fait foi ce jour-là. Le live fait foi à partir du
+    premier jour où le battement porte `env` (versions python/pandas/numpy)
+    ET où `test_agreger_ts.py` est vert SUR le VPS. Le fichier empoisonné
+    est conservé renommé `_rodage` — pièce d'incident, jamais supprimé.
 
 ## Ce que le jour 61 NE fait pas
 

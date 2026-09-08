@@ -117,6 +117,38 @@ def normaliser_ts(ts_ms):
     return ts.where(sec != 59, ts + 1000)
 
 
+TS_MS_MIN = 1_500_000_000_000    # 2017-07 — plancher de l'invariant d'unite
+TS_MS_MAX = 3_000_000_000_000    # 2065-01 — plafond
+
+
+def ts_plage(valeurs):
+    """Invariant FAIL-LOUD : un `ts` est en MILLISECONDES epoch, ou il n'est pas.
+
+    Reserve 1 revue Fable 08/09 : un test par site ne couvre que les sites
+    connus. Hors [2017..2065], on refuse de continuer et on nomme l'unite
+    probable (cf INCIDENT_LOG 08/09 : pandas 3 + astype nu = mega-secondes,
+    ferie fantome 1970).
+    """
+    v = pd.to_numeric(valeurs, errors="coerce").dropna()
+    if len(v) == 0:
+        return
+    lo, hi = int(v.min()), int(v.max())
+    if lo < TS_MS_MIN or hi > TS_MS_MAX:
+        unite = ("secondes" if 1e9 <= abs(hi) < 1e11 else
+                 "microsecondes" if abs(hi) > 1e14 else
+                 "mega-secondes" if 1e5 <= abs(hi) < 1e8 else "inconnue")
+        raise ValueError(
+            "ts hors plage ms [%d..%d] : min=%d max=%d — unite probable : %s"
+            % (TS_MS_MIN, TS_MS_MAX, lo, hi, unite))
+
+
+def ts_ms(index):
+    """Index datetime -> epoch ms, unite normalisee PUIS invariant verifie."""
+    ts = index.as_unit("ns").astype("int64") // 1_000_000
+    ts_plage(pd.Series(ts))
+    return ts
+
+
 # ---------------------------------------------------------------------------
 # 1. Fenetres
 # ---------------------------------------------------------------------------

@@ -69,8 +69,13 @@ from V3.execution.sync_vps import (config_vps, journee_courante,  # noqa: E402
                                    synchroniser)
 
 MINUTES = 15
-CYCLE_S = 60          # une barre par minute ; le scp de deux fichiers de
-                      # 10-30 Mo interdit plus court sans rien apporter
+CYCLE_S = 60   # une barre/min ; le scp de fichiers 10-30 Mo interdit plus court
+
+# Fable 08/09 : env au battement ; hors liste = avertir, continuer (cf ts_ms)
+import numpy as _np  # noqa: E402
+ENV = {"python": "%d.%d.%d" % sys.version_info[:3],
+       "pandas": pd.__version__, "numpy": _np.__version__}
+PANDAS_TESTES = ("2.3.3", "3.0.1")
 
 
 def _dans_chaine(df, signaux, sym, hypothese, live, jour):
@@ -161,7 +166,7 @@ def battre_coeur(jour, coeur):
     est invisible autrement qu'en regardant une console : la leçon des 8 h
     silencieuses du 08/09. `garde_coureur.py` relance au-delà de 3 min."""
     d = {"quand_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-         "jour": jour}
+         "jour": jour, "env": ENV}
     d.update(coeur)
     tmp = "LOGS/heartbeat_coureur.json.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -250,6 +255,10 @@ def main():
                   "comptes.local.yaml — fichier local, age_s dira la vérité.")
 
     print("COUREUR LIVE — journée %s, strict=True, journal %s" % (jour, chemin))
+    print("  env : python %(python)s, pandas %(pandas)s, numpy %(numpy)s" % ENV)
+    if ENV["pandas"] not in PANDAS_TESTES:
+        print("  AVERTISSEMENT : pandas %s hors liste testée %s — on continue"
+              % (ENV["pandas"], PANDAS_TESTES))
     vus, battues = relire_journal(chemin)
     if vus or battues:
         print("  reprise : %d signal(aux) déjà vus, battements %s"

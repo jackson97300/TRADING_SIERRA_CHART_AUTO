@@ -554,6 +554,8 @@ Cf `DOCS/plans/2026-06-25-bot4-v2-refonte-spec.md` + memoire `project_bot4_v2_re
 
 ## Risques opérationnels flaggés
 
+- [2026-09-08] Vivacité coureur (review réserves 2-4, non bloquantes) : (a) `L0_DTC_DECONNECTE` hors FAMILLE_VIVACITE — un DTC mort une matinée cash ne sonnerait pas, arbitrage données-vs-connectivité à poser à Fable ; (b) anti-spam par JOUR pas par sym — un NQ bloqué l'après-midi est masqué si ES a sonné le matin ; (c) un `ts_plage` qui lève en cycle live est bruyant console mais invisible du garde (heartbeat bat toujours) — compter les échecs de cycle consécutifs dans le heartbeat. (d) coureur_live.py à 300 lignes PILE — prochain ajout = extraire un module (candidat : ENV/battre_coeur → coeur.py).
+
 - [2026-05-01] Topstep daily limit -$1000 : pas d'alerte bot quand approche → besoin widget dashboard urgent
 - [2026-05-01] Snapshots ML pollués par signal_price (R5 race fix) → biais Lopez meta-labeling
 - [2026-05-01] Recovery boot persiste signal_price (R6) → biais permanent au reboot
