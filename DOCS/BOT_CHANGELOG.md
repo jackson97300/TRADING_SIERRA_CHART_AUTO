@@ -1,4 +1,4 @@
-# BOT CHANGELOG — MIA Trading System
+﻿# BOT CHANGELOG — MIA Trading System
 
 **Journal permanent de toutes les modifications apportees au bot** : gates, features, fixes, configs, refactos. Ordre **anti-chronologique** (dernier en haut).
 
@@ -65,7 +65,7 @@ RE-elargir les conseils — aucun etat persistant a nettoyer.
   sortie de zone (S3) ; unifier bar vs bar_enr entre detect_level_breaks et
   zone_info.
 
-**Deployed at** : EN ATTENTE DU GO JACKSON (seance en cours).
+**Deployed at** : 2026-09-08 13:21 UTC — GO Jackson en seance. scp 5 fichiers (3 api + log_catalog + logging_v2, imports smoke-testes AVANT restart), nssm stop/start (~40 s de coupure, le restart nssm n'enchaine pas le start — a savoir pour la prochaine fois), service Running + HTTP 200.
 
 ## 2026-09-04 — [MOTEUR DE DECISION] Regime : le vote MODE ne garde que des etats Market Profile + fix range_pos + garde-fou anti-derive
 
