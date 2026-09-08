@@ -84,19 +84,46 @@ ou se retirent de la famille ; sur les continuations (EOD, cassures), ils
 gardent leur sens. La regle 12 de LECTURE_JOUR_61 (lecture par famille)
 est la version jour-61 de cette ligne.
 
-## 5 quinquies. C2_BOND_CLOSE — le spike de 15h00 ET (observation Jackson, mesurée)
+## 5 quinquies. La fin de séance — TROIS candidats DISTINCTS, jamais un fourre-tout
+*(observation Jackson mesurée — rapport spike_fin_session_20260908 — puis
+recherche Fable 08/09 : académique + desk. Pré-enregistrés séparément.)*
 
-L'observation vécue (« ça spike vers 20h45-50 Paris ») est REELLE mais
-datée dix minutes trop tôt : la minute 15h00 ET (clôture des Treasuries)
-fait ×1,86 le range médian sur ES, ×1,64 sur NQ, volume ×~2 — les deux
-instruments, 60 jours (rapport spike_fin_session_20260908). Et 15h50-15h59
-(MOC) concentre le top-3 des ranges 3 jours sur 4. Un spike de VOLATILITÉ
-n'est pas un edge : il manque le SENS — fade, continuation, ou règles de
-spike Dalton (Mind over Markets : spike de fin de séance + acceptation à
-l'open du lendemain). Brief Fable requis, attendu écrit avant, mesure
-d'activation comme les autres. Références : Baltussen et al. 2021 (déjà
-C2_EOD), Gao-Han-Li-Zhou 2018, Cushing-Madhavan 2000, Wood-McInish-Ord
-1985, Admati-Pfleiderer 1988.
+Le fait mesuré : la minute 15h00 ET (clôture du marché obligataire, l'horloge
+des desks taux) fait ×1,86 le range médian sur ES, ×1,64 sur NQ, volume ×2 —
+60 jours, les deux instruments. Et 15h50-15h59 (déséquilibres MOC publiés à
+15h50, D-Orders ~60 % du volume dès 15h57:30) porte le top-3 des ranges
+3 jours sur 4. PERSONNE n'a publié d'edge directionnel sur la minute de
+15h00 — le spike est réel, son sens est inconnu.
+
+**a) C2_BOND_CLOSE — une QUESTION, pas un setup.** Hypothèse mesurable : le
+sens du spike de 15h00 (clôture 15h00-15h05 vs 14h55) continue-t-il ou se
+retourne-t-il dans les 30 minutes ? Deux attendus OPPOSÉS possibles, aucun
+de niveau A — les deux s'écrivent AVANT la mesure, brief Fable requis.
+CONSÉQUENCE L5 IMMÉDIATE (cycle 2, B-NIV) : **un stop à portée de 0,5 ATR
+entre 14h58 et 15h03 est un stop OFFERT** — la fenêtre du spike récolte les
+stops proches ; le placement doit la connaître.
+
+**b) C2_MOC_FADE — EXIGE UNE DONNÉE NON COLLECTÉE.** Le retournement
+post-15h50 (Wu 2019 : ~13 bp/jour) se mesure sur les DÉSÉQUILIBRES MOC
+publiés, que nous ne collectons pas. Sans ce flux, il ne resterait que le
+proxy « mouvement 15h50-15h59 vs retour overnight » — exactement la classe
+de proxy que la règle refuse. Ne se pré-enregistre PAS tant que la donnée
+n'existe pas dans la collecte.
+
+**c) LES RÈGLES DE SPIKE DE DALTON — le plus solide des trois.** Mind over
+Markets (« Special Situations: Spikes ») : un spike ≥ x ATR dans les
+30 dernières minutes ne SE TRADE PAS le soir — il crée une référence pour
+LE LENDEMAIN (base du spike = support ; ouverture au-dessus / dedans /
+dessous = trois lectures). Design : une fiche F23 de forme `spike` (base
+FIGÉE, mémoire d'épisode — la même famille que POOR v2, A_FAIRE pt 20),
+lue à l'open suivant. Quarante ans de pratique derrière ; brief Fable +
+seuil x posé sur distribution, jamais inventé.
+
+L'instinct « 14h45 » de Jackson reste au journal MANUEL — noté au clic, lu
+au jour 61. Références : Baltussen et al. 2021 (déjà C2_EOD),
+Gao-Han-Li-Zhou 2018, Wu 2019, Bogousslavsky-Muravyev 2023,
+Cushing-Madhavan 2000, Wood-McInish-Ord 1985, Admati-Pfleiderer 1988,
+Dalton Mind over Markets.
 
 ## 6. Confirmations positives, footprint, L4 en sortie
 
