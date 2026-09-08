@@ -95,29 +95,41 @@ des desks taux) fait ×1,86 le range médian sur ES, ×1,64 sur NQ, volume ×2 �
 3 jours sur 4. PERSONNE n'a publié d'edge directionnel sur la minute de
 15h00 — le spike est réel, son sens est inconnu.
 
-**a) C2_BOND_CLOSE — une QUESTION, pas un setup.** Hypothèse mesurable : le
-sens du spike de 15h00 (clôture 15h00-15h05 vs 14h55) continue-t-il ou se
-retourne-t-il dans les 30 minutes ? Deux attendus OPPOSÉS possibles, aucun
-de niveau A — les deux s'écrivent AVANT la mesure, brief Fable requis.
-CONSÉQUENCE L5 IMMÉDIATE (cycle 2, B-NIV) : **un stop à portée de 0,5 ATR
-entre 14h58 et 15h03 est un stop OFFERT** — la fenêtre du spike récolte les
-stops proches ; le placement doit la connaître.
+**a) C2_BOND_CLOSE — la minute 15h00, une QUESTION, pas un setup (brief
+Fable 08/09).** Lieu : la barre 1 min 15h00-15h01 ET, `range ≥ p90` de la
+distribution de CETTE minute (jamais de l'heure). Réaction : le sens du
+spike = signe de `close(15h05) − close(14h55)`. Sens attendu — écrit
+avant, et c'est un AVEU D'IGNORANCE : deux hypothèses opposées
+pré-enregistrées ENSEMBLE — *continuation* (le rééquilibrage taux/actions
+se prolonge, cohérent Baltussen) contre *retour* (choc de liquidité, pas
+d'information — il se résorbe). Mesure : devenir à 15h30 et 16h00, signé
+sens du spike ; attendu = **« l'un des deux, hors bruit, ou aucun »** —
+et on ne trade NI l'un NI l'autre avant le jour 61. CONSÉQUENCE L5
+IMMÉDIATE, indépendante du sens : un stop à ≤ 0,5 ATR-15m d'une position
+ouverte entre 14h57 et 15h03 est un stop OFFERT — porte observée
+**`PF_SPIKE_1500`** (« aurait été touché par la minute 15h00 »),
+journalisée, lue à part.
 
-**b) C2_MOC_FADE — EXIGE UNE DONNÉE NON COLLECTÉE.** Le retournement
-post-15h50 (Wu 2019 : ~13 bp/jour) se mesure sur les DÉSÉQUILIBRES MOC
-publiés, que nous ne collectons pas. Sans ce flux, il ne resterait que le
-proxy « mouvement 15h50-15h59 vs retour overnight » — exactement la classe
-de proxy que la règle refuse. Ne se pré-enregistre PAS tant que la donnée
-n'existe pas dans la collecte.
+**b) C2_SPIKE_DALTON — le plus solide des trois : une méthode COMPLÈTE.**
+Un spike ≥ `x` ATR-15m dans les 30 dernières minutes (seuil sur
+distribution ; attendu 0,7-1,0) crée une **fiche F23 de forme `spike`** :
+base FIGÉE (le début du spike), extrême figé, sens. Elle ne se trade pas
+le soir — elle se lit À L'OUVERTURE DU LENDEMAIN, trois régimes, trois
+attendus écrits, UN journal : ouverture AU-DELÀ du spike = acceptation
+(continuation, cible = extension) ; ouverture DANS le spike = équilibre
+(rotation, on fade les bords) ; ouverture SOUS LA BASE = rejet (retour
+vers la valeur de la veille). Même mécanique de mémoire d'épisode que
+POOR v2 (A_FAIRE pt 20) — vit APRÈS F23 hors quarantaine. Référence :
+Dalton, Mind over Markets, « Special Situations: Spikes ».
 
-**c) LES RÈGLES DE SPIKE DE DALTON — le plus solide des trois.** Mind over
-Markets (« Special Situations: Spikes ») : un spike ≥ x ATR dans les
-30 dernières minutes ne SE TRADE PAS le soir — il crée une référence pour
-LE LENDEMAIN (base du spike = support ; ouverture au-dessus / dedans /
-dessous = trois lectures). Design : une fiche F23 de forme `spike` (base
-FIGÉE, mémoire d'épisode — la même famille que POOR v2, A_FAIRE pt 20),
-lue à l'open suivant. Quarante ans de pratique derrière ; brief Fable +
-seuil x posé sur distribution, jamais inventé.
+**c) C2_MOC_FADE — REFUSÉ, avec la raison écrite.** Le retournement
+post-15h50 (Wu 2019 : ~13 bp/jour) repose sur les DÉSÉQUILIBRES MOC
+publiés par le NYSE — non collectés. Sans eux, la seule version testable
+est le proxy « mouvement 15h50-15h59 vs retour overnight », et la règle le
+refuse. *À reconsidérer SI un flux de déséquilibres entre dans le DMP.*
+Ce que la mesure GARDE de cette fenêtre : 15h59 au top-3 trois jours sur
+quatre → **être plat à 15h55 n'est pas une prudence, c'est une porte
+mesurée**.
 
 L'instinct « 14h45 » de Jackson reste au journal MANUEL — noté au clic, lu
 au jour 61. Références : Baltussen et al. 2021 (déjà C2_EOD),
