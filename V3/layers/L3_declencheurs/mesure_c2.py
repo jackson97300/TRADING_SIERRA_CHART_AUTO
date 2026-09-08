@@ -1,6 +1,9 @@
-"""Mesure C2_EOD — la distribution qui pose `r_min` (brief OMBRE_C2 §2).
+"""Mesures C2 — les distributions qui posent les seuils du yaml.
 
-    python -X utf8 V3/layers/L3_declencheurs/mesure_c2.py
+    python -X utf8 V3/layers/L3_declencheurs/mesure_c2.py          # EOD
+    python -X utf8 V3/layers/L3_declencheurs/mesure_c2.py --rvol   # POOR
+
+## C2_EOD — r_min (brief §2)
 
 ATTENDU, ÉCRIT AVANT LA MESURE : |rendement_r| — le rendement du jour à la
 clôture de la barre 15h15-15h30 ET, normalisé par le range cash du même
@@ -17,8 +20,16 @@ Le range cash jusqu'à 15h30 est OHLC pur (provenance A), borné, et
 signal : le jour 61 peut re-normaliser par ce qu'il veut. Écart au brief
 FLAGGÉ dans DECISIONS.md, arbitrage Fable possible.
 
-Cette mesure ne lit AUCUNE issue, aucun P&L, aucun devenir — elle pose un
-seuil de réaction (brief §13 : « les distributions servent à poser les
+## C2_POOR — rvol_min (brief §5, mode --rvol)
+
+ATTENDU, ÉCRIT AVANT LA MESURE : p50 de `rvol_r` sur les barres 15 min cash
+≈ **1,0 par construction** (le ratio compare la minute à SA médiane sur
+20 jours ; l'agrégat prend la dernière minute de la fenêtre), fourchette
+[0,9 ; 1,1] par instrument. `rvol_min` = p50 — « volume au moins habituel »,
+la lecture littérale du brief.
+
+Aucune de ces mesures ne lit une issue, un P&L, un devenir — elles posent
+des seuils de réaction (brief §13 : « les distributions servent à poser les
 seuils, jamais à lire un devenir »).
 """
 
@@ -62,8 +73,56 @@ def rendement_du_jour(df):
     return ((clo - ouv) / rng, clo - ouv, rng), None
 
 
+def mesure_rvol():
+    """p50 de rvol_r sur l'agrégat 15 min — pose rvol_min de C2_POOR.
+    Chauffe en cache (une lecture par jour, la leçon du scan DIV)."""
+    from CORE.research.hypothesis_runner import injecter_recalculs
+    from V3.campagne import (COLS_RECALC, MIN_JOURS_CHAUFFE,
+                             N_JOURS_CHAUFFE)   # jamais recopiees (review S3)
+    sortie = ["# Mesure C2_POOR — distribution de rvol_r (pose rvol_min)",
+              "", "*Attendu écrit avant : p50 ≈ 1,0 par construction,",
+              "fourchette [0,9 ; 1,1]. rvol_min = p50. Aucun devenir lu.*", ""]
+    for sym in ("ES", "NQ"):
+        cache, vals = {}, []
+        for jour in jours_disponibles(sym):
+            df, brut = charger_jour(sym, jour, 15, avec_1min=True)
+            if brut.empty or not all(c in brut.columns for c in COLS_RECALC):
+                continue
+            cache[jour] = brut[COLS_RECALC]
+            if df.empty or len(df) < 6:
+                continue
+            prev = [cache[j] for j in sorted(cache)
+                    if j < jour][-N_JOURS_CHAUFFE:]
+            if len(prev) < MIN_JOURS_CHAUFFE:
+                continue
+            agg = injecter_recalculs(pd.concat(prev + [cache[jour]],
+                                               ignore_index=True), df,
+                                     minutes=15)
+            vals += pd.to_numeric(agg["rvol_r"],
+                                  errors="coerce").dropna().tolist()
+        if not vals:
+            sortie.append("## %s : aucune barre mesurable" % sym)
+            continue
+        v = np.array(vals)
+        q = {p: float(np.percentile(v, p)) for p in (25, 50, 75)}
+        sortie += ["## %s — %d barres 15 min" % (sym, len(v)),
+                   "- rvol_r : p25 %.3f | **p50 %.3f** | p75 %.3f"
+                   % (q[25], q[50], q[75]),
+                   "- **rvol_min retenu (p50, pré-déclaré) : %.3f** — attendu"
+                   " [0,9 ; 1,1] : %s" % (q[50], "OUI" if 0.9 <= q[50] <= 1.1
+                                          else "NON (%.3f)" % q[50]), ""]
+    chemin = ("V3/layers/L3_declencheurs/rapports/mesure_c2_poor_%s.md"
+              % datetime.now(timezone.utc).strftime("%Y%m%d"))
+    open(chemin, "w", encoding="utf-8").write("\n".join(sortie))
+    print("\n".join(sortie))
+    print("rapport : %s" % chemin)
+    return 0
+
+
 def main():
     os.chdir(RACINE)
+    if "--rvol" in sys.argv:
+        return mesure_rvol()
     sortie = ["# Mesure C2_EOD — distribution de |rendement_r| (pose r_min)",
               "",
               "*Attendu écrit avant : p25 ≈ 0,2-0,3 ; p50 ≈ 0,4 ; r_min = p25",

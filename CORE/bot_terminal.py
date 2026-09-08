@@ -154,6 +154,11 @@ def agreger(df, minutes):
               # (audit Fable 07/09, cablage ombre16).
               "dist_vwap_d", "dist_gex_nearest_up", "dist_gex_nearest_dn",
               "cvd_day_dir", "vwap_slope_10",
+              # C2_POOR (brief OMBRE_C2 §5, cable 08/09) : l'etat poor a la
+              # DERNIERE minute de la fenetre — reproduit mismatch=0
+              # (test_ctx), sans portage le setup serait un N=0 de colonne
+              # absente, le piege ombre16.
+              "ctx_poor_high", "ctx_poor_low",
               "atr", "atr_14m", "finish_delta_pct", "delta_pct", "rvol",
               "dist_vwap_w", "is_news_60m", "is_session_blocked",
               "gamma_block_long", "rvol_zscore", "vix_level", "vix_regime",

@@ -214,6 +214,19 @@ pour L4. Correction : avec la dette C++/pipeline groupee (point 6 de la nuit).
 - S4 : FAIT le 08/09 — test ACTIFS ⊆ LES_C2 + 8 cas par setup actif
   (test_ombre_c2.py, filtrage PAR SETUP), livre AVEC l'activation de C2_EOD.
 
+## 20. C2_POOR — REDESIGN J+2 (brief Fable, memoire d'episode)
+La v1 est morte par construction (0 lieu / 52 j x 2, rapport
+lieu_poor_20260908) : le flag C++ est un detecteur ROULANT 60 min, le
+retour vers le niveau l'eteint avant la cloture de fenetre. Pre-cablage
+conserve (fonction + 8 cas verts + rvol_min mesure + portage agreger).
+Le brief J+2 doit : (a) definir la MEMOIRE D'EPISODE (un poor RESTE poor
+jusqu'a reparation/invalidation — Dalton) ; (b) ecarter PAR MESURE
+l'option portage `.max()` de fenetre ; (c) trancher le NaN d'episode
+(tenir ou clore). NOTE jour 61 : dans c2_div_delta, `niveau_prix` peut
+etre ecrase si les deux lieux tombent sur la MEME barre (review POOR —
+meme motif corrige dans c2_poor via poor_prix_h/b ; sur DIV le cas ne
+touche que des lignes muettes de barre 0, lecture avec precaution).
+
 ## 19. DETTE est_cash DST — DEADLINE DURE 31/10 (review C2_EOD 08/09, R1)
 `recalc.est_cash` est fige EDT (13:30-20:00 UTC toute l'annee). Des le
 2/11 : la barre EOD 15h15 ET (20:15 UTC) est COUPEE par `charger_jour`

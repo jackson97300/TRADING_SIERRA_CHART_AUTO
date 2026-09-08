@@ -7,7 +7,12 @@ JAMAIS par la chaîne, aucun P&L avant N = 40 sur NQ, setup par setup.
 
 Actifs : `C2_80PCT` (07/09 — la règle des 80 %, le trade MANUEL de Jackson),
 `C2_EOD` (08/09 — momentum de fin de journée, brief §2), `C2_DIV_DELTA`
-(08/09 — divergence delta au niveau, brief §6). Les FONCTIONS vivent dans
+(08/09 — divergence delta au niveau, brief §6). `C2_POOR` est PRÉ-CÂBLÉ
+mais PAS ACTIF : sa v1 est morte par construction — 0 lieu sur 52 j × 2
+(rapport lieu_poor), l'état 15 min ne persiste jamais les 3 barres exigées.
+Redesign J+2 (mémoire d'épisode), jamais activé pour faire semblant : un
+setup instructurable déclaré actif fabriquerait « testé, N=0 = rare »,
+le mensonge exact que la règle 15 interdit. Les FONCTIONS vivent dans
 `setups_c2.py` (scindé le 08/09, garde des 300 lignes — un concept par
 fichier) ; ici le QUOI courir : registre, activation, seuils, journal.
 
@@ -47,10 +52,14 @@ CHEMIN_SEUILS = os.path.join(os.path.dirname(__file__), "seuils_c2.yaml")
 
 # Ce que les setups ACTIFS lisent — une colonne perdue = un setup mort en
 # silence pendant 60 jours (le piege ombre16, R1 de la review du 07/09).
+# ctx_poor_*/rvol_r y restent VOLONTAIREMENT malgre la non-activation de
+# C2_POOR : surveiller le flux 60 jours pour que le redesign herite d'une
+# colonne verifiee (review 08/09, suggestion 2 — assume, pas un oubli).
 COLONNES_C2 = ("ts", "jour", "open", "high", "low", "close",
                "dist_prev_vah", "dist_prev_val", "dist_pdh", "dist_pdl",
                "dist_mq_call", "dist_mq_put", "vwap_rth_r",
-               "cvd_sess_r", "atr_barre")
+               "cvd_sess_r", "atr_barre",
+               "ctx_poor_high", "ctx_poor_low", "rvol_r")
 
 # Le registre COMPLET du brief (les familles #3 et #12 comptent pour 2 et 3
 # setups journalisés). La parité avec OMBRE_C2.md est testée.
@@ -78,11 +87,14 @@ def verifier_seuils():
     pour un jour couru (« vide = couru muet »). `campagne.courir` l'appelle
     en tout premier."""
     s = charger_seuils()
-    if "C2_EOD" in ACTIFS:
+    requis = {"C2_EOD": "r_min", "C2_POOR": "rvol_min"}
+    for nom, cle in requis.items():
+        if nom not in ACTIFS:
+            continue
         for sym in ("ES", "NQ"):
-            if (((s.get("C2_EOD") or {}).get("r_min") or {}).get(sym)) is None:
-                raise ValueError("C2_EOD actif sans r_min %s — poser la"
-                                 " distribution dans seuils_c2.yaml" % sym)
+            if (((s.get(nom) or {}).get(cle) or {}).get(sym)) is None:
+                raise ValueError("%s actif sans %s %s — poser la distribution"
+                                 " dans seuils_c2.yaml" % (nom, cle, sym))
 
 
 def _extras(r, i):

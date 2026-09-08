@@ -9,6 +9,16 @@ C2_DIV_DELTA: {}      # aucun seuil numérique : le lieu lit P10 (planchers
                       # SPEC L3, déjà mesurés), la divergence est une
                       # COMPARAISON entre deux extrêmes, pas un seuil.
 
+C2_POOR:
+  # rvol_min : la réaction exige « rvol_r >= p50 » (brief §5, volume au
+  # moins habituel). Mesure 08/09 (rapports/mesure_c2_poor_20260908.md,
+  # ~1 260 barres 15 min/instrument) : p50 PRÉ-DÉCLARÉ — ES 0,991,
+  # NQ 0,979 (attendu [0,9 ; 1,1] par construction : tenu).
+  rvol_min: {ES: 0.991, NQ: 0.979}
+  # DÉFINITION du brief (« formé depuis >= 3 barres »), pas un seuil
+  # mesuré — grain 15 min écrit dans le setup.
+  formation_min_barres: 3
+
 C2_EOD:
   # r_min : |rendement_r| minimal — rendement du jour à la clôture 15h30 ET,
   # normalisé par le RANGE CASH du même instant (OHLC, provenance A). Écart
