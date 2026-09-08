@@ -33,6 +33,15 @@
 
 ---
 
+### 2026-09-08 — [VALIDATION_MISS + COMMENT_FALSE] — le chart 15 (VIX) est MORT depuis le 04/09 et personne ne l'a vu : quatre jours de vix_level = 0
+
+**Constat** : trouve par Jackson a l'oeil sur le dashboard (« le graphique est mort »), pas par le systeme. Mesure NQ live_enriched : 02/09 1379/1379 valides, 03/09 1380/1380, **04/09 261 barres a zero en fin de journee**, 06/09 120/120 a zero, 07/09 1140/1140, 08/09 910/910 — cash compris. Chart 15 = source unique du VIX pour le dumper (`DMP_Reader.h:41 VIX_MQ=15`, prix + etude MQ Gamma sg0-2/5-7/9+) et pour `VIX_Lite.cpp:101`.
+**Impacts mesures** : (a) campagne V3 NON bloquee — le rejeu tourne `strict=False` (campagne.py:142) et aucun setup L3 / veto L5 ne lit le VIX ; seule la porte dormante L0_VIX_REGIME est concernee ; (b) coureur LIVE strict : 40 `TROU_L0_VIX_REGIME` au journal du 08/09 — le fix du matin (vix_level=0 -> None) fait son travail, il refuse d'inventer un feu vert ; (c) dashboard : `regime_engine.py:484` FORCE `vol_regime="NORMAL"` quand vix<=0 — la carte « Volatilite normale » est un fallback, pas une mesure, affiche a cote d'un SESS/ATR a 3,07x ; (d) la porte de securite VIX est aveugle depuis 4 jours.
+**Cause racine** : aucune surveillance de fraicheur par COLONNE. Une colonne peut passer a zero sur 100 % des barres pendant 4 jours sans qu'aucune alerte ne parte — L6 surveille la continuite des barres, pas la mort d'un champ. Et le commentaire du fix du matin attribuait la cause a « le CBOE ne publie pas la nuit » : hypothese plausible, jamais mesuree, FAUSSE (la panne est permanente, cash compris) — corrige dans `V3/lecture.py` le soir meme.
+**Lecon** : un zero n'est pas une valeur. Toute colonne physique doit avoir un controle « morte depuis N barres » qui hurle, sinon le systeme consomme du zero comme une lecture. Et le dashboard doit afficher TROU, jamais un fallback silencieux (`vol_regime` force = exactement le defaut n° 5 de l'audit du jour).
+**Trigger prevention** : avant d'expliquer un defaut de donnee par une cause temporelle (« la nuit », « le week-end »), MESURER la distribution sur les barres de cash. Une explication plausible non mesuree est un COMMENT_FALSE en puissance.
+**Reviewed** : Jackson (detection) / self (mesure + chaine d'impact)
+
 ### 2026-09-08 — [VALIDATION_MISS] — les emissions log du dashboard etaient MORTES depuis 3 mois : AttributeError avalee a chaque appel
 
 **Constat** : `from CORE import logging_v2 as _v2log` puis `_v2log.emit(...)` — le module n'a pas de emit() module-level (seulement Logger.emit via get_logger). Chaque appel levait AttributeError, avalee par les `except Exception: pass` des sites. ZERO emission depuis le 08/06 : `CONSEIL_MTF_PERFECT_DOWNWEIGHT` et `BIAS_NEUTRAL_ZONE_FALLBACK` n'ont jamais ecrit une ligne — les audits J+7 des fixes BUG#1/#4 n'ont JAMAIS eu de donnees, et personne ne l'a vu. Les 2 codes du 08/09 (zone/veto) ont herite du pattern mort.

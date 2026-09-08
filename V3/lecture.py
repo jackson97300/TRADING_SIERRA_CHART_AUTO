@@ -147,11 +147,11 @@ def lire(df, i, sym="ES", live=None):
         "ferie": calendrier.est_ferie(_jour(df, i)),
         "rollover": live.get("rollover"),
         # --- famille C : le marche est-il tradable ? -----------------------
-        # vix_level == 0.0 est un DEFAUT DANS LE DOMAINE, pas une lecture :
-        # le CBOE ne publie pas la nuit, et le C++ rend quand meme regime=1.
-        # Cas reel du 08/09 (barres Londres) : vix_level=0.0, vix_regime=1.
-        # Un regime sans niveau est un trou — TROU_L0_VIX_REGIME, jamais
-        # « regime 1 » pris pour vrai.
+        # vix_level == 0.0 est un DEFAUT DANS LE DOMAINE, pas une lecture : le
+        # C++ rend regime=1 quand meme. Cause mesuree le 08/09 au soir (et non
+        # « la nuit », hypothese du matin) : le chart 15 est MORT depuis le
+        # 04/09, cash compris — 100 % des barres a zero du 06 au 08/09.
+        # Un regime sans niveau est un trou. Voir INCIDENT_LOG 08/09.
         "vix_regime": (val(df, "vix_regime", i)
                        if (val(df, "vix_level", i) or 0.0) > 0.0 else None),
         "dist_hvl_atr": _dist_hvl_atr(df, i),
