@@ -1290,6 +1290,37 @@ def build_conseil_global(
     else:
         action = "ATTENDRE"
 
+    # PORTE DE LIEU (Jackson 08/09) : « les achats se font aux zones, pas au
+    # milieu de nulle part ». Un conseil directionnel a plus du seuil P10 du
+    # niveau le plus proche passe ATTENDRE — audit du jour : « Breakdown
+    # SWING_H » conseille 17 pts sous la zone, dans un aimant a 10 pts
+    # (R:R 0,23 contre 1,7 a la zone). La direction reste lisible dans les
+    # checks ; retro-compat : sans `zone` dans le regime, rien ne change.
+    zone = (regime or {}).get("zone") or {}
+    if action not in ("ATTENDRE", "CONFLIT") and zone and not zone.get("en_zone", True):
+        checks.append(
+            "HORS ZONE — plus proche %s %.2f a %st (seuil %st) : direction %s NON tradable ICI, attendre la zone"
+            % (zone.get("niveau"), zone.get("prix") or 0.0,
+               zone.get("dist_ticks"), zone.get("seuil_ticks"), action))
+        action = "ATTENDRE"
+
+    # VETO DE COHERENCE MTF (Jackson 08/09, cas LIVE : « VENTE PRUDENTE »
+    # avec 1m/5m/15m/1h TOUS acheteurs sur cassure de pVAH — le vote
+    # range_pos>=80 « fade » compte +1 vendeur SANS condition, meme sur un
+    # breakout que les quatre unites de temps voient). Le MTF ne FORCE
+    # jamais un sens (feedback_mtf_no_override, BUG #1 08/06) — mais un
+    # verdict directionnel CONTREDIT par un alignement 4/4 OPPOSE n'est
+    # pas tradable : CONFLIT, pas inversion. On ne suit pas le MTF, on
+    # refuse de trader CONTRE lui quand il est unanime.
+    if action in ("ACHAT", "ACHAT PRUDENT") and mtf_bears == 4:
+        checks.append("VETO MTF — verdict %s contre un alignement 4/4 BEAR :"
+                      " CONFLIT, pas d'entree" % action)
+        action = "CONFLIT"
+    elif action in ("VENTE", "VENTE PRUDENTE") and mtf_bulls == 4:
+        checks.append("VETO MTF — verdict %s contre un alignement 4/4 BULL :"
+                      " CONFLIT, pas d'entree" % action)
+        action = "CONFLIT"
+
     # PATCH 22/04/2026 → LEVE 24/04/2026 : SELL ré-activé (paper seulement).
     #
     # HISTORIQUE :

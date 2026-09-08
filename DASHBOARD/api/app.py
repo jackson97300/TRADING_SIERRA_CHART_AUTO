@@ -63,6 +63,7 @@ from DASHBOARD.api.stabilizers import (
     _stabilize_favor,
     _stabilize_qui,
     detect_level_breaks,
+    zone_info,
 )
 from DASHBOARD.api.stripe_webhooks import stripe_router
 from DASHBOARD.api.tier_filter import _filter_response_by_tier, _require_tier
@@ -443,21 +444,28 @@ async def data_freshness():
             return "WARN"
         return "OK"
 
-    # 1. JSONL live_enriched (source unique 3 bots multi-bot depuis 24/05/2026).
-    # FIX 25/05/2026 Jackson "DOWN 51.5h banner" : ancien check lisait
-    # LIVE_CACHE/{ES,NQ}_c_0_last.json (Bot 2 V6 LIVE cache mort post-transition
-    # multi-bot 24/05) → mtime 51.5h → faux positif permanent. Aligner sur
-    # check_pipeline_v4 (health_checker.py 25/05) qui lit le JSONL live frais.
+    # 1. JSONL live_enriched (source unique 4 bots multi-bot depuis migration Sierra 16/06).
+    # FIX 24/06/2026 audit garde-fous : pointer source unique de verite Sierra Chart.
+    # Avant : DATA/live_enriched/{ES,NQ}/*_ES.jsonl (Databento mort 16/06)
+    #         -> mtime 299h+ -> faux positif "DOWN 299h" badge dashboard depuis 12 jours.
+    # Apres : DATA/live_enriched/sierra/{ES,NQ}/*_{SYM}_sierra_enriched.jsonl
+    #         (la vraie source que les 4 bots BotMR/Bot1V2/BotBN/Bot 4 lisent).
     def _glob_age_only(pattern):
         a, _ = _glob_latest_age(pattern)
         return a
-    age_es_live = _glob_age_only(os.path.join(base, "DATA", "live_enriched", "ES", "*_ES.jsonl"))
-    age_nq_live = _glob_age_only(os.path.join(base, "DATA", "live_enriched", "NQ", "*_NQ.jsonl"))
+    age_es_live = _glob_age_only(os.path.join(
+        base, "DATA", "live_enriched", "sierra", "ES",
+        "*_ES_sierra_enriched.jsonl",
+    ))
+    age_nq_live = _glob_age_only(os.path.join(
+        base, "DATA", "live_enriched", "sierra", "NQ",
+        "*_NQ_sierra_enriched.jsonl",
+    ))
     age_live = max(age_es_live or 0, age_nq_live or 0) if (age_es_live or age_nq_live) else None
     sources.append({
-        "name": "JSONL live_enriched (3 bots source)",
+        "name": "JSONL sierra_enriched (4 bots source unique)",
         "age_sec": round(age_live, 1) if age_live else None,
-        # 180s WARN, 600s CRIT (= 3min/10min vs plancher ~60s normal Databento+enricher)
+        # 180s WARN, 600s CRIT (= 3min/10min vs plancher ~60s normal Sierra enricher)
         "status": _classify(age_live, 180, 600),
         "details": f"ES {round(age_es_live, 1) if age_es_live else 'n/a'}s · NQ {round(age_nq_live, 1) if age_nq_live else 'n/a'}s · plancher 60s normal",
     })
@@ -660,44 +668,54 @@ async def bots_health_legacy():
     now_ts = _t.time()
 
     # Bot definitions : path glob events + seuils
+    # REECRITURE 24/06/2026 (audit garde-fous) :
+    # Avant : pointait sur paper_v2/paper_v6/paper (Databento, mort 16/06) +
+    # code 'BOT_HEARTBEAT' generic obsolete -> 297h "DOWN" faux positif spam
+    # 12 jours dans Discord canal alertes.
+    # Apres : pointe sur events_*_{bot_mr,bot1v2,botbn,bot4}.jsonl + codes
+    # specifiques {BOTMR,BOT1V2,BOTBN,BOT4}_HEARTBEAT.
     BOTS = [
         {
-            "name": "Bot 1 (DMP Sierra Sim2)",
-            "key": "bot1",
-            "glob": os.path.join(logs_dir, "events_*_paper.jsonl"),
-            # FIX 08/05 (faux positif WARN) : 90s trop strict pour bars 1m DMP cycle naturel
-            "warn_age_s": 180, "crit_age_s": 480,
+            "name": "Bot 1 Mean Revert (BotMR Sim1)",
+            "key": "bot1_botmr",
+            "glob": os.path.join(logs_dir, "events_*_bot_mr.jsonl"),
+            "code_prefix": "BOTMR_HEARTBEAT",
+            "warn_age_s": 90, "crit_age_s": 240,
         },
-        # FIX 23/05/2026 Jackson : Bot 2 health check route conditionnelle.
-        # Si MIA_BN_V4_ENABLED=1 -> heartbeat BN V4 dans events_*_paper_v2.jsonl
-        # avec filtre prefix code BN_V4_HEARTBEAT (BN V4 wire dans paper_v2 process).
-        # Sinon -> legacy events_*_paper_v6.jsonl (Brain V6).
-        (
-            {
-                "name": "Bot 2 BN V4 (Databento Sim2)",
-                "key": "bot2_bnv4",
-                "glob": os.path.join(logs_dir, "events_*_paper_v2.jsonl"),
-                "code_prefix": "BN_V4_HEARTBEAT",    # filtre exclusif vs BOT3
-                "warn_age_s": 900, "crit_age_s": 1800,
-            }
-            if os.environ.get("MIA_BN_V4_ENABLED", "0") == "1"
-            else {
-                "name": "Bot 2 V6 (Databento Sim2)",
-                "key": "bot2_v6",
-                "glob": os.path.join(logs_dir, "events_*_paper_v6.jsonl"),
-                "warn_age_s": 600, "crit_age_s": 1800,
-            }
-        ),
         {
-            "name": "Bot 3 MP (Databento Sim1)",
-            "key": "bot3",
-            "glob": os.path.join(logs_dir, "events_*_paper_v2.jsonl"),
-            "warn_age_s": 1500, "crit_age_s": 2700,
+            "name": "Bot 2 Mirror v2 (Bot1V2 Sim2)",
+            "key": "bot2_bot1v2",
+            "glob": os.path.join(logs_dir, "events_*_bot1v2.jsonl"),
+            "code_prefix": "BOT1V2_HEARTBEAT",
+            "warn_age_s": 90, "crit_age_s": 240,
+        },
+        {
+            "name": "Bot 3 BN V4 (BotBN Sim3)",
+            "key": "bot3_botbn",
+            "glob": os.path.join(logs_dir, "events_*_botbn.jsonl"),
+            "code_prefix": "BOTBN_HEARTBEAT",
+            "warn_age_s": 90, "crit_age_s": 240,
+        },
+        {
+            "name": "Bot 4 MIA Trader (Sim4)",
+            "key": "bot4_mia_trader",
+            "glob": os.path.join(logs_dir, "events_*_bot4.jsonl"),
+            "code_prefix": "BOT4_HEARTBEAT",
+            "warn_age_s": 300, "crit_age_s": 1800,
         },
     ]
 
-    def _last_heartbeat(path_glob: str) -> dict:
-        """Cherche le dernier BOT_HEARTBEAT dans le file le plus recent.
+    def _last_heartbeat(path_glob: str, code_prefix: str = "HEARTBEAT") -> dict:
+        """Cherche le dernier heartbeat dans le file le plus recent.
+
+        Args:
+            path_glob : glob pattern fichier(s) events JSONL
+            code_prefix : substring requis dans le code (24/06 fix)
+                          - "BOTMR_HEARTBEAT" pour Bot 1 MR
+                          - "BOT1V2_HEARTBEAT" pour Bot 2 Mirror v2
+                          - "BOTBN_HEARTBEAT" pour Bot 3 BN V4
+                          - "BOT4_HEARTBEAT" pour Bot 4 MIA Trader
+                          - "HEARTBEAT" (substring) fallback compat ancienne
 
         Returns {ts_utc, last_bar_age, hb_age_sec} ou {} si rien.
         """
@@ -711,14 +729,21 @@ async def bots_health_legacy():
                 lines = f.readlines()[-200:]
             for line in reversed(lines):
                 line = line.strip()
-                if "BOT_HEARTBEAT" not in line:
+                if code_prefix not in line:
                     continue
                 try:
                     j = _json.loads(line)
                 except _json.JSONDecodeError:
                     continue
-                if j.get("code") != "BOT_HEARTBEAT":
-                    continue
+                code_val = j.get("code", "")
+                # Match exact si code_prefix est lui-meme un code complet (XX_HEARTBEAT),
+                # sinon endswith (fallback compat "HEARTBEAT" substring).
+                if code_prefix == "HEARTBEAT":
+                    if not code_val.endswith("HEARTBEAT"):
+                        continue
+                else:
+                    if code_val != code_prefix:
+                        continue
                 ts_str = j.get("ts", "")
                 ctx = j.get("ctx", {})
                 last_bar_age = ctx.get("last_bar_age", None)
@@ -739,7 +764,7 @@ async def bots_health_legacy():
     bots_status = []
     priority = {"OK": 0, "WARN": 1, "CRIT": 2, "DOWN": 3}
     for bot in BOTS:
-        hb = _last_heartbeat(bot["glob"])
+        hb = _last_heartbeat(bot["glob"], bot.get("code_prefix", "HEARTBEAT"))
         if not hb:
             bots_status.append({
                 "name": bot["name"], "key": bot["key"],
@@ -1250,6 +1275,13 @@ async def dashboard(request: Request):
     nq_reg = response["nq"]["regime"] if response.get("nq") else {}
     es_opt = response["es"]["options"] if response.get("es") else None
     nq_opt = response["nq"]["options"] if response.get("nq") else None
+    # PORTE DE LIEU (Jackson 08/09) : le niveau le plus proche + en_zone,
+    # attache au regime AVANT le conseil — build_conseil_global passe
+    # ATTENDRE hors zone, _stabilize_favor rend le motif honnete.
+    if isinstance(es_reg, dict) and es_reg:
+        es_reg["zone"] = zone_info(bar_es_enr)
+    if isinstance(nq_reg, dict) and nq_reg:
+        nq_reg["zone"] = zone_info(bar_nq_enr)
     response["conseil_global"] = {
         "es": build_conseil_global(bar_es_enr, es_reg, es_opt),
         "nq": build_conseil_global(bar_nq_enr, nq_reg, nq_opt),
@@ -1291,6 +1323,11 @@ async def dashboard(request: Request):
     # ne fallback PAS sur None. Utiliser `or {}` apres get pour gerer ce cas.
     _level_breaks = response.get("level_breaks") or {}
     _resp_nq = response.get("nq") or {}
+    # regime_es (l.1162) et response["es"]["regime"] sont DEUX dicts — la
+    # zone calculee plus haut doit suivre pour que le motif HORS ZONE du
+    # favor force existe aussi cote ES (NQ lit deja le bon dict).
+    if isinstance(regime_es, dict) and isinstance(es_reg, dict) and es_reg.get("zone"):
+        regime_es["zone"] = es_reg["zone"]
     _stabilize_favor("ES", regime_es, advisory, _level_breaks.get("es", []))
     _stabilize_favor("NQ", _resp_nq.get("regime", {}) or {}, None, _level_breaks.get("nq", []))
 
