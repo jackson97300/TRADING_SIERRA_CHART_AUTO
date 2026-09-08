@@ -68,17 +68,57 @@ with tempfile.TemporaryDirectory() as tmp:
         check("lieu sans reaction distingue",
               "lieu(x) sans reaction" in s and "1 (lieu sans reaction)" in s)
 
-        # 2. journal VIDE != journal ABSENT (convention pourquoi.py)
+        # 2. journal VIDE != journal ABSENT (convention pourquoi.py) — un
+        #    journal vide annonce 0 signal et liste le registre ; un journal
+        #    absent est un INCIDENT.
+        _ecrire(tmp, "ombre16_20260906.jsonl", [])
+        s = _sortie("20260906")
+        check("vide dit 0 signal + registre",
+              "0 signal(aux)" in s and "aucune ligne :" in s, s[:160])
+        check("absent dit INCIDENT", "AUCUN JOURNAL" in s and "INCIDENT" in s,
+              s[:160])
+
+        # 3. aucun jour : les deux absents => INCIDENT et manque = 2 (R4)
+        s = _sortie("20990101")
+        check("deux absents = INCIDENT", s.count("AUCUN JOURNAL") == 2
+              and "INCIDENT" in s, s[:160])
+        check("absent compte dans le retour", pourquoi.ombres("20990101") == 2)
+
+        # 4. R3 — `jour_muet:<raison>` n'est PAS un lieu sans reaction : le
+        #    setup n'a pas pu VOIR. Les confondre fabrique du denominateur
+        #    a partir d'un trou (mesure 07/09 : 2 barre_eod_absente comptes
+        #    comme des lieux).
+        _ecrire(tmp, "ombre_c2_20260907.jsonl", [
+            {"sym": "ES", "setup": "C2_EOD",
+             "motif": "jour_muet:barre_eod_absente"}])
         _ecrire(tmp, "ombre16_20260907.jsonl", [])
         s = _sortie("20260907")
-        check("vide dit COURU", "journal VIDE" in s, s[:160])
-        check("absent dit NON COURU", "AUCUN JOURNAL" in s, s[:160])
+        check("jour_muet dit MUET", "MUET : barre_eod_absente" in s, s[:200])
+        check("jour_muet PAS compte en lieu",
+              "1 (lieu sans reaction)" not in s and "lieu(x)" not in s, s[:200])
 
-        # 3. aucun jour : les deux absents, aucune exception
-        s = _sortie("20990101")
-        check("deux absents sans crash", s.count("AUCUN JOURNAL") == 2, s[:160])
+        # 5. R5 — le REGISTRE s'affiche, pas seulement ce qui a tire : un
+        #    setup actif sans une seule ligne doit se voir.
+        check("setups sans ligne annonces", "aucune ligne :" in s, s[:200])
     finally:
         os.chdir(ancien)
+
+# 6. R1 — le jour des ombres vient du CHEMIN LU, jamais de la date demandee.
+#    Mesure du defaut : `--journal entonnoir_20260904` affichait les ombres
+#    du 08/09 dans le meme ecran, sans un mot.
+import re  # noqa: E402
+for base, attendu in (("entonnoir_20260904.jsonl", "20260904"),
+                      ("ombre_c2_20260908.jsonl", "20260908")):
+    t = re.search(r"(\d{8})", base)
+    check("date lue depuis %s" % base, t and t.group(1) == attendu)
+
+# 7. R2 — le repli est ANCRE sur `entonnoir_` : il ne doit JAMAIS ramasser
+#    un journal d'ombre et le presenter comme l'entonnoir (mesure : un jour
+#    non couru rendait une lecture plausible depuis ombre_c2).
+source = open(RACINE / "V3" / "pourquoi.py", encoding="utf-8").read()
+check("repli ancre sur entonnoir_",
+      'glob.glob("LOGS/entonnoir/entonnoir_*.jsonl")' in source
+      and 'glob.glob("LOGS/entonnoir/*.jsonl")' not in source)
 
 print("pourquoi (trois journaux) : %d PASS, %d FAIL" % (PASSED, FAILED))
 sys.exit(1 if FAILED else 0)

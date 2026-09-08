@@ -2,12 +2,13 @@
 
     python -X utf8 V3/execution/rythme_soir.py [YYYYMMDD]
 
-Trois étapes, dans l'ordre, chacune sur la MÊME journée :
+Cinq étapes, dans l ordre, chacune sur la MÊME journée :
 
     1. `campagne.py`         le rejeu officiel — LA mesure (strict=False)
     2. `pourquoi.py`         où chaque signal s'est arrêté, les TROIS journaux
     3. `reactions.py`        ce que le marché a fait aux 17 niveaux
     4. `barrieres_du_jour`   les trois SL candidats par signal (B-ATR/NIV/NAT)
+    5. `marges.py`           de combien une condition a manque (la puissance)
 
 LIMITE CONNUE DE L'ÉTAPE 4, mesurée le 08/09 : `barrieres_du_jour` ne voit
 que les signaux de `signaux_l3` — LES QUATRE gelées. Les seize ED et les C2
@@ -70,11 +71,12 @@ def main():
         return 2
     args = [jour] if jour else []
     codes = [
-        _etape("1/4 campagne (LA mesure)", ["V3/campagne.py", *args]),
-        _etape("2/4 pourquoi (les trois journaux)", ["V3/pourquoi.py", *args]),
-        _etape("3/4 reactions (les niveaux)", ["V3/reactions.py", *args]),
-        _etape("4/4 barrieres (les SL candidats)",
+        _etape("1/5 campagne (LA mesure)", ["V3/campagne.py", *args]),
+        _etape("2/5 pourquoi (les trois journaux)", ["V3/pourquoi.py", *args]),
+        _etape("3/5 reactions (les niveaux)", ["V3/reactions.py", *args]),
+        _etape("4/5 barrieres (les SL candidats)",
                ["V3/layers/L5_risque/barrieres_du_jour.py", *args]),
+        _etape("5/5 marges (la distance au seuil)", ["V3/marges.py", *args]),
     ]
     print("\n--- fait. Reste le JOURNAL MANUEL (METHODE 6) — la machine ne "
           "l'ecrit pas.")

@@ -157,6 +157,36 @@ def courir(jour, strict=False, minutes=15):
     chemin_c2 = "LOGS/entonnoir/ombre_c2_%s.jsonl" % jour
     open(chemin_c2, "w").close()
     total = 0
+    # R8 (revue 09/09) : la troncature ci-dessus a DEJA eu lieu. Si la boucle
+    # casse sur NQ, les trois journaux restent ES-SEULEMENT et tout lecteur en
+    # aval lit « le jour a ete couru » — un journal a moitie ecrit est un
+    # MENSONGE, un journal absent est un incident lisible. Constate deux fois
+    # le 08/09 : PermissionError sur le fichier NQ encore en ecriture par le
+    # coureur (le rejeu de 23:01 croise la synchronisation), ombre_c2 tombe de
+    # 8 lignes a 1. On efface plutot que de laisser une demi-mesure.
+    faits = []
+    try:
+        total = _boucle(jour, strict, minutes, chemin, chemin16, chemin_c2,
+                        faits)
+    except BaseException:
+        for c in (chemin, chemin16, chemin_c2):
+            if os.path.exists(c):
+                os.remove(c)
+        print("  ECHEC apres %s — les trois journaux sont EFFACES : le jour"
+              " compte comme NON COURU (incident), jamais comme muet." % faits)
+        raise
+    if len(faits) < 2:
+        for c in (chemin, chemin16, chemin_c2):
+            if os.path.exists(c):
+                os.remove(c)
+        print("  UN SEUL INSTRUMENT couru (%s) — journaux effaces, jour NON"
+              " couru. Une demi-mesure n'entre pas dans la campagne." % faits)
+        return None
+    return chemin
+
+
+def _boucle(jour, strict, minutes, chemin, chemin16, chemin_c2, faits):
+    total = 0
     for sym in ("ES", "NQ"):
         df, brut = charger_jour(sym, jour, minutes, avec_1min=True)
         if df.empty or len(df) < 6:
@@ -199,11 +229,12 @@ def courir(jour, strict=False, minutes=15):
               " %d C2 (+%d lieux muets) -> %s"
               % (sym, len(sig), detail, len(retenus), n16, n_c2, muets_c2,
                  chemin))
+        faits.append(sym)          # cet instrument est ALLE AU BOUT (R8)
     if total == 0:
         print("  AUCUN SIGNAL sur la journee — le journal VIDE est ecrit : la")
         print("  preuve que le jour a ete couru. Verifier avec pourquoi.py que")
         print("  ce n'est pas une couche muette.")
-    return chemin
+    return total
 
 
 def main():
@@ -219,7 +250,9 @@ def main():
     print("CAMPAGNE ombre-1 — journee %s, mode %s"
           % (jour, "STRICT (live)" if a.strict else "rejeu (strict=False)"))
     chemin = courir(jour, strict=a.strict)
-    print("\nlecture : python -X utf8 V3/pourquoi.py --journal %s" % chemin)
+    if chemin is None:      # demi-mesure effacee (R8) : le jour est un incident
+        return 1
+    print("\nlecture : python -X utf8 V3/pourquoi.py %s" % jour)
     return 0
 
 

@@ -23,10 +23,16 @@ import collections
 import glob
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if RACINE not in sys.path:
+    sys.path.insert(0, RACINE)
+
+from V3.layers.L3_declencheurs.ombre16 import LES_SEIZE   # noqa: E402
+from V3.layers.L3_declencheurs.ombre_c2 import ACTIFS     # noqa: E402
 COUCHES = ("L0", "REG", "L1", "L3", "L4", "L5", "L6")
 
 
@@ -116,31 +122,56 @@ def ombres(date):
     ils fausseraient la position virtuelle des quatre). Une couche absente de
     ce resume est un incident — la docstring de ce fichier le dit, et deux
     couches sur trois y manquaient depuis le premier jour."""
-    for nom, motif in (("les SEIZE (ED)", "LOGS/entonnoir/ombre16_%s.jsonl"),
-                       ("les C2 actifs", "LOGS/entonnoir/ombre_c2_%s.jsonl")):
+    manque = 0
+    for nom, motif, registre in (
+            ("les SEIZE (ED)", "LOGS/entonnoir/ombre16_%s.jsonl", LES_SEIZE),
+            ("les C2 actifs", "LOGS/entonnoir/ombre_c2_%s.jsonl", ACTIFS)):
         chemin = motif % date
         if not os.path.exists(chemin):
-            print("%s : AUCUN JOURNAL — le jour n'a pas ete couru pour eux."
-                  % nom)
+            # R4 : meme cause que l'entonnoir absent — campagne.courir cree les
+            # TROIS fichiers dans trois lignes consecutives. Donc meme mot,
+            # meme code retour : INCIDENT, jamais « couru pour eux ».
+            print("%s : AUCUN JOURNAL — INCIDENT (METHODE.md 7) : le jour n'a"
+                  " pas ete couru." % nom)
+            manque += 1
             continue
         lg = charger(chemin)
-        if not lg:
-            print("%s : journal VIDE (couru, rien tire)." % nom)
-            continue
-        par = collections.Counter()
-        muets = collections.Counter()
+        sig = collections.Counter()
+        lieux = collections.Counter()
+        aveugles = collections.Counter()
         for o in lg:
             cle = (o.get("sym"), o.get("setup"))
-            (muets if o.get("motif") else par)[cle] += 1
-        n = sum(par.values())
-        print("%s : %d signal(aux)%s" % (
-            nom, n, (" + %d lieu(x) sans reaction" % sum(muets.values()))
-            if muets else ""))
-        for (sym, setup), k in sorted(par.items()):
+            m = str(o.get("motif") or "")
+            # R3 : `motif` porte DEUX sens incompatibles. `jour_muet:<raison>`
+            # = le setup n'a pas pu VOIR (colonne absente, barre EOD manquante)
+            # ; `lieu_sans_reaction` = il a vu et rien n'est venu. Les
+            # confondre fabrique du denominateur a partir d'un trou.
+            if m.startswith("jour_muet:"):
+                aveugles[(cle, m.split(":", 1)[1])] += 1
+            elif m:
+                lieux[cle] += 1
+            else:
+                sig[cle] += 1
+        print("%s : %d signal(aux)%s%s" % (
+            nom, sum(sig.values()),
+            (" + %d lieu(x) sans reaction" % sum(lieux.values())) if lieux else "",
+            (" + %d MUET(S)" % sum(aveugles.values())) if aveugles else ""))
+        for (sym, setup), k in sorted(sig.items()):
             print("    %s %-24s %d" % (sym, setup, k))
-        for (sym, setup), k in sorted(muets.items()):
+        for (sym, setup), k in sorted(lieux.items()):
             print("    %s %-24s %d (lieu sans reaction)" % (sym, setup, k))
+        for ((sym, setup), raison), k in sorted(aveugles.items()):
+            print("    %s %-24s %d MUET : %s" % (sym, setup, k, raison))
+        # R5 : montrer le REGISTRE, pas seulement ce qui a tire. Un setup
+        # actif sans une seule ligne est indiscernable d'un setup non cable —
+        # c'est le piege ombre16, deja paye une fois le 07/09.
+        vus = {s for (_, s) in list(sig) + list(lieux)} | {
+            s for ((_, s), _) in aveugles}
+        jamais = sorted(set(registre) - vus)
+        if jamais:
+            print("    (aucune ligne : %s)" % ", ".join(jamais))
         print()
+    return manque
 
 
 def main():
@@ -152,6 +183,16 @@ def main():
     os.chdir(RACINE)
 
     chemin = a.journal or "LOGS/entonnoir/entonnoir_%s.jsonl" % a.date
+    # R1 : le jour des OMBRES doit venir du chemin REELLEMENT lu, jamais de la
+    # date demandee — sinon `--journal entonnoir_20260904` affiche les ombres
+    # du 08/09 dans le meme ecran, sans un mot. Mesure : deux journees
+    # melangees par la commande que campagne.py imprime lui-meme.
+    trouve = re.search(r"(\d{8})", os.path.basename(chemin))
+    if not trouve:
+        print("REFUS : %s ne porte pas de date lisible — le jour des ombres"
+              " serait devine." % chemin)
+        return 1
+    jour_lu = trouve.group(1)
     # VIDE et ABSENT ne disent pas la meme chose : vide = le jour a ete couru
     # et n'a rien produit (les declencheurs sont rares par construction) ;
     # absent = le jour n'a jamais ete couru, et LUI est un incident. Les
@@ -159,20 +200,26 @@ def main():
     existe = os.path.exists(chemin)
     lignes = charger(chemin)
     if not existe:
-        # repli : le dernier journal de mesure, pour que la commande reponde
-        # toujours quelque chose de verifiable
-        cands = sorted(glob.glob("LOGS/entonnoir/*.jsonl"),
+        # R2 : le repli globait `*.jsonl` et ramassait ombre16_/ombre_c2_/live_
+        # comme des entonnoirs. Mesure : `pourquoi.py 20260909` lisait
+        # `ombre_c2_20260908` et rendait une lecture PLAUSIBLE pour un jour
+        # jamais couru — l'incident meme que ce fichier existe pour empecher.
+        # Le motif est ancre sur `entonnoir_`, et le repli DIT sa date.
+        cands = sorted(glob.glob("LOGS/entonnoir/entonnoir_*.jsonl"),
                        key=os.path.getmtime)
         if cands and a.journal is None:
             chemin = cands[-1]
             lignes = charger(chemin)
             existe = True
-            print("POURQUOI — pas de journal pour %s ; lecture du plus recent :"
-                  % a.date)
+            trouve = re.search(r"(\d{8})", os.path.basename(chemin))
+            jour_lu = trouve.group(1) if trouve else jour_lu
+            print("POURQUOI — pas de journal pour %s ; lecture du plus recent"
+                  " (%s) :" % (a.date, jour_lu))
     print("source : %s (%d lignes)\n" % (chemin, len(lignes)))
     if not existe:
         print("  AUCUN JOURNAL. Un jour de campagne sans entonnoir est un "
               "incident (METHODE.md §7), pas une journee calme.")
+        ombres(jour_lu)
         return 1
     if not lignes:
         print("  ENTONNOIR VIDE : le jour a ete couru, zero signal des QUATRE.")
@@ -182,10 +229,14 @@ def main():
         for sym in ("ES", "NQ"):
             afficher(resumer(lignes, sym), sym)
             print()
-    ombres(a.date)
+    manque = ombres(jour_lu)
     print("Ce resume ne montre JAMAIS le P&L (METHODE.md §6). Il repond a une")
     print("seule question : ou chaque signal s'est-il arrete, et pourquoi.")
-    return 0
+    # R4 : le code retour reflete l'AVEUGLEMENT, jamais le nombre de signaux.
+    # Entonnoir vide + ombres qui ont tire = 0 (journee bien mesuree) ;
+    # n'importe quel journal ABSENT = 1. C'est le seul signal que la tache
+    # planifiee peut remonter.
+    return 1 if manque else 0
 
 
 if __name__ == "__main__":

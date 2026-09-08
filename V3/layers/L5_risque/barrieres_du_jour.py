@@ -36,6 +36,7 @@ def courir(jour):
     open(chemin, "w").close()          # vide = jour couru muet, absent = pas couru
     s = B.charger_seuils()
     n = 0
+    incidents = []
     with open(chemin, "a", encoding="utf-8") as fh:
         for sym in ("ES", "NQ"):
             df, brut = charger_jour(sym, jour, 15, avec_1min=True)
@@ -49,6 +50,7 @@ def courir(jour):
             if manquantes:
                 print("  %s : COLONNES MANQUANTES %s — jour NON couru,"
                       " incident" % (sym, manquantes))
+                incidents.append(sym)     # R7 : et le code retour le DIT
                 continue
             sig, _c = signaux_l3(df)
             n_sym = 0
@@ -96,9 +98,15 @@ def courir(jour):
                     }
                     fh.write(json.dumps(ligne, ensure_ascii=False) + "\n")
                     n += 1
-            print("  %s : %d lignes de barrieres" % (sym, n))
+                    n_sym += 1
+            print("  %s : %d lignes de barrieres" % (sym, n_sym))
     print("journal : %s" % chemin)
-    return 0
+    # R7 (revue 09/09) : un instrument declare « jour NON couru, incident »
+    # rendait quand meme 0, et `rythme_soir._etape` y voyait un succes. Le
+    # code retour doit porter l'aveuglement, jamais le nombre de lignes.
+    if incidents:
+        print("  INCIDENT sur %s — code retour 1." % ", ".join(incidents))
+    return 1 if incidents else 0
 
 
 def main():
