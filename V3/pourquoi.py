@@ -107,6 +107,42 @@ def afficher(r, sym, n_barres_attendues=26):
               " blocage, a departager" % "/".join(couches_muettes))
 
 
+def ombres(date):
+    """Les DEUX autres journaux — sans eux, ce lecteur repondait « zero
+    signal » un jour ou NEUF avaient tire (08/09 : 4 ombre16 ES, 5 C2).
+
+    L'entonnoir ne porte que LES_QUATRE ; les seize ED et les C2 actifs ont
+    leur journal separe, par construction (ils ne passent pas par la chaine,
+    ils fausseraient la position virtuelle des quatre). Une couche absente de
+    ce resume est un incident — la docstring de ce fichier le dit, et deux
+    couches sur trois y manquaient depuis le premier jour."""
+    for nom, motif in (("les SEIZE (ED)", "LOGS/entonnoir/ombre16_%s.jsonl"),
+                       ("les C2 actifs", "LOGS/entonnoir/ombre_c2_%s.jsonl")):
+        chemin = motif % date
+        if not os.path.exists(chemin):
+            print("%s : AUCUN JOURNAL — le jour n'a pas ete couru pour eux."
+                  % nom)
+            continue
+        lg = charger(chemin)
+        if not lg:
+            print("%s : journal VIDE (couru, rien tire)." % nom)
+            continue
+        par = collections.Counter()
+        muets = collections.Counter()
+        for o in lg:
+            cle = (o.get("sym"), o.get("setup"))
+            (muets if o.get("motif") else par)[cle] += 1
+        n = sum(par.values())
+        print("%s : %d signal(aux)%s" % (
+            nom, n, (" + %d lieu(x) sans reaction" % sum(muets.values()))
+            if muets else ""))
+        for (sym, setup), k in sorted(par.items()):
+            print("    %s %-24s %d" % (sym, setup, k))
+        for (sym, setup), k in sorted(muets.items()):
+            print("    %s %-24s %d (lieu sans reaction)" % (sym, setup, k))
+        print()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("date", nargs="?",
@@ -139,13 +175,14 @@ def main():
               "incident (METHODE.md §7), pas une journee calme.")
         return 1
     if not lignes:
-        print("  JOURNAL VIDE : le jour a ete couru, zero signal L3. Normal")
-        print("  quand les declencheurs sont rares par construction — un jour")
-        print("  NON couru serait un fichier ABSENT, et lui est un incident.")
-        return 0
-    for sym in ("ES", "NQ"):
-        afficher(resumer(lignes, sym), sym)
-        print()
+        print("  ENTONNOIR VIDE : le jour a ete couru, zero signal des QUATRE.")
+        print("  Normal quand les declencheurs sont rares par construction — un")
+        print("  jour NON couru serait un fichier ABSENT, et lui est un incident.")
+    else:
+        for sym in ("ES", "NQ"):
+            afficher(resumer(lignes, sym), sym)
+            print()
+    ombres(a.date)
     print("Ce resume ne montre JAMAIS le P&L (METHODE.md §6). Il repond a une")
     print("seule question : ou chaque signal s'est-il arrete, et pourquoi.")
     return 0
