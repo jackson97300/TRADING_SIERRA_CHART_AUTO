@@ -882,3 +882,5 @@ Sierra-NATIVES passthrough ne resettent pas à la frontière CME 18:00 ET : `cvd
 - [ ] **Reconfig study VWAP Sierra (option propre source)** : ancrer vwap_d à 18:00 CME côté Sierra Chart (Jackson) au lieu de RTH-anchored → règle parité batch ML.
 - [ ] **Backtest préservation** (règle souveraine) avant tout deploy des fix sizing/SL : `backtest_trade_level.py` avant/après.
 - [ ] FAIT 18/06 : gate vwap_d overnight (sl_tp + near_level) + helper `is_rth_bar` (constants.py). GO franc agent, 126 tests.
+
+- [2026-09-08] reactions.py — 3 points de suivi non bloquants : (a) PermissionError si le fichier live_enriched est verrouillé par le scp du coureur au moment du run (rencontré une fois sur ES 08/09) → ajouter un retry court, la tâche de 23:01 tourne pendant que le coureur synchronise ; (b) ovn_high/low en fige=False faute de conditionnel horaire — figés seulement après 9h30 ET, la nuit ils développent (écart mesuré 92,7 % ES 03/09) ; (c) bandes SD1/SD2 du VWAP hebdo et mensuel absentes en dist_ (prix absolu seulement) — à calculer avec marges.py.

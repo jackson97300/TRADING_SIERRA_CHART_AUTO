@@ -190,6 +190,43 @@ def _ligne_niveau_jour(df15, col, sym, jour, fiches, tick):
     }
 
 
+def _ligne_jour(df1, sym, jour):
+    """LA FORME DE LA JOURNEE — demande Jackson 08/09 (« on a eu un profil en
+    D et on ne l'a pas capte »). Les colonnes existent ; personne ne les
+    journalisait. Etat a la DERNIERE barre de cash : un profil ne se lit
+    qu'une fois la seance faite. Aucune etiquette « D », « b », « p » n'est
+    posee ici — le vocabulaire de forme viendra de la DISTRIBUTION de ces
+    grandeurs a N jours, jamais d'un seuil pose ce soir.
+
+    LU SUR LE 1 MIN, PAS SUR L'AGREGE : aucune de ces colonnes ne survit a
+    `bot_terminal.agreger` (mesure 07/09 : les quatorze a None). Le piege
+    « colonne perdue = mesure morte en silence » — meme famille que les six
+    niveaux du narratif rattrapes le 08/09."""
+    cash = df1[df1.get("is_cash_session", False) == True] if \
+        "is_cash_session" in df1.columns else df1
+    if cash.empty:
+        cash = df1
+    d = cash.iloc[-1]
+    champs = ("profile_shape", "day_type", "open_type", "poc_position",
+              "profile_skew", "volume_imbalance", "is_double_dist",
+              "poc_separation_ticks", "single_print_count",
+              "trend_day_probability", "rule_80pct", "ib_range_atr",
+              "sess_range_atr", "range_pos")
+    ligne = {"type": "jour", "schema": "reactions/1", "jour": jour,
+             "sym": sym, "niveaux_version": NIVEAUX_VERSION,
+             "n_barres_cash": int(len(cash))}
+    for c in champs:
+        v = d.get(c) if c in cash.columns else None
+        ligne[c] = (None if v is None or pd.isna(v) else
+                    (int(v) if float(v) == int(float(v)) else round(float(v), 4)))
+    # `profile_shape` n'est pas stable en seance (ES 08/09 : 210 barres a 2,
+    # 179 a 3). On journalise la composition, pas seulement l'etat final.
+    if "profile_shape" in cash.columns:
+        vc = cash["profile_shape"].value_counts()
+        ligne["profile_shape_compo"] = {str(k): int(v) for k, v in vc.items()}
+    return ligne
+
+
 def courir(jour):
     os.makedirs(DOSSIER, exist_ok=True)
     chemin = os.path.join(DOSSIER, "reactions_%s.jsonl" % jour)
@@ -213,13 +250,21 @@ def courir(jour):
                 # Contrat corrige : un ecart de recomptage sur un niveau MOBILE
                 # est attendu (il MESURE la derive) ; sur un niveau FIGE, c'est
                 # un vrai desaccord et il arrete la publication.
-                if REGISTRE[col][1] and not ligne["recompte_ok"]:
+                # Un niveau FIGE dont la derive n'est pas nulle a change de
+                # REFERENCE, il n'a pas bouge : c'est la bascule de journee de
+                # trading (22:00 UTC). Mesure NQ 07/09 : pdh 29569,75 ->
+                # 29683,50 a 22:01. Un test a cheval compare deux niveaux
+                # differents — ce n'est pas un desaccord de comptage.
+                bascule = bool(ligne["fige"] and ligne.get("derive_niveau_atr"))
+                ligne["bascule_session"] = bascule
+                if ligne["fige"] and not ligne["recompte_ok"] and not bascule:
                     alertes += 1
                     print("  ECART %s %s %s : fiche %s vs recompte %s (%.1f %%)"
                           % (sym, col, ligne["ts"], ligne.get("volume_au_dela"),
                              ligne["recompte_vol"], ligne["ecart_vol_pct"]))
                 lignes.append(ligne)
             lignes.append(_ligne_niveau_jour(df15, col, sym, jour, fs, tick))
+        lignes.append(_ligne_jour(df1, sym, jour))
     tete = {"type": "entete", "schema": "reactions/1", "jour": jour,
             "niveaux_version": NIVEAUX_VERSION,
             "ferie": calendrier.est_ferie(jour),
