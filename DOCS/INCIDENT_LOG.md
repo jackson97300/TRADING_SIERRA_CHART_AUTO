@@ -33,6 +33,16 @@
 
 ---
 
+### 2026-09-08 — [DEPLOY_UNSAFE + VALIDATION_MISS] — pandas 3 sur le VPS : la chaine V3 vivait au 1er janvier 1970 (ferie fantome « New Year's Day »)
+
+**Constat** : premier jour de la chaine V3 sur le VPS — 44 battements du coureur live bloques par `L0_FERIE_CME` un mardi ordinaire. Reproduction : `charger_jour` -> `agreger` rend `ts=1788883` (MEGA-secondes) sur le VPS, `ts=1788883200000` (ms) en local. Cause : VPS = pandas 3.0.1 (installe en mars), local = 2.3.3. pandas 3 PRESERVE l'unite ms de `to_datetime(unit="ms")` jusque dans l'index du resample ; `astype("int64") // 1_000_000` — juste sur un index ns — rend alors des mega-secondes -> `_jour` = 1970-01-01 -> `est_ferie` = « New Year's Day » -> tout bloque. `L0_DATA_PERIMEE` (38 blocks) et `window_version` faussees par le meme ts.
+**Aggravant trouve par la review (NOGO du fix partiel)** : le MEME motif vivait dans `hypothesis_runner.py` l.191 et l.253 — et l.253 est la cle du `merge(on="ts")` des colonnes `_r`. Corriger `bot_terminal` SEUL aurait desynchronise les deux cotes du merge : toutes les colonnes `_r` (rvol_r, vwap_rth_r, dist_*, vwap_slope_r) NaN a 100 %, SANS crash ni motif — le piege « N=0 de colonne absente » (ombre16) en pire, le jour 1 de la campagne.
+**Fix** : `as_unit("ns")` aux 3 sites (bot_terminal l.210, hypothesis_runner l.193/257) + `V3/execution/test_agreger_ts.py` qui force l'index en ns/ms/us SOUS pandas 2 (reproduit la condition pandas 3 partout) et verifie le merge non-NaN. L'ancien code FAIL sur ms, le nouveau 5 PASS. La classe de bug etait DEJA documentee dans le depot (`replay_enricher_batch.py` « FIX BUG us/ns », `label_v4_dataset.py`) — bot_terminal n'avait jamais recu le traitement.
+**Cause racine** : deploiement de V3 sur une machine a pandas 3.0.1 sans JAMAIS y executer la suite de tests. Les tests etaient verts en local — sur un pandas different. Un depot valide n'existe pas sans son environnement.
+**Lecon** : apres tout deploiement Python sur une nouvelle machine, executer la suite de tests SUR CETTE MACHINE avant de declarer le composant vivant. Verifier les versions des libs critiques (pandas, numpy) des deux cotes. Et tout `astype("int64")` sur un datetime doit passer par `as_unit("ns")` — grep preventif fait, 3 sites du chemin vivant corriges.
+**Trigger prevention** : deploy VPS d'un composant Python -> `python -X utf8 <suite de tests> ` en SSH sur le VPS = partie du deploy, pas une option. Categorie VALIDATION_MISS 9+ : la verification post-deploy sur l'environnement CIBLE est LA recidive.
+**Reviewed** : code-reviewer (NOGO puis conditions appliquees) / self (mesure VPS)
+
 ### 2026-09-08 — [VALIDATION_MISS + COMMENT_FALSE] — le chart 15 (VIX) est MORT depuis le 04/09 et personne ne l'a vu : quatre jours de vix_level = 0
 
 **Constat** : trouve par Jackson a l'oeil sur le dashboard (« le graphique est mort »), pas par le systeme. Mesure NQ live_enriched : 02/09 1379/1379 valides, 03/09 1380/1380, **04/09 261 barres a zero en fin de journee**, 06/09 120/120 a zero, 07/09 1140/1140, 08/09 910/910 — cash compris. Chart 15 = source unique du VIX pour le dumper (`DMP_Reader.h:41 VIX_MQ=15`, prix + etude MQ Gamma sg0-2/5-7/9+) et pour `VIX_Lite.cpp:101`.

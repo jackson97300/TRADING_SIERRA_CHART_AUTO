@@ -5,6 +5,89 @@
 Format : `- [date] {idea_short} | {effort} | {impact} | {status}`
 Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
+## P2 Bot 4 v2 batch 4b dtc_adapter — Dette résiduelle (25/06/2026)
+
+Dette différée Batch 4b dtc_adapter, post-review DOUBLE finale P2.
+
+- **[BOT4V2-P2-4b-R1-SEND-SL-ONLY-LENGTH 2026-06-25]** **`_send_sl_only` 56L > 40L spec** | 30 min refactor + tests | LOW (style) | WAITING_DATA (post-paper)
+  - **Contexte** : `bot4_v2/execution/dtc_adapter.py:_send_sl_only` 56 LOC depasse spec section 7 "max 40L".
+  - **Action post-paper** : extraire `_validate_dtc_result(result) -> Optional[BracketResult]` (10 LOC) + `_build_naked_or_success(parent, sl, fill) -> BracketResult` (8 LOC). Ramene a ~30L.
+  - **Trigger fix** : APRES GO paper Sim5 (eviter risque casser flux SL-only pendant validation).
+
+- **[BOT4V2-P2-4b-R4-RECONNECT-THROTTLE 2026-06-25]** **`ensure_connected` throttle promesse non implementee** | 20 min code + 3 tests | MEDIUM | PROPOSED (premier batch P3)
+  - **Contexte** : `dtc_adapter.py:ensure_connected` documentation promet throttle anti-spam (`settings.reconnect_throttle_sec=30.0`) mais code REC0NNECT a chaque appel sans verifier last_attempt timestamp.
+  - **Action P3** : ajouter `self._last_reconnect_attempt: Optional[float] = None` + check `(time.monotonic() - last) < throttle_sec -> return DISCONNECTED sans connect()`. Tests : (1) throttle skip si <30s, (2) reconnect autorise si >30s, (3) exception backend met throttle a jour.
+  - **Trigger fix** : premier batch P3 quand decision_router pilote ensure_connected en boucle (risque spam si backend down 1h).
+
+- **[BOT4V2-P2-4b-R5-MENTHORQ-FUNCTIONS-LENGTH 2026-06-25]** **menthorq_source fonctions >40L** | 20 min refactor | LOW (style) | WAITING_DATA
+  - **Contexte** : `menthorq_levels_to_key_levels` 58L et `load_menthorq_levels` 47L depassent spec.
+  - **Action post-paper** : closure `_add` interne extraite ou helper `_load_json_safe(path)`. Mais code-reviewer batch 4a R3 a recommande NE PAS extraire (closure justifie).
+  - **Trigger fix** : post-paper SEULEMENT si seuil 40L impose strictement par CI.
+
+- **[BOT4V2-P2-4b-R6-DTC-CHANGELOG-ENTRY 2026-06-25]** **BOT_CHANGELOG entry consolidation P2** | 10 min doc | LOW (traçabilite) | PROPOSED
+  - **Contexte** : `DOCS/BOT_CHANGELOG.md` n'a aucune entry pour P0/P1/P2 Bot 4 v2. CLAUDE.md ligne 92 mandate entry "AVANT tout deploy d'une modif qui touche le moteur de decision". P2 ne deploie pas en prod (Bot 4 v1 stoppe) MAIS consolider phase = traçabilite operationnelle saine.
+  - **Action** : ajouter entry resume P2 batches 1-4b avec stats (6 modules, 369 tests, 10 reviews, 11 backlog items).
+  - **Trigger fix** : avant fin P3 (au plus tard avant deploy P5 Sim5).
+
+## P2 Bot 4 v2 batch 3b narrative_engine — Dette résiduelle (25/06/2026)
+
+- **[BOT4V2-P2-3b-R3-FALLBACK-COUNTER 2026-06-25]** **Counter global anti-silence sample log 1/1000** | 15 min refactor + tests | LOW (audit) | PROPOSED
+  - **Contexte** : `bot4_v2/core/narrative_engine.py:_maybe_warn` sample 1/1000 = ~16h silence si field manque systematiquement (schema bump drop cvd_session). Bar incomplete legitime OK, mais drift schema masque.
+  - **Action P3** : ajouter `_FALLBACK_COUNTER: dict[str, int]` module-level + emit count dans warning. Detecte "field X manque 50000 fois" = schema drift vs bar incomplete legitime.
+  - **Trigger fix** : avant P3 decision_router consumer ou avant 30j shadow P6 collecte.
+
+- **[BOT4V2-P2-3b-R4-BIAS-THRESHOLDS 2026-06-25]** **Magic numbers `_bias_from_value` thresholds non documentes** | 10 min refactor | LOW (DX) | PROPOSED
+  - **Contexte** : `narrative_engine._extract_order_flow` utilise `threshold=1000` (cvd_day) et `threshold=200` (cvd_session) hardcoded sans justification.
+  - **Action** : extraire constantes nommees `CVD_DAY_BIAS_THRESHOLD = 1000` et `CVD_SESSION_BIAS_THRESHOLD = 200` + commentaire origine (backtests ? heuristique ? heritage CORE 12/06).
+  - **Trigger fix** : post-paper avec R-config-extract.
+
+- **[BOT4V2-P2-3b-R5-FUNCTIONS-LENGTH 2026-06-25]** **Fonctions >40L narrative_engine** | 30 min refactor | LOW (style) | WAITING_DATA
+  - **Contexte** : `build_narrative_context` (81L), `_extract_support_levels` (62L), `_extract_order_flow` (57L), `_extract_resistance_levels` (56L) depassent spec section 2 "max 40L". Identique CORE (fidelite preservee).
+  - **Action post-paper** : extraire helpers `_make_resistance_adder()`, `_make_support_adder()` factory pattern.
+  - **Trigger fix** : APRES GO paper Sim5 (eviter risque casser parite bit-for-bit CORE pendant validation).
+
+## P2 Bot 4 v2 — Dette résiduelle formalisée (25/06/2026)
+
+Dette différée de Phase P2 (Sources isolation), à traiter post-paper GO Bot 4 v2.
+Source : reviews batch 1 P2 + batch 2 P2 code-reviewer.
+
+- **[BOT4V2-P2-R3-REGIME-REFACTOR 2026-06-25]** **`compute_regime` 228L > 40L spec** | 1h refactor + tests | LOW (style) | WAITING_DATA (post-paper)
+  - **Contexte** : `bot4_v2/core/regime_source.py:179` fonction principale `compute_regime` fait 228 LOC effective vs spec section 2 "max 40L".
+  - **Décision report** : refactor risque casser parité bit-for-bit avec `CORE/regime_engine_v2.py`. Garder freeze bit-for-bit jusqu'à GO paper Bot 4 v2.
+  - **Action post-paper** : extraire 10 helpers `_vote_ib`, `_vote_day_type`, `_vote_single_prints`, `_vote_vwap_slope`, `_vote_atr_ratio`, `_vote_open_type`, `_vote_profile_shape`, `_vote_poc_dist`, `_vote_bars_va`, `_vote_tdp` + assembleur `_aggregate_votes()`.
+  - **Trigger fix** : après 30j paper Sim5 GO ou avant si Jackson confirme.
+
+- **[BOT4V2-P2-R-REGIME-CONFIG-EXTRACT 2026-06-25]** **Seuils calibrés durs → tunables env vars** | 30 min refactor + tests | LOW (DX) | PROPOSED
+  - **Contexte** : `bot4_v2/core/regime_source.py` a 10+ seuils calibrés durs (mode_strong=3, conf_actionable=0.10, vwap_dir_threshold=3.5, sp_strong=100, etc.) non tunables sans éditer le code.
+  - **Action** : extraire vers `bot4_v2.config.settings.regime_*` champs avec env override `BOT4V2_REGIME_*`. Permet tuning prod sans code change.
+  - **Trigger fix** : si Jackson veut tester sensibilité seuils en paper sans redéploiement code.
+
+## P1 Bot 4 v2 — Dette résiduelle formalisée (25/06/2026)
+
+Dette différée de Phase P1 (Infrastructure observable), à traiter au moment indiqué.
+Source : 3 reviews batch + 1 review FINAL P1 code-reviewer (GO-AVEC-RESERVES B1+B2 applies).
+Cf `DOCS/plans/2026-06-25-bot4-v2-refonte-spec.md` + memoire `project_bot4_v2_refonte_chantier.md`.
+
+- **[BOT4V2-P1-R2-B2 2026-06-25]** **Security pickle → joblib + HMAC sign** | 1h dev + tests | MEDIUM (P6) | WAITING_DATA
+  - **Contexte** : `bot4_v2/observability/calibration_persistence.py` utilise `pickle.load/dump` pour persister calibrations. Risque CVE arbitrary code execution si fichier compromis.
+  - **Décision report** : OK tant que P6 n'écrit pas vrais sklearn IsotonicRegression. Patch quand calibrations réelles arrivent (sem 9-12 collecte 30j shadow).
+  - **Action P6** : remplacer pickle par joblib + HMAC-SHA256 signature stockée dans `CalibrationMetadata.notes` ou champ dédié.
+
+- **[BOT4V2-P1-R7-B2 2026-06-25]** **Refactor save/load_calibration 61L/76L > 40L spec** | 30 min refactor | LOW (style) | PROPOSED
+  - **Contexte** : `save_calibration` 61L et `load_calibration` 76L dépassent la règle spec section 2 "max 40L par fonction".
+  - **Action** : extraire `_persist_meta_and_model()` et `_validate_age()` + `_load_pickle()` helpers. Ramène à 35-40L chaque.
+  - **Trigger fix** : quand 2e contributeur touche le module ou avant P6 calibration.
+
+- **[BOT4V2-P1-R3-B3 2026-06-25]** **`_evaluate_outcome` 6 params → BarSnapshot dataclass** | 20 min refactor | LOW (style) | PROPOSED
+  - **Contexte** : `shadow_logger._evaluate_outcome` prend 6 params (pending, bar_high, bar_low, bar_close, bar_ts, tick_size) viole spec "max 3 params" section 2.
+  - **Action P3** : introduire `@dataclass(frozen=True) _BarSnapshot(ts, high, low, close, tick_size)` + signature `_evaluate_outcome(pending, bar: _BarSnapshot)`. Cohérent avec `bar4_v2/decision/decision_router.py` qui consommera `BarSnapshot` en P3.
+  - **Trigger fix** : démarrage Phase P3 (sem 5-6) decision router.
+
+- **[BOT4V2-P1-R8-B2 2026-06-25]** **Refactor `update_outcomes` 60L + `emit_safe` 67L** | 15 min review | LOW (style) | PROPOSED
+  - **Contexte** : `shadow_logger.update_outcomes` 60L (mostly docstring + loop pending) et `telemetry.emit_safe` 67L (7 branches fail-soft justifiées).
+  - **Décision** : `emit_safe` 67L est JUSTIFIABLE (7 branches fail-soft distinctes, découper artificielle nuirait lisibilité). `update_outcomes` corps net ~30L. Acceptable backlog.
+  - **Action** : si extension future ajoute branche, refactorer en sous-helpers.
+
 ## Idées en cours / proposées
 
 - **[BUG-4-DIST-BLIND 2026-06-15]** **Re-injection Python streaming `dist_blind_nearest_up/dn`** | 1-2h dev + review | MEDIUM | PROPOSED
@@ -460,6 +543,7 @@ Status : `PROPOSED / IN_PROGRESS / DONE / REJECTED / WAITING_DATA`
 
 ## Patterns observés (à investiguer)
 
+- [2026-09-08] CORE/features/test_recalc.py : contrôle « vwap_cumule vs vwap_d (17h UTC) » ÉCHOUE (médiane 0,33 pt, 81,3 % sous 1 pt vs seuil). Préexistant au fix as_unit (prouvé git stash), test de tolérance empirique sur données réelles — investiguer si dérive de la vwap_d dumpée ou seuil trop strict. Tracé sur demande review GO du fix pandas 3.
 - [2026-05-01] WR Bot 2 = 23% sur 7j (-$2041 PnL) | breakeven RR=1.31 nécessite WR=43% → besoin meilleur filtre entrée
 - [2026-05-01] RR > 2 = 0% TP atteint (12/12 SL) → cap RR=2.0 deployé, observer impact
 - [2026-05-01] SL>budget 107 rejets/jour SHORTs → SL_BUDGET 75→120 deployé
@@ -779,3 +863,19 @@ Si 2+ symbols et crash sur sym A, sym B est traite mais heartbeat global. Accept
 - `.claude/rules/tick-size-policy.md`
 - `.claude/rules/orphan-prevention.md`
 - Memory : `project_bn_v4_paper_decision_20260523.md` (paper deploy malgre NOGO audit setup)
+
+## 2026-06-18 — Suite chantier cvd/vwap_d session reset (Bot 2 autopsie)
+
+Root cause éclaircie (3 agents) : le chemin live Sierra = `run_sierra_enricher.py` →
+`sierra_pipeline.SierraPipelineOrchestrator.enrich_bar` (PAS enricher_chain). Les features
+Sierra-NATIVES passthrough ne resettent pas à la frontière CME 18:00 ET : `cvd_day`/`cvd_day_dir`
+(= C++ sg18 "ALL"), `delta_day`/`delta_day_dir`, `vwap_d`+bandes SD. Les features Python-recalculées
+(sess_high/low, IB, ovn, pdh/pdl, cvd_session) resettent correctement.
+
+- [ ] **FIX #1 cvd_day/cvd_day_dir** : brancher `override_cvd_day_session` dans `sierra_pipeline.enrich_bar` (après cvd_session ~ligne 640). Module existe + testé. Impact : bias_calculator PTS_CVD + dashboard_mirror bias fallback.
+- [ ] **FIX #2 delta_day/delta_day_dir** : créer override Python cumsum reset-session (n'existe pas).
+- [ ] **vwap_d_side overnight** : non gaté (consommé MTF TF3 + bias + pts). Mesurer distribution overnight vs RTH, gater si pollue (même pattern `is_rth_bar`). Non bloquant.
+- [ ] **bug latent bn_v4 + mean_revert** : consomment aussi vwap_d_sd* comme mur/feature → même gate overnight requis OU fix à la source. Vérifier s'ils l'utilisent comme SL (critique) ou feature.
+- [ ] **Reconfig study VWAP Sierra (option propre source)** : ancrer vwap_d à 18:00 CME côté Sierra Chart (Jackson) au lieu de RTH-anchored → règle parité batch ML.
+- [ ] **Backtest préservation** (règle souveraine) avant tout deploy des fix sizing/SL : `backtest_trade_level.py` avant/après.
+- [ ] FAIT 18/06 : gate vwap_d overnight (sl_tp + near_level) + helper `is_rth_bar` (constants.py). GO franc agent, 126 tests.

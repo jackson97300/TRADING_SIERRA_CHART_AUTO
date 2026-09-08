@@ -188,7 +188,9 @@ def agreger_5min(df, minutes=None):
         if c in d.columns:
             cols[c] = o[c].max()
     out = pd.DataFrame(cols).dropna(subset=["close"])
-    out["ts"] = (out.index.astype("int64") // 1_000_000)
+    # as_unit("ns") : pandas 3 garde l'unite ms jusque dans l'index resample —
+    # sans lui, ts sort en MEGA-secondes. Cf commentaire bot_terminal.agreger.
+    out["ts"] = (out.index.as_unit("ns").astype("int64") // 1_000_000)
     out["jour"] = out.index.date
     tr = pd.concat([out["high"] - out["low"],
                     (out["high"] - out["close"].shift()).abs(),
@@ -250,7 +252,10 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
     o = aux.resample("%dmin" % int(minutes or MINUTES_BARRE), origin="start_day",
                      label="left", closed="left").last()
     o = o.dropna(subset=["c"])
-    o["ts"] = (o.index.astype("int64") // 1_000_000)
+    # as_unit("ns") OBLIGATOIRE ici aussi : cette cle sert au merge(on="ts")
+    # avec `cinq` — une unite differente ne casse pas, elle rend TOUTES les
+    # colonnes _r NaN en silence. Cf commentaire bot_terminal.agreger.
+    o["ts"] = (o.index.as_unit("ns").astype("int64") // 1_000_000)
     # `niveau - close`, en ticks : meme convention et meme signe que dist_cur_vah
     o["dist_vwap_rth_sd2u_r"] = (o["sd2u"] - o["c"]) / HYP.TICK
     o["dist_vwap_rth_sd2d_r"] = (o["sd2d"] - o["c"]) / HYP.TICK

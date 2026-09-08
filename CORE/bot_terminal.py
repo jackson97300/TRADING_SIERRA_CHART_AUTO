@@ -202,7 +202,12 @@ def agreger(df, minutes):
                           label="left", closed="left").max()
             .map({0: "stable", 1: "warmup", 2: "degraded"}))
     out = pd.DataFrame(cols).dropna(subset=["close"])
-    out["ts"] = out.index.astype("int64") // 1_000_000
+    # as_unit("ns") OBLIGATOIRE : pandas 3 garde l'unite ms de to_datetime
+    # (unit="ms") jusque dans l'index resample — astype("int64") rend alors des
+    # ms, et //1e6 des MEGA-secondes, soit 1970-01-01 pour toute la chaine
+    # (ferie fantome "New Year's Day", VPS 08/09). Meme piege que le FIX us/ns
+    # de replay_enricher_batch. Local pandas 2 = ns, le bug etait invisible.
+    out["ts"] = out.index.as_unit("ns").astype("int64") // 1_000_000
     out["jour"] = out.index.date
     out["barre_complete"] = out["minutes_reelles"] >= minutes
     # `window_version` se deduit du ts : elle qualifie les colonnes DUMPEES en
