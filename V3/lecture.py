@@ -148,10 +148,10 @@ def lire(df, i, sym="ES", live=None):
         "rollover": live.get("rollover"),
         # --- famille C : le marche est-il tradable ? -----------------------
         # vix_level == 0.0 est un DEFAUT DANS LE DOMAINE, pas une lecture : le
-        # C++ rend regime=1 quand meme. Cause mesuree le 08/09 au soir (et non
-        # « la nuit », hypothese du matin) : le chart 15 est MORT depuis le
-        # 04/09, cash compris — 100 % des barres a zero du 06 au 08/09.
-        # Un regime sans niveau est un trou. Voir INCIDENT_LOG 08/09.
+        # C++ rend regime=1 quand meme. Un regime sans niveau est un trou.
+        # DUREE CORRIGEE (audit 09/09) : la panne tient au MATIN du 08/09, pas
+        # « depuis le 04/09 » — en CASH, 0 zero les 01-04/09, 101/390 le 08.
+        # Nuit, dimanche et ferie pris pour une panne. INCIDENT_LOG 09/09.
         "vix_regime": (val(df, "vix_regime", i)
                        if (val(df, "vix_level", i) or 0.0) > 0.0 else None),
         "dist_hvl_atr": _dist_hvl_atr(df, i),

@@ -33,6 +33,15 @@
 
 ---
 
+### 2026-09-09 — [COMMENT_FALSE] — « le chart VIX est mort depuis le 04/09 » : ma propre mesure incluait la NUIT, les week-ends et un FERIE
+
+**Constat** : l'entree du 08/09 (ci-dessous) annonce « MORT depuis le 04/09, cash compris — 100 % des barres a zero du 06 au 08/09 ». L'audit du 09/09 mesure le CASH seul (NQ) : **0 zero les 01, 02, 03 et 04/09** ; 101/390 le 08/09 ; 100 % le 07/09 — qui est **Labor Day**, marche US ferme. Les 261 zeros du 04/09 que j'avais comptes sont des barres de NUIT (le CBOE ne cote pas), le 06/09 est un **dimanche**. La panne reelle tient au MATIN du 08/09 (bascule mesuree vers 15:10 UTC, reparation de Jackson a 15:15).
+**Cause racine** : j'ai mesure sur TOUTES les barres du fichier au lieu de la session cash — le seul perimetre ou « le VIX doit coter » est vrai. Trois periodes de fermeture normale (nuit, dimanche, ferie) sont devenues « quatre jours de panne ». Le CLAUDE.md prescrit exactement l'inverse : « ne jamais qualifier un ecart de bug avant de l'avoir mesure sur les deux instruments ET sur l'ensemble de la periode », et « avant de declarer une anomalie, chercher la seconde convention ». La seconde convention etait la : jour calendaire vs session.
+**Ce qui reste VRAI de l'entree du 08/09** : les niveaux MenthorQ du VIX etaient bien absents (les 8 `dist_vix_*` a null, prouve dans `vix_levels/.../vix.jsonl`), Jackson a bien du recharger, et le prix est bien revenu a 15:15. Seules la DUREE et la CAUSE etaient fausses.
+**Lecon** : une fenetre de mesure est une hypothese. « 100 % des barres a zero » ne veut rien dire tant qu'on n'a pas dit DE QUELLES barres on parle — et pour une donnee de marche, le defaut doit etre la session, jamais le fichier.
+**Trigger prevention** : avant d'ecrire « mort depuis le JJ/MM », refaire la mesure avec `is_cash_session` et verifier le calendrier (`calendrier.est_ferie`) sur chaque jour cite. Un jour ferie ou un dimanche dans une serie de « panne » invalide la serie.
+**Reviewed** : agent audit calculs (finding 8) / self (mesure de confirmation, cash vs toutes barres)
+
 ### 2026-09-08 — [DEPLOY_UNSAFE + VALIDATION_MISS] — pandas 3 sur le VPS : la chaine V3 vivait au 1er janvier 1970 (ferie fantome « New Year's Day »)
 
 **Constat** : premier jour de la chaine V3 sur le VPS — 44 battements du coureur live bloques par `L0_FERIE_CME` un mardi ordinaire. Reproduction : `charger_jour` -> `agreger` rend `ts=1788883` (MEGA-secondes) sur le VPS, `ts=1788883200000` (ms) en local. Cause : VPS = pandas 3.0.1 (installe en mars), local = 2.3.3. pandas 3 PRESERVE l'unite ms de `to_datetime(unit="ms")` jusque dans l'index du resample ; `astype("int64") // 1_000_000` — juste sur un index ns — rend alors des mega-secondes -> `_jour` = 1970-01-01 -> `est_ferie` = « New Year's Day » -> tout bloque. `L0_DATA_PERIMEE` (38 blocks) et `window_version` faussees par le meme ts.
