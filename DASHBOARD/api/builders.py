@@ -19,7 +19,13 @@ except ImportError:
 # Logger V2 (R2 code-reviewer BUG #4 08/06) — emit CONSEIL_MTF_PERFECT_DOWNWEIGHT
 # pour audit J+7 impact suppression double-comptage MTF 4/4.
 try:
-    from CORE import logging_v2 as _v2log
+    # FIX 08/09 (audit) : `logging_v2` n'a PAS de emit() module-level —
+    # l'ancien import rendait chaque `_v2log.emit(...)` AttributeError,
+    # avalee par les try/except : ZERO emission depuis le 08/06 (3 mois),
+    # CONSEIL_MTF_PERFECT_DOWNWEIGHT et BIAS_NEUTRAL_ZONE_FALLBACK n'ont
+    # jamais ecrit une ligne. Il faut un Logger via get_logger().
+    from CORE.logging_v2 import get_logger as _get_logger
+    _v2log = _get_logger("dashboard_builders", process="dashboard")
 except Exception:
     _v2log = None
 from DASHBOARD.api.readers import (

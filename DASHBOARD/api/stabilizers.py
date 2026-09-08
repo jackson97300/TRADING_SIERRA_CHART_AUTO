@@ -19,8 +19,12 @@ from DASHBOARD.api.data_reader import _calc_confidence, dist_to_price, get_field
 # Logger V2 (R5 code-reviewer BUG #1 08/06) — emit BIAS_NEUTRAL_ZONE_FALLBACK
 # si MTF boost ne suffit pas a basculer bias amont (audit J+7 impact fix).
 # Fail-safe : si import echoue, fallback no-op.
+# FIX 08/09 (audit) : le module n'a pas de emit() module-level — l'ancien
+# import rendait chaque _v2log.emit() AttributeError avalee : ZERO emission
+# en 3 mois. Un Logger via get_logger(), comme partout ailleurs.
 try:
-    from CORE import logging_v2 as _v2log
+    from CORE.logging_v2 import get_logger as _get_logger
+    _v2log = _get_logger("dashboard_stabilizers", process="dashboard")
 except Exception:
     _v2log = None
 
