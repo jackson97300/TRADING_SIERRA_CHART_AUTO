@@ -138,7 +138,12 @@ def _ligne_setup_jour(setup, sym, jour, df, r, marges, motif, ferie):
     lieu = r.get("_lieu") if r else None
     n_lieu = int(np.asarray(lieu.fillna(False), dtype=bool).sum()) if lieu is not None else 0
     reagit = (r["short"][0] | r["long"][0]) if r and r.get("short") else None
-    muet = motif or (r or {}).get("_muet_jour")
+    # L'AVEUGLEMENT L'EMPORTE sur le motif generique (audit 09/09) : ecrire
+    # « marge_non_exposee » sur un setup qui rend `colonne_absente` cache la
+    # vraie raison — et 60 jours de dénominateur diraient « le marche n'a rien
+    # offert » la ou le frame n'avait pas les colonnes. Le pire des motifs
+    # gagne, jamais le plus commode.
+    muet = (r or {}).get("_muet_jour") or motif
     if not muet and not marges:
         muet = ("lieu_jamais_produit" if n_lieu == 0 else
                 "hors_date_ombre" if jour < ACTIFS.get(setup, "99999999")
@@ -180,6 +185,10 @@ def courir(jour):
                                                 "hors_date_ombre", ferie))
                 continue
             r = SETUPS[setup](df, sym, seuils)
+            # DIV_DELTA lit des colonnes RECALCULEES (cvd_sess_r, atr_ref…) que
+            # `charger_jour` nu ne porte pas : sur ce frame il rend
+            # `colonne_absente`, et c'est la VERITE a journaliser. Sa marge
+            # exige le frame injecte — c'est marges_niveaux.py, pas ici.
             m, motif = ((_marges_eod(r, df, sym, seuils, jour))
                         if setup == "C2_EOD" else ([], "marge_non_exposee"))
             if motif and motif.startswith("signature_inattendue"):
