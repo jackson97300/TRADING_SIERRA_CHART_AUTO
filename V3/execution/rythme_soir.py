@@ -4,9 +4,18 @@
 
 Trois étapes, dans l'ordre, chacune sur la MÊME journée :
 
-    1. `campagne.py`   le rejeu officiel — LA mesure du jour (strict=False)
-    2. `pourquoi.py`   pourquoi zéro trade : les gates, motif par motif
-    3. `reactions.py`  ce que le marché a fait aux 17 niveaux du registre
+    1. `campagne.py`         le rejeu officiel — LA mesure (strict=False)
+    2. `pourquoi.py`         où chaque signal s'est arrêté, les TROIS journaux
+    3. `reactions.py`        ce que le marché a fait aux 17 niveaux
+    4. `barrieres_du_jour`   les trois SL candidats par signal (B-ATR/NIV/NAT)
+
+LIMITE CONNUE DE L'ÉTAPE 4, mesurée le 08/09 : `barrieres_du_jour` ne voit
+que les signaux de `signaux_l3` — LES QUATRE gelées. Les seize ED et les C2
+actifs n'ont donc AUCUNE barrière, alors que ce sont eux qui tirent (9
+signaux le jour 1, tous hors des quatre). Le branchement est nécessaire
+(règle 15 : un module écrit mais pas couru n'existe pas) et INSUFFISANT :
+tant que les barrières ne couvrent pas les ombres, la campagne journalise
+des entrées sans sorties. Étendre = un chantier, pas un branchement.
 
 Le journal MANUEL de Jackson reste à écrire à la main — c'est le seul
 maillon que la machine ne remplace pas (METHODE §6).
@@ -61,9 +70,11 @@ def main():
         return 2
     args = [jour] if jour else []
     codes = [
-        _etape("1/3 campagne (LA mesure)", ["V3/campagne.py", *args]),
-        _etape("2/3 pourquoi (les gates)", ["V3/pourquoi.py", *args]),
-        _etape("3/3 reactions (les niveaux)", ["V3/reactions.py", *args]),
+        _etape("1/4 campagne (LA mesure)", ["V3/campagne.py", *args]),
+        _etape("2/4 pourquoi (les trois journaux)", ["V3/pourquoi.py", *args]),
+        _etape("3/4 reactions (les niveaux)", ["V3/reactions.py", *args]),
+        _etape("4/4 barrieres (les SL candidats)",
+               ["V3/layers/L5_risque/barrieres_du_jour.py", *args]),
     ]
     print("\n--- fait. Reste le JOURNAL MANUEL (METHODE 6) — la machine ne "
           "l'ecrit pas.")
