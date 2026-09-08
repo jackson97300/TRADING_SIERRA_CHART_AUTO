@@ -53,8 +53,12 @@ def synchroniser(sym, jour, hote, chemin_donnees):
         hote, chemin_donnees, sym, jour, sym)
     dst = os.path.join("DATA", "live_enriched", "sierra", sym) + os.sep
     try:
+        # CREATE_NO_WINDOW : lance detache (sans console), chaque scp
+        # ouvrait SA fenetre noire au-dessus des graphiques — une par
+        # minute et par instrument (vu par Jackson le 08/09 en seance).
         r = subprocess.run(["scp", "-q", src, dst],
-                           capture_output=True, timeout=120)
+                           capture_output=True, timeout=120,
+                           creationflags=0x08000000)
     except (subprocess.TimeoutExpired, OSError) as e:
         print("  sync %s : %s" % (sym, type(e).__name__))
         return False

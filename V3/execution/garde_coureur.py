@@ -59,7 +59,8 @@ def tuer_coureurs():
            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
     try:
         subprocess.run(["powershell", "-NoProfile", "-Command", cmd],
-                       capture_output=True, timeout=60)
+                       capture_output=True, timeout=60,
+                       creationflags=0x08000000)   # jamais de fenetre
     except (subprocess.TimeoutExpired, OSError) as e:
         print("kill : %s (la relance continue)" % type(e).__name__)
 
