@@ -44,6 +44,18 @@ pas un rasoir**. Si la formule est cassée, la couche l'est : lecture
 SÉPARÉE ES/NQ au jour 61, et `finish_r` recalculé depuis OHLC est la
 première ligne de `NEXT_CYCLE.md`.
 
+**LIMITATION GELÉE N° 2 (audit Fable 08/09, mesurée le jour même)** : les
+quatre lisent `seuil_ticks(atr_barre)` et `atr_barre` (rolling 14,
+min_periods = 7) est **NaN sur 100 % des barres 9h30-11h00** (300/300 sur
+le lot) → **AUCUN lieu n'est possible pendant l'IB et la première heure**.
+Vérifié sur 52 jours × 2 instruments : **0 signal des quatre avant 11h00,
+58 après** (`rapports/trou_atr_les_quatre_20260908.md`). La campagne gelée
+est donc AVEUGLE là où la session teste PDH/VAH — c'est un défaut de la
+FEATURE de normalisation, pas des setups. Rien ne change au gelé ; la
+lecture du jour 61 le sait (LECTURE_JOUR_61 règle 11) ; le cycle 2 lit
+`atr_ref` (= `atr_barre`, sinon ATR de la VEILLE — la solution L1,
+`NEXT_CYCLE.md`).
+
 ---
 
 ## H3-VPOC — rejet à l'extrême de la VA courante, cible VPOC

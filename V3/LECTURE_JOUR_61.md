@@ -43,6 +43,28 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     instrument sur 60 jours, et L1/L4/F23 se mesurent SUR ces signaux. Une
     lecture sous-puissante n'est pas une surprise, c'est la réalité de
     l'ombre — écrite ici pour n'être découverte par personne le jour 61.
+11. **Les quatre n'ont JAMAIS été testées avant 11h00 ET** (mesure 08/09,
+    `rapports/trou_atr_les_quatre` : 0 signal sur 52 j × 2, 300/300 barres
+    `atr_barre` NaN 9h30-11h00 — min_periods = 7). La sous-population
+    « avant 11h00 » de la règle 1 est **VIDE PAR CONSTRUCTION**, pas par le
+    marché : toute phrase du type « la stratégie ne marche pas le matin »
+    est INTERDITE au jour 61 — elle n'y a pas été essayée. L'IB et la
+    première heure sont un angle mort ASSUMÉ de la campagne gelée ; le
+    cycle 2 lit `atr_ref` (ATR-veille en secours, la solution L1).
+12. **L4 se lit PAR FAMILLE de déclencheur** (audit Fable 08/09) : ses vetos
+    sont écrits pour une CONTINUATION (« personne n'achète » = danger) ;
+    sur un FADE, « personne n'achète » au niveau est la raison même du
+    trade. Indice mesuré (bruit, N = 23, mais le signe gêne) : H3-ES à
+    k = 2, retenus −0,162 / vetoés +0,251 — L4 fermait les GAGNANTS. Un
+    verdict L4 global qui mélange fades et continuations est interdit. Et
+    **V5 n'a jamais été mesuré** (seuils null, 100 % trous) : le jour 61
+    dit « quatre vetos mesurés, un non mesurable », jamais « cinq vetos ».
+13. **C2_EOD porte DEUX verdicts pré-enregistrés, jamais un troisième**
+    (arbitrage Fable 08/09) : EOD-pur — le papier Baltussen, side =
+    `side_pur`, TOUS les jours, N ≈ 60 — et EOD-r_min — le filtre |rend_r|
+    ≥ p25, N ≈ 45. Les deux colonnes sont dans chaque ligne du journal
+    (`side_pur`, `rend_pts`, `rendement_r`) ; si un seul des deux survit,
+    la conclusion porte sur le FILTRE, pas sur l'effet.
 
 ## Ce que le jour 61 NE fait pas
 
