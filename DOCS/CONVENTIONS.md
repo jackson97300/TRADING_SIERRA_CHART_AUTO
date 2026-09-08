@@ -244,6 +244,8 @@ justifie le recalcul plutot que l'abandon.
 | `bar_body_ticks`, `bar_body_pct` | signes, pas absolus | renommer `bar_body_signed_*` |
 | `delta_day` | alias de `cvd_day` | hors noyau |
 | `cvd_session` | alias de `ctx_cvd_session`, repli `cvd_day` | hors noyau |
+| `finish_delta_pct` (15 min) | la DERNIERE MINUTE de la fenetre, pas la barre agregee (VALIDATION_MISS 07/09) | `finish_r` = (close-low)/(high-low) de la barre AGREGEE (`recalc.finish`) — pour tout ce qui n'est PAS gele ; les quatre gelees restent dessus, lecture jour 61 |
+| `gamma_block_*` (seuil) | REPRODUIT (murs A + atr, 0 ecart / 5 275 barres) mais INCOHERENT entre instruments : `clamp(0,5 x ATR-jour, [10, 80]) ticks` = 0,5 ATR-15m sur ES, 0,2 sur NQ (le clamp 80 ticks mord) — reproduit ≠ coherent (audit Fable 08/09) | lecture PAR INSTRUMENT au jour 61 ; re-poser en ATR-15m au cycle 2 ; la porte reste observee jusqu'a la ligne de Jackson |
 
 Signes inverses verifies a 0,0 % de conformite sur ES **et** NQ, 75 jours filtres
 `stable`. Les variantes en ticks (`dist_ovn_*`, `dist_sess_*`, `dist_ib_*`) sont

@@ -64,6 +64,14 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
   sur `minutes_et`, parité 0/271 940 barres réelles — audit Fable §2).
   RÉSIDUEL côté recherche (surveillance_l6, classer_colonnes, test_ctx,
   sync_vps), deadline 31/10 — A_FAIRE pt 19.
+- **Audit Fable 08/09 : EXÉCUTÉ pts 1-5 le jour même** — la campagne gelée
+  est AVEUGLE avant 11h00 (mesuré : 0 signal / 52 j × 2, atr NaN 300/300 —
+  SPEC limitation n° 2, LECTURE règles 11-13, phrase « ça ne marche pas le
+  matin » INTERDITE) ; dette DST L0 fermée ; `atr_ref` généralisé (DIV v2
+  ×4 lieux) ; EOD deux verdicts (`side_pur`/`rend_pts`, `close_1545`) ;
+  80PCT règle d'ouverture journalisée. RESTE de l'audit : **B-BOUEE +
+  branchement `barrieres_du_jour` au 21:01** (pt 6 — avec la mesure 57 j
+  des barrières du matin), POOR v2 (après F23 hors quarantaine).
 - **BLOQUEUR JACKSON** : 3 webhooks Discord actifs dans le dépôt principal
   public ; 75+ commits locaux attendent. Troisième jour. Dix minutes.
 

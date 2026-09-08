@@ -214,18 +214,23 @@ pour L4. Correction : avec la dette C++/pipeline groupee (point 6 de la nuit).
 - S4 : FAIT le 08/09 — test ACTIFS ⊆ LES_C2 + 8 cas par setup actif
   (test_ombre_c2.py, filtrage PAR SETUP), livre AVEC l'activation de C2_EOD.
 
-## 20. C2_POOR — REDESIGN J+2 (brief Fable, memoire d'episode)
-La v1 est morte par construction (0 lieu / 52 j x 2, rapport
-lieu_poor_20260908) : le flag C++ est un detecteur ROULANT 60 min, le
-retour vers le niveau l'eteint avant la cloture de fenetre. Pre-cablage
-conserve (fonction + 8 cas verts + rvol_min mesure + portage agreger).
-Le brief J+2 doit : (a) definir la MEMOIRE D'EPISODE (un poor RESTE poor
-jusqu'a reparation/invalidation — Dalton) ; (b) ecarter PAR MESURE
-l'option portage `.max()` de fenetre ; (c) trancher le NaN d'episode
-(tenir ou clore). NOTE jour 61 : dans c2_div_delta, `niveau_prix` peut
-etre ecrase si les deux lieux tombent sur la MEME barre (review POOR —
-meme motif corrige dans c2_poor via poor_prix_h/b ; sur DIV le cas ne
-touche que des lignes muettes de barre 0, lecture avec precaution).
+## 20. C2_POOR v2 — ARBITRE par Fable (audit 08/09, §5C) : fiche F23, pas un flag
+La v1 est morte par construction (0 lieu / 52 j x 2, rapport lieu_poor).
+Design ARBITRE — une MEMOIRE D'EPISODE dans F23 : un *poor high* = le plus
+haut de session touche a <= 1 tick par **>= 2 barres 15 min** sans etre
+depasse (l'absence d'exces de Dalton : un sommet PLAT, pas une queue). Il
+NAIT quand la 2e barre le touche, porte `prix_poor` FIGE, PERSISTE jusqu'a
+la reparation (une cloture au-dela de prix_poor + 1 tick) ou l'extinction
+(fin de session). Fiche F23 de forme `poor`, avec `n_tests` et
+`issue = repare | eteint`. Le setup v2 LIT la fiche : lieu = retour a
+<= P10 (sur atr_ref) de prix_poor VIVANT ; reaction = cloture au-dela avec
+rvol_r >= p50. MESURE D'ACTIVATION d'abord, comme v1 ; attendu N ~ 10-15.
+Le brief doit aussi ecarter PAR MESURE l'option portage `.max()` et
+trancher le NaN d'episode. **ORDRE Fable §6.8 : apres F23 hors
+quarantaine, PAS avant.** Pre-cablage conserve (8 cas verts, rvol_min
+mesure, portage agreger). NOTE jour 61 : dans c2_div_delta, `niveau_prix`
+peut etre ecrase si les deux lieux tombent sur la MEME barre (ne touche
+que des muets de barre 0 — lecture avec precaution).
 
 ## 19. DETTE est_cash DST — FERMEE pour L0 le 08/09 ; RESIDUEL recherche 31/10
 FAIT (audit Fable §2, le jour meme) : `est_cash` + `initial_balance` sur

@@ -51,6 +51,16 @@ figée à l'entrée (DECISIONS 07/09) ; cycle 2 : figer AUSSI le niveau du lieu
 au moment du signal, comme F23 fige ses niveaux, et lire par heure (la VA de
 10h00 a deux barres de vie ; celle de 14h en a dix-huit).
 
+## 5 bis. Les quatre sur `atr_ref` — boucher le trou 9h30-11h00 (audit 08/09)
+
+`atr_barre` (min_periods = 7) est NaN sur 100 % des barres 9h30-11h00 :
+ZERO signal des quatre avant 11h00 sur 52 j x 2 (rapport
+trou_atr_les_quatre) — la campagne gelee est aveugle pendant l'IB, la ou
+la session teste PDH/VAH. Le cycle 2 lit `atr_ref` (= atr_barre, sinon
+la MEDIANE de l'ATR de la VEILLE cash — `recalc.atr_veille_15`, sans
+fuite, la solution L1). Deja fait pour les setups non geles : DIV_DELTA
+v2 (lieux x4,2 ES / x3 NQ a P10 constant). `atr_source` se journalise.
+
 ## 6. Confirmations positives, footprint, L4 en sortie
 
 Reportés de la SPEC L4 §10, inchangés : modificateur de taille après 200
