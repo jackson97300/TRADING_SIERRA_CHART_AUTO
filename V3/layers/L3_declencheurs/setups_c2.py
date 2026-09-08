@@ -55,14 +55,12 @@ def _figes(df, cols):
 def c2_80pct(df, sym, s):
     """Règle des 80 % (Dalton) — brief §1, définitions F23.
 
-    Régime B5 : l'ouverture cash HORS de la VA veille (recalculé depuis
-    l'open de la première barre cash vs les niveaux reconstruits — jamais le
-    flag C++ `rule_80pct`). Lieu ET acceptation sur le MÊME prédicat : la VA
-    reconstruite figée (S1 de la review — le flag C++ `inside_prev_va` et la
-    reconstruction divergeaient d'un tick, fragmentaient l'épisode et
-    gonflaient N ; unifié provenance A). Réaction : DEUX clôtures 15 min
-    consécutives dans la VA. Side : vers le bord opposé (ouverture
-    au-dessus → SHORT vers VAL ; miroir)."""
+    Régime B5 : l'ouverture cash HORS de la VA veille (recalculée — jamais
+    le flag C++ `rule_80pct`). Lieu ET acceptation sur le MÊME prédicat :
+    la VA reconstruite figée (S1 : le flag C++ `inside_prev_va` divergeait
+    d'un tick et fragmentait l'épisode ; unifié provenance A). Réaction :
+    DEUX clôtures 15 min consécutives dans la VA. Side : vers le bord
+    opposé (ouverture au-dessus → SHORT vers VAL ; miroir)."""
     close = pd.to_numeric(df["close"], errors="coerce")
     vah = close + pd.to_numeric(df.get("dist_prev_vah"), errors="coerce") * TICK
     val = close + pd.to_numeric(df.get("dist_prev_val"), errors="coerce") * TICK
@@ -88,11 +86,11 @@ def c2_80pct(df, sym, s):
 def c2_eod(df, sym, s):
     """Momentum de fin de journée — brief §2 (Baltussen et al., JFE 2021).
 
-    Lieu : la barre 15h15-15h30 ET clôturée. `recalc.minutes_et` gère
-    EDT/EST ICI mais PAS de bout en bout (review 08/09, R1) : `est_cash`
-    amont est figé EDT et couperait la barre 20:15 UTC dès le 2/11 — motif
-    faux chaque jour, open glissé à 8h30 ET, N plafonné sous 40. DEADLINE
-    DURE 31/10 : `est_cash` sur `minutes_et` (A_FAIRE pt 19). Réaction :
+    Lieu : la barre 15h15-15h30 ET clôturée — DST géré DE BOUT EN BOUT
+    depuis le 08/09 : `est_cash` amont est passé sur `minutes_et` (audit
+    Fable §2, parité 0/271 940 barres — la dette qui aurait coupé la barre
+    dès le 2/11 est FERMÉE ; résiduel côté recherche : A_FAIRE pt 19).
+    Réaction :
     |rendement_r| ≥ r_min, où rendement_r = (close(15h30) − open(9h30)) /
     range cash du même instant — provenance A pure ; l'écart au « ATR-jour »
     du brief est documenté dans `mesure_c2.py` et `seuils_c2.yaml`, points
@@ -131,23 +129,21 @@ def c2_eod(df, sym, s):
 def c2_div_delta(df, sym, s):
     """Divergence delta au niveau — brief §6, famille flux, sans régime.
 
-    Lieu : NOUVEAU plus haut de session à ≤ P10 (planchers SPEC L3) d'un
-    niveau figé (prev_vah, pdh, mq_call — miroir bas : prev_val, pdl,
-    mq_put). Réaction : `cvd_sess_r` au nouvel extrême < (resp. >) sa valeur
-    au PRÉCÉDENT extrême de session, ET clôture du bon côté du niveau.
+    Lieu : NOUVEAU plus haut de session à ≤ P10 d'un niveau figé (prev_vah,
+    pdh, mq_call — miroir bas : prev_val, pdl, mq_put). Réaction :
+    `cvd_sess_r` au nouvel extrême < (resp. >) sa valeur au PRÉCÉDENT
+    extrême de session, ET clôture du bon côté du niveau.
     GRAIN 15 MIN ÉCRIT : CVD lu à la CLÔTURE de la barre de l'extrême, pas
     au tick — la limitation des seize. Cible : `vwap_rth_r` de la barre (Série,
     échantillonnée au signal). NaN (cvd, atr, dist) = jamais un signal.
     Anti-fuite : extrêmes courants et cumuls, rien après t.
 
-    TROU DE CHAUFFE ÉCRIT (review 08/09) : `atr_barre` est NaN les 6
-    premières barres (min_periods=7) → AUCUN lieu possible 9h30-11h00 ET,
-    là où la session teste PDH/VAH — 58 % des nouveaux extrêmes du lot y
-    tombent, la cause PREMIÈRE du N mesuré (~6/60 j, rapport
-    lieu_div_delta). Arbitrage Fable ouvert : ATR de la VEILLE (la solution
-    L1 du 07/09) — une v2 aurait sa propre date d'ombre, jamais rétroactive.
-    Niveaux MQ figés au snapshot du MATIN toute la journée (le §9 prévoit la
-    mise à jour de midi — limitation v1 écrite)."""
+    V2 (08/09, arbitrage Fable B, adopté AVANT le premier rejeu officiel —
+    aucune ligne v1 journalisée, pas de rétroactivité) : le seuil lit
+    `atr_ref` (atr_barre, sinon ATR-VEILLE) — le trou 9h30-11h00 bouché
+    pour ce setup NON GELÉ, `atr_source` journalisé ; sans `atr_ref`
+    (frames nus), repli atr_barre, le trou revient — voulu. Niveaux MQ
+    figés au snapshot du MATIN (le §9 prévoit midi — limitation écrite)."""
     vide = pd.Series(False, index=df.index)
     muet = {"short": (vide, -1), "long": (vide, +1), "_lieu": vide,
             "_cibles": {}}
@@ -157,7 +153,10 @@ def c2_div_delta(df, sym, s):
         return dict(muet, _muet_jour="colonne_absente")
     h, l_ = cols["high"].to_numpy(float), cols["low"].to_numpy(float)
     c, cvd = cols["close"].to_numpy(float), cols["cvd_sess_r"].to_numpy(float)
-    p10 = np.asarray(HYP.seuil_ticks(cols["atr_barre"], "P10"), float)
+    base_atr = _col(df, "atr_ref")
+    if base_atr is None:
+        base_atr = cols["atr_barre"]
+    p10 = np.asarray(HYP.seuil_ticks(base_atr, "P10"), float)
     nv_h = _figes(df, ("dist_prev_vah", "dist_pdh", "dist_mq_call"))
     nv_b = _figes(df, ("dist_prev_val", "dist_pdl", "dist_mq_put"))
     if not nv_h and not nv_b:        # un jour sans niveaux doit se VOIR (R2)
@@ -189,24 +188,25 @@ def c2_div_delta(df, sym, s):
                     clong[i] = True
             j_b = i
     vwap = df["vwap_rth_r"] if "vwap_rth_r" in df.columns else None
+    extra = {"niveau_prix": pd.Series(nv_px, index=df.index),
+             "dist_niveau_ticks": pd.Series(d_tk, index=df.index),
+             "cvd_prec": pd.Series(cvd_prec, index=df.index)}
+    if "atr_source" in df.columns:      # d'ou vient le seuil (v2, jour 61)
+        extra["atr_source"] = df["atr_source"]
     return {"short": (pd.Series(cshort, index=df.index), -1),
             "long": (pd.Series(clong, index=df.index), +1),
             "_lieu": pd.Series(lieu, index=df.index),
             "_cibles": {} if vwap is None else {-1: vwap, +1: vwap},
-            "_extra": {"niveau_prix": pd.Series(nv_px, index=df.index),
-                       "dist_niveau_ticks": pd.Series(d_tk, index=df.index),
-                       "cvd_prec": pd.Series(cvd_prec, index=df.index)}}
+            "_extra": extra}
 
 
 def c2_poor(df, sym, s):
     """Réparation de poor high/low — brief §5. PRÉ-CÂBLÉ, PAS ACTIF :
-    la mesure d'activation (rapport lieu_poor_20260908) rend 0 lieu sur
-    52 j × 2 instruments — l'état 15 min (dernière minute de fenêtre) ne
-    persiste JAMAIS les 3 barres exigées (0 épisode ≥ 4 barres sur 5 j × 2),
-    parce que le flag C++ est un détecteur ROULANT 60 min, pas une mémoire
-    d'épisode, et que le retour vers le niveau l'éteint avant la clôture de
-    la fenêtre. Redesign J+2 : mémoire d'épisode (un poor RESTE poor
-    jusqu'à réparation ou invalidation — la sémantique Dalton), brief Fable.
+    0 lieu sur 52 j × 2 (rapport lieu_poor) — l'état 15 min ne persiste
+    jamais les 3 barres exigées : flag ROULANT 60 min, pas une mémoire
+    d'épisode, et le retour vers le niveau l'éteint avant la clôture de
+    fenêtre. Redesign J+2 : mémoire d'épisode en fiche F23 (un poor RESTE
+    poor jusqu'à réparation/invalidation — Dalton), brief Fable.
 
     L'état `ctx_poor_high/low` vient du producteur 1 min (REPRODUIT
     mismatch=0, test_ctx), porté à l'agrégat par sa dernière minute de
@@ -218,7 +218,7 @@ def c2_poor(df, sym, s):
     AU-DELÀ du prix du poor (la réparation) avec rvol_r ≥ rvol_min (p50
     mesuré). Side : LONG à travers le poor high, SHORT miroir. Cible : le
     prochain niveau figé au-delà (pdh/prev_vah/mq_call, miroir bas) — NaN
-    si aucun. Même trou de chauffe ATR que DIV (p10 NaN barres 0-5, écrit).
+    si aucun. Trou de chauffe comme DIV v1 (atr_barre ; atr_ref au redesign).
     L'évaluation de la barre i lit l'état d'AVANT i (le repair fait souvent
     un nouvel extrême : re-figer d'abord tuerait chaque signal). NaN =
     jamais un signal — et un flag NaN CLÔT l'épisode (fillna(0),

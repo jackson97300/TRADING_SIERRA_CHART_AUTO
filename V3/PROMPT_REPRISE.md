@@ -60,9 +60,10 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
   par construction (0 lieu / 52 j × 2, le flag roulant s'éteint au retour) —
   redesign J+2 avec brief Fable, rapport `lieu_poor_20260908`. Chaque bloc :
   review agent GO-AVEC-RESERVES, réserves appliquées, miroir publié.
-- **DETTE DURE, deadline 31/10** : `est_cash` figé EDT — dès le 2/11 la
-  barre EOD serait coupée en amont et l'open cash lu à 8h30 ET (A_FAIRE
-  pt 19). Tâche séparée cross-module, review + parité obligatoires.
+- **Dette DST : FERMÉE pour L0 le 08/09** (`est_cash` + `initial_balance`
+  sur `minutes_et`, parité 0/271 940 barres réelles — audit Fable §2).
+  RÉSIDUEL côté recherche (surveillance_l6, classer_colonnes, test_ctx,
+  sync_vps), deadline 31/10 — A_FAIRE pt 19.
 - **BLOQUEUR JACKSON** : 3 webhooks Discord actifs dans le dépôt principal
   public ; 75+ commits locaux attendent. Troisième jour. Dix minutes.
 

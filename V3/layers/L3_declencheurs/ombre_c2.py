@@ -58,7 +58,7 @@ CHEMIN_SEUILS = os.path.join(os.path.dirname(__file__), "seuils_c2.yaml")
 COLONNES_C2 = ("ts", "jour", "open", "high", "low", "close",
                "dist_prev_vah", "dist_prev_val", "dist_pdh", "dist_pdl",
                "dist_mq_call", "dist_mq_put", "vwap_rth_r",
-               "cvd_sess_r", "atr_barre",
+               "cvd_sess_r", "atr_barre", "atr_ref", "atr_source",
                "ctx_poor_high", "ctx_poor_low", "rvol_r")
 
 # Le registre COMPLET du brief (les familles #3 et #12 comptent pour 2 et 3
@@ -103,7 +103,13 @@ def _extras(r, i):
     out = {}
     for k, serie in (r.get("_extra") or {}).items():
         v = serie.iloc[i]
-        out[k] = None if pd.isna(v) else round(float(v), 4)
+        if pd.isna(v):
+            out[k] = None
+        else:
+            try:
+                out[k] = round(float(v), 4)
+            except (TypeError, ValueError):   # atr_source et autres textes
+                out[k] = str(v)
     return out
 
 

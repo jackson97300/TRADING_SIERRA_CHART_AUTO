@@ -20,7 +20,13 @@ try:
 except ImportError:  # lance depuis CORE/
     from constants import get_tick_size
 
-# Cash : 9h30-16h00 ET. En UTC : 13:30-20:00 (EDT) / 14:30-21:00 (EST).
+# Cash : 9h30-16h00 HEURE DE L'EST — en minutes ET (`minutes_et`), plus
+# jamais en UTC fige : la fenetre UTC bouge au changement d'heure.
+CASH_DEBUT_MIN_ET = 9 * 60 + 30
+CASH_FIN_MIN_ET = 16 * 60
+# Les constantes UTC-EDT restent pour DEUX scripts de RECHERCHE qui font
+# leur arithmetique en UTC (surveillance_l6, classer_colonnes) — meme dette
+# DST, cote recherche : a migrer AVEC eux, pas silencieusement ici.
 CASH_DEBUT_MIN_EDT = 13 * 60 + 30
 CASH_FIN_MIN_EDT = 20 * 60
 BARRES_SESSION = 1380
@@ -58,13 +64,16 @@ def minutes_et(dt):
 
     Fenetre : aucune. Unite : minutes [0, 1440). Signe : sans objet.
 
-    Suit l'heure d'ete via `ouverture_sess_utc` (decalage 4 h EDT / 5 h EST) —
-    jamais de constante UTC en dur : la campagne traverse le 1er novembre, et
-    la barre « 15h15 ET » saute de 19:15 a 20:15 UTC ce jour-la. C'est la
-    meme dette DST que `est_cash` (CONVENTIONS §2), reglee ici a la source.
+    Suit l'heure d'ete (decalage 4 h EDT / 5 h EST via `_est_edt`) — jamais
+    de constante UTC en dur : la campagne traverse le 1er novembre, et la
+    barre « 15h15 ET » saute de 19:15 a 20:15 UTC ce jour-la. Depuis le
+    08/09 c'est LA base d'`est_cash` (la dette CONVENTIONS §2 est fermee a
+    la source) : vectorise par date unique, pas de boucle par barre.
     """
     d = pd.to_datetime(dt, utc=True)
-    dec = (ouverture_sess_utc(d) - 17) * 60
+    dates = pd.Series(d.dt.date, index=d.index)
+    dec = dates.map({x: (240 if _est_edt(pd.Timestamp(str(x), tz="UTC"))
+                         else 300) for x in dates.unique()})
     return (d.dt.hour * 60 + d.dt.minute - dec) % 1440
 
 
@@ -131,13 +140,16 @@ def session_sess(dt):
 def est_cash(dt):
     """Masque de la seance cash.
 
-    Fenetre : `_rth`, 9h30-16h00 ET (13:30-20:00 UTC en EDT).
-    Unite : booleen.
-    Signe : sans objet.
+    Fenetre : `_rth`, 9h30-16h00 ET — en minutes ET (`minutes_et`), EDT et
+    EST. La constante UTC figee (dette CONVENTIONS §2) ratait l'heure
+    d'hiver : des le 2/11 la barre 15h15 ET quittait la fenetre et 8h30 ET
+    y entrait — L0 elle-meme aurait deplace la session d'une heure. Fermee
+    le 08/09 (audit Fable §2 : dette L0, pas C2). Parite AVANT/APRES :
+    0 barre changee sur le lot (periode EDT) + annee synthetique complete.
+    Unite : booleen. Signe : sans objet.
     """
-    d = pd.to_datetime(dt, utc=True)
-    mn = d.dt.hour * 60 + d.dt.minute
-    return (mn >= CASH_DEBUT_MIN_EDT) & (mn < CASH_FIN_MIN_EDT)
+    mn = minutes_et(dt)
+    return (mn >= CASH_DEBUT_MIN_ET) & (mn < CASH_FIN_MIN_ET)
 
 
 def session_rth(dt):
@@ -235,8 +247,8 @@ def initial_balance(df, dt, minutes=60):
     Fige apres la fin de l'IB, diffuse jusqu'a la cloture cash.
     """
     d = pd.to_datetime(dt, utc=True)
-    mn = d.dt.hour * 60 + d.dt.minute
-    dans_ib = est_cash(dt) & (mn < CASH_DEBUT_MIN_EDT + minutes)
+    mn = minutes_et(dt)
+    dans_ib = est_cash(dt) & (mn < CASH_DEBUT_MIN_ET + minutes)
     jour = pd.Series(d.dt.date, index=df.index)
     h = pd.to_numeric(df["high"], errors="coerce").where(dans_ib)
     l = pd.to_numeric(df["low"], errors="coerce").where(dans_ib)
@@ -313,6 +325,48 @@ def cumul_delta(df, cle, col_delta="delta_bar"):
     """
     d = pd.to_numeric(df[col_delta], errors="coerce").fillna(0.0)
     return d.groupby(cle).cumsum()
+
+
+def atr_veille_15(df, dt, minutes=15):
+    """Mediane de l'ATR de barre agregee de la SESSION CASH PRECEDENTE.
+
+    Fenetre : la veille cash entiere. Unite : POINTS (echelle atr_barre).
+    Signe : sans objet.
+
+    LE SECOURS DU TROU DE CHAUFFE (audit Fable 08/09) : `atr_barre`
+    (rolling 14, min_periods 7) est NaN sur 100 % des barres 9h30-11h00 —
+    zero lieu en ATR possible pendant l'IB, 0 signal des quatre avant
+    11h00 sur 52 j x 2 (rapport trou_atr_les_quatre). La veille est
+    disponible des la barre 0, SANS FUITE : la valeur d'une date ne lit
+    que les barres 1 min de la date cash PRECEDENTE. C'est la solution
+    deja adoptee par L1 (DECISIONS 07/09 : « l'ATR de reference du biais
+    est celui de la VEILLE »), generalisee.
+
+    Prend le 1 min MULTI-JOURS (la chauffe), rend une Series indexee par
+    DATE cash : valeur a la date d = mediane de l'ATR agrege de la date
+    cash presente precedente. NaN pour la premiere date du frame.
+    """
+    d = pd.to_datetime(dt, utc=True)
+    cash = est_cash(d)
+    g = pd.DataFrame({
+        "j": pd.Series(d.dt.date, index=df.index).where(cash),
+        "b": pd.to_numeric(df["ts"], errors="coerce") // (minutes * 60_000),
+        "h": pd.to_numeric(df["high"], errors="coerce"),
+        "l": pd.to_numeric(df["low"], errors="coerce"),
+        "c": pd.to_numeric(df["close"], errors="coerce"),
+    }).dropna(subset=["j"])
+    if g.empty:
+        return pd.Series(dtype=float)
+    agg = (g.groupby(["j", "b"])
+            .agg(h=("h", "max"), l=("l", "min"), c=("c", "last"))
+            .reset_index().sort_values(["j", "b"]))
+    prev_c = agg.groupby("j")["c"].shift()
+    tr = pd.concat([agg["h"] - agg["l"], (agg["h"] - prev_c).abs(),
+                    (agg["l"] - prev_c).abs()], axis=1).max(axis=1)
+    atr = tr.groupby(agg["j"].values).transform(
+        lambda s: s.rolling(14, min_periods=7).mean())
+    med = atr.groupby(agg["j"].values).median().sort_index()
+    return med.shift(1)
 
 
 def rvol(df, dt, n_jours=20, col_vol="total_vol"):

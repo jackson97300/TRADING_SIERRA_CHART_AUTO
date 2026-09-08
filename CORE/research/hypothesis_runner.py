@@ -226,6 +226,11 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
     `vwap_slope_r` — pente de `vwap_rth_r` sur 4 barres agregees, en ATR
                 (`recalc.pente_vwap`, cle `jour` : jamais de pente entre deux
                 sessions ; NaN AU MOINS les 4 premieres barres — un trou).
+    `atr_ref` / `atr_veille` / `atr_source` — audit Fable 08/09 (arbitrage
+                B) : atr_barre si disponible, sinon la MEDIANE de l'ATR
+                agrege de la VEILLE cash (`recalc.atr_veille_15`, chauffe
+                multi-jours, sans fuite) — bouche le trou 9h30-11h00 pour
+                tout setup NON GELE. `atr_source` dit lequel a servi.
     """
     b = brut_1min.copy()
     b["dt"] = pd.to_datetime(b["ts"], unit="ms", utc=True)
@@ -261,6 +266,14 @@ def injecter_recalculs(brut_1min, cinq, minutes=None):
              else pd.Series(np.nan, index=out.index))
     out["vwap_slope_r"] = recalc.pente_vwap(out["vwap_rth_r"], atr_b, n=4,
                                             jours=out.get("jour"))
+    # atr_ref : le secours de la veille pour le trou 9h30-11h00 (non gele)
+    veille = recalc.atr_veille_15(b, b["dt"], minutes=int(minutes or MINUTES_BARRE))
+    out["atr_veille"] = (out["jour"].map(veille) if "jour" in out.columns
+                         else np.nan)
+    out["atr_ref"] = atr_b.fillna(out["atr_veille"])
+    out["atr_source"] = np.where(atr_b.notna(), "barre",
+                                 np.where(out["atr_ref"].notna(), "veille",
+                                          "aucun"))
     return out
 
 

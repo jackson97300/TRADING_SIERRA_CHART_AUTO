@@ -227,13 +227,16 @@ etre ecrase si les deux lieux tombent sur la MEME barre (review POOR —
 meme motif corrige dans c2_poor via poor_prix_h/b ; sur DIV le cas ne
 touche que des lignes muettes de barre 0, lecture avec precaution).
 
-## 19. DETTE est_cash DST — DEADLINE DURE 31/10 (review C2_EOD 08/09, R1)
-`recalc.est_cash` est fige EDT (13:30-20:00 UTC toute l'annee). Des le
-2/11 : la barre EOD 15h15 ET (20:15 UTC) est COUPEE par `charger_jour`
-avant d'atteindre les setups (motif `barre_eod_absente` FAUX chaque jour),
-l'open cash glisse a 8h30 ET (la definition de `rendement_r` casse), et le
-N de C2_EOD plafonne sous 40 — invalidation structurelle silencieuse.
-Fix : reecrire `est_cash` sur `minutes_et` (fenetre ET [570, 960)). Tache
-SEPAREE cross-module (les quatre officiels, ombre16, VWAP RTH, F23, IB
-lisent tous ce filtre) : review obligatoire + test de parite sur le lot
-AVANT/APRES (attendu : zero barre changee tant qu'on est en EDT).
+## 19. DETTE est_cash DST — FERMEE pour L0 le 08/09 ; RESIDUEL recherche 31/10
+FAIT (audit Fable §2, le jour meme) : `est_cash` + `initial_balance` sur
+`minutes_et` (fenetre ET [570, 960)), `minutes_et` vectorisee. Parite
+prouvee : annee synthetique 2026 — ecarts UNIQUEMENT en periode EST, aux
+bords de fenetre attendus ; lot reel — 0 difference sur 271 940 barres
+(152 fichiers). Le chemin de decision (charger_jour, coureur_live,
+campagne, VWAP RTH, IB) est corrige de bout en bout.
+**RESIDUEL, deadline 31/10** — les scripts de RECHERCHE qui font leur
+arithmetique en UTC directement : `surveillance_l6` (des le 2/11, chaque
+jour serait flagge « PANNE » — faux positif fail-loud), `classer_colonnes`
+(fallback 14:30 UTC), `test_ctx` (BOUNDARY_UTC_H = 22 en dur — ses deux
+jours de reference sont EDT, il ne casse pas, mais la constante ment en
+EST), `sync_vps` (note Globex). A migrer ENSEMBLE, meme famille.

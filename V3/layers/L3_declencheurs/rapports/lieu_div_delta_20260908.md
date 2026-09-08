@@ -38,7 +38,23 @@ La solution existe déjà dans le dépôt : **l'ATR de la VEILLE** (DECISIONS
 07/09 — adopté par L1 pour exactement ce problème, disponible dès la
 barre 0, sans fuite).
 
-## 4. Décision
+## 4. V2 mesurée (08/09, arbitrage Fable B appliqué — `atr_ref`)
+
+Même comptage, seuil sur `atr_ref` (atr_barre, sinon ATR-veille) :
+
+| | lieux v1 → v2 | signaux v1 → v2 |
+|---|---|---|
+| ES | 6 → **25** (×4,2) | 5 → **11** |
+| NQ | 7 → **21** (×3,0) | 5 → **9** |
+
+La prédiction de la review (« boucher le trou récupère ~20 lieux à P10
+constant ») est TENUE. Projection 60 jours : ~11-13 signaux/instrument —
+toujours sous N = 40 sur NQ seule (lecture probablement à 120 jours ou
+ES+NQ à 1,3 test), mais le double de v1, et la fenêtre 9h30-11h00 existe
+enfin. Adopté AVANT le premier rejeu officiel : aucune ligne v1 dans un
+journal, pas de rétroactivité.
+
+## 5. Décision
 
 - Le setup reste **ACTIF tel quel** (v1 : P10 / atr_barre, date d'ombre
   20260908) — coût nul, le journal accumule, on n'active jamais

@@ -106,6 +106,17 @@ def cas_div(e, run):
     if n != 0 or not any("niveaux_absents" in str(l.get("motif")) for l in li):
         e.append("DIV sans niveaux : attendu jour_muet:niveaux_absents "
                  "(%d/%d)" % (n, m))
+    # 11. V2 atr_ref : atr_barre NaN mais atr_ref present -> le trou est
+    #     bouche, le signal revient, et atr_source est sur la ligne
+    df = _frame_div(DIV_SHORT)
+    df["atr_barre"] = float("nan")
+    df["atr_ref"] = 10.0
+    df["atr_source"] = "veille"
+    n, m, a, li = run(df, "C2_DIV_DELTA")
+    sig = [l for l in li if "snapshot_id" in l]
+    if n != 1 or (sig and sig[0].get("atr_source") != "veille"):
+        e.append("DIV v2 atr_ref : attendu 1 signal + atr_source=veille "
+                 "(%d, %s)" % (n, sig and sig[0].get("atr_source")))
 
 
 def _frame_poor(barres):
