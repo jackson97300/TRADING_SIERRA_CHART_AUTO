@@ -1,8 +1,9 @@
 # PROMPT DE REPRISE — à coller au début de la prochaine session
-*Écrit le 07/09/2026 (les documents portaient d abord la date du lendemain), révisé le 07/09 après relecture Fable
-(ordre du §3 inversé, constat du §5, trois points de la nuit ajoutés), puis au
-soir : coureur `campagne.py` corrigé et validé (cf INCIDENT_LOG 07/09). Se met
-à jour à chaque fin de session si l'état a bougé.*
+*Écrit le 07/09/2026, révisé plusieurs fois le 07/09 (relecture Fable,
+coureur corrigé), puis dans la NUIT du 07 au 08/09 : mission Jackson
+« câbler les déclencheurs un à un, jusqu'à GO » — 4 blocs exécutés, chacun
+avec review agent et publication miroir. Se met à jour à chaque fin de
+session si l'état a bougé.*
 
 ---
 
@@ -37,20 +38,31 @@ construis, mesures, commites et publies ; tu ne scelles jamais seul ; Fable
   dynamiques) et « piégé » sous condition de déséquilibre (l'épisode 200 538
   contrats / delta −534 était une ROTATION). `recit.py` s'auto-vérifie et
   refuse de publier sur écart.
-- **L4** : J1 fait (provenance, distributions, formules héritées disqualifiées) ;
-  **J2 est LA priorité de la semaine** — c'est écrit au point 14 : le narratif
-  est séduisant, les vetos sont arides, et c'est le narratif qui a mangé la
-  dernière journée.
-- **Campagne d'ombre** : démarrée le 08/09, **tag `campagne-ombre-1` posé**
-  (bloqueurs 1-5 de la revue Fable traités le 07/09 : unités 15 min dans
-  `campagne.yaml`, source news unique, défenses_du_niveau → fiches F23,
-  SPEC L3 gelée, STATUS cohérent). Le coureur `V3/campagne.py` fait EXISTER
-  la journée — corrigé et validé le 07/09 au soir : il court LES_QUATRE
-  pré-enregistrées (pas le cycle 1), injecte `rvol_r` + bandes SD2 (chauffe
-  20 j), compte par franchissement, et un journal VIDE est la preuve d'un
-  jour couru muet (absent = incident). Rythme quotidien 21:01 UTC =
-  `campagne.py` puis `pourquoi.py` + journal MANUEL. Jamais le P&L.
-  Rollover à contrôler le 10/09.
+- **L4** : **J2 FAIT le 07/09** — mesurée aux trois k, séparation DANS LE
+  BRUIT, k=2 écrit, L4 reste OBSERVÉE (elle ne passe pas sur le lot, se
+  rejuge au jour 61). **L5 barrières J2 FAIT** : `barrieres.py` (B-ATR /
+  B-NIV / B-NAT, parité 108/108) + `barrieres_du_jour.py` — reste le
+  branchement au rythme 21:01 (Jackson) et la mesure 57 j (matin).
+- **Campagne d'ombre** : démarrée le 08/09, **tag `campagne-ombre-1` posé**.
+  Le coureur `V3/campagne.py` fait EXISTER la journée : LES_QUATRE
+  pré-enregistrées + les SEIZE ED (`ombre16`) + **les C2 actifs**
+  (`ombre_c2`), injection `rvol_r`/`cvd_sess_r`/SD2/`finish_r`/
+  `vwap_slope_r`/`dist_vwap_rth_r` (chauffe 20 j), comptage par
+  franchissement, journal VIDE = jour couru muet. Rythme 21:01 UTC =
+  `campagne.py` puis `pourquoi.py` + journal MANUEL +
+  `barrieres_du_jour.py`. Jamais le P&L. Rollover à contrôler le 10/09.
+- **Ombre C2 (nuit 07→08/09, mission « un à un jusqu'à GO »)** : TROIS
+  actifs — `C2_80PCT` (07/09), `C2_EOD` (08/09, r_min p25 0,273/0,275,
+  sortie horaire 16h00, écart « range vs ATR-jour » ASSUMÉ → arbitrage
+  Fable), `C2_DIV_DELTA` (08/09, attendu corrigé PAR LA MESURE : ~6/60 j —
+  58 % des extrêmes dans le trou de chauffe ATR → arbitrage Fable
+  ATR-VEILLE, pas P15/P20). **`C2_POOR` pré-câblé PAS actif** : v1 morte
+  par construction (0 lieu / 52 j × 2, le flag roulant s'éteint au retour) —
+  redesign J+2 avec brief Fable, rapport `lieu_poor_20260908`. Chaque bloc :
+  review agent GO-AVEC-RESERVES, réserves appliquées, miroir publié.
+- **DETTE DURE, deadline 31/10** : `est_cash` figé EDT — dès le 2/11 la
+  barre EOD serait coupée en amont et l'open cash lu à 8h30 ET (A_FAIRE
+  pt 19). Tâche séparée cross-module, review + parité obligatoires.
 - **BLOQUEUR JACKSON** : 3 webhooks Discord actifs dans le dépôt principal
   public ; 75+ commits locaux attendent. Troisième jour. Dix minutes.
 
@@ -123,7 +135,7 @@ a survecu. Branchement decisionnel Sim : cycle 2, ~mi-decembre.
   semaine pour ce qui est hebdo) ; signe avant magnitude ; deux conventions
   avant une anomalie ; un incident écrit le jour même ; rien ne change pendant
   la campagne ; **mesurer avant d'annoncer, et qu'un autre lise**.
-- Publier = `sh V3/publier.sh` (DIX contrôles). Jamais de push direct.
+- Publier = `sh V3/publier.sh` (DOUZE contrôles). Jamais de push direct.
 - Le dépôt public est `github.com/jackson97300/mia-v3` (V3 seul). Le dépôt
   principal ne se pousse PAS tant que les webhooks ne sont pas révoqués.
 
