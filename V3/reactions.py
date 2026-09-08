@@ -7,22 +7,17 @@ trois types de lignes — `entete`, `test` (une par test de niveau), et
 `niveau_jour` (une par couple niveau × instrument, **TOUJOURS écrite, même à
 zéro test**, avec le motif du zéro).
 
-CE QUE CE FICHIER AJOUTE À `recit.py`, ET POURQUOI IL N'EST PAS UN TUYAU
-------------------------------------------------------------------------
-1. LE DENOMINATEUR. `f23.fiches` rend `[]` aussi bien pour « colonne absente »
-   que pour « niveau jamais approché » (f23.py l.213). Sans `motif_zero`,
-   soixante jours de silence se liraient « ce niveau ne marche pas ».
-2. LA SYMETRIE. `f23._reaction_atr` ne mesure QUE l'excursion dans le sens du
-   rejet : un niveau traversé rend une réaction faible, et rien ne dit de
-   combien il a été traversé. Le biais directionnel est DANS le moteur — on
-   l'équilibre ici par `exc_poursuite_*`, sans toucher f23.
-3. LA DERIVE. `cur_*` bougent en séance ; c'est la mesure que la quarantaine
-   F23 attend pour être levée — et la cause des 11 écarts qui rendent
-   `recit.py` non publiable les 04 et 07/09.
-4. LE TEMOIN. `vwap_d` est le plus testé de tous (6,2 tests/jour-instrument) et
-   personne ne prétend que c'est un niveau : il sert de CONTROLE NEGATIF. Un
-   niveau primaire qui ne s'en distingue pas n'est pas un niveau, c'est une
-   heure.
+CE QUE CE FICHIER AJOUTE À `recit.py` — quatre choses, pas un tuyau :
+1. LE DENOMINATEUR — `f23.fiches` rend `[]` pour « colonne absente » comme
+   pour « jamais approché » ; sans `motif_zero`, 60 jours de silence se
+   liraient « ce niveau ne marche pas ».
+2. LA SYMETRIE — `_reaction_atr` ne mesure QUE le rejet ; `exc_poursuite_*`
+   équilibre, sans toucher f23.
+3. LA DERIVE — `cur_*` bougent en séance : la mesure que la quarantaine F23
+   attend (et la cause des 11 écarts de `recit.py`).
+4. LE TEMOIN — `vwap_d`, le plus testé (6,2/jour-instrument) : le CONTROLE
+   NEGATIF. Un primaire qui ne s'en distingue pas est une heure, pas un
+   niveau.
 
 Règle de lecture au jour 61 : `LECTURE_JOUR_61.md` (règles 19-28, écrites
 AVANT la première ligne de données).
@@ -191,17 +186,11 @@ def _ligne_niveau_jour(df15, col, sym, jour, fiches, tick):
 
 
 def _ligne_jour(df1, sym, jour):
-    """LA FORME DE LA JOURNEE — demande Jackson 08/09 (« on a eu un profil en
-    D et on ne l'a pas capte »). Les colonnes existent ; personne ne les
-    journalisait. Etat a la DERNIERE barre de cash : un profil ne se lit
-    qu'une fois la seance faite. Aucune etiquette « D », « b », « p » n'est
-    posee ici — le vocabulaire de forme viendra de la DISTRIBUTION de ces
-    grandeurs a N jours, jamais d'un seuil pose ce soir.
-
-    LU SUR LE 1 MIN, PAS SUR L'AGREGE : aucune de ces colonnes ne survit a
-    `bot_terminal.agreger` (mesure 07/09 : les quatorze a None). Le piege
-    « colonne perdue = mesure morte en silence » — meme famille que les six
-    niveaux du narratif rattrapes le 08/09."""
+    """LA FORME DE LA JOURNEE (demande Jackson 08/09, « profil en D non
+    capte ») — etat a la DERNIERE barre de cash, LUE SUR LE 1 MIN : aucune de
+    ces colonnes ne survit a `agreger` (14 a None, mesure 07/09). Aucune
+    etiquette « D »/« b »/« p » : le vocabulaire viendra de la distribution
+    a N jours, jamais d'un seuil pose ce soir."""
     cash = df1[df1.get("is_cash_session", False) == True] if \
         "is_cash_session" in df1.columns else df1
     if cash.empty:
@@ -231,11 +220,29 @@ def courir(jour):
     os.makedirs(DOSSIER, exist_ok=True)
     chemin = os.path.join(DOSSIER, "reactions_%s.jsonl" % jour)
     open(chemin, "w", encoding="utf-8").close()   # idempotent : jamais append
+    # R8 propage : crash entre ES et NQ = fichier vide lu « couru muet ».
+    try:
+        return _courir(jour, chemin)
+    except BaseException:
+        if os.path.exists(chemin):
+            os.remove(chemin)
+        print("  ECHEC en cours de route — %s EFFACE : jour NON couru." % chemin)
+        raise
+
+
+def _courir(jour, chemin):
     lignes, entete, alertes = [], {}, 0
     for sym in ("ES", "NQ"):
         df15, df1 = _charger_session_entiere(sym, jour)
         if df15.empty:
             entete[sym] = {"n_barres_15m": 0}
+            # LE DENOMINATEUR SURVIT a l'absence de donnees (audit 09/09 : un
+            # samedi, le fichier ne contenait QUE l'entete). Meme fonction que
+            # le cas nominal — un seul schema de ligne — motif force.
+            for col in REGISTRE:
+                lg = _ligne_niveau_jour(df15, col, sym, jour, [], TICK[sym])
+                lg["motif_zero"] = "jour_sans_donnee"
+                lignes.append(lg)
             continue
         tick = TICK[sym]
         entete[sym] = {

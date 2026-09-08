@@ -159,7 +159,10 @@ def cas_poor(e, run):
     # ou le redesign posera une VRAIE date d'ombre, ce test ne doit pas
     # l'ecraser puis la supprimer.
     ancien = OC2.ACTIFS.get("C2_POOR")
-    OC2.ACTIFS["C2_POOR"] = ancien or "test_seulement"
+    # une VRAIE date anterieure au jour de test — depuis le filtre de date
+    # d'ombre (audit 09/09), "test_seulement" > "20260908" en comparaison de
+    # chaines faisait SAUTER le setup : les cas POOR rendaient 0 partout.
+    OC2.ACTIFS["C2_POOR"] = ancien or "20260101"
     try:
         _cas_poor(e, run)
     finally:

@@ -46,10 +46,12 @@ if RACINE not in sys.path:
 from CORE.bot_terminal import charger_jour                      # noqa: E402
 from CORE.features import recalc                                # noqa: E402
 from V3 import calendrier                                       # noqa: E402
+from CORE.research.hypothesis_runner import (                    # noqa: E402
+    signaux_par_franchissement)
 from V3.layers.L3_declencheurs.ombre_c2 import (ACTIFS, SETUPS,  # noqa: E402
                                                 charger_seuils)
 
-MARGES_VERSION = "2026-09-09"
+MARGES_VERSION = "2026-09-09b"   # b : n_declenches -> n_barres_reagissantes
 DOSSIER = "LOGS/marges"
 ENV = {"python": "%d.%d.%d" % sys.version_info[:3], "pandas": pd.__version__}
 
@@ -152,8 +154,17 @@ def _ligne_setup_jour(setup, sym, jour, df, r, marges, motif, ferie):
         "type": "setup_jour", "setup": setup, "sym": sym,
         "date_ombre": ACTIFS.get(setup), "n_barres": int(len(df)),
         "n_lieu": n_lieu,
-        "n_declenches": int(np.asarray(reagit.fillna(False), dtype=bool).sum())
+        # BARRES et EPISODES sont deux unites (audit 09/09 : 14 barres pour 3
+        # episodes sur 80PCT, facteur 4,7 entre deux journaux du meme setup).
+        # Meme fonction que le journal officiel, condition DIFFERENTE : ici le
+        # OR(short,long), le journal franchit PAR COTE — un long qui demarre
+        # pendant un short encore vrai compte 1 ici, 2 la-bas. A savoir en
+        # lecture, jamais un « facteur X » mysterieux.
+        "n_barres_reagissantes": int(
+            np.asarray(reagit.fillna(False), dtype=bool).sum())
         if reagit is not None else 0,
+        "n_episodes": len(signaux_par_franchissement(
+            reagit.fillna(False), df["jour"])) if reagit is not None else 0,
         "n_marges": len(marges), "motif_muet": muet, "ferie": ferie}
 
 
@@ -162,6 +173,18 @@ def courir(jour):
     os.makedirs(DOSSIER, exist_ok=True)
     chemin = os.path.join(DOSSIER, "marges_%s.jsonl" % jour)
     open(chemin, "w", encoding="utf-8").close()   # idempotent : jamais append
+    # R8 propage (audit 09/09) : crash entre ES et NQ = fichier vide lu
+    # « couru muet ». Efface + re-eleve : absent = incident lisible.
+    try:
+        return _courir(jour, chemin)
+    except BaseException:
+        if os.path.exists(chemin):
+            os.remove(chemin)
+        print("  ECHEC en cours de route — %s EFFACE : jour NON couru." % chemin)
+        raise
+
+
+def _courir(jour, chemin):
     seuils = charger_seuils()
     ferie = calendrier.est_ferie(jour)
     lignes, entete, alertes = [], {}, 0

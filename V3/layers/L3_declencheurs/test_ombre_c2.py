@@ -64,7 +64,11 @@ def _run(df, setup):
     os.close(fd)
     try:
         open(chemin, "w").close()
-        *_x, absentes = OC2.journaliser(df, "ES", "20260903", chemin)
+        # 20260908 et pas 20260903 : depuis l'audit 09/09, journaliser SAUTE
+        # tout jour anterieur a la date d'ombre du setup (« on n'active
+        # JAMAIS retroactivement » est enfin du code). Le jour de test doit
+        # etre >= la plus tardive des dates ACTIFS, sinon zero ligne.
+        *_x, absentes = OC2.journaliser(df, "ES", "20260908", chemin)
         lignes = [json.loads(l) for l in open(chemin, encoding="utf-8")]
         lignes = [l for l in lignes if l.get("setup") == setup]
         n = sum(1 for l in lignes if "snapshot_id" in l)

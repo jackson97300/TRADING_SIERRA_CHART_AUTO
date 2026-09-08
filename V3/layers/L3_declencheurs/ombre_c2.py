@@ -125,6 +125,12 @@ def journaliser(df, sym, jour, chemin):
     n_sig, n_muets = 0, 0
     with open(chemin, "a", encoding="utf-8") as fh:
         for nom in ACTIFS:
+            # « On n'active JAMAIS retroactivement » etait une docstring, pas
+            # une ligne de code (audit 09/09) : 12 lignes sur 23 deja ecrites
+            # HORS ombre — C2_EOD (ombre 08/09) avait des signaux les 03-04.
+            # Un grep au jour 61 aurait franchi N>=40 avec du retroactif.
+            if jour < ACTIFS[nom]:
+                continue
             r = SETUPS[nom](df, sym, seuils)
             if r.get("_muet_jour"):
                 # le jour n'a pas pu etre evalue — la raison doit se voir,
@@ -132,6 +138,7 @@ def journaliser(df, sym, jour, chemin):
                 fh.write(json.dumps({
                     "ts": int(df["ts"].iloc[0]), "sym": sym, "setup": nom,
                     "motif": "jour_muet:%s" % r["_muet_jour"], "jour": jour,
+                    "date_ombre": ACTIFS[nom],
                 }, ensure_ascii=False) + "\n")
                 n_muets += 1
                 continue
@@ -152,7 +159,7 @@ def journaliser(df, sym, jour, chemin):
                         "snapshot_id": "C2:%s:%d:%s" % (
                             sym, i, "L" if side > 0 else "S"),
                         "ts": int(df["ts"].iloc[i]), "sym": sym, "setup": nom,
-                        "side": side, "jour": jour,
+                        "side": side, "jour": jour, "date_ombre": ACTIFS[nom],
                         "cible_prix": cible if cible is None else float(cible),
                     }
                     if r.get("_sortie"):     # cible_prix None MOTIVE : horaire
@@ -165,7 +172,8 @@ def journaliser(df, sym, jour, chemin):
             muets = r["_lieu"] & ~reagit
             for i in signaux_par_franchissement(muets, df["jour"]):
                 ligne = {"ts": int(df["ts"].iloc[i]), "sym": sym, "setup": nom,
-                         "motif": "lieu_sans_reaction", "jour": jour}
+                         "motif": "lieu_sans_reaction", "jour": jour,
+                         "date_ombre": ACTIFS[nom]}
                 ligne.update(_extras(r, i))
                 fh.write(json.dumps(ligne, ensure_ascii=False) + "\n")
                 n_muets += 1

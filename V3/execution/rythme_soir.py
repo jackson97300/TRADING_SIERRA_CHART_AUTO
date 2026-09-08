@@ -27,11 +27,12 @@ de part et d'autre de la bascule de 22:00 UTC et mesurer deux jours
 différents sans que rien ne le signale.
 
 PIÈGE DST — À LIRE AVANT LE 25/10/2026 : la tâche planifiée Windows tourne en
-heure LOCALE. 23:01 Paris = 21:01 UTC en heure d'été SEULEMENT. Au changement
-d'heure européen (25/10) il faudra la passer à 22:01 locale, sinon la
-séquence tourne une heure trop tard — le 25/10 tombe DANS la campagne. Ce
-script REFUSE de tourner hors de la fenêtre UTC attendue plutôt que de
-mesurer en silence la mauvaise journée.
+heure LOCALE. 23:01 Paris = 21:01 UTC en heure d'été SEULEMENT. Après le
+changement d'heure (25/10, DANS la campagne), sans déplacer la tâche à 22:01
+locale, la séquence tournera une heure PLUS TARD mais — depuis le fix du
+09/09, jour résolu UNE FOIS en UTC — sur le BON jour : 22:01 UTC reste dans
+la fenêtre et avant minuit. Le refus hors fenêtre ne garde plus que le vrai
+danger restant : un lancement sans argument après minuit UTC.
 """
 
 from __future__ import annotations
@@ -69,7 +70,15 @@ def main():
               % (maintenant.hour, maintenant.minute,
                  *FENETRE_UTC[0], *FENETRE_UTC[1]))
         return 2
-    args = [jour] if jour else []
+    # UN SEUL jour, resolu UNE FOIS (audit 09/09) : sans argument, les etapes
+    # 1 et 4 prenaient dernier_jour() (le fichier du LENDEMAIN apparait des
+    # 22:00 UTC via le coureur) et les etapes 2, 3, 5 prenaient utcnow() —
+    # la meme sequence mesurait DEUX journees, et l'etape 1 pouvait rejouer
+    # (et ecraser) un jour a peine commence.
+    if jour is None:
+        jour = datetime.now(timezone.utc).strftime("%Y%m%d")
+        print("  jour resolu : %s (UTC, une fois pour les cinq etapes)" % jour)
+    args = [jour]
     codes = [
         _etape("1/5 campagne (LA mesure)", ["V3/campagne.py", *args]),
         _etape("2/5 pourquoi (les trois journaux)", ["V3/pourquoi.py", *args]),

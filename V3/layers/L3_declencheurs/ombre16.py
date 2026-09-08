@@ -63,6 +63,16 @@ def journaliser(df, sym, jour, chemin):
     absentes = [c for c in COLONNES_SEIZE if c not in df.columns]
     n = 0
     with open(chemin, "a", encoding="utf-8") as fh:
+        if absentes:
+            # L'aveuglement s'ecrit DANS le journal, pas seulement en console
+            # (audit 09/09 : 4 colonnes retirees -> 6 lignes au lieu de 16 et
+            # ZERO trace — un jour aveugle se lisait « jour calme » au jour
+            # 61). Copie du geste d'ombre_c2.
+            fh.write(json.dumps({
+                "ts": int(df["ts"].iloc[0]) if len(df) else None, "sym": sym,
+                "setup": "SEIZE", "jour": jour,
+                "motif": "jour_muet:colonne_absente:%s" % ",".join(absentes),
+            }, ensure_ascii=False) + "\n")
         for nom, sigs in signaux_seize(df).items():
             for i, side in sigs:
                 fh.write(json.dumps(

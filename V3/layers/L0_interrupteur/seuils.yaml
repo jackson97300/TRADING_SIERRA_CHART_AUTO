@@ -138,24 +138,33 @@ portes:
     seuils: {max: 12}
     mesure: "rang du signal dans la journee, execute ou non — le 15e vaut-il
              moins que le 3e ? Seuil provisoire : a caler sur la distribution."
+  # CORRECTION 09/09 (audit) : ces TROIS portes sont INERTES PAR CONSTRUCTION
+  # dans l'etat actuel — `etat["pnl_jour"]` et `etat["fin_cooldown"]` sont
+  # initialises par `chaine.etat_neuf()` et ECRITS NULLE PART (aucun trade
+  # simule n'alimente le P&L en ombre). Elles rendent False en toute
+  # circonstance : n=0 ne dit RIEN du marche. Ma phrase du 08/09 (« MESURABLE,
+  # jamais inerte par construction ») confondait deux choses : le SEUIL est
+  # atteignable (4,9 SL de 1 ATR sur NQ), mais la GRANDEUR n'est pas cablee.
+  # Cablage = cycle 2 (le fantome L0_POSITION_OUVERTE porte deja un pnl_atr
+  # simule — c'est la brique). Jamais pendant la campagne.
   L0_STOP_JOURNALIER:
     mode: appliquee
     seuils: {usd: -1000.0}
-    mesure: "PEU PROBABLE sur NQ (4,9 SL de 1 ATR), improbable sur ES (13,2) —
-             MESURABLE, jamais « inerte par construction » (revue 08/09 A2 :
-             ses propres chiffres disaient le contraire). Si une seance NQ
-             ferme dessus, LECTURE_JOUR_61 regle 16 la lit A PART."
+    mesure: "INERTE PAR CONSTRUCTION (pnl_jour jamais ecrit) — cf bloc ci-dessus.
+             Le seuil lui-meme reste atteignable : si le cablage arrive et
+             qu'une seance NQ ferme dessus, LECTURE_JOUR_61 regle 16 la lit A PART."
   L0_STOP_PROPFIRM:
     mode: observee
     seuils: {usd: -200.0}
-    mesure: "la vraie regle Douglas — combien de jours coupes ?"
+    mesure: "INERTE PAR CONSTRUCTION (pnl_jour jamais ecrit). La vraie regle
+             Douglas — combien de jours coupes ? — attend le cablage cycle 2."
   L0_COOLDOWN:
     mode: observee
     seuils: {apres_perte_min: 90, apres_gain_min: 60}
-    mesure: "90/60 min, PAS les 3/5 min de janvier. Raison : en barres de 15
-             min, un cooldown de 3 min ne saute meme pas une barre — il ne
-             pourrait rien empecher. 90 min = six barres. A trancher sur la
-             mesure quand il se declenchera : il ne l'a jamais fait en 57 jours."
+    mesure: "INERTE PAR CONSTRUCTION (fin_cooldown jamais ecrit). 90/60 min,
+             PAS les 3/5 min de janvier (en 15 min, 3 min ne saute pas une
+             barre). « il ne s'est jamais declenche en 57 jours » etait vrai
+             pour une mauvaise raison : il ne POUVAIT pas."
 
   # === FAMILLE E — ETAT DE L'EXECUTION : puis-je passer l'ordre ? ==========
   L0_POSITION_OUVERTE:

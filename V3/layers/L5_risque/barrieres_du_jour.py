@@ -34,6 +34,18 @@ def courir(jour):
     chemin = "LOGS/barrieres/barrieres_%s.jsonl" % jour
     os.makedirs(os.path.dirname(chemin), exist_ok=True)
     open(chemin, "w").close()          # vide = jour couru muet, absent = pas couru
+    # R8 propage (audit 09/09) : crash entre ES et NQ = fichier vide/partiel
+    # lu « couru muet ». Efface + re-eleve : absent = incident lisible.
+    try:
+        return _courir(jour, chemin)
+    except BaseException:
+        if os.path.exists(chemin):
+            os.remove(chemin)
+        print("  ECHEC en cours de route — %s EFFACE : jour NON couru." % chemin)
+        raise
+
+
+def _courir(jour, chemin):
     s = B.charger_seuils()
     n = 0
     incidents = []

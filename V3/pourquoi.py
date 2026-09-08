@@ -33,6 +33,10 @@ if RACINE not in sys.path:
 
 from V3.layers.L3_declencheurs.ombre16 import LES_SEIZE   # noqa: E402
 from V3.layers.L3_declencheurs.ombre_c2 import ACTIFS     # noqa: E402
+# Le tuple liste les couches que l'AFFICHAGE sait ranger — mais seules L0 et
+# L5 PEUVENT ecrire dans l'entonnoir (chaine.py n'importe que ces deux
+# modules, audit 09/09). REG/L1/L3/L4/L6 a zero n'est pas une couche muette :
+# c'est la construction. Le garde de mutisme (l.~110) ne surveille que L0/L5.
 COUCHES = ("L0", "REG", "L1", "L3", "L4", "L5", "L6")
 
 
@@ -233,10 +237,12 @@ def main():
     print("Ce resume ne montre JAMAIS le P&L (METHODE.md §6). Il repond a une")
     print("seule question : ou chaque signal s'est-il arrete, et pourquoi.")
     # R4 : le code retour reflete l'AVEUGLEMENT, jamais le nombre de signaux.
-    # Entonnoir vide + ombres qui ont tire = 0 (journee bien mesuree) ;
-    # n'importe quel journal ABSENT = 1. C'est le seul signal que la tache
-    # planifiee peut remonter.
-    return 1 if manque else 0
+    # Et le REPLI n'excuse rien (audit 09/09) : si l'entonnoir du jour DEMANDE
+    # est absent, le jour n'a pas ete couru — on affiche le plus recent pour
+    # aider, mais le retour dit l'incident a la tache planifiee.
+    demande_absent = (a.journal is None and not os.path.exists(
+        "LOGS/entonnoir/entonnoir_%s.jsonl" % a.date))
+    return 1 if (manque or demande_absent) else 0
 
 
 if __name__ == "__main__":
