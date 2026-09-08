@@ -158,7 +158,9 @@ def _rang(lec, etat, s):
 
 @porte("L0_STOP_JOURNALIER", "L0")
 def _stop_jour(lec, etat, s):
-    """Garde-fou de securite en SIM, pas filtre. Inerte par construction."""
+    """Garde-fou SIM — PEU PROBABLE sur NQ (4,9 SL de 1 ATR), improbable
+    sur ES (13,2), MESURABLE : jamais « inerte par construction » (revue
+    08/09, A2). Une seance fermee dessus se lit A PART (LECTURE regle 16)."""
     return etat["pnl_jour"] <= s["usd"]
 
 

@@ -63,8 +63,20 @@ def c2_80pct(df, sym, s):
     dedans = (close >= val_j) & (close <= vah_j)
     acceptation = dedans & dedans.shift(1, fill_value=False)
     pos = pd.Series(np.arange(len(df), dtype=float), index=df.index)
-    debut = pos.where(dedans & ~dedans.shift(1, fill_value=False))
+    entree_run = dedans & ~dedans.shift(1, fill_value=False)
+    debut = pos.where(entree_run)
     extra = {"fenetre_reentree_barres": (pos - debut.ffill()).where(dedans)}
+    # COTE de re-entree (revue 08/09, C) : +1 = par le haut, -1 = par le
+    # bas, NaN = 1re barre du jour deja dedans. Une ouverture au-dessus
+    # RE-ENTREE PAR LE BAS n'est plus le cas de Dalton — LECTURE regle 14,
+    # le cas mixte se lit A PART. Limite ecrite : un close NaN juste avant
+    # une re-entree herite du cote du run precedent (ffill) — improbable
+    # sur OHLC cash, a durcir au cycle 2 si vu.
+    prec = close.shift(1)
+    cote = pd.Series(np.where(prec > vah_j, 1.0,
+                              np.where(prec < val_j, -1.0, np.nan)),
+                     index=df.index)
+    extra["cote_reentree"] = cote.where(entree_run).ffill().where(dedans)
     bas, haut = _col(df, "low"), _col(df, "high")
     if bas is not None and haut is not None:
         extra["cible_atteinte_short"] = bas <= val_j
@@ -83,8 +95,9 @@ def c2_eod(df, sym, s):
 
     Lieu : la barre 15h15-15h30 ET clôturée — DST géré DE BOUT EN BOUT
     depuis le 08/09 : `est_cash` amont est passé sur `minutes_et` (audit
-    Fable §2, parité 0/271 940 barres — la dette qui aurait coupé la barre
-    dès le 2/11 est FERMÉE ; résiduel côté recherche : A_FAIRE pt 19).
+    Fable §2 ; preuve = année synthétique, le lot EDT = non-régression
+    0/271 940 — la dette qui aurait coupé la barre dès le 2/11 est
+    FERMÉE ; résiduel côté recherche : A_FAIRE pt 19).
     Réaction : |rendement_r| ≥ r_min, où rendement_r = (close(15h30) −
     open(9h30)) / range cash du même instant — provenance A pure ; l'écart
     au « ATR-jour » du brief est documenté dans `mesure_c2.py` et

@@ -24,9 +24,10 @@ except ImportError:  # lance depuis CORE/
 # jamais en UTC fige : la fenetre UTC bouge au changement d'heure.
 CASH_DEBUT_MIN_ET = 9 * 60 + 30
 CASH_FIN_MIN_ET = 16 * 60
-# Les constantes UTC-EDT restent pour DEUX scripts de RECHERCHE qui font
-# leur arithmetique en UTC (surveillance_l6, classer_colonnes) — meme dette
-# DST, cote recherche : a migrer AVEC eux, pas silencieusement ici.
+# Constantes UTC-EDT : MORTES depuis la migration de surveillance_l6
+# (08/09 — plus AUCUN consommateur dans CORE/V3). Gardees annotees jusqu'au
+# solde du residuel A_FAIRE pt 19 (classer_colonnes fait son UTC en dur,
+# sans les lire) ; retrait a ce moment-la, jamais silencieusement.
 CASH_DEBUT_MIN_EDT = 13 * 60 + 30
 CASH_FIN_MIN_EDT = 20 * 60
 BARRES_SESSION = 1380
@@ -144,8 +145,11 @@ def est_cash(dt):
     EST. La constante UTC figee (dette CONVENTIONS §2) ratait l'heure
     d'hiver : des le 2/11 la barre 15h15 ET quittait la fenetre et 8h30 ET
     y entrait — L0 elle-meme aurait deplace la session d'une heure. Fermee
-    le 08/09 (audit Fable §2 : dette L0, pas C2). Parite AVANT/APRES :
-    0 barre changee sur le lot (periode EDT) + annee synthetique complete.
+    le 08/09 (audit Fable §2 : dette L0, pas C2). LA PREUVE est l'annee
+    synthetique 2026 (la seule qui contient de l'EST : ecarts uniquement
+    aux bords de fenetre attendus) ; le lot reel, ENTIEREMENT EDT, ne
+    prouve rien sur l'hiver — il sert de NON-REGRESSION : 0/271 940 barres
+    (revue 08/09, B2 : l'ordre des deux compte).
     Unite : booleen. Signe : sans objet.
     """
     mn = minutes_et(dt)

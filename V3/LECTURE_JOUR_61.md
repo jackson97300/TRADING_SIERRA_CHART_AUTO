@@ -50,7 +50,12 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     marché : toute phrase du type « la stratégie ne marche pas le matin »
     est INTERDITE au jour 61 — elle n'y a pas été essayée. L'IB et la
     première heure sont un angle mort ASSUMÉ de la campagne gelée ; le
-    cycle 2 lit `atr_ref` (ATR-veille en secours, la solution L1).
+    cycle 2 lit `atr_ref` (ATR-veille en secours, la solution L1). ET LE
+    TABLEAU DIT PLUS (revue 08/09, B7) : H3-VPOC fait 13/4/2 signaux ES et
+    8/5/2 NQ sur les tranches 11h-13h / 13h-15h / 15h-16h — **les quatre
+    gelées sont, EN PRATIQUE, un setup de 11h00-13h00**. Un H3 lu sur 60
+    signaux dont les deux tiers en mi-journée ne se généralise PAS à la
+    séance.
 12. **L4 se lit PAR FAMILLE de déclencheur** (audit Fable 08/09) : ses vetos
     sont écrits pour une CONTINUATION (« personne n'achète » = danger) ;
     sur un FADE, « personne n'achète » au niveau est la raison même du
@@ -67,6 +72,26 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     la conclusion porte sur le FILTRE, pas sur l'effet. `side_pur = 0`
     (jour exactement plat au tick) = pas de direction : compté NO-TRADE
     dans le N d'EOD-pur — deux lecteurs ne doivent pas compter deux N.
+    Le PRIX de sortie = la clôture de la dernière barre cash du jour
+    (`close_1545` est une règle DÉTERMINISTE label → prix, recalculée du
+    fichier — jamais sur la ligne de signal, qui resterait sinon
+    contaminée par le futur : l'anti-fuite du test l'interdit) ; le
+    journal des barrières portera l'issue chiffrée (A_FAIRE pt 21).
+14. **C2_80PCT se lit par `cote_reentree`** (revue 08/09, C) : le side
+    « ouverture au-dessus → SHORT vers VAL » suppose une ré-entrée PAR LE
+    HAUT. Une ouverture au-dessus, un tour SOUS la VA, puis une ré-entrée
+    par le bas : l'ouverture n'est plus la référence — le cas `mixte` se
+    lit À PART, jamais mélangé au cas Dalton.
+15. **DIV_DELTA v2 se lit en séparant `atr_source`** (revue 08/09, C) :
+    un lieu à 9h35 sur l'ATR de la VEILLE dans une journée à gap de 2 ATR
+    est un lieu sur une échelle fausse pour CETTE journée. Les signaux
+    `veille` et `barre` sont deux populations — la colonne est dans chaque
+    ligne, la lecture ne les additionne pas sans les avoir vues séparées.
+16. **Les journées fermées par le stop journalier SIM se lisent À PART**
+    (revue 08/09, A2) : le stop n'est PAS « inerte par construction »
+    (4,9 SL de 1 ATR sur NQ) — si une séance ferme dessus, ses signaux
+    post-fermeture n'existent pas dans le journal officiel, et la comparer
+    aux journées pleines fausserait les deux.
 
 ## Ce que le jour 61 NE fait pas
 

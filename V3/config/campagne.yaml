@@ -75,22 +75,27 @@ portes_appliquees:
     actif: true
     seuil_usd: -1000
     mesure: |
-      INERTE PAR CONSTRUCTION, et c'est assume. Un SL de 1,0 ATR-15m vaut
-      75,55 $ sur MES et 202,28 $ sur MNQ (medians 06/09) : il faut 13,2 pertes
-      d'affilee sur ES et 4,9 sur NQ pour l'atteindre, alors qu'on mesure ~7
-      signaux par jour. Il protege le SIM, il ne sera pas mesure. Le stop reel
-      est en observation.
+      PEU PROBABLE sur NQ, improbable sur ES — MESURABLE, jamais « inerte
+      par construction » (revue 08/09, A2 : ses propres chiffres disaient
+      le contraire). Un SL de 1,0 ATR-15m vaut 75,55 $ sur MES et 202,28 $
+      sur MNQ (medians 06/09) : 13,2 pertes d'affilee sur ES, 4,9 sur NQ —
+      cinq SL NQ dans une journee a ~7 signaux n'est pas impossible. Le
+      jour ou il ferme une seance, LECTURE_JOUR_61 lit ces journees A PART
+      (regle 16) ; le rang du trade qui l'atteint se lit dans le journal
+      (rang_du_trade + pnl cumule). Le stop reel est en observation.
 
   veto_gamma:
-    # PASSE EN OBSERVATION le 07/09, avant le jour 1 : gamma_block_* est
-    # gouverne par `_mq_gamma_source = sierra_proxy_v2` — un PROXY, refuse
-    # mecaniquement par lecture.py (point 7 de la nuit, decision souveraine
-    # 06/09 « aucun proxy »). Le -0,48 ATR avait ete mesure SUR le proxy.
-    # La porte journalise desormais TROU_L5_VETO_GAMMA. Arbitrage Jackson
-    # avant le gel du 12/09 — cf seuils.yaml L5_VETO_GAMMA + A_FAIRE pt 16.
+    # EN OBSERVATION — et le POURQUOI a change le 07/09 au soir : ce bloc
+    # ne le redecrit PLUS (revue 08/09, A1 : le fichier fige portait le
+    # verdict perime du matin « proxy, -0,48 mesure sur le proxy »,
+    # RETOURNE le soir meme par la reproduction — 5 275 barres, 0 ecart,
+    # entree propre). La verite vit dans UNE seule paire :
+    # seuils.yaml L5_VETO_GAMMA + DECISIONS 07/09 soir. `actif: false`
+    # reste le mot de Jackson (arbitrage 1 ligne avant le gel du 12/09,
+    # A_FAIRE pt 16).
     actif: false
     source: layers/L0_interrupteur/seuils.yaml -> porte L5_VETO_GAMMA
-    mesure: "devenir des rejetes -0,48 ATR sur ES (mesure SUR le proxy). Ne se declenche jamais sur NQ."
+    mesure: "cf seuils.yaml L5_VETO_GAMMA + DECISIONS 07/09 soir — jamais redecrit ici"
 
 # ---------------------------------------------------------------------------
 # PORTES OBSERVEES — elles journalisent « aurait bloque », elles n'agissent pas
@@ -121,8 +126,10 @@ portes_observees:
     # vah_touches_20b / retest_*_count disent « touche » pour « proximite »
     # (mesure : 20/20 barres touchees dans une VA de 7 pts). Observer 60 jours
     # d'un compteur qu'on sait faux ne mesurerait rien.
-    # Branchement des fiches en SEMAINE 1 de la campagne — engagement ecrit ici,
-    # comme la revue l'exige.
+    # Branchement des fiches en SEMAINE 1 — SOUS RESERVE du diagnostic
+    # A_FAIRE pt 11 (deux ecarts F23 nuit a diagnostiquer AVANT de se
+    # servir des fiches) ; sinon `TROU_DEFENSES` journalise, jamais un
+    # compteur faux en silence (revue 08/09, B3).
     source: fiches F23 (recalcul au tick), PAS les compteurs C++
     mesure: |
       NON MESURABLE SUR 57 JOURS, et c'est le resultat. En 15 min : 1re 133 /

@@ -122,6 +122,20 @@ def cas_80pct(e):
     if not sig or sig[0].get("cible_atteinte_short") != 1.0:
         e.append("80PCT traversee : cible_atteinte_short=1.0 attendu (%s)"
                  % (sig and sig[0]))
+    # cote de re-entree (regle 14) : par le HAUT sur le frame standard...
+    n, m, a, li = _run(_frame(120.0, [115.0, 105.0, 104.0]), "C2_80PCT")
+    sig = [l for l in li if "snapshot_id" in l]
+    if not sig or sig[0].get("cote_reentree") != 1.0:
+        e.append("80PCT cote_reentree : +1.0 (par le haut) attendu (%s)"
+                 % (sig and sig[0]))
+    # ... et le cas MIXTE (ouverture au-dessus, tour SOUS la VA, re-entree
+    # par le BAS) porte -1.0 — il se lira A PART, l'ouverture n'est plus
+    # la reference (revue 08/09, C)
+    n, m, a, li = _run(_frame(120.0, [115.0, 85.0, 95.0, 96.0]), "C2_80PCT")
+    sig = [l for l in li if "snapshot_id" in l]
+    if not sig or sig[0].get("cote_reentree") != -1.0:
+        e.append("80PCT mixte : cote_reentree=-1.0 (par le bas) attendu (%s)"
+                 % (sig and sig[0]))
 
 
 def cas_eod(e):

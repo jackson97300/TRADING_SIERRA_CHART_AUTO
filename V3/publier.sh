@@ -59,5 +59,20 @@ fi
 git remote get-url v3pub >/dev/null 2>&1 || git remote add v3pub "$DEPOT"
 git subtree push --prefix=V3 v3pub master
 
+# Le tag de campagne doit etre identifiable SUR LE MIROIR (revue 08/09,
+# A4) : un tag du depot principal ne survit pas au split — on tague la
+# tete du miroir, une fois, jamais deplace ensuite. Le jour 61 doit
+# pouvoir dire « le code qui a couru est <hash> » publiquement.
+if git tag -l | grep -q "^campagne-ombre-1$"; then
+    if ! git ls-remote --tags v3pub 2>/dev/null | grep -q "refs/tags/campagne-ombre-1$"; then
+        # le split DU COMMIT TAGUE, jamais HEAD (review R2) : si HEAD a
+        # avance, taguer son split publierait un AUTRE etat que le tag —
+        # la divergence exacte que A4 rend impossible.
+        split=$(git subtree split --prefix=V3 campagne-ombre-1)
+        git push v3pub "$split:refs/tags/campagne-ombre-1"
+        echo "tag campagne-ombre-1 pousse sur le miroir ($split)"
+    fi
+fi
+
 echo
 echo "publie : https://github.com/jackson97300/mia-v3"

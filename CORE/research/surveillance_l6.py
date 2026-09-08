@@ -121,22 +121,27 @@ def controle_volumetrie(df, sym, jour, ecourtee=False):
 
 
 def controle_continuite(df, sym, jour):
-    """Trous INTERNES en cash : ce qui distingue une seance courte d'une panne."""
+    """Trous INTERNES en cash : ce qui distingue une seance courte d'une panne.
+
+    En minutes ET depuis le 08/09 (revue Fable B2) : ce controle est LE
+    chien de garde du 2/11 — s'il etait reste en UTC fige, il aurait
+    flagge chaque jour d'hiver « PANNE » et compense l'erreur qu'il doit
+    detecter."""
     st = df[df.get("data_quality_flag", "stable") == "stable"]
     m = recalc.est_cash(st["_dt"])
-    mn = (st.loc[m, "_dt"].dt.hour * 60 + st.loc[m, "_dt"].dt.minute).sort_values()
+    mn = recalc.minutes_et(st.loc[m, "_dt"]).sort_values()
     if mn.empty:
         return _res("continuite", "ALERTE", "aucune barre en seance cash", trous=None)
     debut, fin = int(mn.iloc[0]), int(mn.iloc[-1])
     trous = (fin - debut + 1) - mn.nunique()
     tot = mn.nunique()
-    if trous <= MAX_TROUS_CASH and debut <= recalc.CASH_DEBUT_MIN_EDT + 1:
+    if trous <= MAX_TROUS_CASH and debut <= recalc.CASH_DEBUT_MIN_ET + 1:
         etat, quoi = ("OK", "complete") if tot >= BARRES_CASH - 5 else \
                      ("INFO", "seance ecourtee (bloc continu)")
     else:
         etat, quoi = "ALERTE", "PANNE (trous disperses)"
     return _res("continuite", etat,
-                "%s : %d barres cash, %d trous internes, %02d:%02d -> %02d:%02d UTC"
+                "%s : %d barres cash, %d trous internes, %02d:%02d -> %02d:%02d ET"
                 % (quoi, tot, trous, debut // 60, debut % 60, fin // 60, fin % 60),
                 barres_cash=tot, trous=int(trous))
 

@@ -56,25 +56,25 @@ tests, mesure, rapports. Carte complete dans `LISEZ_MOI.md`.
 
 ## Calendrier immediat
 
-**LUNDI 07/09/2026 — LABOR DAY.** 1er lundi de septembre, verifie. Le marche est
-OUVERT mais ferme a 13:00 ET au lieu de 16:00 : seance raccourcie, aucun trade.
-
-Deux consequences :
-- la campagne d'ombre demarre le **mardi 08/09**, elle n'est pas touchee ;
-- la surveillance L6 etait prevue lundi 21:01 UTC sur la premiere journee `w1`.
-  **Une demi-seance est une mauvaise reference** — volumetrie, reset VWAP et
-  fenetre seront tous atypiques. A decaler au mardi, ou a lire en sachant que
-  les ecarts sont attendus.
+**MARDI 08/09/2026 — JOUR 1 DE LA CAMPAGNE D'OMBRE.** Le coureur live tourne
+(`coureur_live.py --sync`, lance le 07/09 au soir) ; le rejeu officiel de
+21:01 UTC est celui de CE soir — quatre gelees + seize ED + TROIS setups C2
+actifs (80PCT, EOD, DIV_DELTA v2). JEUDI 10/09 : rollover U26→Z26,
+`L0_CONTRAT_INACTIF` doit le dire — a REGARDER, pas a corriger.
+VENDREDI 12/09 : GEL — apres, on n'ajoute plus, on regarde tourner.
 
 ## Prochain pas
 
-**L1 — le biais 1 h / 4 h.** Meme methode : ecrire, mesurer le taux de rejet et
-le devenir des rejetes, confronter les deux versions, sceller. Le critere de L0
-sert de modele, pas de copie : une couche de BIAIS ne se juge pas comme un
-interrupteur, et sa plage reste a etablir sur sa propre mesure.
+1. **B-BOUEE + branchement `barrieres_du_jour` au 21:01** (mesure MAE des
+   gagnants d'abord) et **A2 + PF_PERTE_JOUR observee** — demain, revue
+   Fable 08/09 §E2.
+2. **`test_dmp`** (reproduction des colonnes B du post-it) puis la chaine
+   POSTIT (recalc range → cinq mesures → setups PJ_*).
+3. **Diagnostic F23 nuit (A_FAIRE pt 11)** → debloque #3 VWAP/SD1,
+   #4 SWEEP_ON et POOR v2 (fiche F23, design arbitre pt 20).
+4. **Pont DTC / EXEC SIM** : ordres de TEST hors chaine, avant vendredi.
 
-**Fait le 07/09** : le coureur live (`V3/execution/coureur_live.py`) emprunte
-`chaine.appliquer(strict=True, live={...})` sur le fichier vivant — teste en
-reel pendant la seance ecourtee de Labor Day. Avant mardi 9h30 : le LANCER
-(`--sync`), et le laisser tourner la nuit pour voir SESSION_BLOQUEE + TROU_VIX
-sur les barres de nuit (question 3 du constat).
+**L1 (biais 1 h / 4 h) attend F23** — B1-photo est ecartee par la mesure
+(DECISIONS 07/09) ; rien a construire sur L1 avant le diagnostic.
+Regle de coherence (revue 08/09, A3) : `PROMPT_REPRISE` cite CE fichier,
+jamais l'inverse — une seule verite pour « ou en est-on ».

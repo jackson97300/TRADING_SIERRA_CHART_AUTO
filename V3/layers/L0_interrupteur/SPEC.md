@@ -116,7 +116,7 @@ dans des conditions où le réel ne les aurait pas remplis au même prix.
 
 | porte | seuil | classe | mesure |
 |---|---|---|---|
-| stop journalier SIM | −1 000 $ | **appliquée** | **inerte par construction** : 31,8 pertes d'affilée sur ES contre ~7 signaux/jour. Assumé |
+| stop journalier SIM | −1 000 $ | **appliquée** | **peu probable sur NQ, improbable sur ES, MESURABLE** — jamais « inerte par construction » (revue 08/09, A2 : 13,2 pertes de 1 ATR sur ES, **4,9 sur NQ** — base SL médians 75,55 $/202,28 $, qui corrige aussi le vieux « 31,8 » calculé sur 31,43 $). Séance fermée dessus = LECTURE règle 16, lue à part |
 | stop prop firm réel | −200 $ | **observée** | « aurait bloqué ici » — à la lecture, combien de jours coupés |
 | `max_trades/jour` | 5 | **observée** | **devenue INERTE** : 0 rejet une fois `POSITION_OUVERTE` appliquée. Les 41,6 % mesurés le 06/09 venaient d'un état où la position n'était pas suivie — à ~1,5 trade retenu par jour, la limite de 5 n'est jamais atteinte |
 | rang du trade dans la journée | — | **observée** | le 15ᵉ est-il pire que le 3ᵉ ? |

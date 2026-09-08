@@ -31,6 +31,10 @@ barrieres:
     # chantier) : ES 20 t = 5,00 pts ; 5,00 / 15,11 = 0,33.
     # NQ 109 t = 27,25 pts ; 27,25 / 101,14 = 0,27. Proches, PAS
     # identiques : par instrument quand meme, re-mesures au jour 61.
+    # PROVENANCE (revue 08/09, B4) : mesure sur les fiches F23 `prev_*`
+    # REGAGNEES en 1 min — donc IMMUNISEE contre les deux ecarts F23 du
+    # pt 11, qui touchent les `cur_*`. La provenance du seuil, pas
+    # seulement sa valeur.
     buffer_sweep_atr: {ES: 0.33, NQ: 0.27}
     plafond_sl_atr: 1.5
     plafond_tp_atr: 1.5   # le TP de reference B-ATR — un TP au-dela serait une autre barriere

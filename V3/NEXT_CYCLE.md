@@ -61,6 +61,29 @@ la MEDIANE de l'ATR de la VEILLE cash — `recalc.atr_veille_15`, sans
 fuite, la solution L1). Deja fait pour les setups non geles : DIV_DELTA
 v2 (lieux x4,2 ES / x3 NQ a P10 constant). `atr_source` se journalise.
 
+## 5 ter. L'exception L0 `SESSION_CLOTURE` pour C2_EOD (revue 08/09, B1)
+
+L0 n'a AUCUN mecanisme d'exception : C2_EOD entre a 15h30, la porte
+`SESSION_CLOTURE` bloque a 15h30 — sans effet en ombre (l'ombre ne passe
+pas par la chaine), BLOQUANT PAR CONSTRUCTION le jour ou EOD passe en
+EXEC. L0 est scellee : l'exception s'ecrit ICI, maintenant, pas le jour
+ou on s'en apercevra. Cycle 2 : cle `exceptions: [C2_EOD]` sur la porte,
+portee STRICTE (uniquement l'entree 15h30 + sortie close_1545 d'EOD,
+jamais un canal generique), avec son test : la porte bloque tout le reste
+a l'identique, et EOD passe UNIQUEMENT dans sa fenetre.
+
+## 5 quater. L4 : V1/V2 RETOURNES par famille (revue 08/09, C)
+
+k=2 ES : retenus -0,162, vetoes +0,251 (N=23, bruit — mais le mecanisme
+est visible) : V1 « personne n'achete » et V2 « le flux pousse contre »
+sont ecrits pour une CONTINUATION ; sur un fade au VAH, « personne
+n'achete » est LA THESE DU TRADE. Cycle 2 — signe attendu PAR FAMILLE,
+ecrit avant la mesure : sur les fades (H3, retours a la valeur), le flux
+qui pousse DANS LE SENS DU NIVEAU confirme le rejet → V1/V2 s'inversent
+ou se retirent de la famille ; sur les continuations (EOD, cassures), ils
+gardent leur sens. La regle 12 de LECTURE_JOUR_61 (lecture par famille)
+est la version jour-61 de cette ligne.
+
 ## 6. Confirmations positives, footprint, L4 en sortie
 
 Reportés de la SPEC L4 §10, inchangés : modificateur de taille après 200

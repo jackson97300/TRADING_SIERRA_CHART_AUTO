@@ -58,7 +58,7 @@ vient d'une donnee reelle, pas d'un synthetique. La prochaine session commence i
    « touche » pour « proximite » — confirmation que F23 recalcule a raison.
 10. Reset hebdo confirme sur les DEUX instruments (vwap_w = vwap_d un lundi).
 
-## 11. CONTRE-LECTURE F23 sur la nuit du 08/09 : DEUX ECARTS, a diagnostiquer AVANT de se servir des fiches
+## 11. CONTRE-LECTURE F23 sur la nuit du 06 au 07/09 (dite « du 08/09 » par l'ancienne confusion de date) : DEUX ECARTS, a diagnostiquer AVANT de se servir des fiches
 - F23 dit « prev_val cassee 03:00, 2540 contrats pieges » ; les barres brutes montrent
   ZERO cloture ni volume sous 7712,50 entre 03:00 et 04:00. Suspect n.1 : la reference
   « veille » CHANGE pendant la nuit (limite de journee de trading) — dist_prev_val a 03:00
@@ -214,6 +214,22 @@ pour L4. Correction : avec la dette C++/pipeline groupee (point 6 de la nuit).
 - S4 : FAIT le 08/09 — test ACTIFS ⊆ LES_C2 + 8 cas par setup actif
   (test_ombre_c2.py, filtrage PAR SETUP), livre AVEC l'activation de C2_EOD.
 
+## 19. DETTE est_cash DST — FERMEE pour L0 le 08/09 ; RESIDUEL recherche 31/10
+FAIT (audit Fable §2, le jour meme) : `est_cash` + `initial_balance` sur
+`minutes_et` (fenetre ET [570, 960)), `minutes_et` vectorisee. Parite
+prouvee : annee synthetique 2026 — ecarts UNIQUEMENT en periode EST, aux
+bords de fenetre attendus ; lot reel — 0 difference sur 271 940 barres
+(152 fichiers). Le chemin de decision (charger_jour, coureur_live,
+campagne, VWAP RTH, IB) est corrige de bout en bout.
+**FAIT AUSSI (revue 08/09, B2)** : `surveillance_l6` continuite migre sur
+`minutes_et` le 08/09 — c'est LE chien de garde du 2/11, il ne pouvait
+pas rester lui-meme fige EDT (il aurait flagge chaque jour d'hiver
+« PANNE » et compense l'erreur qu'il doit detecter).
+**RESIDUEL, deadline 31/10** — les scripts de RECHERCHE restants :
+`classer_colonnes` (fallback 14:30 UTC), `test_ctx` (BOUNDARY_UTC_H = 22
+en dur — ses deux jours de reference sont EDT, il ne casse pas, mais la
+constante ment en EST), `sync_vps` (note Globex). A migrer ENSEMBLE.
+
 ## 20. C2_POOR v2 — ARBITRE par Fable (audit 08/09, §5C) : fiche F23, pas un flag
 La v1 est morte par construction (0 lieu / 52 j x 2, rapport lieu_poor).
 Design ARBITRE — une MEMOIRE D'EPISODE dans F23 : un *poor high* = le plus
@@ -232,16 +248,19 @@ mesure, portage agreger). NOTE jour 61 : dans c2_div_delta, `niveau_prix`
 peut etre ecrase si les deux lieux tombent sur la MEME barre (ne touche
 que des muets de barre 0 — lecture avec precaution).
 
-## 19. DETTE est_cash DST — FERMEE pour L0 le 08/09 ; RESIDUEL recherche 31/10
-FAIT (audit Fable §2, le jour meme) : `est_cash` + `initial_balance` sur
-`minutes_et` (fenetre ET [570, 960)), `minutes_et` vectorisee. Parite
-prouvee : annee synthetique 2026 — ecarts UNIQUEMENT en periode EST, aux
-bords de fenetre attendus ; lot reel — 0 difference sur 271 940 barres
-(152 fichiers). Le chemin de decision (charger_jour, coureur_live,
-campagne, VWAP RTH, IB) est corrige de bout en bout.
-**RESIDUEL, deadline 31/10** — les scripts de RECHERCHE qui font leur
-arithmetique en UTC directement : `surveillance_l6` (des le 2/11, chaque
-jour serait flagge « PANNE » — faux positif fail-loud), `classer_colonnes`
-(fallback 14:30 UTC), `test_ctx` (BOUNDARY_UTC_H = 22 en dur — ses deux
-jours de reference sont EDT, il ne casse pas, mais la constante ment en
-EST), `sync_vps` (note Globex). A migrer ENSEMBLE, meme famille.
+## 21. DEMAIN (revue 08/09, E2-E3) — le bloc barrieres/risque
+1. **B-BOUEE** dans barrieres.py — mesure de la MAE des gagnants D'ABORD
+   (definition POSTIT §L5), jamais un seuil invente.
+2. **Branchement `barrieres_du_jour` au 21:01** + ligne DECISIONS de
+   datation (« journal barrieres a partir du <date> ; jours anterieurs
+   rejoues le <date> ») — regle 15 appliquee aux barrieres (B5).
+3. **A2 suite** : la porte L0_STOP_JOURNALIER journalise `aurait_ferme_a`
+   (le rang du trade qui l'atteint) comme les autres portes — additive,
+   review obligatoire (chaine scellee).
+4. **PF_PERTE_JOUR en OBSERVATION** (revue §C : la porte qui manque le
+   plus pour le plan prop firm — un stop -500 $ mord a 2,5 SL NQ, le
+   -1 000 $ presque jamais). Porte observee, seuil a poser sur
+   distribution, jamais un gate applique pendant la campagne.
+5. **EOD : l'issue chiffree** (prix de sortie close_1545 + pnl) au journal
+   des BARRIERES (moteur d'issue), JAMAIS sur la ligne de signal —
+   l'anti-fuite du test l'interdit (LECTURE regle 13).
