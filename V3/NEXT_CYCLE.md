@@ -84,6 +84,20 @@ ou se retirent de la famille ; sur les continuations (EOD, cassures), ils
 gardent leur sens. La regle 12 de LECTURE_JOUR_61 (lecture par famille)
 est la version jour-61 de cette ligne.
 
+## 5 quinquies. C2_BOND_CLOSE — le spike de 15h00 ET (observation Jackson, mesurée)
+
+L'observation vécue (« ça spike vers 20h45-50 Paris ») est REELLE mais
+datée dix minutes trop tôt : la minute 15h00 ET (clôture des Treasuries)
+fait ×1,86 le range médian sur ES, ×1,64 sur NQ, volume ×~2 — les deux
+instruments, 60 jours (rapport spike_fin_session_20260908). Et 15h50-15h59
+(MOC) concentre le top-3 des ranges 3 jours sur 4. Un spike de VOLATILITÉ
+n'est pas un edge : il manque le SENS — fade, continuation, ou règles de
+spike Dalton (Mind over Markets : spike de fin de séance + acceptation à
+l'open du lendemain). Brief Fable requis, attendu écrit avant, mesure
+d'activation comme les autres. Références : Baltussen et al. 2021 (déjà
+C2_EOD), Gao-Han-Li-Zhou 2018, Cushing-Madhavan 2000, Wood-McInish-Ord
+1985, Admati-Pfleiderer 1988.
+
 ## 6. Confirmations positives, footprint, L4 en sortie
 
 Reportés de la SPEC L4 §10, inchangés : modificateur de taille après 200
