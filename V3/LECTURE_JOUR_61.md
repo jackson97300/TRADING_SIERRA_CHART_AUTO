@@ -107,6 +107,37 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     ET où `test_agreger_ts.py` est vert SUR le VPS. Le fichier empoisonné
     est conservé renommé `_rodage` — pièce d'incident, jamais supprimé.
 
+## Les réactions aux niveaux (`reactions.py`) — règles écrites AVANT la donnée
+
+*Ajoutées le 08/09 au soir, avant la première ligne du journal. Un journal
+sans sa règle de lecture est un jeu de données à miner (incident 28/04).*
+
+19. **Unité statistique** : le TEST pour les lignes `type=test`, le
+    JOUR-INSTRUMENT pour `niveau_jour`. Jamais mélangées dans une phrase.
+20. **Lecture par CLASSE** : primaires d'abord, secondaires à part avec leur
+    `derive_niveau_atr`, et `vwap_d` en TÉMOIN. **Un niveau primaire qui ne se
+    distingue pas du témoin n'est pas un niveau : c'est une heure.**
+21. **Test de permutation obligatoire** : mélanger les étiquettes `niveau`
+    entre fiches d'une même journée, 1 000 fois. Si la séparation réelle est
+    sous le p95 du mélange, F23 décrit l'heure ou le régime, pas le niveau.
+22. **`issue` se lit en composition à quatre voies**, jamais en taux de
+    réussite : « 55 tenu sur 80 » n'est pas 69 % de réussite.
+23. **Symétrie obligatoire** : `exc_rejet_atr_4` et `exc_poursuite_atr_4` se
+    lisent CÔTE À CÔTE, jamais l'un sans l'autre. `reaction_atr` (hérité de
+    f23) est ASYMÉTRIQUE — il ne se lit jamais seul.
+24. Les fiches à `barres_restantes < 8` sont **censurées à droite** : lues à
+    part ou exclues, décidé avant de regarder.
+25. Une ligne à `motif_zero != null` ne compte **JAMAIS** comme « ce niveau
+    n'a pas marché » — la colonne était absente, vide, ou le prix n'est
+    jamais venu.
+26. Jours `ferie` et demi-séances **à part** (07/09 = Labor Day est déjà dans
+    le lot).
+27. ES et NQ comptent **1,3**, pas 2 (règle 2). Aucun épisode isolé (règle 3).
+28. **Aucune phrase de devenir.** Ce journal ne porte ni gain, ni R, ni
+    entrée, ni sortie, ni stop. « Ce niveau a marché » est un contresens
+    d'usage : le fichier dit ce que le marché a FAIT, jamais ce qu'il aurait
+    fallu faire.
+
 ## Ce que le jour 61 NE fait pas
 
 Pas de « correction » : ce qui a survécu bascule observée → appliquée, ce qui
