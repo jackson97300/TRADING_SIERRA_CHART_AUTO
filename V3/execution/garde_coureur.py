@@ -74,6 +74,16 @@ def relancer(args):
             [sys.executable, "-X", "utf8", "-u",
              os.path.join("V3", "execution", "coureur_live.py"), *args],
             cwd=RACINE, stdout=fh, stderr=fh, creationflags=DETACHE)
+    # Battement PROVISOIRE tamponne a la relance : un jeune coureur met
+    # ~60-90 s a battre (chauffe) — sans ce tampon, un tick du garde dans
+    # la fenetre tue un coureur SAIN (course OBSERVEE au deploiement VPS
+    # 08/09 : la relance de 10:38:03 tuee a 10:38:47 par un garde croise).
+    tmp = os.path.join(RACINE, "LOGS", "heartbeat_coureur.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"quand_utc": datetime.now(timezone.utc)
+                   .isoformat(timespec="seconds"),
+                   "relance_par_garde": True}, fh)
+    os.replace(tmp, os.path.join(RACINE, "LOGS", "heartbeat_coureur.json"))
 
 
 def main():
