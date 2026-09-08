@@ -64,7 +64,9 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     `side_pur`, TOUS les jours, N ≈ 60 — et EOD-r_min — le filtre |rend_r|
     ≥ p25, N ≈ 45. Les deux colonnes sont dans chaque ligne du journal
     (`side_pur`, `rend_pts`, `rendement_r`) ; si un seul des deux survit,
-    la conclusion porte sur le FILTRE, pas sur l'effet.
+    la conclusion porte sur le FILTRE, pas sur l'effet. `side_pur = 0`
+    (jour exactement plat au tick) = pas de direction : compté NO-TRADE
+    dans le N d'EOD-pur — deux lecteurs ne doivent pas compter deux N.
 
 ## Ce que le jour 61 NE fait pas
 

@@ -27,15 +27,16 @@ from V3.layers.L3_declencheurs.cas_c2_niveaux import (        # noqa: E402
     cas_div, cas_poor)   # les cas DIV/POOR — scindes, garde des 300 lignes
 
 
-def _frame(ouverture, closes):
+def _frame(ouverture, closes, lows=None):
     """Journée 80 % : VA veille reconstruite = close + dist × 0,25, posée
     telle que VAH = 110 et VAL = 90. Les ts (epoch 1970) n'ont JAMAIS de
-    barre 15h15 ET — C2_EOD y rend un jour muet, filtré par setup."""
+    barre 15h15 ET — C2_EOD y rend un jour muet, filtré par setup.
+    `lows` : bas explicites (cas « la barre traverse la VA entière »)."""
     lignes = []
     for i, c in enumerate(closes):
         lignes.append({"ts": 1_000_000 + i * 900_000, "jour": "2026-09-03",
                        "open": ouverture if i == 0 else c,
-                       "high": c, "low": c, "close": c,
+                       "high": c, "low": lows[i] if lows else c, "close": c,
                        "dist_prev_vah": (110.0 - c) / 0.25,
                        "dist_prev_val": (90.0 - c) / 0.25})
     return pd.DataFrame(lignes)
@@ -107,6 +108,20 @@ def cas_80pct(e):
     if sig["cible_prix"] != 90.0 or not sig["snapshot_id"].startswith("C2:"):
         e.append("80PCT signal : cible 90.0 (VAL) et prefixe C2: attendus "
                  "(%s / %s)" % (sig["cible_prix"], sig["snapshot_id"]))
+    # audit Fable §3 : la ligne porte la fenetre de re-entree (dedans depuis
+    # la barre 1, signal barre 2 -> 1.0) et « cible deja atteinte » a 0
+    if (sig.get("fenetre_reentree_barres") != 1.0
+            or sig.get("cible_atteinte_short") != 0.0):
+        e.append("80PCT extras : fenetre=1.0 + cible_atteinte_short=0.0 "
+                 "attendus (%s)" % sig)
+    # ... et quand la barre du signal TRAVERSE la VA entiere (low 89 < VAL),
+    # le flag cible_atteinte_short passe a 1 — journalise, jamais un trade
+    n, m, a, li = _run(_frame(120.0, [115.0, 105.0, 104.0],
+                              lows=[115.0, 105.0, 89.0]), "C2_80PCT")
+    sig = [l for l in li if "snapshot_id" in l]
+    if not sig or sig[0].get("cible_atteinte_short") != 1.0:
+        e.append("80PCT traversee : cible_atteinte_short=1.0 attendu (%s)"
+                 % (sig and sig[0]))
 
 
 def cas_eod(e):
@@ -115,23 +130,28 @@ def cas_eod(e):
     sig = [l for l in li if "snapshot_id" in l]
     if n != 1 or sig[0]["side"] != 1:
         e.append("EOD LONG : attendu 1 signal side +1 (obtenu %d)" % n)
-    # ... et la ligne porte sortie horaire + rendement_r (re-coupe jour 61)
-    if sig and (sig[0].get("sortie") != "1600_ET"
+    # ... et la ligne porte sortie + rendement_r + les DEUX verdicts
+    # (side_pur/rend_pts — arbitrage Fable A, LECTURE_JOUR_61 regle 13)
+    if sig and (sig[0].get("sortie") != "close_1545"
                 or not isinstance(sig[0].get("rendement_r"), float)
+                or sig[0].get("side_pur") != 1.0
+                or sig[0].get("rend_pts") != 8.0
                 or sig[0]["cible_prix"] is not None):
-        e.append("EOD LONG : sortie=1600_ET + rendement_r + cible None attendus"
-                 " (%s)" % sig[0])
+        e.append("EOD LONG : sortie=close_1545 + rendement_r + side_pur=1 +"
+                 " rend_pts=8 + cible None attendus (%s)" % sig[0])
     # 2. SHORT miroir
     n, m, a, li = _run(_frame_eod(JOUR_DN), "C2_EOD")
     sig = [l for l in li if "snapshot_id" in l]
     if n != 1 or sig[0]["side"] != -1:
         e.append("EOD SHORT : attendu 1 signal side -1 (obtenu %d)" % n)
-    # 3. jour plat -> 0 signal, 1 muet lieu_sans_reaction AVEC rendement_r
+    # 3. jour plat -> 0 signal, 1 muet AVEC rendement_r ET side_pur/rend_pts
+    #    (le verdict EOD-pur se lit TOUS les jours, meme sous r_min)
     n, m, a, li = _run(_frame_eod(JOUR_PLAT), "C2_EOD")
     muet = [l for l in li if l.get("motif") == "lieu_sans_reaction"]
-    if n != 0 or len(muet) != 1 or "rendement_r" not in muet[0]:
+    if (n != 0 or len(muet) != 1 or "rendement_r" not in muet[0]
+            or "side_pur" not in muet[0] or "rend_pts" not in muet[0]):
         e.append("EOD plat : attendu 0 signal + 1 muet portant rendement_r "
-                 "(%d/%d)" % (n, m))
+                 "et side_pur/rend_pts (%d/%d)" % (n, m))
     # 4. demi-seance : pas de barre 15h15 -> jour muet motive
     n, m, a, li = _run(_frame_eod(JOUR_UP[:2]), "C2_EOD")
     if n != 0 or not any("barre_eod_absente" in str(l.get("motif")) for l in li):

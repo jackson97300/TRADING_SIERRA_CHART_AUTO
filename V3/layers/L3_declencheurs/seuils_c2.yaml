@@ -31,10 +31,11 @@ C2_EOD:
   # p25 PRÉ-DÉCLARÉ avant mesure — ES 0,273, NQ 0,275 (attendu 0,2-0,3 :
   # tenu ; p50 0,46/0,48, attendu ~0,4 : tenu).
   r_min: {ES: 0.273, NQ: 0.275}
-  # Sortie HORAIRE 16h00 ET, pas de barrière prix (brief §2). L'exception L0
-  # SESSION_CLOTURE (`exceptions: [C2_EOD]`) est NOTÉE ici, PAS câblée dans
-  # L0 : la couche est SCELLÉE et l'ombre ne passe jamais par la chaîne — le
-  # câblage L0 n'aurait d'objet que si C2_EOD entrait dans la chaîne
-  # (cycle 2+, après lecture N = 40).
-  sortie: 1600_ET
+  # Sortie HORAIRE : la CLÔTURE de la barre 15h45-16h00 ET — le dernier
+  # print cash (audit Fable §2 : « 16h00 ET » ne suffisait pas, EXEC ne
+  # devine pas). Pas de barrière prix. L'exception L0 SESSION_CLOTURE
+  # (`exceptions: [C2_EOD]`) est NOTÉE ici, PAS câblée dans L0 : la couche
+  # est SCELLÉE et l'ombre ne passe jamais par la chaîne — le câblage L0
+  # n'aurait d'objet que si C2_EOD entrait dans la chaîne (cycle 2+).
+  sortie: close_1545
   exception_l0_prevue: SESSION_CLOTURE
