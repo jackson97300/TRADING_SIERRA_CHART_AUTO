@@ -19,7 +19,12 @@ VAL_POINT = {"NQ": 2.00, "ES": 5.00}
 
 @porte("L5_VETO_GAMMA", "L5")
 def _gamma(lec, etat, s):
-    """Mur gamma dans le sens du TP. Devenir des rejetes -0,40 ATR sur ES."""
+    """Mur gamma. BUG A1 CONNU (audit Fable 09/09, INCIDENT_LOG) : lit
+    `gamma_block_long` quel que soit le SIDE — un mur au-dessus bloque des
+    shorts sans raison, un mur en dessous ne bloque jamais. Fix = `side` dans
+    `lecture` + `gamma_block_short` porte dans l'agregation 15 min (absente
+    aujourd'hui) : passe dediee (lecture.py au plafond 300 lignes). Porte
+    OBSERVEE — zero effet campagne ; seule la lecture du jour 61 en depend."""
     return lec["gamma_block_long"]
 
 
@@ -46,9 +51,9 @@ def _frais(lec, etat, s):
     conclusion que le cout par trade, atteinte par un autre chemin.
     """
     atr = lec["atr_barre"]
-    if not atr or atr <= 0:
-        return False
-    tp_usd = s["tp_atr"] * atr * VAL_POINT.get(lec["sym"], 5.0)
+    if atr is None or (isinstance(atr, float) and atr != atr) or atr <= 0:
+        return None                        # A2 : ATR inconnu -> TROU, jamais False
+    tp_usd = s["tp_atr"] * atr * VAL_POINT[lec["sym"]]   # C1 : fail-loud sym inconnu
     if tp_usd <= 0:
         return True
-    return (COUT_DOLLARS.get(lec["sym"], 4.32) / tp_usd) > s["part_max"]
+    return (COUT_DOLLARS[lec["sym"]] / tp_usd) > s["part_max"]

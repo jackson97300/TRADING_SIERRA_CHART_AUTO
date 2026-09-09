@@ -33,6 +33,16 @@
 
 ---
 
+### 2026-09-09 — [COMMENT_FALSE + VALIDATION_MISS] — audit Fable V3 : L5_VETO_GAMMA ignore le SENS du trade (A1), et deux portes L5 inventaient un feu vert
+**Contexte** : audit ligne-a-ligne de Fable (14 fichiers logique) a `045443c`, apres les corrections du pas 1 EXEC.
+**A1 (BUG, PENDING)** : `vetos._gamma` rend `lec["gamma_block_long"]` quel que soit le side — un mur AU-DESSUS bloque des shorts sans raison, un mur EN DESSOUS ne bloque jamais. La docstring L5 dit « la seule couche qui lit le SENS » : FAUSSE. Le -0,48 ATR mesure le 06/09 sur 11 signaux ES l'a ete avec ce veto inverse (VALIDATION_MISS : mesure sur condition fausse). Porte OBSERVEE -> zero effet campagne, mais la lecture du jour 61 lirait un veto qui n'existe pas.
+**Pourquoi PAS corrige tout de suite** : le fix exige `side` dans `lecture.lire` + `gamma_block_short` porte dans l'agregation 15 min (mesure : la colonne existe en 1 min, ABSENTE du df agrege — Fable ne voit pas CORE, d'ou son estimation « une heure » optimiste), et `lecture.py` est au plafond 300 lignes (decoupage requis). Passe dediee avant le gel, pas un hack dans un tour deja enorme. Documente dans la docstring de `_gamma`.
+**A2 (CORRIGE)** : `_frais` rendait `False` (= frais legers) sur ATR absent -> `None` (TROU). Regle souveraine « None jamais False ». + cas test.
+**C1 (CORRIGE)** : `COUT_DOLLARS.get(sym, 4.32)` / `VAL_POINT.get(sym, 5.0)` = defaut silencieux ES pour un sym inconnu -> `[sym]` fail-loud.
+**Lecon** : une porte OBSERVEE n'est pas une porte SANS consequence — sa mesure nourrit le jour 61. Un veto qui lit une condition mono-sens est un veto FAUX, meme s'il ne bloque rien.
+**Trigger prevention** : tout veto/porte qui depend du SENS doit recevoir `side` ; grep `gamma_block_long` sans `gamma_block_short` a cote = suspect.
+**Reviewed** : Fable (audit) + self + code-reviewer (A2/C1).
+
 ### 2026-09-09 — [SCALE_DRIFT] — L0_EOD_LOCKOUT en UTC fige : bug latent qui aurait mange la barre 15h15 de C2_EOD des le 1er novembre
 **Contexte** : la porte L0 comparait `minute_utc` a un seuil UTC EN DUR (`cloture_utc_min: 1200`, marge 10 -> 19:50 UTC). Trouve pre-gel, jamais tire en prod.
 **Ce qui aurait mal tourne** : au passage EDT->EST (1er nov), 20:15 UTC = 15:15 ET. La porte se serait mise a bloquer des 14:50 ET, mangeant la barre 15:15 ET ou tire precisement C2_EOD. Aujourd'hui (EDT) elle est dormante (derniere barre cash 15:45 ET = 19:45 UTC < 19:50) : le bug etait INVISIBLE et se serait reveille tout seul dans 7 semaines.

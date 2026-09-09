@@ -120,6 +120,7 @@ CAS = [
     ("L5_FRAIS_TROP_LOURDS", {"atr_barre": 0.5}, {}, True),
     # MES : 4,32 / (1,5 x 15,11 pts x 5 $) = 3,8 % -> passe (ATR median mesure)
     ("L5_FRAIS_TROP_LOURDS", {"atr_barre": 15.11}, {}, False),
+    ("L5_FRAIS_TROP_LOURDS", {"atr_barre": None}, {}, None),   # A2 : ATR absent -> TROU
 ]
 
 
