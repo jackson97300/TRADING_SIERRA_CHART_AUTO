@@ -8,6 +8,16 @@ pas la famille, la re-dérivation la donne), puis écrit une ligne par signal
 et par barrière dans `LOGS/barrieres/barrieres_<jour>.jsonl`. Le jour se
 rejoue entier (truncate), le fichier existe même sans signal. RÈGLE : aucun
 `null` sans motif à côté.
+
+Depuis le 09/09 (audit ops Fable), les SIGNAUX D'OMBRE (16 ED + C2 actifs)
+reçoivent AUSSI leur B-ATR — la sortie que 9 signaux sur 9 du jour 1
+n'avaient pas. `_barrieres_ombres` lit les journaux d'ombre déjà écrits par
+`campagne` (rien de gelé touché) et écrit le BRACKET (sl/tp), PAS le devenir :
+la pré-inscription des SEIZE/C2 (OMBRE_ED16) est « du N, rien d'autre, sans
+un seul regard sur le passé ». L'issue se recalcule au JOUR 61 depuis le
+bracket stocké — jamais journalisée, jamais un tableau de bord quotidien.
+(Les lignes LES_QUATRE, elles, gardent leur devenir : pré-inscription
+distincte, qui le tolère.)
 """
 
 from __future__ import annotations
@@ -113,7 +123,10 @@ def _courir(jour, chemin):
                     fh.write(json.dumps(ligne, ensure_ascii=False) + "\n")
                     n += 1
                     n_sym += 1
-            print("  %s : %d lignes de barrieres" % (sym, n_sym))
+            n_omb = _barrieres_ombres(df, sym, jour, s, fh, incidents)
+            n += n_omb
+            print("  %s : %d LES_QUATRE + %d ombres (B-ATR)"
+                  % (sym, n_sym, n_omb))
     os.replace(chemin + ".tmp", chemin)
     print("journal : %s" % chemin)
     # R7 (revue 09/09) : un instrument declare « jour NON couru, incident »
@@ -122,6 +135,73 @@ def _courir(jour, chemin):
     if incidents:
         print("  INCIDENT sur %s — code retour 1." % ", ".join(incidents))
     return 1 if incidents else 0
+
+
+def _barrieres_ombres(df, sym, jour, s, fh, incidents):
+    """B-ATR pour les SIGNAUX D'OMBRE (16 ED + C2 actifs) — la sortie que 9
+    signaux sur 9 du jour 1 n'avaient pas (audit ops Fable 09/09).
+
+    Observateur pur : lit les journaux d'ombre DEJA ecrits par `campagne`
+    (rien de gele touche), mappe le `ts` du signal a l'indice de barre, et
+    reutilise `b_atr` — unites deja justes (pas de recalcul, pas de risque
+    points/ticks). Une seule barriere, la reference.
+
+    BRACKET SEULEMENT, PAS DE DEVENIR (review R1) : la pre-inscription des
+    SEIZE/C2 (OMBRE_ED16) est « du N, rien d'autre, sans un seul regard sur
+    le passe ». `B.issue` REGARDE le futur — on ne l'appelle pas. On ecrit
+    le bracket (sl/tp, connus a t+1), l'issue se recalcule au JOUR 61 depuis
+    (sl_prix, tp_prix, i). Cle de lecture jour 61 = (setup, ts, side), jamais
+    le snapshot_id. Aucun `null` sans motif."""
+    ts_to_i = {int(t): k for k, t in enumerate(df["ts"])}
+    n = 0
+    for nom_j, fam in (("ombre16", "SEIZE"), ("ombre_c2", "C2")):
+        p = "LOGS/entonnoir/%s_%s.jsonl" % (nom_j, jour)
+        if not os.path.exists(p):
+            continue
+        for l in open(p, encoding="utf-8"):
+            try:
+                o = json.loads(l)
+            except ValueError:
+                continue
+            # un VRAI signal du bon instrument — jamais un muet ni un
+            # lieu_sans_reaction (ils portent `motif`, pas `side` seul)
+            if o.get("sym") != sym or o.get("side") is None or o.get("motif"):
+                continue
+            side, ts = int(o.get("side")), int(o.get("ts"))
+            i = ts_to_i.get(ts)
+            # snapshot_id UNIQUE par setup (R2) : deux ED au meme ts/sens sont
+            # deux signaux ; l'id inclut le setup pour ne pas collisionner.
+            sid = "OMB:%s:%s:%s:%s" % (o.get("setup"), sym, i,
+                                       "L" if side > 0 else "S")
+            base = {"snapshot_id": sid, "ts": ts, "sym": sym,
+                    "setup": o.get("setup"), "side": side, "famille": fam,
+                    "barriere": "B-ATR"}
+            atr = (float(pd.to_numeric(df["atr_barre"], errors="coerce").iloc[i])
+                   if i is not None else None)
+            probleme = ("ts_introuvable" if i is None else
+                        "fenetre_absente" if i + 1 >= len(df) else
+                        "atr_invalide" if (atr is None or pd.isna(atr) or atr <= 0)
+                        else None)
+            if probleme:
+                base.update(sl_prix=None, tp_prix=None, motif_ligne=probleme)
+                if probleme == "ts_introuvable":
+                    # R3 : ce n'est PAS un signal en fin de fenetre — c'est la
+                    # rupture de l'invariant « meme df que campagne » (SCOPE_
+                    # CREEP batch/stream). Ca crie, ca ne passe pas muet.
+                    print("  %s ATTENTION ts %d introuvable — divergence"
+                          " campagne/barrieres (incident)" % (sym, ts))
+                    incidents.append("%s:ombre_ts" % sym)
+                fh.write(json.dumps(base, ensure_ascii=False) + "\n")
+                n += 1
+                continue
+            entree = float(df["open"].iloc[i + 1])
+            r = B.b_atr(entree, atr, side, s["B-ATR"])
+            base.update(entree=entree, atr_pts=round(atr, 2), **r,
+                        sl_atr=round((r["sl_prix"] - entree) / atr * -side, 3),
+                        tp_atr=round((r["tp_prix"] - entree) / atr * side, 3))
+            fh.write(json.dumps(base, ensure_ascii=False) + "\n")
+            n += 1
+    return n
 
 
 def main():
