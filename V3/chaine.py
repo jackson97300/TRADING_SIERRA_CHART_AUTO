@@ -121,7 +121,12 @@ def appliquer(signaux, df, sym, journal=None, hypothese="?",
             bloquantes += [k for k in trous if k in _APPLIQUEES]
 
         if journal is not None:
-            for k in bloquantes + observees:
+            # Un trou promu bloquant (strict) ne se journalise QU'UNE fois,
+            # sous TROU_<porte> — pas aussi sous le nom plein (audit 09/09 :
+            # 210/624 lignes du jour 1 en double, pourquoi.py annoncait 204
+            # blocages L0 pour 99 reels). Le COMPORTEMENT bloquant, lui, ne
+            # change pas d'un bit : `bloquantes` reste augmentee des trous.
+            for k in [x for x in bloquantes if x not in trous] + observees:
                 extra = (_fantome(df, i, side, sym, etat)
                          if k == "L0_POSITION_OUVERTE" else None)
                 entonnoir.journaliser(

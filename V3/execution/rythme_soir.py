@@ -80,6 +80,11 @@ def main():
         print("  jour resolu : %s (UTC, une fois pour les cinq etapes)" % jour)
     args = [jour]
     codes = [
+        # Etape 0 (Fable C4, 09/09) : L6 n'avait AUCUN producteur quotidien —
+        # dernier verdict du 04/09, et L0_DATA_L6_ALERTE (appliquee) a bloque
+        # 84 battements du jour 1 sur un verdict de 4 jours. Observateur pur.
+        _etape("0/5 surveillance L6", ["CORE/research/surveillance_l6.py",
+                                       *args]),
         _etape("1/5 campagne (LA mesure)", ["V3/campagne.py", *args]),
         _etape("2/5 pourquoi (les trois journaux)", ["V3/pourquoi.py", *args]),
         _etape("3/5 reactions (les niveaux)", ["V3/reactions.py", *args]),

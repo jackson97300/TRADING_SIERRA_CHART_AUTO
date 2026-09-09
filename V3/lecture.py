@@ -149,9 +149,8 @@ def lire(df, i, sym="ES", live=None):
         # --- famille C : le marche est-il tradable ? -----------------------
         # vix_level == 0.0 est un DEFAUT DANS LE DOMAINE, pas une lecture : le
         # C++ rend regime=1 quand meme. Un regime sans niveau est un trou.
-        # DUREE CORRIGEE (audit 09/09) : la panne tient au MATIN du 08/09, pas
-        # « depuis le 04/09 » — en CASH, 0 zero les 01-04/09, 101/390 le 08.
-        # Nuit, dimanche et ferie pris pour une panne. INCIDENT_LOG 09/09.
+        # Duree corrigee (09/09) : panne = MATIN du 08/09 seulement — nuit,
+        # dimanche et ferie pris pour une panne. INCIDENT_LOG 09/09.
         "vix_regime": (val(df, "vix_regime", i)
                        if (val(df, "vix_level", i) or 0.0) > 0.0 else None),
         "dist_hvl_atr": _dist_hvl_atr(df, i),
@@ -200,7 +199,8 @@ def _dist_hvl_atr(df, i):
     a = val(df, "atr_barre", i)
     if d is None or not a or a <= 0:
         return None
-    return d / a
+    # Fable C2 09/09 : dist TICKS x0,25 / atr POINTS ; seuil YAML 1,0->0,25
+    return (d * 0.25) / a
 
 
 # --- bloc l4 : la fenetre de confirmation (SPEC L4 §2) ----------------------

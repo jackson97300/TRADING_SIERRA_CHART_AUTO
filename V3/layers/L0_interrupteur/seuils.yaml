@@ -119,7 +119,13 @@ portes:
              reveille c'est de la securite elementaire."
   L0_REGIME_INDETERMINE:
     mode: observee
-    seuils: {zone_morte_atr: 1.0}
+    # 0,25 et non 1,0 (arbitrage Fable C2, 09/09) : le YAML disait 1,0 par
+    # ERREUR D'UNITE (ticks divises par points dans _dist_hvl_atr) — la zone
+    # morte de 1,0 n'a JAMAIS existe. Le comportement mesure le 06/09
+    # (10,2 -> 1,8 bascules/jour) est celui de 0,25 ATR-15m : on ecrit ce qui
+    # a ete mesure. Zero changement de comportement (conversion x0,25 dans le
+    # code + seuil /4 = identite). Re-poser au cycle 2 sur distribution.
+    seuils: {zone_morte_atr: 0.25}
     mesure: "zone morte autour du HVL — combien de barres sans regime lisible ?"
 
   # === FAMILLE D — ETAT DU RISQUE : ai-je encore le droit de perdre ? ======
@@ -198,7 +204,15 @@ portes:
     seuils: {}
     mesure: "mur gamma dans le sens du TP — voir rapports/portes_57j.csv"
   L5_VETO_RVOL_EXTREME:
-    mode: appliquee
+    # OBSERVEE depuis le 09/09 (arbitrage Fable C3) : le z lu est celui de la
+    # DERNIERE MINUTE du bloc 15 min (bot_terminal, famille ETATS .last()).
+    # Mesure : NQ 64 blocages avec la derniere minute, ZERO avec la barre
+    # reconstruite (moyenne ponderee volume) — 100 % d'artefact d'agregation.
+    # Un veto applique qui bloque sur un artefact n'est pas une protection,
+    # c'est un biais actif sur un instrument. L'agregation juste (73 / 0 /
+    # 25 / 401 sur ES selon la definition) se tranche au cycle 2 SUR
+    # DISTRIBUTION — pas en campagne. Re-application = ligne DECISIONS.
+    mode: observee
     seuils: {zscore_max: 3.0}
     # DEUX DEFINITIONS EXISTENT, ET ELLES NE SE REMPLACENT PAS.
     #   `rvol_zscore`  volume inhabituel par rapport au passe RECENT (intraday)

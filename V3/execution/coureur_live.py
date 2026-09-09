@@ -71,10 +71,10 @@ from V3.execution.sync_vps import (config_vps, journee_courante,  # noqa: E402
 MINUTES = 15
 CYCLE_S = 60   # une barre/min ; le scp de fichiers 10-30 Mo interdit plus court
 
-# Fable 08/09 : env au battement ; hors liste = avertir, continuer (cf ts_ms)
-import numpy as _np  # noqa: E402
+import numpy as _np  # noqa: E402  (env au battement — Fable 08/09)
 ENV = {"python": "%d.%d.%d" % sys.version_info[:3],
-       "pandas": pd.__version__, "numpy": _np.__version__}
+       "pandas": pd.__version__, "numpy": _np.__version__,
+       "exe": sys.executable}   # enigme 3.0.2/3.0.1 : le chemin tranche
 PANDAS_TESTES = ("2.3.3", "3.0.1")
 
 

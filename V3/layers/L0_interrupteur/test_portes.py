@@ -83,7 +83,10 @@ CAS = [
     ("L0_VIX_REGIME", {"vix_regime": 2.0}, {}, True),
     ("L0_VIX_REGIME", {"vix_regime": 1.0}, {}, False),
     ("L0_VIX_REGIME", {"vix_regime": None}, {}, None),
-    ("L0_REGIME_INDETERMINE", {"dist_hvl_atr": 0.3}, {}, True),
+    # 0,2 et non 0,3 : la zone morte YAML vaut 0,25 depuis le fix d'unite
+    # (Fable C2, 09/09) — 0,3 etait « dedans » pour l'ancienne unite fausse.
+    ("L0_REGIME_INDETERMINE", {"dist_hvl_atr": 0.2}, {}, True),
+    ("L0_REGIME_INDETERMINE", {"dist_hvl_atr": 0.3}, {}, False),
     ("L0_REGIME_INDETERMINE", {"dist_hvl_atr": -2.0}, {}, False),
     ("L0_REGIME_INDETERMINE", {"dist_hvl_atr": None}, {}, None),
     # --- famille D : ai-je encore le droit de perdre ? ------------------
