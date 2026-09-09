@@ -224,8 +224,10 @@ def _boucle(jour, strict, minutes, chemin, chemin16, chemin_c2, faits):
             continue
         live = {"contrat_actif": contrat_ok(sym, jour), "rollover": False}
         sig, comptes = signaux_l3(df)
-        retenus = chaine.appliquer([(i, s) for i, s, _n in sig], df, sym,
-                                   journal=chemin, hypothese="ombre1",
+        # sig porte (i, side, FAMILLE) : on la passe telle quelle pour que le
+        # journal PASSE porte la vraie famille (H3-VPOC...), pas « ombre1 » fige
+        # sur soixante jours (revue Fable 09/09). chaine.appliquer lit sig[2].
+        retenus = chaine.appliquer(sig, df, sym, journal=chemin,
                                    strict=strict, live=live)
         total += len(sig)
         detail = " ".join("%s=%d" % (n, comptes[n]) for n in H.LES_QUATRE)

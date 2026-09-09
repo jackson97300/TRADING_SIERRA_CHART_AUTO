@@ -66,5 +66,20 @@ with tempfile.TemporaryDirectory() as tmp:
     else:
         print("  PASS : blocage strict intact (0 PASSE)")
 
-print("chaine journal : %s" % ("2 PASS" if not echecs else "%d FAIL" % echecs))
+    # 3-tuple : la FAMILLE par signal l'emporte sur le defaut (fix Fable 09/09)
+    journal2 = os.path.join(tmp, "j2.jsonl")
+    chaine.appliquer([(10, 1, "H3-VPOC"), (20, -1)], df, "ES", journal=journal2,
+                     hypothese="defaut", strict=True, live={})
+    hyp_par_i = {}
+    for o in (json.loads(l) for l in open(journal2, encoding="utf-8")):
+        i = int(o["snapshot_id"].split(":")[1])
+        hyp_par_i.setdefault(i, set()).add(o["hypothese"])
+    if hyp_par_i.get(10) == {"H3-VPOC"} and hyp_par_i.get(20) == {"defaut"}:
+        print("  PASS : 3-tuple -> famille par signal, 2-tuple -> defaut")
+    else:
+        echecs += 1
+        print("  FAIL : hypothese par signal i10=%s i20=%s"
+              % (hyp_par_i.get(10), hyp_par_i.get(20)))
+
+print("chaine journal : %s" % ("3 PASS" if not echecs else "%d FAIL" % echecs))
 sys.exit(1 if echecs else 0)

@@ -86,7 +86,9 @@ def appliquer(signaux, df, sym, journal=None, hypothese="?",
               strict=False, live=None):
     """Rend les indices qui passent toutes les portes APPLIQUEES.
 
-    `signaux` : liste de (i, side), croissante en i. `side` vaut +1 ou -1.
+    `signaux` : liste de (i, side) OU (i, side, famille), croissante en i.
+    `side` vaut +1 ou -1 ; la famille par signal, si presente, l'emporte sur
+    `hypothese` dans le journal (un 2-tuple garde le defaut — retro-compatible).
 
     Journalise une ligne par porte qui aurait bloque — appliquee comme observee,
     avec un suffixe `:A` ou `:O` sur le `snapshot_id`. Les signaux fermes par
@@ -106,7 +108,13 @@ def appliquer(signaux, df, sym, journal=None, hypothese="?",
     """
     passes, jour_courant, etat = [], None, etat_neuf()
 
-    for i, side in signaux:
+    for sig in signaux:
+        # (i, side) OU (i, side, famille) : la famille PAR SIGNAL l'emporte sur
+        # le `hypothese` par defaut. Retro-compatible — un 2-tuple garde le
+        # defaut. campagne passe la vraie famille pour ne pas figer « ombre1 »
+        # sur soixante jours de journal (revue Fable 09/09).
+        i, side = sig[0], sig[1]
+        hyp = sig[2] if len(sig) > 2 else hypothese
         lec = lecture.lire(df, i, sym, live=live)
         if lec["jour"] != jour_courant:
             jour_courant, etat = lec["jour"], etat_neuf()
@@ -131,19 +139,19 @@ def appliquer(signaux, df, sym, journal=None, hypothese="?",
                          if k == "L0_POSITION_OUVERTE" else None)
                 entonnoir.journaliser(
                     ts=lec["ts"], sym=sym, couche=registre.REGISTRE[k]["couche"],
-                    hypothese=hypothese, decision="BLOQUE", motif=k,
+                    hypothese=hyp, decision="BLOQUE", motif=k,
                     snapshot_id="%s:%s" % (_id(sym, i, side),
                                            "A" if k in _APPLIQUEES else "O"),
                     chemin=journal, extra=extra)
             for k in trous:
                 entonnoir.journaliser(
                     ts=lec["ts"], sym=sym, couche=registre.REGISTRE[k]["couche"],
-                    hypothese=hypothese, decision="BLOQUE",
+                    hypothese=hyp, decision="BLOQUE",
                     motif="TROU_%s" % k,
                     snapshot_id="%s:T" % _id(sym, i, side), chemin=journal)
             if not bloquantes:
                 entonnoir.journaliser(
-                    ts=lec["ts"], sym=sym, couche="L0", hypothese=hypothese,
+                    ts=lec["ts"], sym=sym, couche="L0", hypothese=hyp,
                     decision="PASSE", motif="",
                     snapshot_id=_id(sym, i, side), chemin=journal)
 

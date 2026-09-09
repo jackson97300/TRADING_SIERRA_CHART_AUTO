@@ -212,8 +212,8 @@ def cycle(sym, jour, chauffe, vus, battues, chemin, sync=None, coeur=None):
                 return ("%s : COLONNES MANQUANTES %s — signaux NON detectes,"
                         " incident" % (sym, manquantes))
             sig, _comptes = signaux_l3(cash_agg)
-            lignes = _dans_chaine(cash_agg, [(i, s) for i, s, _n in sig],
-                                  sym, "ombre1-live", live, jour)
+            # sig = (i, side, FAMILLE) : le journal live garde la famille (Fable)
+            lignes = _dans_chaine(cash_agg, sig, sym, "ombre1-live", live, jour)
             paires = [(ln, _base_id(json.loads(ln))) for ln in lignes]
             nouvelles = [(ln, b) for ln, b in paires if b not in vus]
             with open(chemin, "a", encoding="utf-8") as fh:
