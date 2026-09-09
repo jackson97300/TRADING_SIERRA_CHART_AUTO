@@ -31,6 +31,7 @@ le `snapshot_id` n'est pas deja la : relancable sans doublon.
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import sys
@@ -50,6 +51,10 @@ from V3.layers.L5_risque import barrieres as B                   # noqa: E402
 
 _DOSSIER = "LOGS/intentions"
 DUREE_BARRE_MS = 15 * 60 * 1000
+# Plat au plus tard : cloture cash (16h00 ET = 960 min ET). UNIFORME — un plat
+# par famille anticipe (C2_EOD ?) demande une source MESUREE, pas un chiffre
+# invente (regle souveraine) : a decider quand la famille sera dans la ligne.
+SORTIE_HORAIRE_ET_DEFAUT = 960
 # delai_max_s : nombre INVENTE (90 s). Regle souveraine du projet : aucun seuil
 # sans distribution (PLAN §2 [AJOUT]). Ici il ne REFUSE rien — il n'est
 # qu'ECRIT dans `au_plus_tard_ms`, pour batir la distribution latence en SIM.
@@ -90,21 +95,39 @@ def intention(passe, atr, contrat, tick, s_batr, horloge_ms=None):
     t1_open_ms = ts + DUREE_BARRE_MS                # t+1 ouvre a la barre suivante
     emission_ms = int(horloge_ms) if horloge_ms is not None else t1_open_ms
     seuils = s_batr["seuils"]
+    sl_exact = seuils["sl_atr"] * float(atr) / tick
+    tp_exact = seuils["tp_atr"] * float(atr) / tick
+    sl_ticks, tp_ticks = int(round(sl_exact)), int(round(tp_exact))
+    if sl_ticks < 1 or tp_ticks < 1:      # R1 : bracket 0-width = ATR degenere
+        raise ValueError("bracket < 1 tick (ATR trop petit) pour %s : %r"
+                         % (passe["snapshot_id"], atr))
     return {
         "snapshot_id": passe["snapshot_id"],        # cle d'idempotence
         "sym": sym, "side": side,
-        # `hypothese` = LABEL DE MODE (« ombre1 »), PAS la famille : campagne
-        # le fige pour tous les signaux. La famille se retrouve par snapshot_id
-        # (journal barrieres) — ne PAS s'en servir comme discriminant.
+        # `hypothese` = la FAMILLE du declencheur (H3-VPOC...) depuis le 09/09
+        # (campagne la passe par signal). Les anciens journaux (<= 08/09)
+        # portent « ombre1 » (label de mode) — les relire par jointure barrieres.
         "hypothese": passe.get("hypothese", "?"),
         "ts_signal": ts, "contrat": contrat,
         # entree : MKT a l'ouverture de t+1. `au_plus_tard_ms` = deadline de
         # fill ; DELAI_MAX_S est OBSERVE, pas applique (cf constante).
         "entree": {"type": "MKT", "ref": "open(t+1)",
                    "au_plus_tard_ms": t1_open_ms + DELAI_MAX_S * 1000},
-        "barriere": {"sl_ticks": round(seuils["sl_atr"] * float(atr) / tick, 1),
-                     "tp_ticks": round(seuils["tp_atr"] * float(atr) / tick, 1),
+        # ORDRE : ticks ENTIERS (Sierra ne pose pas 234,4 ticks). L'exact garde
+        # la parite avec le B-ATR gele ; l'ecart entier<->exact est le premier
+        # glissement, avant meme le fill. La barriere porte AUSSI ses SOURCES
+        # (atr_pts, tick, sl_atr, tp_atr) : aucun derive sans de quoi le
+        # recomposer le jour ou l'agregation bouge (revue Fable).
+        "barriere": {"sl_ticks": sl_ticks,
+                     "tp_ticks": tp_ticks,
+                     "sl_ticks_exact": round(sl_exact, 3),
+                     "tp_ticks_exact": round(tp_exact, 3),
+                     "atr_pts": round(float(atr), 4), "tick": tick,
+                     "sl_atr": seuils["sl_atr"], "tp_atr": seuils["tp_atr"],
                      "expiration_barres": seuils["expiration_barres"]},
+        # plat au plus tard (cloture cash) — un champ, pas un chiffre en dur cote
+        # EXEC (revue Fable). Uniforme tant que la famille n'affine pas.
+        "sortie_horaire_et": SORTIE_HORAIRE_ET_DEFAUT,
         "taille": 1,
         "emission_ms": emission_ms,
         "etat": "EMISE",
@@ -170,6 +193,23 @@ def _atr_par_ts(jour, incidents):
     return out
 
 
+def _barres_en_conflit(passes):
+    """{(sym, ts)} des barres qui portent DEUX PASSE de sens OPPOSES.
+
+    Une chaine qui dit long ET short sur la meme barre n'a pas decide (revue
+    Fable) : les deux intentions sont journalisees mais marquees non
+    executables. Mesure = 0 dans le lot (POSITION_OUVERTE bloque le second
+    hors-ligne) ; garde fail-loud si ca changeait.
+    """
+    sens = collections.defaultdict(set)
+    for p in passes:
+        try:
+            sens[(p["sym"], int(p["ts"]))].add(_parse_snapshot(p["snapshot_id"])[2])
+        except (ValueError, KeyError):
+            continue
+    return {c for c, se in sens.items() if se == {1, -1}}
+
+
 def courir(jour):
     """Rejoue les PASSE du jour -> intentions. OBSERVATION, ZERO ordre.
 
@@ -203,6 +243,7 @@ def courir(jour):
     contrat = calendrier.contrat_actif(jour)
     incidents = []
     atrs = _atr_par_ts(jour, incidents)
+    conflit = _barres_en_conflit(passes)
     n = 0
     for p in passes:
         cle = (p["sym"], int(p["ts"]))
@@ -220,6 +261,9 @@ def courir(jour):
             print("  ATTENTION PASSE illisible %r : %s" % (p.get("snapshot_id"), e))
             incidents.append("%s:intention_illisible" % p.get("sym", "?"))
             continue
+        if cle in conflit:          # journalise, mais PAS executable (etat != EMISE)
+            intent["etat"] = "CONFLIT_MEME_BARRE"
+            incidents.append("%s:conflit_meme_barre" % p["sym"])
         if emettre(intent, chemin, deja):
             n += 1
     print("  %s : %d intention(s) EMISE(s), contrat %s -> %s"

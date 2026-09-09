@@ -47,10 +47,19 @@ check("side L -> +1",
       I.intention(PASSE_L, 10.0, "U26", 0.25, S_BATR)["side"] == 1)
 check("contrat porte", it["contrat"] == "U26")
 # B-ATR en ticks : 1,0*10/0,25 = 40 ; 1,5*10/0,25 = 60
-check("sl_ticks = sl_atr*atr/tick", it["barriere"]["sl_ticks"] == 40.0,
+check("sl_ticks ENTIER = round(sl_atr*atr/tick)",
+      it["barriere"]["sl_ticks"] == 40 and isinstance(it["barriere"]["sl_ticks"], int),
       str(it["barriere"]))
-check("tp_ticks = tp_atr*atr/tick", it["barriere"]["tp_ticks"] == 60.0)
+check("tp_ticks ENTIER",
+      it["barriere"]["tp_ticks"] == 60 and isinstance(it["barriere"]["tp_ticks"], int))
+check("sl/tp_ticks_exact gardes (parite B-ATR)",
+      it["barriere"]["sl_ticks_exact"] == 40.0
+      and it["barriere"]["tp_ticks_exact"] == 60.0)
+check("barriere porte ses SOURCES (atr_pts/tick/sl_atr/tp_atr)",
+      it["barriere"]["atr_pts"] == 10.0 and it["barriere"]["tick"] == 0.25
+      and it["barriere"]["sl_atr"] == 1.0 and it["barriere"]["tp_atr"] == 1.5)
 check("expiration portee", it["barriere"]["expiration_barres"] == 20)
+check("sortie_horaire_et = cloture cash (960)", it["sortie_horaire_et"] == 960)
 # la propriete-cle : PAS de prix absolu (fill-independant, anti-peek)
 check("aucun prix de fill dans le bracket",
       "sl_prix" not in it["barriere"] and "tp_prix" not in it["barriere"])
@@ -61,7 +70,17 @@ check("snapshot_id = cle d'idempotence", it["snapshot_id"] == "NQ:13:S")
 
 # le bracket ne depend QUE de l'ATR : deux ATR -> deux brackets, meme tick
 it20 = I.intention(PASSE_S, atr=20.0, contrat="U26", tick=0.25, s_batr=S_BATR)
-check("bracket suit l'ATR (20 -> sl 80)", it20["barriere"]["sl_ticks"] == 80.0)
+check("bracket suit l'ATR (20 -> sl 80)", it20["barriere"]["sl_ticks"] == 80)
+
+# --- point 4 : deux PASSE meme barre, sens opposes -> conflit ---------------
+p_l = {"ts": TS, "sym": "NQ", "snapshot_id": "NQ:13:L"}
+p_s = {"ts": TS, "sym": "NQ", "snapshot_id": "NQ:13:S"}
+p_autre = {"ts": TS + 900000, "sym": "NQ", "snapshot_id": "NQ:14:L"}
+conflit = I._barres_en_conflit([p_l, p_s, p_autre])
+check("meme barre L+S -> conflit", ("NQ", TS) in conflit)
+check("barre a un seul sens -> pas de conflit", ("NQ", TS + 900000) not in conflit)
+check("meme sens meme barre -> pas de conflit",
+      I._barres_en_conflit([p_l, dict(p_l)]) == set())
 
 # --- fail-loud -------------------------------------------------------------
 def leve(fn):
@@ -80,6 +99,8 @@ check("ATR nul -> leve",
       leve(lambda: I.intention(PASSE_S, 0.0, "U26", 0.25, S_BATR)))
 check("ATR None -> leve",
       leve(lambda: I.intention(PASSE_S, None, "U26", 0.25, S_BATR)))
+check("ATR minuscule -> bracket < 1 tick leve (R1)",
+      leve(lambda: I.intention(PASSE_S, 0.1, "U26", 0.25, S_BATR)))
 check("sym incoherent -> leve",
       leve(lambda: I.intention(dict(PASSE_S, sym="ES"), 10.0, "U26", 0.25, S_BATR)))
 
@@ -115,9 +136,12 @@ else:
                       I.get_tick_size("NQ"), I.B.charger_seuils()["B-ATR"])
     check("[I2] atr_barre NQ 04/09 fige a 58.61", round(atr_reg, 2) == 58.61,
           "%.4f" % atr_reg)
-    check("[I2] sl_ticks fige a 234.4", reg["barriere"]["sl_ticks"] == 234.4,
+    check("[I2] sl_ticks ENTIER fige a 234", reg["barriere"]["sl_ticks"] == 234,
           str(reg["barriere"]))
-    check("[I2] tp_ticks fige a 351.6", reg["barriere"]["tp_ticks"] == 351.6)
+    check("[I2] tp_ticks ENTIER fige a 352", reg["barriere"]["tp_ticks"] == 352)
+    check("[I2] exact garde la parite (234.4 / 351.6)",
+          round(reg["barriere"]["sl_ticks_exact"], 1) == 234.4
+          and round(reg["barriere"]["tp_ticks_exact"], 1) == 351.6)
 
 # --- garde-fou souverain du pas 1 : ZERO ORDRE -----------------------------
 src = (RACINE / "V3" / "execution" / "intentions.py").read_text(encoding="utf-8")
