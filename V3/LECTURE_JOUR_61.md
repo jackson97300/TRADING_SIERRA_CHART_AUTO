@@ -107,6 +107,14 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     ET où `test_agreger_ts.py` est vert SUR le VPS. Le fichier empoisonné
     est conservé renommé `_rodage` — pièce d'incident, jamais supprimé.
 
+19. **`POSITION_OUVERTE` : le journal LIVE ne fait pas foi dessus, jusqu'au pas
+    2b** (audit Fable 09/09, A4 ; défaut `PLAN_ENTREE_EXEC` §0). En live,
+    `triple_barriere` ne voit pas la sortie future → `libre_a = −1` → la porte
+    ne ferme rien → DEUX `PASSE` simultanés possibles sur un instrument. Le
+    REJEU 21:01 a le futur : `libre_a` juste, un seul PASSE. Sur CETTE porte, la
+    mesure = le rejeu, jamais le live, tant que le câblage sur l'état réel (pas
+    2b, après le gel) n'est pas fait.
+
 ## Les réactions aux niveaux (`reactions.py`) — règles écrites AVANT la donnée
 
 *Ajoutées le 08/09 au soir, avant la première ligne du journal. Un journal

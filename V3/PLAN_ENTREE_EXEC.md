@@ -132,3 +132,16 @@ point d'entrée exact — le défaut qui a plombé le projet six fois.
 
 Rien ne touche à ce que la chaîne DÉCIDE (LES_QUATRE, L0, L5 gelés). Ça change
 seulement QUAND et SUR QUEL ÉTAT une décision devient un acte.
+
+## 7. Réserves de schéma — audit Fable 09/09 (à traiter au câblage / cycle 2)
+
+- **B2 — B-NIV exige une intention en PRIX ABSOLUS, pas en ticks.** B-ATR est un
+  multiple d'ATR → le bracket en ticks autour du fill est exact. Mais B-NIV pose
+  le SL « derrière le niveau » à un PRIX figé : le niveau ne bouge pas, le fill
+  si. Une intention en offsets-ticks ne peut pas l'exprimer. Quand B-NIV
+  s'exécutera (cycle 2), le schéma d'intention doit porter `sl_prix`/`tp_prix`
+  absolus pour les barrières de niveau, pas seulement `sl_ticks`.
+- **C2 — `etat_exec.TTL_DEFAUT_S` = 60 s (deux battements), et EXEC ÉCRIT un
+  battement toutes les 30 s même sans événement.** Sinon un état plat de 90 s
+  est indiscernable d'EXEC mort. La valeur doit venir de `seuils`, pas d'une
+  constante (aujourd'hui 120 provisoire, à corriger au pas 2b).
