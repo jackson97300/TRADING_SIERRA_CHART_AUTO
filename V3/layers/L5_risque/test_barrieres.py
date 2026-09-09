@@ -36,7 +36,8 @@ def _df(close=100.0, atr=10.0, **dists):
     lignes = []
     for i in range(4):
         ligne = {"ts": 1_000_000 + i * 900_000, "open": close, "high": close,
-                 "low": close, "close": close, "atr_barre": atr}
+                 "low": close, "close": close, "atr_barre": atr,
+                 "atr_ref": atr, "atr_source": "barre"}
         for col, v in dists.items():
             ligne[col] = v
         lignes.append(ligne)
@@ -132,6 +133,8 @@ def main():
         df15 = charger_jour("ES", jour, 15)
         if df15.empty:
             continue
+        # parite avec triple_barriere (atr_barre) : le metre est le MEME ici
+        df15 = df15.assign(atr_ref=df15["atr_barre"], atr_source="barre")
         for i in range(len(df15) - 2):
             for side in (+1, -1):
                 ref = triple_barriere(df15, i, side, B.COUTS["ES"])

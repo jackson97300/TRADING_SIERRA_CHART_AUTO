@@ -42,7 +42,7 @@ def check(nom, ok, detail=""):
 n = 30
 df = pd.DataFrame({
     "ts": [TS0 + i * 900_000 for i in range(n)],
-    "atr_barre": 10.0,
+    "atr_barre": 10.0, "atr_ref": 10.0, "atr_source": "barre",
     "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0,
 })
 s = B.charger_seuils()

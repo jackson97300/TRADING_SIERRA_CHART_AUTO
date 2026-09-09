@@ -9,6 +9,14 @@ voit pas.
 Rien ici ne doit etre modifie apres le tag. Une idee nee en lisant les resultats
 va dans `NEXT_CYCLE.md`.
 
+EXCEPTION DU 09/09 (DECISIONS, brique 1 Fable) — LE METRE, PAS LA REGLE.
+`seuil_ticks` lit `atr_ref` (= `atr_barre` si fini, sinon la mediane de l'ATR
+agrege de la derniere session cash COMPLETE, `recalc.atr_veille_15`).
+`np.maximum(0,10 x NaN, 2)` valait NaN : la bande n'existait pas avant 11h00
+parce que le metre etait vide, pas parce que la regle l'a voulu (0 signal des
+quatre sur 52 j x 2 avant 11h00, rapport trou_atr_les_quatre). Planchers,
+fractions, reactions : inchanges. `atr_source` dit lequel a servi.
+
 
 UNITES — la source d'erreur numero un de ce depot
 --------------------------------------------------
@@ -20,7 +28,9 @@ livres (facteur 4) cette semaine, `atr` lu au lieu de `atr_14m`, et le seuil de
     `dist_*`          TICKS.  Mesure du 06/09 : le niveau reconstruit par
                               `close + dist x 0,25` est constant sur la journee
                               et tombe sur des strikes ronds.
-    conversion        `atr5_ticks = atr_barre / tick`, tick = 0,25 sur ES et NQ.
+    `atr_ref`              POINTS. `atr_barre` si fini, sinon l'ATR de la derniere
+                              session complete (`atr_source` = barre | veille).
+    conversion        `atr5_ticks = atr_ref / tick`, tick = 0,25 sur ES et NQ.
 
 **Toute comparaison entre une `dist_*` et un multiple d'ATR passe par
 `seuil_ticks()`.** Comparer une distance en ticks a `0,10 * atr_barre` en points
@@ -87,8 +97,8 @@ def h2(df, tick=TICK):
     COLONNES   : bandes recalculees par `recalc.vwap_bandes(..., n_sd=2.0)` (A),
                  `delta_bar` (A), `finish_delta_pct` (A), `ib_range_atr` (B)
     """
-    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
-    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
+    p10 = seuil_ticks(df["atr_ref"], "P10", tick)
+    p15 = seuil_ticks(df["atr_ref"], "P15", tick)
     regime = _f(df, "ib_range_atr") < 0.8
     du, dd = _f(df, "dist_vwap_rth_sd2u_r"), _f(df, "dist_vwap_rth_sd2d_r")
     delta, fin = _f(df, "delta_bar"), _f(df, "finish_delta_pct")
@@ -118,7 +128,7 @@ def h3(df, tick=TICK):
     revenir » se lit donc `high > VAH` (la meche depasse) et `dist_cur_vah > 0`
     (la cloture est revenue dessous).
     """
-    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
+    p10 = seuil_ticks(df["atr_ref"], "P10", tick)
     dh, dl = _f(df, "dist_cur_vah"), _f(df, "dist_cur_val")
     fin = _f(df, "finish_delta_pct")
     vah = _f(df, "close") + dh * tick
@@ -189,8 +199,8 @@ def h6(df, tick=TICK):
     AU-DESSUS de l'IB. C'est ce signe qui distingue le retest par le haut (on
     est repasse au-dessus) du retest par le bas.
     """
-    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
-    p05 = seuil_ticks(df["atr_barre"], "P05", tick)
+    p15 = seuil_ticks(df["atr_ref"], "P15", tick)
+    p05 = seuil_ticks(df["atr_ref"], "P05", tick)
     regime = _f(df, "ib_range_atr") < 0.4
     dh, dl = _f(df, "dist_ib_high"), _f(df, "dist_ib_low")
     fin = _f(df, "finish_delta_pct")
@@ -227,7 +237,7 @@ def h7(df, tick=TICK):
     condition de reserve de liquidite qui fait tout le travail. Elle est donc
     ecrite serree, et exige qu'un niveau de reference ait ete REELLEMENT depasse.
     """
-    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
+    p10 = seuil_ticks(df["atr_ref"], "P10", tick)
     low, high, close = _f(df, "low"), _f(df, "high"), _f(df, "close")
 
     def depasse(cols, sens):
@@ -278,7 +288,7 @@ def h8(df, tick=TICK):
     — « normal mesure » et « jamais calcule » y sont indistinguables
     (CONVENTIONS §3.1, incident du 06/09).
     """
-    p20 = seuil_ticks(df["atr_barre"], "P20", tick)
+    p20 = seuil_ticks(df["atr_ref"], "P20", tick)
     pres = pd.Series(False, index=df.index)
     for c in NIVEAUX_H8:
         pres = pres | (_f(df, c).abs() <= p20)
@@ -303,10 +313,10 @@ def lieux(df, tick=TICK):
     et c'est precisement ce qui a manque a la lecture du 06/09, ou H6 rendait
     N = 0 sans qu'on voie que son regime couvrait 0,13 % des barres.
     """
-    p05 = seuil_ticks(df["atr_barre"], "P05", tick)
-    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
-    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
-    p20 = seuil_ticks(df["atr_barre"], "P20", tick)
+    p05 = seuil_ticks(df["atr_ref"], "P05", tick)
+    p10 = seuil_ticks(df["atr_ref"], "P10", tick)
+    p15 = seuil_ticks(df["atr_ref"], "P15", tick)
+    p20 = seuil_ticks(df["atr_ref"], "P20", tick)
     du, dd = _f(df, "dist_vwap_rth_sd2u_r"), _f(df, "dist_vwap_rth_sd2d_r")
     dh, dl = _f(df, "dist_cur_vah"), _f(df, "dist_cur_val")
     ih, il = _f(df, "dist_ib_high"), _f(df, "dist_ib_low")
@@ -368,8 +378,8 @@ def h2_prime(df, tick=TICK):
     reaction ramenait 27 signaux a 3, et le regime corrige ne coupe presque plus
     (141 sur 143).
     """
-    p10 = seuil_ticks(df["atr_barre"], "P10", tick)
-    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
+    p10 = seuil_ticks(df["atr_ref"], "P10", tick)
+    p15 = seuil_ticks(df["atr_ref"], "P15", tick)
     regime = _ib_range_atr_r(df, tick) < 0.8
     du, dd = _f(df, "dist_vwap_rth_sd2u_r"), _f(df, "dist_vwap_rth_sd2d_r")
     delta, fin = _f(df, "delta_bar"), _f(df, "finish_delta_pct")
@@ -387,8 +397,8 @@ def h6_prime(df, tick=TICK):
     ramenes a 37 / 35 par le regime — sous le seuil de 40 avant meme la reaction.
     Annoncee NON TESTABLE.
     """
-    p15 = seuil_ticks(df["atr_barre"], "P15", tick)
-    p05 = seuil_ticks(df["atr_barre"], "P05", tick)
+    p15 = seuil_ticks(df["atr_ref"], "P15", tick)
+    p05 = seuil_ticks(df["atr_ref"], "P05", tick)
     regime = _ib_range_atr_r(df, tick) < 0.4
     dh, dl = _f(df, "dist_ib_high"), _f(df, "dist_ib_low")
     fin = _f(df, "finish_delta_pct")
@@ -413,7 +423,7 @@ def h8_prime(df, tick=TICK):
     et un finish contraire ne coexistent presque jamais. Elle est lancee pour que
     ce soit ecrit, pas parce qu'on l'espere.
     """
-    p20 = seuil_ticks(df["atr_barre"], "P20", tick)
+    p20 = seuil_ticks(df["atr_ref"], "P20", tick)
     pres = pd.Series(False, index=df.index)
     for c in NIVEAUX_H8:
         pres = pres | (_f(df, c).abs() <= p20)

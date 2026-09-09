@@ -203,11 +203,15 @@ def b_nat(df, i, side, sym, s, entree, atr, famille):
 
 def issue(df, i, side, sl_prix, tp_prix, sym, expiration=20):
     """Premier touché, expiration sinon — entrée à l'open de t+1, pnl NET en
-    ATR. Même moteur que `triple_barriere`, prix explicites."""
+    ATR. Même moteur que `triple_barriere`, prix explicites.
+
+    Normalise par `atr_ref` (brique 1, 09/09) : le même mètre que le bracket
+    — avant 11h00 c'est l'ATR de la dernière session complète, `atr_source`
+    le dit sur la ligne. `triple_barriere` CORE, gelé, garde `atr_barre`."""
     j = i + 1
     if j >= len(df):
         return None
-    atr = float(pd.to_numeric(df["atr_barre"], errors="coerce").iloc[i])
+    atr = float(pd.to_numeric(df["atr_ref"], errors="coerce").iloc[i])
     if not atr or atr <= 0 or pd.isna(atr):
         return None
     entree = float(pd.to_numeric(df["open"], errors="coerce").iloc[j])

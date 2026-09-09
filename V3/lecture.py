@@ -49,7 +49,7 @@ REQUISES = {
     "L1": ("dist_vwap_w", "dist_cur_vah", "dist_cur_val", "dist_cur_vpoc",
            "dist_prev_vah", "dist_prev_val", "dist_prev_vpoc",
            "poc_migration_dir"),
-    "L5": ("gamma_block_long", "rvol_zscore"),
+    "L5": ("gamma_block_long", "rvol_zscore", "atr_ref", "atr_source"),
 }
 
 # Les PROVENANCES AUTO-DECLAREES du flux : un champ `_X_source` gouverne des

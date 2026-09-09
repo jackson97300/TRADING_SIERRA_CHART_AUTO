@@ -379,9 +379,18 @@ def atr_veille_15(df, dt, minutes=15):
     est celui de la VEILLE »), generalisee.
 
     Prend le 1 min MULTI-JOURS (la chauffe), rend une Series indexee par
-    DATE cash : valeur a la date d = mediane de l'ATR agrege de la date
-    cash presente precedente. NaN pour la premiere date du frame.
+    DATE cash : valeur a la date d = mediane de l'ATR agrege de la derniere
+    date cash COMPLETE strictement avant d. NaN tant qu'aucune ne precede.
+
+    DERNIERE SESSION COMPLETE, PAS DERNIERE SESSION (brique 1 Fable, 09/09,
+    DECISIONS) : le lendemain d'une demi-seance ou d'un fichier tronque
+    (08/05 : derniere barre 14h30), la veille utile est celle d'avant — la
+    mediane d'une demi-journee est un metre faux. Complete = toutes les
+    barres agregees de la fenetre cash (9h30-16h00 ET = 390 min) presentes.
+    Fige a 9h30 par construction : la valeur d'une date ne lit que les
+    dates precedentes, rien de la seance en cours.
     """
+    cash_min = 390                            # la fenetre d'`est_cash`, en minutes
     d = pd.to_datetime(dt, utc=True)
     cash = est_cash(d)
     g = pd.DataFrame({
@@ -402,7 +411,14 @@ def atr_veille_15(df, dt, minutes=15):
     atr = tr.groupby(agg["j"].values).transform(
         lambda s: s.rolling(14, min_periods=7).mean())
     med = atr.groupby(agg["j"].values).median().sort_index()
-    return med.shift(1)
+    n_barres = agg.groupby("j").size().reindex(med.index)
+    n_min = g.groupby("j").size().reindex(med.index)
+    # complete = tous les bins ET (review 10/09, Q1) presque toutes les minutes
+    # — un bin qui n'a qu'UNE barre 1 min compte « present », pas le jour.
+    complete = (n_barres >= (cash_min // minutes)) & (n_min >= cash_min - 10)
+    # where(complete) efface les demi-seances ; ffill porte la derniere
+    # complete jusqu'a la date suivante ; shift(1) = « strictement avant ».
+    return med.where(complete).ffill().shift(1)
 
 
 def rvol(df, dt, n_jours=20, col_vol="total_vol"):

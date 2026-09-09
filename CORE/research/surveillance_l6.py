@@ -22,6 +22,13 @@ Cinq controles, chacun ne pouvant se declencher que sur une mesure :
   E  DERIVE          mediane du jour par famille, comparee aux 20 jours
                      precedents. Une famille entiere qui bouge d'un facteur
                      signale un changement de source, pas un mouvement de marche.
+  F  ECHELLE ATR     brique 1 (Fable 09/09) : avant 11h00 le metre des lieux
+                     est l'ATR de la derniere session COMPLETE (`atr_ref`).
+                     Un gap d'ouverture >= 2 x cet ATR rend l'echelle de la
+                     veille douteuse pour CE jour : INFO `motif=echelle_douteuse`
+                     (JAMAIS ALERTE — toute ALERTE ferme la journee live
+                     suivante via L0_DATA_L6_ALERTE), et la regle 15 lit ses
+                     signaux `atr_source=veille` a part.
 
 Sortie : une ligne JSONL par controle dans `LOGS/surveillance/`, et un code
 retour non nul des qu'une ALERTE est levee — de quoi brancher une tache
@@ -66,6 +73,14 @@ N_JOURS_REFERENCE = 20
 # une alerte qu'on finit par ignorer.
 FAMILLES_MOUVANTES = {"F11", "F8"}
 MAX_DERIVE_MOUVANTE = 10.0
+# Brique 1 (Fable 09/09) : au-dela de ce gap d'ouverture, en ATR de la
+# derniere session complete, l'echelle de la veille est douteuse pour le jour.
+# SEUIL OBSERVE, jamais bloquant (review 10/09, R1) : mesure sur le lot, il
+# etiquette 66 % des jours (p50 ES 1,62 / NQ 2,47 ; p90 5,8 / 6,7).
+MAX_GAP_ATR_VEILLE = 2.0
+N_VEILLES_ECHELLE = 5
+TOLERANCE_MIN_CASH = 10          # une veille a < 380 barres cash est incomplete
+COLS_ECHELLE = ["_ts", "_dt", "open", "high", "low", "close"]
 
 
 def charger_jour(sym: str, jour: str) -> pd.DataFrame:
@@ -360,6 +375,88 @@ def controle_valeurs_par_defaut(df, sym, jour):
                 " ; ".join(msg) if msg else "aucune valeur par defaut dominante")
 
 
+def _masque_cash(dt):
+    m = recalc.est_cash(dt)
+    return m.to_numpy() if hasattr(m, "to_numpy") else np.asarray(m, dtype=bool)
+
+
+def _veilles(sym, jour, n=N_VEILLES_ECHELLE):
+    """Les `n` fichiers 1 min qui PRECEDENT `jour` — de quoi trouver une
+    session complete meme apres un ferie ou un fichier tronque."""
+    fichiers = sorted(f for f in glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym)
+                      if os.path.basename(f)[:8] < jour)[-n:]
+    return [charger_jour(sym, os.path.basename(f)[:8]) for f in fichiers]
+
+
+def _contrat(v):
+    if "contract" not in v.columns:
+        return None
+    c = v["contract"].dropna()
+    return str(c.iloc[-1]) if len(c) else None
+
+
+def controle_echelle_atr(df, sym, jour, veilles=None):
+    """F — brique 1 (Fable 09/09). `atr_ref` prend l'ATR de la derniere
+    session COMPLETE quand `atr_barre` n'existe pas (9h30-11h00). Un jour de
+    GAP d'ouverture >= MAX_GAP_ATR_VEILLE x cet ATR, l'echelle de la veille
+    est douteuse pour CETTE journee : `motif = echelle_douteuse`, que la
+    LECTURE (regle 15) lit pour mettre les signaux `atr_source = veille` du
+    jour A PART.
+
+    JAMAIS ALERTE (review 10/09, R1) : `etat_live.etat_l6` promeut TOUTE
+    ligne ALERTE en `L0_DATA_L6_ALERTE` (appliquee), qui fermerait la journee
+    live SUIVANTE — et 2,0 ATR-veille est la MEDIANE des jours NQ (mesure sur
+    le lot : ES 44 %, NQ 58 %, union 66 % des jours ; p90 5,8 / 6,7). Le
+    seuil est OBSERVE : il etiquette, il ne bloque rien. Un changement de
+    contrat rend `motif = rollover` (gap de BASE, pas de marche — hors regle
+    15). Une veille presente mais incomplete (fichier tronque) rend
+    `motif = veille_incomplete` : sa cloture n'en est pas une. Sans session
+    complete avant (premier jour du lot) : INFO, jamais un silence."""
+    veilles = [v for v in (_veilles(sym, jour) if veilles is None else veilles)
+               if not v.empty]
+    cash = df[_masque_cash(df["_dt"])]
+    if cash.empty:
+        return _res("echelle_atr", "INFO", "aucune barre cash — pas de gap mesurable")
+    tout = pd.concat([v[COLS_ECHELLE] for v in veilles] + [df[COLS_ECHELLE]],
+                     ignore_index=True)
+    med = recalc.atr_veille_15(tout.rename(columns={"_ts": "ts"}), tout["_dt"],
+                               minutes=15)
+    atr_v = float(med.get(cash["_dt"].iloc[0].date(), np.nan))
+    if not np.isfinite(atr_v) or atr_v <= 0:
+        return _res("echelle_atr", "INFO",
+                    "aucune session complete avant %s : atr_ref = aucun avant "
+                    "11h00, les quatre et les seize y restent aveugles" % jour,
+                    atr_veille=None, motif=None)
+    prec = [v[_masque_cash(v["_dt"])] for v in veilles]
+    prec = [v for v in prec if not v.empty]
+    if not prec:
+        return _res("echelle_atr", "INFO", "veille sans barre cash — gap non mesurable",
+                    atr_veille=round(atr_v, 2), motif=None)
+    if len(prec[-1]) < BARRES_CASH - TOLERANCE_MIN_CASH:
+        return _res("echelle_atr", "INFO",
+                    "veille presente mais INCOMPLETE (%d barres cash) : sa cloture "
+                    "n'en est pas une, gap non mesurable" % len(prec[-1]),
+                    atr_veille=round(atr_v, 2), motif="veille_incomplete")
+    close_v = float(pd.to_numeric(prec[-1]["close"], errors="coerce").dropna().iloc[-1])
+    open_j = float(pd.to_numeric(cash["open"], errors="coerce").dropna().iloc[0])
+    gap = abs(open_j - close_v) / atr_v
+    c_j, c_v = _contrat(df), _contrat(veilles[-1])
+    if c_j is not None and c_v is not None and c_j != c_v:
+        motif, suite = "rollover", (" — ROLLOVER %s -> %s : gap de BASE, pas de "
+                                    "marche (hors regle 15)" % (c_v, c_j))
+    elif gap >= MAX_GAP_ATR_VEILLE:
+        motif, suite = "echelle_douteuse", (" — ECHELLE DOUTEUSE : les signaux "
+                                            "atr_source=veille du jour se lisent "
+                                            "a part (regle 15)")
+    else:
+        motif, suite = None, ""
+    return _res("echelle_atr", "INFO" if motif else "OK",
+                "gap d'ouverture %.2f ATR-veille (%.2f pts, atr_veille %.2f)%s"
+                % (gap, abs(open_j - close_v), atr_v, suite),
+                gap_atr=round(gap, 2), atr_veille=round(atr_v, 2),
+                close_veille=close_v, open_jour=open_j, motif=motif)
+
+
 def surveiller(sym: str, jour: str, regles) -> list:
     df = charger_jour(sym, jour)
     if df.empty:
@@ -374,7 +471,8 @@ def surveiller(sym: str, jour: str, regles) -> list:
             controle_reset_vwap(df, sym, jour),
             controle_rollover(df, sym, jour),
             controle_derive(df, sym, jour, regles),
-            controle_valeurs_par_defaut(df, sym, jour)]
+            controle_valeurs_par_defaut(df, sym, jour),
+            controle_echelle_atr(df, sym, jour)]
 
 
 def main() -> int:

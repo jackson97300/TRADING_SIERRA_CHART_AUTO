@@ -42,7 +42,8 @@ COLONNES_SEIZE = ("dist_cur_vpoc", "dist_vwap_d", "dist_prev_vah",
                   "dist_vwap_rth_sd2u_r", "dist_vwap_rth_sd2d_r", "rvol_r",
                   "delta_pct", "finish_delta_pct", "cvd_day_dir",
                   "vwap_slope_10", "inside_prev_va", "ib_broken_up",
-                  "ib_broken_dn", "high", "low", "close", "atr_barre")
+                  "ib_broken_dn", "high", "low", "close", "atr_ref",
+                  "atr_source")
 
 
 def signaux_seize(df):
@@ -75,8 +76,12 @@ def journaliser(df, sym, jour, chemin):
             }, ensure_ascii=False) + "\n")
         for nom, sigs in signaux_seize(df).items():
             for i, side in sigs:
+                # atr_source (brique 1, 09/09) : d'ou vient le metre du lieu —
+                # « veille » avant 11h00, lu a part au jour 61 (regle 15).
                 fh.write(json.dumps(
                     {"ts": int(df["ts"].iloc[i]), "sym": sym, "setup": nom,
-                     "side": side, "jour": jour}, ensure_ascii=False) + "\n")
+                     "side": side, "jour": jour,
+                     "atr_source": str(df["atr_source"].iloc[i])},
+                    ensure_ascii=False) + "\n")
                 n += 1
     return n, absentes

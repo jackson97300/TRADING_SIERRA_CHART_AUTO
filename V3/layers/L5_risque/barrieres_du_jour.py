@@ -79,8 +79,11 @@ def _courir(jour, chemin):
             sig, _c = signaux_l3(df)
             n_sym = 0
             for i, side, famille in sig:
-                atr = float(pd.to_numeric(df["atr_barre"],
+                # atr_ref (brique 1, 09/09) : le meme metre que le lieu —
+                # atr_barre si fini, sinon la derniere session complete.
+                atr = float(pd.to_numeric(df["atr_ref"],
                                           errors="coerce").iloc[i])
+                src = str(df["atr_source"].iloc[i])
                 # un signal ne disparait JAMAIS sans trace (review R5)
                 probleme = ("fenetre_absente" if i + 1 >= len(df) else
                             "atr_invalide" if (pd.isna(atr) or atr <= 0)
@@ -94,7 +97,7 @@ def _courir(jour, chemin):
                             "hypothese": famille, "side": side,
                             "barriere": b_nom, "sl_prix": None,
                             "tp_prix": None, "issue": None, "pnl_atr": None,
-                            "motif_ligne": probleme,
+                            "motif_ligne": probleme, "atr_source": src,
                         }, ensure_ascii=False) + "\n")
                         n += 1
                         n_sym += 1
@@ -112,7 +115,7 @@ def _courir(jour, chemin):
                         "ts": int(df["ts"].iloc[i]), "sym": sym,
                         "hypothese": famille, "side": side,
                         "entree": entree, "atr_pts": round(atr, 2),
-                        **r,
+                        "atr_source": src, **r,
                         "sl_atr": round((r["sl_prix"] - entree) / atr * -side, 3),
                         "tp_atr": round((r["tp_prix"] - entree) / atr * side, 3),
                         "issue": res[0] if res else None,
@@ -175,8 +178,10 @@ def _barrieres_ombres(df, sym, jour, s, fh, incidents):
                                        "L" if side > 0 else "S")
             base = {"snapshot_id": sid, "ts": ts, "sym": sym,
                     "setup": o.get("setup"), "side": side, "famille": fam,
-                    "barriere": "B-ATR"}
-            atr = (float(pd.to_numeric(df["atr_barre"], errors="coerce").iloc[i])
+                    "barriere": "B-ATR",
+                    "atr_source": (str(df["atr_source"].iloc[i])
+                                   if i is not None else None)}
+            atr = (float(pd.to_numeric(df["atr_ref"], errors="coerce").iloc[i])
                    if i is not None else None)
             probleme = ("ts_introuvable" if i is None else
                         "fenetre_absente" if i + 1 >= len(df) else

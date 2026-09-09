@@ -53,6 +53,10 @@ au moment du signal, comme F23 fige ses niveaux, et lire par heure (la VA de
 
 ## 5 bis. Les quatre sur `atr_ref` — boucher le trou 9h30-11h00 (audit 08/09)
 
+**FAIT le 09/09 (brique 1 Fable, DECISIONS) — sorti du cycle 2, entre dans la
+campagne AVANT le gel avec re-rejeu des jours 1-2** : un NaN dans le metre
+n'est pas une convention (meme classe que le DST). Reste ici pour l'histoire.
+
 `atr_barre` (min_periods = 7) est NaN sur 100 % des barres 9h30-11h00 :
 ZERO signal des quatre avant 11h00 sur 52 j x 2 (rapport
 trou_atr_les_quatre) — la campagne gelee est aveugle pendant l'IB, la ou

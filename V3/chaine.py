@@ -121,6 +121,13 @@ def appliquer(signaux, df, sym, journal=None, hypothese="?",
         lec = lecture.lire(df, i, sym, live=live)
         if lec["jour"] != jour_courant:
             jour_courant, etat = lec["jour"], etat_neuf()
+        # atr_source (brique 1, 09/09) : d'ou vient le metre du lieu, sur
+        # CHAQUE ligne de signal — « veille » avant 11h00 se lit a part au
+        # jour 61 (regle 15). « absent » quand le df n'a pas les recalculs :
+        # le BATTEMENT live (full_agg, ~26 lignes/jour/sym, hypothese=
+        # battement) et les df de test. Visible, jamais un None muet.
+        src = {"atr_source": (str(df["atr_source"].iloc[i])
+                              if "atr_source" in df.columns else "absent")}
 
         etat["n_signaux_jour"] += 1
         p = registre.evaluer_toutes(lec, etat, _SEUILS, _ABSENTES)
@@ -138,8 +145,8 @@ def appliquer(signaux, df, sym, journal=None, hypothese="?",
             # blocages L0 pour 99 reels). Le COMPORTEMENT bloquant, lui, ne
             # change pas d'un bit : `bloquantes` reste augmentee des trous.
             for k in [x for x in bloquantes if x not in trous] + observees:
-                extra = (_fantome(df, i, side, sym, etat)
-                         if k == "L0_POSITION_OUVERTE" else None)
+                extra = dict(src, **(_fantome(df, i, side, sym, etat)
+                                     if k == "L0_POSITION_OUVERTE" else {}))
                 entonnoir.journaliser(
                     ts=lec["ts"], sym=sym, couche=registre.REGISTRE[k]["couche"],
                     hypothese=hyp, decision="BLOQUE", motif=k,
@@ -151,18 +158,30 @@ def appliquer(signaux, df, sym, journal=None, hypothese="?",
                     ts=lec["ts"], sym=sym, couche=registre.REGISTRE[k]["couche"],
                     hypothese=hyp, decision="BLOQUE",
                     motif="TROU_%s" % k,
-                    snapshot_id="%s:T" % _id(sym, i, side), chemin=journal)
+                    snapshot_id="%s:T" % _id(sym, i, side), chemin=journal,
+                    extra=src)
             if not bloquantes:
                 entonnoir.journaliser(
                     ts=lec["ts"], sym=sym, couche="L0", hypothese=hyp,
                     decision="PASSE", motif="",
-                    snapshot_id=_id(sym, i, side), chemin=journal)
+                    snapshot_id=_id(sym, i, side), chemin=journal, extra=src)
 
         if not bloquantes:
             passes.append(i)
             etat["n_jour"] += 1
             _ouvrir(df, i, side, sym, etat)
     return passes
+
+
+def _metre(df):
+    """Le df que CORE lit avec le MEME metre que L3 et L5 (brique 1, review
+    10/09 R2) : `atr_barre` remplace par `atr_ref` quand il existe. Identique
+    a partir de 11h00 (atr_ref == atr_barre partout ou celui-ci est fini) ;
+    le matin, `triple_barriere` rend enfin un devenir — sans quoi un PASSE de
+    9h45 n'ouvrait JAMAIS la position virtuelle et `L0_POSITION_OUVERTE`
+    restait inerte jusqu'a 20 barres. Sans `atr_ref` (battement live sur
+    full_agg, df de test) : le df tel quel, la ligne porte atr_source=absent."""
+    return df.assign(atr_barre=df["atr_ref"]) if "atr_ref" in df.columns else df
 
 
 def _ouvrir(df, i, side, sym, etat):
@@ -173,7 +192,7 @@ def _ouvrir(df, i, side, sym, etat):
     libere la place en trois barres, et `POSITION_OUVERTE` ne doit pas fermer
     les dix-sept suivantes pour rien.
     """
-    r = triple_barriere(df, i, side, COUTS[sym])
+    r = triple_barriere(_metre(df), i, side, COUTS[sym])
     if r is None:
         etat.update(libre_a=-1, side_ouvert=0, i_entree=-1, issue_ouverte=None)
         return
@@ -189,7 +208,7 @@ def _fantome(df, i, side, sym, etat):
     deduits, exactement comme un trade reel. Le runner sait deja le faire —
     c'est `triple_barriere()` appelee sur un signal qu'on n'execute pas.
     """
-    r = triple_barriere(df, i, side, COUTS[sym])
+    r = triple_barriere(_metre(df), i, side, COUTS[sym])
     champs = {
         "fantome": True,
         "meme_sens": bool(side == etat["side_ouvert"]),

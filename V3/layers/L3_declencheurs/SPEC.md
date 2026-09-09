@@ -51,10 +51,17 @@ le lot) → **AUCUN lieu n'est possible pendant l'IB et la première heure**.
 Vérifié sur 52 jours × 2 instruments : **0 signal des quatre avant 11h00,
 58 après** (`rapports/trou_atr_les_quatre_20260908.md`). La campagne gelée
 est donc AVEUGLE là où la session teste PDH/VAH — c'est un défaut de la
-FEATURE de normalisation, pas des setups. Rien ne change au gelé ; la
-lecture du jour 61 le sait (LECTURE_JOUR_61 règle 11) ; le cycle 2 lit
-`atr_ref` (= `atr_barre`, sinon ATR de la VEILLE — la solution L1,
-`NEXT_CYCLE.md`).
+FEATURE de normalisation, pas des setups. **CORRIGÉE le 09/09 (brique 1
+Fable, DECISIONS)** — le mètre, pas la règle : les quatre et les seize
+lisent `atr_ref` (= `atr_barre` si fini, sinon l'ATR de la DERNIÈRE SESSION
+COMPLÈTE — pas la dernière session), `atr_source` sur chaque ligne de signal
+(entonnoir, ombre16 ; ombre_c2 : DIV v2, seul C2 dont le LIEU est en ATR —
+80PCT/EOD le portent sur leur bracket) et de bracket, jours 1-2 rejoués
+(anciens journaux conservés). Planchers, fractions, réactions : inchangés.
+Le matin se lit À PART (LECTURE règle 15 étendue) ; L6 `echelle_atr` étiquette
+(INFO + `motif`, jamais ALERTE) les jours de gap ≥ 2 ATR-veille — seuil
+OBSERVÉ, il marque 66 % des jours du lot.
+Rapport `rapports/trou_atr_les_quatre_20260909.md`.
 
 ---
 

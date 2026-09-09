@@ -81,5 +81,33 @@ with tempfile.TemporaryDirectory() as tmp:
         print("  FAIL : hypothese par signal i10=%s i20=%s"
               % (hyp_par_i.get(10), hyp_par_i.get(20)))
 
-print("chaine journal : %s" % ("3 PASS" if not echecs else "%d FAIL" % echecs))
+    # R2 (review 10/09, brique 1) : un PASSE du MATIN (atr_barre NaN, atr_ref
+    # fini) ouvre la position virtuelle sur le MEME metre que L3/L5 — le signal
+    # suivant est BLOQUE par L0_POSITION_OUVERTE (avec son fantome), pas PASSE.
+    # (barres 6 et 8 : au-dela de L0_PREMIERE_BARRE, encore dans le « matin »
+    # synthetique ou atr_barre est NaN et atr_ref fini)
+    df2 = df.copy()
+    df2["atr_barre"] = [np.nan] * 10 + [2.0] * (n - 10)
+    df2["atr_ref"] = 2.0
+    df2["atr_source"] = ["veille"] * 10 + ["barre"] * (n - 10)
+    journal3 = os.path.join(tmp, "j3.jsonl")
+    chaine.appliquer([(6, 1, "H3-VPOC"), (8, 1, "H3-VPOC")], df2, "ES",
+                     journal=journal3, strict=False,
+                     live={"contrat_actif": True, "rollover": False})
+    dec = {}
+    for o in (json.loads(l) for l in open(journal3, encoding="utf-8")):
+        i = int(o["snapshot_id"].split(":")[1])
+        dec.setdefault(i, set()).add((o["decision"], o["motif"], o.get("atr_source"),
+                                      o.get("fantome_issue") is not None))
+    passe6 = any(d == "PASSE" and s == "veille" for d, _m, s, _f in dec.get(6, ()))
+    bloque8 = any(d == "BLOQUE" and m == "L0_POSITION_OUVERTE" and f
+                  for d, m, _s, f in dec.get(8, ()))
+    if passe6 and bloque8:
+        print("  PASS : PASSE du matin (veille) -> le suivant BLOQUE POSITION_OUVERTE"
+              " avec fantome (meme metre)")
+    else:
+        echecs += 1
+        print("  FAIL : R2 — i6=%s i8=%s" % (dec.get(6), dec.get(8)))
+
+print("chaine journal : %s" % ("4 PASS" if not echecs else "%d FAIL" % echecs))
 sys.exit(1 if echecs else 0)

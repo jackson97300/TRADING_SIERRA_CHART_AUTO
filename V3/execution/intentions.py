@@ -72,7 +72,8 @@ def _parse_snapshot(sid):
     return parts[0], int(parts[1]), (1 if parts[2] == "L" else -1)
 
 
-def intention(passe, atr, contrat, tick, s_batr, sortie, horloge_ms=None):
+def intention(passe, atr, contrat, tick, s_batr, sortie, horloge_ms=None,
+              atr_source=None):
     """L'objet immuable depuis UNE ligne PASSE. Ne journalise pas, N'ORDONNE pas.
 
     `passe`   la ligne PASSE (ts, sym, hypothese, snapshot_id).
@@ -125,7 +126,8 @@ def intention(passe, atr, contrat, tick, s_batr, sortie, horloge_ms=None):
                      "tp_ticks_exact": round(tp_exact, 3),
                      "atr_pts": round(float(atr), 4), "tick": tick,
                      "sl_atr": seuils["sl_atr"], "tp_atr": seuils["tp_atr"],
-                     "expiration_barres": seuils["expiration_barres"]},
+                     "expiration_barres": seuils["expiration_barres"],
+                     "atr_source": atr_source},      # barre | veille (brique 1)
         # plat au plus tard PAR FAMILLE + sa SOURCE (C3) : un repli sur le
         # defaut est JOURNALISE (sortie_source), jamais silencieux.
         "sortie_horaire_et": sortie_et,
@@ -171,11 +173,11 @@ def emettre(intent, chemin, deja=None):
 
 
 def _atr_par_ts(jour, incidents):
-    """{(sym, ts): atr_barre} — le df reconstruit COMME le rejeu (barrieres).
+    """{(sym, ts): (atr_ref, atr_source)} — le df reconstruit COMME le rejeu.
 
     Meme chauffe, memes recalculs : le mapping par TS est l'invariant « meme
-    df que la chaine ». Un instrument illisible est note incident, jamais
-    silencieusement absent.
+    df que la chaine ». `atr_ref` = le metre des barrieres (brique 1, 09/09).
+    Un instrument illisible est note incident, jamais silencieusement absent.
     """
     from V3 import lecture
     out = {}
@@ -189,9 +191,10 @@ def _atr_par_ts(jour, incidents):
         if lecture.verifier_colonnes(df, ("L0", "L5")):
             incidents.append(sym)
             continue
-        a = pd.to_numeric(df["atr_barre"], errors="coerce")
-        for ts, atr in zip(df["ts"], a):
-            out[(sym, int(ts))] = float(atr) if pd.notna(atr) and atr > 0 else None
+        a = pd.to_numeric(df["atr_ref"], errors="coerce")
+        for ts, atr, src in zip(df["ts"], a, df["atr_source"]):
+            out[(sym, int(ts))] = (float(atr) if pd.notna(atr) and atr > 0
+                                   else None, str(src))
     return out
 
 
@@ -250,7 +253,7 @@ def courir(jour):
     n = 0
     for p in passes:
         cle = (p["sym"], int(p["ts"]))
-        atr = atrs.get(cle)
+        atr, src = atrs.get(cle, (None, None))
         if atr is None:
             print("  ATTENTION %s ts %d introuvable/ATR nul — divergence"
                   " entonnoir/intentions (incident)" % (p["sym"], p["ts"]))
@@ -260,7 +263,7 @@ def courir(jour):
         # on continue (politique incident uniforme avec ts introuvable).
         try:
             intent = intention(p, atr, contrat, get_tick_size(p["sym"]),
-                               s["B-ATR"], sortie)
+                               s["B-ATR"], sortie, atr_source=src)
         except (ValueError, KeyError) as e:
             print("  ATTENTION PASSE illisible %r : %s" % (p.get("snapshot_id"), e))
             incidents.append("%s:intention_illisible" % p.get("sym", "?"))

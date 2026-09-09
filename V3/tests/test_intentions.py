@@ -136,15 +136,21 @@ with tempfile.TemporaryDirectory() as tmp:
 # AVANT qu'EXEC ne pose un SL/TP faux en silence (regle sizing/SL/TP 27/05).
 TS_REG = 1788540300000
 atrs = I._atr_par_ts("20260904", [])
-atr_reg = atrs.get(("NQ", TS_REG))
+# (atr_ref, atr_source) depuis la brique 1 (09/09) : a 12h45 ET le metre est
+# celui de la barre — le repli veille ne touche que 9h30-11h00.
+atr_reg, src_reg = atrs.get(("NQ", TS_REG), (None, None))
 if atr_reg is None:
     print("  [I2] donnees 20260904 absentes — regression NON verifiee (SKIP)")
 else:
     reg = I.intention({"ts": TS_REG, "sym": "NQ", "hypothese": "ombre1",
                        "snapshot_id": "NQ:13:S"}, atr_reg, "U26",
-                      I.get_tick_size("NQ"), I.B.charger_seuils()["B-ATR"], SORTIE)
+                      I.get_tick_size("NQ"), I.B.charger_seuils()["B-ATR"], SORTIE,
+                      atr_source=src_reg)
     check("[I2] atr_barre NQ 04/09 fige a 58.61", round(atr_reg, 2) == 58.61,
           "%.4f" % atr_reg)
+    check("[I2] atr_source = barre a 12h45 (hors trou), porte par l'intention",
+          src_reg == "barre" and reg["barriere"]["atr_source"] == "barre",
+          "%s / %s" % (src_reg, reg["barriere"].get("atr_source")))
     check("[I2] sl_ticks ENTIER fige a 234", reg["barriere"]["sl_ticks"] == 234,
           str(reg["barriere"]))
     check("[I2] tp_ticks ENTIER fige a 352", reg["barriere"]["tp_ticks"] == 352)

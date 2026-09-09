@@ -134,3 +134,22 @@ machine ne peut pas écrire, et demain elle aura un rollover à raconter.
    d'avant 11h. `atr_ref` (ATR-veille) le boucherait — avant ou après le gel ?
 4. **Volumétrie L6 à 90 %** sur un cash complet : le contrôle compte l'after-hours
    qu'il ne peut pas encore avoir à 20h41. Cash-only, ou décaler l'attendu ?
+
+## 10. Addendum — nuit du 09/09, brique 1 (`atr_ref`) : le jour REJOUÉ
+
+*Arbitrage Fable (GO Jackson) : le trou ATR 9h30-11h00 était un défaut du
+mètre, pas de la règle. Les quatre, les seize et les brackets lisent `atr_ref`
+(ATR de la dernière session COMPLÈTE en secours), `atr_source` sur chaque
+ligne. Le 09/09 a été rejoué : **≥ 11h00, identique ligne à ligne** à ce que
+dit ce rapport. Ce qui change, tout est AVANT 11h :*
+
+- **§4 : les SEIZE font 10, pas 8** — **ES `ED04_BUY_VPOC_RECLAIM` et
+  `ED06_BUY_GEX_SUPPORT` à 10h00** (`atr_source = veille`, à lire à part,
+  règle 15). Le « ED06 muet alors que `mq_put` ES a été testé 4× » de la lecture
+  du soir : c'était le trou, pas la condition.
+- **§4/§5 : le bracket NQ `C2_80PCT` 10h00 EXISTE** (atr 50,76 pts, veille) —
+  plus d'`atr_invalide` ; la question 3 de §9 est close.
+- **LES_QUATRE restent à 0/0** sur le 09/09, matin compris : le lieu n'y était
+  pas, même avec le mètre. Le silence est maintenant un silence MESURÉ.
+- Sur le lot (54 j × 2) : ES 6 / NQ 5 lieux des quatre le matin, tous `veille`
+  (`rapports/trou_atr_les_quatre_20260909.md`).

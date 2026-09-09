@@ -33,6 +33,15 @@
 
 ---
 
+### 2026-09-10 (nuit) — [SCALE_DRIFT] — un seuil « 2 ATR-veille » pose sans distribution : 66 % des jours, et l'ALERTE aurait FERME la journee live suivante
+**Contexte** : brique 1 (`atr_ref`), garde-fou du brief Fable « alerte L6 `echelle_douteuse` les jours de gap >= 2 ATR-veille ».
+**Ce qui a mal tourne** : j'ai code `MAX_GAP_ATR_VEILLE = 2.0` et `etat = "ALERTE"` tels quels. La review (code-reviewer) a mesure le taux sur le lot : ES 44 %, NQ 58 % (p50 = 2,47 ATR — la MEDIANE des jours), union 66 % ; et `etat_live.etat_l6` promeut TOUTE ligne ALERTE en `L0_DATA_L6_ALERTE` (appliquee) → la journee live J+1 fermee deux jours sur trois.
+**Comment c'est sorti** : la review, pas moi — apres 20 fichiers de tests verts et un rejeu « identique ». Les tests prouvaient que l'alerte se leve ; aucun ne mesurait combien de fois, ni ce qu'elle DECLENCHE en aval.
+**Cause racine** : un seuil recu d'un brief traite comme une convention, sans mesurer son taux (memoire feedback_scale_drift) ; et le couplage L6 → L0 (appliquee) oublie en ajoutant un controle L6.
+**Lecon** : tout nouveau controle L6 est une PORTE L0 par construction (`etat_l6` ne filtre pas par controle) — INFO + motif par defaut ; ALERTE seulement avec un taux mesure et une action. Tout seuil ecrit dans un observateur : mesurer son taux sur `jours_disponibles` AVANT le commit, l'ecrire dans la docstring.
+**Trigger prevention** : ajouter un `_res(..., "ALERTE", ...)` dans surveillance_l6 → relire `etat_live.etat_l6` ET mesurer le taux sur le lot. Corrige : INFO + `motif`, seuil OBSERVE, test [4g] « aucun cas ALERTE ».
+**Reviewed** : code-reviewer / self
+
 ### 2026-09-09 (nuit) — [CONTEXT_MISS] — le trou ATR « decouvert » le soir etait mesure ET decide depuis le 08/09 (rapport trou_atr_les_quatre)
 **Contexte** : question Jackson « comment faire payer les journees muettes ». J'ai mesure 6 barres/26 sans `atr_barre` et `seuil_ticks` = NaN avant 11h, et je l'ai annonce comme « LE trou », decision a prendre.
 **Ce qui a mal tourne** : `V3/layers/L3_declencheurs/mesure_trou_atr.py` + `rapports/trou_atr_les_quatre_20260908.md` (audit Fable §1, attendu ecrit avant, 0/58 signaux des quatre 9h30-11h00 sur 52 j x 2) existaient, AVEC une decision ecrite : « rien a changer au gele, SPEC L3 limitation gelee n° 2 + LECTURE ». Et `recalc.atr_veille_15` est deja le secours (L1 depuis DECISIONS 07/09, DIV_DELTA v2, regle 15). J'ai re-derive un resultat connu et presente un choix deja tranche comme ouvert.
