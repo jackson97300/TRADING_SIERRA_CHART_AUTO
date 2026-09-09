@@ -48,9 +48,12 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     `atr_barre` NaN 9h30-11h00 — min_periods = 7). La sous-population
     « avant 11h00 » de la règle 1 est **VIDE PAR CONSTRUCTION**, pas par le
     marché : toute phrase du type « la stratégie ne marche pas le matin »
-    est INTERDITE au jour 61 — elle n'y a pas été essayée. L'IB et la
-    première heure sont un angle mort ASSUMÉ de la campagne gelée ; le
-    cycle 2 lit `atr_ref` (ATR-veille en secours, la solution L1). ET LE
+    est INTERDITE au jour 61 — elle n'y a pas été essayée. **Corrigé le
+    09/09 (brique 1 Fable, DECISIONS)** : depuis le jour 1 REJOUÉ, les
+    quatre et les seize lisent `atr_ref` (ATR de la dernière session
+    complète en secours) — la sous-population du matin EXISTE, elle porte
+    `atr_source = veille` et se lit À PART (règle 15 étendue) ; les jours
+    L6 `echelle_douteuse` (gap ≥ 2 ATR-veille) à part encore. ET LE
     TABLEAU DIT PLUS (revue 08/09, B7) : H3-VPOC fait 13/4/2 signaux ES et
     8/5/2 NQ sur les tranches 11h-13h / 13h-15h / 15h-16h — **les quatre
     gelées sont, EN PRATIQUE, un setup de 11h00-13h00**. Un H3 lu sur 60
@@ -82,7 +85,12 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     HAUT. Une ouverture au-dessus, un tour SOUS la VA, puis une ré-entrée
     par le bas : l'ouverture n'est plus la référence — le cas `mixte` se
     lit À PART, jamais mélangé au cas Dalton.
-15. **DIV_DELTA v2 se lit en séparant `atr_source`** (revue 08/09, C) :
+15. **DIV_DELTA v2 — et depuis le 09/09 LES QUATRE et LES SEIZE (brique 1) —
+    se lisent en séparant `atr_source`** (revue 08/09, C ; les lignes
+    antérieures à la brique — intentions du 04/09, journaux ≤ 08/09 non
+    rejoués — n'ont pas le champ : absent = `barre`, un PASSE n'existait que
+    sur `atr_barre` fini ; les jours L6 `motif = echelle_douteuse` ou
+    `rollover` se lisent à part encore) :
     un lieu à 9h35 sur l'ATR de la VEILLE dans une journée à gap de 2 ATR
     est un lieu sur une échelle fausse pour CETTE journée. Les signaux
     `veille` et `barre` sont deux populations — la colonne est dans chaque
@@ -167,6 +175,16 @@ devenirs par famille. Écrites après la confrontation `research/parite_barriere
     de données, jamais un devenir. La correction de CORE (étiquette `EOD` +
     20 barres détenues) attend le CYCLE 2 : la campagne est gelée sur CORE,
     changer le moteur des devenirs en cours ferait deux populations de mesures.
+
+35. **Le silence des quatre se lit en `lieu_min_ticks`** (brique 2 Fable,
+    09/09 — `marges_quatre_<jour>.jsonl`, une ligne par hypothèse × instrument,
+    MÊME les jours muets, parité barre à barre avec les fonctions gelées
+    prouvée par `test_marges_quatre`). « Bande trop serrée de X ticks sur N
+    jours », « lieu atteint, réaction manquante = finish sur M jours » sont
+    des CALIBRATIONS pour le cycle 2 — JAMAIS une permission d'élargir une
+    bande ou de desserrer une réaction pendant la campagne. QUASI n'est pas un
+    signal manqué : c'est une distance. La seule phrase autorisée a la forme
+    « à seuil × k, N passerait de A à B », et elle se prononce au jour 61.
 
 ## Ce que le jour 61 NE fait pas
 

@@ -33,6 +33,14 @@ passe pas à côté »). Deux audits : la REVUE QUALITÉ (14 fichiers logique, �
 
 ## ⏳ PASSES DÉDIÉES — quand elles viennent
 - **Passe lecture** : découper `lecture.py` (plafond 300), PUIS
+  - **R3 (review brique 1, 10/09) — AVANT LE GEL** : `lecture.lire` n'expose
+    que `atr_barre` → `vetos._frais` (`L5_FRAIS_TROP_LOURDS`) et
+    `_dist_hvl_atr` (`L0_REGIME_INDETERMINE`), observées, rendent un TROU sur
+    toute la population du matin (`atr_source = veille`) — « vide par
+    construction », la classe que la brique 1 corrige pour L3. Fix : clé
+    `atr_ref` dans `lec`, les deux consommateurs dessus, fixtures
+    `test_portes`, + scénario `test_faux_live` avec une barre du matin
+    (`atr_barre` NaN, `atr_ref` fini) qui PASSE en strict.
   - **A1** gamma PAR SENS : `side` dans `lire` + porter `gamma_block_short`
     dans l'agrégation 15 min (ABSENTE aujourd'hui — mesuré). Porte OBSERVÉE,
     ne bloque rien, mais corrompt la lecture du jour 61 (veto mono-sens).
@@ -81,6 +89,12 @@ passe pas à côté »). Deux audits : la REVUE QUALITÉ (14 fichiers logique, �
 *Mesuré : 6 journées sur 9 sans signal des quatre (67 %), 2/2 sur la campagne.
 C'est le RÉGIME. On ne touche ni bande ni déclencheur (pattern 11) ; on complète
 ce qu'un silence ÉCRIT.*
+- ✅ **BRIQUE 1 FAITE (nuit du 09/09, DECISIONS × 2)** : `seuil_ticks` et les
+  brackets lisent `atr_ref`, `atr_source` partout, `atr_veille_15` = dernière
+  session COMPLÈTE, L6 `echelle_douteuse`, `test_atr_ref` 19/19, jours 1-2
+  rejoués (≥ 11h identique ; matin : ES ED10 08/09, ES ED04+ED06 09/09, bracket
+  NQ C2_80PCT). Lot : ES 6 / NQ 5 lieux des quatre le matin. Check (ii) ED06 =
+  RÉSOLU (le trou). Reste (i) ED02 vs regain prev_val NQ 11h15.
 - **Trou ATR = 23 % de CHAQUE séance** — DÉJÀ MESURÉ le 08/09
   (`L3_declencheurs/rapports/trou_atr_les_quatre_20260908.md` : 0/58 signaux des
   quatre 9h30-11h00 sur 52 j × 2, attendu tenu ; décision d'alors : rien au gelé,
@@ -96,10 +110,13 @@ ce qu'un silence ÉCRIT.*
   jours 1-2 (déterministe, une population ; anciens journaux CONSERVÉS,
   renommés, jamais effacés). Même repli pour les brackets d'ombre.
   **Renverse la décision du 08/09 → ligne DECISIONS à écrire par Jackson.**
-- **Marge des quatre** : C2 écrit la sienne (`setup_jour`), les quatre non. Un
-  observateur (pas la chaîne) écrit par hypothèse et par jour : distance min au
-  LIEU en ticks, heure, lequel manquait (lieu / réaction). Même code = **carte
-  des lieux du matin** (prix où chaque hypothèse tirerait) pour Jackson.
+- ✅ **BRIQUE 2 FAITE (nuit du 09/09)** : `V3/marges_quatre.py` (étape 5b/5 du
+  rythme, journal `marges_quatre_<jour>.jsonl`, schéma marges/2), parité
+  barre à barre avec les gelées (`test_marges_quatre` 12/12, 0 écart / 1 248),
+  règle 35 LECTURE. 09/09 : ES H3 QUASI 0,95 t (11h45), NQ H3 QUASI 0,7 t
+  (9h45) ; 08/09 : NQ H3 lieu atteint 11h15, manque finish. **Reste** : la
+  **carte du matin** (`carte_matin.py`, 9h25, même exposition en PRIX :
+  niveau ± seuil, régime lu à 9h30, alternance en aveugle Q7) — brique 3.
 - **Journal MANUEL absent du dépôt** (`V3/**/*manuel*` → 0). Seule pièce que la
   machine n'écrit pas ; sans lui l'angle trader d'un jour muet vaut zéro.
   `V3/journal_manuel/AAAAMMJJ.md` : heure, prix, sens, une ligne pourquoi.

@@ -91,6 +91,10 @@ def main():
         _etape("4/5 barrieres (les SL candidats)",
                ["V3/layers/L5_risque/barrieres_du_jour.py", *args]),
         _etape("5/5 marges (la distance au seuil)", ["V3/marges.py", *args]),
+        # Brique 2 (Fable 09/09) : la marge des QUATRE — de combien le lieu a
+        # manque, et lequel des deux manquait. Observateur pur, journal separe.
+        _etape("5b/5 marges des quatre (le lieu manque)",
+               ["V3/marges_quatre.py", *args]),
     ]
     print("\n--- fait. Reste le JOURNAL MANUEL (METHODE 6) — la machine ne "
           "l'ecrit pas.")
