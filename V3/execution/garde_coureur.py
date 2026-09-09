@@ -162,6 +162,13 @@ def main():
               " un jour — un jour fige a coute la nuit du 07 au 08.")
         return 1
     os.makedirs(os.path.join(RACINE, "LOGS"), exist_ok=True)
+    # KILL SWITCH (audit ops Fable 09/09) : un fichier STOP a la racine =
+    # tout s'arrete et RIEN ne relance. Le garde tue meme un coureur vivant —
+    # STOP prime sur le heartbeat. Retirer le fichier = reprise au tick suivant.
+    if os.path.exists(os.path.join(RACINE, "STOP")):
+        print("STOP present — kill du coureur, AUCUNE relance.")
+        tuer_coureurs()
+        return 0
     age = age_heartbeat()
     if age is not None and age <= MAX_AGE_S:
         print("coureur vivant — battement il y a %.0f s" % age)

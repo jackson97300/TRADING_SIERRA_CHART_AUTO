@@ -9,8 +9,7 @@ zéro test**, avec le motif du zéro).
 
 CE QUE CE FICHIER AJOUTE À `recit.py` — quatre choses, pas un tuyau :
 1. LE DENOMINATEUR — `f23.fiches` rend `[]` pour « colonne absente » comme
-   pour « jamais approché » ; sans `motif_zero`, 60 jours de silence se
-   liraient « ce niveau ne marche pas ».
+   « jamais approché » ; sans `motif_zero`, 60 jours de silence mentent.
 2. LA SYMETRIE — `_reaction_atr` ne mesure QUE le rejet ; `exc_poursuite_*`
    équilibre, sans toucher f23.
 3. LA DERIVE — `cur_*` bougent en séance : la mesure que la quarantaine F23
@@ -236,9 +235,8 @@ def _courir(jour, chemin):
         df15, df1 = _charger_session_entiere(sym, jour)
         if df15.empty:
             entete[sym] = {"n_barres_15m": 0}
-            # LE DENOMINATEUR SURVIT a l'absence de donnees (audit 09/09 : un
-            # samedi, le fichier ne contenait QUE l'entete). Meme fonction que
-            # le cas nominal — un seul schema de ligne — motif force.
+            # Le denominateur survit a l'absence de donnees (audit 09/09) —
+            # meme fonction que le nominal, motif force.
             for col in REGISTRE:
                 lg = _ligne_niveau_jour(df15, col, sym, jour, [], TICK[sym])
                 lg["motif_zero"] = "jour_sans_donnee"
@@ -277,9 +275,11 @@ def _courir(jour, chemin):
             "ferie": calendrier.est_ferie(jour),
             "dow": pd.Timestamp(jour).day_name()[:3],
             "sym": entete, "avertissement": AVERTISSEMENT}
-    with open(chemin, "w", encoding="utf-8") as fh:
+    # .tmp + os.replace (R8) : plus d'ampute sous kill dur.
+    with open(chemin + ".tmp", "w", encoding="utf-8") as fh:
         for o in [tete] + lignes:
             fh.write(json.dumps(o, ensure_ascii=False, default=float) + "\n")
+    os.replace(chemin + ".tmp", chemin)
     tests = sum(1 for o in lignes if o["type"] == "test")
     print("%s — %d tests, %d lignes niveau_jour, %d ecart(s) sur niveau fige"
           % (jour, tests, len(lignes) - tests, alertes))

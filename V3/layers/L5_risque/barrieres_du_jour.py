@@ -33,14 +33,16 @@ from V3.layers.L5_risque import barrieres as B                # noqa: E402
 def courir(jour):
     chemin = "LOGS/barrieres/barrieres_%s.jsonl" % jour
     os.makedirs(os.path.dirname(chemin), exist_ok=True)
-    open(chemin, "w").close()          # vide = jour couru muet, absent = pas couru
+    # vide = jour couru muet, absent = pas couru. Ecrit en .tmp puis replace
+    # (moitie restante de R8) : un kill dur ne laisse plus d'ampute.
     # R8 propage (audit 09/09) : crash entre ES et NQ = fichier vide/partiel
     # lu « couru muet ». Efface + re-eleve : absent = incident lisible.
     try:
         return _courir(jour, chemin)
     except BaseException:
-        if os.path.exists(chemin):
-            os.remove(chemin)
+        for c in (chemin, chemin + ".tmp"):
+            if os.path.exists(c):
+                os.remove(c)
         print("  ECHEC en cours de route — %s EFFACE : jour NON couru." % chemin)
         raise
 
@@ -49,7 +51,7 @@ def _courir(jour, chemin):
     s = B.charger_seuils()
     n = 0
     incidents = []
-    with open(chemin, "a", encoding="utf-8") as fh:
+    with open(chemin + ".tmp", "w", encoding="utf-8") as fh:
         for sym in ("ES", "NQ"):
             df, brut = charger_jour(sym, jour, 15, avec_1min=True)
             if df.empty or len(df) < 6:
@@ -112,6 +114,7 @@ def _courir(jour, chemin):
                     n += 1
                     n_sym += 1
             print("  %s : %d lignes de barrieres" % (sym, n_sym))
+    os.replace(chemin + ".tmp", chemin)
     print("journal : %s" % chemin)
     # R7 (revue 09/09) : un instrument declare « jour NON couru, incident »
     # rendait quand meme 0, et `rythme_soir._etape` y voyait un succes. Le

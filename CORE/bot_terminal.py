@@ -97,7 +97,19 @@ def charger_jour(sym, jour, minutes, avec_1min=False, cash_only=True):
         return vide
     lignes = []
     for f in fichiers:
-        for ln in open(f, encoding="utf-8", errors="ignore"):
+        # retry PermissionError (audit ops 09/09) : le fichier live peut etre
+        # verrouille par le scp du coureur au moment du rejeu de 23:01 —
+        # constate deux fois le 08/09, ombre_c2 ampute de 8 lignes a 1.
+        for essai in range(3):
+            try:
+                contenu = open(f, encoding="utf-8", errors="ignore").readlines()
+                break
+            except PermissionError:
+                if essai == 2:
+                    raise
+                import time
+                time.sleep(2)
+        for ln in contenu:
             ln = ln.strip()
             if ln[:1] != "{":
                 continue

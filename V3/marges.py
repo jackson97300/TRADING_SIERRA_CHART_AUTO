@@ -234,9 +234,11 @@ def _courir(jour, chemin):
             "setups": dict(ACTIFS),
             "tranches_declarees": [n for _, n in TRANCHES],
             "avertissement": AVERTISSEMENT}
-    with open(chemin, "w", encoding="utf-8") as fh:
+    # .tmp + os.replace (moitie restante de R8) : plus d'ampute sous kill dur.
+    with open(chemin + ".tmp", "w", encoding="utf-8") as fh:
         for o in [tete] + lignes:
             fh.write(json.dumps(o, ensure_ascii=False, default=float) + "\n")
+    os.replace(chemin + ".tmp", chemin)
     n_m = sum(1 for o in lignes if o["type"] == "marge")
     print("%s — %d marges, %d lignes setup_jour (le denominateur), %d alerte(s)"
           % (jour, n_m, len(lignes) - n_m, alertes))

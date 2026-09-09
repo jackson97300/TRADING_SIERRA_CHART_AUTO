@@ -69,7 +69,16 @@ def _charger_session_entiere(sym, jour):
     fs = sorted(glob.glob("DATA/live_enriched/sierra/%s/%s*.jsonl" % (sym, jour)))
     lignes = []
     for fp in fs:
-        for ln in open(fp, encoding="utf-8", errors="ignore"):
+        for essai in range(3):    # retry scp-lock (audit ops 09/09)
+            try:
+                _lignes = open(fp, encoding="utf-8", errors="ignore").readlines()
+                break
+            except PermissionError:
+                if essai == 2:
+                    raise
+                import time
+                time.sleep(2)
+        for ln in _lignes:
             if ln[:1] == "{":
                 try:
                     d = json.loads(ln)

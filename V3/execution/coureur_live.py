@@ -19,14 +19,11 @@ chaque cycle, les deux choses que le rejeu ne peut pas faire :
              chaque signal NOUVEAU passe la chaîne stricte et se journalise
              une seule fois.
 
-JOURNAL : `LOGS/entonnoir/live_<jour>.jsonl`, APPEND-ONLY — SÉPARÉ de
-l'entonnoir officiel. Le rejeu de 21:01 reste LA mesure (il rejoue le jour
-entier, déterministe) ; le journal live est la PREUVE que le jour a été couru
-en strict, avec l'âge réel des barres. Les deux ne se mélangent jamais.
+JOURNAL : `LOGS/entonnoir/live_<jour>.jsonl`, APPEND-ONLY, SÉPARÉ de
+l'entonnoir. Le rejeu 21:01 = LA mesure ; le live = la PREUVE du strict.
 
-L'ÉTAT LIVE (six clés, chacune sourcée ou laissée en trou) vit dans
-`etat_live.py` ; le lien VPS (scp, hôte et chemin hors du code) dans
-`sync_vps.py`.
+L'ÉTAT LIVE (six clés, sourcées ou en trou) : `etat_live.py` ; le lien
+VPS (scp, hôte hors code) : `sync_vps.py`. STOP à la racine = arrêt propre.
 
 ATTENDU PRÉ-ENREGISTRÉ (écrit le 07/09 AVANT le premier run, règle 5) :
   - férié US en séance cash : chaque battement BLOQUE avec `L0_FERIE_CME` ;
@@ -272,6 +269,9 @@ def main():
     roule = a.jour is None       # un jour force (test) ne bascule jamais
     coeur = {}
     while True:
+        if os.path.exists("STOP"):          # kill switch (Fable, audit ops)
+            print("STOP present — arret propre du coureur.")
+            return 0
         debut = time.time()
         if roule:
             jour, chemin, vus, battues, chauffe = rouler_si_nouvelle_journee(
