@@ -104,10 +104,10 @@ portes:
     mesure: "aucune decision avant que le regime soit lisible"
   L0_EOD_LOCKOUT:
     mode: appliquee
-    seuils: {cloture_utc_min: 1200, marge_min: 10}   # 20:00 UTC - 10 min
-    mesure: "REDONDANTE avec SESSION_BLOQUEE, pas inerte : 20h UTC est deja
-             100 % bloque en amont. Gardee car elle protege si le calendrier
-             economique tombe."
+    seuils: {cloture_min_et: 960, marge_min: 10}   # 16:00 ET - 10 = 15:50 ET
+    mesure: "seuil en MINUTES ET (DST-aware), pas UTC fige : en EST un
+             cloture_utc_min aurait bloque des 14h50 ET, mangeant la barre
+             15h15 de C2_EOD. REDONDANTE avec SESSION_BLOQUEE, gardee en filet."
 
   # === FAMILLE C — CONDITIONS DE MARCHE : le marche est-il tradable ? ======
   L0_VIX_REGIME:

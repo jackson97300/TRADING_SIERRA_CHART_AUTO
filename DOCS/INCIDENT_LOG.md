@@ -21,7 +21,7 @@
 - `LAZY_DELEGATION` — saute STEP 1-3 d'analyse manuelle, delegue tout aux agents (cf `.claude/rules/module-review-protocol.md`)
 - `DATA_MINING_TRAP` — audit one-shot qui produit "edges" sans walk-forward + DSR Lopez = noise habille en signal (haircut multiple testing manquant)
 - `DECISION_SOUVERAINE` — Jackson override review agent en paper avec kill switch trivial (cf #81bis 25/06)
-- `SCALE_DRIFT` — seuil fige dans le code alors que la feature a change d'echelle, d'instrument ou de definition. Echec SILENCIEUX : le critere vote toujours pareil sans lever d'erreur. 5 occurrences (#57, #99, #100 x3). Garde-fou : `tools/check_regime_calibration.py`
+- `SCALE_DRIFT` — seuil fige dans le code alors que la feature a change d'echelle, d'instrument ou de definition. Echec SILENCIEUX : le critere vote toujours pareil sans lever d'erreur. 6 occurrences (#57, #99, #100 x3, EOD_LOCKOUT 09/09 fuseau UTC fige). Garde-fou : `tools/check_regime_calibration.py`
 
 ## Regles de maintenance
 
@@ -32,6 +32,15 @@
 5. **Cross-reference** avec `.claude/rules/lessons.md` + memoires `feedback_*`
 
 ---
+
+### 2026-09-09 — [SCALE_DRIFT] — L0_EOD_LOCKOUT en UTC fige : bug latent qui aurait mange la barre 15h15 de C2_EOD des le 1er novembre
+**Contexte** : la porte L0 comparait `minute_utc` a un seuil UTC EN DUR (`cloture_utc_min: 1200`, marge 10 -> 19:50 UTC). Trouve pre-gel, jamais tire en prod.
+**Ce qui aurait mal tourne** : au passage EDT->EST (1er nov), 20:15 UTC = 15:15 ET. La porte se serait mise a bloquer des 14:50 ET, mangeant la barre 15:15 ET ou tire precisement C2_EOD. Aujourd'hui (EDT) elle est dormante (derniere barre cash 15:45 ET = 19:45 UTC < 19:50) : le bug etait INVISIBLE et se serait reveille tout seul dans 7 semaines.
+**Cause racine** : une heure de cloture exprimee en UTC est une hypothese qui se perime au changement d'heure — meme famille que #57/#99/#100 (seuil en dur qui vote faux sans lever d'erreur), ici c'est le fuseau qui derive.
+**Lecon** : toute heure de session/cloture s'exprime en MINUTES ET via `recalc.minutes_et` (DST-aware, base d'`est_cash`), jamais en UTC fige. Le projet avait deja construit cet outil (dette CONVENTIONS §2) — la porte ne l'utilisait pas.
+**Fix** : `seuils.yaml` {cloture_min_et: 960, marge_min: 10} (15:50 ET) ; `_eod` compare `lec["minutes_et"]` ; `minute_utc` retire du dict `lec` (dead code, seul consommateur). Preuve algebrique : sur df cash-only EDT, `minute_utc = minutes_et + 240` sans wrap -> rejeu byte-identique. Preuve empirique (tz IANA) : EDT 0 divergence, EST debloque 15:15.
+**Trigger prevention** : avant tout seuil temporel dans une porte/gate -> est-il en ET (DST-aware) ou en UTC/local fige ? Si fige, il derive au 1er nov / 2e dim de mars.
+**Reviewed** : self + code-reviewer (GO, 0 reserve bloquante).
 
 ### 2026-09-09 — [COMMENT_FALSE] — « le chart VIX est mort depuis le 04/09 » : ma propre mesure incluait la NUIT, les week-ends et un FERIE
 

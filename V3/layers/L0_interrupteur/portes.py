@@ -93,11 +93,15 @@ def _premiere_barre(lec, etat, s):
 def _eod(lec, etat, s):
     """Pas de nouvelle entree dans les dernieres minutes avant la cloture.
 
-    REDONDANTE avec `SESSION_BLOQUEE` — pas inerte. La distinction compte :
-    une porte inerte ne protege de rien, une porte redondante protege deja,
-    par une autre. On la garde comme filet si le calendrier tombe.
+    Le seuil est en MINUTES ET (`minutes_et`, DST-aware), pas en UTC : un
+    `cloture_utc_min` en dur derivait d'une heure au 1er novembre et, en EST,
+    aurait bloque des 14h50 ET — donc la barre 15h15 de C2_EOD. En ET, 15h50
+    reste 15h50 toute l'annee. Identique en EDT (aucune barre cash >= 15h50).
+
+    REDONDANTE avec `SESSION_BLOQUEE` — pas inerte : une porte redondante
+    protege deja, par une autre. On la garde comme filet si le calendrier tombe.
     """
-    return lec["minute_utc"] >= (s["cloture_utc_min"] - s["marge_min"])
+    return lec["minutes_et"] >= (s["cloture_min_et"] - s["marge_min"])
 
 
 # --- famille C — CONDITIONS DE MARCHE ---------------------------------------

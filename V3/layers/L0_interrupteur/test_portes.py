@@ -32,7 +32,7 @@ SEUILS, APPLIQUEES, ABSENTES = portes.charger_seuils()
 
 # Une barre nominale : tout va bien, aucune porte ne doit fermer.
 BARRE = {
-    "ts": 1_757_000_000_000, "sym": "ES", "i": 100, "minute_utc": 14 * 60,
+    "ts": 1_757_000_000_000, "sym": "ES", "i": 100, "minutes_et": 14 * 60,
     "jour": "20260903", "rang_du_jour": 20,
     "qualite": "stable", "fenetre_melangee": False, "barre_complete": True,
     "age_s": 12.0, "l6_alerte": False, "colonnes_mortes": False,
@@ -77,8 +77,10 @@ CAS = [
     ("L0_ROLLOVER", {"rollover": None}, {}, None),
     ("L0_PREMIERE_BARRE", {"rang_du_jour": 2}, {}, True),
     ("L0_PREMIERE_BARRE", {"rang_du_jour": 8}, {}, False),
-    ("L0_EOD_LOCKOUT", {"minute_utc": 19 * 60 + 55}, {}, True),
-    ("L0_EOD_LOCKOUT", {"minute_utc": 19 * 60 + 45}, {}, False),
+    # 15h50 ET = 950 = seuil (16h00 - 10) -> bloque ; 15h45 (derniere barre
+    # cash 15 min) = 945 -> passe. Un seuil UTC fige bloquait 15h15 EST.
+    ("L0_EOD_LOCKOUT", {"minutes_et": 15 * 60 + 50}, {}, True),
+    ("L0_EOD_LOCKOUT", {"minutes_et": 15 * 60 + 45}, {}, False),
     # --- famille C : le marche est-il tradable ? ------------------------
     ("L0_VIX_REGIME", {"vix_regime": 2.0}, {}, True),
     ("L0_VIX_REGIME", {"vix_regime": 1.0}, {}, False),

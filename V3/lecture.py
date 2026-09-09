@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from CORE.features import recalc
 from V3 import calendrier
 
 
@@ -123,13 +124,12 @@ def lire(df, i, sym="ES", live=None):
     t = pd.Timestamp(ts, unit="ms", tz="UTC")
     return {
         "ts": ts, "sym": sym, "i": i,
-        "minute_utc": t.hour * 60 + t.minute,
+        "minutes_et": int(recalc.minutes_et(pd.Series([t])).iloc[0]),
         "jour": str(df["jour"].iloc[i]) if "jour" in df.columns else "",
         # --- famille A : la donnee est-elle vraie ? ------------------------
         # Hors ligne, `charger_jour` a deja filtre les barres instables : le
-        # champ vaut donc `stable` par construction et la porte ne rejette
-        # rien. Ce n'est pas une porte inerte, c'est une porte hors de son
-        # terrain — son terrain est le live.
+        # champ vaut `stable` par construction, la porte ne rejette rien. Pas
+        # une porte inerte : une porte hors de son terrain — le live.
         "qualite": _texte(df, "data_quality_flag", i),
         "fenetre_melangee": _fenetre_melangee(df),
         "barre_complete": (bool(df["barre_complete"].iloc[i])
