@@ -129,14 +129,29 @@ def contrat_ok(sym, jour):
     if not fs:
         return None
     attendu = calendrier.contrat_actif(jour)
+    # OBSERVATION (Fable, audit 09/09) : TOUS les contrats du fichier, pas
+    # seulement la premiere ligne — le roll de juin a change le contrat EN
+    # MILIEU de fichier (12/06 a 12:02 UTC, et le 15/06 a battu M26/U26 six
+    # fois). Le VERDICT reste celui de la premiere ligne (gel) ; l'ensemble
+    # est IMPRIME pour que le jour du roll se lise, jamais devine.
+    contrats, premier = set(), None
     for ln in open(fs[0], encoding="utf-8", errors="ignore"):
-        if ln[:1] == "{":
-            try:
-                c = json.loads(ln).get("contract", "")
-            except ValueError:
-                continue
-            return attendu in str(c)
-    return None
+        p = ln.find('"contract":')
+        if p < 0:
+            continue
+        c = ln[p + 11:p + 40].split('"')[1] if '"' in ln[p + 11:p + 40] else ""
+        if c:
+            contrats.add(c)
+            if premier is None:
+                premier = c
+    if premier is None:
+        return None
+    if len(contrats) > 1 or attendu not in premier:
+        print("  %s : contrats du fichier %s | calendrier attend %s%s"
+              % (sym, sorted(contrats), attendu,
+                 " | CHANGEMENT EN COURS DE FICHIER" if len(contrats) > 1
+                 else ""))
+    return attendu in premier
 
 
 def courir(jour, strict=False, minutes=15):
