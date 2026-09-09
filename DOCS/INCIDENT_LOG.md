@@ -33,6 +33,15 @@
 
 ---
 
+### 2026-09-09 (nuit) — [CONTEXT_MISS] — le trou ATR « decouvert » le soir etait mesure ET decide depuis le 08/09 (rapport trou_atr_les_quatre)
+**Contexte** : question Jackson « comment faire payer les journees muettes ». J'ai mesure 6 barres/26 sans `atr_barre` et `seuil_ticks` = NaN avant 11h, et je l'ai annonce comme « LE trou », decision a prendre.
+**Ce qui a mal tourne** : `V3/layers/L3_declencheurs/mesure_trou_atr.py` + `rapports/trou_atr_les_quatre_20260908.md` (audit Fable §1, attendu ecrit avant, 0/58 signaux des quatre 9h30-11h00 sur 52 j x 2) existaient, AVEC une decision ecrite : « rien a changer au gele, SPEC L3 limitation gelee n° 2 + LECTURE ». Et `recalc.atr_veille_15` est deja le secours (L1 depuis DECISIONS 07/09, DIV_DELTA v2, regle 15). J'ai re-derive un resultat connu et presente un choix deja tranche comme ouvert.
+**Cause racine** : « mesurer avant d'annoncer » applique, « chercher si c'est DEJA mesure » oublie — pas de grep `atr|trou` dans `V3/layers/*/rapports/` ni dans DECISIONS avant l'annonce.
+**Ce qui etait neuf** : le regime (6/9 jours muets, 2/2 campagne) ; les SEIZE aveugles aussi (0/43 ED avant 11h — `hypotheses_ed` lit `seuil_ticks`, hors perimetre du 08/09) ; le plancher 2 t qui disparait avec NaN (`np.maximum` propage).
+**Lecon** : un chiffre deja mesure se CITE, il ne se redecouvre pas ; une decision ecrite se RENVERSE explicitement dans DECISIONS (Fable l'a fait ce soir : voie (a) avant le gel), elle ne se rouvre pas en silence.
+**Trigger prevention** : toute annonce « trou / aveugle / manque » sur V3 → `grep -rl <colonne> V3/layers/*/rapports/ V3/DECISIONS.md` d'abord.
+**Reviewed** : self
+
 ### 2026-09-09 (soir) — [VALIDATION_MISS] — un run d'UN jour du harnais de confrontation a ECRASE le rapport du LOT (79 jours), attrape par publier.sh
 **Contexte** : rythme du soir 09/09. J'ai lance `parite_barriere.py 20260909` (confrontation triple_barriere sur la seule journee) pour enrichir le rapport de session.
 **Ce qui a mal tourne** : le harnais ecrivait TOUJOURS `research/rapports/parite_barriere.txt`. Le run d'un jour (0 signal des quatre = « aucun signal ») a remplace le rapport du lot (70 signaux, 22 EOD, 0 ecart de prix) par 2 lignes vides. Silencieux : exit 0, rien a l'ecran.
@@ -5953,7 +5962,7 @@ Resultat : recompile aurait donne **ZERO changement observable** sur les 4 featu
 
 | Categorie | Occurrences | Promoted en memoire ? |
 |---|---|---|
-| CONTEXT_MISS | **6** | **OUI** `feedback_context_miss.md` (deja promu, renforce 22/04 avec trigger "grep enum existant" + "batch add = grep chaque nouveau nom") |
+| CONTEXT_MISS | **7** | **OUI** `feedback_context_miss.md` (deja promu, renforce 22/04 avec trigger "grep enum existant" + "batch add = grep chaque nouveau nom") |
 | VALIDATION_MISS | **12** | **OUI** (+1 le 07/09 `finish_delta_pct` derniere minute, +1 le 07/09 campagne.py set non verifie contre pre-enregistrement) — promu `feedback_validation_miss_patterns.md` : **27/04 leak structurel session features + 03/06 trigger renforce : "tout changement broker symbol + tout guard CRITIQUE empirique audit > 100/24h" + 20/06 trigger : "tout modif default config -> grep consumers cross-codebase" + 07/09 trigger : "coureur de campagne -> comparer set execute au pre-enregistrement + verif notna() colonnes exigees"** |
 | AGENT_MISUSE | 1 | **OUI preventivement** `feedback_agent_brief_verify.md` |
 | SCOPE_CREEP | 1 | Pas encore |

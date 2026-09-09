@@ -81,14 +81,21 @@ passe pas à côté »). Deux audits : la REVUE QUALITÉ (14 fichiers logique, �
 *Mesuré : 6 journées sur 9 sans signal des quatre (67 %), 2/2 sur la campagne.
 C'est le RÉGIME. On ne touche ni bande ni déclencheur (pattern 11) ; on complète
 ce qu'un silence ÉCRIT.*
-- **Trou ATR = 23 % de CHAQUE séance, structurel** : 6 barres/26 sans `atr_barre`,
-  première barre couverte 11h00 ET (mesuré 08/09 + 09/09, ES et NQ). Et
-  `seuil_ticks` rend `np.maximum(0,10·NaN, 2)` = NaN → la bande de H3 n'existe
-  pas avant 11h → **les quatre sont muettes PAR CONSTRUCTION sur l'ouverture**
-  (high NQ 10h00 dans la fenêtre aveugle). Le jour 61 lirait « rares » pour
-  « aveugles ». **Décision Fable** (touche ce que L3 voit) : (a) avant le gel,
-  repli `atr_ref` (ATR veille) pour `seuil_ticks` + bracket ; (b) après, règle
-  LECTURE « 23 % non couverts ». À poser avec le rollover.
+- **Trou ATR = 23 % de CHAQUE séance** — DÉJÀ MESURÉ le 08/09
+  (`L3_declencheurs/rapports/trou_atr_les_quatre_20260908.md` : 0/58 signaux des
+  quatre 9h30-11h00 sur 52 j × 2, attendu tenu ; décision d'alors : rien au gelé,
+  SPEC L3 limitation n° 2). NEUF le 09/09 : **les SEIZE aussi** (0/43 ED avant
+  11h, `hypotheses_ed` lit `seuil_ticks`) et le plancher 2 t disparaît
+  (`np.maximum` propage NaN). **ARBITRAGE FABLE 09/09 soir : voie (a) AVANT LE
+  GEL** — `atr_barre` NaN ← `recalc.atr_veille_15` (existe : L1 depuis le 07/09,
+  DIV_DELTA v2), `atr_source` journalisé (`barre|veille`), `seuil_ticks` intact.
+  **Deux conditions** : l'attendu écrit AVANT (« N lieux des quatre 9h30-11h00
+  sur 57 j avec atr_ref, aucune direction attendue », = `mesure_trou_atr.py`
+  rejoué avec le repli) et la lecture SÉPARÉE `atr_source = veille` au jour 61
+  (règle 15 : un gap de 2 ATR rend l'échelle de la veille fausse). Re-rejeu des
+  jours 1-2 (déterministe, une population ; anciens journaux CONSERVÉS,
+  renommés, jamais effacés). Même repli pour les brackets d'ombre.
+  **Renverse la décision du 08/09 → ligne DECISIONS à écrire par Jackson.**
 - **Marge des quatre** : C2 écrit la sienne (`setup_jour`), les quatre non. Un
   observateur (pas la chaîne) écrit par hypothèse et par jour : distance min au
   LIEU en ticks, heure, lequel manquait (lieu / réaction). Même code = **carte
