@@ -77,6 +77,29 @@ passe pas à côté »). Deux audits : la REVUE QUALITÉ (14 fichiers logique, �
 - **Pas 4 `pourquoi.py`** : trace un `snapshot_id` de bout en bout (retenu →
   émis → exécuté → refusé pourquoi).
 
+## ⏳ JOURNÉES MUETTES — ce qui manque pour qu'elles paient (09/09 soir)
+*Mesuré : 6 journées sur 9 sans signal des quatre (67 %), 2/2 sur la campagne.
+C'est le RÉGIME. On ne touche ni bande ni déclencheur (pattern 11) ; on complète
+ce qu'un silence ÉCRIT.*
+- **Trou ATR = 23 % de CHAQUE séance, structurel** : 6 barres/26 sans `atr_barre`,
+  première barre couverte 11h00 ET (mesuré 08/09 + 09/09, ES et NQ). Et
+  `seuil_ticks` rend `np.maximum(0,10·NaN, 2)` = NaN → la bande de H3 n'existe
+  pas avant 11h → **les quatre sont muettes PAR CONSTRUCTION sur l'ouverture**
+  (high NQ 10h00 dans la fenêtre aveugle). Le jour 61 lirait « rares » pour
+  « aveugles ». **Décision Fable** (touche ce que L3 voit) : (a) avant le gel,
+  repli `atr_ref` (ATR veille) pour `seuil_ticks` + bracket ; (b) après, règle
+  LECTURE « 23 % non couverts ». À poser avec le rollover.
+- **Marge des quatre** : C2 écrit la sienne (`setup_jour`), les quatre non. Un
+  observateur (pas la chaîne) écrit par hypothèse et par jour : distance min au
+  LIEU en ticks, heure, lequel manquait (lieu / réaction). Même code = **carte
+  des lieux du matin** (prix où chaque hypothèse tirerait) pour Jackson.
+- **Journal MANUEL absent du dépôt** (`V3/**/*manuel*` → 0). Seule pièce que la
+  machine n'écrit pas ; sans lui l'angle trader d'un jour muet vaut zéro.
+  `V3/journal_manuel/AAAAMMJJ.md` : heure, prix, sens, une ligne pourquoi.
+- **Check (iii) résolu** : `h3` ne lit PAS `inside_cur_va` (code : `dist_cur_vah/
+  val`, high/low/close, `finish_delta_pct`) — docstring fausse dans CORE gelé,
+  à noter au cycle 2. Restent ED02 / ED06 (conditions vs 11h15 NQ, `mq_put` ES).
+
 ## ✅ Anti-patterns V1 à NE JAMAIS reprendre (déjà évités dans V3)
 - **somme pondérée** (`ml_3layer`, contexte à 0,12) → V3 a le test anti-addition.
 - **signal dérivé du régime** (`generate_fade_signal`) → REG autorise des
