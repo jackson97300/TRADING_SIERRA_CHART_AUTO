@@ -4,7 +4,19 @@
 #
 # Les PORTES L5 (veto gamma/rvol/frais) restent dans
 # layers/L0_interrupteur/seuils.yaml — une seule verite, on ne demenage pas
-# un fichier que la chaine lit. Ce fichier-ci ne porte que les BARRIERES.
+# un fichier que la chaine lit. Ce fichier-ci porte les BARRIERES et la table
+# de sortie horaire (C3).
+
+# Plat au plus tard, PAR FAMILLE (C3, audit Fable 09/09) — une DEFINITION, pas
+# un seuil tune : C2_EOD est le trade de la derniere demi-heure (JFE 15h30 ->
+# cloture), sa sortie EST la cloture cash (960) ; les autres familles sortent
+# au plat de fin de journee (955 = 15h55, cf L0_EOD_LOCKOUT / jamais overnight).
+# Une famille absente prend `defaut` ET le journalise (sortie_source), jamais
+# en silence. Aucune distribution ne deplace une borne de seance.
+sortie_horaire_et:
+  defaut: 955
+  par_famille:
+    C2_EOD: 960
 
 barrieres:
 

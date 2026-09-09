@@ -56,6 +56,16 @@ def charger_seuils():
     return cfg
 
 
+def charger_sortie():
+    """La table de sortie horaire par famille (C3) — `{defaut, par_famille}`.
+
+    Une DEFINITION, pas un seuil (cf en-tete seuils.yaml) : C2_EOD sort a la
+    cloture, les autres au plat de fin de journee. Config, jamais en dur."""
+    import yaml
+    with open(CHEMIN_SEUILS, encoding="utf-8") as fh:
+        return yaml.safe_load(fh)["sortie_horaire_et"]
+
+
 def _niveaux_figes(df, i, noms):
     """{nom: prix} reconstruits À la barre du signal — figés par F23.
     Un dist NaN = niveau inconnu ce jour : absent de la liste, jamais 0."""

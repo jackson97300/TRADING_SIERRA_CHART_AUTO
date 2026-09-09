@@ -51,12 +51,8 @@ from V3.layers.L5_risque import barrieres as B                   # noqa: E402
 
 _DOSSIER = "LOGS/intentions"
 DUREE_BARRE_MS = 15 * 60 * 1000
-# Plat au plus tard, PAR FAMILLE (C3, audit Fable 09/09) : C2_EOD tient jusqu'a
-# la cloture (16h00 ET = 960, setup into-close) ; les autres se plattent 5 min
-# avant (15h55 = 955). Valeurs STRUCTURELLES (borne de seance + convention de
-# plat), pas des seuils tunes -> pas de distribution requise.
-SORTIE_HORAIRE_ET = {"C2_EOD": 960}
-SORTIE_HORAIRE_ET_DEFAUT = 955
+# La table de sortie horaire PAR FAMILLE vit dans le seuils L5 (C3, config pas
+# code) : `B.charger_sortie()` -> `{defaut, par_famille}`, passee a `intention`.
 # delai_max_s : nombre INVENTE (90 s). Regle souveraine du projet : aucun seuil
 # sans distribution (PLAN §2 [AJOUT]). Ici il ne REFUSE rien — il n'est
 # qu'ECRIT dans `au_plus_tard_ms`, pour batir la distribution latence en SIM.
@@ -76,7 +72,7 @@ def _parse_snapshot(sid):
     return parts[0], int(parts[1]), (1 if parts[2] == "L" else -1)
 
 
-def intention(passe, atr, contrat, tick, s_batr, horloge_ms=None):
+def intention(passe, atr, contrat, tick, s_batr, sortie, horloge_ms=None):
     """L'objet immuable depuis UNE ligne PASSE. Ne journalise pas, N'ORDONNE pas.
 
     `passe`   la ligne PASSE (ts, sym, hypothese, snapshot_id).
@@ -103,6 +99,9 @@ def intention(passe, atr, contrat, tick, s_batr, horloge_ms=None):
     if sl_ticks < 1 or tp_ticks < 1:      # R1 : bracket 0-width = ATR degenere
         raise ValueError("bracket < 1 tick (ATR trop petit) pour %s : %r"
                          % (passe["snapshot_id"], atr))
+    fam = passe.get("hypothese")
+    par_fam = sortie.get("par_famille", {})
+    sortie_et = par_fam.get(fam, sortie["defaut"])
     return {
         "snapshot_id": passe["snapshot_id"],        # cle d'idempotence
         "sym": sym, "side": side,
@@ -127,10 +126,10 @@ def intention(passe, atr, contrat, tick, s_batr, horloge_ms=None):
                      "atr_pts": round(float(atr), 4), "tick": tick,
                      "sl_atr": seuils["sl_atr"], "tp_atr": seuils["tp_atr"],
                      "expiration_barres": seuils["expiration_barres"]},
-        # plat au plus tard PAR FAMILLE (C3) — un champ, pas un chiffre en dur
-        # cote EXEC. C2_EOD a 16h00 (into-close), les autres a 15h55.
-        "sortie_horaire_et": SORTIE_HORAIRE_ET.get(passe.get("hypothese"),
-                                                   SORTIE_HORAIRE_ET_DEFAUT),
+        # plat au plus tard PAR FAMILLE + sa SOURCE (C3) : un repli sur le
+        # defaut est JOURNALISE (sortie_source), jamais silencieux.
+        "sortie_horaire_et": sortie_et,
+        "sortie_source": "table" if fam in par_fam else "defaut",
         "taille": 1,
         "emission_ms": emission_ms,
         "etat": "EMISE",
@@ -241,6 +240,7 @@ def courir(jour):
         return 0
 
     s = B.charger_seuils()
+    sortie = B.charger_sortie()
     chemin = chemin_du_jour(jour)
     deja = snapshot_ids_emis(chemin)
     contrat = calendrier.contrat_actif(jour)
@@ -259,7 +259,8 @@ def courir(jour):
         # une ligne PASSE illisible n'arrete PAS le rejeu du jour : incident +
         # on continue (politique incident uniforme avec ts introuvable).
         try:
-            intent = intention(p, atr, contrat, get_tick_size(p["sym"]), s["B-ATR"])
+            intent = intention(p, atr, contrat, get_tick_size(p["sym"]),
+                               s["B-ATR"], sortie)
         except (ValueError, KeyError) as e:
             print("  ATTENTION PASSE illisible %r : %s" % (p.get("snapshot_id"), e))
             incidents.append("%s:intention_illisible" % p.get("sym", "?"))

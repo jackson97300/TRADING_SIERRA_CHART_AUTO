@@ -81,7 +81,7 @@ trou sous `TROU_<porte>` ; en live (`strict=True`) le trou **bloque**.
 | hors session cash | `is_in_us_cash` | **appliquée** | 27,5 % des barres en cash |
 | `is_session_blocked` | `eco_calendar.py` | **appliquée** | ferme **10,1 % ES / 14,0 % NQ**, devenir +0,07 / +0,04 |
 | `L0_NEWS` : ±60 min, TOUS niveaux | `is_news_60m` | **appliquée** | **−4,82 ATR ES, −1,18 NQ.** Trente écarts-types du hasard. Née d'une perte de 1 156 $. **A3 (Fable 09/09)** : le code lit `is_news_60m` (±60 min, tous niveaux) — la distinction CRITIQUE/ÉLEVÉE ci-dessous N'EST PAS appliquée |
-| news par niveau : CRITIQUE −15/+30, ÉLEVÉE −5 | FOMC/NFP/CPI vs PIB/ISM | **NEXT_CYCLE** | exige le NIVEAU dans le JSONL ; la fenêtre élargie n'a que 4 occurrences, trop peu sans mesure |
+| news par niveau : CRITIQUE −15/+30, ÉLEVÉE −5 | FOMC/NFP/CPI vs PIB/ISM | **NEXT_CYCLE** | UNE AUTRE porte, à MESURER au cycle 2 avant de remplacer `is_news_60m` (qui, elle, a un chiffre : −4,82) ; exige le NIVEAU dans le JSONL, et l'élargie n'a que 4 occurrences |
 | férié CME | `sessions.yaml` | **appliquée** | **déclarée, jamais déductible des données** : Juneteenth avait 841 barres et 12 % du volume |
 | demi-séance (clôture 13:00 ET) | `sessions.yaml` | **appliquée** | le CME ferme plus tôt, le marché reste ouvert |
 | dimanche / week-end | vendredi 15:30 → dimanche 18:15 ET | **appliquée** | déjà dans `eco_calendar` |
