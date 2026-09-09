@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from V3.registre import porte
 
-# Couts et valeurs de point — micros MES / MNQ, commissions + 1 tick par cote.
-COUT_DOLLARS = {"NQ": 2.82, "ES": 4.32}
-VAL_POINT = {"NQ": 2.00, "ES": 5.00}
+# Couts : SOURCE UNIQUE = hypothesis_runner (B1, audit Fable). Plus de copie —
+# les memes nombres vivaient a trois endroits (chaine, vetos, runner).
+from CORE.research.hypothesis_runner import COUT_DOLLARS, VAL_POINT   # noqa: E402
 
 
 @porte("L5_VETO_GAMMA", "L5")

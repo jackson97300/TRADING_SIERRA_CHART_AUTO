@@ -47,13 +47,16 @@ if RACINE not in sys.path:
     sys.path.insert(0, RACINE)
 
 from CORE import entonnoir                                        # noqa: E402
-from CORE.research.hypothesis_runner import triple_barriere       # noqa: E402
+from CORE.research.hypothesis_runner import (                     # noqa: E402
+    COUT_DOLLARS, VAL_POINT, triple_barriere)
 from V3 import lecture, registre                                  # noqa: E402
 from V3.layers.L0_interrupteur import portes                      # noqa: E402
 from V3.layers.L0_interrupteur import portes_donnees              # noqa: E402,F401
 from V3.layers.L5_risque import vetos                             # noqa: E402  (enregistre L5)
 
-COUTS = {"NQ": (2.82, 2.00), "ES": (4.32, 5.00)}    # (dollars, $/point) micros
+# B1 (audit Fable) : source UNIQUE des couts = hypothesis_runner. Plus de copie ;
+# meme construction que barrieres.py. Les nombres ne vivent qu'a UN endroit.
+COUTS = {s: (COUT_DOLLARS[s], VAL_POINT[s]) for s in COUT_DOLLARS}
 ETIQUETTES = {1: "TP", -1: "SL", 0: "EXPIRATION"}
 
 _SEUILS, _APPLIQUEES, _ABSENTES = portes.charger_seuils()
@@ -170,7 +173,7 @@ def _ouvrir(df, i, side, sym, etat):
     libere la place en trois barres, et `POSITION_OUVERTE` ne doit pas fermer
     les dix-sept suivantes pour rien.
     """
-    r = triple_barriere(df, i, side, COUTS.get(sym, COUTS["ES"]))
+    r = triple_barriere(df, i, side, COUTS[sym])
     if r is None:
         etat.update(libre_a=-1, side_ouvert=0, i_entree=-1, issue_ouverte=None)
         return
@@ -186,7 +189,7 @@ def _fantome(df, i, side, sym, etat):
     deduits, exactement comme un trade reel. Le runner sait deja le faire —
     c'est `triple_barriere()` appelee sur un signal qu'on n'execute pas.
     """
-    r = triple_barriere(df, i, side, COUTS.get(sym, COUTS["ES"]))
+    r = triple_barriere(df, i, side, COUTS[sym])
     champs = {
         "fantome": True,
         "meme_sens": bool(side == etat["side_ouvert"]),

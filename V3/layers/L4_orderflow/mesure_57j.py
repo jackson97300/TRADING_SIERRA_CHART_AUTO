@@ -30,12 +30,12 @@ if RACINE not in sys.path:
 from CORE.bot_terminal import charger_jour                    # noqa: E402
 from CORE.research import hypotheses as H                     # noqa: E402
 from CORE.research.hypothesis_runner import (                 # noqa: E402
-    signaux_par_franchissement, triple_barriere)
+    COUT_DOLLARS, VAL_POINT, signaux_par_franchissement, triple_barriere)
 from V3 import stats                                          # noqa: E402
 from V3.campagne import jours_disponibles                     # noqa: E402
 from V3.layers.L4_orderflow import confirmation               # noqa: E402
 
-COUTS = {"NQ": (2.82, 2.00), "ES": (4.32, 5.00)}
+COUTS = {s: (COUT_DOLLARS[s], VAL_POINT[s]) for s in COUT_DOLLARS}   # B1 : source unique
 KS = (1, 2, 3)
 N_TIRAGES_HASARD = 500
 GRAINE = 7

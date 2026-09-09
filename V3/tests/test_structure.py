@@ -103,6 +103,12 @@ def controler():
             if n > LIGNES_MAX:
                 echecs.append("%s : %d lignes (max %d) — a decouper"
                               % (rel, n, LIGNES_MAX))
+            # B1 (audit Fable) : les couts micros (2.82/4.32) ne vivent qu'en
+            # SOURCE UNIQUE (CORE/hypothesis_runner) ; V3 les IMPORTE, jamais ne
+            # les recopie. Une copie qui reapparait fait echouer le commit.
+            if re.search(r"\b(2\.82|4\.32)\b", txt):
+                echecs.append("%s : cout 2.82/4.32 en dur — source unique = "
+                              "hypothesis_runner, a importer (B1)" % rel)
     return echecs
 
 
