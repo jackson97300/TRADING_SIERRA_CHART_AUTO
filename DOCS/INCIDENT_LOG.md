@@ -33,6 +33,16 @@
 
 ---
 
+### 2026-09-09 (soir) — [VALIDATION_MISS] — un run d'UN jour du harnais de confrontation a ECRASE le rapport du LOT (79 jours), attrape par publier.sh
+**Contexte** : rythme du soir 09/09. J'ai lance `parite_barriere.py 20260909` (confrontation triple_barriere sur la seule journee) pour enrichir le rapport de session.
+**Ce qui a mal tourne** : le harnais ecrivait TOUJOURS `research/rapports/parite_barriere.txt`. Le run d'un jour (0 signal des quatre = « aucun signal ») a remplace le rapport du lot (70 signaux, 22 EOD, 0 ecart de prix) par 2 lignes vides. Silencieux : exit 0, rien a l'ecran.
+**Comment c'est sorti** : publier.sh, controle 14 (« des modifications de V3/ ne sont pas commitees ») a REFUSE le push. Sans lui, un rapport faux partait au miroir et Fable l'aurait lu comme « la confrontation est vide ».
+**Cause racine** : un rapport de LOT et un rapport de JOUR partageaient un chemin. Et DECISIONS prevoyait de brancher ce harnais au rythme du soir — il aurait ecrase le lot CHAQUE nuit. Le clobber d'un soir a revele le defaut avant la routine.
+**Fix** : d9d7e14 — `parite_barriere <jour>` ecrit `parite_barriere_<jour>.txt` ; le fichier sans date n'est ecrit que par le run complet. Lot restaure depuis 49933d9.
+**Lecon** : tout script « lot OU jour » a DEUX sorties nommees, jamais une. Et le « exit 0 » de `cmd | tail; echo` est celui de l'echo — lire `${PIPESTATUS[0]}`, sinon un refus passe pour un succes (c'est ce qui m'a fait annoncer une republication « finie » qui n'avait pas pousse).
+**Trigger prevention** : avant d'ajouter un mode « un seul jour » a un script de rapport -> verifier ou il ecrit ; avant d'annoncer un push -> le `-> master` imprime, jamais l'exit du pipeline.
+**Reviewed** : self + publier.sh (controle 14, le garde-fou qui a fait son travail).
+
 ### 2026-09-09 — [COMMENT_FALSE + VALIDATION_MISS] — audit Fable V3 : L5_VETO_GAMMA ignore le SENS du trade (A1), et deux portes L5 inventaient un feu vert
 **Contexte** : audit ligne-a-ligne de Fable (14 fichiers logique) a `045443c`, apres les corrections du pas 1 EXEC.
 **A1 (BUG, PENDING)** : `vetos._gamma` rend `lec["gamma_block_long"]` quel que soit le side — un mur AU-DESSUS bloque des shorts sans raison, un mur EN DESSOUS ne bloque jamais. La docstring L5 dit « la seule couche qui lit le SENS » : FAUSSE. Le -0,48 ATR mesure le 06/09 sur 11 signaux ES l'a ete avec ce veto inverse (VALIDATION_MISS : mesure sur condition fausse). Porte OBSERVEE -> zero effet campagne, mais la lecture du jour 61 lirait un veto qui n'existe pas.
