@@ -127,18 +127,22 @@ def tableau(lignes):
 
 def main():
     os.chdir(RACINE)
-    if len(sys.argv) > 1:
-        jours = [sys.argv[1]]
-    else:
-        jours = sorted(set(jours_disponibles("ES")) | set(jours_disponibles("NQ")))
+    jour_arg = sys.argv[1] if len(sys.argv) > 1 else None
+    jours = ([jour_arg] if jour_arg else
+             sorted(set(jours_disponibles("ES")) | set(jours_disponibles("NQ"))))
+    # Un jour seul ecrit SON rapport date ; le rapport du LOT (sans date) n'est
+    # ecrit que par le run complet. Un run quotidien ne l'ecrase JAMAIS — le
+    # 09/09 l'a clobbere une fois (79 jours remplaces par « 1 jour, aucun
+    # signal ») et le rythme du soir l'aurait refait chaque nuit.
+    rapport = RAPPORT.replace(".txt", "_%s.txt" % jour_arg) if jour_arg else RAPPORT
     entete = ("CONFRONTATION — %d jour(s), signaux LES_QUATRE, CORE vs reference\n"
               % len(jours))
     corps = tableau(confronter(jours))
     print(entete + corps)
-    os.makedirs(os.path.dirname(RAPPORT), exist_ok=True)
-    with open(RAPPORT, "w", encoding="utf-8") as fh:
+    os.makedirs(os.path.dirname(rapport), exist_ok=True)
+    with open(rapport, "w", encoding="utf-8") as fh:
         fh.write(entete + corps)
-    print("rapport : %s" % RAPPORT)
+    print("rapport : %s" % rapport)
     return 0
 
 

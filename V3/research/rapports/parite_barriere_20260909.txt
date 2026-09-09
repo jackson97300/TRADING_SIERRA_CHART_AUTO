@@ -1,0 +1,2 @@
+CONFRONTATION — 1 jour(s), signaux LES_QUATRE, CORE vs reference
+  aucun signal dans le lot — rien a confronter
