@@ -95,6 +95,12 @@ ce qu'un silence ÉCRIT.*
   rejoués (≥ 11h identique ; matin : ES ED10 08/09, ES ED04+ED06 09/09, bracket
   NQ C2_80PCT). Lot : ES 6 / NQ 5 lieux des quatre le matin. Check (ii) ED06 =
   RÉSOLU (le trou). Reste (i) ED02 vs regain prev_val NQ 11h15.
+  **Arbitrages Fable 10/09 (avant l'ouverture)** : L6 dérive → INFO (le live
+  du 10/09 s'ouvre) ; seuil `echelle_douteuse` = p90 par instrument (5,81 /
+  6,69) ; `atr_veille_15` exige un seul contrat par session ; brique 2 :
+  `porte_jamais_ouverte` = JOUR_MUET (version b, rejoué) ; carte du matin
+  pré-enregistrée en aveugle (DECISIONS). **Passe lecture avant le gel =
+  découpage + R3 + A1 + B3**, une fois.
 - **Trou ATR = 23 % de CHAQUE séance** — DÉJÀ MESURÉ le 08/09
   (`L3_declencheurs/rapports/trou_atr_les_quatre_20260908.md` : 0/58 signaux des
   quatre 9h30-11h00 sur 52 j × 2, attendu tenu ; décision d'alors : rien au gelé,

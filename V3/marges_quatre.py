@@ -50,7 +50,7 @@ from V3 import calendrier                                       # noqa: E402
 from V3.campagne import COLS_RECALC, chauffe_1min               # noqa: E402
 from V3.marges import AVERTISSEMENT, ENV, _heure_et             # noqa: E402
 
-VERSION = "2026-09-10a"
+VERSION = "2026-09-10b"   # b : porte_jamais_ouverte = JOUR_MUET (Fable Q5)
 DOSSIER = "LOGS/marges"
 SCHEMA = "marges/2"
 ETATS = ("LIEU_REAGI", "LIEU_SANS_REACTION", "QUASI", "LIEU_IMPOSSIBLE",
@@ -162,10 +162,15 @@ def resumer(df, hyp, cotes, fn):
         etat, motif = "LIEU_REAGI", None
     elif n_lieu or manques.get("regime"):
         etat, motif = "LIEU_SANS_REACTION", None
+    elif meilleur is None and not porte_ouverte:
+        # Fable Q5 (10/09) : une IB jamais cassee est une mesure PRISE dont la
+        # precondition n'a pas eu lieu — c'est le DENOMINATEUR qui dit combien
+        # H6p est rare, il reste dedans. JOUR_MUET, pas LIEU_IMPOSSIBLE.
+        etat, motif = "JOUR_MUET", "porte_jamais_ouverte"
     elif meilleur is None:
+        # LIEU_IMPOSSIBLE = la mesure n'a PAS pu etre prise : hors denominateur.
         etat = "LIEU_IMPOSSIBLE"
-        motif = ("porte_jamais_ouverte" if not porte_ouverte else
-                 "atr_ref_absent"
+        motif = ("atr_ref_absent"
                  if pd.to_numeric(df["atr_ref"], errors="coerce").isna().all()
                  else "colonne_absente")
     elif meilleur[3] and meilleur[0] <= meilleur[3]:

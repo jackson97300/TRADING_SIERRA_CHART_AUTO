@@ -22,6 +22,9 @@ Cinq controles, chacun ne pouvant se declencher que sur une mesure :
   E  DERIVE          mediane du jour par famille, comparee aux 20 jours
                      precedents. Une famille entiere qui bouge d'un facteur
                      signale un changement de source, pas un mouvement de marche.
+                     INFO + motif=derive_feature (Fable 10/09) : une derive
+                     INFORME, seule l'integrite FERME — toute ALERTE d'ici
+                     ferme la journee live suivante (L0_DATA_L6_ALERTE).
   F  ECHELLE ATR     brique 1 (Fable 09/09) : avant 11h00 le metre des lieux
                      est l'ATR de la derniere session COMPLETE (`atr_ref`).
                      Un gap d'ouverture >= 2 x cet ATR rend l'echelle de la
@@ -75,12 +78,14 @@ FAMILLES_MOUVANTES = {"F11", "F8"}
 MAX_DERIVE_MOUVANTE = 10.0
 # Brique 1 (Fable 09/09) : au-dela de ce gap d'ouverture, en ATR de la
 # derniere session complete, l'echelle de la veille est douteuse pour le jour.
-# SEUIL OBSERVE, jamais bloquant (review 10/09, R1) : mesure sur le lot, il
-# etiquette 66 % des jours (p50 ES 1,62 / NQ 2,47 ; p90 5,8 / 6,7).
-MAX_GAP_ATR_VEILLE = 2.0
+# SEUIL OBSERVE, jamais bloquant (review 10/09, R1), POSE SUR LA DISTRIBUTION
+# (Fable Q1) : p90 PAR INSTRUMENT, mesure le 10/09 sur 62 jours (gap = |open
+# cash J - close cash J-1 presente| / atr_veille) — ES p50 1,62 p90 5,81 ;
+# NQ p50 2,47 p90 6,69. Le « 2,0 » du brief etait la MEDIANE : retire.
+MAX_GAP_ATR_VEILLE = {"ES": 5.81, "NQ": 6.69}
 N_VEILLES_ECHELLE = 5
 TOLERANCE_MIN_CASH = 10          # une veille a < 380 barres cash est incomplete
-COLS_ECHELLE = ["_ts", "_dt", "open", "high", "low", "close"]
+COLS_ECHELLE = ["_ts", "_dt", "open", "high", "low", "close", "contract"]
 
 
 def charger_jour(sym: str, jour: str) -> pd.DataFrame:
@@ -254,13 +259,20 @@ def controle_derive(df, sym, jour, regles):
                  else MAX_DERIVE_FAMILLE)
         if r > seuil or r < 1.0 / seuil:
             derives.append((fam, round(r, 2)))
-    etat = "ALERTE" if derives else "OK"
+    # Une DERIVE informe, l'INTEGRITE ferme (Fable, 10/09 avant l'ouverture) :
+    # `etat_live.etat_l6` promeut toute ALERTE en L0_DATA_L6_ALERTE (appliquee),
+    # et la derive F15 x44 du 09/09 aurait ferme le live du 10/09 entier. Une
+    # famille qui change d'echelle n'est pas une atteinte a la donnee : INFO +
+    # motif, la lecture y met son caveat (ED10 les jours F15). La taxonomie
+    # complete des verdicts L6 (integrite / derive) se formalise apres le gel.
+    etat = "INFO" if derives else "OK"
     return _res("derive", etat,
                 ("familles derivant d'un facteur > %g : %s" % (
                     MAX_DERIVE_FAMILLE,
                     ", ".join("%s x%.2f" % (f, r) for f, r in derives)))
                 if derives else "%d familles comparees, aucune derive" % len(set(a) & set(b)),
-                familles_en_derive=[f for f, _ in derives])
+                familles_en_derive=[f for f, _ in derives],
+                motif="derive_feature" if derives else None)
 
 
 def controle_rollover(df, sym, jour):
@@ -405,9 +417,11 @@ def controle_echelle_atr(df, sym, jour, veilles=None):
 
     JAMAIS ALERTE (review 10/09, R1) : `etat_live.etat_l6` promeut TOUTE
     ligne ALERTE en `L0_DATA_L6_ALERTE` (appliquee), qui fermerait la journee
-    live SUIVANTE — et 2,0 ATR-veille est la MEDIANE des jours NQ (mesure sur
-    le lot : ES 44 %, NQ 58 %, union 66 % des jours ; p90 5,8 / 6,7). Le
-    seuil est OBSERVE : il etiquette, il ne bloque rien. Un changement de
+    live SUIVANTE — et 2,0 ATR-veille etait la MEDIANE des jours NQ (mesure
+    sur 62 j : ES 44 %, NQ 58 %, union 66 %). Le seuil est le p90 PAR
+    INSTRUMENT (Fable Q1 : ES 5,81 / NQ 6,69), OBSERVE : il etiquette les
+    ~10 % de jours ou l'echelle de la veille est vraiment fausse, il ne
+    bloque rien. Un changement de
     contrat rend `motif = rollover` (gap de BASE, pas de marche — hors regle
     15). Une veille presente mais incomplete (fichier tronque) rend
     `motif = veille_incomplete` : sa cloture n'en est pas une. Sans session
@@ -417,8 +431,9 @@ def controle_echelle_atr(df, sym, jour, veilles=None):
     cash = df[_masque_cash(df["_dt"])]
     if cash.empty:
         return _res("echelle_atr", "INFO", "aucune barre cash — pas de gap mesurable")
-    tout = pd.concat([v[COLS_ECHELLE] for v in veilles] + [df[COLS_ECHELLE]],
-                     ignore_index=True)
+    def _cols(v):                      # `contract` n'est pas dans les frames de test
+        return v[[c for c in COLS_ECHELLE if c in v.columns]]
+    tout = pd.concat([_cols(v) for v in veilles] + [_cols(df)], ignore_index=True)
     med = recalc.atr_veille_15(tout.rename(columns={"_ts": "ts"}), tout["_dt"],
                                minutes=15)
     atr_v = float(med.get(cash["_dt"].iloc[0].date(), np.nan))
@@ -444,10 +459,11 @@ def controle_echelle_atr(df, sym, jour, veilles=None):
     if c_j is not None and c_v is not None and c_j != c_v:
         motif, suite = "rollover", (" — ROLLOVER %s -> %s : gap de BASE, pas de "
                                     "marche (hors regle 15)" % (c_v, c_j))
-    elif gap >= MAX_GAP_ATR_VEILLE:
-        motif, suite = "echelle_douteuse", (" — ECHELLE DOUTEUSE : les signaux "
-                                            "atr_source=veille du jour se lisent "
-                                            "a part (regle 15)")
+    elif gap >= MAX_GAP_ATR_VEILLE[sym]:          # fail-loud sur un sym inconnu
+        motif, suite = "echelle_douteuse", (" — ECHELLE DOUTEUSE (>= p90 %s %.2f) : "
+                                            "les signaux atr_source=veille du jour se "
+                                            "lisent a part (regle 15)"
+                                            % (sym, MAX_GAP_ATR_VEILLE[sym]))
     else:
         motif, suite = None, ""
     return _res("echelle_atr", "INFO" if motif else "OK",

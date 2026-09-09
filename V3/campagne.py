@@ -47,7 +47,9 @@ from V3.layers.L3_declencheurs import ombre16, ombre_c2          # noqa: E402
 
 # Ce que `injecter_recalculs` consomme du 1 min : hlc3 + volume + horodatage
 # + delta (cvd_sess_r, prerequis L4).
-COLS_RECALC = ["ts", "high", "low", "close", "total_vol", "delta_bar"]
+# `contract` (Fable Q7, 10/09) : `atr_veille_15` exige UN SEUL contrat par
+# session pour la juger complete — la chauffe doit le porter.
+COLS_RECALC = ["ts", "high", "low", "close", "total_vol", "delta_bar", "contract"]
 # = `n_jours` de recalc.rvol — les deux bougent ensemble, sinon la chauffe
 # devient trop courte en silence. Le plancher 10 = son `min_periods`.
 N_JOURS_CHAUFFE, MIN_JOURS_CHAUFFE = 20, 10

@@ -266,3 +266,25 @@ Toute barre porte `window_version`, qui qualifie les **colonnes dumpees en live*
 Exception : les VA **exportees de l'historique** apres recalcul Sierra sont `w1`
 meme pour des dates anterieures au 05/09 — c'est precisement leur interet. La
 version qualifie la fenetre de calcul, pas la date de la barre.
+
+## 10. L'ATR de reference : `atr_ref` = `atr_barre`, sinon la derniere session COMPLETE
+
+`atr_barre` (rolling 14, min_periods 7, barres agregees) est NaN sur les six
+premieres barres cash de chaque journee. Depuis la brique 1 (09/09, DECISIONS),
+tout ce qui mesure une distance en ATR — les quatre, les seize, DIV v2, les
+brackets, la position virtuelle de la chaine, L1 — lit `atr_ref` :
+`atr_barre` si fini, sinon `atr_veille` = la MEDIANE de l'ATR agrege de la
+DERNIERE SESSION CASH COMPLETE strictement anterieure (`recalc.atr_veille_15`).
+
+Complete = 26 bins de 15 min presents ET >= 380 minutes ET un seul contrat
+(une session qui bascule U26 -> Z26 en seance porte un bin dont le « range »
+est la base entre contrats, pas un range). Une demi-seance ou un fichier
+tronque ne fait pas une veille : le 08/09 lit le VENDREDI 04/09 (8,2054 pts
+sur ES), pas la demi-seance de Labor Day du 07/09. Figee a 9h30 par
+construction — la valeur d'une date ne lit que les dates precedentes.
+
+`atr_source` (barre | veille | aucun) est sur chaque ligne de signal et de
+bracket ; la lecture separe les deux populations (LECTURE_JOUR_61 regle 15).
+Les jours L6 `motif = echelle_douteuse` (gap d'ouverture >= p90 par
+instrument, mesure sur 62 j : ES 5,81 / NQ 6,69 ATR-veille) ou `motif =
+rollover` se lisent a part encore.

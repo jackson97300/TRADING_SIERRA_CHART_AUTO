@@ -8,7 +8,8 @@ Ce que ça prouve, écrit avant :
      GELÉE. Zéro écart, sinon l'exposition ment.
   2. Les ÉTATS sur du synthétique H3 : QUASI (3 t hors d'une bande de 4 t),
      LIEU_REAGI (tout y est), LIEU_SANS_REACTION avec le manque nommé
-     (« finish »), et H6p LIEU_IMPOSSIBLE(porte_jamais_ouverte).
+     (« finish »), et H6p JOUR_MUET(porte_jamais_ouverte) — dans le
+     dénominateur (Fable Q5) ; LIEU_IMPOSSIBLE = mesure non prise, hors.
   3. Le DÉNOMINATEUR : une journée muette réelle rend une ligne par
      hypothèse × instrument (8), aucune LIEU_REAGI, aucune clé de devenir.
   4. IDEMPOTENCE : deux runs, un seul hash.
@@ -92,8 +93,8 @@ def main():
           and r["n_barres_lieu"] == 1 and r["lieu_atteint"], r)
     df = synth(dist_ib_high=0.0)
     r = MQ.resumer(df, "H6p", MQ.exposer(df)["H6p"], H.h6_prime)
-    check("[2d] H6p sans cassure d'IB -> LIEU_IMPOSSIBLE(porte_jamais_ouverte)",
-          r["etat"] == "LIEU_IMPOSSIBLE" and r["motif"] == "porte_jamais_ouverte", r)
+    check("[2d] H6p sans cassure d'IB -> JOUR_MUET(porte_jamais_ouverte), dans le denominateur",
+          r["etat"] == "JOUR_MUET" and r["motif"] == "porte_jamais_ouverte", r)
     df = synth(dist_cur_vah=100.0)
     r = MQ.resumer(df, "H3-VPOC", MQ.exposer(df)["H3-VPOC"], H.h3)
     check("[2e] 96 t hors bande -> JOUR_MUET(lieu_loin)",

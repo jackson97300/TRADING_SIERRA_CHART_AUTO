@@ -40,7 +40,8 @@
 **Cause racine** : un seuil recu d'un brief traite comme une convention, sans mesurer son taux (memoire feedback_scale_drift) ; et le couplage L6 → L0 (appliquee) oublie en ajoutant un controle L6.
 **Lecon** : tout nouveau controle L6 est une PORTE L0 par construction (`etat_l6` ne filtre pas par controle) — INFO + motif par defaut ; ALERTE seulement avec un taux mesure et une action. Tout seuil ecrit dans un observateur : mesurer son taux sur `jours_disponibles` AVANT le commit, l'ecrire dans la docstring.
 **Trigger prevention** : ajouter un `_res(..., "ALERTE", ...)` dans surveillance_l6 → relire `etat_live.etat_l6` ET mesurer le taux sur le lot. Corrige : INFO + `motif`, seuil OBSERVE, test [4g] « aucun cas ALERTE ».
-**Reviewed** : code-reviewer / self
+**Auteur du seuil — Fable (10/09)** : « le 2,0 ATR-veille de mon brief, je l'ai ecrit sans distribution, exactement ce que la regle souveraine interdit ; ca va dans INCIDENT_LOG a mon nom ». Arbitrage Q1 : le 2,0 disparait, seuil = p90 PAR INSTRUMENT mesure sur 62 j (ES 5,81 / NQ 6,69). Meme jour, meme classe : la DERIVE de famille (F15 x44) etait ALERTE dans L6 et aurait ferme le live du 10/09 — « une derive informe, l'integrite ferme » : INFO + motif=derive_feature avant l'ouverture.
+**Reviewed** : code-reviewer / Fable / self
 
 ### 2026-09-09 (nuit) — [CONTEXT_MISS] — le trou ATR « decouvert » le soir etait mesure ET decide depuis le 08/09 (rapport trou_atr_les_quatre)
 **Contexte** : question Jackson « comment faire payer les journees muettes ». J'ai mesure 6 barres/26 sans `atr_barre` et `seuil_ticks` = NaN avant 11h, et je l'ai annonce comme « LE trou », decision a prendre.

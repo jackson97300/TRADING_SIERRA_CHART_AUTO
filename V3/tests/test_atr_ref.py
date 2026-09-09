@@ -83,6 +83,14 @@ def main():
                                                     utc=True), minutes=15)
     check("[1d] le meme jour COMPLET est pris (10)",
           abs(float(v2.iloc[-1]) - 10.0) < 1e-9, list(v2))
+    # Fable Q7 : une session a DEUX contrats n'est pas complete (definition)
+    b_roll = b_ok.assign(contract=["ESU26-CME"] * 200 + ["ESZ26-CME"] * 190)
+    tout3 = pd.concat([a.assign(contract="ESU26-CME"), b_roll,
+                       c.assign(contract="ESZ26-CME")], ignore_index=True)
+    v3 = recalc.atr_veille_15(tout3, pd.to_datetime(tout3["ts"], unit="ms",
+                                                    utc=True), minutes=15)
+    check("[1e] session a deux contrats (bascule en seance) -> pas complete, sautee (2, pas 10)",
+          abs(float(v3.iloc[-1]) - 2.0) < 1e-9, list(v3))
 
     # 2. journee reelle : fige a 9h30, atr_ref == atr_barre, veille avant 11h
     jour, sym = "20260903", "NQ"
@@ -130,23 +138,27 @@ def main():
 
     # 4. L6 echelle_atr : JAMAIS ALERTE (couplage L0_DATA_L6_ALERTE), motifs
     veille = frame_l6(jour_1min("2026-09-08", 390, 1.0))          # ATR 2, close 100
-    gap5 = frame_l6(jour_1min("2026-09-09", 390, 1.0, close=110.0))   # gap 10 = 5 ATR
+    gap6 = frame_l6(jour_1min("2026-09-09", 390, 1.0, close=112.0))   # gap 12 = 6 ATR
     petit = frame_l6(jour_1min("2026-09-09", 390, 1.0, close=101.0))  # 0,5 ATR
     tronq = frame_l6(jour_1min("2026-09-08", 200, 1.0))
     vieille = frame_l6(jour_1min("2026-09-04", 390, 1.0))
     cas = {
-        "4a": L6.controle_echelle_atr(gap5, "ES", "20260909", veilles=[veille]),
+        "4a": L6.controle_echelle_atr(gap6, "ES", "20260909", veilles=[veille]),
         "4b": L6.controle_echelle_atr(petit, "ES", "20260909", veilles=[veille]),
         "4c": L6.controle_echelle_atr(petit, "ES", "20260909", veilles=[]),
-        "4d": L6.controle_echelle_atr(gap5, "ES", "20260909", veilles=[tronq]),
-        "4e": L6.controle_echelle_atr(gap5.assign(contract="ESZ26-CME"), "ES", "20260910",
+        "4d": L6.controle_echelle_atr(gap6, "ES", "20260909", veilles=[tronq]),
+        "4e": L6.controle_echelle_atr(gap6.assign(contract="ESZ26-CME"), "ES", "20260910",
                                       veilles=[veille.assign(contract="ESU26-CME")]),
-        "4f": L6.controle_echelle_atr(gap5, "ES", "20260909", veilles=[vieille, tronq]),
+        "4f": L6.controle_echelle_atr(gap6, "ES", "20260909", veilles=[vieille, tronq]),
+        "4h": L6.controle_echelle_atr(gap6, "NQ", "20260909", veilles=[veille]),
     }
     r = cas["4a"]
-    check("[4a] gap 5 ATR-veille -> INFO motif=echelle_douteuse",
+    check("[4a] ES gap 6 ATR-veille (>= p90 5,81) -> INFO motif=echelle_douteuse",
           r["etat"] == "INFO" and r.get("motif") == "echelle_douteuse"
-          and abs(r["gap_atr"] - 5.0) < 1e-6, r)
+          and abs(r["gap_atr"] - 6.0) < 1e-6, r)
+    r = cas["4h"]
+    check("[4h] NQ meme gap 6 (< p90 6,69) -> OK : seuil PAR INSTRUMENT",
+          r["etat"] == "OK" and r.get("motif") is None, r)
     r = cas["4b"]
     check("[4b] gap 0,5 ATR-veille -> OK, sans motif",
           r["etat"] == "OK" and r.get("motif") is None, r)

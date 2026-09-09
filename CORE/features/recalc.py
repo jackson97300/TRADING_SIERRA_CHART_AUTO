@@ -386,7 +386,9 @@ def atr_veille_15(df, dt, minutes=15):
     DECISIONS) : le lendemain d'une demi-seance ou d'un fichier tronque
     (08/05 : derniere barre 14h30), la veille utile est celle d'avant — la
     mediane d'une demi-journee est un metre faux. Complete = toutes les
-    barres agregees de la fenetre cash (9h30-16h00 ET = 390 min) presentes.
+    barres agregees de la fenetre cash (9h30-16h00 ET = 390 min) presentes,
+    >= 380 minutes, UN SEUL contrat. Exemple (CONVENTIONS §10) : le 08/09
+    lit le vendredi 04/09 (8,2054 ES), pas la demi-seance de Labor Day.
     Fige a 9h30 par construction : la valeur d'une date ne lit que les
     dates precedentes, rien de la seance en cours.
     """
@@ -399,6 +401,13 @@ def atr_veille_15(df, dt, minutes=15):
         "h": pd.to_numeric(df["high"], errors="coerce"),
         "l": pd.to_numeric(df["low"], errors="coerce"),
         "c": pd.to_numeric(df["close"], errors="coerce"),
+        # UN SEUL CONTRAT PAR SESSION (Fable Q7, 10/09) : une session qui
+        # bascule U26 -> Z26 en seance porte un bin dont le TR est la BASE
+        # entre contrats, pas un range — elle n'est pas complete, par
+        # definition. La campagne porte `contract` (COLS_RECALC) ; un frame
+        # sans la colonne ne peut pas appliquer le critere (les autres tiennent).
+        "k": (df["contract"].astype(str) if "contract" in df.columns
+              else pd.Series("?", index=df.index)),
     }).dropna(subset=["j"])
     if g.empty:
         return pd.Series(dtype=float)
@@ -413,9 +422,12 @@ def atr_veille_15(df, dt, minutes=15):
     med = atr.groupby(agg["j"].values).median().sort_index()
     n_barres = agg.groupby("j").size().reindex(med.index)
     n_min = g.groupby("j").size().reindex(med.index)
+    n_contrats = g.groupby("j")["k"].nunique().reindex(med.index)
     # complete = tous les bins ET (review 10/09, Q1) presque toutes les minutes
-    # — un bin qui n'a qu'UNE barre 1 min compte « present », pas le jour.
-    complete = (n_barres >= (cash_min // minutes)) & (n_min >= cash_min - 10)
+    # — un bin qui n'a qu'UNE barre 1 min compte « present », pas le jour —
+    # ET un seul contrat.
+    complete = ((n_barres >= (cash_min // minutes)) & (n_min >= cash_min - 10)
+                & (n_contrats <= 1))
     # where(complete) efface les demi-seances ; ffill porte la derniere
     # complete jusqu'a la date suivante ; shift(1) = « strictement avant ».
     return med.where(complete).ffill().shift(1)
