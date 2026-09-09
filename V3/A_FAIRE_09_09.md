@@ -64,6 +64,16 @@ passe pas à côté »). Deux audits : la REVUE QUALITÉ (14 fichiers logique, �
   à copier — seule étape où V1 > V3). + **#3 rotation d'état** (`pnl_jour`, streak,
   cooldown à 22:00 UTC, JAMAIS au boot). + lecture des 2 instruments EN PARALLÈLE
   (V1 `_read_all_snapshots_parallel`, un timeout par instrument).
+  + **glissement EOD mesuré** (confrontation `triple_barriere` 09/09) : le prix
+  15h55 réel où EXEC est plat n'est PAS `close_945` (16h00, où sortent CORE ET la
+  ref) ; mesurer `prix_15h55_réel − close_945` par trade de fin de journée dès le
+  1er ordre SIM — 5 min de clôture, non modélisables, seulement mesurables.
+
+## ⏳ DONNÉES — à investiguer
+- **`08/05` a une donnée cash tronquée** (dernière barre 14h30 = 870, pas 945),
+  révélé par la confrontation `triple_barriere` (`INDETERMINE` résiduel). `09/07`
+  (Labor Day) et `09/09` (collecte en cours) sont attendus ; `08/05` non — trou de
+  collecte ? demi-séance oubliée du calendrier ? À nommer avant le jour 61.
 - **Pas 4 `pourquoi.py`** : trace un `snapshot_id` de bout en bout (retenu →
   émis → exécuté → refusé pourquoi).
 

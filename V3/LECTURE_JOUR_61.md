@@ -107,7 +107,7 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
     ET où `test_agreger_ts.py` est vert SUR le VPS. Le fichier empoisonné
     est conservé renommé `_rodage` — pièce d'incident, jamais supprimé.
 
-19. **`POSITION_OUVERTE` : le journal LIVE ne fait pas foi dessus, jusqu'au pas
+18b. **`POSITION_OUVERTE` : le journal LIVE ne fait pas foi dessus, jusqu'au pas
     2b** (audit Fable 09/09, A4 ; défaut `PLAN_ENTREE_EXEC` §0). En live,
     `triple_barriere` ne voit pas la sortie future → `libre_a = −1` → la porte
     ne ferme rien → DEUX `PASSE` simultanés possibles sur un instrument. Le
@@ -145,6 +145,28 @@ sans sa règle de lecture est un jeu de données à miner (incident 28/04).*
     entrée, ni sortie, ni stop. « Ce niveau a marché » est un contresens
     d'usage : le fichier dit ce que le marché a FAIT, jamais ce qu'il aurait
     fallu faire.
+
+## Le devenir (`triple_barriere`) — CORE confronté à la référence (09/09)
+
+*Rangées dans la plage jour-61 (29-34) ; 29-32 réservées à la lecture des
+devenirs par famille. Écrites après la confrontation `research/parite_barriere`.*
+
+33. **Une `EXPIRATION` de CORE sur la dernière barre cash (945 = 15h45) est un
+    EOD** — un trade coupé par la clôture, pas un trade qui a duré 20 barres. La
+    confrontation 09/09 (`research/rapports/parite_barriere.txt`) le chiffre :
+    sur 70 signaux des quatre, **22 `EXPIRATION → EOD`** (MÊME prix, étiquette
+    CORE fausse), répartis 11h-15h — **un tiers dès 11h** : la barrière 20 barres
+    (5h) dépasse la clôture pour tout signal après ~11h, l'EOD est le vrai plafond.
+    **Zéro écart de `pnl_atr`** entre CORE et la référence sur les 66 résolus :
+    CORE n'a pas tort sur le PRIX, seulement sur le NOM. Les devenirs se lisent
+    en SÉPARANT `EOD` des vraies `EXPIRATION`.
+34. **Trois jours ont une donnée cash TRONQUÉE** (dernière barre < 945) : `09/07`
+    (Labor Day, demi-séance — attendu), `09/09` (collecte en cours — attendu),
+    `08/05` (**inexpliqué, à investiguer**). CORE y fabrique une `EXPIRATION` sur
+    une barre trop précoce ; la référence dit `INDETERMINE`. À lire comme un TROU
+    de données, jamais un devenir. La correction de CORE (étiquette `EOD` +
+    20 barres détenues) attend le CYCLE 2 : la campagne est gelée sur CORE,
+    changer le moteur des devenirs en cours ferait deux populations de mesures.
 
 ## Ce que le jour 61 NE fait pas
 

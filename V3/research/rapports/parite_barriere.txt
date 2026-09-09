@@ -1,0 +1,23 @@
+CONFRONTATION — 79 jour(s), signaux LES_QUATRE, CORE vs reference
+=== CONFRONTATION triple_barriere : CORE vs reference ===
+  signaux confrontes         : 70
+  issues qui DIFFERENT        : 24 (34.3 %)
+  |pnl_atr core - ref| moyen  : 0.0000 ATR (max 0.0000) sur 66 resolus
+  TP+SL meme barre (C3)       : 0 (0.0 %)
+
+  DIVERGENCES D'ISSUE (core -> ref) :
+     EXPIRATION   -> EOD          : 22
+     EXPIRATION   -> INDETERMINE  : 2
+
+  INDETERMINE residuels (attendu 0) : 4
+     ES 20260805 : derniere barre cash = 870.0 (attendu 945) — jour a NOMMER
+     ES 20260907 : derniere barre cash = 765.0 (attendu 945) — jour a NOMMER
+     ES 20260909 : derniere barre cash = 810.0 (attendu 945) — jour a NOMMER
+     NQ 20260813 : derniere barre cash = 945.0 (attendu 945) — jour a NOMMER
+
+  REPARTITION HORAIRE des 24 divergences (heure d'entree ET) :
+     11h : 3
+     12h : 5
+     13h : 6
+     14h : 5
+     15h : 5
