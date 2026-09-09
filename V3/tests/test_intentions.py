@@ -59,7 +59,10 @@ check("barriere porte ses SOURCES (atr_pts/tick/sl_atr/tp_atr)",
       it["barriere"]["atr_pts"] == 10.0 and it["barriere"]["tick"] == 0.25
       and it["barriere"]["sl_atr"] == 1.0 and it["barriere"]["tp_atr"] == 1.5)
 check("expiration portee", it["barriere"]["expiration_barres"] == 20)
-check("sortie_horaire_et = cloture cash (960)", it["sortie_horaire_et"] == 960)
+check("sortie_horaire_et defaut = 15h55 (955)", it["sortie_horaire_et"] == 955)
+check("sortie_horaire_et C2_EOD = 16h00 (960)",
+      I.intention(dict(PASSE_S, hypothese="C2_EOD"), 10.0, "U26", 0.25,
+                  S_BATR)["sortie_horaire_et"] == 960)
 # la propriete-cle : PAS de prix absolu (fill-independant, anti-peek)
 check("aucun prix de fill dans le bracket",
       "sl_prix" not in it["barriere"] and "tp_prix" not in it["barriere"])

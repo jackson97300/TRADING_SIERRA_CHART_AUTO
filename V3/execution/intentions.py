@@ -51,10 +51,12 @@ from V3.layers.L5_risque import barrieres as B                   # noqa: E402
 
 _DOSSIER = "LOGS/intentions"
 DUREE_BARRE_MS = 15 * 60 * 1000
-# Plat au plus tard : cloture cash (16h00 ET = 960 min ET). UNIFORME — un plat
-# par famille anticipe (C2_EOD ?) demande une source MESUREE, pas un chiffre
-# invente (regle souveraine) : a decider quand la famille sera dans la ligne.
-SORTIE_HORAIRE_ET_DEFAUT = 960
+# Plat au plus tard, PAR FAMILLE (C3, audit Fable 09/09) : C2_EOD tient jusqu'a
+# la cloture (16h00 ET = 960, setup into-close) ; les autres se plattent 5 min
+# avant (15h55 = 955). Valeurs STRUCTURELLES (borne de seance + convention de
+# plat), pas des seuils tunes -> pas de distribution requise.
+SORTIE_HORAIRE_ET = {"C2_EOD": 960}
+SORTIE_HORAIRE_ET_DEFAUT = 955
 # delai_max_s : nombre INVENTE (90 s). Regle souveraine du projet : aucun seuil
 # sans distribution (PLAN §2 [AJOUT]). Ici il ne REFUSE rien — il n'est
 # qu'ECRIT dans `au_plus_tard_ms`, pour batir la distribution latence en SIM.
@@ -125,9 +127,10 @@ def intention(passe, atr, contrat, tick, s_batr, horloge_ms=None):
                      "atr_pts": round(float(atr), 4), "tick": tick,
                      "sl_atr": seuils["sl_atr"], "tp_atr": seuils["tp_atr"],
                      "expiration_barres": seuils["expiration_barres"]},
-        # plat au plus tard (cloture cash) — un champ, pas un chiffre en dur cote
-        # EXEC (revue Fable). Uniforme tant que la famille n'affine pas.
-        "sortie_horaire_et": SORTIE_HORAIRE_ET_DEFAUT,
+        # plat au plus tard PAR FAMILLE (C3) — un champ, pas un chiffre en dur
+        # cote EXEC. C2_EOD a 16h00 (into-close), les autres a 15h55.
+        "sortie_horaire_et": SORTIE_HORAIRE_ET.get(passe.get("hypothese"),
+                                                   SORTIE_HORAIRE_ET_DEFAUT),
         "taille": 1,
         "emission_ms": emission_ms,
         "etat": "EMISE",
