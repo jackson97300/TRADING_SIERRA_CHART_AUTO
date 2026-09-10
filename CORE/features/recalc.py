@@ -663,3 +663,214 @@ def ib_range_atr_r(df, tick=0.25):
     ir = pd.to_numeric(df.get("ib_range_ticks"), errors="coerce")
     at = pd.to_numeric(df.get("atr"), errors="coerce")
     return (ir * tick / at.where(at > 0))
+
+
+# ---------------------------------------------------------------------------
+# SCENARIOS — prerequis 1 : le type d'ouverture Dalton, RECALCULE (10/09/2026)
+# ---------------------------------------------------------------------------
+
+OPEN_TYPES = ("DRIVE", "TEST_DRIVE", "REJET_RENVERSEMENT", "ENCHERE")
+
+
+def open_type_r(df15, atr_ref, tick=0.25, open_lvl=None, p10=0.10, plancher=2.0):
+    """Le type d'ouverture (Dalton) depuis les DEUX premieres barres 15 min cash
+    et le retour ou non sur l'ouverture — definition ECRITE AVANT la mesure
+    (SCENARIOS_SPEC §1, prerequis 1). Rend un dict, jamais un score.
+
+    O = `open_lvl` (open_cash_lvl du brut) sinon l'open de la barre 0.
+    bande = max(p10 x atr_ref / tick, plancher) ticks — la proximite P10 des
+    fonctions gelees, LA SEULE unite admise ici (aucun autre seuil).
+      s1, s2   : cote de la cloture de la barre 1 / 2 par rapport a O, 0 si
+                 dans la bande.
+      traverse : la barre 1 a depasse la bande des DEUX cotes de O.
+      retour   : le range de la barre 2 touche la bande autour de O.
+    Types, dans cet ordre de priorite :
+      REJET_RENVERSEMENT  s1 et s2 non nuls, opposes — l'ouverture pousse d'un
+                          cote, la 2e barre repasse O et cloture de l'autre.
+      DRIVE               s1 == s2 != 0, pas de retour, pas de traversee :
+                          O est l'extreme (a la bande pres), le prix part.
+      TEST_DRIVE          meme cote sans retour, MAIS la barre 1 a d'abord
+                          teste l'autre cote (traversee) — ou barre 1 indecise
+                          (s1 == 0) et barre 2 partie sans retour.
+      ENCHERE             tout le reste : clotures dans la bande, ou retour sur
+                          O apres etre parti — l'enchere a deux sens.
+    Deux barres = 30 minutes : c'est le grain de la campagne, pas celui de
+    Dalton (qui lit les premieres minutes). La distribution des quatre sur
+    le lot est la premiere mesure du module, avant tout usage."""
+    if df15 is None or len(df15) < 2:
+        return {"type": None, "motif": "moins_de_deux_barres"}
+    a = float(atr_ref) if atr_ref is not None and atr_ref == atr_ref else None
+    if a is None or a <= 0:
+        return {"type": None, "motif": "atr_ref_absent"}
+    b1, b2 = df15.iloc[0], df15.iloc[1]
+    o = float(open_lvl) if open_lvl is not None and open_lvl == open_lvl else float(b1["open"])
+    bande = max(p10 * a / tick, plancher) * tick            # en points
+    def cote(c):
+        d = float(c) - o
+        return 0 if abs(d) <= bande else (1 if d > 0 else -1)
+    s1, s2 = cote(b1["close"]), cote(b2["close"])
+    traverse = float(b1["high"]) > o + bande and float(b1["low"]) < o - bande
+    retour = float(b2["low"]) <= o + bande and float(b2["high"]) >= o - bande
+    if s1 and s2 and s2 == -s1:
+        typ = "REJET_RENVERSEMENT"
+    elif s1 and s2 == s1 and not retour:
+        typ = "TEST_DRIVE" if traverse else "DRIVE"
+    elif s1 == 0 and s2 and not retour:
+        typ = "TEST_DRIVE"
+    else:
+        typ = "ENCHERE"
+    return {"type": typ, "direction": s2 or s1, "retour_ouverture": bool(retour),
+            "traverse_b1": bool(traverse), "open_cash": round(o, 2),
+            "bande_ticks": round(bande / tick, 2),
+            "ext_b1_ticks": round((float(b1["close"]) - o) / tick, 2),
+            "ext_b2_ticks": round((float(b2["close"]) - o) / tick, 2), "motif": None}
+
+
+# ---------------------------------------------------------------------------
+# SCENARIOS — prerequis 2 : le range, machine a quatre etats (post-it §2.2)
+# ---------------------------------------------------------------------------
+
+ETATS_RANGE = ("FORMATION", "ETABLI", "CASSE", "RETEST")
+
+
+def _fiches_bord(df, col, tick, z_touche, z_reset, decalage):
+    """Les fiches F23 d'un bord, indices ramenes dans le frame complet."""
+    from CORE.features import f23                       # import tardif : pas de cycle
+    dist = pd.to_numeric(df[col], errors="coerce")
+    out = []
+    for f in f23.fiches(df, None, col, tick, z_touche, z_reset):
+        g = dict(f)
+        # TENUE CAUSALE : la barre suivante cloture du cote d'ou le prix venait,
+        # connue a i + 1 et rien d'autre. L'`issue` F23 finale attend jusqu'a
+        # huit barres pour dire « casse » : elle decrit le futur du test, pas
+        # ce qu'un observateur savait a i + 1 — direct et retrospectif
+        # divergeraient (MISSION, test 6). L'acceptation se lit a part.
+        j = g["i"] + 1
+        v = dist.iloc[j] if j < len(dist) else np.nan
+        g["tenu_a"] = (j + decalage) if np.isfinite(v) and ((v > 0) == (g["cote"] > 0)) else None
+        g["i"] += decalage
+        g["i_connu"] += decalage
+        out.append(g)
+    return out
+
+
+def _compression(df15, fiches_vus, bord_haut, bord_bas, k):
+    """Largeur EFFECTIVE des k derniers tests / largeur du range (§2.6).
+
+    Pour chaque test : |EXTREME de la barre du test vers son bord - milieu| /
+    (largeur / 2) — le high pour un test du bord haut, le low pour le bas.
+    L'extreme, pas la cloture (Fable, 10/09, reponse 6) : la compression
+    mesure jusqu'ou le marche est alle chercher le bord, c'est la meche qui
+    le porte ; la cloture porte la reaction. 1 = les meches atteignent les
+    bords ; > 1 = elles les depassent ; vers 0 = elles s'arretent avant, le
+    range ne se teste plus — ce qui annonce la cassure. Un ratio
+    journalise, jamais un seuil ici."""
+    if not fiches_vus:
+        return None
+    milieu, demi = (bord_haut + bord_bas) / 2.0, (bord_haut - bord_bas) / 2.0
+    derniers = sorted(fiches_vus, key=lambda f: f["i"])[-k:]
+    h = pd.to_numeric(df15["high"], errors="coerce")
+    l_ = pd.to_numeric(df15["low"], errors="coerce")
+    ext = [float(h.iloc[f["i"]]) if f["niveau"] == "dist_bord_haut" else float(l_.iloc[f["i"]])
+           for f in derniers]
+    return round(float(np.mean([abs(x - milieu) / demi for x in ext])), 3)
+
+
+def range_r(df15, bord_haut, bord_bas, i_debut=0, tick=0.25, z_touche=0.0,
+            z_reset=0.5, w_min=None, w_max=None, k_compression=4):
+    """La machine a quatre etats du post-it (§2.2) sur DEUX FICHES F23 FACE A
+    FACE — definition ECRITE AVANT la mesure. Rend une ligne par barre 15 min
+    a partir de `i_debut`, jamais un score.
+
+    Les bords sont FIGES par l'appelant (apres 10h30 l'IB est le premier
+    range ; sinon deux swings, ou VAH/VAL apres stabilite) : cette fonction
+    ne les cherche pas, elle dit ce que le prix en fait. Chaque mot est une
+    definition F23 existante, avec ses parametres de L1 (`z_touche`,
+    `z_reset`) :
+      test    une barre qui englobe le bord (F23 touche + hysteresis)
+      tenue   la barre suivante cloture du cote d'ou le prix venait — lue a
+              i + 1, CAUSALE (pas l'`issue` F23 finale, qui regarde 8 barres)
+      acceptation au-dela  DEUX clotures consecutives au-dela du bord —
+              strictement au-dela : une cloture SUR le bord est dedans
+      regain  apres une acceptation, DEUX clotures consecutives dedans
+    Etats :
+      FORMATION  les deux bords existent, pas encore tenus deux fois chacun
+      ETABLI     chaque bord : >= 2 tests TENUS et CONNUS (tenu_a <= i) ; largeur
+                 dans [w_min, w_max] ATR-15m (None = pas de borne : la
+                 distribution n'existe pas encore) ; aucune acceptation dehors
+      CASSE      acceptation au-dela d'un bord (evenement TRANSITION, `casse_par`
+                 +1 par le haut / -1 par le bas)
+      RETEST     apres CASSE, un test du bord casse PAR L'AUTRE COTE (la fiche
+                 F23 de cote oppose) ; s'il tient : evenement CONTINUATION
+    Un regain (deux clotures dedans) rend l'etat d'AVANT la cassure —
+    evenement REGAIN, le head-fake du post-it, le desequilibre se lit a cote.
+    Rien de ce qui n'est pas encore connu n'est revele : l'issue d'un test
+    n'entre dans l'etat qu'a `i_connu`. Les bords ne bougent jamais ; un
+    nouveau range = un nouvel appel.
+    `largeur_atr` = (haut - bas) / atr de la barre (`atr_ref` si present,
+    sinon `atr_barre`) ; `compression` : voir `_compression` ; `age_barres`
+    depuis ETABLI ; `barres_depuis_pose` depuis `i_debut` — la grammaire en
+    fait l'etat de sequence POSE (« bords poses, aucune acceptation dehors »,
+    Fable 10/09 reponse 3 : il decrit, il ne valide pas ; FORMATION ici).
+    v0 : UN range par journee, l'IB ; pas de second range apres une CASSE
+    (les journees a deux ranges tombent en S_AUTRE et se comptent — reponse 2).
+    Unite des bords : POINTS."""
+    n = len(df15)
+    if n == 0 or not (bord_haut > bord_bas) or i_debut >= n:
+        return []
+    d = df15.iloc[i_debut:].reset_index(drop=True).copy()
+    close = pd.to_numeric(d["close"], errors="coerce")
+    d["dist_bord_haut"] = (bord_haut - close) / tick
+    d["dist_bord_bas"] = (bord_bas - close) / tick
+    if "atr_ref" in d.columns:
+        d["atr_barre"] = d["atr_ref"]              # le metre de la chaine (brique 1)
+    fh = _fiches_bord(d, "dist_bord_haut", tick, z_touche, z_reset, i_debut)
+    fb = _fiches_bord(d, "dist_bord_bas", tick, z_touche, z_reset, i_debut)
+    atr = pd.to_numeric(d["atr_barre"], errors="coerce") if "atr_barre" in d.columns else pd.Series(np.nan, index=d.index)
+    largeur = bord_haut - bord_bas
+    etat, avant_casse, casse_par, i_casse, i_etabli = "FORMATION", None, None, None, None
+    lignes = []
+    for j in range(len(d)):
+        i = j + i_debut
+        c = float(close.iloc[j])
+        cp = float(close.iloc[j - 1]) if j > 0 else None
+        evenement = None
+        a = float(atr.iloc[j]) if np.isfinite(atr.iloc[j]) and atr.iloc[j] > 0 else None
+        l_atr = round(largeur / a, 3) if a else None
+        largeur_ok = ((w_min is None or (l_atr is not None and l_atr >= w_min))
+                      and (w_max is None or (l_atr is not None and l_atr <= w_max)))
+        accepte_haut = c > bord_haut and cp is not None and cp > bord_haut
+        accepte_bas = c < bord_bas and cp is not None and cp < bord_bas
+        dedans = bord_bas <= c <= bord_haut
+        dedans_p = cp is not None and bord_bas <= cp <= bord_haut
+        tenus_h = [f for f in fh if f["tenu_a"] is not None and f["tenu_a"] <= i]
+        tenus_b = [f for f in fb if f["tenu_a"] is not None and f["tenu_a"] <= i]
+        if etat in ("FORMATION", "ETABLI"):
+            if accepte_haut or accepte_bas:
+                avant_casse, etat, casse_par, i_casse = etat, "CASSE", (1 if accepte_haut else -1), i
+                evenement = "TRANSITION"
+            elif etat == "FORMATION" and len(tenus_h) >= 2 and len(tenus_b) >= 2 and largeur_ok:
+                etat, i_etabli, evenement = "ETABLI", i, "ETABLI"
+        else:                                      # CASSE ou RETEST
+            if dedans and dedans_p:
+                etat, evenement, casse_par = avant_casse, "REGAIN", None
+            else:
+                fiches_bord = fh if casse_par > 0 else fb
+                retests = [f for f in fiches_bord if i_casse < f["i"] <= i and f["cote"] == -casse_par]
+                if etat == "CASSE" and retests:
+                    etat, evenement = "RETEST", "RETEST"
+                elif etat == "RETEST" and retests and retests[-1]["tenu_a"] == i:
+                    evenement = "CONTINUATION"
+        vus = [f for f in fh + fb if f["i"] <= i]
+        lignes.append({
+            "i": i, "ts": int(d["ts"].iloc[j]) if "ts" in d.columns else None, "etat": etat,
+            "bord_haut": bord_haut, "bord_bas": bord_bas, "largeur_atr": l_atr,
+            "n_tests_haut": sum(1 for f in fh if f["i"] <= i),
+            "n_tests_bas": sum(1 for f in fb if f["i"] <= i),
+            "age_barres": (i - i_etabli) if i_etabli is not None else None,
+            "barres_depuis_pose": j,       # bords poses depuis j barres (etat POSE de la grammaire)
+            "compression": _compression(d, [dict(f, i=f["i"] - i_debut) for f in vus],
+                                        bord_haut, bord_bas, k_compression),
+            "evenement": evenement, "casse_par": casse_par,
+        })
+    return lignes

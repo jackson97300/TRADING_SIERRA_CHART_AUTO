@@ -231,6 +231,17 @@ devenirs par famille. Écrites après la confrontation `research/parite_barriere
     taille est mesurée dans DECISIONS (10/09 soir : longs / shorts H3 sur le
     lot) — c'est la jambe qu'on isole.
 
+39. **Le scénario est sur chaque ligne ; il DÉCRIT, il ne DÉCOUPE pas**
+    (Fable, 10/09, module SCÉNARIOS — pré-enregistrée avant que le module
+    existe). `scenario_en_cours` sera sur chaque ligne de l'entonnoir, des
+    fantômes et des marges : au jour 61 il se lit comme une **colonne de
+    contexte**, jamais comme une partition du verdict. Sur le lot, 73 signaux
+    des quatre en 54 jours : découpés par scénario, aucune case n'a de
+    puissance. Une partition par scénario exige N ≥ 40 par case — le cycle 2
+    ou au-delà. La règle 9 (jamais en groupe) s'applique dans les deux sens :
+    ni fusionner, ni découper en dessous de la puissance. Le module n'entre
+    dans aucune porte, ne décide rien, n'écrit que ses propres journaux.
+
 ## Ce que le jour 61 NE fait pas
 
 Pas de « correction » : ce qui a survécu bascule observée → appliquée, ce qui

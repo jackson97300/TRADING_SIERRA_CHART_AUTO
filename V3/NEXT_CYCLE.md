@@ -177,3 +177,40 @@ VAH, celui qu'on a ecrit ; et un long ACCIDENTEL que personne n'a
 pre-enregistre. La jambe long ne peut pas « passer » : un resultat sur elle
 est une DECOUVERTE a pre-enregistrer ici, au cycle 2, jamais un verdict. Sa
 taille (longs / shorts H3 sur le lot) est dans DECISIONS du 10/09 soir.
+
+## 5 octies. F23 : `issue = tenu` est RETROSPECTIF, jamais une condition live (10/09, range_r)
+
+`f23._issue` ne dit « tenu » qu'apres avoir regarde jusqu'a HUIT barres sans
+y trouver deux clotures de l'autre cote ; a `i + 1`, `scalaires` rend donc
+« tenu » pour un test qui ne cassera pas dans les sept barres suivantes et
+« en_cours » pour un test qui cassera — lire `issue == "tenu"` a i + 1 revele
+l'avenir. Mesure du 10/09 : AUCUNE porte gelee ne le lit (consommateurs :
+`reactions.py` et `recit.py`, tous deux sur la journee complete, le soir —
+retrospectifs par construction). `range_r` (scenarios, prerequis 2) lit la
+tenue CAUSALE (`tenu_a` = la cloture suivante du cote d'origine) et le prouve
+barre a barre (direct = retrospectif, `test_range` [6]). Au cycle 2 : si une
+couche vivante doit lire une tenue, elle lit `tenu_a`, pas `issue` ; et
+`scalaires` gagne un champ `tenu_causal` pour que la confusion soit
+impossible. Rien ne bouge en campagne.
+
+## 5 nonies. SCENARIOS, ce que le cycle 1 laisse au cycle 2 (Fable, 10/09, dix reponses)
+
+- **`mq_snapshot_ts` n'existe pas dans le brut** (verifie le 10/09 : les murs
+  n'y sont que des `dist_mq_*` par barre, `mq_gamma_condition` a cote). Le
+  module detecte `ZONE_DEPLACEE` par un saut > 1 tick du niveau reconstruit
+  entre deux barres, avec l'heure — un saut a 12h00-12h15 est la mise a jour
+  MenthorQ, un saut a 10h17 est peut-etre un defaut de collecte, les deux
+  sont journalises et le jour 61 les separe par heure. Une colonne au DMP
+  (`mq_snapshot_ts`) et le doute disparait : a demander, hors campagne.
+- **Un range par journee (v0), l'IB.** Les swings recalcules n'existent pas,
+  les `cur_*` sont en quarantaine : pas de second range apres une `CASSE`
+  acceptee. Les journees a deux ranges tombent en `S_AUTRE` et se comptent —
+  premier candidat du cycle 2 si `S_AUTRE` en est plein. Mesure du 10/09 :
+  ETABLI strict (deux tenues par bord) sur l'IB = 0 journee ES / 1 NQ sur 57
+  (`rapports/range_ib_57j.md`) ; l'etat de sequence `POSE` decrit ces
+  journees sans les valider.
+- **`open_type_r` a 30 minutes ne separe pas DRIVE de TEST_DRIVE** : la bande
+  P10 (0,10 ATR) est presque toujours traversee des deux cotes par une barre
+  de 15 min (ES 1 DRIVE / 24 TEST_DRIVE, NQ 0 / 32). Au cycle 2 : lire la
+  traversee sur les premieres minutes (1 min), garder la cloture 15 min pour
+  le type — ou fusionner les deux en campagne et le dire.

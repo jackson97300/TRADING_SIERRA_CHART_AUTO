@@ -89,3 +89,37 @@ mesures écrit avant), règle 39. Review interne, 14 contrôles, hash après le
   un mur qui bouge à midi = événement `ZONE_DEPLACEE`, jamais une correction.
   Les 0DTE entrent après 14h00 ET seulement, rôle `pin`. Les murs remplissent
   `prochaine_zone_haut/bas` quand le scénario est hors VA.
+
+## Les dix décisions de Fable (10/09, après les prérequis 1-2) — s'appliquent à la grammaire
+1. **Tenue causale, jamais l'`issue` F23.** La grammaire ne consomme que
+   `tenu_a` (la clôture suivante) et les acceptations à deux clôtures ;
+   `issue` reste pour F23 et le jour 61. Test : la grammaire rejouée barre à
+   barre ne lit aucune colonne dont le calcul dépend de i+2 ou au-delà
+   (direct = rétrospectif sous une autre forme).
+2. **v0 : un range par journée, l'IB.** Après une `CASSE` acceptée, le
+   scénario est `S_DANS_CASSURE_*` jusqu'à un regain ou la clôture ; les
+   journées à deux ranges tombent en `S_AUTRE` et se comptent — premier
+   candidat du cycle 2 si `S_AUTRE` en est plein.
+3. **ETABLI reste strict** (deux tenues par bord) ; l'état de séquence
+   `POSE` (« bords posés, aucune acceptation dehors ») décrit sans valider —
+   `range_r` journalise `barres_depuis_pose`. Si la mesure dit peu d'ETABLI,
+   c'est une information, pas une raison de baisser à une tenue.
+4. **Zones asymétriques** : `dehors` = p80 des dépassements sur les tests
+   TENUS, `dedans` = P10 `seuil_ticks` ; `quantile_contenance: 0.80` (p90
+   contient les balayages qui sont des cassures tentées).
+5. **`ZONE_DEPLACEE` par les données** (saut > 1 tick du niveau reconstruit
+   entre deux barres), journalisé avec l'heure ; le brut n'a pas de
+   `mq_snapshot_ts` — à demander au DMP (NEXT_CYCLE).
+6. **Compression sur l'EXTRÊME** de la barre du test, pas sa clôture.
+7. **Le tag : demain matin**, hash de la tête à 9h00 Paris, relecture, tag
+   avant l'ouverture — les deux recalculs seront dedans.
+8. **Règle 39 décrit, elle ne découpe pas** : le scénario est une colonne de
+   contexte au jour 61, jamais une partition du verdict (N ≥ 40 par case
+   pour partitionner — cycle 2 ou au-delà).
+9. **Les trois attendus du rejeu, signés relectrice** : couverture 60 %
+   (< 45 % trop courte, > 80 % trop large) ; validés à 10h30 encore vrais à
+   16h00 : 55 % (< 40 % trop précoce) ; contrôle négatif battu d'au moins
+   15 points sur les deux. Dans `seuils.yaml` et DECISIONS avant le rejeu.
+10. **0DTE `dormant` avant 14h00 ET** dans le journal, absents des zones
+    affichées et des rôles ; `cote_hvl` : `dist_mq_hvl < 0` = prix au-dessus
+    du HVL = gamma positif — prouvé sur barres réelles (`tests/test_cote_hvl.py`).

@@ -38,6 +38,11 @@ V3/
       vetos.py           3 vetos, la seule couche qui lit le SENS du trade
     L6_surveillance/   les controles quotidiens sur les donnees
 
+  scenarios/           le module SCENARIOS (spec : SCENARIOS_SPEC.md ; ordre : MISSION.md)
+    lot.py             le lot des 57 jours avec le metre `atr_ref`, pour les mesures
+    mesure_*.py        prerequis 1-3 : types d'ouverture, IB comme range, reactions par nature
+    rapports/          les distributions, ecrites AVANT tout usage
+    seuils.yaml        null tant que Fable/Jackson n'ont pas fixe la valeur sur la distribution
   publier.sh           publie le miroir public (3 controles, puis subtree push)
   tests/test_structure.py   le garde-fou du miroir public, en pre-commit
 ```

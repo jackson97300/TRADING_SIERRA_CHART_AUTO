@@ -99,3 +99,26 @@ suivante) · pas 2b.
 - **11/09 matin** : si le fichier ouvre en Z26 → `L0_CONTRAT_INACTIF` remise
   `appliquee` + une ligne DECISIONS ; relecture Fable (marges/2, lieu,
   §5 septies, `derive_feature` v1) ; **le gel + son tag**.
+
+## SCENARIOS — prérequis avant la grammaire (10/09 après-midi, ordre de Fable)
+- [x] règle 38 (H3 deux jambes) + mesure sans devenir (15 longs / 30 shorts sur 73) ->
+      commit `9c2cd96` -> **miroir `d470feb`** (spec + mission scénarios dedans).
+- [x] prérequis 1 `recalc.open_type_r` + `test_open_type` 15/15 + distribution
+      (`scenarios/rapports/open_type_57j.md`) : DRIVE quasi absent à 30 min (ES 1 / NQ 0),
+      TEST_DRIVE 43 / 57 %, REJET 21 / 20 %, ENCHERE 34 / 23 % -> NEXT_CYCLE §5 nonies.
+- [x] prérequis 2 `recalc.range_r` (deux fiches F23 face à face, tenue CAUSALE,
+      compression sur l'extrême) + `test_range` 27/27 dont direct = rétrospectif ;
+      distribution IB (`rapports/range_ib_57j.md`).
+- [x] prérequis 3 + 3 bis `mesure_reactions` (dépassement sur tests tenus, sauts par
+      heure) -> `rapports/reactions_niveaux_57j.md` ; `scenarios/seuils.yaml` (null +
+      décisions Fable : dedans P10 / dehors p80 tenus, POSE, un range v0, 0DTE dormant).
+- [x] dix décisions Fable appliquées (MISSION.md), règle 39, NEXT_CYCLE §5 octies/nonies,
+      `test_cote_hvl` 5/5, CONVENTIONS §11, DECISIONS (attendu avant / mesuré après /
+      attendus du rejeu signés relectrice).
+- [ ] commit B -> publier -> vérifier le miroir -> **hash à Fable avec les distributions**
+      (relecture AVANT la grammaire).
+- [ ] **11/09 9h00 Paris** : hash de la tête à Fable ; relecture ; **tag avant l'ouverture**
+      (les deux recalculs seront dedans — Fable, réponse 7).
+- [ ] après relecture : `grammaire.py`, `zones.py`, `scenarios.py`, `erreurs.py`, `sorties.py`
+      (< 300 l. chacun) ; rejeu 57 j ; les trois mesures §4.4 contre l'attendu de Fable ;
+      test direct = rétrospectif de la grammaire ; mode vivant ; `scenario_en_cours`.

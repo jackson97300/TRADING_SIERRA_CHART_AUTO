@@ -288,3 +288,40 @@ bracket ; la lecture separe les deux populations (LECTURE_JOUR_61 regle 15).
 Les jours L6 `motif = echelle_douteuse` (gap d'ouverture >= p90 par
 instrument, mesure sur 62 j : ES 5,81 / NQ 6,69 ATR-veille) ou `motif =
 rollover` se lisent a part encore.
+
+## 11. Deux recalculs du module SCENARIOS (10/09/2026) : `open_type_r`, `range_r`
+
+Definitions ecrites AVANT la mesure (DECISIONS 10/09 14h10), dans
+`CORE/features/recalc.py`, avec leur distribution dans
+`V3/scenarios/rapports/`. Ni l'un ni l'autre ne decide : ils decrivent.
+
+`open_type_r(df15, atr_ref, tick, open_lvl)` — le type d'ouverture Dalton sur
+les DEUX premieres barres 15 min cash (30 minutes : le grain de la campagne,
+pas celui de Dalton). Fenetre : barres 0 et 1 du cash. Unite : un dict
+(`type` parmi DRIVE / TEST_DRIVE / REJET_RENVERSEMENT / ENCHERE, `direction`
++1/-1/0, `retour_ouverture`, extensions en TICKS signes depuis O). Signe :
+`ext > 0` = au-dessus de l'ouverture. O = `open_cash_lvl` du brut, sinon
+l'open de la barre 0. La seule tolerance est la bande P10 sur `atr_ref`
+(`max(0,10 x atr / tick, 2)` ticks), la proximite des fonctions gelees —
+aucun seuil nouveau. Le `open_type` LIVRE (codes C++ 0-9, table inconnue
+ici) se croise, ne se remplace pas.
+
+`range_r(df15, bord_haut, bord_bas, i_debut, ...)` — la machine a quatre etats
+du post-it L3 §2.2 sur DEUX FICHES F23 FACE A FACE. Les bords sont FIGES par
+l'appelant (apres 10h30, l'IB ; jamais des `cur_*`). Fenetre : de `i_debut`
+a la fin de la journee, une ligne par barre 15 min. Unite : bords en POINTS,
+`largeur_atr` en ATR de la barre (`atr_ref` si present, sinon `atr_barre`),
+`compression` = ratio sans unite (§2.6 : |cloture du test - milieu| /
+demi-largeur, moyenne des k derniers tests). Signe : `casse_par` +1 par le
+haut, -1 par le bas. Definitions : test = touche F23 avec l'hysteresis de L1
+(`z_touche` 0, `z_reset` 0,5 ATR) ; tenue = la barre SUIVANTE cloture du cote
+d'ou le prix venait, lue a i + 1 et CAUSALE — pas l'`issue` F23 finale, qui
+attend jusqu'a huit barres pour dire « casse » et ferait diverger le direct du
+retrospectif ; acceptation = DEUX clotures consecutives STRICTEMENT au-dela
+(une cloture SUR le bord est dedans) ; regain = deux clotures dedans, qui rend
+l'etat d'avant la cassure. ETABLI exige deux tenues connues par bord et une
+largeur dans [`w_min`, `w_max`] (None = pas de borne tant que la distribution
+n'est pas fixee dans `V3/scenarios/seuils.yaml`). Rien de ce qui n'est pas
+encore connu n'entre dans l'etat : `test_range.py` le prouve barre a barre
+(direct = retrospectif) sur ES et NQ 09/09.
+
