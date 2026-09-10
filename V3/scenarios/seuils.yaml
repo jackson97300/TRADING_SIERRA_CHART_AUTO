@@ -1,8 +1,9 @@
 # SCENARIOS — les seuils du module. REGLE DURE (MISSION.md) : aucun seuil dans
-# le code ; ici, `null` tant que la valeur n'a pas ete FIXEE par Fable/Jackson
-# sur la distribution mesuree — la distribution est ecrite A COTE, la valeur
-# n'est jamais lue dedans par le code. Les mesures : `rapports/*.md`
-# (10/09/2026, 57 journees par instrument, aucun devenir de trade).
+# le code ; ici, chaque valeur est FIXEE par Fable/Jackson sur la distribution
+# mesuree, ecrite A COTE — jamais lue dedans par le code. `null` = pas fixe.
+# Les mesures : `rapports/*.md` (10/09/2026, 57 journees par instrument,
+# aucun devenir de trade). Valeurs fixees par Fable a la relecture de
+# `e26236a` (10/09 apres-midi).
 #
 # Ce qui N'EST PAS un seuil nouveau, et ne se declare pas ici : la bande P10
 # (`seuil_ticks` sur `atr_ref`, la proximite des fonctions gelees) que
@@ -10,43 +11,37 @@
 # `z_reset` 0,5 ATR des fiches F23 (L1 `seuils.yaml`, mesures le 06/09) que
 # `range_r` et `mesure_reactions` reutilisent.
 
-version: 2026-09-10
+version: 2026-09-10b
 
 zones:
-  # Une zone est ASYMETRIQUE (Fable, 10/09, reponse 4) : un niveau se teste
-  # en le depassant, le depassement au-dela n'a pas la distribution du retrait
-  # en deca.
-  #   dedans = P10 `seuil_ticks` sur atr_ref — la proximite qui declenche ;
-  #            convention existante, rien a fixer.
-  #   dehors = p80 des DEPASSEMENTS sur les tests TENUS, par nature et par
-  #            instrument (rapports/reactions_niveaux_57j.md) — `null` = a
-  #            fixer sur la distribution.
+  # Une zone est ASYMETRIQUE (Fable, reponse 4) : un niveau se teste en le
+  # depassant. `dedans` = P10 `seuil_ticks` sur atr_ref = la proximite qui
+  # DECLENCHE (convention existante) ; `dehors` = p80 des depassements sur les
+  # tests TENUS = la bande qui CONTIENT (rapports/reactions_niveaux_57j.md).
+  # Mesure : aucune nature n'est contenue par P10 — c'est exactement ce que
+  # l'asymetrie prevoyait.
   dedans: P10
-  # MESURE 10/09 (rapports/reactions_niveaux_57j.md), p80 du depassement sur
-  # les tests TENUS, en ticks (ATR) — les CANDIDATS, pas les valeurs :
-  #   VA_veille    ES 27,8 (0,50)  NQ 310 (0,98)   [lot w0 : profil anterieur, pas J-1]
-  #   IB           ES  7,8 (0,20)  NQ  33 (0,10)
-  #   PDH_PDL      ES 19,4 (0,25)  NQ 121 (0,50)
-  #   OVN          ES 20,8 (0,46)  NQ  94 (0,23)
-  #   MUR_call_put ES 16,2 (0,28)  NQ 390 (1,51)   [N = 26 / 27]
-  # Aucune nature n'est contenue par P10 (0,10 ATR). VWAP_jour et GEX_nearest
-  # bougent a chaque barre : pas des zones (null definitif, pas « a fixer »).
   dehors_ticks:
-    VA_veille: {ES: null, NQ: null}
-    VWAP_jour: {ES: null, NQ: null}
-    IB: {ES: null, NQ: null}
-    PDH_PDL: {ES: null, NQ: null}
-    OVN: {ES: null, NQ: null}
-    MUR_call_put: {ES: null, NQ: null}
-    GEX_nearest: {ES: null, NQ: null}
-  # p80, pas p90 (Fable, reponse 4) : p90 contient les balayages profonds qui
-  # sont precisement des cassures tentees ; une zone qui les contient ne
-  # distingue plus un test d'un head-fake.
+    IB:           {ES: 8,    NQ: 33}     # 0,20 / 0,10 ATR — la nature la mieux contenue
+    PDH_PDL:      {ES: 19,   NQ: 121}    # 0,25 / 0,50
+    OVN:          {ES: 21,   NQ: 94}     # 0,46 / 0,23
+    VA_veille:    {ES: 28,   NQ: 310}    # PROVISOIRE, voir provenance ci-dessous
+    MUR_call_put: {ES: 16,   NQ: null}   # ES provisoire (N = 26) ; NQ 1,51 ATR sur N = 27 = un mur qui n'est pas la, pas de zone en v0
+    VWAP_jour:    {ES: null, NQ: null}   # DEFINITIF : bouge a chaque barre — reference, pas zone
+    GEX_nearest:  {ES: null, NQ: null}   # DEFINITIF, meme raison
+  provenance:
+    VA_veille: w0_profil_anterieur       # le lot est en w0 (INCIDENT_LOG 04/09) : le p80 mesure un profil
+                                         # anterieur fige a 9h30, pas J-1 ; la campagne est en w1
+    VA_veille_re_mesure: jour_20_w1      # a re-mesurer au 20e jour de w1 — un provisoire DECLARE vaut mieux qu'un proxy
+    MUR_call_put_ES: provisoire_N26
+  # p80, pas p90 (Fable) : p90 contient les balayages profonds qui sont
+  # precisement des cassures tentees ; une zone qui les contient ne distingue
+  # plus un test d'un head-fake.
   quantile_contenance: 0.80
-  # un mur qui bouge de plus d'un tick entre deux barres = `ZONE_DEPLACEE`,
-  # journalise avec l'heure (reponse 5 : 12h00-12h15 = mise a jour MenthorQ,
-  # ailleurs = peut-etre un defaut de collecte ; le jour 61 separe par heure).
-  # Le brut n'a pas de `mq_snapshot_ts` (verifie 10/09) — NEXT_CYCLE.
+  # un niveau qui bouge de plus d'un tick entre deux barres = `ZONE_DEPLACEE`,
+  # journalise avec l'heure. Mesure : les murs ne bougent PAS en seance dans
+  # le brut (2 sauts ES a 14h sur 57 j, 0 NQ) — rare, tant mieux ; pas de
+  # `mq_snapshot_ts` dans le brut (NEXT_CYCLE, au DMP).
   zone_deplacee_ticks: 1
   # les 0DTE existent dans le journal toute la journee, `etat: dormant` ;
   # ils n'entrent dans les zones affichees et les roles qu'a partir de 14h00
@@ -54,47 +49,74 @@ zones:
   zero_dte_minutes_et: 840
 
 range:
-  # `range_r` : largeur admise pour ETABLI, en ATR-15m (post-it §2.2 : attendu
-  # 0,8-2,5). `null` = pas de borne (None dans le code). Distribution de la
-  # largeur de l'IB : rapports/range_ib_57j.md.
-  # MESURE 10/09 : largeur de l'IB p10 / p50 / p90 = ES 1,72 / 2,91 / 5,03,
-  # NQ 2,30 / 3,24 / 5,84 ATR-15m — plus large que l'attendu 0,8-2,5.
-  w_min_atr: {ES: null, NQ: null}
-  w_max_atr: {ES: null, NQ: null}
-  # ETABLI reste STRICT (deux tenues par bord — reponse 3). L'etat de sequence
-  # POSE (« bords poses, aucune acceptation dehors depuis N barres ») decrit
-  # sans valider : N = `null` = des la pose (FORMATION de `range_r`,
-  # `barres_depuis_pose` journalise).
+  # `range_r` sur l'IB : largeur admise pour ETABLI, en ATR-15m = p10 / p90
+  # de l'IB PAR INSTRUMENT (rapports/range_ib_57j.md). Les 0,8-2,5 du post-it
+  # decrivaient un range de milieu de seance, pas l'IB — la demi-heure la
+  # plus volatile du jour. Hors de [w_min, w_max] : `S_AUTRE(IB_hors_norme)`,
+  # une IB a 6 ATR n'est pas un range, c'est un jour d'evenement.
+  w_min_atr: {ES: 1.72, NQ: 2.30}
+  w_max_atr: {ES: 5.03, NQ: 5.84}
+  # ETABLI reste STRICT (deux tenues par bord — reponse 3) : mesure 0 / 57 ES,
+  # 1 / 57 NQ, c'est ce qu'on attendait. L'etat de sequence POSE (« bords
+  # poses, aucune acceptation dehors ») decrit sans valider : N = `null` = des
+  # la pose (`barres_depuis_pose` journalise). S_DANS_POSE = scenario
+  # canonique v0 (IB posee jusqu'a la cloture, 25 % des jours) ;
+  # S_DANS_ROTATION garde pour l'ETABLI rare.
   pose_n_barres: null
-  # `compression` (§2.6, sur les EXTREMES des k derniers tests — reponse 6)
-  # sous laquelle le range « se resserre » — journalisee, jamais filtrante en
-  # campagne ; `null` tant que le controle par permutation (trade de range,
-  # hors prerequis) n'est pas fait.
-  compression_basse: null
+  # `pression` (nee « compression », §2.6 : extremes des k derniers tests /
+  # demi-largeur). MESURE : 1,18 / 1,08 AVANT la premiere cassure contre
+  # 1,05 / 1,07 sans — les meches s'allongent avant la cassure. On ne renverse
+  # pas l'hypothese apres coup : colonne journalisee, PAS un etat, aucun seuil
+  # en v0 ; H-PRESSION pre-enregistree cycle 2 (NEXT_CYCLE §5 nonies).
+  pression_k_tests: 4
+  pression_seuil: null
   # nombre de tests par bord a partir duquel « le carburant s'use » (§2.4,
-  # contre-indication journalisee) — `null`, distribution des n_tests dans le
-  # rapport.
+  # contre-indication journalisee) — `null`, mediane mesuree 1 / 1.
   n_tests_use: null
   # v0 : UN range par journee, l'IB (reponse 2). Les journees a deux ranges
-  # tombent en S_AUTRE et se comptent — premier candidat du cycle 2 si
-  # S_AUTRE en est plein.
+  # tombent en S_AUTRE et se comptent — premier candidat du cycle 2.
   ranges_par_journee: 1
+  # 53 / 54 % des premieres cassures echouent (regain) : ce n'est pas un
+  # seuil, c'est une DEFINITION — la neuvieme sequence, S_DANS_HEADFAKE
+  # (cassure acceptee -> regain a deux clotures -> retour dans l'IB).
+  premiere_cassure_echouee_mesure_pct: {ES: 53, NQ: 54}
 
 open_type:
-  # la bande autour de l'ouverture est P10 sur `atr_veille` — convention
-  # existante, pas un seuil nouveau ; rien a fixer ici. Distribution des
-  # quatre types : rapports/open_type_57j.md.
+  # v0 : TROIS types — DRIVE n'existe pas a 30 minutes (ES 1 / NQ 0 sur 57),
+  # fusionne dans TEST_DRIVE avec `retour_open` journalise (False = jamais
+  # revenu sur l'ouverture, ce qu'il reste du drive) ; la traversee sur les
+  # premieres minutes 1 min = candidat cycle 2, pre-enregistre. La bande est
+  # P10 sur `atr_veille` — convention existante, rien a fixer.
+  types: [TEST_DRIVE, REJET_RENVERSEMENT, ENCHERE]
   bande: P10
 
+auto_evaluation:
+  # §8 : le module NOTE, il ne se regle pas. BASCULE_FANTOME = une bascule
+  # A -> B suivie d'un retour B -> A en au plus N barres. N = 4 est une
+  # DEFINITION, pas une mesure : deux acceptations dos a dos (deux clotures
+  # chacune) tiennent en quatre barres — un aller-retour plus court a reagi a
+  # quelque chose de plus court qu'une acceptation. ZONE_TROP_ETROITE = une
+  # tenue dont le depassement sort de la bande `dehors` de moins de
+  # `etroite_max_ticks` (« a 1-2 ticks hors bande »).
+  bascule_fantome_barres: 4
+  etroite_max_ticks: 2
+
 grammaire:
-  # les huit canoniques (spec §1) n'ont aucun parametre numerique : leurs
-  # validations / invalidations sont des acceptations (deux clotures), des
-  # tenues CAUSALES (`tenu_a`, jamais l'`issue` F23 — reponse 1) et des zones.
-  # Si la grammaire en reclame un, il s'ecrit ICI, `null` d'abord.
-  {}
+  # v0, HUIT canoniques autrement composees (Fable, relecture e26236a) :
+  # S_OUV_HAUT_TEND, S_OUV_HAUT_REJET, S_OUV_BAS_REINT_PULL,
+  # S_OUV_BAS_REINT_TRAV, S_OUV_BAS_TEND, S_DANS_POSE, S_DANS_CASSURE_HAUT/BAS,
+  # S_DANS_HEADFAKE — plus S_DANS_ROTATION garde pour l'ETABLI rare et
+  # S_TRANSITION (spec §1). Aucun parametre numerique : validations et
+  # invalidations = acceptations (deux clotures), tenues CAUSALES (`tenu_a`,
+  # jamais l'`issue` F23) et zones. Tout ce qui n'entre pas = S_AUTRE avec sa
+  # sequence brute ; IB hors [w_min, w_max] = S_AUTRE(IB_hors_norme).
+  canoniques_v0: [S_OUV_HAUT_TEND, S_OUV_HAUT_REJET, S_OUV_BAS_REINT_PULL,
+                  S_OUV_BAS_REINT_TRAV, S_OUV_BAS_TEND, S_DANS_POSE,
+                  S_DANS_CASSURE, S_DANS_HEADFAKE]
+  gardes: [S_DANS_ROTATION, S_TRANSITION]
 
 # Les trois attendus du rejeu (spec §4.4), PRE-ENREGISTRES PAR LA RELECTRICE
-# (Fable, 10/09, reponse 9) — ecrits avant le rejeu, dans DECISIONS aussi :
+# (Fable, 10/09, reponse 9 — reconfirmes a la relecture de e26236a) :
 #   couverture des canoniques sur les 57 jours : 60 % ; < 45 % = grammaire
 #     trop courte, on ajoute des sequences avant tout affichage ; > 80 % =
 #     scenarios trop larges (S_AUTRE trop rare) ;

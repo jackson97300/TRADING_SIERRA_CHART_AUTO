@@ -3,7 +3,7 @@
     python -X utf8 V3/tests/test_open_type.py
 
 Ce que ça prouve, écrit avant (définition dans la docstring de la fonction) :
-  1. DRIVE : deux clôtures du même côté hors bande, O = l'extrême, pas de retour.
+  1. ex-DRIVE (v0 Fable : trois types) = TEST_DRIVE avec traverse_b1 False, retour_open False.
   2. TEST_DRIVE : la barre 1 traverse la bande des deux côtés puis clôture d'un
      côté, la barre 2 continue sans retour ; ou barre 1 indécise + barre 2 partie.
   3. REJET_RENVERSEMENT : barre 1 d'un côté, barre 2 clôture de l'autre.
@@ -46,12 +46,15 @@ def main():
     atr = 10.0                    # P10 = 4 t = 1,00 pt de bande
     t = lambda df, **k: recalc.open_type_r(df, atr, **k)["type"]   # noqa: E731
     # 1. DRIVE (O = 100 est le bas ; les deux cloturent au-dessus, pas de retour)
-    check("[1a] DRIVE haussier", t(deux((100, 103, 99.5, 102.5), (102.5, 105, 102, 104.5))) == "DRIVE")
-    check("[1b] DRIVE baissier (miroir)",
-          t(deux((100, 100.5, 97, 97.5), (97.5, 98, 95, 95.5))) == "DRIVE")
+    r = recalc.open_type_r(deux((100, 103, 99.5, 102.5), (102.5, 105, 102, 104.5)), atr)
+    check("[1a] ex-DRIVE haussier = TEST_DRIVE, traverse_b1 False, retour_open False (v0 Fable)",
+          r["type"] == "TEST_DRIVE" and r["traverse_b1"] is False and r["retour_open"] is False, r)
+    r = recalc.open_type_r(deux((100, 100.5, 97, 97.5), (97.5, 98, 95, 95.5)), atr)
+    check("[1b] ex-DRIVE baissier (miroir) = TEST_DRIVE sans traversee",
+          r["type"] == "TEST_DRIVE" and r["traverse_b1"] is False, r)
     # 2. TEST_DRIVE : la barre 1 va d'abord sous O - bande, puis cloture au-dessus
-    check("[2a] TEST_DRIVE haussier (traversee barre 1)",
-          t(deux((100, 103, 98.5, 102.5), (102.5, 105, 102, 104.5))) == "TEST_DRIVE")
+    r = recalc.open_type_r(deux((100, 103, 98.5, 102.5), (102.5, 105, 102, 104.5)), atr)
+    check("[2a] TEST_DRIVE haussier, traverse_b1 True", r["type"] == "TEST_DRIVE" and r["traverse_b1"] is True, r)
     check("[2b] TEST_DRIVE : barre 1 indecise, barre 2 partie sans retour",
           t(deux((100, 101, 99.2, 100.5), (100.5, 104, 100.4 + 1.0, 103.5))) == "TEST_DRIVE")
     # 3. REJET_RENVERSEMENT : barre 1 au-dessus, barre 2 cloture en dessous

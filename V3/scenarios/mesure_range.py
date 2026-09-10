@@ -11,7 +11,7 @@ barres 15 min, machine à partir de 10h30, `atr_ref` comme mètre) :
   - la mort du range : première CASSE (heure médiane) ou extinction (jamais cassé) ;
   - l'échec de la première cassure (CASSE suivie d'un REGAIN) — « la plupart »
     de Dalton, en chiffre ; la part des CASSE retestées, puis tenues ;
-  - `compression` à la barre qui précède la première CASSE, contre sa médiane
+  - `pression` (extrêmes des tests / demi-largeur, née « compression ») à la barre qui précède la première CASSE, contre sa médiane
     sur les barres sans cassure (description ; le contrôle par permutation
     appartient au trade de range, pas au prérequis) ;
   - `n_tests` par bord en fin de journée.
@@ -73,10 +73,10 @@ def mesurer(sym):
             r["retest"] += retest
             r["continuation"] += cont
             avant = next((l for l in L if l["i"] == i_casse - 1), None)
-            if avant and avant["compression"] is not None:
-                r["comp_avant_casse"].append(avant["compression"])
+            if avant and avant["pression"] is not None:
+                r["comp_avant_casse"].append(avant["pression"])
         else:
-            r["comp_sans"] += [l["compression"] for l in L if l["compression"] is not None]
+            r["comp_sans"] += [l["pression"] for l in L if l["pression"] is not None]
         r["n_tests"].append((L[-1]["n_tests_haut"], L[-1]["n_tests_bas"]))
         r["lignes"].append((jour, lot.fmt(L[0]["largeur_atr"]), df["atr_source"].iloc[I_DEBUT],
                             heure_et(df, i_etabli) if i_etabli is not None else "—",
@@ -106,9 +106,9 @@ def bloc(sym, r):
            "| premiere cassure ECHOUEE (REGAIN avant toute autre cassure) | %d / %d (%.0f %%) |" % (
                r["regain_apres_1re"], r["casse"], 100.0 * r["regain_apres_1re"] / r["casse"] if r["casse"] else 0),
            "| premiere cassure RETESTEE / retest TENU (CONTINUATION) | %d / %d |" % (r["retest"], r["continuation"]),
-           "| compression a la barre AVANT la premiere CASSE : mediane (N) | %s (%d) |" % (
+           "| pression (extremes / demi-largeur, nee compression) a la barre AVANT la premiere CASSE : mediane (N) | %s (%d) |" % (
                lot.fmt(np.median(r["comp_avant_casse"]) if r["comp_avant_casse"] else None, 3), len(r["comp_avant_casse"])),
-           "| compression, barres des journees SANS cassure : mediane (N) | %s (%d) |" % (
+           "| pression, barres des journees SANS cassure : mediane (N) | %s (%d) |" % (
                lot.fmt(np.median(r["comp_sans"]) if r["comp_sans"] else None, 3), len(r["comp_sans"])),
            "| n_tests haut / bas en fin de journee : mediane | %s / %s |" % (
                lot.fmt(np.median([a for a, _ in r["n_tests"]]) if r["n_tests"] else None, 1),

@@ -669,7 +669,12 @@ def ib_range_atr_r(df, tick=0.25):
 # SCENARIOS — prerequis 1 : le type d'ouverture Dalton, RECALCULE (10/09/2026)
 # ---------------------------------------------------------------------------
 
-OPEN_TYPES = ("DRIVE", "TEST_DRIVE", "REJET_RENVERSEMENT", "ENCHERE")
+# v0 (Fable, relecture du 10/09 a e26236a) : TROIS types. DRIVE n'existe pas a
+# 30 minutes (mesure : ES 1 / NQ 0 sur 57) : fusionne dans TEST_DRIVE, avec le
+# booleen journalise `retour_open` (False = jamais revenu sur l'ouverture, ce
+# qu'il reste du drive) et `traverse_b1` (False = l'ancien DRIVE pur). La
+# traversee sur les premieres minutes 1 min = candidat cycle 2.
+OPEN_TYPES = ("TEST_DRIVE", "REJET_RENVERSEMENT", "ENCHERE")
 
 
 def open_type_r(df15, atr_ref, tick=0.25, open_lvl=None, p10=0.10, plancher=2.0):
@@ -687,16 +692,17 @@ def open_type_r(df15, atr_ref, tick=0.25, open_lvl=None, p10=0.10, plancher=2.0)
     Types, dans cet ordre de priorite :
       REJET_RENVERSEMENT  s1 et s2 non nuls, opposes — l'ouverture pousse d'un
                           cote, la 2e barre repasse O et cloture de l'autre.
-      DRIVE               s1 == s2 != 0, pas de retour, pas de traversee :
-                          O est l'extreme (a la bande pres), le prix part.
-      TEST_DRIVE          meme cote sans retour, MAIS la barre 1 a d'abord
-                          teste l'autre cote (traversee) — ou barre 1 indecise
+      TEST_DRIVE          meme cote sans retour (s1 == s2 != 0), que la barre 1
+                          ait traverse l'autre cote (`traverse_b1`) ou non
+                          (False = l'ancien DRIVE pur : 1 jour ES / 0 NQ sur
+                          57, pas un type a ce grain) — ou barre 1 indecise
                           (s1 == 0) et barre 2 partie sans retour.
       ENCHERE             tout le reste : clotures dans la bande, ou retour sur
                           O apres etre parti — l'enchere a deux sens.
+    `retour_open` (= `retour_ouverture`) est journalise avec le type.
     Deux barres = 30 minutes : c'est le grain de la campagne, pas celui de
-    Dalton (qui lit les premieres minutes). La distribution des quatre sur
-    le lot est la premiere mesure du module, avant tout usage."""
+    Dalton (qui lit les premieres minutes). La distribution sur le lot
+    (rapports/open_type_57j.md) a precede tout usage."""
     if df15 is None or len(df15) < 2:
         return {"type": None, "motif": "moins_de_deux_barres"}
     a = float(atr_ref) if atr_ref is not None and atr_ref == atr_ref else None
@@ -713,14 +719,12 @@ def open_type_r(df15, atr_ref, tick=0.25, open_lvl=None, p10=0.10, plancher=2.0)
     retour = float(b2["low"]) <= o + bande and float(b2["high"]) >= o - bande
     if s1 and s2 and s2 == -s1:
         typ = "REJET_RENVERSEMENT"
-    elif s1 and s2 == s1 and not retour:
-        typ = "TEST_DRIVE" if traverse else "DRIVE"
-    elif s1 == 0 and s2 and not retour:
+    elif (s1 and s2 == s1 and not retour) or (s1 == 0 and s2 and not retour):
         typ = "TEST_DRIVE"
     else:
         typ = "ENCHERE"
     return {"type": typ, "direction": s2 or s1, "retour_ouverture": bool(retour),
-            "traverse_b1": bool(traverse), "open_cash": round(o, 2),
+            "retour_open": bool(retour), "traverse_b1": bool(traverse), "open_cash": round(o, 2),
             "bande_ticks": round(bande / tick, 2),
             "ext_b1_ticks": round((float(b1["close"]) - o) / tick, 2),
             "ext_b2_ticks": round((float(b2["close"]) - o) / tick, 2), "motif": None}
@@ -754,14 +758,20 @@ def _fiches_bord(df, col, tick, z_touche, z_reset, decalage):
     return out
 
 
-def _compression(df15, fiches_vus, bord_haut, bord_bas, k):
-    """Largeur EFFECTIVE des k derniers tests / largeur du range (§2.6).
+def _pression(df15, fiches_vus, bord_haut, bord_bas, k):
+    """Distance des extremes des k derniers tests au milieu / demi-largeur
+    (post-it §2.6, nee « compression »). MESURE 10/09 sur l'IB : 1,18 / 1,08 a
+    la barre AVANT la premiere cassure contre 1,05 / 1,07 sans — les meches
+    S'ALLONGENT avant la cassure. On ne renverse pas l'hypothese apres coup
+    (Fable) : meme definition, nom `pression` (> 1 = le marche s'appuie sur le
+    bord), COLONNE JOURNALISEE, PAS UN ETAT ; H-PRESSION pre-enregistree pour
+    le cycle 2 (NEXT_CYCLE §5 nonies). Aucun seuil.
 
     Pour chaque test : |EXTREME de la barre du test vers son bord - milieu| /
     (largeur / 2) — le high pour un test du bord haut, le low pour le bas.
-    L'extreme, pas la cloture (Fable, 10/09, reponse 6) : la compression
-    mesure jusqu'ou le marche est alle chercher le bord, c'est la meche qui
-    le porte ; la cloture porte la reaction. 1 = les meches atteignent les
+    L'extreme, pas la cloture (Fable, 10/09, reponse 6) : la colonne mesure
+    jusqu'ou le marche est alle chercher le bord, c'est la meche qui le
+    porte ; la cloture porte la reaction. 1 = les meches atteignent les
     bords ; > 1 = elles les depassent ; vers 0 = elles s'arretent avant, le
     range ne se teste plus — ce qui annonce la cassure. Un ratio
     journalise, jamais un seuil ici."""
@@ -777,7 +787,7 @@ def _compression(df15, fiches_vus, bord_haut, bord_bas, k):
 
 
 def range_r(df15, bord_haut, bord_bas, i_debut=0, tick=0.25, z_touche=0.0,
-            z_reset=0.5, w_min=None, w_max=None, k_compression=4):
+            z_reset=0.5, w_min=None, w_max=None, k_pression=4):
     """La machine a quatre etats du post-it (§2.2) sur DEUX FICHES F23 FACE A
     FACE — definition ECRITE AVANT la mesure. Rend une ligne par barre 15 min
     a partir de `i_debut`, jamais un score.
@@ -796,8 +806,8 @@ def range_r(df15, bord_haut, bord_bas, i_debut=0, tick=0.25, z_touche=0.0,
     Etats :
       FORMATION  les deux bords existent, pas encore tenus deux fois chacun
       ETABLI     chaque bord : >= 2 tests TENUS et CONNUS (tenu_a <= i) ; largeur
-                 dans [w_min, w_max] ATR-15m (None = pas de borne : la
-                 distribution n'existe pas encore) ; aucune acceptation dehors
+                 dans [w_min, w_max] ATR-15m (None = pas de borne ; fixes
+                 le 10/09 par Fable a p10 / p90 de l'IB dans `scenarios/seuils.yaml`) ; aucune acceptation dehors
       CASSE      acceptation au-dela d'un bord (evenement TRANSITION, `casse_par`
                  +1 par le haut / -1 par le bas)
       RETEST     apres CASSE, un test du bord casse PAR L'AUTRE COTE (la fiche
@@ -808,7 +818,7 @@ def range_r(df15, bord_haut, bord_bas, i_debut=0, tick=0.25, z_touche=0.0,
     n'entre dans l'etat qu'a `i_connu`. Les bords ne bougent jamais ; un
     nouveau range = un nouvel appel.
     `largeur_atr` = (haut - bas) / atr de la barre (`atr_ref` si present,
-    sinon `atr_barre`) ; `compression` : voir `_compression` ; `age_barres`
+    sinon `atr_barre`) ; `pression` : voir `_pression` ; `age_barres`
     depuis ETABLI ; `barres_depuis_pose` depuis `i_debut` — la grammaire en
     fait l'etat de sequence POSE (« bords poses, aucune acceptation dehors »,
     Fable 10/09 reponse 3 : il decrit, il ne valide pas ; FORMATION ici).
@@ -869,8 +879,8 @@ def range_r(df15, bord_haut, bord_bas, i_debut=0, tick=0.25, z_touche=0.0,
             "n_tests_bas": sum(1 for f in fb if f["i"] <= i),
             "age_barres": (i - i_etabli) if i_etabli is not None else None,
             "barres_depuis_pose": j,       # bords poses depuis j barres (etat POSE de la grammaire)
-            "compression": _compression(d, [dict(f, i=f["i"] - i_debut) for f in vus],
-                                        bord_haut, bord_bas, k_compression),
+            "pression": _pression(d, [dict(f, i=f["i"] - i_debut) for f in vus],
+                                        bord_haut, bord_bas, k_pression),
             "evenement": evenement, "casse_par": casse_par,
         })
     return lignes

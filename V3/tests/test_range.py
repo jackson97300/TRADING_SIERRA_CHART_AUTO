@@ -111,10 +111,10 @@ def main():
     check("[1j] head-fake : une cloture dedans (13) reste RETEST, deux (14) -> REGAIN, etat ETABLI",
           e3[13] == "RETEST" and e3[14] == "ETABLI" and L3[14]["evenement"] == "REGAIN"
           and L3[14]["casse_par"] is None, (e3[12:], L3[14]["evenement"]))
-    # compression = moyenne sur les 4 tests de |extreme - milieu| / demi-largeur (demi = 2) :
+    # pression = moyenne sur les 4 tests de |extreme - milieu| / demi-largeur (demi = 2) :
     # highs 100,25 / 100,25 -> 1,125 ; lows 96,25 -> 0,875 et 95,75 -> 1,125 ; moyenne 1,0625
-    check("[1k] compression a la barre 8 = 1,062 (les EXTREMES des 4 tests, pas les clotures)",
-          L[8]["compression"] == 1.062, L[8]["compression"])
+    check("[1k] pression a la barre 8 = 1,062 (les EXTREMES des 4 tests, pas les clotures)",
+          L[8]["pression"] == 1.062, L[8]["pression"])
     check("[1l] barres_depuis_pose : 0 a la barre 0, 8 a la barre 8",
           L[0]["barres_depuis_pose"] == 0 and L[8]["barres_depuis_pose"] == 8)
     # 2. miroir

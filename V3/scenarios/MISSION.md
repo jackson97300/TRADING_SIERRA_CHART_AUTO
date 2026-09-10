@@ -123,3 +123,64 @@ mesures écrit avant), règle 39. Review interne, 14 contrôles, hash après le
 10. **0DTE `dormant` avant 14h00 ET** dans le journal, absents des zones
     affichées et des rôles ; `cote_hvl` : `dist_mq_hvl < 0` = prix au-dessus
     du HVL = gamma positif — prouvé sur barres réelles (`tests/test_cote_hvl.py`).
+
+## Relecture Fable à `e26236a` (10/09) — les écarts tranchés, les valeurs fixées
+*« C'est la bonne façon d'arriver à des seuils : les nombres sont là, `null` en
+attendant, et c'est à moi de fixer. »* Les valeurs sont dans `seuils.yaml`
+(v2026-09-10b) ; ici, les décisions.
+- **Écart 1 — DRIVE n'existe pas à ce grain, on ne le force pas.** Trois
+  types en v0 : `TEST_DRIVE`, `REJET_RENVERSEMENT`, `ENCHERE` ; DRIVE
+  fusionné dans TEST_DRIVE avec `retour_open` journalisé (false = jamais
+  revenu sur l'ouverture, ce qu'il reste du drive) ; la traversée sur les
+  premières minutes 1 min = candidat cycle 2, pré-enregistré.
+- **Écart 2 — l'IB est plus large que le post-it, et c'est normal** : les
+  0,8-2,5 décrivaient un range de milieu de séance. `w_min / w_max` = p10 /
+  p90 par instrument ; hors de ça, `S_AUTRE(IB_hors_norme)`.
+- **Écart 3 — les mèches s'allongent avant la cassure : on ne renverse pas
+  l'hypothèse après coup.** Même définition, colonne renommée `pression`
+  (> 1 = le marché s'appuie sur le bord), journalisée, pas un état, aucun
+  seuil en v0 ; **H-PRESSION** pré-enregistrée cycle 2 (NEXT_CYCLE §5 nonies).
+- **Écart 4 — aucune nature contenue par P10** : `dedans` reste P10 (la
+  proximité qui déclenche), `dehors` = p80 mesuré (la bande qui contient).
+  VA_veille provisoire (w0), re-mesure au jour 20 de w1 ; murs NQ = pas une
+  zone ; VWAP et GEX_nearest = null définitifs.
+- **ETABLI 0 / 57 et 1 / 57 = attendu, et un fait exige une neuvième
+  séquence maintenant** : 53 % des premières cassures échouent →
+  `S_DANS_HEADFAKE` (cassure acceptée → regain à deux clôtures → retour dans
+  l'IB) ; `S_DANS_POSE` (IB posée, aucune acceptation dehors jusqu'à la
+  clôture, 25 % des jours) canonique v0 ; `S_DANS_ROTATION` gardé pour
+  l'ETABLI rare. **Grammaire v0 = huit canoniques autrement composées** :
+  `S_OUV_*` ×5 + `S_DANS_POSE` + `S_DANS_CASSURE_*` + `S_DANS_HEADFAKE`.
+- Les deux faits de données acceptés et déclarés ; `mq_snapshot_ts` au DMP
+  dans NEXT_CYCLE. Attendus du rejeu inchangés (60 % / 55 % / 15 points).
+- **« La grammaire peut se coder maintenant sur ces valeurs. »** Tag demain
+  9h00 Paris sur la tête, relecture du périmètre gelé, tag avant l'ouverture.
+
+## État de la construction (10/09 soir) — à relire par Fable AVANT `scenario_en_cours` sur l'entonnoir
+- Étape 4 **faite** : `grammaire.py` (huit canoniques v0 + `S_DANS_ROTATION` +
+  `S_AUTRE(raison)` ; `S_OUV_BAS_REINT` = famille sans précision ; codes
+  asymétriques par nom, logique en miroir — NEXT_CYCLE §5 nonies), `zones.py`
+  (bande asymétrique dedans P10 / dehors p80, mémoire F23 CAUSALE, cassée /
+  regagnée à deux clôtures, `ZONE_DEPLACEE` avec la barre, 0DTE dormant avant
+  14h00 ET), `scenarios.py` (rejeu et direct par la MÊME fonction `derouler`,
+  journal `.tmp` + `os.replace`, un écrivain), `erreurs.py` (sept erreurs
+  nommées, chacune avec « ce qui aurait été juste », carnet cumulé, candidats
+  pré-enregistrés — aucun paramètre ne bouge), `sorties.py` (`B-SCEN` : TP
+  devant la zone cible − marge B-NIV, SL derrière la zone d'invalidation +
+  buffer B-NIV, `None` + motif sans zone).
+- Tests **faits** : `test_grammaire` 24/24 (un état par scénario validé /
+  invalidé / bascule, miroir, bande au tick, rôles, S_AUTRE, mots conclusifs,
+  ZONE_DEPLACEE, DIRECT = RÉTROSPECTIF sur quatre journées synthétiques),
+  `test_scenarios_soir` 18/18 (chaque erreur nommée sur un cas synthétique,
+  B-SCEN en parité de formule avec `barrieres.b_niv`, miroir, sans conseil).
+- Étape 5 **faite** : `mesure_scenarios.py` → `rapports/scenarios_57j.md`
+  contre l'attendu de la relectrice (lire le rapport, pas ce résumé).
+- Étape 6 : direct = rétrospectif prouvé sur synthétique ([8]) et sur ES/NQ
+  09/09 pour `range_r` ; sur une VRAIE journée en direct, c'est `erreurs.py`
+  qui le vérifie chaque soir (`FUITE` = incident) — première journée : 10/09.
+- Étape 7 **faite** en lecture seule : `scenarios.py --direct` (barres
+  complètes), appelé par `direct.py` ; rythme du soir étape 5b/5 =
+  `erreurs.py`. La page texte / la vitrine : pas encore.
+- Étape 8 **pas faite, volontairement** : `scenario_en_cours` sur les lignes
+  de l'entonnoir, des fantômes et des marges touche `chaine.py` — après la
+  relecture de Fable, jamais avant le tag. Règle 39 déjà écrite.

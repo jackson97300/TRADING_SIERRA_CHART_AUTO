@@ -38,11 +38,17 @@ V3/
       vetos.py           3 vetos, la seule couche qui lit le SENS du trade
     L6_surveillance/   les controles quotidiens sur les donnees
 
-  scenarios/           le module SCENARIOS (spec : SCENARIOS_SPEC.md ; ordre : MISSION.md)
-    lot.py             le lot des 57 jours avec le metre `atr_ref`, pour les mesures
-    mesure_*.py        prerequis 1-3 : types d'ouverture, IB comme range, reactions par nature
+  scenarios/           le module SCENARIOS — le narrateur de seance (spec : SCENARIOS_SPEC.md ; ordre : MISSION.md)
+    lot.py             le lot des 57 jours avec le metre `atr_ref`, et `seuils()` — la seule source des nombres
+    seuils.yaml        chaque nombre FIXE par Fable sur sa distribution, ecrite a cote ; null = pas fixe
+    zones.py           les zones : bande asymetrique (dedans P10 / dehors p80), memoire F23 causale, roles
+    grammaire.py       les huit canoniques v0 : sequences d'etats dates, validations / invalidations / bascules
+    scenarios.py       la journee deroulee barre a barre ; rejeu et direct par la MEME fonction ; le journal
+    sorties.py         B-SCEN : ou le scenario finit (devant la cible), ou il meurt (derriere l'invalidation)
+    erreurs.py         l'auto-evaluation du soir : sept erreurs nommees, le carnet ; note, ne regle pas
+    direct.py          la journee en cours, barres completes seulement, lecture seule
+    mesure_*.py        prerequis 1-3 et les trois mesures de la grammaire (couverture, tenue, tirage au sort)
     rapports/          les distributions, ecrites AVANT tout usage
-    seuils.yaml        null tant que Fable/Jackson n'ont pas fixe la valeur sur la distribution
   publier.sh           publie le miroir public (3 controles, puis subtree push)
   tests/test_structure.py   le garde-fou du miroir public, en pre-commit
 ```

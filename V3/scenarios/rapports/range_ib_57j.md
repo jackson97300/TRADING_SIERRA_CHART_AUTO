@@ -17,8 +17,8 @@ la distribution est ci-dessous, la borne est à fixer dans `seuils.yaml`). Aucun
 | barre mediane de la premiere CASSE | 7.0 |
 | premiere cassure ECHOUEE (REGAIN avant toute autre cassure) | 23 / 43 (53 %) |
 | premiere cassure RETESTEE / retest TENU (CONTINUATION) | 20 / 8 |
-| compression a la barre AVANT la premiere CASSE : mediane (N) | 1.183 (40) |
-| compression, barres des journees SANS cassure : mediane (N) | 1.049 (166) |
+| pression (extremes / demi-largeur, nee compression) a la barre AVANT la premiere CASSE : mediane (N) | 1.183 (40) |
+| pression, barres des journees SANS cassure : mediane (N) | 1.049 (166) |
 | n_tests haut / bas en fin de journee : mediane | 1.0 / 1.0 |
 
 <details><summary>par jour</summary>
@@ -97,8 +97,8 @@ la distribution est ci-dessous, la borne est à fixer dans `seuils.yaml`). Aucun
 | barre mediane de la premiere CASSE | 8.0 |
 | premiere cassure ECHOUEE (REGAIN avant toute autre cassure) | 22 / 41 (54 %) |
 | premiere cassure RETESTEE / retest TENU (CONTINUATION) | 14 / 4 |
-| compression a la barre AVANT la premiere CASSE : mediane (N) | 1.083 (38) |
-| compression, barres des journees SANS cassure : mediane (N) | 1.068 (217) |
+| pression (extremes / demi-largeur, nee compression) a la barre AVANT la premiere CASSE : mediane (N) | 1.083 (38) |
+| pression, barres des journees SANS cassure : mediane (N) | 1.068 (217) |
 | n_tests haut / bas en fin de journee : mediane | 1.0 / 1.0 |
 
 <details><summary>par jour</summary>

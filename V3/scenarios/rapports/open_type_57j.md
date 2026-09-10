@@ -6,16 +6,14 @@ barres 15 min cash, O = `open_cash_lvl`, bande = P10 sur `atr_veille`. Aucun dev
 ## ES — 56 jours types ((atr_ref_absent) 1 non mesurables)
 | type | jours | part | dont retour sur O |
 |---|---|---|---|
-| DRIVE | 1 | 2 % | 0 |
-| TEST_DRIVE | 24 | 43 % | 0 |
+| TEST_DRIVE | 25 | 45 % | 0 |
 | REJET_RENVERSEMENT | 12 | 21 % | 12 |
 | ENCHERE | 19 | 34 % | 19 |
 
 Croisement avec le `open_type` LIVRÉ (code C++, table inconnue ici) :
 | recalculé \ livré | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
 |---|---|---|---|---|---|---|---|---|---|
-| DRIVE | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| TEST_DRIVE | 2 | 2 | 1 | 2 | 0 | 2 | 6 | 4 | 5 |
+| TEST_DRIVE | 2 | 2 | 1 | 2 | 0 | 2 | 6 | 4 | 6 |
 | REJET_RENVERSEMENT | 0 | 2 | 0 | 0 | 0 | 1 | 3 | 3 | 3 |
 | ENCHERE | 0 | 1 | 0 | 1 | 2 | 0 | 3 | 7 | 5 |
 
@@ -65,7 +63,7 @@ Croisement avec le `open_type` LIVRÉ (code C++, table inconnue ici) :
 | 20260817 | TEST_DRIVE | -1 | -43.0 | -55.0 | 9 |
 | 20260818 | ENCHERE | -1 | 2.0 | -9.0 | 9 |
 | 20260819 | ENCHERE | -1 | -11.0 | -15.0 | 7 |
-| 20260820 | DRIVE | +1 | 57.0 | 24.0 | 9 |
+| 20260820 | TEST_DRIVE | +1 | 57.0 | 24.0 | 9 |
 | 20260821 | ENCHERE | -1 | -11.0 | -35.0 | 4 |
 | 20260824 | ENCHERE | -1 | -62.0 | -12.0 | 7 |
 | 20260825 | ENCHERE | -1 | -5.0 | -24.0 | 8 |
@@ -85,7 +83,6 @@ Croisement avec le `open_type` LIVRÉ (code C++, table inconnue ici) :
 ## NQ — 56 jours types ((atr_ref_absent) 1 non mesurables)
 | type | jours | part | dont retour sur O |
 |---|---|---|---|
-| DRIVE | 0 | 0 % | 0 |
 | TEST_DRIVE | 32 | 57 % | 0 |
 | REJET_RENVERSEMENT | 11 | 20 % | 11 |
 | ENCHERE | 13 | 23 % | 13 |
@@ -93,7 +90,6 @@ Croisement avec le `open_type` LIVRÉ (code C++, table inconnue ici) :
 Croisement avec le `open_type` LIVRÉ (code C++, table inconnue ici) :
 | recalculé \ livré | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
 |---|---|---|---|---|---|---|---|---|---|
-| DRIVE | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | TEST_DRIVE | 3 | 2 | 1 | 4 | 1 | 2 | 3 | 7 | 9 |
 | REJET_RENVERSEMENT | 0 | 0 | 1 | 1 | 0 | 3 | 2 | 1 | 3 |
 | ENCHERE | 0 | 1 | 0 | 0 | 2 | 1 | 3 | 4 | 2 |

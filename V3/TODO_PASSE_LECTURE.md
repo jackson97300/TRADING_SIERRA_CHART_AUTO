@@ -115,10 +115,22 @@ suivante) · pas 2b.
 - [x] dix décisions Fable appliquées (MISSION.md), règle 39, NEXT_CYCLE §5 octies/nonies,
       `test_cote_hvl` 5/5, CONVENTIONS §11, DECISIONS (attendu avant / mesuré après /
       attendus du rejeu signés relectrice).
-- [ ] commit B -> publier -> vérifier le miroir -> **hash à Fable avec les distributions**
+- [x] commit B `66bfc6a` -> **miroir `e26236a`** (vérifié) -> hash à Fable avec les distributions
       (relecture AVANT la grammaire).
 - [ ] **11/09 9h00 Paris** : hash de la tête à Fable ; relecture ; **tag avant l'ouverture**
       (les deux recalculs seront dedans — Fable, réponse 7).
-- [ ] après relecture : `grammaire.py`, `zones.py`, `scenarios.py`, `erreurs.py`, `sorties.py`
-      (< 300 l. chacun) ; rejeu 57 j ; les trois mesures §4.4 contre l'attendu de Fable ;
-      test direct = rétrospectif de la grammaire ; mode vivant ; `scenario_en_cours`.
+- [x] relecture Fable à `e26236a` (10/09 15h) : les quatre écarts tranchés, les valeurs fixées
+      (`seuils.yaml` v2026-09-10b : dehors par nature, w_min/w_max p10/p90, `pression`, trois types
+      d'ouverture, S_DANS_POSE + S_DANS_HEADFAKE, attendus 60 / 55 / 15) -> appliqué, tests verts.
+- [x] `grammaire.py` (huit canoniques v0 + S_DANS_ROTATION + S_AUTRE(raison)), `zones.py` (bande
+      asymétrique, mémoire F23 causale, ZONE_DEPLACEE, 0DTE dormant), `scenarios.py` (rejeu et direct
+      par la MÊME fonction, journal `.tmp` + `os.replace`), `sorties.py` (B-SCEN en parité B-NIV),
+      `erreurs.py` (sept erreurs nommées + carnet) — chacun < 300 l. ; `test_grammaire` 24/24
+      (validé / invalidé / bascule, miroir, bande, rôles, S_AUTRE, mots conclusifs, ZONE_DEPLACEE,
+      DIRECT = RÉTROSPECTIF), `test_scenarios_soir` 18/18.
+- [x] mode vivant : `scenarios.py --direct` (barres complètes), appelé par `direct.py` ; rythme du
+      soir étape 5b/5 = `erreurs.py` (rejeu + auto-évaluation + FUITE si le direct diffère).
+- [ ] rejeu 57 j : `mesure_scenarios.py` -> `rapports/scenarios_57j.md` contre l'attendu de Fable
+      (couverture 60 %, tenue 55 %, tirage battu de 15 points) -> ligne DECISIONS « mesuré ».
+- [ ] commit D -> publier -> hash à Fable (relecture de la grammaire) ; `scenario_en_cours` sur les
+      lignes de l'entonnoir / fantômes / marges = après sa relecture (touche `chaine.py`).

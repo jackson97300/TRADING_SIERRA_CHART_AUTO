@@ -97,6 +97,12 @@ def main():
         _etape("4/5 barrieres (les SL candidats)",
                ["V3/layers/L5_risque/barrieres_du_jour.py", *args]),
         _etape("5/5 marges (la distance au seuil)", ["V3/marges.py", *args]),
+        # 10/09 : le narrateur de seance — rejeu de la journee, auto-evaluation
+        # (§8 : note, ne regle pas), FUITE si le journal direct differe du
+        # rejeu. Lecture seule, n'ecrit que LOGS/scenarios/ ; en dernier, et sa
+        # sortie ne bloque rien.
+        _etape("5b/5 scenarios (rejeu + auto-evaluation du narrateur)",
+               ["V3/scenarios/erreurs.py", *args]),
     ]
     print("\n--- fait. Reste le JOURNAL MANUEL (METHODE 6) — la machine ne "
           "l'ecrit pas.")

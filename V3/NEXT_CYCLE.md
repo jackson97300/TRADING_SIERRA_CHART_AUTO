@@ -211,6 +211,27 @@ impossible. Rien ne bouge en campagne.
   journees sans les valider.
 - **`open_type_r` a 30 minutes ne separe pas DRIVE de TEST_DRIVE** : la bande
   P10 (0,10 ATR) est presque toujours traversee des deux cotes par une barre
-  de 15 min (ES 1 DRIVE / 24 TEST_DRIVE, NQ 0 / 32). Au cycle 2 : lire la
-  traversee sur les premieres minutes (1 min), garder la cloture 15 min pour
-  le type — ou fusionner les deux en campagne et le dire.
+  de 15 min (ES 1 DRIVE / 24 TEST_DRIVE, NQ 0 / 32). Tranche par Fable
+  (relecture e26236a) : v0 = TROIS types, DRIVE fusionne dans TEST_DRIVE avec
+  `retour_open` journalise. CANDIDAT PRE-ENREGISTRE cycle 2 : la traversee
+  lue sur les premieres minutes 1 min, la cloture 15 min gardee pour le type.
+- **H-PRESSION, pre-enregistree (Fable, 10/09).** La colonne `pression`
+  (nee « compression », post-it §2.6 : extremes des k derniers tests /
+  demi-largeur) a ete MESUREE a 1,18 / 1,08 a la barre AVANT la premiere
+  cassure de l'IB contre 1,05 / 1,07 sans cassure : les meches s'allongent,
+  elles ne se resserrent pas. On ne renverse pas l'hypothese apres coup ; en
+  v0 la colonne est journalisee, jamais un etat, aucun seuil. ATTENDU ECRIT
+  POUR LE CYCLE 2 : « `pression` > 1,1 sur les 3 dernieres barres precede
+  une cassure acceptee plus souvent que le hasard » — controle par
+  permutation des barres, sur les 57 jours du lot PLUS les 60 de la campagne.
+- **Grammaire v0, deux choix de definition a relire (10/09 soir).** (1) Les
+  codes sont ASYMETRIQUES par nom, symetriques par logique : cote haut, la
+  reintegration acceptee est `S_OUV_HAUT_REJET` avec une `precision` PULL /
+  TRAV ; cote bas, la meme sequence bascule vers `S_OUV_BAS_REINT_PULL` ou
+  `_TRAV` (les cinq codes de la spec). Le miroir est teste sur la logique
+  (`test_grammaire` [2]) ; un cycle 2 peut unifier les noms. (2) Avant que
+  PULL ou TRAV soit connu, le code est `S_OUV_BAS_REINT` (famille canonique,
+  `precision: null`) — pas un S_AUTRE, pas une bascule artificielle. (3) Le
+  rejet au VPOC accepte apres une traversee tombe en S_AUTRE(rejet_vpoc) :
+  si la mesure en compte beaucoup, c'est une sequence a nommer (rotation
+  dans la valeur), pas un seuil.

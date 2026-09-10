@@ -298,8 +298,10 @@ Definitions ecrites AVANT la mesure (DECISIONS 10/09 14h10), dans
 `open_type_r(df15, atr_ref, tick, open_lvl)` — le type d'ouverture Dalton sur
 les DEUX premieres barres 15 min cash (30 minutes : le grain de la campagne,
 pas celui de Dalton). Fenetre : barres 0 et 1 du cash. Unite : un dict
-(`type` parmi DRIVE / TEST_DRIVE / REJET_RENVERSEMENT / ENCHERE, `direction`
-+1/-1/0, `retour_ouverture`, extensions en TICKS signes depuis O). Signe :
+(`type` parmi TEST_DRIVE / REJET_RENVERSEMENT / ENCHERE — trois en v0, DRIVE
+n'existant pas a 30 minutes (Fable, relecture e26236a) : fusionne dans
+TEST_DRIVE avec `retour_open` et `traverse_b1` journalises ; `direction`
++1/-1/0, extensions en TICKS signes depuis O). Signe :
 `ext > 0` = au-dessus de l'ouverture. O = `open_cash_lvl` du brut, sinon
 l'open de la barre 0. La seule tolerance est la bande P10 sur `atr_ref`
 (`max(0,10 x atr / tick, 2)` ticks), la proximite des fonctions gelees —
@@ -311,8 +313,10 @@ du post-it L3 §2.2 sur DEUX FICHES F23 FACE A FACE. Les bords sont FIGES par
 l'appelant (apres 10h30, l'IB ; jamais des `cur_*`). Fenetre : de `i_debut`
 a la fin de la journee, une ligne par barre 15 min. Unite : bords en POINTS,
 `largeur_atr` en ATR de la barre (`atr_ref` si present, sinon `atr_barre`),
-`compression` = ratio sans unite (§2.6 : |cloture du test - milieu| /
-demi-largeur, moyenne des k derniers tests). Signe : `casse_par` +1 par le
+`pression` (nee « compression ») = ratio sans unite (§2.6 : |EXTREME du test
+vers son bord - milieu| / demi-largeur, moyenne des k derniers tests ; mesure
+10/09 : les meches s'allongent avant la cassure, 1,18 contre 1,05 — colonne
+journalisee, pas un etat, H-PRESSION au cycle 2). Signe : `casse_par` +1 par le
 haut, -1 par le bas. Definitions : test = touche F23 avec l'hysteresis de L1
 (`z_touche` 0, `z_reset` 0,5 ATR) ; tenue = la barre SUIVANTE cloture du cote
 d'ou le prix venait, lue a i + 1 et CAUSALE — pas l'`issue` F23 finale, qui
@@ -320,8 +324,8 @@ attend jusqu'a huit barres pour dire « casse » et ferait diverger le direct du
 retrospectif ; acceptation = DEUX clotures consecutives STRICTEMENT au-dela
 (une cloture SUR le bord est dedans) ; regain = deux clotures dedans, qui rend
 l'etat d'avant la cassure. ETABLI exige deux tenues connues par bord et une
-largeur dans [`w_min`, `w_max`] (None = pas de borne tant que la distribution
-n'est pas fixee dans `V3/scenarios/seuils.yaml`). Rien de ce qui n'est pas
+largeur dans [`w_min`, `w_max`] (fixes par Fable a p10 / p90 de l'IB par
+instrument dans `V3/scenarios/seuils.yaml` ; hors bornes = S_AUTRE(IB_hors_norme)). Rien de ce qui n'est pas
 encore connu n'entre dans l'etat : `test_range.py` le prouve barre a barre
 (direct = retrospectif) sur ES et NQ 09/09.
 

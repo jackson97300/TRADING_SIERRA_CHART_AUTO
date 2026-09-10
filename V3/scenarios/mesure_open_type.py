@@ -3,7 +3,7 @@ le lot, AVANT tout usage (MISSION.md, point 1).
 
     python -X utf8 V3/scenarios/mesure_open_type.py
 
-Par instrument : le compte des quatre types (`recalc.open_type_r`, deux
+Par instrument : le compte des types (v0 : trois — DRIVE fusionné dans TEST_DRIVE, `traverse_b1` False = l'ancien DRIVE pur) (`recalc.open_type_r`, deux
 premières barres 15 min cash, O = `open_cash_lvl` du brut si présent, bande
 P10 sur `atr_veille` — le mètre que la chaîne a à 9h30, via `lot.journees`) ; la part de retours
 sur l'ouverture ; le croisement avec le `open_type` LIVRÉ (code C++ 0-9, dont

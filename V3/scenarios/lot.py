@@ -66,6 +66,15 @@ def journees(sym, jours=None):
         yield jour, avec_metre(df, atr_veille(sym, jour, brut)), brut
 
 
+def seuils():
+    """`scenarios/seuils.yaml`, tel quel — la seule source des nombres du module
+    (règle dure : aucun seuil dans le code ; `null` = pas fixé = None)."""
+    import yaml
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "seuils.yaml"),
+              encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
 def quantiles(valeurs, qs=(0.1, 0.25, 0.5, 0.75, 0.9)):
     v = np.asarray([x for x in valeurs if x is not None and np.isfinite(x)], dtype=float)
     if len(v) == 0:
