@@ -33,6 +33,15 @@
 
 ---
 
+### 2026-09-10 (matin) — [VALIDATION_MISS] — « le code gele fait foi » pour DECRIRE un niveau : la colonne `_lvl` tranchait, je ne l'ai pas cherchee
+**Contexte** : le lieu dans la ligne PASSE (`V3/lieux.py`). J'ai mesure la convention de signe des `dist_*` par « niveau reconstruit constant dans la journee » : concluant pour les niveaux figes, NON concluant pour les `cur_*` (ils bougent).
+**Ce qui a mal tourne** : faute de mesure qui tranche, j'ai pris le code gele de `h3` (`val = close - dl x tick`) comme verite et ecrit `dist_cur_val` = close - VAL (signe -1) dans la table, la docstring, la regle 37 et DECISIONS. Le brut porte `cur_val_lvl` : `close + d x tick == cur_val_lvl` a 100 % sur 4 x 390 barres — le journal aurait porte `2·close - VAL` sous le nom `cur_val`, la fiction exacte que le lieu devait supprimer.
+**Comment c'est sorti** : la review (code-reviewer, R1), avant commit. Mes tests reels n'exercaient que des shorts ; le seul cas `cur_val` etait synthetique, avec l'attente fausse.
+**Cause racine** : une mesure qui ne discrimine pas prise pour « pas de mesure possible », puis le code promu au rang de fait. Un code gele fait foi pour la DECISION qu'il prend, jamais pour la DESCRIPTION d'une donnee.
+**Lecon** : pour decrire une colonne, chercher la colonne SOURCE (`_lvl`, brut 1 min) avant de lire le code qui la consomme ; un test « reel » qui n'exerce pas le cas litigieux ne prouve rien (regle 1 de METHODE : « qu'un autre lise »).
+**Trigger prevention** : toute affirmation « colonne X = A - B » → grep `_lvl`/source dans le brut et mesurer l'egalite a 100 % ; sinon ecrire « non mesure », jamais « le code fait foi ». Bonus : la mesure a revele que le long de `h3` gele ne teste pas sa docstring (NEXT_CYCLE §5 septies).
+**Reviewed** : code-reviewer / self
+
 ### 2026-09-10 (nuit) — [SCALE_DRIFT] — un seuil « 2 ATR-veille » pose sans distribution : 66 % des jours, et l'ALERTE aurait FERME la journee live suivante
 **Contexte** : brique 1 (`atr_ref`), garde-fou du brief Fable « alerte L6 `echelle_douteuse` les jours de gap >= 2 ATR-veille ».
 **Ce qui a mal tourne** : j'ai code `MAX_GAP_ATR_VEILLE = 2.0` et `etat = "ALERTE"` tels quels. La review (code-reviewer) a mesure le taux sur le lot : ES 44 %, NQ 58 % (p50 = 2,47 ATR — la MEDIANE des jours), union 66 % ; et `etat_live.etat_l6` promeut TOUTE ligne ALERTE en `L0_DATA_L6_ALERTE` (appliquee) → la journee live J+1 fermee deux jours sur trois.

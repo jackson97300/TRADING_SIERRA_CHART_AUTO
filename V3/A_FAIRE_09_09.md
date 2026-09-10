@@ -22,7 +22,11 @@ passe pas à côté »). Deux audits : la REVUE QUALITÉ (14 fichiers logique, �
 - **A1** gamma : bug documenté à 3 endroits (docstring `_gamma`, INCIDENT_LOG,
   garde YAML au-dessus de `mode: observee` — ne pas promouvoir sans le fix).
 
-## ⏳ PASSE DÉDIÉE — avant le gel SI POSSIBLE
+## ✅ PASSE DÉDIÉE — avant le gel SI POSSIBLE → FAIT le 10/09
+- ✅ **#4 — LE LIEU dans la ligne PASSE** : `V3/lieux.py` (table (famille, côté)
+  → niveau, prix = close + dist × tick, convention mesurée, exception
+  `dist_cur_val` du code gelé), la chaîne l'écrit en `extra` sur chaque ligne
+  du signal, `test_lieux` 12/12, règle 37. *(Le point tel qu'il était écrit :)*
 - **#4 — LE LIEU dans la ligne PASSE** (V1-lessons #4). **PAS une colonne** :
   vérifié dans `CORE/research/hypotheses.py`, le lieu dépend de famille+sens et
   `h7` lit TROIS niveaux (ovn_low/pdl/ib_low). Exige que les fonctions

@@ -42,13 +42,21 @@ la dernière porte le hash du miroir.*
       sur les autres shorts** (non prévu, consigné : « non mesuré » par short) ;
       7 `PREMIERE_BARRE` inchangées ; ombres identiques ; jours 1-2 : 0/0. Le
       jour 3 (10/09) se rejoue à 23h01 avec le code neuf.
-- [ ] **5. Review interne** (code-reviewer), 14 contrôles, publier, **hash
-      après `-> master`** : `……`
+- [x] **5. Review interne** (code-reviewer : GO-AVEC-RÉSERVES, R1/R3-R8
+      exécutées — mesure 13 vs attendu 1 consignée, battements de nuit
+      documentés + testés, test « L5_VETO_GAMMA reste observée », lint,
+      chiffres), 14 contrôles, publié — commit `bd5dbd2`, **miroir `e333fe5`**.
+      **R2 reste à Jackson : redémarrer le coureur live (ancien `lecture.py`
+      en mémoire) à 15h15 Paris, `ts` dans DECISIONS + règle 36.**
 
 ## Pas dans cette passe
 `gamma_block_short` dans l'agrégation (CORE) · le lieu dans `PASSE` (passe
 suivante) · pas 2b.
 
 ## Après, dans l'ordre de Fable
-le lieu dans `PASSE` → lecture marges/2 → **gel demain matin + tag** →
-briques 4-5 dans la semaine → carte du matin (protocole pré-enregistré).
+- [x] **le lieu dans `PASSE`** — `V3/lieux.py` + `test_lieux` 12/12, chaîne
+      3 lignes (journal seulement), règle 37, DECISIONS ; review + commit +
+      hash : `……`
+- [ ] lecture marges/2 par Fable (schéma validé Q5, version b)
+- [ ] **gel demain matin + tag**
+- [ ] briques 4-5 dans la semaine → carte du matin (protocole pré-enregistré)

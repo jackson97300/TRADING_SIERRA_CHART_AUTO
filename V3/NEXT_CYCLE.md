@@ -160,3 +160,15 @@ Reportés de la SPEC L4 §10, inchangés : modificateur de taille après 200
 trades ; footprint par niveau de prix (même ligne C++ que le spread) ;
 absorption lue sur la fiche F23 du niveau ; un veto L4 qui apparaît en
 position = signal de sortie, mesuré comme les fantômes.
+
+## 5 septies. H3 long : la VAL lue avec le signe inverse (mesure du 10/09, review du lieu)
+
+`dist_cur_val` = VAL - close (mesure : `close + d x tick == cur_val_lvl` a
+100 % sur 4 x 390 barres, `inside_cur_va = 1` -> d < 0), mais `h3` gele
+reconstruit `val = close - dl x tick` = 2·close - VAL. Son LONG tire donc
+quand la cloture est juste SOUS la VAL (`dl > 0`, |dl| <= P10) avec une meche
+basse plus longue que la distance a la VAL — pas « sortie sous la VAL puis
+cloture dedans ». Le short (VAH) est juste. Au cycle 2 : `val = close + dl x
+tick`, `low < val`, `dl < 0` (cloture revenue AU-DESSUS) — miroir exact du
+short — et lire les deux populations de longs cote a cote. En campagne : rien
+ne bouge, H3-VPOC se mesure telle que taguee (LECTURE regle 37).

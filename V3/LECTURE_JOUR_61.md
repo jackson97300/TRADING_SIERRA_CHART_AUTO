@@ -199,6 +199,25 @@ devenirs par famille. Écrites après la confrontation `research/parite_barriere
     `L0_REGIME_INDETERMINE` RÉPONDENT avant 11h00 (sur `atr_ref`) : leurs
     `TROU_` du matin antérieurs sont des trous de MÈTRE, pas de marché.
 
+37. **Le LIEU est sur la ligne depuis le 10/09** (`lieux`, `seuil_ticks`,
+    `bande_ticks`, `close`, `lieux_motif` — `V3/lieux.py`) : nom du niveau,
+    prix reconstruit `close + dist × tick` (TOUTES les `dist_*` sont
+    « niveau − close », `dist_cur_val` comprise — mesuré à 100 % contre
+    `cur_val_lvl` ; review du 10/09), distance en ticks, la BANDE du lieu
+    (bas, haut — H6p `[−P15 ; +P05]`, H2p asymétrique : `seuil_ticks` est la
+    borne de proximité de la famille, PAS la bande). Les lignes antérieures
+    (non rejouées) n'ont pas le champ : leur lieu se reconstruit par rejeu,
+    pas par lecture. Un `lieux: None` porte son motif ; un signal hors des
+    quatre (battement, ombre) en a un par construction. Le lieu DÉCRIT ;
+    « le niveau X marche mieux que Y » est une lecture du jour 61 par
+    famille, jamais une raison de retoucher un lieu en campagne. **Et une
+    lecture pour NEXT_CYCLE, pas pour le tag** : `h3` gelé reconstruit la VAL
+    avec le signe inverse (`close − dl × tick` = 2·close − VAL) — son LONG
+    tire quand la clôture est juste SOUS la VAL (`dl > 0`) avec une mèche
+    basse plus longue que la distance à la VAL, pas « sortie sous la VAL
+    puis clôture dedans » comme sa docstring le dit. Le journal porte la
+    vraie VAL ; le déclencheur reste tel qu'il a été tagué et mesuré.
+
 ## Ce que le jour 61 NE fait pas
 
 Pas de « correction » : ce qui a survécu bascule observée → appliquée, ce qui

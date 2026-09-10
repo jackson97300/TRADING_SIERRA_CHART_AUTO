@@ -49,7 +49,7 @@ if RACINE not in sys.path:
 from CORE import entonnoir                                        # noqa: E402
 from CORE.research.hypothesis_runner import (                     # noqa: E402
     COUT_DOLLARS, VAL_POINT, triple_barriere)
-from V3 import lecture, registre                                  # noqa: E402
+from V3 import lecture, lieux, registre                           # noqa: E402
 from V3.layers.L0_interrupteur import portes                      # noqa: E402
 from V3.layers.L0_interrupteur import portes_donnees              # noqa: E402,F401
 from V3.layers.L5_risque import vetos                             # noqa: E402  (enregistre L5)
@@ -128,6 +128,9 @@ def appliquer(signaux, df, sym, journal=None, hypothese="?",
         # battement) et les df de test. Visible, jamais un None muet.
         src = {"atr_source": (str(df["atr_source"].iloc[i])
                               if "atr_source" in df.columns else "absent")}
+        # LE LIEU (V1-lesson 4, 10/09) : sur chaque ligne du signal, lu par
+        # personne — `lieux.py`. None porte toujours son motif.
+        src.update(lieux.pour_signal(df, i, hyp, side))
 
         etat["n_signaux_jour"] += 1
         p = registre.evaluer_toutes(lec, etat, _SEUILS, _ABSENTES)
