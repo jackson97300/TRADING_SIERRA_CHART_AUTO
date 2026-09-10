@@ -36,8 +36,14 @@ if RACINE not in sys.path:
 
 from CORE.bot_terminal import charger_jour                    # noqa: E402
 from V3 import chaine                                         # noqa: E402
+from V3.layers.L0_interrupteur import portes                  # noqa: E402
 
 JOUR, SYM = "20260903", "ES"
+# Un trou ne BLOQUE en strict que sur une porte APPLIQUEE (chaine.appliquer :
+# `bloquantes += trous & APPLIQUEES`). Une porte passee observee — le
+# rollover du 10/09 met L0_CONTRAT_INACTIF en observee le temps que Sierra
+# bascule — se journalise avec son motif, sans fermer. Le test lit le YAML.
+_S, APPLIQUEES, _A = portes.charger_seuils()
 
 # Un etat live SAIN : rien ne doit bloquer a cause de lui.
 LIVE_SAIN = {
@@ -132,9 +138,12 @@ def main():
         r, motifs = _rejouer(df, live, strict=True)
         if motif not in motifs:
             echecs.append("%-32s : %s attendu, absent du journal" % (nom, motif))
-        elif r:
+        elif r and motif[len("TROU_"):] in APPLIQUEES:
             echecs.append("%-32s : le trou est journalise mais %d signaux "
                           "passent quand meme en mode strict" % (nom, len(r)))
+        elif r:
+            print("  (%s : porte OBSERVEE dans le YAML — le trou se journalise "
+                  "sans fermer, c'est attendu)" % motif[len("TROU_"):])
 
     # --- hors ligne, le meme trou ne doit PAS bloquer ----------------------
     # Sinon aucune mesure historique ne serait possible : l'age d'une barre

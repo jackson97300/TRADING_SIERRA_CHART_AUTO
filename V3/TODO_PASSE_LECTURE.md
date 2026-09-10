@@ -7,8 +7,11 @@ la dernière porte le hash du miroir.*
 ## Ce matin (Jackson + Claude)
 - [x] L6 : F15 en INFO (`motif=derive_feature`) — `etat_l6(20260910) = False`,
       le live du 10/09 s'ouvre (commit `41412e7`)
-- [ ] Rollover à l'ouverture : la commande de `ROLLOVER_10_09.md`, ligne A ou B
-      dans DECISIONS, l'heure ; le soir : heure de bascule + `max(atr_barre)`
+- [x] Rollover : commande lancée à **10h01 Paris** — ES 480 / NQ 481 lignes,
+      100 % U26, calendrier Z26 → **ligne B** (DECISIONS, YAML observée, fiche).
+      Restent : redémarrage coureur 15h15 (ancien YAML en mémoire) ; ce soir
+      heure de bascule + `max(atr_barre)` ; 11/09 matin remise appliquée si le
+      fichier ouvre en Z26.
 - [ ] `journal_manuel/20260909.md` : la ligne de 11h15 (Jackson)
 
 ## La passe lecture

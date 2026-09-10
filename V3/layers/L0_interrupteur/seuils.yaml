@@ -180,7 +180,13 @@ portes:
              Bloque l'entree, ne bloque PAS la mesure : chaque signal qu'elle
              ferme est simule en trade fantome complet — rapports/fantomes_57j.txt"
   L0_CONTRAT_INACTIF:
-    mode: appliquee
+    # ROLLOVER 10/09, ligne B (ROLLOVER_10_09.md, DECISIONS 10/09 10h01) : les
+    # fichiers du 10/09 ouvrent en U26 (ES 480 / NQ 481 lignes, 100 %) alors
+    # que contrat_actif dit Z26 — le roll calendaire est celui du CME, pas de
+    # Sierra. Bloquer toute la seance sur un decalage d'horloge serait un
+    # faux TROU : OBSERVEE pour le 10/09, remise `appliquee` des qu'un
+    # fichier OUVRE en Z26 (a verifier le 11/09 au matin, une ligne DECISIONS).
+    mode: observee
     seuils: {}
     mesure: "contrat du JSONL != contrat du compte — a brancher avant le 10/09"
   L0_DTC_DECONNECTE:

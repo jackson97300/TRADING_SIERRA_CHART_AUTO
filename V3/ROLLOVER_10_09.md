@@ -1,5 +1,12 @@
 # ROLLOVER 10/09 — préparé la veille, à décider vite à l'ouverture
 
+> **DÉCIDÉ le 10/09 à 10h01 Paris : LIGNE B.** ES 480 / NQ 481 lignes du
+> 10/09, 100 % U26 (la nuit Globex), `contrat_actif` = Z26 → `L0_CONTRAT_INACTIF`
+> observée pour le 10/09 (seuils.yaml). Reste : (1) redémarrer le coureur live
+> à 15h15 (il a l'ancien YAML en mémoire) ; (2) ce soir, l'heure de bascule et
+> `max(atr_barre)` ; (3) le 11/09 au matin, si le fichier ouvre en Z26 →
+> remise `appliquee` + une ligne DECISIONS ; (4) ton clic MANUEL : U26 ou Z26 ?
+
 *La décision se prend en une minute : lire le contrat des 3 premières barres du
 10/09, garder la bonne ligne DECISIONS, noter l'heure. C'est la mesure qui dira
 si « 3e vendredi − 8 jours » est l'horloge de **Sierra** ou seulement celle du
