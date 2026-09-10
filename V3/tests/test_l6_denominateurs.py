@@ -135,6 +135,23 @@ def main():
     check("[5c] dimanche 13/09 sans fichier -> chargement INFO week_end",
           r and r[0]["controle"] == "chargement" and r[0]["etat"] == "INFO", r)
 
+    # 6. reset_vwap (10/09 soir) : un RESET pose le VWAP sur le prix ; un gros saut qui
+    # laisse le VWAP loin du prix est un deplacement (premiere minute d'un gap), pas un reset
+    def jour_vwap(h_saut, repose):
+        ts = pd.date_range("2026-09-09 20:00", periods=1380, freq="min", tz="UTC")   # le reset de 21h n'est pas la 1re barre
+        close = pd.Series(np.linspace(29000, 29100, 1380))
+        v = (close - 150.0).copy()               # VWAP loin du prix toute la nuit
+        i = int(((ts.hour == h_saut) & (ts.minute == 0)).argmax())
+        v.iloc[i:] = (close.iloc[i:] - 0.5) if repose else (v.iloc[i:] - 8.0)
+        return pd.DataFrame({"ts": (ts.asi8 // 10**6), "close": close, "vwap_d": v, "_dt": ts})
+    r = L6.controle_reset_vwap(jour_vwap(21, True), "NQ", "20260910")
+    check("[6a] reset a 21h UTC (le VWAP se pose sur le prix) -> OK", r["etat"] == "OK", r)
+    r = L6.controle_reset_vwap(jour_vwap(13, True), "NQ", "20260910")
+    check("[6b] reset a 13h UTC (pose sur le prix, mauvaise heure) -> ALERTE", r["etat"] == "ALERTE", r)
+    r = L6.controle_reset_vwap(jour_vwap(13, False), "NQ", "20260910")
+    check("[6c] saut de 8 pts a 13h qui LAISSE le VWAP a 150 pts du prix -> INFO deplacement, pas un reset (NQ 10/09)",
+          r["etat"] == "INFO" and "sans reset" in r["message"], r)
+
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0
 

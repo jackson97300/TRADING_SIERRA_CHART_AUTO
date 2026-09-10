@@ -210,12 +210,28 @@ def controle_reset_vwap(df, sym, jour):
     if "vwap_d" not in df.columns:
         return _res("reset_vwap", "INFO", "colonne vwap_d absente")
     v = pd.to_numeric(df["vwap_d"], errors="coerce")
+    close = pd.to_numeric(df["close"], errors="coerce")
     saut = v.diff().abs()
     seuil = max(float(saut.quantile(0.995)), 5.0)
     pas = df["_dt"].diff().dt.total_seconds()
-    reset = (saut > seuil) & (pas <= 300)
-    if not reset.any():
+    # Un RESET repose le VWAP SUR LE PRIX : apres le saut, il est a moins de son
+    # propre saut de la cloture. Un gros saut qui laisse le VWAP loin du prix
+    # n'est pas un reset, c'est la premiere minute de cash d'un gap qui deplace
+    # la moyenne (NQ 10/09 : saut 8 pts, VWAP a 168 pts du prix -> ALERTE fausse
+    # qui aurait FERME le live du 11/09 par L0_DATA_L6_ALERTE ; sur le lot, les
+    # vrais resets posent le VWAP a 0,1-10 pts du prix pour des sauts de 10-270).
+    # Le plancher 5.0 est un nombre d'ES : il reste, mais il ne suffit plus seul.
+    grand = (saut > seuil) & (pas <= 300)
+    pose = (v - close).abs() < saut
+    reset = grand & pose
+    if not grand.any():
         return _res("reset_vwap", "INFO", "aucun reset detecte ce jour")
+    if not reset.any():
+        i = int(grand[grand].index[0])
+        return _res("reset_vwap", "INFO",
+                    "%d saut(s) sans reset : le VWAP reste a %.1f pts du prix (saut %.1f) — deplacement, pas un reset"
+                    % (int(grand.sum()), abs(float(v[i]) - float(close[i])), float(saut[i])),
+                    sauts_sans_reset=int(grand.sum()))
     heures = df.loc[reset, "_dt"].dt.hour
     attendue = int(recalc.ouverture_sess_utc(df["_dt"]).iloc[0])
     proche = int(((heures - attendue).abs() <= 1).sum())
@@ -700,7 +716,9 @@ def main() -> int:
                 r.update({"symbole": sym, "jour": jour,
                           "ecrit_a": datetime.now(timezone.utc).isoformat()})
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-                marque = {"OK": "  ", "INFO": "  ", "ALERTE": ">>"}[r["etat"]]
+                # CONNU (day_type, brique 4) n'etait pas dans ce dict : KeyError le 10/09
+                # au soir, ES coupe apres reset_vwap — le verdict ecrit etait PARTIEL.
+                marque = {"ALERTE": ">>", "CONNU": "??"}.get(r["etat"], "  ")
                 print("%s %-12s %-7s %s" % (marque, r["controle"], r["etat"],
                                             r["message"]))
                 alertes += r["etat"] == "ALERTE"

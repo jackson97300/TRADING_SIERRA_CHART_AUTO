@@ -33,6 +33,22 @@
 
 ---
 
+### 2026-09-10 (22h40) — [SCALE_DRIFT + VALIDATION_MISS] — `controle_reset_vwap` prenait un deplacement du VWAP pour un reset : ALERTE fausse sur NQ, le live du 11/09 aurait ete FERME par L0_DATA_L6_ALERTE
+**Contexte** : premier rythme du soir de la campagne avec 5b/5 (10/09). L6 leve `reset_vwap ALERTE` sur NQ : « 1 reset, heures vues : 13h UTC ». `L0_DATA_L6_ALERTE` est APPLIQUEE : toute ligne ALERTE de la veille ferme le live du lendemain.
+**Ce qui a mal tourne** : a 13h30 UTC (9h30 ET, premiere minute de cash d'un gap de 5,7 ATR-veille), `vwap_d` bouge de 8,0 pts en une minute (29 295 -> 29 287) et reste a 168 pts du prix (29 119). Le controle definissait un reset comme « saut > max(p99,5, 5,0 pts) » : un plancher absolu de 5 pts, nombre d'ES applique a NQ (memoire calibration_par_instrument), sans verifier que le VWAP se REPOSE sur le prix. Sur le lot, les vrais resets posent le VWAP a 0,1-10 pts du prix pour des sauts de 10-270 pts.
+**Cause racine** : une definition incomplete (un reset = le VWAP restart AU PRIX), testee sur les jours de la campagne (08-09/09, sans gap) et jamais sur un gap d'ouverture. Meme famille que SCALE_DRIFT du 10/09 nuit (seuil pose sans distribution, ALERTE qui ferme).
+**Lecon** : un controle L6 dont l'ALERTE FERME le live doit avoir sa distribution par instrument ET un cas negatif (« ce qui n'est PAS un reset ») avant d'etre appliquee. Un nombre absolu en points n'est jamais commun a ES et NQ.
+**Trigger prevention** : pour chaque controle de la famille FERME (volumetrie_cash, vix_cash_zero, continuite, fenetre, reset, chargement) : un test avec le faux positif le plus proche (ici : gros saut sans repose) ; correction 10/09 22h45 : `reset = saut > seuil ET |vwap - close| < saut` (le VWAP se pose a moins de son propre saut du prix), test_l6 [6a-6c], NQ 10/09 -> INFO « deplacement, pas un reset », L6 rejouee, verdict du 10/09 sans ALERTE.
+**Reviewed** : self (mesure sur le lot : sous la regle corrigee, les 55 / 50 journees w0 restent ALERTE — session a 17h UTC en w0, c'est le controle qui fait son travail — et les trois journees w1 sont OK / INFO) ; a relire par Fable le 11/09 a 9h00.
+
+### 2026-09-10 (22h35) — [VALIDATION_MISS] — l'afficheur de L6 ne connaissait pas l'etat CONNU : KeyError, verdict du 10/09 ecrit PARTIEL (ES coupe apres reset_vwap)
+**Contexte** : brique 4 (10/09) a introduit l'etat `CONNU` (day_type fige a 2.0, calcul absent) ; la boucle d'affichage de `surveillance_l6.main` faisait `{"OK","INFO","ALERTE"}[etat]`.
+**Ce qui a mal tourne** : premier jour ou `valeurs_par_defaut` rend CONNU sur ES -> KeyError apres l'ecriture de la ligne, la boucle s'arrete : le fichier de verdict porte NQ complet et ES ampute (pas de echelle_atr, volumetrie_cash, vix_cash_zero, derive_feature pour ES). `etat_l6` aurait lu un verdict incomplet comme complet.
+**Cause racine** : un etat ajoute a la sortie sans que le consommateur (l'afficheur) soit dans le test ; les tests de brique 4 verifiaient les controles, pas `main`.
+**Lecon** : quand un module ajoute une valeur a une enumeration de sortie, grep TOUS les endroits qui indexent cette enumeration (ici un dict litteral) ; un afficheur ne doit jamais pouvoir amputer un verdict — `.get(etat, "  ")`.
+**Trigger prevention** : `marque = {...}.get(etat, "  ")` ; L6 rejouee le 10/09 22h45 (verdict complet) ; ajouter `main` a `test_l6_denominateurs` (un jour reel de bout en bout) — a faire.
+**Reviewed** : self
+
 ### 2026-09-10 (midi) — [VALIDATION_MISS] — la carte du matin etait VIDE a 9h25, son seul horaire : 13 tests verts sur la mauvaise condition
 **Contexte** : brique 3 (`V3/carte_matin.py`), la carte des lieux a 9h25 ET. Test [2] ecrit sur le 09/09 COMPLET (13 PASS).
 **Ce qui a mal tourne** : `recalc.atr_veille_15` n'indexait sa Series que sur les dates qui ont du CASH ; a 9h25 le jour n'a que sa nuit Globex → `v.get(d)` = NaN → « pas de metre » pour ES et NQ, carte vide. Reproduit par la review sur le fichier reel du 10/09 (503 barres, derniere 08:23 UTC).
