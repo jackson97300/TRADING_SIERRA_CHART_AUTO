@@ -8,7 +8,8 @@ par instrument dans `LOGS/scenarios/direct_<jour>.jsonl`.
 Ce qu'il fait, toutes les CYCLE_S secondes :
   1. bat le cœur : `LOGS/heartbeat_scenarios.json` (quand_utc, jour, dernière
      barre écrite par instrument, env, grammaire_version) — même sans barre ;
-  2. hors cash (avant 9h30 ET, après 16h15 ET), férié CME, week-end : dort ;
+  2. avant 9h30 ET, férié CME, week-end : dort ; après 16h15 ET : un passage de
+     RATTRAPAGE des barres complètes non écrites (écrivain relancé tard), puis dort ;
   3. sinon, par instrument : les barres 15 min COMPLÈTES (la barre en cours
      n'existe pas), par le MÊME chemin que le rejeu (`scenarios.charger`) ;
      si la dernière n'est pas encore écrite → `derouler` sur la journée depuis
@@ -91,9 +92,12 @@ def un_tour(jour=None, minutes=None):
     if calendrier.est_ferie(jour):
         battre_coeur(jour, dernieres, "ferie")
         return "ferie", {}
-    if not (CASH_DE <= minutes <= CASH_A):
+    if minutes < CASH_DE:
         battre_coeur(jour, dernieres, "hors_cash")
         return "hors_cash", {}
+    # apres la cloture : un ecrivain relance a 17h RATTRAPE les barres completes qu'il
+    # n'a pas ecrites (un seul passage utile, puis il dort) — jamais avant 9h30
+    motif = "cash" if minutes <= CASH_A else "rattrapage"
     ecrits = {}
     for sym in ("ES", "NQ"):
         df, brut = scenarios.charger(sym, jour, completes_seulement=True)
@@ -106,8 +110,8 @@ def un_tour(jour=None, minutes=None):
         neuves = ecrire_nouvelles(jour, sym, lignes, scenarios.lire(scenarios.chemin_direct(jour)))
         ecrits[sym] = len(neuves)
         dernieres[sym] = dernier
-    battre_coeur(jour, dernieres, "cash")
-    return "cash", ecrits
+    battre_coeur(jour, dernieres, motif if ecrits or motif == "cash" else "hors_cash")
+    return (motif if ecrits or motif == "cash" else "hors_cash"), ecrits
 
 
 def main(argv):

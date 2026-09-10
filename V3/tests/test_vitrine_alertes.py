@@ -162,6 +162,9 @@ def main():
     m, e5 = boucle.un_tour("20260913", 600)
     check("[5c] samedi -> week_end, aucune ecriture, heartbeat quand meme", m == "week_end" and e5 == {} and os.path.exists(boucle.HEARTBEAT))
     check("[5d] 8h00 ET -> hors_cash ; 4 juillet -> ferie", boucle.un_tour("20260910", 480)[0] == "hors_cash" and boucle.un_tour("20260703", 600)[0] == "ferie")
+    m5, e5 = boucle.un_tour("20260908", 1000)            # 16h40 ET sur une journee reelle sans lignes jouets dans tmp
+    check("[5e] apres la cloture, barres completes non ecrites -> RATTRAPAGE (26 barres par instrument), puis hors_cash",
+          m5 == "rattrapage" and e5.get("ES") == 26 and e5.get("NQ") == 26 and boucle.un_tour("20260908", 1000)[0] == "hors_cash", (m5, e5))
     # 6. coherence des trois
     scenarios.ecrire(scenarios.chemin_direct(jour), L2)
     for p in (alertes.chemin_alertes(jour),):

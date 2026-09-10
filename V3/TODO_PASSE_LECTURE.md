@@ -146,9 +146,11 @@ suivante) · pas 2b.
       `injecter_recalculs`) ; tests 30/30, 25/25, 24/24.
 - [ ] **11/09 9h00, AVANT la tête** : lire `LOGS/scenarios/erreurs_20260910.jsonl` — la première comparaison
       direct / rejeu d'une vraie journée (5b/5 de 23h01) ; `FUITE` = incident à consigner avant le tag.
-- [ ] **après le tag du 11/09, dans cet ordre** : `execution/scenarios.bat` (l'écrivain), la tâche « V3 garde
-      scenarios » toutes les 5 min, `vitrine.py`, puis `fenetre.py` AVEC JACKSON DEVANT (WebView2 non confirmé :
-      si elle s'ouvre vide, c'est ça, pas la page) ; `pip` pyttsx3 plus tard. Ancien plan (pour mémoire) : (1) l'écrivain en boucle
+- [x] COPILOTE LANCÉ le 10/09 à 22h50 sur « lance tout » + GO de Jackson : `scenarios.bat` (écrivain, dort hors
+      cash), tâche « V3 garde scenarios » toutes les 5 min (via PowerShell), `vitrine.py` (8765), `fenetre.py`
+      avec Jackson devant. Rythme du soir du 10/09 fait à la main : L6 reset_vwap faux positif corrigé (sinon
+      live du 11/09 fermé), verdict rejoué sans ALERTE ; 5b/5 sans FUITE.
+- [ ] **11/09 matin** : vérifier que la fenêtre s'est ouverte (WebView2) ; `pip` pyttsx3 plus tard. Ancien plan (pour mémoire) : (1) l'écrivain en boucle
       (`scenarios.py --direct` à chaque clôture de 15 min, un processus) ; (2) la vitrine HTML servie
       sur localhost ; (3) la fenêtre `pywebview` always-on-top sur le même HTML ; (4) `winsound` sur les
       cinq événements, muet, silence des cinq premières minutes ; (5) `scenarios_visibles : oui/non`
