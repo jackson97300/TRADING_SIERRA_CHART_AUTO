@@ -65,5 +65,23 @@ suivante) · pas 2b.
       lit la VAL avec le signe inverse — rien ne bouge au tag) ; commit
       `1b6d4b7`, **miroir `8fe25d3`**.
 - [ ] lecture marges/2 par Fable (schéma validé Q5, version b)
-- [ ] **gel demain matin + tag**
-- [ ] briques 4-5 dans la semaine → carte du matin (protocole pré-enregistré)
+- [ ] **gel demain matin + tag** (après relecture Fable — pas avant)
+- [x] **brique 4** — L6 dénominateurs : `volumetrie_cash` (ferme), `vix_cash_zero`
+      (ferme > 5 min, mesuré 101-210), `derive_feature` (INFO, définition v1 à
+      valider par Fable), Globex ne ferme plus ; `test_l6_denominateurs` 12/12 ;
+      réel 09/09 : NQ F15 ×3,71 = la feature, ES ×2,50 = un régime, 0 ALERTE.
+- [x] **brique 5** — `pourquoi_plus.py` (lieux sans réaction des quatre + trader
+      vs machine, `--ecrire`), `recit.py` (AU-DELÀ / D / R, H-PIÈGE si regagné),
+      journal manuel 7 champs.
+- [x] **brique 3** — `carte_matin.py` (niveau + bande en PRIX sur `atr_veille`,
+      les dix de H8p, les repères `_lvl`), tirage en aveugle SEED 20260910 /
+      blocs d'une semaine / 8 tirés d'un coup, carte toujours générée et
+      stockée, `carte_visible` dans le journal, `--forcer` n'écrit pas ;
+      `test_carte_matin` 14/14 (nuit seule, tardive, forcée) ;
+      `execution/carte_matin.bat`. **À Jackson : la tâche planifiée 15h25
+      Paris, jours de semaine seulement** (`schtasks /create /tn "V3 carte
+      matin" /tr "<racine du dépôt>\V3\execution\carte_matin.bat" /sc weekly
+      /d MON,TUE,WED,THU,FRI /st 15:25` — même piège DST que le rythme du
+      soir : à revoir le 25/10 et le 1er/11 ; la garde TARDIVE protège la
+      donnée, pas l'horloge).
+- [ ] review 3-4-5 → commit → publier → hash : `……`

@@ -91,6 +91,21 @@ def main():
                                                     utc=True), minutes=15)
     check("[1e] session a deux contrats (bascule en seance) -> pas complete, sautee (2, pas 10)",
           abs(float(v3.iloc[-1]) - 2.0) < 1e-9, list(v3))
+    # review 10/09 R1 (carte du matin) : un jour qui n'a que sa NUIT Globex
+    # (aucune barre cash) doit quand meme lire la veille — 9h25, le seul
+    # horaire de la carte. Nuit du 04/09 : 04:00-08:00 UTC, 240 barres.
+    t0 = pd.Timestamp("2026-09-04 04:00", tz="UTC")
+    nuit = pd.DataFrame({"ts": [int((t0 + pd.Timedelta(minutes=k)).value // 1_000_000)
+                                for k in range(240)],
+                         "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0})
+    tout4 = pd.concat([a, b_ok, c, nuit], ignore_index=True)
+    v4 = recalc.atr_veille_15(tout4, pd.to_datetime(tout4["ts"], unit="ms", utc=True),
+                              minutes=15)
+    from datetime import date as _d
+    check("[1f] jour NUIT SEULE (9h25) : lit la derniere complete (03/09 -> 6), "
+          "les dates cash inchangees",
+          abs(float(v4.get(_d(2026, 9, 4), float("nan"))) - 6.0) < 1e-9
+          and abs(float(v4.get(_d(2026, 9, 3))) - 10.0) < 1e-9, dict(v4))
 
     # 2. journee reelle : fige a 9h30, atr_ref == atr_barre, veille avant 11h
     jour, sym = "20260903", "NQ"

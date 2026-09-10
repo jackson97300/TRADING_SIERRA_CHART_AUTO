@@ -60,7 +60,9 @@ BANDE = {("H3-VPOC", -1): ("P10", "P10"), ("H3-VPOC", +1): ("P10", "P10"),
 SEUIL = {"H3-VPOC": "P10", "H2p": "P10", "H6p": "P05", "H8p": "P20"}   # la proximite
 
 
-def _p(a, nom, tick):
+def seuil_p(a, nom, tick=H.TICK):
+    """Le plancher `nom` (P05..P20) en ticks pour un ATR `a` — partage avec
+    carte_matin (meme metre que les fonctions gelees)."""
     return float(H.seuil_ticks(pd.Series([a]), nom, tick).iloc[0])
 
 
@@ -82,8 +84,8 @@ def pour_signal(df, i, famille, side, tick=H.TICK):
         return _sans("atr_ref_absent")
     cote = int(side)
     bas, haut = BANDE[(famille, cote)]                      # fail-loud : cote ±1
-    p = round(_p(a, SEUIL[famille], tick), 2)
-    bande = [round(-_p(a, bas, tick), 2), round(_p(a, haut, tick), 2)]
+    p = round(seuil_p(a, SEUIL[famille], tick), 2)
+    bande = [round(-seuil_p(a, bas, tick), 2), round(seuil_p(a, haut, tick), 2)]
     close = val(df, "close", i)
     if close is None:
         return _sans("close_absent", seuil_ticks=p, bande_ticks=bande)

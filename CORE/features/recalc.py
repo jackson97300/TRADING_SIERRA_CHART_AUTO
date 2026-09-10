@@ -430,7 +430,12 @@ def atr_veille_15(df, dt, minutes=15):
                 & (n_contrats <= 1))
     # where(complete) efface les demi-seances ; ffill porte la derniere
     # complete jusqu'a la date suivante ; shift(1) = « strictement avant ».
-    return med.where(complete).ffill().shift(1)
+    # Indexee sur TOUTES les dates du frame, cash ou nuit (review 10/09, R1 :
+    # a 9h25 le jour n'a que sa nuit Globex et doit lire la veille quand
+    # meme) — valeurs inchangees pour les dates qui ont du cash.
+    toutes = pd.Index(sorted(set(x for x in d.dt.date if x is not None and x == x)
+                             | set(med.index)))
+    return med.where(complete).reindex(toutes).ffill().shift(1)
 
 
 def rvol(df, dt, n_jours=20, col_vol="total_vol"):

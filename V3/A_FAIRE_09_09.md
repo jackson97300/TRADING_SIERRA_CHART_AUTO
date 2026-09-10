@@ -122,9 +122,12 @@ ce qu'un silence ÉCRIT.*
   (9h45) ; 08/09 : NQ H3 lieu atteint 11h15, manque finish. **Reste** : la
   **carte du matin** (`carte_matin.py`, 9h25, même exposition en PRIX :
   niveau ± seuil, régime lu à 9h30, alternance en aveugle Q7) — brique 3.
-- **Journal MANUEL absent du dépôt** (`V3/**/*manuel*` → 0). Seule pièce que la
-  machine n'écrit pas ; sans lui l'angle trader d'un jour muet vaut zéro.
-  `V3/journal_manuel/AAAAMMJJ.md` : heure, prix, sens, une ligne pourquoi.
+- ✅ **Journal MANUEL** créé (`V3/journal_manuel/20260909.md`, 7 champs Fable +
+  `ce_que_j_ai_vu` + `carte_visible`) ; `pourquoi_plus --ecrire` y régénère
+  « ce que le bot a vu ». **Les clics restent à Jackson.**
+- ✅ **Briques 4 et 5 (10/09)** : L6 dénominateurs (`volumetrie_cash`,
+  `vix_cash_zero`, `derive_feature` v1 — définition à valider par Fable),
+  `pourquoi_plus.py`, `recit.py` AU-DELÀ / D / R / H-PIÈGE. DECISIONS ×2.
 - **Check (iii) résolu** : `h3` ne lit PAS `inside_cur_va` (code : `dist_cur_vah/
   val`, high/low/close, `finish_delta_pct`) — docstring fausse dans CORE gelé,
   à noter au cycle 2. Restent ED02 / ED06 (conditions vs 11h15 NQ, `mq_put` ES).

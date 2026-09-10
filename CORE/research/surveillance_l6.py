@@ -25,6 +25,17 @@ Cinq controles, chacun ne pouvant se declencher que sur une mesure :
                      INFO + motif=derive_feature (Fable 10/09) : une derive
                      INFORME, seule l'integrite FERME — toute ALERTE d'ici
                      ferme la journee live suivante (L0_DATA_L6_ALERTE).
+  G  VOLUMETRIE CASH brique 4 (Fable 10/09) : barres cash stable sur 390 — LE
+                     compte qui FERME (integrite) ; un ferie rend INFO ; le
+                     compte Globex (A) ne ferme plus, il se lit le lendemain.
+  H  VIX CASH ZERO   vix_level = 0 en cash = chart VIX mort : ALERTE au-dela
+                     de VIX_MORT_MIN minutes (mesure : les pannes du lot
+                     durent 101-210 min, jamais une minute).
+  I  DERIVE FEATURE  F15 : flag LIVRE par barre (delta_divergence_any, Python)
+                     / compte recalcule, contre SA mediane 20 j : un RATIO
+                     RELATIF dit feature ou regime. INFO seulement.
+  Un roll ATTENDU par le calendrier et un week-end sans fichier rendent INFO
+  (review 10/09) : une ALERTE ici ferme le lendemain (L0_DATA_L6_ALERTE).
   F  ECHELLE ATR     brique 1 (Fable 09/09) : avant 11h00 le metre des lieux
                      est l'ATR de la derniere session COMPLETE (`atr_ref`).
                      Un gap d'ouverture >= 2 x cet ATR rend l'echelle de la
@@ -84,6 +95,14 @@ MAX_DERIVE_MOUVANTE = 10.0
 # NQ p50 2,47 p90 6,69. Le « 2,0 » du brief etait la MEDIANE : retire.
 MAX_GAP_ATR_VEILLE = {"ES": 5.81, "NQ": 6.69}
 N_VEILLES_ECHELLE = 5
+# Brique 4 : fenetre (barres 1 min) des divergences delta RECALCULEES —
+# definition v1, ecrite dans `_div_recalc`, a valider par Fable.
+DIV_FENETRE = 10
+MIN_BARRES_RATIO = 5        # sous ca, un compte ne fait pas un ratio (bruit)
+# Brique 4 : minutes de vix_level = 0 en cash au-dela desquelles le chart VIX
+# est declare mort (pannes du lot : 101-210 min ; une impression en retard de
+# 10 min ne ferme pas le lendemain — review R7).
+VIX_MORT_MIN = 30
 TOLERANCE_MIN_CASH = 10          # une veille a < 380 barres cash est incomplete
 COLS_ECHELLE = ["_ts", "_dt", "open", "high", "low", "close", "contract"]
 
@@ -132,12 +151,18 @@ def controle_volumetrie(df, sym, jour, ecourtee=False):
                     "%d barres (%.0f %%) — seance ecourtee confirmee par la "
                     "continuite, pas une panne" % (n, 100 * part),
                     barres=n, part=round(part, 3))
-    etat = "OK" if part >= SEUIL_EXPLOITABLE else "ALERTE"
+    # Brique 4 (Fable 10/09) : le compte Globex (1 380) ne FERME plus — a l'heure
+    # du rythme (20h41 UTC) l'after-hours n'est pas fini, et « 90 % » fermait
+    # le live du lendemain pour rien. C'est `volumetrie_cash` qui ferme.
+    etat = "OK" if part >= SEUIL_EXPLOITABLE else "INFO"
     return _res("volumetrie", etat,
-                "%d barres stable sur %d attendues (%.0f %%)"
-                % (n, BARRES_SESSION, 100 * part),
+                "%d barres stable sur %d attendues (%.0f %%)%s"
+                % (n, BARRES_SESSION, 100 * part,
+                   " — Globex incomplet a l'heure du rythme, se lit le lendemain"
+                   if etat == "INFO" else ""),
                 barres=n, part=round(part, 3),
-                degraded=int((df.get("data_quality_flag") != "stable").sum()))
+                degraded=int((df.get("data_quality_flag") != "stable").sum()),
+                motif="globex_incomplet" if etat == "INFO" else None)
 
 
 def controle_continuite(df, sym, jour):
@@ -292,10 +317,19 @@ def controle_rollover(df, sym, jour):
     if "contract" not in df.columns:
         return _res("rollover", "INFO", "colonne contract absente")
     ct = sorted(set(df["contract"].dropna().astype(str)))
+    # Un roll ATTENDU par le calendrier n'est pas une atteinte a la donnee
+    # (review 10/09, R6) : le jour du roll, une ALERTE ici fermerait le
+    # lendemain — le jour du GEL — par L0_DATA_L6_ALERTE. INFO + motif.
+    from V3 import calendrier
+    attendu = calendrier.contrat_actif(jour)
+    vers_attendu = any(attendu in c for c in ct)
     if len(ct) > 1:
-        return _res("rollover", "ALERTE",
-                    "deux contrats dans la meme journee : %s" % ", ".join(ct),
-                    contrats=ct)
+        return _res("rollover", "INFO" if vers_attendu else "ALERTE",
+                    "deux contrats dans la meme journee : %s%s"
+                    % (", ".join(ct), " — bascule EN SEANCE vers le contrat attendu"
+                       " (%s) : le bin de bascule porte la base, pas un range"
+                       % attendu if vers_attendu else ""),
+                    contrats=ct, motif="rollover" if vers_attendu else None)
     veille = None
     for f in sorted(glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym)):
         if os.path.basename(f)[:8] >= jour:
@@ -327,11 +361,15 @@ def controle_rollover(df, sym, jour):
         manques.append("is_roll_day ne vaut jamais 1")
     if not mq_bouge:
         manques.append("dist_mq_call absente — MenthorQ n'a pas suivi")
-    return _res("rollover", "ALERTE" if manques else "INFO",
+    # le roll a eu lieu : attendu -> INFO meme si les deux autres tardent (ils
+    # sont NOMMES) ; un roll vers un contrat que le calendrier n'attend pas
+    # reste une ALERTE (le dumper suit autre chose que le front month).
+    return _res("rollover", "INFO" if vers_attendu else "ALERTE",
                 "ROLL %s -> %s%s" % (ct_v, ct[0],
                                      " | " + " ; ".join(manques) if manques
                                      else " — is_roll_day et MenthorQ suivent"),
-                contrat=ct[0], contrat_veille=str(ct_v), manques=manques)
+                contrat=ct[0], contrat_veille=str(ct_v), manques=manques,
+                motif="rollover" if vers_attendu else "contrat_inattendu")
 
 
 def controle_valeurs_par_defaut(df, sym, jour):
@@ -473,9 +511,158 @@ def controle_echelle_atr(df, sym, jour, veilles=None):
                 close_veille=close_v, open_jour=open_j, motif=motif)
 
 
+def _flag_stable(df):
+    return ((df["data_quality_flag"] == "stable").to_numpy()
+            if "data_quality_flag" in df.columns else np.ones(len(df), dtype=bool))
+
+
+def controle_volumetrie_cash(df, sym, jour):
+    """G — brique 4 (Fable 10/09). LE compte qui ferme : barres cash
+    9h30-16h00 ET `stable` sur 390. Un jour normal sous 390 - MAX_TROUS_CASH
+    est une atteinte a la donnee — le 05/08 tronque a 14h30 aurait ete vu
+    (la continuite le lisait « seance ecourtee »). Un ferie / demi-seance
+    du calendrier rend INFO : le marche ferme a 13h00 ET, ce n'est pas 390."""
+    from V3 import calendrier                 # la source de verite des feries
+    n = int((_masque_cash(df["_dt"]) & _flag_stable(df)).sum())
+    if _week_end(jour):
+        return _res("volumetrie_cash", "INFO", "%d barres cash — week-end, pas un "
+                    "compte a %d" % (n, BARRES_CASH), barres=n, motif="week_end")
+    ferie = calendrier.est_ferie(jour)
+    if ferie:
+        return _res("volumetrie_cash", "INFO",
+                    "%d barres cash — %s (seance raccourcie) : pas un compte a %d"
+                    % (n, ferie, BARRES_CASH), barres=n, motif="ferie")
+    if n >= BARRES_CASH - MAX_TROUS_CASH:
+        return _res("volumetrie_cash", "OK", "%d barres cash stable sur %d"
+                    % (n, BARRES_CASH), barres=n, motif=None)
+    return _res("volumetrie_cash", "ALERTE",
+                "%d barres cash stable sur %d (manque %d) — donnee TRONQUEE ou "
+                "trouee un jour normal" % (n, BARRES_CASH, BARRES_CASH - n),
+                barres=n, motif="cash_incomplet")
+
+
+def controle_vix_cash_zero(df, sym, jour):
+    """H — brique 4. `vix_level == 0` (ou NaN, compte mort) en cash = le chart
+    VIX mort. Mesure sur 130 jour-instruments (10/09) : 08/09 101 min, 10/08
+    147, 05/08 160, 07/09 210/210 — jamais une panne courte. ALERTE au-dela
+    de VIX_MORT_MIN minutes (30 : sous les pannes observees, au-dessus d'une
+    premiere impression VIX en retard de 10 min — review R7). L0 VIX_REGIME
+    lit le trou barre par barre ; une panne se dit le jour meme."""
+    m = _masque_cash(df["_dt"])
+    if "vix_level" not in df.columns:
+        return _res("vix_cash_zero", "INFO", "colonne vix_level absente",
+                    motif="colonne_absente")
+    v = pd.to_numeric(df.loc[m, "vix_level"], errors="coerce").fillna(0.0)
+    if not len(v):
+        return _res("vix_cash_zero", "INFO", "aucune barre cash — non mesurable",
+                    minutes_zero=None, motif="non_mesurable")
+    n0 = int((v <= 0).sum())
+    if n0 == 0:
+        return _res("vix_cash_zero", "OK", "vix_level > 0 sur %d barres cash" % len(v),
+                    minutes_zero=0, motif=None)
+    etat = "ALERTE" if n0 > VIX_MORT_MIN else "INFO"
+    return _res("vix_cash_zero", etat,
+                "vix_level = 0 sur %d barres cash / %d — chart VIX mort%s"
+                % (n0, len(v), " (> %d min : ALERTE)" % VIX_MORT_MIN
+                   if etat == "ALERTE" else " (court, <= %d min)" % VIX_MORT_MIN),
+                minutes_zero=n0, motif="vix_zero")
+
+
+def _div_recalc(df, m, n=DIV_FENETRE):
+    """Divergences delta RECALCULEES sur le 1 min cash — definition v1, ecrite
+    ici, a valider par Fable : une barre est en divergence si sa cloture fait
+    un plus-haut STRICT sur `n` barres sans plus-haut strict du CVD (bear), ou
+    le miroir (bull). UNITE : barres en etat de divergence (pas des episodes).
+    CVD = cumul de `delta_bar` sur le cash (un decalage constant par rapport a
+    `cvd_sess_r`, sans effet sur des extremes glissants)."""
+    d = df[m]
+    if "delta_bar" not in d.columns or len(d) < n + 1:
+        return None
+    c = pd.to_numeric(d["close"], errors="coerce")
+    cvd = pd.to_numeric(d["delta_bar"], errors="coerce").fillna(0.0).cumsum()
+    hh = c > c.shift(1).rolling(n).max()             # strict des deux cotes (R8)
+    ll = c < c.shift(1).rolling(n).min()
+    cvd_hh = cvd > cvd.shift(1).rolling(n).max()
+    cvd_ll = cvd < cvd.shift(1).rolling(n).min()
+    return int(((hh & ~cvd_hh) | (ll & ~cvd_ll)).sum())
+
+
+COL_DIV_LIVREE = "delta_divergence_any"     # flag PYTHON par barre (divergences_v2)
+
+
+def _compte_div(df):
+    """(livre, recalc) sur le cash d'un frame : livre = barres ou le flag
+    LIVRE `delta_divergence_any` (Python, divergences_v2 — PAS le C++
+    `delta_divergence`, 0-8 barres par jour, trop rare pour un ratio) est vrai."""
+    m = _masque_cash(df["_dt"])
+    if COL_DIV_LIVREE not in df.columns:
+        return None, None
+    livre = int((pd.to_numeric(df.loc[m, COL_DIV_LIVREE],
+                               errors="coerce").fillna(0) > 0).sum())
+    return livre, _div_recalc(df, m)
+
+
+def _reference_div(sym, jour, n=N_JOURS_REFERENCE):
+    """Les ratios cpp/recalc des `n` jours precedents (jours mesurables)."""
+    fichiers = sorted(glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym))
+    fichiers = [f for f in fichiers if os.path.basename(f)[:8] < jour][-n:]
+    ratios = []
+    for f in fichiers:
+        cpp, rec = _compte_div(charger_jour(sym, os.path.basename(f)[:8]))
+        if cpp is not None and rec:
+            ratios.append(cpp / rec)
+    return ratios
+
+
+def controle_derive_feature(df, sym, jour, reference=None):
+    """I — brique 4 (review R5). « F15 x44 » seul ne dit rien. Le MEME
+    phenomene compte par le flag LIVRE `delta_divergence_any` (Python,
+    divergences_v2, par barre — le C++ `delta_divergence` fait 0-8 barres par
+    jour : trop rare pour un ratio, mediane nulle) et par `_div_recalc`. Les
+    deux definitions ne coincident pas par construction (ratio ~2-4 un jour
+    normal) : le ratio du jour se compare a SA PROPRE mediane des
+    N_JOURS_REFERENCE jours precedents, par instrument — hors [1/MAX ; MAX]
+    x mediane = la feature LIVREE s'emballe (INFO, motif derive_feature, les
+    ED10 du jour portent caveat_F15). Jamais ALERTE."""
+    livre, rec = _compte_div(df)
+    if livre is None:
+        return _res("derive_feature", "INFO", "%s absente" % COL_DIV_LIVREE,
+                    motif="colonne_absente")
+    if not rec or livre < MIN_BARRES_RATIO:
+        return _res("derive_feature", "INFO", "F15 : livre %d, recalcule %s — trop "
+                    "rare pour un ratio" % (livre, rec), livre=livre, recalc=rec,
+                    motif="non_mesurable")
+    ref = [x for x in (_reference_div(sym, jour) if reference is None else reference)
+           if x > 0]
+    r = livre / rec
+    if len(ref) < 5:
+        return _res("derive_feature", "INFO", "F15 : livre %d / recalcule %d = x%.2f — "
+                    "moins de 5 jours de reference" % (livre, rec, r), livre=livre,
+                    recalc=rec, ratio=round(r, 2), motif="non_mesurable")
+    med = float(np.median(ref))
+    rel = r / med
+    derive = rel > MAX_DERIVE_FAMILLE or rel < 1.0 / MAX_DERIVE_FAMILLE
+    return _res("derive_feature", "INFO" if derive else "OK",
+                "F15 : livre %d / recalcule %d = x%.2f, mediane %d j = x%.2f (rel x%.2f)%s"
+                % (livre, rec, r, len(ref), med, rel,
+                   " — la feature LIVREE s'emballe, pas le marche (caveat_F15 sur les"
+                   " ED10 du jour)" if derive else " — dans sa plage : un regime"),
+                livre=livre, recalc=rec, ratio=round(r, 2), mediane_ref=round(med, 2),
+                n_ref=len(ref), motif="derive_feature" if derive else None)
+
+
+def _week_end(jour):
+    return pd.Timestamp(jour).dayofweek >= 5
+
+
 def surveiller(sym: str, jour: str, regles) -> list:
     df = charger_jour(sym, jour)
     if df.empty:
+        # un samedi / dimanche sans fichier n'est pas une atteinte (review R6) :
+        # une ALERTE ici fermerait le LUNDI par L0_DATA_L6_ALERTE
+        if _week_end(jour):
+            return [_res("chargement", "INFO", "%s : week-end, pas de fichier attendu"
+                         % jour, motif="week_end")]
         return [_res("chargement", "ALERTE", "aucune donnee pour %s %s" % (sym, jour))]
     # La continuite d'abord : c'est elle qui tranche entre seance ecourtee et
     # panne, et la volumetrie s'y subordonne.
@@ -488,7 +675,10 @@ def surveiller(sym: str, jour: str, regles) -> list:
             controle_rollover(df, sym, jour),
             controle_derive(df, sym, jour, regles),
             controle_valeurs_par_defaut(df, sym, jour),
-            controle_echelle_atr(df, sym, jour)]
+            controle_echelle_atr(df, sym, jour),
+            controle_volumetrie_cash(df, sym, jour),
+            controle_vix_cash_zero(df, sym, jour),
+            controle_derive_feature(df, sym, jour)]
 
 
 def main() -> int:

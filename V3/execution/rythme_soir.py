@@ -86,15 +86,17 @@ def main():
         _etape("0/5 surveillance L6", ["CORE/research/surveillance_l6.py",
                                        *args]),
         _etape("1/5 campagne (LA mesure)", ["V3/campagne.py", *args]),
-        _etape("2/5 pourquoi (les trois journaux)", ["V3/pourquoi.py", *args]),
+        # Brique 2 (Fable 09/09) : la marge des QUATRE — de combien le lieu a
+        # manque, et lequel des deux manquait. Observateur pur, journal separe.
+        # AVANT pourquoi (review 10/09, R3) : pourquoi_plus la lit.
+        _etape("1b/5 marges des quatre (le lieu manque)",
+               ["V3/marges_quatre.py", *args]),
+        _etape("2/5 pourquoi (les trois journaux + les deux lignes)",
+               ["V3/pourquoi.py", *args]),
         _etape("3/5 reactions (les niveaux)", ["V3/reactions.py", *args]),
         _etape("4/5 barrieres (les SL candidats)",
                ["V3/layers/L5_risque/barrieres_du_jour.py", *args]),
         _etape("5/5 marges (la distance au seuil)", ["V3/marges.py", *args]),
-        # Brique 2 (Fable 09/09) : la marge des QUATRE — de combien le lieu a
-        # manque, et lequel des deux manquait. Observateur pur, journal separe.
-        _etape("5b/5 marges des quatre (le lieu manque)",
-               ["V3/marges_quatre.py", *args]),
     ]
     print("\n--- fait. Reste le JOURNAL MANUEL (METHODE 6) — la machine ne "
           "l'ecrit pas.")

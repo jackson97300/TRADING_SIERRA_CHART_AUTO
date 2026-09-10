@@ -21,7 +21,6 @@ import argparse
 import os
 import sys
 
-import numpy as np
 import pandas as pd
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -121,21 +120,33 @@ def raconter(sym, jour):
                        " — reste casse a %s" % _hh(f["ts_connu"]))
                 print("%s — CASSE a %s (2e cloture au-dela)%s"
                       % (tete, quand_casse, fin))
-                re = _recompter(df1, f)
+                rec = _recompter(df1, f)
                 vol_f = f.get("volume_au_dela") or 0.0
-                if re is None:
-                    print("        piege : NON VERIFIABLE (bornes absentes)")
-                elif re["vol"] <= 0:
+                if rec is None:
+                    print("        volume au-dela : NON VERIFIABLE (bornes absentes)")
+                elif rec["vol"] <= 0:
                     print("        cassure sans volume mesurable au-dela")
                 else:
-                    ok = vol_f and abs(re["vol"] - vol_f) / re["vol"] <= 0.05
-                    print("        PIEGE %d contrats (delta %+d) entre %s et %s "
-                          "%s le niveau%s"
-                          % (re["vol"], re["delta"], quand_casse,
+                    ok = vol_f and abs(rec["vol"] - vol_f) / rec["vol"] <= 0.05
+                    # Brique 5 (Fable 10/09) : l'OBSERVATION d'abord — volume
+                    # au-dela, delta, duree (D), distance (R, en ATR) sont des
+                    # faits ; « piege » est une INTERPRETATION qui n'entre que
+                    # si le niveau est REGAGNE, et sous son nom d'hypothese.
+                    print("        AU-DELA %d contrats (delta %+d) entre %s et %s "
+                          "%s niveau | D = %s barres, R = %s ATR%s"
+                          % (rec["vol"], rec["delta"], quand_casse,
                              _hh(f["ts_connu"]),
-                             "au-dessus de" if f["cote"] > 0 else "sous",
+                             "au-dessus du" if f["cote"] > 0 else "sous le",
+                             f.get("duree_au_dela") if f.get("duree_au_dela")
+                             is not None else "?",
+                             ("%.2f" % f["dist_piege"]) if f.get("dist_piege")
+                             is not None else "?",
                              "" if ok else
                              "  << ECART : la fiche dit %d" % vol_f))
+                    print("        H-PIEGE : %s" % (
+                        "oui — niveau regagne (2 clotures), ce volume est du mauvais cote"
+                        if f["issue"] == "regagne" else
+                        "non — pas regagne dans la fenetre de la fiche (8 barres)"))
                     if not ok:
                         ecarts += 1
             else:

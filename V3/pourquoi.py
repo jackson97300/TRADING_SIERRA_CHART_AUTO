@@ -234,6 +234,10 @@ def main():
             afficher(resumer(lignes, sym), sym)
             print()
     manque = ombres(jour_lu)
+    # Brique 5 (Fable 10/09) : les deux lignes qui manquaient — les lieux sans
+    # reaction des quatre, et le trader face a la machine (pourquoi_plus).
+    from V3 import pourquoi_plus
+    pourquoi_plus.tout(jour_lu)
     print("Ce resume ne montre JAMAIS le P&L (METHODE.md §6). Il repond a une")
     print("seule question : ou chaque signal s'est-il arrete, et pourquoi.")
     # R4 : le code retour reflete l'AVEUGLEMENT, jamais le nombre de signaux.

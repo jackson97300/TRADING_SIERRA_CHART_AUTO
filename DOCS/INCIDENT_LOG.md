@@ -33,6 +33,15 @@
 
 ---
 
+### 2026-09-10 (midi) — [VALIDATION_MISS] — la carte du matin etait VIDE a 9h25, son seul horaire : 13 tests verts sur la mauvaise condition
+**Contexte** : brique 3 (`V3/carte_matin.py`), la carte des lieux a 9h25 ET. Test [2] ecrit sur le 09/09 COMPLET (13 PASS).
+**Ce qui a mal tourne** : `recalc.atr_veille_15` n'indexait sa Series que sur les dates qui ont du CASH ; a 9h25 le jour n'a que sa nuit Globex → `v.get(d)` = NaN → « pas de metre » pour ES et NQ, carte vide. Reproduit par la review sur le fichier reel du 10/09 (503 barres, derniere 08:23 UTC).
+**Comment c'est sorti** : la review (code-reviewer, R1). Le test exercait un jour complet — jamais la condition d'usage (nuit seule).
+**Cause racine** : tester ce qui est disponible (un jour fini) au lieu de ce que le code rencontrera (une nuit seule, avant l'ouverture) ; « 13 PASS » lu comme une preuve.
+**Lecon** : un observateur a UN horaire — le test doit fabriquer la donnee de CET horaire (frame nuit seule, brut sans cash). Et une garde sur la DONNEE (une barre cash deja la = TARDIVE, rc 2, rien au journal), pas sur l'horloge : elle survit au DST.
+**Trigger prevention** : tout script planifie → un test avec un frame construit a l'heure de la tache ; `atr_veille_15` indexe maintenant toutes les dates du frame (cash ou nuit), valeurs inchangees pour les dates cash (test_atr_ref [1f]).
+**Reviewed** : code-reviewer / self
+
 ### 2026-09-10 (matin) — [VALIDATION_MISS] — « le code gele fait foi » pour DECRIRE un niveau : la colonne `_lvl` tranchait, je ne l'ai pas cherchee
 **Contexte** : le lieu dans la ligne PASSE (`V3/lieux.py`). J'ai mesure la convention de signe des `dist_*` par « niveau reconstruit constant dans la journee » : concluant pour les niveaux figes, NON concluant pour les `cur_*` (ils bougent).
 **Ce qui a mal tourne** : faute de mesure qui tranche, j'ai pris le code gele de `h3` (`val = close - dl x tick`) comme verite et ecrit `dist_cur_val` = close - VAL (signe -1) dans la table, la docstring, la regle 37 et DECISIONS. Le brut porte `cur_val_lvl` : `close + d x tick == cur_val_lvl` a 100 % sur 4 x 390 barres — le journal aurait porte `2·close - VAL` sous le nom `cur_val`, la fiction exacte que le lieu devait supprimer.
