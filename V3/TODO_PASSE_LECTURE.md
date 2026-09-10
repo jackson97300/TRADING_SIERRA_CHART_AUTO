@@ -140,8 +140,12 @@ suivante) · pas 2b.
       (10/09) : `FUITE` = incident si le journal direct diffère du rejeu.
 - [x] phase A de la liste fusionnée CODÉE le 10/09 (ordre de Jackson) : SPEC_VITRINE, boucle + garde,
       vitrine + html, alertes, noter, fenêtre, test A5, scenarios_visibles — rien lancé en tâche avant le tag.
-- [ ] **après le tag du 11/09** : lancer l'écrivain (`execution/scenarios.bat`), la tâche « V3 garde scenarios »
-      (toutes les 5 min), la vitrine, la fenêtre ; `pip` pyttsx3 plus tard. Ancien plan (pour mémoire) : (1) l'écrivain en boucle
+- [x] phase A RELUE par Fable à `2670789` : elle passe (DECISIONS 18h00) ; deux remarques, pas des corrections.
+- [ ] **11/09 9h00, AVANT la tête** : lire `LOGS/scenarios/erreurs_20260910.jsonl` — la première comparaison
+      direct / rejeu d'une vraie journée (5b/5 de 23h01) ; `FUITE` = incident à consigner avant le tag.
+- [ ] **après le tag du 11/09, dans cet ordre** : `execution/scenarios.bat` (l'écrivain), la tâche « V3 garde
+      scenarios » toutes les 5 min, `vitrine.py`, puis `fenetre.py` AVEC JACKSON DEVANT (WebView2 non confirmé :
+      si elle s'ouvre vide, c'est ça, pas la page) ; `pip` pyttsx3 plus tard. Ancien plan (pour mémoire) : (1) l'écrivain en boucle
       (`scenarios.py --direct` à chaque clôture de 15 min, un processus) ; (2) la vitrine HTML servie
       sur localhost ; (3) la fenêtre `pywebview` always-on-top sur le même HTML ; (4) `winsound` sur les
       cinq événements, muet, silence des cinq premières minutes ; (5) `scenarios_visibles : oui/non`

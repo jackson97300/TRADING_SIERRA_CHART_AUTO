@@ -233,4 +233,7 @@ impossible. Rien ne bouge en campagne.
   sequence a nommer (rotation dans la valeur), pas un seuil ; (2) la mesure
   « validee a 10h30 encore vraie a 16h00 » se lit au jour 20 de w1 (N = 5 /
   4 sur le lot) ; (3) la VA du lot est w0 : re-mesurer les couvertures sur
-  w1 seulement des que N le permet.
+  w1 seulement des que N le permet ; (4) `alertes.py` reecrit `alertes_<jour>` en
+  entier a chaque passage (atomique, sur — remarque Fable 10/09) : si la boucle
+  ralentit un jour a cinquante alertes, passer a l'ajout d'une ligne avec un
+  lecteur tolerant a la derniere ligne tronquee.
