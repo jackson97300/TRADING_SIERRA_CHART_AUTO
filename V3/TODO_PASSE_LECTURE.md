@@ -54,9 +54,13 @@ la dernière porte le hash du miroir.*
 suivante) · pas 2b.
 
 ## Après, dans l'ordre de Fable
-- [x] **le lieu dans `PASSE`** — `V3/lieux.py` + `test_lieux` 12/12, chaîne
-      3 lignes (journal seulement), règle 37, DECISIONS ; review + commit +
-      hash : `……`
+- [x] **le lieu dans `PASSE`** — `V3/lieux.py` + `test_lieux` 16/16, chaîne
+      3 lignes (journal seulement), règle 37, DECISIONS ×3 ; review
+      GO-AVEC-RÉSERVES exécutées (R1 : signe de `dist_cur_val` mesuré contre
+      `cur_val_lvl`, ma table avait tort — VALIDATION_MISS ; R2 `bande_ticks` ;
+      R3 `close` ; R4 tests) ; NEXT_CYCLE §5 septies (le long de `h3` gelé
+      lit la VAL avec le signe inverse — rien ne bouge au tag) ; commit
+      `1b6d4b7`, **miroir `8fe25d3`**.
 - [ ] lecture marges/2 par Fable (schéma validé Q5, version b)
 - [ ] **gel demain matin + tag**
 - [ ] briques 4-5 dans la semaine → carte du matin (protocole pré-enregistré)
