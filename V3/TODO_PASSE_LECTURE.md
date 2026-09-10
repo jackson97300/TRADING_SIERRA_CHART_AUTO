@@ -138,3 +138,11 @@ suivante) · pas 2b.
       jamais avant le tag) ; la vitrine texte ; sa réponse « laquelle est la couverture ».
 - [ ] ce soir 23h01 : le rythme du soir passe par 5b/5 (`erreurs.py`) — première vraie journée en direct
       (10/09) : `FUITE` = incident si le journal direct diffère du rejeu.
+- [x] phase A de la liste fusionnée CODÉE le 10/09 (ordre de Jackson) : SPEC_VITRINE, boucle + garde,
+      vitrine + html, alertes, noter, fenêtre, test A5, scenarios_visibles — rien lancé en tâche avant le tag.
+- [ ] **après le tag du 11/09** : lancer l'écrivain (`execution/scenarios.bat`), la tâche « V3 garde scenarios »
+      (toutes les 5 min), la vitrine, la fenêtre ; `pip` pyttsx3 plus tard. Ancien plan (pour mémoire) : (1) l'écrivain en boucle
+      (`scenarios.py --direct` à chaque clôture de 15 min, un processus) ; (2) la vitrine HTML servie
+      sur localhost ; (3) la fenêtre `pywebview` always-on-top sur le même HTML ; (4) `winsound` sur les
+      cinq événements, muet, silence des cinq premières minutes ; (5) `scenarios_visibles : oui/non`
+      dans le journal manuel. Puis la voix, puis le study Sierra. Rien sur le VPS avant le jour 20 de w1.

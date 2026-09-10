@@ -14,7 +14,7 @@ le fichier) :
   - les niveaux figés à la première barre cash (VA veille, PDH/PDL, OVN,
     murs) avec `dedans` = P10 et le candidat `dehors` (p80 mesuré, NON fixé :
     affiché comme candidat, jamais comme zone).
-Chaque passage écrit une ligne dans `LOGS/scenarios/direct_<jour>.jsonl` — ce
+Chaque passage écrit une ligne dans `LOGS/scenarios/prerequis_<jour>.jsonl` — ce
 soir, le rejeu de la journée complète doit rendre les mêmes états barre à
 barre (MISSION, test 6 : direct = rétrospectif, sur une vraie journée).
 """
@@ -143,7 +143,7 @@ def journal(r):
     d = os.path.join(RACINE, "LOGS", "scenarios")
     os.makedirs(d, exist_ok=True)
     r = dict(r, ecrit_a=int(time.time() * 1000), mode="direct")
-    with open(os.path.join(d, "direct_%s.jsonl" % r["jour"]), "a", encoding="utf-8") as f:
+    with open(os.path.join(d, "prerequis_%s.jsonl" % r["jour"]), "a", encoding="utf-8") as f:
         f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
 
 
@@ -155,7 +155,7 @@ def main(argv):
         afficher(r)
         journal(r)
     # le narrateur de séance (grammaire v0), sur les mêmes barres complètes —
-    # il écrit son propre journal `scenarios_<jour>.jsonl`, rien d'autre
+    # il écrit son propre journal `direct_<jour>.jsonl`, rien d'autre
     from V3.scenarios import scenarios
     print("-- scenario en cours (grammaire v0, lecture seule) :")
     scenarios.direct(jour)

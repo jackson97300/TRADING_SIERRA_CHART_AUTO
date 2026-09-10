@@ -90,6 +90,35 @@ open_type:
   types: [TEST_DRIVE, REJET_RENVERSEMENT, ENCHERE]
   bande: P10
 
+alertes:
+  # les CINQ evenements qui sonnent (Fable, A4) — jamais un etat, jamais un prix,
+  # jamais un verbe d'action ; les gabarits sont ICI, pas dans le code ;
+  # <= 10 mots. {sym} {scenario} {zone} {vers} {cause} sont les seuls champs.
+  evenements: [bascule, validation, invalidation, zone_cassee, zone_deplacee]
+  gabarits:
+    bascule: "{sym} bascule vers {vers} : {cause}"
+    validation: "{sym} {scenario} valide sur {zone}"
+    invalidation: "{sym} {scenario} invalide sur {zone}"
+    zone_cassee: "{sym} zone {zone} cassee, deux clotures"
+    zone_deplacee: "{sym} zone {zone} deplacee"
+  # silence des cinq premieres minutes de cash (9h30-9h35 ET), en minutes ET
+  silence_de: 570
+  silence_a: 575
+  # le marqueur muet : present -> rien ne sonne, tout se journalise
+  muet_fichier: LOGS/scenarios/MUET
+  # trois sons distincts (frequence Hz, duree ms) ; les deux autres = ding
+  sons:
+    bascule: [[660, 120], [880, 120], [660, 120]]
+    validation: [[880, 180]]
+    invalidation: [[440, 260]]
+    ding: [[1000, 80]]
+
+vitrine:
+  port: 8765
+  rafraichissement_s: 15
+  heartbeat_max_s: 60           # au-dela : « ecrivain muet », toute la page grise
+  fenetre_minutes: 60           # validations / invalidations / alertes affichees
+
 auto_evaluation:
   # §8 : le module NOTE, il ne se regle pas. BASCULE_FANTOME = une bascule
   # A -> B suivie d'un retour B -> A en au plus N barres. N = 4 est une

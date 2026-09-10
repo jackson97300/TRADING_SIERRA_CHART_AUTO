@@ -177,6 +177,45 @@ attendant, et c'est à moi de fixer. »* Les valeurs sont dans `seuils.yaml`
   ligne ; (c) la réserve w0 en gras en tête du rapport — les vrais nombres
   commencent le 10/09 au soir, 23h01, en w1.
 
+## La vitrine et les alertes — plan arrêté avec Fable (10/09 soir), APRÈS le tag du 11/09
+Trois choses séparées, jamais fondues : **l'écrivain** (un processus, là où
+sont les données, sans écran — `scenarios.py --direct` en boucle à chaque
+clôture de 15 min), **la vitrine** (une page HTML sans état qui lit le journal :
+titre avec son état, zones triées par distance, validations / invalidations
+de la dernière heure, ce qui s'arme, ce qui ne se trade pas, les sorties du
+scénario — jamais le mot « conseil »), **les alertes** (un lecteur du journal
+qui sonne sur cinq ÉVÉNEMENTS — bascule, validation, invalidation, zone
+cassée, `ZONE_DEPLACEE` — jamais sur un état en cours ; un muet ; silence les
+cinq premières minutes).
+- Ordre : local d'abord (PC, `localhost`, zéro fichier sur le VPS) ; le VPS
+  (service nssm à côté des données) et la page du dashboard après le jour 20
+  de w1 et une relecture — même HTML, déploiement sur confirmation explicite.
+- Pas de logiciel de bureau (Tkinter, PyQt : cul-de-sac), mais **une fenêtre**
+  : `pywebview`, native, always-on-top, qui affiche LE MÊME HTML que la
+  vitrine — un onglet de navigateur disparaît derrière Sierra. Une seule page,
+  deux façons de l'ouvrir.
+- Ensuite seulement : la voix (`pyttsx3`) quand les événements auront prouvé
+  qu'ils valent d'être entendus ; le study Sierra en dernier.
+- La règle qui protège tout : **la page lit, elle n'écrit que dans le journal
+  manuel, jamais ailleurs**. Et dater le moment où Jackson regarde :
+  `scenarios_visibles : oui/non` dans `journal_manuel/<jour>.md`, comme
+  `carte_visible` — les clics cessent d'être indépendants de la machine, la
+  ligne « trader vs machine » du jour 61 se lit en deux populations.
+
+## Liste fusionnée (Fable, 10/09 soir) — phase A CODÉE le 10/09, sur ordre de Jackson
+Seize fichiers, trois phases (le document de Fable fait foi). Phase A, faite :
+`SPEC_VITRINE.md` (A0) ; `boucle.py` + `execution/scenarios.bat` +
+`execution/garde_scenarios.py/.bat` (A1 — le garde est en Python comme celui du
+coureur, pas en `.ps1` : même code, même leçon du 07/09 ; `direct_<jour>.jsonl`
+DISTINCT de `scenarios_<jour>.jsonl` du rejeu, `grammaire_version` +
+`seuils_version` sur chaque ligne) ; `vitrine.py` + `vitrine.html` (A2, la seule
+source HTML, `/etat.json`, NOTER, MUET) ; `alertes.py` (A4, cinq événements,
+gabarits dans le yaml) ; `tests/test_vitrine_alertes.py` (A5) ; `fenetre.py`
+(A3, pywebview installé sur le PC) ; `scenarios_visibles` dans le journal
+manuel lu par `pourquoi_plus` (A6) ; `noter.py` (A6 bis). Rien n'est lancé en
+tâche avant le tag ; les `.bat` portent la commande `schtasks`. Phase B et C :
+après relecture, puis jour 20 de w1.
+
 ## État de la construction (10/09 soir) — à relire par Fable AVANT `scenario_en_cours` sur l'entonnoir
 - Étape 4 **faite** : `grammaire.py` (huit canoniques v0 + `S_DANS_ROTATION` +
   `S_AUTRE(raison)` ; `S_OUV_BAS_REINT` = famille sans précision ; codes

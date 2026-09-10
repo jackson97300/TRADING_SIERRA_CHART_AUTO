@@ -141,6 +141,8 @@ def observer(zones, df15, i, brut=None):
             _deplacement(z, df15, brut, i, evenements)
         if "_touches" not in z:
             z["_touches"] = _touches(df15, z)
+        if z["dormant"]:
+            continue                                  # un 0DTE dormant n'a ni memoire ni evenement avant 14h00 ET
         f = z["fiche"]
         vus = [(j, c) for j, c in z["_touches"] if j <= i]
         if vus and vus[-1][0] == i:

@@ -138,6 +138,13 @@ def trader_vs_machine(jour, ecrire=False):
         return 0
     machine = _signaux_machine(jour)
     trades = _lignes_trader(chemin)
+    # deux populations, jamais fusionnees (Fable, 10/09) : les jours ou la carte du
+    # matin / la vitrine des scenarios etaient VISIBLES, les clics ne sont plus
+    # independants de la machine — le jour 61 les lit a part
+    texte_j = open(chemin, encoding="utf-8").read()
+    for champ in ("carte_visible", "scenarios_visibles"):
+        m = re.search(r"`%s` *: *(\S+)" % champ, texte_j)
+        print("  %s : %s" % (champ, m.group(1) if m else "absent"))
     if not trades:
         print("  journal present, AUCUN clic note (tableau vide).")
     for t in trades:

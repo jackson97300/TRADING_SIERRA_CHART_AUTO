@@ -41,14 +41,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-# Fable, relecture c6c12dd (10/09) : les codes sont des FAMILLES en miroir exact ;
-# PULL / TRAV sont une `precision` (PULL, TRAV ou null), jamais un code.
+# Fable, c6c12dd : les codes sont des FAMILLES en miroir exact ; PULL / TRAV = `precision`, jamais un code.
 CANONIQUES = ("S_OUV_HAUT_TEND", "S_OUV_HAUT_REINT", "S_OUV_BAS_TEND", "S_OUV_BAS_REINT",
               "S_DANS_POSE", "S_DANS_CASSURE_HAUT", "S_DANS_CASSURE_BAS", "S_DANS_HEADFAKE")
 GARDES = ("S_DANS_ROTATION",)
 FAMILLES = CANONIQUES + GARDES
 PRECISIONS = ("PULL", "TRAV")
 ETATS_SCENARIO = ("en_cours", "valide", "invalide")
+# Sur chaque ligne : deux versions de grammaire ne se lisent pas ensemble — incrémenter à chaque DÉFINITION.
+GRAMMAIRE_VERSION = "v0-2026-09-10"
 QUATRE_VINGTS = 0.8          # la règle des 80 % de Dalton — une définition, pas un seuil mesuré
 DERNIERE_BARRE_ET = 15 * 60 + 45   # la barre 15h45 ET : la clôture cash
 
@@ -59,8 +60,7 @@ def _minutes_et(ts):
 
 
 def _hhmm(ts):
-    m = _minutes_et(ts)
-    return "%02dh%02d" % (m // 60, m % 60)
+    return "%02dh%02d" % divmod(_minutes_et(ts), 60)
 
 # rôle des zones par scénario (v0) : cible | invalidation | pullback | neutre
 ROLES = {
@@ -76,11 +76,9 @@ ROLES = {
 }
 # ce qui ne se trade pas, par scénario (v0) — des définitions, pas des seuils
 HORS_SCENARIO = {
-    "S_OUV_HAUT_TEND": [("short", "prev_vah", "fade contre l'ouverture au-dessus"),
-                        ("short", "ib_high", "fade de la cassure attendue")],
+    "S_OUV_HAUT_TEND": [("short", "prev_vah", "fade contre l'ouverture au-dessus"), ("short", "ib_high", "fade de la cassure attendue")],
     "S_OUV_HAUT_REINT": [("long", "prev_vah", "chasser la reprise avant acceptation")],
-    "S_OUV_BAS_TEND": [("long", "prev_val", "fade contre l'ouverture en dessous"),
-                       ("long", "ib_low", "fade de la cassure attendue")],
+    "S_OUV_BAS_TEND": [("long", "prev_val", "fade contre l'ouverture en dessous"), ("long", "ib_low", "fade de la cassure attendue")],
     "S_OUV_BAS_REINT": [("short", "prev_val", "vendre le pullback d'une reintegration acceptee")],
     "S_DANS_POSE": [("long", "ib_high", "cassure non acceptee"), ("short", "ib_low", "cassure non acceptee")],
     "S_DANS_ROTATION": [("long", "ib_high", "cassure non acceptee"), ("short", "ib_low", "cassure non acceptee")],

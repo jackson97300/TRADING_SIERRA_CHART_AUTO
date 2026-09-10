@@ -3,8 +3,14 @@ les zones (§2), la grammaire (§1), le journal (un écrivain, `.tmp` +
 `os.replace`). Ne décide rien, n'entre dans aucune porte, n'écrit que
 `LOGS/scenarios/`.
 
-    python -X utf8 V3/scenarios/scenarios.py ES 20260909        # rejeu d'une journée
-    python -X utf8 V3/scenarios/scenarios.py --direct            # la journée en cours, barres complètes
+    python -X utf8 V3/scenarios/scenarios.py 20260909            # rejeu d'une journée (ES + NQ) -> scenarios_<jour>.jsonl
+    python -X utf8 V3/scenarios/scenarios.py --direct            # la journée en cours, barres complètes -> direct_<jour>.jsonl
+
+Deux journaux DISTINCTS par jour (Fable, liste fusionnée) : `direct_<jour>.jsonl`,
+écrit barre à barre par l'écrivain (`boucle.py`, ou `--direct`), et
+`scenarios_<jour>.jsonl`, écrit par le rejeu du soir — c'est la paire que le
+rythme 5b/5 compare (`FUITE` si différence). Chaque ligne porte
+`grammaire_version` et `seuils_version`.
 
 Rétrospectif (`rejouer`) et direct (`direct`) passent par la MÊME fonction
 `derouler(df15, brut, sym)` : en direct, `df15` est tronqué aux barres
@@ -99,6 +105,7 @@ def derouler(df15, brut, sym, seuils=None):
                   if i in lignes_range else None,
                   "zones": Z.exporter(zones, c), "evenements_zones": ev_zones,
                   "prochaine_zone_haut": ph, "prochaine_zone_bas": pb})
+        r["grammaire_version"], r["seuils_version"] = grammaire.GRAMMAIRE_VERSION, str(s.get("version"))
         out.append(_propre(r))
     return out
 
@@ -119,6 +126,24 @@ def charger(sym, jour, completes_seulement=False):
 def rejouer(sym, jour):
     df, brut = charger(sym, jour)
     return derouler(df, brut, sym) if not df.empty else []
+
+
+def chemin_direct(jour):
+    return os.path.join(JOURNAL_DIR, "direct_%s.jsonl" % jour)
+
+
+def chemin_rejeu(jour):
+    return os.path.join(JOURNAL_DIR, "scenarios_%s.jsonl" % jour)
+
+
+def rejouer_journal(jour):
+    """Le rejeu du soir des deux instruments -> `scenarios_<jour>.jsonl`
+    (réécrit en entier, un écrivain). Rend {sym: lignes}."""
+    par = {sym: rejouer(sym, jour) for sym in ("ES", "NQ")}
+    lignes = [dict(l, mode="rejeu", ecrit_a=int(time.time() * 1000)) for sym in ("ES", "NQ") for l in par[sym]]
+    if lignes:
+        ecrire(chemin_rejeu(jour), lignes)
+    return par
 
 
 def ecrire(chemin, lignes):
@@ -158,7 +183,7 @@ def direct(jour=None):
             print("== %s %s : aucune barre 15 min complete" % (sym, jour))
             continue
         lignes = derouler(df, brut, sym)
-        chemin = os.path.join(JOURNAL_DIR, "scenarios_%s.jsonl" % jour)
+        chemin = chemin_direct(jour)
         deja = lire(chemin)
         vus = {(l["sym"], l["i"]) for l in deja}
         neuves = [dict(l, mode="direct", ecrit_a=int(time.time() * 1000)) for l in lignes if (l["sym"], l["i"]) not in vus]
@@ -172,12 +197,11 @@ def main(argv):
     if len(argv) >= 2 and argv[1] == "--direct":
         direct(argv[2] if len(argv) > 2 else None)
         return 0
-    sym, jour = (argv[1], argv[2]) if len(argv) >= 3 else ("ES", "20260909")
-    lignes = rejouer(sym, jour)
-    chemin = os.path.join(JOURNAL_DIR, "rejeu", "%s_%s.jsonl" % (sym, jour))
-    ecrire(chemin, lignes)
-    print(resume(lignes))
-    print("journal :", chemin)
+    jour = argv[1] if len(argv) >= 2 else "20260909"
+    par = rejouer_journal(jour)
+    for sym in ("ES", "NQ"):
+        print(resume(par[sym]))
+    print("journal :", chemin_rejeu(jour))
     return 0
 
 

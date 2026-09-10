@@ -46,7 +46,14 @@ V3/
     scenarios.py       la journee deroulee barre a barre ; rejeu et direct par la MEME fonction ; le journal
     sorties.py         B-SCEN : ou le scenario finit (devant la cible), ou il meurt (derriere l'invalidation)
     erreurs.py         l'auto-evaluation du soir : sept erreurs nommees, le carnet ; note, ne regle pas
-    direct.py          la journee en cours, barres completes seulement, lecture seule
+    SPEC_VITRINE.md    les cinq phrases que la vitrine ne franchit jamais (frontiere, mots interdits)
+    boucle.py          L'ECRIVAIN : un processus, recalcule la journee a chaque barre -> direct_<jour>.jsonl
+    vitrine.py/.html   la page sans etat (localhost:8765) : lit le journal, n'ecrit que NOTER et MUET
+    fenetre.py         la meme page, epinglee au premier plan (pywebview)
+    alertes.py         sonne sur cinq EVENEMENTS, jamais sur un etat ; muet ; silence 9h30-9h35
+    noter.py           le bouton NOTER -> journal manuel, HORS_SCENARIO, scenarios_visibles
+    direct.py          les prerequis de la journee en cours, lecture seule -> prerequis_<jour>.jsonl
+  execution/garde_scenarios.py  relance l'ecrivain si son coeur s'arrete (toutes les 5 min, backoff)
     mesure_*.py        prerequis 1-3 et les trois mesures de la grammaire (couverture, tenue, tirage au sort)
     rapports/          les distributions, ecrites AVANT tout usage
   publier.sh           publie le miroir public (3 controles, puis subtree push)

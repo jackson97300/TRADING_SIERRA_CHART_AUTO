@@ -22,8 +22,8 @@ Les erreurs nommées (une définition chacune, `seuils.yaml: auto_evaluation`) :
                       tenue dans son sens — juste : l'exclusion n'a pas tenu
   FUITE               le journal DIRECT diffère du rejeu — un INCIDENT, pas une
                       erreur (`DOCS/INCIDENT_LOG.md`)
-Écrit `LOGS/scenarios/erreurs_<jour>.jsonl` et met à jour
-`LOGS/scenarios/carnet.json`.
+Écrit `LOGS/scenarios/scenarios_<jour>.jsonl` (le rejeu), `erreurs_<jour>.jsonl`
+et met à jour `carnet.json`.
 """
 
 from __future__ import annotations
@@ -127,10 +127,13 @@ def carnet_maj(chemin, erreurs, jour):
 def main(argv):
     os.chdir(RACINE)
     jour = argv[1] if len(argv) > 1 else time.strftime("%Y%m%d")
-    direct = scenarios.lire(os.path.join(scenarios.JOURNAL_DIR, "scenarios_%s.jsonl" % jour))
+    # la paire que 5b/5 compare : direct_<jour> (l'ecrivain, barre a barre) contre
+    # scenarios_<jour> (le rejeu du soir, ecrit ICI) — FUITE si difference
+    direct = scenarios.lire(scenarios.chemin_direct(jour))
+    par = scenarios.rejouer_journal(jour)
     toutes = []
     for sym in ("ES", "NQ"):
-        lignes = scenarios.rejouer(sym, jour)
+        lignes = par[sym]
         if not lignes:
             print("== %s %s : rien a evaluer" % (sym, jour))
             continue
