@@ -144,9 +144,8 @@ def resume(lignes):
     seq = " > ".join(e["etat"] + ("(%s)" % e.get("vers", e.get("type", e.get("raison", "")))
                                   if e["etat"] in ("BASCULE", "TYPE_OUVERTURE", "S_AUTRE") else "")
                      for e in d["sequence_etats"])
-    return ("%s %s | %s | %s%s | valide %s | bascules %d | %s" % (
-        d["sym"], d["heure_et"], d["position_ouverture"], d["scenario_en_cours"],
-        " [%s]" % d["precision"] if d.get("precision") else "", d["valide"], len(d["bascules"]), seq))
+    return ("%s %s | ouvre %s | %s | bascules %d | %s" % (
+        d["sym"], d["heure_et"], d["position_ouverture"], d["titre"], len(d["bascules"]), seq))
 
 
 def direct(jour=None):

@@ -110,10 +110,16 @@ grammaire:
   # invalidations = acceptations (deux clotures), tenues CAUSALES (`tenu_a`,
   # jamais l'`issue` F23) et zones. Tout ce qui n'entre pas = S_AUTRE avec sa
   # sequence brute ; IB hors [w_min, w_max] = S_AUTRE(IB_hors_norme).
-  canoniques_v0: [S_OUV_HAUT_TEND, S_OUV_HAUT_REJET, S_OUV_BAS_REINT_PULL,
-                  S_OUV_BAS_REINT_TRAV, S_OUV_BAS_TEND, S_DANS_POSE,
-                  S_DANS_CASSURE, S_DANS_HEADFAKE]
-  gardes: [S_DANS_ROTATION, S_TRANSITION]
+  # Relecture c6c12dd : les codes sont des FAMILLES en miroir exact ; PULL / TRAV
+  # sont une `precision` (PULL, TRAV, null), jamais un code ; S_OUV_HAUT_REJET a
+  # disparu comme nom (-> S_OUV_HAUT_REINT). Chaque ligne du journal porte
+  # `etat_scenario` (en_cours | valide | invalide) et un `titre` ; un scenario
+  # en cours non valide ne fait rien s'armer.
+  canoniques_v0: [S_OUV_HAUT_TEND, S_OUV_HAUT_REINT, S_OUV_BAS_TEND, S_OUV_BAS_REINT,
+                  S_DANS_POSE, S_DANS_CASSURE_HAUT, S_DANS_CASSURE_BAS, S_DANS_HEADFAKE]
+  precisions: [PULL, TRAV]
+  gardes: [S_DANS_ROTATION]
+  etats_scenario: [en_cours, valide, invalide]
 
 # Les trois attendus du rejeu (spec §4.4), PRE-ENREGISTRES PAR LA RELECTRICE
 # (Fable, 10/09, reponse 9 — reconfirmes a la relecture de e26236a) :
@@ -126,7 +132,13 @@ grammaire:
 #     grammaire bat le tirage d'au moins 15 points sur les deux mesures ;
 #     sous 15, le module decrit le passe.
 # Aucune direction attendue sur quoi que ce soit.
+# Relecture c6c12dd : LA COUVERTURE = les scenarios VALIDES a la cloture (le
+# « en cours » etait une position deguisee en scenario — mal defini par la
+# relectrice, note) ; la mesure 2 SE LIT AU JOUR 20 DE w1 (N = 5 / 4 sur le
+# lot : vrai et trop petit), la 2 bis en est le proxy DECLARE d'ici la.
 attendu_rejeu:
+  couverture_definition: valides_a_la_cloture
+  tenue_lecture: jour_20_w1
   couverture_pct: 60
   couverture_min_pct: 45
   couverture_max_pct: 80

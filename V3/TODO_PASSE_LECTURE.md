@@ -130,7 +130,11 @@ suivante) · pas 2b.
       DIRECT = RÉTROSPECTIF), `test_scenarios_soir` 18/18.
 - [x] mode vivant : `scenarios.py --direct` (barres complètes), appelé par `direct.py` ; rythme du
       soir étape 5b/5 = `erreurs.py` (rejeu + auto-évaluation + FUITE si le direct diffère).
-- [ ] rejeu 57 j : `mesure_scenarios.py` -> `rapports/scenarios_57j.md` contre l'attendu de Fable
-      (couverture 60 %, tenue 55 %, tirage battu de 15 points) -> ligne DECISIONS « mesuré ».
-- [ ] commit D -> publier -> hash à Fable (relecture de la grammaire) ; `scenario_en_cours` sur les
-      lignes de l'entonnoir / fantômes / marges = après sa relecture (touche `chaine.py`).
+- [x] rejeu 57 j : `rapports/scenarios_57j.md` — couverture en cours 93 % (trop large : mécanique TEND),
+      validée 58 / 53 % (dans l'attendu), tenue 60 / 75 % sur N = 5 / 4, tirage battu de +68 / +67 ->
+      ligne DECISIONS 16h15.
+- [x] commit D `3f288e8` -> **miroir `c6c12dd`** (vérifié) -> hash à Fable (relecture de la grammaire).
+- [ ] après relecture Fable : `scenario_en_cours` sur l'entonnoir / fantômes / marges (touche `chaine.py`,
+      jamais avant le tag) ; la vitrine texte ; sa réponse « laquelle est la couverture ».
+- [ ] ce soir 23h01 : le rythme du soir passe par 5b/5 (`erreurs.py`) — première vraie journée en direct
+      (10/09) : `FUITE` = incident si le journal direct diffère du rejeu.

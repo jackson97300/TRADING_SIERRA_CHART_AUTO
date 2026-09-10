@@ -6,19 +6,19 @@ deux clôtures, tenues `tenu_a`, états de `range_r`, `open_type_r` — jamais
 l'`issue` F23. Rejoué barre à barre sur les barres 0..i seules, il rend le
 même état que sur la journée complète (test « direct = rétrospectif »).
 
-Les huit canoniques v0 (Fable), et ce qui les valide / invalide :
+Les huit canoniques v0 (Fable, relectures e26236a puis c6c12dd) — des FAMILLES
+en MIROIR EXACT, et ce qui les valide / invalide :
   S_OUV_HAUT_TEND      ouvre > VAH ; validé : acceptation > IB high ;
-                       invalidé : réintégration ACCEPTÉE (→ S_OUV_HAUT_REJET)
-  S_OUV_HAUT_REJET     réintégration acceptée depuis le haut (validé à
-                       l'acceptation) ; précision PULL (pullback sur le VAH
-                       tenu, puis plus bas de session) ou TRAV (80 % vers la
-                       VAL) ; invalidé : acceptation > VAH (reprise → TEND)
-  S_OUV_BAS_TEND       miroir de HAUT_TEND
-  S_OUV_BAS_REINT_PULL réintégration acceptée → pullback sur la VAL TENU →
-                       validé au plus haut de session suivant ; invalidé :
-                       acceptation < VAL (→ S_OUV_BAS_TEND)
-  S_OUV_BAS_REINT_TRAV réintégration acceptée → 80 % franchi SANS pullback
-                       (validé) ; invalidé : rejet au VPOC accepté
+                       invalidé : réintégration ACCEPTÉE (→ S_OUV_HAUT_REINT)
+  S_OUV_HAUT_REINT     réintégration acceptée depuis le haut — validé à
+                       l'acceptation (deux clôtures dans la VA) ; `precision`
+                       ∈ {PULL, TRAV, null} : PULL = pullback sur le VAH TENU
+                       (puis NOUVEL_EXTREME_APRES_PULLBACK, daté), TRAV = 80 %
+                       vers la VAL SANS pullback ; invalidé : acceptation > VAH
+                       (reprise → TEND) ; TRAV puis rejet au VPOC accepté →
+                       S_AUTRE(rejet_vpoc)
+  S_OUV_BAS_TEND       miroir exact de HAUT_TEND
+  S_OUV_BAS_REINT      miroir exact de HAUT_REINT (précisions PULL / TRAV)
   S_DANS_POSE          ouvre dans la VA → IB posée, aucune acceptation dehors
                        (validé à la clôture) ; invalidé : CASSE (→ CASSURE)
   S_DANS_CASSURE_H/B   acceptation au-delà d'un bord de l'IB ; validé : retest
@@ -28,10 +28,12 @@ Les huit canoniques v0 (Fable), et ce qui les valide / invalide :
   gardes : S_DANS_ROTATION (ETABLI strict, rare) ; S_AUTRE(raison) pour tout le
   reste — IB hors [w_min, w_max] sur une ouverture dans la VA, rejet au VPOC,
   pas de VA, journée sans IB.
-Réintégration : TENTÉE = une clôture dans la VA ; ACCEPTÉE = deux. Avant que
-PULL ou TRAV soit connu, le code est `S_OUV_BAS_REINT` avec `precision: null`
-— une famille canonique, pas S_AUTRE. Chaque changement de scénario est une
-BASCULE datée avec sa cause, jamais une correction.
+Réintégration : TENTÉE = une clôture dans la VA ; ACCEPTÉE = deux. Une famille
+avec `precision: null` est un canonique, pas S_AUTRE. Chaque changement de
+scénario est une BASCULE datée avec sa cause, jamais une correction. Chaque
+ligne porte `etat_scenario` ∈ {en_cours, valide, invalide} et un `titre` :
+« S_OUV_HAUT_TEND (en cours, non validé) » / « (validé 10h45) » — un scénario
+en cours non validé ne fait rien s'armer (`arme: false`).
 """
 
 from __future__ import annotations
@@ -39,11 +41,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-CANONIQUES = ("S_OUV_HAUT_TEND", "S_OUV_HAUT_REJET", "S_OUV_BAS_TEND", "S_OUV_BAS_REINT_PULL",
-              "S_OUV_BAS_REINT_TRAV", "S_DANS_POSE", "S_DANS_CASSURE_HAUT", "S_DANS_CASSURE_BAS",
-              "S_DANS_HEADFAKE")
+# Fable, relecture c6c12dd (10/09) : les codes sont des FAMILLES en miroir exact ;
+# PULL / TRAV sont une `precision` (PULL, TRAV ou null), jamais un code.
+CANONIQUES = ("S_OUV_HAUT_TEND", "S_OUV_HAUT_REINT", "S_OUV_BAS_TEND", "S_OUV_BAS_REINT",
+              "S_DANS_POSE", "S_DANS_CASSURE_HAUT", "S_DANS_CASSURE_BAS", "S_DANS_HEADFAKE")
 GARDES = ("S_DANS_ROTATION",)
-FAMILLES = CANONIQUES + GARDES + ("S_OUV_BAS_REINT",)
+FAMILLES = CANONIQUES + GARDES
+PRECISIONS = ("PULL", "TRAV")
+ETATS_SCENARIO = ("en_cours", "valide", "invalide")
 QUATRE_VINGTS = 0.8          # la règle des 80 % de Dalton — une définition, pas un seuil mesuré
 DERNIERE_BARRE_ET = 15 * 60 + 45   # la barre 15h45 ET : la clôture cash
 
@@ -52,14 +57,17 @@ def _minutes_et(ts):
     from CORE.features import recalc
     return int(recalc.minutes_et(pd.Series([int(ts)]).pipe(pd.to_datetime, unit="ms", utc=True)).iloc[0])
 
+
+def _hhmm(ts):
+    m = _minutes_et(ts)
+    return "%02dh%02d" % (m // 60, m % 60)
+
 # rôle des zones par scénario (v0) : cible | invalidation | pullback | neutre
 ROLES = {
     "S_OUV_HAUT_TEND": {"prev_vah": "invalidation", "ib_high": "cible", "ib_low": "neutre"},
-    "S_OUV_HAUT_REJET": {"prev_vah": "pullback", "prev_vpoc": "cible", "prev_val": "cible"},
+    "S_OUV_HAUT_REINT": {"prev_vah": "pullback", "prev_vpoc": "cible", "prev_val": "cible"},
     "S_OUV_BAS_TEND": {"prev_val": "invalidation", "ib_low": "cible", "ib_high": "neutre"},
     "S_OUV_BAS_REINT": {"prev_val": "pullback", "prev_vpoc": "cible", "prev_vah": "cible"},
-    "S_OUV_BAS_REINT_PULL": {"prev_val": "invalidation", "prev_vpoc": "cible", "prev_vah": "cible"},
-    "S_OUV_BAS_REINT_TRAV": {"prev_vpoc": "invalidation", "prev_vah": "cible"},
     "S_DANS_POSE": {"ib_high": "invalidation", "ib_low": "invalidation", "prev_vpoc": "cible"},
     "S_DANS_ROTATION": {"ib_high": "invalidation", "ib_low": "invalidation", "prev_vpoc": "cible"},
     "S_DANS_CASSURE_HAUT": {"ib_high": "pullback", "ib_low": "neutre"},
@@ -70,12 +78,10 @@ ROLES = {
 HORS_SCENARIO = {
     "S_OUV_HAUT_TEND": [("short", "prev_vah", "fade contre l'ouverture au-dessus"),
                         ("short", "ib_high", "fade de la cassure attendue")],
-    "S_OUV_HAUT_REJET": [("long", "prev_vah", "chasser la reprise avant acceptation")],
+    "S_OUV_HAUT_REINT": [("long", "prev_vah", "chasser la reprise avant acceptation")],
     "S_OUV_BAS_TEND": [("long", "prev_val", "fade contre l'ouverture en dessous"),
                        ("long", "ib_low", "fade de la cassure attendue")],
     "S_OUV_BAS_REINT": [("short", "prev_val", "vendre le pullback d'une reintegration acceptee")],
-    "S_OUV_BAS_REINT_PULL": [("short", "prev_val", "vendre le pullback tenu")],
-    "S_OUV_BAS_REINT_TRAV": [("short", "prev_vpoc", "vendre le milieu d'une traversee")],
     "S_DANS_POSE": [("long", "ib_high", "cassure non acceptee"), ("short", "ib_low", "cassure non acceptee")],
     "S_DANS_ROTATION": [("long", "ib_high", "cassure non acceptee"), ("short", "ib_low", "cassure non acceptee")],
     "S_DANS_CASSURE_HAUT": [("short", "ib_high", "fade d'une cassure acceptee")],
@@ -124,6 +130,7 @@ class Grammaire:
 
     def _invalider(self, i, ts, quoi, zone, vers, cause):
         self.invalidations.append({"i": i, "ts": int(ts), "quoi": quoi, "zone": zone, "scenario": self.scenario})
+        self.invalide_barre = {"de": self.scenario, "quoi": quoi, "zone": zone, "vers": vers}
         self._bascule(i, ts, vers, cause)
 
     def _dans_va(self, c):
@@ -136,6 +143,7 @@ class Grammaire:
         c = float(df15["close"].iloc[i])
         h, l_, ts = float(df15["high"].iloc[i]), float(df15["low"].iloc[i]), int(df15["ts"].iloc[i])
         cp = float(df15["close"].iloc[i - 1]) if i > 0 else None
+        self.invalide_barre = None
         self.session_high = h if self.session_high is None else max(self.session_high, h)
         self.session_low = l_ if self.session_low is None else min(self.session_low, l_)
         if i == 0:
@@ -210,10 +218,11 @@ class Grammaire:
             if dedans and dedans_p:
                 r["acceptee_i"] = i
                 self._ev(i, ts, "REINT_ACCEPTEE", zone="prev_vah" if haut else "prev_val")
-                vers = "S_OUV_HAUT_REJET" if haut else "S_OUV_BAS_REINT"
+                vers = "S_OUV_HAUT_REINT" if haut else "S_OUV_BAS_REINT"
                 self._invalider(i, ts, "reintegration_acceptee", "prev_vah" if haut else "prev_val", vers, "reintegration_acceptee")
-                if haut:
-                    self._valider(i, ts, "deux_clotures_dans_la_VA", "prev_vah")
+                # miroir exact (Fable, c6c12dd) : la famille REINT est validee par
+                # l'acceptation, des deux cotes ; PULL / TRAV sont des precisions datees
+                self._valider(i, ts, "deux_clotures_dans_la_VA", "prev_vah" if haut else "prev_val")
             return
         # réintégré : reprise (acceptation de nouveau hors VA) ?
         hors = (c > self.vah and cp is not None and cp > self.vah) if haut else (c < self.val and cp is not None and cp < self.val)
@@ -232,21 +241,17 @@ class Grammaire:
         if self.precision is None and self.pullback is None and self._pullback_tenu(i, bord, haut):
             self.pullback = {"i": i, "extreme": self.session_low if haut else self.session_high}
             self._ev(i, ts, "PULLBACK_TENU", zone=zone_bord)
-            if not haut:
-                self._bascule(i, ts, "S_OUV_BAS_REINT_PULL", "pullback_tenu")
             self.precision = "PULL"
         if self.precision == "PULL" and self.pullback:
             nouveau = (c < self.pullback["extreme"]) if haut else (c > self.pullback["extreme"])
-            if nouveau:
-                self._valider(i, ts, "nouvel_extreme_de_session_apres_pullback", zone_bord)
+            if nouveau and not self.pullback.get("confirme"):
+                self.pullback["confirme"] = True
+                self._ev(i, ts, "NOUVEL_EXTREME_APRES_PULLBACK", zone=zone_bord)
         if self.precision is None and self.vpoc is not None:
             franchi = (c <= oppose + QUATRE_VINGTS * (bord - oppose)) if haut else (c >= bord + QUATRE_VINGTS * (oppose - bord))
             if franchi:
                 self._ev(i, ts, "QUATRE_VINGTS_FRANCHI", zone="prev_val" if haut else "prev_vah")
-                if not haut:
-                    self._bascule(i, ts, "S_OUV_BAS_REINT_TRAV", "80_pct_sans_pullback")
-                self.precision = "TRAV"              # apres la bascule, qui remet la precision a zero
-                self._valider(i, ts, "80_pct_franchi", "prev_val" if haut else "prev_vah")
+                self.precision = "TRAV"
         if self.precision == "TRAV" and self.vpoc is not None and cp is not None:
             if (c < self.vpoc if haut else c > self.vpoc):
                 self.vu_vpoc = True
@@ -274,8 +279,18 @@ class Grammaire:
         for z in self.zones:
             z["role"] = roles.get(z["nom"], "neutre")
         hors = [{"setup": "%s@%s" % (s, z), "raison": r} for s, z, r in HORS_SCENARIO.get(code, [])]
+        inv = getattr(self, "invalide_barre", None)
+        etat_sc = "invalide" if inv else "valide" if self.valide_a is not None else "en_cours"
+        nom = code + (" [%s]" % self.precision if self.precision else "")
+        if inv:
+            titre = "%s (invalide %s : %s) -> %s" % (inv["de"], _hhmm(ts), inv["quoi"], nom)
+        elif self.valide_a is not None:
+            titre = "%s (valide %s)" % (nom, _hhmm(self.validations[-1]["ts"]) if self.validations else "?")
+        else:
+            titre = "%s (en cours, non valide)" % nom
         return {"i": i, "ts": ts, "position_ouverture": self.position, "type_ouverture": self.type_ouverture,
                 "scenario_en_cours": code, "precision": self.precision, "scenario_depuis": self.depuis,
+                "etat_scenario": etat_sc, "titre": titre, "arme": etat_sc == "valide", "invalide": inv,
                 "valide": self.valide_a is not None, "valide_a_i": self.valide_a,
                 "ib": self.ib, "session_high": self.session_high, "session_low": self.session_low,
                 "sequence_etats": list(self.sequence), "validations": list(self.validations),

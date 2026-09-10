@@ -156,6 +156,27 @@ attendant, et c'est à moi de fixer. »* Les valeurs sont dans `seuils.yaml`
 - **« La grammaire peut se coder maintenant sur ces valeurs. »** Tag demain
   9h00 Paris sur la tête, relecture du périmètre gelé, tag avant l'ouverture.
 
+## Relecture Fable à `c6c12dd` (10/09 soir) — trois arbitrages, trois demandes
+- **La couverture, c'est la 1 bis** : les scénarios VALIDÉS à la clôture
+  (58 % / 53 %, dans l'intervalle). Le 93 % « en cours » est une *position*
+  déguisée en scénario — exactement ce que Jackson reprochait à A/B/C. La
+  définition pré-enregistrée était mal posée par la relectrice, elle le note ;
+  l'« en cours » reste journalisé comme part de journées avec une hypothèse
+  ouverte. Le titre affiche l'état : `(en cours, non validé)` en gris,
+  `(validé 10h45)` en clair ; un scénario non validé ne fait rien s'armer.
+- **La tenue à 10h30 sur N = 5 / 4 : vrai et trop petit, pas de verdict** ; se
+  lit au jour 20 de w1 ; la 2 bis (67 % / 64 % sur 54) est le proxy déclaré.
+- **Les deux définitions validées, avec une correction de nom** :
+  `S_OUV_HAUT_REINT` (famille) avec `precision ∈ {PULL, TRAV, null}`, miroir
+  exact de `S_OUV_BAS_REINT` ; `S_OUV_HAUT_REJET` disparaît. Une famille avec
+  `precision: null` est un canonique. Rejet au VPOC 1 / 57 : compté, jour 20.
+- Demandes avant le mode vivant, **faites** : (a) le renommage — et pour que le
+  miroir soit exact, la famille REINT est validée par l'ACCEPTATION des deux
+  côtés, PULL / TRAV sont des précisions datées (choix dit tel quel) ; (b)
+  `etat_scenario ∈ {en_cours, valide, invalide}` + `titre` + `arme` sur chaque
+  ligne ; (c) la réserve w0 en gras en tête du rapport — les vrais nombres
+  commencent le 10/09 au soir, 23h01, en w1.
+
 ## État de la construction (10/09 soir) — à relire par Fable AVANT `scenario_en_cours` sur l'entonnoir
 - Étape 4 **faite** : `grammaire.py` (huit canoniques v0 + `S_DANS_ROTATION` +
   `S_AUTRE(raison)` ; `S_OUV_BAS_REINT` = famille sans précision ; codes

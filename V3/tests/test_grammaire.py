@@ -123,18 +123,24 @@ def main():
           L[5]["scenario_en_cours"] == "S_OUV_HAUT_TEND" and not L[5]["valide"] and L[6]["valide"]
           and L[6]["validations"][0]["quoi"] == "acceptation_au_dela_IB_high", fin(L)[:7])
     L = scenarios.derouler(*journee(REJET_PULL), "ES", SEUILS)
-    check("[1b] une cloture dans la VA = TENTEE, pas de bascule ; deux = ACCEPTEE -> S_OUV_HAUT_REJET valide",
+    check("[1b] une cloture dans la VA = TENTEE, pas de bascule ; deux = ACCEPTEE -> S_OUV_HAUT_REINT valide",
           L[1]["scenario_en_cours"] == "S_OUV_HAUT_TEND" and L[1]["reintegration"]["tentee_i"] == 1
-          and L[2]["scenario_en_cours"] == "S_OUV_HAUT_REJET" and L[2]["valide"]
+          and L[2]["scenario_en_cours"] == "S_OUV_HAUT_REINT" and L[2]["valide"]
           and L[2]["bascules"][0]["cause"] == "reintegration_acceptee", fin(L)[:4])
     check("[1c] pullback sur le VAH tenu a la barre 4 -> precision PULL (code inchange)",
           L[3]["precision"] is None and L[4]["precision"] == "PULL"
-          and L[4]["scenario_en_cours"] == "S_OUV_HAUT_REJET", fin(L)[3:6])
+          and L[4]["scenario_en_cours"] == "S_OUV_HAUT_REINT", fin(L)[3:6])
+    check("[1c bis] etat_scenario / titre : en cours non valide a la barre 1, valide 10h00 a la barre 2, invalide sur la barre de bascule",
+          L[1]["etat_scenario"] == "en_cours" and "non valide" in L[1]["titre"] and not L[1]["arme"]
+          and L[2]["etat_scenario"] == "invalide" and L[2]["invalide"]["de"] == "S_OUV_HAUT_TEND"
+          and L[3]["etat_scenario"] == "valide" and "valide 10h00" in L[3]["titre"] and L[3]["arme"],
+          [(l["etat_scenario"], l["titre"]) for l in L[1:4]])
     L = scenarios.derouler(*journee(REINT_TRAV), "ES", SEUILS)
-    check("[1d] ouvre < VAL, reint acceptee -> S_OUV_BAS_REINT (precision null) a la barre 2",
-          L[2]["scenario_en_cours"] == "S_OUV_BAS_REINT" and L[2]["precision"] is None, fin(L)[:4])
-    check("[1e] 80 % franchi sans pullback -> S_OUV_BAS_REINT_TRAV valide a la barre 3",
-          L[3]["scenario_en_cours"] == "S_OUV_BAS_REINT_TRAV" and L[3]["valide"], fin(L)[3:5])
+    check("[1d] ouvre < VAL, reint acceptee -> S_OUV_BAS_REINT valide a la barre 2, precision null",
+          L[2]["scenario_en_cours"] == "S_OUV_BAS_REINT" and L[2]["precision"] is None and L[2]["valide"], fin(L)[:4])
+    check("[1e] 80 % franchi sans pullback -> precision TRAV a la barre 3, meme famille, pas de bascule",
+          L[3]["scenario_en_cours"] == "S_OUV_BAS_REINT" and L[3]["precision"] == "TRAV"
+          and len(L[3]["bascules"]) == 1, fin(L)[3:5])
     check("[1f] rejet au VPOC accepte (deux clotures < VPOC apres l'avoir franchi) -> S_AUTRE(rejet_vpoc)",
           L[5]["scenario_en_cours"] == "S_AUTRE" and L[5]["bascules"][-1]["cause"] == "rejet_vpoc", fin(L)[4:7])
     L = scenarios.derouler(*journee(REPRISE), "ES", SEUILS)
@@ -152,13 +158,14 @@ def main():
           L[8]["scenario_en_cours"] == "S_DANS_HEADFAKE" and L[8]["valide"]
           and L[10]["scenario_en_cours"] == "S_DANS_CASSURE_HAUT", fin(L)[7:11])
     # 2. miroir
-    for nom, jour, attendu in (("TEND", TEND_HAUT, "S_OUV_BAS_TEND"), ("REJET/REINT", REJET_PULL, "S_OUV_BAS_REINT_PULL")):
+    for nom, jour, attendu in (("TEND", TEND_HAUT, "S_OUV_BAS_TEND"), ("REINT", REJET_PULL, "S_OUV_BAS_REINT")):
         A = scenarios.derouler(*journee(jour), "ES", SEUILS)
         M = scenarios.derouler(*miroir(*journee(jour)), "ES", SEUILS)
         va, vm = A[-1]["valide_a_i"], M[-1]["valide_a_i"]
-        check("[2] miroir %s -> %s, meme barre de validation (%s)" % (nom, attendu, vm),
-              M[-1]["scenario_en_cours"] == attendu and (nom == "TEND" and va == vm or nom != "TEND" and vm == 5)
-              and M[-1]["precision"] == A[-1]["precision"], (fin(A)[-1], fin(M)[-1], va, vm))
+        check("[2] miroir EXACT %s -> %s, meme barre de validation (%s), meme precision, memes bascules" % (nom, attendu, vm),
+              M[-1]["scenario_en_cours"] == attendu and va == vm and M[-1]["precision"] == A[-1]["precision"]
+              and [b["i"] for b in M[-1]["bascules"]] == [b["i"] for b in A[-1]["bascules"]],
+              (fin(A)[-1], fin(M)[-1], va, vm))
     # 3. la bande
     z = {"prix": 100.0, "dedans_ticks": 4, "dehors_ticks": 20}
     check("[3a] prix en dessous : bande [prix - dedans, prix + dehors] = [99, 105]", Z.bande(z, 98.0) == (99.0, 105.0))
@@ -167,9 +174,9 @@ def main():
     check("[3c] un prix AU bord bas est dedans, un tick en dessous est dehors",
           bas <= 99.0 <= haut and not (bas <= 98.75 <= haut))
     # 4. le role change avec le scenario
-    roles = {s: grammaire.ROLES[s].get("prev_val") for s in ("S_OUV_BAS_TEND", "S_OUV_BAS_REINT", "S_OUV_HAUT_REJET")}
+    roles = {s: grammaire.ROLES[s].get("prev_val") for s in ("S_OUV_BAS_TEND", "S_OUV_BAS_REINT", "S_OUV_HAUT_REINT")}
     check("[4] prev_val : invalidation / pullback / cible selon le scenario",
-          roles == {"S_OUV_BAS_TEND": "invalidation", "S_OUV_BAS_REINT": "pullback", "S_OUV_HAUT_REJET": "cible"}, roles)
+          roles == {"S_OUV_BAS_TEND": "invalidation", "S_OUV_BAS_REINT": "pullback", "S_OUV_HAUT_REINT": "cible"}, roles)
     # 5. S_AUTRE
     S2 = {"zones": SEUILS["zones"], "range": {"w_min_atr": {"ES": 1.72}, "w_max_atr": {"ES": 5.03}}}
     L = scenarios.derouler(*journee(IB_ETROITE), "ES", S2)

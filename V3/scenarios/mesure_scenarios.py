@@ -35,7 +35,7 @@ from V3.scenarios import grammaire, lot, scenarios              # noqa: E402
 
 RAPPORT = os.path.join(RACINE, "V3", "scenarios", "rapports", "scenarios_57j.md")
 I_10H30 = 4
-CANON = set(grammaire.CANONIQUES) | set(grammaire.GARDES) | {"S_OUV_BAS_REINT"}
+CANON = set(grammaire.CANONIQUES) | set(grammaire.GARDES)
 TIRAGES = 1000
 
 
@@ -101,8 +101,11 @@ def bloc(sym, jours, att, rng):
     t, npop, tl, nlarge = tenue(jours)
     cm, c95, tm, t95 = controle_negatif(jours, rng)
     ec_c, ec_t = c - c95, (t - t95) if t is not None else None
-    verdict_c = ("ATTENDU" if att["couverture_min_pct"] <= c <= att["couverture_max_pct"] else
-                 "TROP COURTE (< %d %%)" % att["couverture_min_pct"] if c < att["couverture_min_pct"] else
+    # Fable, relecture c6c12dd : LA couverture = les scenarios VALIDES a la cloture (un
+    # scenario en cours non valide est une hypothese, pas une seance) ; l'« en cours »
+    # reste journalise comme part de journees avec une hypothese ouverte, sans verdict.
+    verdict_c = ("ATTENDU" if att["couverture_min_pct"] <= cv <= att["couverture_max_pct"] else
+                 "TROP COURTE (< %d %%)" % att["couverture_min_pct"] if cv < att["couverture_min_pct"] else
                  "TROP LARGE (> %d %%)" % att["couverture_max_pct"])
     verdict_t = ("—" if t is None else "ATTENDU" if t >= att["valides_min_pct"] else
                  "TROP PRECOCE (< %d %%)" % att["valides_min_pct"])
@@ -110,12 +113,12 @@ def bloc(sym, jours, att, rng):
                  and (ec_t is None or ec_t >= att["ecart_min_controle_negatif_points"]) else "NE BAT PAS LE TIRAGE")
     out = ["## %s — %d journées" % (sym, n), "",
            "| mesure | attendu (relectrice) | mesuré | verdict |", "|---|---|---|---|",
-           "| 1. couverture des canoniques (scénario final EN COURS, pré-enregistrée) | %d %% (%d-%d) | **%.0f %%** | %s |" % (
-               att["couverture_pct"], att["couverture_min_pct"], att["couverture_max_pct"], c, verdict_c),
-           "| 1 bis. couverture des canoniques VALIDÉS à la clôture | — | **%.0f %%** | %s (à la relectrice de dire laquelle est la couverture) |" % (
-               cv, "dans l'attendu" if att["couverture_min_pct"] <= cv <= att["couverture_max_pct"] else "hors attendu"),
-           "| 2. validés à 10h30 encore vrais à 16h00 | %d %% (≥ %d) | **%s** (N validés à 10h30 = %d) | %s |" % (
-               att["valides_10h30_vrais_16h_pct"], att["valides_min_pct"], lot.fmt(t, 0) + " %" if t is not None else "—", npop, verdict_t),
+           "| 1. COUVERTURE = canoniques VALIDÉS à la clôture (Fable, c6c12dd) | %d %% (%d-%d) | **%.0f %%** | %s |" % (
+               att["couverture_pct"], att["couverture_min_pct"], att["couverture_max_pct"], cv, verdict_c),
+           "| 1 bis. journées avec une hypothèse ouverte (scénario final en cours, validé ou non) | — | %.0f %% | description, pas une couverture |" % c,
+           "| 2. validés à 10h30 encore vrais à 16h00 — SE LIT AU JOUR 20 DE w1 | %d %% (≥ %d) | **%s** (N validés à 10h30 = %d) | %s |" % (
+               att["valides_10h30_vrais_16h_pct"], att["valides_min_pct"], lot.fmt(t, 0) + " %" if t is not None else "—", npop,
+               "N trop petit, pas de verdict" if npop < 20 else verdict_t),
            "| 2 bis. en cours à 10h30 encore en cours à 16h00 (large) | — | %s (N = %d) | description |" % (
                lot.fmt(tl, 0) + " %" if tl is not None else "—", nlarge),
            "| 3. contrôle négatif, couverture : tirage moyen / p95 | grammaire − p95 ≥ %d pts | %.0f / %.0f %% → écart **%+.0f** | %s |" % (
@@ -150,6 +153,10 @@ def main():
     att = s["attendu_rejeu"]
     rng = np.random.default_rng(20260910)
     out = ["# La grammaire v0 sur le lot — les trois mesures de la spec §4.4 (module SCÉNARIOS)", "",
+           "**RÉSERVE w0 (Fable, c6c12dd) : le lot est en fenêtre w0 — la VA de 9h30 y est un profil ANTÉRIEUR, pas",
+           "J−1 (INCIDENT_LOG 04/09, CONVENTIONS §9). La position d'ouverture du lot n'est donc pas celle de la",
+           "campagne, et toutes les couvertures ci-dessous sont mesurées sur ce profil antérieur. Les vrais nombres",
+           "commencent le 10/09 au soir (23h01, rythme 5b/5), en w1.**", "",
            "*Attendu pré-enregistré par la relectrice (Fable, 10/09) : couverture 60 % (45-80), validés à 10h30",
            "encore vrais à 16h00 : 55 % (≥ 40), contrôle négatif battu d'au moins 15 points. Grammaire :",
            "`scenarios/grammaire.py` ; zones : `zones.py` ; seuils : `seuils.yaml` v2026-09-10b. Rejeu",

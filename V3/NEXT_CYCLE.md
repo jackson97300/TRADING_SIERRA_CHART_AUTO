@@ -224,14 +224,13 @@ impossible. Rien ne bouge en campagne.
   POUR LE CYCLE 2 : « `pression` > 1,1 sur les 3 dernieres barres precede
   une cassure acceptee plus souvent que le hasard » — controle par
   permutation des barres, sur les 57 jours du lot PLUS les 60 de la campagne.
-- **Grammaire v0, deux choix de definition a relire (10/09 soir).** (1) Les
-  codes sont ASYMETRIQUES par nom, symetriques par logique : cote haut, la
-  reintegration acceptee est `S_OUV_HAUT_REJET` avec une `precision` PULL /
-  TRAV ; cote bas, la meme sequence bascule vers `S_OUV_BAS_REINT_PULL` ou
-  `_TRAV` (les cinq codes de la spec). Le miroir est teste sur la logique
-  (`test_grammaire` [2]) ; un cycle 2 peut unifier les noms. (2) Avant que
-  PULL ou TRAV soit connu, le code est `S_OUV_BAS_REINT` (famille canonique,
-  `precision: null`) — pas un S_AUTRE, pas une bascule artificielle. (3) Le
-  rejet au VPOC accepte apres une traversee tombe en S_AUTRE(rejet_vpoc) :
-  si la mesure en compte beaucoup, c'est une sequence a nommer (rotation
-  dans la valeur), pas un seuil.
+- **Grammaire v0 — tranche par Fable a `c6c12dd` (10/09 soir).** Les codes
+  sont des FAMILLES en miroir exact (`S_OUV_HAUT_REINT` / `S_OUV_BAS_REINT`,
+  `S_OUV_HAUT_REJET` a disparu), PULL / TRAV sont des `precision`, une
+  famille sans precision est un canonique. Reste au cycle 2 : (1) le rejet
+  au VPOC accepte apres une traversee (1 / 57 sur le lot) tombe en
+  S_AUTRE(rejet_vpoc) — si le jour 20 de w1 en compte plusieurs, c'est une
+  sequence a nommer (rotation dans la valeur), pas un seuil ; (2) la mesure
+  « validee a 10h30 encore vraie a 16h00 » se lit au jour 20 de w1 (N = 5 /
+  4 sur le lot) ; (3) la VA du lot est w0 : re-mesurer les couvertures sur
+  w1 seulement des que N le permet.
