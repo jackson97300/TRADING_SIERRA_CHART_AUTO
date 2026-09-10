@@ -29,7 +29,9 @@ JOUR, SYM = "20260903", "ES"     # la meme journee que test_faux_live
 
 
 def _df(source):
-    d = {"ts": [1000], "mq_gamma_condition": [2.0],
+    # un ts REEL sur la grille 15 min (09/09 13:30 UTC = 9h30 ET) : la
+    # lecture leve sur une barre hors grille depuis la passe lecture (B3)
+    d = {"ts": [1788960600000], "mq_gamma_condition": [2.0],
          "gamma_block_long": [1.0], "rvol_zscore": [0.5]}
     if source is not None:
         d["_mq_gamma_source"] = [source]

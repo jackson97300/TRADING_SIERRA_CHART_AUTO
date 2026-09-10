@@ -186,6 +186,19 @@ devenirs par famille. Écrites après la confrontation `research/parite_barriere
     signal manqué : c'est une distance. La seule phrase autorisée a la forme
     « à seuil × k, N passerait de A à B », et elle se prononce au jour 61.
 
+36. **`L5_VETO_GAMMA` se lit sur les LONGS seulement** (A1, forme minimale,
+    passe lecture 10/09) : CHAQUE short depuis le 10/09 porte une ligne
+    `TROU_L5_VETO_GAMMA` — mur ou pas — parce que `gamma_block_short` n'est
+    pas dans l'agrégation ; ce n'est pas « aucun mur sous le prix », c'est
+    « non mesuré » (mesuré au re-rejeu : 13 shorts sur 14 jours, 13 lignes ;
+    avant, un short sans mur n'écrivait rien). Les lignes antérieures au
+    10/09 (non rejouées, et le journal LIVE du 10/09 avant le redémarrage du
+    coureur — `ts` dans DECISIONS) lisaient le mur du DESSUS pour les
+    shorts : un `BLOQUE:L5_VETO_GAMMA` sur un `:S` y est un veto inversé,
+    pas une mesure. Et depuis la même passe, `L5_FRAIS_TROP_LOURDS` et
+    `L0_REGIME_INDETERMINE` RÉPONDENT avant 11h00 (sur `atr_ref`) : leurs
+    `TROU_` du matin antérieurs sont des trous de MÈTRE, pas de marché.
+
 ## Ce que le jour 61 NE fait pas
 
 Pas de « correction » : ce qui a survécu bascule observée → appliquée, ce qui

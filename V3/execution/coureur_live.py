@@ -33,11 +33,11 @@ ATTENDU PRÉ-ENREGISTRÉ (écrit le 07/09 AVANT le premier run, règle 5) :
     quand `vix_level == 0` ;
   - fichier non synchronisé depuis > 90 s : `L0_DATA_PERIMEE` bloque ;
   - aucun signal ni battement n'est journalisé deux fois (relance comprise) ;
-  - à 22:00 UTC la boucle BASCULE de journée (ajout 08/09, INCIDENT
-    VALIDATION_MISS : « bascule à 22:00 » était une intention, pas une
-    ligne de code — la nuit du 07 au 08 n'a aucune preuve live) et
-    `LOGS/heartbeat_coureur.json` bat à chaque cycle (le garde relance
-    au-delà de 3 min — `garde_coureur.py`).
+  - à 22:00 UTC la boucle BASCULE de journée (ajout 08/09, INCIDENT VALIDATION_
+    MISS : « bascule à 22:00 » était une intention, pas une ligne de code) ;
+    `LOGS/heartbeat_coureur.json` bat à chaque cycle (garde : relance > 3 min) ;
+  - après minuit ET (passe lecture 10/09) : `L0_PREMIERE_BARRE` bloque AUSSI
+    les battements de nuit — rang lu sur l'heure, négatif avant 9h30 ET.
 """
 
 from __future__ import annotations

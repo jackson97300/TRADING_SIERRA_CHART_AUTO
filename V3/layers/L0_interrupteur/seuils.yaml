@@ -200,9 +200,11 @@ portes:
     # du matin etait une association de famille (SOURCES_DECLAREES corrigee).
     # RESTE LE MOT DE JACKSON : repasser appliquee = changer cette ligne,
     # un commit. Cf A_FAIRE point 16, DECISIONS 07/09 soir.
-    # /!\ BUG A1 (audit Fable 09/09, INCIDENT_LOG) : `_gamma` lit
-    # gamma_block_long quel que soit le SIDE — ignore le sens. NE PAS repasser
-    # appliquee avant le fix A1, sinon veto directionnel FAUX en live.
+    # A1 CORRIGE EN FORME MINIMALE (passe lecture 10/09) : `_gamma` lit le
+    # SENS — un LONG lit gamma_block_long, un SHORT rend un TROU
+    # (gamma_block_short n'est PAS dans l'agregation 15 min). NE PAS repasser
+    # appliquee AVANT la passe complete : en strict, le trou bloquerait TOUS
+    # les shorts. Les longs sont mesures, les shorts non (LECTURE regle 36).
     mode: observee
     seuils: {}
     mesure: "mur gamma dans le sens du TP — voir rapports/portes_57j.csv"

@@ -4,8 +4,9 @@ Les portes comparent, elles ne calculent pas. Une porte qui calcule est une
 porte qu'on ne peut pas tester sans un DataFrame complet ; avec ce decoupage,
 chaque porte se teste avec un dict de trois cles.
 
-C'est aussi le seul endroit qui connait les noms de colonnes. Le jour ou une
-colonne change de nom, une ligne bouge — pas quinze portes.
+Les NOMS de colonnes et les convertisseurs vivent dans `lecture_colonnes.py`
+(passe lecture du 10/09, plafond 300 lignes) et sont re-exportes ici : le
+jour ou une colonne change de nom, une ligne bouge la-bas — pas quinze portes.
 
 
 CE QU'UN CHAMP A `None` VEUT DIRE
@@ -27,90 +28,18 @@ import pandas as pd
 
 from CORE.features import recalc
 from V3 import calendrier
+# Re-exportes tels quels : `lecture.val`, `lecture.verifier_colonnes`,
+# `lecture.SOURCES_DECLAREES`, `lecture.REQUISES` restent le chemin des
+# appelants (chaine, campagne, coureur_live, barrieres, L4, tests).
+from V3.lecture_colonnes import (REQUISES, REQUISES_L4,        # noqa: F401
+                                 SOURCES_DECLAREES, _refusee_proxy, _texte,
+                                 val, verifier_colonnes, vrai)
+
+OUVERTURE_ET = 570          # 9h30 ET, la fenetre d'`est_cash` (CONVENTIONS §1)
+BARRE_MIN = 15              # la barre de la campagne
 
 
-# Les colonnes dont les couches DEPENDENT. Une absente n'est pas une donnee
-# manquante qu'on lira `None` : c'est un chainon rompu entre le JSONL et la
-# decision, et il est SILENCIEUX.
-#
-# Deux fois le 06/09, une colonne presente dans les donnees s'est perdue a
-# l'agregation sans que rien ne le signale :
-#   - `data_quality_flag` — la porte L0_DATA_INSTABLE aurait ferme la seance
-#     entiere en live, en repondant « je ne sais pas » sur chaque barre ;
-#   - `dist_vwap_w` — `biais()` rendait 0 EN PERMANENCE, donc B1 n'existait
-#     pas, et aucune mesure ne consultait sa sortie pour s'en apercevoir.
-#
-# `test_rien_de_cache` protege les portes contre ce genre de derive ; rien ne
-# protegeait les COLONNES. C'est ce que fait `verifier_colonnes`.
-REQUISES = {
-    "L0": ("ts", "high", "low", "close", "atr_barre", "data_quality_flag",
-           "window_version", "barre_complete", "is_news_60m",
-           "is_session_blocked", "vix_regime", "dist_mq_hvl"),
-    "L1": ("dist_vwap_w", "dist_cur_vah", "dist_cur_val", "dist_cur_vpoc",
-           "dist_prev_vah", "dist_prev_val", "dist_prev_vpoc",
-           "poc_migration_dir"),
-    "L5": ("gamma_block_long", "rvol_zscore", "atr_ref", "atr_source"),
-}
-
-# Les PROVENANCES AUTO-DECLAREES du flux : un champ `_X_source` gouverne des
-# colonnes, et quand il contient « proxy », ces colonnes se REFUSENT — point 7
-# de la nuit du 08/09 (`_mq_gamma_source: sierra_proxy_v2` : le gamma est
-# reconstruit depuis un scraper mort le 27/05, decision souveraine du 06/09 :
-# aucun proxy). lecture.py est le seul endroit qui connait les noms de
-# colonnes ; c'est donc le seul endroit qui peut refuser MECANIQUEMENT.
-# Une colonne refusee se lit None — un TROU, jamais un faux « tout va bien ».
-SOURCES_DECLAREES = {
-    # CORRIGE le 07/09 au soir (DECISIONS) : le proxy ne produit QUE le label
-    # mq_gamma_condition. Les gamma_block_* viennent de gamma_veto_engine
-    # (murs A + atr + bool_gex_flip_zone DMP natif) — REPRODUITS, 0 ecart
-    # sur 7 313 barres (5 275 + 2 038 independantes). La table du matin les
-    # condamnait par association de famille.
-    "_mq_gamma_source": ("mq_gamma_condition",),
-    "_aggressor_source": ("aggressor_imbalance",),   # non consommee ce jour
-}
-
-
-def _refusee_proxy(df, col, i):
-    """True si `col` est gouvernee par une `_source` qui contient « proxy »."""
-    for src, cols in SOURCES_DECLAREES.items():
-        if col in cols and src in df.columns:
-            v = df[src].iloc[i]
-            if v is not None and not pd.isna(v) and "proxy" in str(v).lower():
-                return True
-    return False
-
-
-def verifier_colonnes(df, couches=("L0", "L5")):
-    """Rend la liste des colonnes manquantes pour les couches demandees.
-
-    A appeler apres le chargement, avant toute mesure. Une couche qui tourne
-    sur une colonne absente ne leve rien : elle rend un resultat d'apparence
-    normale, et c'est ce qui rend le defaut indetectable a la lecture.
-    """
-    return [(c, col) for c in couches
-            for col in REQUISES.get(c, ()) if col not in df.columns]
-
-
-def val(df, col, i):
-    if col not in df.columns or _refusee_proxy(df, col, i):
-        return None
-    v = pd.to_numeric(pd.Series([df[col].iloc[i]]), errors="coerce").iloc[0]
-    return None if pd.isna(v) else float(v)
-
-
-def vrai(df, col, i):
-    v = val(df, col, i)
-    return v is not None and v != 0
-
-
-def _texte(df, col, i):
-    if col not in df.columns:
-        return None
-    v = df[col].iloc[i]
-    return None if pd.isna(v) else str(v)
-
-
-def lire(df, i, sym="ES", live=None):
+def lire(df, i, sym="ES", live=None, side=None):
     """Prepare la barre `i` pour toutes les portes.
 
     `live` porte ce qui n'existe qu'en execution reelle — age de la barre en
@@ -118,13 +47,31 @@ def lire(df, i, sym="ES", live=None):
     ligne il vaut `None` et ces champs restent `None` : les portes de la
     famille A rendent alors « je ne peux pas repondre », jamais « tout va
     bien ».
+
+    `side` (A1, passe lecture 10/09) : le SENS du signal, +1 / -1, que L5 lit
+    (le veto gamma est par sens). None = inconnu, et le veto rend un TROU.
     """
     live = live or {}
     ts = int(df["ts"].iloc[i])
     t = pd.Timestamp(ts, unit="ms", tz="UTC")
+    m_et = int(recalc.minutes_et(pd.Series([t])).iloc[0])
+    # B3 (passe lecture 10/09) : le rang vient de l'HEURE, plus de l'indice —
+    # `i` supposait en silence un df cash commencant a 9h30 sans trou. Une
+    # barre hors de la grille 15 min depuis 9h30 ET est une agregation fausse :
+    # on leve, avec le ts, plutot que de ranger une barre de 9h20.
+    if (m_et - OUVERTURE_ET) % BARRE_MIN:
+        raise ValueError("barre hors grille %d min depuis 9h30 ET : ts=%d "
+                         "(minutes_et=%d)" % (BARRE_MIN, ts, m_et))
+    # R3 : le metre des vetos est atr_ref (brique 1). Sans recalculs — le
+    # battement live sur full_agg, les df de test — le seul metre est
+    # atr_barre, et atr_source le DIT (« absent ») : visible, jamais muet.
+    atr_b = val(df, "atr_barre", i)
+    recalcs = "atr_ref" in df.columns and "atr_source" in df.columns   # un seul fait
+    a_ref = val(df, "atr_ref", i) if recalcs else atr_b
+    src = _texte(df, "atr_source", i) if recalcs else "absent"
     return {
-        "ts": ts, "sym": sym, "i": i,
-        "minutes_et": int(recalc.minutes_et(pd.Series([t])).iloc[0]),
+        "ts": ts, "sym": sym, "i": i, "side": side,
+        "minutes_et": m_et,
         "jour": str(df["jour"].iloc[i]) if "jour" in df.columns else "",
         # --- famille A : la donnee est-elle vraie ? ------------------------
         # Hors ligne, `charger_jour` a deja filtre les barres instables : le
@@ -134,7 +81,7 @@ def lire(df, i, sym="ES", live=None):
         "fenetre_melangee": _fenetre_melangee(df),
         "barre_complete": (bool(df["barre_complete"].iloc[i])
                            if "barre_complete" in df.columns else None),
-        "rang_du_jour": i,
+        "rang_du_jour": (m_et - OUVERTURE_ET) // BARRE_MIN,
         "age_s": live.get("age_s"),
         "l6_alerte": live.get("l6_alerte"),
         "colonnes_mortes": live.get("colonnes_mortes"),
@@ -153,7 +100,7 @@ def lire(df, i, sym="ES", live=None):
         # dimanche et ferie pris pour une panne. INCIDENT_LOG 09/09.
         "vix_regime": (val(df, "vix_regime", i)
                        if (val(df, "vix_level", i) or 0.0) > 0.0 else None),
-        "dist_hvl_atr": _dist_hvl_atr(df, i),
+        "dist_hvl_atr": _dist_hvl_atr(df, i, a_ref),
         # --- famille E : puis-je passer l'ordre ? --------------------------
         "dtc_connecte": live.get("dtc_connecte"),
         "contrat_actif": live.get("contrat_actif"),
@@ -164,7 +111,7 @@ def lire(df, i, sym="ES", live=None):
         "gamma_block_long": (None if val(df, "gamma_block_long", i) is None
                              else vrai(df, "gamma_block_long", i)),
         "rvol_zscore": val(df, "rvol_zscore", i),
-        "atr_barre": val(df, "atr_barre", i),
+        "atr_barre": atr_b, "atr_ref": a_ref, "atr_source": src,
     }
 
 
@@ -187,16 +134,15 @@ def _fenetre_melangee(df):
     return int(df["window_version"].nunique(dropna=True)) > 1
 
 
-def _dist_hvl_atr(df, i):
+def _dist_hvl_atr(df, i, a):
     """Distance au HVL en ATR — le HVL est un REGIME, pas un lieu.
 
     Mesure du 06/09 : 1,65 % des barres sont a portee du HVL si on le traite
     comme un lieu, contre 99,7 % de couverture si on lit le SIGNE de la
     distance. La zone morte de 1,0 ATR fait tomber les bascules de 10,2 a 1,8
-    par jour.
+    par jour. `a` = atr_ref (R3) : avant 11h00 le regime se lit enfin.
     """
     d = val(df, "dist_mq_hvl", i)
-    a = val(df, "atr_barre", i)
     if d is None or not a or a <= 0:
         return None
     # Fable C2 09/09 : dist TICKS x0,25 / atr POINTS ; seuil YAML 1,0->0,25
@@ -204,16 +150,7 @@ def _dist_hvl_atr(df, i):
 
 
 # --- bloc l4 : la fenetre de confirmation (SPEC L4 §2) ----------------------
-
-# `finish_delta_pct` n'y est PAS : saturee a 1,0 et de formule inconnue
-# (seuils.yaml V5), elle est hors du chemin decisionnel — le finish de la
-# fenetre se RECALCULE depuis OHLC (position de la cloture dans le range).
-REQUISES_L4 = ("ts", "open", "high", "low", "close", "total_vol", "delta_bar",
-               "ask_pct", "bid_pct",
-               "max_big_ask_vol_in_bar", "max_big_bid_vol_in_bar")
-REQUISES["L4"] = REQUISES_L4      # verifier_colonnes declare le bloc (SPEC §9.1)
-                                  # — a appeler sur le frame 1 MIN, pas le 15
-
+# Les colonnes requises (REQUISES_L4) sont declarees dans lecture_colonnes.
 
 def lire_l4(b, i_debut, k):
     """Les `k` premieres barres 1 MIN de t+1 — la matiere des cinq vetos.

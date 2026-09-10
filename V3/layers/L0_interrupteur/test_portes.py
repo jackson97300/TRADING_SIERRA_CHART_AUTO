@@ -40,6 +40,9 @@ BARRE = {
     "rollover": False, "vix_regime": 1.0, "dist_hvl_atr": 2.4,
     "dtc_connecte": True, "contrat_actif": True,
     "gamma_block_long": False, "rvol_zscore": 0.4, "atr_barre": 15.0,
+    # passe lecture 10/09 : le metre des vetos est atr_ref (R3), le veto
+    # gamma lit le SENS (A1) — une barre nominale est un LONG sur son ATR
+    "atr_ref": 15.0, "atr_source": "barre", "side": 1,
 }
 ETAT = {"n_jour": 0, "n_signaux_jour": 0, "pnl_jour": 0.0, "fin_cooldown": -1,
         "libre_a": -1, "side_ouvert": 0, "i_entree": -1, "issue_ouverte": None}
@@ -114,13 +117,17 @@ CAS = [
     # --- L5 : combien, et ou est le stop ? ------------------------------
     ("L5_VETO_GAMMA", {"gamma_block_long": True}, {}, True),
     ("L5_VETO_GAMMA", {}, {}, False),
+    # A1 (passe lecture 10/09) : le meme mur, un SHORT -> TROU honnete, jamais
+    # un veto inverse — la colonne short n'est pas dans l'agregation
+    ("L5_VETO_GAMMA", {"gamma_block_long": True, "side": -1}, {}, None),
+    ("L5_VETO_GAMMA", {"gamma_block_long": True, "side": None}, {}, None),
     ("L5_VETO_RVOL_EXTREME", {"rvol_zscore": -3.4}, {}, True),
     ("L5_VETO_RVOL_EXTREME", {"rvol_zscore": 2.9}, {}, False),
-    # MES : 4,32 / (1,5 x 0,5 pt x 5 $) = 115 % > 10 % -> bloque
-    ("L5_FRAIS_TROP_LOURDS", {"atr_barre": 0.5}, {}, True),
+    # MES : 4,32 / (1,5 x 0,5 pt x 5 $) = 115 % > 10 % -> bloque  (R3 : sur atr_ref)
+    ("L5_FRAIS_TROP_LOURDS", {"atr_ref": 0.5}, {}, True),
     # MES : 4,32 / (1,5 x 15,11 pts x 5 $) = 3,8 % -> passe (ATR median mesure)
-    ("L5_FRAIS_TROP_LOURDS", {"atr_barre": 15.11}, {}, False),
-    ("L5_FRAIS_TROP_LOURDS", {"atr_barre": None}, {}, None),   # A2 : ATR absent -> TROU
+    ("L5_FRAIS_TROP_LOURDS", {"atr_ref": 15.11}, {}, False),
+    ("L5_FRAIS_TROP_LOURDS", {"atr_ref": None}, {}, None),   # A2 : ATR absent -> TROU
 ]
 
 

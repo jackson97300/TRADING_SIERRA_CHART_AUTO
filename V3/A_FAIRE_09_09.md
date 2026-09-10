@@ -32,20 +32,15 @@ passe pas à côté »). Deux audits : la REVUE QUALITÉ (14 fichiers logique, �
   colonne de journal, pas une décision — ne change pas ce que la chaîne décide.
 
 ## ⏳ PASSES DÉDIÉES — quand elles viennent
-- **Passe lecture** : découper `lecture.py` (plafond 300), PUIS
-  - **R3 (review brique 1, 10/09) — AVANT LE GEL** : `lecture.lire` n'expose
-    que `atr_barre` → `vetos._frais` (`L5_FRAIS_TROP_LOURDS`) et
-    `_dist_hvl_atr` (`L0_REGIME_INDETERMINE`), observées, rendent un TROU sur
-    toute la population du matin (`atr_source = veille`) — « vide par
-    construction », la classe que la brique 1 corrige pour L3. Fix : clé
-    `atr_ref` dans `lec`, les deux consommateurs dessus, fixtures
-    `test_portes`, + scénario `test_faux_live` avec une barre du matin
-    (`atr_barre` NaN, `atr_ref` fini) qui PASSE en strict.
-  - **A1** gamma PAR SENS : `side` dans `lire` + porter `gamma_block_short`
-    dans l'agrégation 15 min (ABSENTE aujourd'hui — mesuré). Porte OBSERVÉE,
-    ne bloque rien, mais corrompt la lecture du jour 61 (veto mono-sens).
-  - **B3** `rang_du_jour` depuis `minutes_et` (au lieu de `i`, qui suppose
-    silencieusement un `df` cash commençant à 9h30 ET).
+- ✅ **PASSE LECTURE FAITE (10/09, `TODO_PASSE_LECTURE.md`)** : `lecture.py`
+  découpé (235 + `lecture_colonnes.py` 108) ; **R3** `lec` expose
+  `atr_ref`/`atr_source`, `_frais` et `_dist_hvl_atr` dessus ; **A1 minimal**
+  `lire(side)`, `_gamma` → TROU pour un short (règle 36, garde YAML) ;
+  **B3** `rang_du_jour` depuis l'heure + fail-loud hors grille.
+  `test_passe_lecture` 15/15. Re-rejeu de 14 jours mesuré contre l'attendu
+  (DECISIONS). **Reste au backlog (CORE)** : porter `gamma_block_short` dans
+  l'agrégation 15 min — tant qu'elle n'y est pas, les shorts n'ont pas de
+  mesure de veto gamma.
 - **B1 — coûts SOURCE UNIQUE** : 4 copies (`chaine.py`, `vetos.py`,
   `hypothesis_runner` CORE, `seuils`). `chaine.py:173/189` garde le silent-fallback
   ES que C1 a tué dans `vetos` — deux politiques pour le même nombre. Règle 1 de

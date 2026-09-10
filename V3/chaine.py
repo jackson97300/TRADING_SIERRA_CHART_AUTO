@@ -118,7 +118,7 @@ def appliquer(signaux, df, sym, journal=None, hypothese="?",
         # sur soixante jours de journal (revue Fable 09/09).
         i, side = sig[0], sig[1]
         hyp = sig[2] if len(sig) > 2 else hypothese
-        lec = lecture.lire(df, i, sym, live=live)
+        lec = lecture.lire(df, i, sym, live=live, side=side)   # A1 : L5 lit le sens
         if lec["jour"] != jour_courant:
             jour_courant, etat = lec["jour"], etat_neuf()
         # atr_source (brique 1, 09/09) : d'ou vient le metre du lieu, sur

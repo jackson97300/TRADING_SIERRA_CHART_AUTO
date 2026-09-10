@@ -13,6 +13,7 @@ V3/
 
   registre.py          le registre des portes — une porte n'existe que declaree ici
   lecture.py           prepare une barre pour les portes : le SEUL endroit qui calcule
+  lecture_colonnes.py  les NOMS de colonnes (REQUISES, SOURCES_DECLAREES) et les convertisseurs
   chaine.py            evalue tout, applique, et SIMULE ce qu'elle refuse (fantomes)
 
   config/              ce qui est partage entre couches

@@ -70,6 +70,7 @@
 **C1 (CORRIGE)** : `COUT_DOLLARS.get(sym, 4.32)` / `VAL_POINT.get(sym, 5.0)` = defaut silencieux ES pour un sym inconnu -> `[sym]` fail-loud.
 **Lecon** : une porte OBSERVEE n'est pas une porte SANS consequence — sa mesure nourrit le jour 61. Un veto qui lit une condition mono-sens est un veto FAUX, meme s'il ne bloque rien.
 **Trigger prevention** : tout veto/porte qui depend du SENS doit recevoir `side` ; grep `gamma_block_long` sans `gamma_block_short` a cote = suspect.
+**Suite (passe lecture 10/09, brief Fable)** : A1 corrige en FORME MINIMALE — `lire(side)`, `_gamma` rend None pour un SHORT (TROU_L5_VETO_GAMMA) et un sens inconnu, LONG inchange ; garde YAML reecrite (« en strict, le trou bloquerait tous les shorts — ne pas promouvoir avant la passe complete ») ; LECTURE regle 36 ; tests miroir 4 cas. `gamma_block_short` dans l'agregation = toujours au backlog (CORE).
 **Reviewed** : Fable (audit) + self + code-reviewer (A2/C1).
 
 ### 2026-09-09 — [SCALE_DRIFT] — L0_EOD_LOCKOUT en UTC fige : bug latent qui aurait mange la barre 15h15 de C2_EOD des le 1er novembre

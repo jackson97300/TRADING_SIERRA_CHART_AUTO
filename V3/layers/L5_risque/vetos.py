@@ -19,12 +19,19 @@ from CORE.research.hypothesis_runner import COUT_DOLLARS, VAL_POINT   # noqa: E4
 
 @porte("L5_VETO_GAMMA", "L5")
 def _gamma(lec, etat, s):
-    """Mur gamma. BUG A1 CONNU (audit Fable 09/09, INCIDENT_LOG) : lit
-    `gamma_block_long` quel que soit le SIDE — un mur au-dessus bloque des
-    shorts sans raison, un mur en dessous ne bloque jamais. Fix = `side` dans
-    `lecture` + `gamma_block_short` porte dans l'agregation 15 min (absente
-    aujourd'hui) : passe dediee (lecture.py au plafond 300 lignes). Porte
-    OBSERVEE — zero effet campagne ; seule la lecture du jour 61 en depend."""
+    """Mur gamma, PAR SENS — forme minimale (A1, passe lecture 10/09).
+
+    Bug A1 (audit Fable 09/09) : lisait `gamma_block_long` quel que soit le
+    sens — un mur au-dessus bloquait des shorts sans raison. Maintenant : un
+    LONG lit le mur du dessus ; un SHORT rend None (TROU_L5_VETO_GAMMA) parce
+    que `gamma_block_short` N'EST PAS dans l'agregation 15 min — un trou
+    honnete plutot qu'un veto inverse ; un sens inconnu rend None aussi.
+    Porte OBSERVEE, et la garde YAML tient : la promouvoir en strict
+    bloquerait TOUS les shorts par le trou. La passe complete (porter la
+    colonne short dans l'agregation) reste au backlog."""
+    side = lec["side"]
+    if side is None or side < 0:
+        return None
     return lec["gamma_block_long"]
 
 
@@ -50,7 +57,7 @@ def _frais(lec, etat, s):
     seuil a 10 % ne ferme rien sur MNQ et ferme tout sur MES — la meme
     conclusion que le cout par trade, atteinte par un autre chemin.
     """
-    atr = lec["atr_barre"]
+    atr = lec["atr_ref"]                   # R3 : le meme metre que L3 et les brackets
     if atr is None or (isinstance(atr, float) and atr != atr) or atr <= 0:
         return None                        # A2 : ATR inconnu -> TROU, jamais False
     tp_usd = s["tp_atr"] * atr * VAL_POINT[lec["sym"]]   # C1 : fail-loud sym inconnu
