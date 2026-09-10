@@ -84,4 +84,18 @@ suivante) · pas 2b.
       /d MON,TUE,WED,THU,FRI /st 15:25` — même piège DST que le rythme du
       soir : à revoir le 25/10 et le 1er/11 ; la garde TARDIVE protège la
       donnée, pas l'horloge).
-- [ ] review 3-4-5 → commit → publier → hash : `……`
+- [x] review 3-4-5 (GO-AVEC-RÉSERVES, 12 réserves exécutées — dont la carte
+      VIDE à 9h25 et `derive_feature` contre sa propre médiane) → commit
+      `77e186a` → **miroir `7c9e47d`**.
+
+## Ce qui reste, et à qui (10/09 midi)
+- **Jackson, 15h15 Paris** : `taskkill /PID 26360 /F` (le coureur live a
+  l'ancien `lecture.py` ET l'ancien YAML en mémoire ; le garde le relance en
+  < 3 min) — l'heure va dans DECISIONS + règle 36.
+- **Jackson** : la tâche planifiée « V3 carte matin » (commande ci-dessus).
+- **Jackson** : la ligne de 11h15 du 09/09 dans `journal_manuel/20260909.md`.
+- **Ce soir 22h** : heure de bascule U26→Z26 dans le fichier (si elle a lieu)
+  et `max(atr_barre)` du 10/09 ; `volumetrie_cash` ES/NQ 10/09 avant le gel.
+- **11/09 matin** : si le fichier ouvre en Z26 → `L0_CONTRAT_INACTIF` remise
+  `appliquee` + une ligne DECISIONS ; relecture Fable (marges/2, lieu,
+  §5 septies, `derive_feature` v1) ; **le gel + son tag**.
