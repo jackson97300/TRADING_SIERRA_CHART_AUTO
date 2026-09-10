@@ -171,4 +171,9 @@ basse plus longue que la distance a la VAL — pas « sortie sous la VAL puis
 cloture dedans ». Le short (VAH) est juste. Au cycle 2 : `val = close + dl x
 tick`, `low < val`, `dl < 0` (cloture revenue AU-DESSUS) — miroir exact du
 short — et lire les deux populations de longs cote a cote. En campagne : rien
-ne bouge, H3-VPOC se mesure telle que taguee (LECTURE regle 37).
+ne bouge, H3-VPOC se mesure telle que taguee (LECTURE regles 37 et 38).
+CADRAGE FABLE (10/09) : H3 gele est DEUX hypotheses sous un nom — le short au
+VAH, celui qu'on a ecrit ; et un long ACCIDENTEL que personne n'a
+pre-enregistre. La jambe long ne peut pas « passer » : un resultat sur elle
+est une DECOUVERTE a pre-enregistrer ici, au cycle 2, jamais un verdict. Sa
+taille (longs / shorts H3 sur le lot) est dans DECISIONS du 10/09 soir.

@@ -218,6 +218,19 @@ devenirs par famille. Écrites après la confrontation `research/parite_barriere
     puis clôture dedans » comme sa docstring le dit. Le journal porte la
     vraie VAL ; le déclencheur reste tel qu'il a été tagué et mesuré.
 
+38. **H3-VPOC se lit en DEUX JAMBES** (Fable, 10/09, relecture du lieu —
+    mesure : `close + dist_cur_val × tick = cur_val_lvl` à 100 % sur 4 × 390
+    barres, `h3` gelé reconstruit la VAL au signe inverse). La jambe SHORT
+    (rejet au VAH) est l'hypothèse pré-enregistrée. La jambe LONG tire quand
+    la clôture est juste SOUS la VAL avec une mèche basse — ce n'est pas
+    « sorti sous la VAL puis revenu dedans », c'est autre chose : **une
+    hypothèse ACCIDENTELLE, sans attendu écrit, que personne n'a
+    pré-enregistrée**. Elle se lit À PART et NE PEUT PAS « passer » : un
+    résultat sur elle est une DÉCOUVERTE à pré-enregistrer au cycle 2
+    (NEXT_CYCLE §5 septies), jamais un verdict. Rien ne bouge au tag. Sa
+    taille est mesurée dans DECISIONS (10/09 soir : longs / shorts H3 sur le
+    lot) — c'est la jambe qu'on isole.
+
 ## Ce que le jour 61 NE fait pas
 
 Pas de « correction » : ce qui a survécu bascule observée → appliquée, ce qui

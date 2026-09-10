@@ -151,5 +151,11 @@ dit ce rapport. Ce qui change, tout est AVANT 11h :*
   plus d'`atr_invalide` ; la question 3 de §9 est close.
 - **LES_QUATRE restent à 0/0** sur le 09/09, matin compris : le lieu n'y était
   pas, même avec le mètre. Le silence est maintenant un silence MESURÉ.
+- **§6, corrigé le 10/09 (brique 4, `derive_feature`)** : F15 ×44 sur NQ
+  n'était PAS la feature — livré 189 / recalculé 42 = ×4,50 contre la médiane
+  propre de NQ ×3,28 (rel ×1,37 ; ES rel ×0,97) : **un régime de divergence,
+  le flush**. Les deux `ED10_BUY_CVD_DIVERGENCE` NQ perdent leur `caveat_F15`
+  et portent `regime_divergence` — un label, pas un doute (Fable, 10/09).
+  La question 1 de §9 est close.
 - Sur le lot (54 j × 2) : ES 6 / NQ 5 lieux des quatre le matin, tous `veille`
   (`rapports/trou_atr_les_quatre_20260909.md`).
