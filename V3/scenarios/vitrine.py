@@ -99,6 +99,7 @@ def etat_courant(jour=None, seuils=None):
             "prochaine_zone_haut": d.get("prochaine_zone_haut"), "prochaine_zone_bas": d.get("prochaine_zone_bas"),
             "ce_qui_ne_se_trade_pas": d.get("ce_qui_ne_se_trade_pas", []),
             "sorties": _sorties(d), "setups_hors_zones": d.get("setups_hors_zones", []),
+            "setups_armes_motif": d.get("setups_armes_motif"),
             "alertes": [a for a in al if a["sym"] == sym and a["ts"] >= d["ts"] - fen],
             "grammaire_version": d.get("grammaire_version"), "confiance": None,
         }

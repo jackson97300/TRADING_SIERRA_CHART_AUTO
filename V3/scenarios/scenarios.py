@@ -88,7 +88,15 @@ def derouler(df15, brut, sym, seuils=None):
         haut, bas = float(df15["high"].iloc[:I_DEBUT_IB].max()), float(df15["low"].iloc[:I_DEBUT_IB].min())
         lignes_range = {l["i"]: l for l in recalc.range_r(df15, haut, bas, i_debut=I_DEBUT_IB, tick=lot.TICK,
                                                               w_min=bornes[0], w_max=bornes[1])}
-    expo = marges_quatre.exposer(df15)                 # la decomposition des quatre, lue, jamais recopiee
+    # la decomposition des quatre, lue, jamais recopiee — SEULEMENT sur le frame de la
+    # chaine (rvol_r = mediane roulante sur vingt jours, bandes SD2 injectees) : sur un
+    # frame sans recalculs, exposer rendrait « rvol faux » (colonne absente) ou, pire,
+    # un rvol_r calcule sur trois jours qui existe et qui ment. Alors : aucun setup,
+    # et le motif sur la ligne (Fable, relecture 8ba1d64).
+    if "rvol_r" in df15.columns and "dist_vwap_rth_sd2u_r" in df15.columns:
+        expo, motif_setups = marges_quatre.exposer(df15), None
+    else:
+        expo, motif_setups = {}, "frame_sans_recalculs"
     out = []
     for i in range(len(df15)):
         if i == I_DEBUT_IB:
@@ -107,6 +115,7 @@ def derouler(df15, brut, sym, seuils=None):
                                                              "pression", "barres_depuis_pose", "largeur_atr")}
                   if i in lignes_range else None,
                   "zones": Z.exporter(zones, c), "evenements_zones": ev_zones, "setups_hors_zones": hors,
+                  "setups_armes_motif": motif_setups,
                   "prochaine_zone_haut": ph, "prochaine_zone_bas": pb})
         r["grammaire_version"], r["seuils_version"] = grammaire.GRAMMAIRE_VERSION, str(s.get("version"))
         out.append(_propre(r))

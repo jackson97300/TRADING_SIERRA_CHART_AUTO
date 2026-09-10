@@ -242,13 +242,34 @@ def main():
                       for l in R for z in l["zones"] for s in z["setups_armes"] if s["setup"] == "H8p")
               and all(s["lieu_atteint"] is not None for l in R for s in l["setups_hors_zones"] if s["setup"] == "H2p"))
     L9 = scenarios.derouler(*journee(POSE), "ES", SEUILS)
-    check("[9d] journee synthetique sans colonnes : H6p present sur l'IB avec lieu_inconnu, rien d'invente",
-          all(s["lieu_atteint"] is None and s["condition_restante"] == "lieu_inconnu"
-              for z in L9[-1]["zones"] if z["nom"] in ("ib_high", "ib_low") for s in z["setups_armes"])
-          and any(z["setups_armes"] for z in L9[-1]["zones"] if z["nom"] == "ib_high"))
+    check("[9d] journee synthetique sans recalculs : AUCUN setup (rien d'invente), motif frame_sans_recalculs",
+          all(not z["setups_armes"] for z in L9[-1]["zones"]) and L9[-1]["setups_armes_motif"] == "frame_sans_recalculs")
     zs = [{"nom": "ib_high", "dormant": False, "setups_armes": []}]
     check("[9e] exposer sans H8p -> aucune entree H8p (absent, pas invente)",
           Z.setups_armes(zs, journee(POSE)[0], 5, {"H6p": {}}) == [] and zs[0]["setups_armes"] == [])
+    # 9f. LE TEST QUI TRANCHE (Fable, 8ba1d64) : le rvol_r du frame que setups_armes recoit
+    # est, colonne a colonne, celui du frame de la CAMPAGNE (chauffe vingt jours) ; un frame a
+    # trois jours de chauffe rend un rvol_r different, et derouler n'y calcule AUCUN setup.
+    if not df_r.empty:
+        from CORE.research.hypothesis_runner import injecter_recalculs
+        from V3.campagne import COLS_RECALC, chauffe_1min
+        from V3.scenarios import lot
+        df0, brut0 = charger_jour("ES", "20260909", 15, avec_1min=True)
+        campagne = injecter_recalculs(pd.concat(chauffe_1min("ES", "20260909") + [brut0[COLS_RECALC]], ignore_index=True), df0, minutes=15)
+        a, b = pd.to_numeric(df_r["rvol_r"], errors="coerce"), pd.to_numeric(campagne["rvol_r"], errors="coerce")
+        check("[9f] rvol_r du frame des setups == rvol_r du frame de la campagne (chauffe 20 j), colonne a colonne",
+              len(a) == len(b) and bool(((a == b) | (a.isna() & b.isna())).all()), (a.head(3).tolist(), b.head(3).tolist()))
+        trois = injecter_recalculs(pd.concat(chauffe_1min("ES", "20260909", 3) + [brut0[COLS_RECALC]], ignore_index=True), df0, minutes=15)
+        c3 = pd.to_numeric(trois["rvol_r"], errors="coerce")
+        check("[9g] trois jours de chauffe -> un rvol_r DIFFERENT (le test discrimine) ou absent",
+              "rvol_r" not in trois.columns or not bool(((c3 == b) | (c3.isna() & b.isna())).all()))
+        for _, df_l, brut_l in lot.journees("ES", ["20260909"]):
+            R3 = scenarios.derouler(df_l, brut_l, "ES")
+            check("[9h] frame des mesures (sans recalculs) -> AUCUN setup, motif 'frame_sans_recalculs' sur la ligne",
+                  all(not z["setups_armes"] for l in R3 for z in l["zones"]) and R3[-1]["setups_hors_zones"] == []
+                  and R3[-1]["setups_armes_motif"] == "frame_sans_recalculs")
+        check("[9i] frame de la chaine -> motif None, setups presents",
+              R[-1]["setups_armes_motif"] is None and any(z["setups_armes"] for z in R[-1]["zones"]))
 
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0

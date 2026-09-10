@@ -65,6 +65,7 @@ function bloc(sym, d, muet){
     <table><tr><th>zone</th><th>prix</th><th>bande</th><th>rôle</th><th>mémoire</th><th>dist</th><th>ce qui tirerait ici</th></tr>${d.zones.map(ligneZone).join("")}</table>
     <div class="bloc"><b>dernière heure</b> ${rec.length ? rec.map(h).join(" · ") : "rien"}</div>
     <div class="bloc"><b>hors zones</b> ${(d.setups_hors_zones || []).map(s => h(s.lieu) + " : " + setupTxt(s)).join(" · ") || "—"}</div>
+    ${d.setups_armes_motif ? `<div class="bloc invalide"><b>setups</b> aucun : ${h(d.setups_armes_motif)}</div>` : ""}
     <div class="bloc"><b>ne se trade pas</b> ${d.ce_qui_ne_se_trade_pas.map(x => h(x.setup) + " (" + h(x.raison) + ")").join(" · ") || "—"}</div>
     <div class="bloc"><b>sorties du scénario</b><br>${so}</div>
     <div class="bloc"><b>alertes</b> ${al.length ? al.join(" · ") : "aucune"}</div>
