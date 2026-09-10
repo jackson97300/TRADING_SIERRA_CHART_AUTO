@@ -34,7 +34,8 @@ if RACINE not in sys.path:
 
 from CORE.bot_terminal import charger_jour                      # noqa: E402
 from CORE.features import recalc                                # noqa: E402
-from V3.scenarios import grammaire, lot, zones as Z              # noqa: E402
+from V3 import marges_quatre                                    # noqa: E402
+from V3.scenarios import carnet, grammaire, lot, zones as Z      # noqa: E402
 
 I_DEBUT_IB = 4
 BARRE_MS = 15 * 60 * 1000
@@ -87,6 +88,7 @@ def derouler(df15, brut, sym, seuils=None):
         haut, bas = float(df15["high"].iloc[:I_DEBUT_IB].max()), float(df15["low"].iloc[:I_DEBUT_IB].min())
         lignes_range = {l["i"]: l for l in recalc.range_r(df15, haut, bas, i_debut=I_DEBUT_IB, tick=lot.TICK,
                                                               w_min=bornes[0], w_max=bornes[1])}
+    expo = marges_quatre.exposer(df15)                 # la decomposition des quatre, lue, jamais recopiee
     out = []
     for i in range(len(df15)):
         if i == I_DEBUT_IB:
@@ -98,12 +100,13 @@ def derouler(df15, brut, sym, seuils=None):
         for z in zones:
             if z["nature"] == "MUR_call_put" and z["role"] in (None, "neutre"):
                 z["role"] = "rejet" if cote > 0 else "continuation" if cote < 0 else "neutre"
+        hors = Z.setups_armes(zones, df15, i, expo)
         ph, pb = Z.prochaines(zones, c)
         r.update({"sym": sym, "heure_et": _heure_et(df15["ts"].iloc[i]), "close": c, "cote_hvl": cote,
                   "range": {k: lignes_range[i][k] for k in ("etat", "evenement", "n_tests_haut", "n_tests_bas",
                                                              "pression", "barres_depuis_pose", "largeur_atr")}
                   if i in lignes_range else None,
-                  "zones": Z.exporter(zones, c), "evenements_zones": ev_zones,
+                  "zones": Z.exporter(zones, c), "evenements_zones": ev_zones, "setups_hors_zones": hors,
                   "prochaine_zone_haut": ph, "prochaine_zone_bas": pb})
         r["grammaire_version"], r["seuils_version"] = grammaire.GRAMMAIRE_VERSION, str(s.get("version"))
         out.append(_propre(r))
@@ -111,6 +114,12 @@ def derouler(df15, brut, sym, seuils=None):
 
 
 def charger(sym, jour, completes_seulement=False):
+    """Le MEME frame que la chaine (Fable, A1) : `charger_jour` + la chauffe
+    1 min + `injecter_recalculs` (rvol_r, bandes SD2, atr_ref / atr_source).
+    Sans l'injection, `marges_quatre.exposer` rendrait « rvol faux » pour une
+    colonne ABSENTE — une condition qui ment (test_grammaire [9c])."""
+    from CORE.research.hypothesis_runner import injecter_recalculs
+    from V3.campagne import COLS_RECALC, chauffe_1min
     df, brut = charger_jour(sym, jour, 15, avec_1min=True)
     if df.empty or brut.empty:
         return df, brut
@@ -120,7 +129,11 @@ def charger(sym, jour, completes_seulement=False):
         df = df[fin <= dernier].reset_index(drop=True)
         if df.empty:
             return df, brut
-    return lot.avec_metre(df, lot.atr_veille(sym, jour, brut)), brut
+    b = pd.concat(chauffe_1min(sym, jour) + [brut[COLS_RECALC]], ignore_index=True)
+    df = injecter_recalculs(b, df, minutes=15)
+    if "atr_ref" not in df.columns:
+        df = lot.avec_metre(df, lot.atr_veille(sym, jour, brut))
+    return df, brut
 
 
 def rejouer(sym, jour):

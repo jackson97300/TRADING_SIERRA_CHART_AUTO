@@ -141,6 +141,9 @@ suivante) · pas 2b.
 - [x] phase A de la liste fusionnée CODÉE le 10/09 (ordre de Jackson) : SPEC_VITRINE, boucle + garde,
       vitrine + html, alertes, noter, fenêtre, test A5, scenarios_visibles — rien lancé en tâche avant le tag.
 - [x] phase A RELUE par Fable à `2670789` : elle passe (DECISIONS 18h00) ; deux remarques, pas des corrections.
+- [x] B1 `setups_armes` (lu dans `marges_quatre.exposer`, H3/H2p hors zones, C2 absent) et B5 `carnet.py`
+      codés le 10/09 soir (GO Jackson) ; le module lit le MÊME frame que la chaîne (`scenarios.charger` +
+      `injecter_recalculs`) ; tests 30/30, 25/25, 24/24.
 - [ ] **11/09 9h00, AVANT la tête** : lire `LOGS/scenarios/erreurs_20260910.jsonl` — la première comparaison
       direct / rejeu d'une vraie journée (5b/5 de 23h01) ; `FUITE` = incident à consigner avant le tag.
 - [ ] **après le tag du 11/09, dans cet ordre** : `execution/scenarios.bat` (l'écrivain), la tâche « V3 garde

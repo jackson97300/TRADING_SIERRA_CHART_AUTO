@@ -12,7 +12,10 @@ F23 vides — le silence de colonne vide, pas une mesure.
 
 La chauffe 1 min est limitée à trois journées : `atr_veille` ne lit que la
 dernière session complète, la chauffe de vingt jours de `rvol_r` n'a rien à
-faire ici (et c'est elle qui rend `mesure_open_type` lent).
+faire ici (et c'est elle qui rend `mesure_open_type` lent). Les MESURES lisent
+ce frame-ci (les trois mesures de la grammaire ne lisent pas `setups_armes`) ;
+l'écrivain et le rejeu du soir lisent `scenarios.charger`, le frame de la
+chaîne avec `rvol_r` et les bandes SD2 injectées.
 """
 
 from __future__ import annotations

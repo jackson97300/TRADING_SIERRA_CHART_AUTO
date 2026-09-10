@@ -49,8 +49,9 @@ function h(s){ return String(s == null ? "" : s).replace(/[&<>]/g, c => ({"&":"&
 function ligneZone(z){
   return `<tr class="${h(z.role)}"><td>${h(z.nom)}${z.provisoire ? " ~" : ""}</td><td>${z.prix}</td><td>${z.bas} – ${z.haut}</td>` +
          `<td>${h(z.role)}</td><td>${h(z.etat)} ${z.n_tests}t/${z.n_tenues}</td><td>${z.dist_ticks > 0 ? "+" : ""}${z.dist_ticks} t</td>` +
-         `<td>${(z.setups_armes || []).map(s => h(s.setup || s)).join(", ")}</td></tr>`;
+         `<td>${(z.setups_armes || []).map(setupTxt).join(", ")}</td></tr>`;
 }
+function setupTxt(s){ return h(s.setup) + " " + h(s.side) + (s.lieu_atteint ? " •" : "") + (s.condition_restante ? " → " + h(s.condition_restante) : (s.lieu_atteint ? " ✓" : "")); }
 function bloc(sym, d, muet){
   const cls = (d.etat_scenario === "valide" && !muet) ? "valide" : (d.etat_scenario === "invalide" ? "invalide" : "en_cours");
   const rec = [...d.validations.map(v => `validé ${h(v.quoi)} sur ${h(v.zone)}`), ...d.invalidations.map(v => `invalidé ${h(v.quoi)} sur ${h(v.zone)}`)];
@@ -63,6 +64,7 @@ function bloc(sym, d, muet){
     (d.range ? ` · <b>IB</b> ${h(d.range.etat)} ${d.range.largeur_atr} ATR, tests ${d.range.n_tests_haut}/${d.range.n_tests_bas}, pression ${d.range.pression ?? "—"}` : "") + `</div>
     <table><tr><th>zone</th><th>prix</th><th>bande</th><th>rôle</th><th>mémoire</th><th>dist</th><th>ce qui tirerait ici</th></tr>${d.zones.map(ligneZone).join("")}</table>
     <div class="bloc"><b>dernière heure</b> ${rec.length ? rec.map(h).join(" · ") : "rien"}</div>
+    <div class="bloc"><b>hors zones</b> ${(d.setups_hors_zones || []).map(s => h(s.lieu) + " : " + setupTxt(s)).join(" · ") || "—"}</div>
     <div class="bloc"><b>ne se trade pas</b> ${d.ce_qui_ne_se_trade_pas.map(x => h(x.setup) + " (" + h(x.raison) + ")").join(" · ") || "—"}</div>
     <div class="bloc"><b>sorties du scénario</b><br>${so}</div>
     <div class="bloc"><b>alertes</b> ${al.length ? al.join(" · ") : "aucune"}</div>
@@ -81,6 +83,9 @@ async function rafraichir(){
     const syms = document.getElementById("syms");
     syms.innerHTML = Object.entries(e.sym).map(([s, d]) => bloc(s, d, e.ecrivain_muet)).join("") || "<div class='muet'>aucune barre complète aujourd'hui</div>";
     syms.className = e.ecrivain_muet ? "gris" : "";
+    const hier = e.hier ? `hier (${h(e.hier.jour)}) : ` + (e.hier.erreurs.length ? e.hier.erreurs.map(x => h(x.type) + " " + h(x.heure_et) + " " + h(x.zone || "") + " — " + h(x.ce_qui_aurait_ete_juste)).join(" · ") : "aucune erreur") : "hier : pas d'auto-évaluation";
+    const carnet = Object.keys(e.carnet || {}).length ? " · carnet : " + Object.entries(e.carnet).map(([k, v]) => h(k) + " " + v).join(", ") : "";
+    syms.insertAdjacentHTML("beforeend", `<div class="sym muet"><b>${hier}</b>${carnet}</div>`);
     const sc = document.getElementById("sel-scenario"), zo = document.getElementById("sel-zone");
     const scs = new Set(), zs = new Set();
     Object.values(e.sym).forEach(d => { scs.add(d.scenario_en_cours); d.bascules.forEach(b => scs.add(b.de)); d.zones.forEach(z => zs.add(z.nom)); });

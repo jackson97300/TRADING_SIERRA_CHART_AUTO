@@ -41,11 +41,13 @@ V3/
   scenarios/           le module SCENARIOS — le narrateur de seance (spec : SCENARIOS_SPEC.md ; ordre : MISSION.md)
     lot.py             le lot des 57 jours avec le metre `atr_ref`, et `seuils()` — la seule source des nombres
     seuils.yaml        chaque nombre FIXE par Fable sur sa distribution, ecrite a cote ; null = pas fixe
-    zones.py           les zones : bande asymetrique (dedans P10 / dehors p80), memoire F23 causale, roles
+    zones.py           les zones : bande asymetrique (dedans P10 / dehors p80), memoire F23 causale, roles,
+                       et « ce qui tirerait ici » lu dans marges_quatre.exposer (jamais une condition recopiee)
     grammaire.py       les huit canoniques v0 : sequences d'etats dates, validations / invalidations / bascules
     scenarios.py       la journee deroulee barre a barre ; rejeu et direct par la MEME fonction ; le journal
     sorties.py         B-SCEN : ou le scenario finit (devant la cible), ou il meurt (derriere l'invalidation)
-    erreurs.py         l'auto-evaluation du soir : sept erreurs nommees, le carnet ; note, ne regle pas
+    erreurs.py         l'auto-evaluation du soir : sept erreurs nommees ; note, ne regle pas
+    carnet.py          le cumul des erreurs par type / jour / bloc de deux semaines, un exemple, le candidat cycle 2
     SPEC_VITRINE.md    les cinq phrases que la vitrine ne franchit jamais (frontiere, mots interdits)
     boucle.py          L'ECRIVAIN : un processus, recalcule la journee a chaque barre -> direct_<jour>.jsonl
     vitrine.py/.html   la page sans etat (localhost:8765) : lit le journal, n'ecrit que NOTER et MUET

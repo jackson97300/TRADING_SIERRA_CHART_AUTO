@@ -125,6 +125,35 @@ def main():
     conclusifs = re.compile(r"\b(va monter|va baisser|devrait|conseil|achete|vend)\b", re.I)
     check("[2g] le texte dit ou le scenario finit et meurt, sans conseil", not conclusifs.search(sorties.texte(s))
           and "se termine a" in sorties.texte(s) and "meurt a" in sorties.texte(s), sorties.texte(s))
+    # 3. B5 : le carnet cumule, ne touche rien d'autre
+    import hashlib
+    import json
+    import tempfile
+    from V3.scenarios import carnet
+    tmp = tempfile.mkdtemp(prefix="carnet_")
+    jeux = {"20260901": ["ZONE_TROP_LARGE", "ZONE_TROP_LARGE"], "20260902": ["VALIDATION_PRECOCE"],
+            "20260915": ["ZONE_TROP_LARGE", "FUITE"]}
+    for j, types_ in jeux.items():
+        with open(os.path.join(tmp, "erreurs_%s.jsonl" % j), "w", encoding="utf-8") as f:
+            for k, t_ in enumerate(types_):
+                f.write(json.dumps({"type": t_, "jour": j, "sym": "ES", "heure_et": "1%dh00" % k, "zone": "pdh",
+                                    "scenario": "S_OUV_BAS_TEND", "ce_qui_aurait_ete_juste": "x"}) + "\n")
+    seuils_p = RACINE / "V3" / "scenarios" / "seuils.yaml"
+    avant = hashlib.sha256(open(seuils_p, "rb").read()).hexdigest()
+    c = carnet.agreger(tmp)
+    check("[3a] trois jours jouets -> comptes exacts par type, jours, exemple = la premiere occurrence",
+          c["types"]["ZONE_TROP_LARGE"]["compte"] == 3 and c["types"]["ZONE_TROP_LARGE"]["jours"] == ["20260901", "20260915"]
+          and c["types"]["ZONE_TROP_LARGE"]["exemple"]["jour"] == "20260901" and c["types"]["FUITE"]["compte"] == 1
+          and c["par_jour"]["20260902"] == {"VALIDATION_PRECOCE": 1}, c["types"])
+    check("[3b] blocs de deux semaines : 01-02/09 ensemble, 15/09 dans un autre bloc, taux par jour",
+          len(c["blocs"]) == 2 and any(v["jours"] == 2 and v["par_jour"].get("ZONE_TROP_LARGE") == 1.0 for v in c["blocs"].values()), c["blocs"])
+    check("[3c] chaque type porte son candidat pour le cycle suivant", all(v["candidat_cycle_suivant"] for v in c["types"].values()))
+    check("[3d] carnet.json ecrit, relu identique ; agreger deux fois = meme resultat (idempotent)",
+          carnet.charger(tmp)["types"] == c["types"] and carnet.agreger(tmp)["types"] == c["types"])
+    check("[3e] hier(20260915) = le 02/09 (dernier jour AVANT avec un fichier), hier(20260901) = None",
+          carnet.hier("20260915", tmp)["jour"] == "20260902" and carnet.hier("20260901", tmp) is None)
+    check("[3f] le carnet n'a touche a rien d'autre : seuils.yaml identique",
+          hashlib.sha256(open(seuils_p, "rb").read()).hexdigest() == avant)
 
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0

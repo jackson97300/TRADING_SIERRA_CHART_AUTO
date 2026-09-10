@@ -23,7 +23,7 @@ Les erreurs nommées (une définition chacune, `seuils.yaml: auto_evaluation`) :
   FUITE               le journal DIRECT diffère du rejeu — un INCIDENT, pas une
                       erreur (`DOCS/INCIDENT_LOG.md`)
 Écrit `LOGS/scenarios/scenarios_<jour>.jsonl` (le rejeu), `erreurs_<jour>.jsonl`
-et met à jour `carnet.json`.
+et `carnet.py` cumule (`carnet.json`).
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ if RACINE not in sys.path:
 from V3.scenarios import lot, scenarios                         # noqa: E402
 
 I_10H30 = 4
+# les candidats du cycle suivant vivent dans carnet.py (un seul endroit) ; l'alias reste pour les tests
 CANDIDATS = {
     "VALIDATION_PRECOCE": "validation = acceptation (deux clotures), jamais une tentative ; reporter la validation de 10h30",
     "BASCULE_FANTOME": "ne basculer que sur une acceptation qui a tenu une barre de plus",
@@ -107,23 +108,6 @@ def evaluer(lignes, seuils=None, direct=None):
     return out
 
 
-def carnet_maj(chemin, erreurs, jour):
-    c = json.load(open(chemin, encoding="utf-8")) if os.path.exists(chemin) else {"types": {}, "jours": []}
-    if jour in c["jours"]:
-        return c
-    c["jours"].append(jour)
-    for e in erreurs:
-        t = c["types"].setdefault(e["type"], {"compte": 0, "jours": [], "candidat_cycle_suivant": CANDIDATS.get(e["type"])})
-        t["compte"] += 1
-        if jour not in t["jours"]:
-            t["jours"].append(jour)
-    c["maj"] = int(time.time() * 1000)
-    with open(chemin + ".tmp", "w", encoding="utf-8") as f:
-        json.dump(c, f, ensure_ascii=False, indent=1)
-    os.replace(chemin + ".tmp", chemin)
-    return c
-
-
 def main(argv):
     os.chdir(RACINE)
     jour = argv[1] if len(argv) > 1 else time.strftime("%Y%m%d")
@@ -144,8 +128,8 @@ def main(argv):
         for e in errs:
             print("     %-18s %s %-12s %s" % (e["type"], e["heure_et"], e["zone"] or "-", e["ce_qui_aurait_ete_juste"]))
     scenarios.ecrire(os.path.join(scenarios.JOURNAL_DIR, "erreurs_%s.jsonl" % jour), toutes)
-    c = carnet_maj(os.path.join(scenarios.JOURNAL_DIR, "carnet.json"), toutes, jour)
-    print("carnet : %d jour(s), %s" % (len(c["jours"]), ", ".join("%s %d" % (t, v["compte"]) for t, v in c["types"].items()) or "vide"))
+    from V3.scenarios import carnet                   # B5 : le carnet cumule, un seul ecrivain, recalcule depuis les fichiers
+    print(carnet.texte(carnet.agreger()))
     return 0
 
 

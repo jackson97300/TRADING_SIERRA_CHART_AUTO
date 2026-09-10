@@ -38,6 +38,7 @@ if RACINE not in sys.path:
     sys.path.insert(0, RACINE)
 
 from CORE.features import f23, recalc                           # noqa: E402
+from CORE.research import hypotheses as H                       # noqa: E402
 from V3.scenarios import lot                                    # noqa: E402
 
 Z_TOUCHE, Z_RESET = 0.0, 0.5                 # L1 seuils.yaml (06/09), réutilisés
@@ -231,3 +232,67 @@ def exporter(zones, close):
         bas, haut = bande(z, close)
         out.append({k: v for k, v in z.items() if not k.startswith("_")} | {"bas": bas, "haut": haut})
     return out
+
+
+# --- B1 : ce qui tirerait ici, et ce qui manque encore (Fable, liste fusionnee)
+LIEN_QUATRE = {("H6p", "long"): "ib_high", ("H6p", "short"): "ib_low"}
+HORS_ZONES = {("H3-VPOC", "short"): "cur_vah", ("H3-VPOC", "long"): "cur_val",
+              ("H2p", "short"): "vwap_rth_sd2u", ("H2p", "long"): "vwap_rth_sd2d"}   # quarantaine / pas des zones
+
+
+def _manque(e, i):
+    """(lieu_atteint, condition_restante, marge) LUS dans la decomposition de
+    `marges_quatre.exposer` — la PREMIERE condition fausse nomme le manque ;
+    jamais une condition recopiee (les setups sont geles)."""
+    m = e["marge"].iloc[i]
+    if not np.isfinite(m):
+        return None, "lieu_inconnu", None                # metre ou colonne absents : rien d'invente
+    if m > 0:
+        return False, "lieu", round(float(m), 1)
+    for nom, s in (("porte", e["porte"]), ("regime", e["regime"]), *e["reactions"].items()):
+        v = s.iloc[i]
+        if v != v:
+            return True, "%s (colonne absente)" % nom, round(float(m), 1)
+        if not bool(v):
+            return True, nom, round(float(m), 1)
+    return True, None, round(float(m), 1)
+
+
+def setups_armes(zones, df15, i, expo):
+    """Pour chaque zone : [{setup, side, lieu_atteint, condition_restante,
+    marge_ticks}] depuis `marges_quatre.exposer` (les quatre). H6p sur
+    ib_high / ib_low ; H8p sur la plus proche de ses dix (celles qui sont des
+    zones) ; H3 (VA courante) et H2p (bandes VWAP) ne sont PAS des zones :
+    rendus a part (`hors_zones`, avec le nom du lieu). C2 : aucune
+    decomposition exposee en v0 — absent, pas invente. Rend `hors_zones`."""
+    for z in zones:
+        z["setups_armes"] = []
+    par_nom, hors = {z["nom"]: z for z in zones if not z["dormant"]}, []
+    if not expo:
+        return hors
+    for (hyp, cote), nom in LIEN_QUATRE.items():
+        e = expo.get(hyp, {}).get(cote)
+        if e is not None and nom in par_nom:
+            lieu, cond, m = _manque(e, i)
+            par_nom[nom]["setups_armes"].append({"setup": hyp, "side": cote, "lieu_atteint": lieu,
+                                                 "condition_restante": cond, "marge_ticks": m})
+    for (hyp, cote), lieu_nom in HORS_ZONES.items():
+        e = expo.get(hyp, {}).get(cote)
+        if e is not None:
+            lieu, cond, m = _manque(e, i)
+            hors.append({"setup": hyp, "side": cote, "lieu": lieu_nom, "lieu_atteint": lieu,
+                         "condition_restante": cond, "marge_ticks": m})
+    if "H8p" in expo:
+        dists = {c[len("dist_"):]: abs(float(pd.to_numeric(df15[c], errors="coerce").iloc[i]))
+                 for c in H.NIVEAUX_H8 if c in df15.columns}
+        dists = {k: v for k, v in dists.items() if np.isfinite(v)}
+        if dists:
+            proche = min(dists, key=dists.get)
+            for cote, e in expo["H8p"].items():
+                lieu, cond, m = _manque(e, i)
+                entree = {"setup": "H8p", "side": cote, "lieu_atteint": lieu, "condition_restante": cond, "marge_ticks": m}
+                if proche in par_nom:
+                    par_nom[proche]["setups_armes"].append(entree)
+                else:
+                    hors.append(dict(entree, lieu=proche))
+    return hors

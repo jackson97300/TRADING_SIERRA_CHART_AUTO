@@ -213,8 +213,12 @@ source HTML, `/etat.json`, NOTER, MUET) ; `alertes.py` (A4, cinq événements,
 gabarits dans le yaml) ; `tests/test_vitrine_alertes.py` (A5) ; `fenetre.py`
 (A3, pywebview installé sur le PC) ; `scenarios_visibles` dans le journal
 manuel lu par `pourquoi_plus` (A6) ; `noter.py` (A6 bis). Rien n'est lancé en
-tâche avant le tag ; les `.bat` portent la commande `schtasks`. Phase B et C :
-après relecture, puis jour 20 de w1.
+tâche avant le tag ; les `.bat` portent la commande `schtasks`. Phase B, le soir même sur GO de Jackson : **B1** `zones.setups_armes` (le vrai
+coût caché — lu dans `marges_quatre.exposer`, jamais recopié ; H3 et H2p hors
+zones ; C2 absent, pas de décomposition exposée) et **B5** `carnet.py` (le
+cumul, idempotent, un écrivain) ; la vitrine porte « ce qui tirerait ici » et
+« hier ». **B2 et B3** (`chaine.py`, barrières du jour) et **B4** (le 1 min)
+restent après le tag et relecture. Phase C : jour 20 de w1.
 
 ## État de la construction (10/09 soir) — à relire par Fable AVANT `scenario_en_cours` sur l'entonnoir
 - Étape 4 **faite** : `grammaire.py` (huit canoniques v0 + `S_DANS_ROTATION` +

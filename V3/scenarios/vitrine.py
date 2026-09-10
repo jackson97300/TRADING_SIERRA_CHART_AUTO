@@ -25,7 +25,7 @@ RACINE = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.p
 if RACINE not in sys.path:
     sys.path.insert(0, RACINE)
 
-from V3.scenarios import alertes, lot, noter, scenarios, sorties   # noqa: E402
+from V3.scenarios import alertes, carnet, lot, noter, scenarios, sorties   # noqa: E402
 
 HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vitrine.html")
 HEARTBEAT = os.path.join(RACINE, "LOGS", "heartbeat_scenarios.json")
@@ -71,7 +71,8 @@ def etat_courant(jour=None, seuils=None):
     out = {"jour": jour, "source": source, "heartbeat_age_s": None if age is None else round(age, 1),
            "ecrivain_muet": age is None or age > cfg["heartbeat_max_s"],
            "non_mesure_w1": not os.path.exists(MESURE_W1), "muet": alertes.muet(s["alertes"]),
-           "genere_a": int(time.time() * 1000), "sym": {}}
+           "genere_a": int(time.time() * 1000), "sym": {},
+           "hier": carnet.hier(jour), "carnet": {k: v["compte"] for k, v in carnet.charger().get("types", {}).items()}}
     fen = cfg["fenetre_minutes"] * 60_000
     al = scenarios.lire(alertes.chemin_alertes(jour))
     for sym in ("ES", "NQ"):
@@ -97,7 +98,7 @@ def etat_courant(jour=None, seuils=None):
                        "dist_ticks": round((z["prix"] - d["close"]) / lot.TICK, 1)} for z in zones],
             "prochaine_zone_haut": d.get("prochaine_zone_haut"), "prochaine_zone_bas": d.get("prochaine_zone_bas"),
             "ce_qui_ne_se_trade_pas": d.get("ce_qui_ne_se_trade_pas", []),
-            "sorties": _sorties(d),
+            "sorties": _sorties(d), "setups_hors_zones": d.get("setups_hors_zones", []),
             "alertes": [a for a in al if a["sym"] == sym and a["ts"] >= d["ts"] - fen],
             "grammaire_version": d.get("grammaire_version"), "confiance": None,
         }

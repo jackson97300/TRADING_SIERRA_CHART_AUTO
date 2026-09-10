@@ -215,6 +215,40 @@ def main():
             if cle(D) != cle(r):
                 ecarts.append(k - 1)
         check("[8] DIRECT = RETROSPECTIF barre a barre (%s)" % nom, not ecarts, ecarts[:5])
+    # 9. B1 : ce qui tirerait ici — parite avec marges_quatre, jamais une condition recopiee
+    from CORE.bot_terminal import charger_jour
+    from V3 import marges_quatre
+    df_r, brut_r = scenarios.charger("ES", "20260909")
+    if df_r.empty:
+        check("[9] ES 09/09 indisponible", False)
+    else:
+        R = scenarios.derouler(df_r, brut_r, "ES")
+        expo = marges_quatre.exposer(df_r)
+        ecarts = []
+        for l in R[5:]:
+            z = next((z for z in l["zones"] if z["nom"] == "ib_high"), None)
+            s = next((s for s in (z or {}).get("setups_armes", []) if s["setup"] == "H6p" and s["side"] == "long"), None)
+            m = expo["H6p"]["long"]["marge"].iloc[l["i"]]
+            attendu = None if not (m == m) else bool(m <= 0)
+            if s is None or s["lieu_atteint"] != attendu:
+                ecarts.append((l["i"], s and s["lieu_atteint"], attendu))
+        check("[9a] ES 09/09 : H6p long sur ib_high, lieu_atteint == (marge exposer <= 0) barre a barre", not ecarts, ecarts[:4])
+        check("[9b] H3 et H2p ne sont jamais sur une zone (quarantaine) : rendus hors zones avec leur lieu",
+              all(not any(s["setup"] in ("H3-VPOC", "H2p") for z in l["zones"] for s in z["setups_armes"]) for l in R)
+              and {s["lieu"] for s in R[-1]["setups_hors_zones"] if s["setup"] == "H3-VPOC"} == {"cur_vah", "cur_val"})
+        check("[9c] le frame est celui de la chaine (rvol_r, bandes SD2 injectees) : H8p nomme un vrai manque",
+              "rvol_r" in df_r.columns and "dist_vwap_rth_sd2u_r" in df_r.columns
+              and all(s["condition_restante"] in ("lieu", "rvol", "delta", "finish", None)
+                      for l in R for z in l["zones"] for s in z["setups_armes"] if s["setup"] == "H8p")
+              and all(s["lieu_atteint"] is not None for l in R for s in l["setups_hors_zones"] if s["setup"] == "H2p"))
+    L9 = scenarios.derouler(*journee(POSE), "ES", SEUILS)
+    check("[9d] journee synthetique sans colonnes : H6p present sur l'IB avec lieu_inconnu, rien d'invente",
+          all(s["lieu_atteint"] is None and s["condition_restante"] == "lieu_inconnu"
+              for z in L9[-1]["zones"] if z["nom"] in ("ib_high", "ib_low") for s in z["setups_armes"])
+          and any(z["setups_armes"] for z in L9[-1]["zones"] if z["nom"] == "ib_high"))
+    zs = [{"nom": "ib_high", "dormant": False, "setups_armes": []}]
+    check("[9e] exposer sans H8p -> aucune entree H8p (absent, pas invente)",
+          Z.setups_armes(zs, journee(POSE)[0], 5, {"H6p": {}}) == [] and zs[0]["setups_armes"] == [])
 
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0
