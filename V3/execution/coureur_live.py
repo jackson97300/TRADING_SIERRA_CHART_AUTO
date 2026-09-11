@@ -69,10 +69,10 @@ MINUTES = 15
 CYCLE_S = 60   # une barre/min ; le scp de fichiers 10-30 Mo interdit plus court
 
 import numpy as _np  # noqa: E402  (env au battement — Fable 08/09)
-ENV = {"python": "%d.%d.%d" % sys.version_info[:3],
-       "pandas": pd.__version__, "numpy": _np.__version__,
-       "exe": sys.executable}   # enigme 3.0.2/3.0.1 : le chemin tranche
-PANDAS_TESTES = ("2.3.3", "3.0.1")
+PANDAS_TESTES = ("2.3.3", "3.0.1")   # le drapeau est DANS le battement (DECISIONS 11/09)
+ENV = {"python": "%d.%d.%d" % sys.version_info[:3], "exe": sys.executable,
+       "pandas": pd.__version__, "numpy": _np.__version__,   # version EN MEMOIRE
+       "pandas_hors_liste": pd.__version__ not in PANDAS_TESTES}
 
 
 def _dans_chaine(df, signaux, sym, hypothese, live, jour):

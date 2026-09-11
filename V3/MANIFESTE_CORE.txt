@@ -1,0 +1,18 @@
+# MANIFESTE des modules CORE dont V3 depend — GENERE par
+# V3/tests/test_dependances.py, jamais ecrit a la main.
+# Fermeture TRANSITIVE : V3 -> CORE -> CORE. C'est la liste a envoyer
+# avec V3 au deploiement, et rien d'autre.
+
+CORE.bot_terminal
+CORE.constants
+CORE.ctx_rolling
+CORE.entonnoir
+CORE.features
+CORE.features.f23
+CORE.features.recalc
+CORE.research
+CORE.research.hypotheses
+CORE.research.hypotheses_ed
+CORE.research.hypothesis_runner
+CORE.research.semantic_check_fable
+CORE.research.surveillance_l6

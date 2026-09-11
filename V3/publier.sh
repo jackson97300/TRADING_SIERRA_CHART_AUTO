@@ -16,46 +16,49 @@ set -e
 
 DEPOT=https://github.com/jackson97300/mia-v3.git
 
-echo "1/14  les portes repondent-elles ce qu'on attend ?"
+echo "1/15  les portes repondent-elles ce qu'on attend ?"
 python -X utf8 V3/layers/L0_interrupteur/test_portes.py
 
-echo "2/14  et sur le vrai chemin de code, en faux live ?"
+echo "2/15  et sur le vrai chemin de code, en faux live ?"
 python -X utf8 V3/layers/L0_interrupteur/test_faux_live.py
 
-echo "3/14  le calendrier bloque-t-il les bons jours ?"
+echo "3/15  V3 connait-il TOUTES ses dependances CORE ? (fermeture transitive)"
+python -X utf8 V3/tests/test_dependances.py
+
+echo "4/15  le calendrier bloque-t-il les bons jours ?"
 python -X utf8 V3/tests/test_calendrier.py
 
-echo "4/14  les fiches F23 decrivent-elles ce qui s'est passe ?"
+echo "5/15  les fiches F23 decrivent-elles ce qui s'est passe ?"
 python -X utf8 V3/tests/test_f23.py
 
-echo "5/14 ce qui vient d'un proxy se refuse-t-il ?"
+echo "6/15 ce qui vient d'un proxy se refuse-t-il ?"
 python -X utf8 V3/tests/test_proxys.py
 
-echo "6/14 les ctx_* livrees se reproduisent-elles ?"
+echo "7/15 les ctx_* livrees se reproduisent-elles ?"
 python -X utf8 V3/tests/test_ctx.py
 
-echo "7/14 rvol_r et cvd_sess_r sont-elles dans l'agregation ?"
+echo "8/15 rvol_r et cvd_sess_r sont-elles dans l'agregation ?"
 python -X utf8 V3/tests/test_recalc_agg.py
 
-echo "8/14 les huit cas des C2 actifs sont-ils verts ?"
+echo "9/15 les huit cas des C2 actifs sont-ils verts ?"
 python -X utf8 V3/layers/L3_declencheurs/test_ombre_c2.py
 
-echo "9/14 les cinq vetos L4 annulent-ils sans jamais compter ?"
+echo "10/15 les cinq vetos L4 annulent-ils sans jamais compter ?"
 python -X utf8 V3/layers/L4_orderflow/test_orderflow.py
 
-echo "10/14 la SPEC L3 porte-t-elle les nombres du code tague ?"
+echo "11/15 la SPEC L3 porte-t-elle les nombres du code tague ?"
 python -X utf8 V3/tests/test_spec_l3.py
 
-echo "11/14 l'intention d'entree : pure, idempotente, ZERO ordre ?"
+echo "12/15 l'intention d'entree : pure, idempotente, ZERO ordre ?"
 python -X utf8 V3/tests/test_intentions.py
 
-echo "12/14 l'etat d'execution : atomique, TROU_ETAT, ZERO ordre ?"
+echo "13/15 l'etat d'execution : atomique, TROU_ETAT, ZERO ordre ?"
 python -X utf8 V3/tests/test_etat_exec.py
 
-echo "13/14 rien de sensible, nulle part, dans aucune version ?"
+echo "14/15 rien de sensible, nulle part, dans aucune version ?"
 python -X utf8 V3/tests/test_structure.py
 
-echo "14/14 le travail est-il commite ?"
+echo "15/15 le travail est-il commite ?"
 if ! git diff --quiet -- V3/ || ! git diff --cached --quiet -- V3/; then
     echo "     REFUS : des modifications de V3/ ne sont pas commitees."
     echo "     Le miroir doit refleter un etat scelle, pas un brouillon."
