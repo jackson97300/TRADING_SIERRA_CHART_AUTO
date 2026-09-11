@@ -42,6 +42,15 @@ constant — celle-ci ne s'ajoutera pas à la liste.
 Et cela ne franchit aucune des cinq phrases : ce sont des faits et des
 distances. La page dit où est le prix, jamais quoi en faire.
 
+## La page se recharge quand son code change (11/09)
+Une fenêtre native charge son HTML **une seule fois**. Le 11/09, le bloc
+avant-ouverture était déployé, le serveur le servait, et la fenêtre affichait
+toujours « aucune barre complète » : l'ancien JavaScript vivait en mémoire.
+Depuis, le serveur expose `/version` (le hash du HTML servi) et la page le
+compare toutes les quinze secondes : si le code a changé, elle se recharge
+seule. Sans ça, chaque amélioration exige de fermer la fenêtre — et on finit
+par croire que la page est cassée alors qu'elle est simplement périmée.
+
 ## Ce que Fable vérifie à chaque livraison
 - la frontière (les écritures) ; les mots interdits ; direct = rétrospectif
   chaque soir (`FUITE` = incident) et `grammaire_version` sur chaque ligne ;

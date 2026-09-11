@@ -182,6 +182,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(corps if isinstance(corps, bytes) else corps.encode("utf-8"))
 
     def do_GET(self):                                     # noqa: N802
+        if self.path.startswith("/version"):
+            # Le hash du HTML SERVI. La fenetre (pywebview) charge la page UNE
+            # fois : sans ce controle, une amelioration du HTML reste invisible
+            # jusqu'a ce qu'on ferme la fenetre — vu le 11/09, la page montrait
+            # encore « aucune barre complete » alors que le bloc avant-ouverture
+            # etait en place. Le JS compare et se recharge tout seul.
+            import hashlib
+            h = hashlib.sha256(open(HTML, "rb").read()).hexdigest()[:12]
+            return self._envoyer(200, json.dumps({"html": h}))
         if self.path.startswith("/etat.json"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             return self._envoyer(200, json.dumps(etat_courant(q.get("jour", [None])[0]), ensure_ascii=False, default=str))

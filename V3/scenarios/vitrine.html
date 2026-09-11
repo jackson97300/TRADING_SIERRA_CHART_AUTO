@@ -117,7 +117,18 @@ document.getElementById("form-noter").onsubmit = async (ev) => {
   document.getElementById("msg").textContent = j.ok ? "ligne écrite" + (j.ligne.hors_scenario === "true" ? " (HORS_SCENARIO)" : "") : "refusé : " + j.erreur;
   if (j.ok) ev.target.reset();
 };
-rafraichir(); setInterval(rafraichir, R);
+// Si le HTML servi a change (amelioration deployee), la page se recharge d'elle-meme :
+// une fenetre native ne recharge jamais toute seule, et l'ancien JS reste en memoire.
+let versionHtml = null;
+async function verifierVersion(){
+  try {
+    const v = await (await fetch("/version", {cache:"no-store"})).json();
+    if (versionHtml && v.html !== versionHtml) { location.reload(); return; }
+    versionHtml = v.html;
+  } catch (e) { /* serveur absent : le bandeau du heartbeat le dit deja */ }
+}
+rafraichir(); verifierVersion();
+setInterval(rafraichir, R); setInterval(verifierVersion, R);
 </script>
 </body>
 </html>
