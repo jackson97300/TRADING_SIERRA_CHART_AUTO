@@ -162,20 +162,25 @@ def main():
     # meme frame. On ne sait pas laquelle des deux moities croire.
     import pandas as pd
     from V3.scenarios import scenarios as sc
-    df = pd.DataFrame({"vwap_slope_r": [0.3], "cvd_sess_r": [700.0],
-                       "rvol_r": [1.4], "delta_pct": [0.02]})
+    # La frame porte TOUTES les colonnes du flux : depuis le 12/09 il en compte
+    # huit (les quatre du biais, plus delta_bar, finish et les deux meches dont
+    # la fiche de touche a besoin). Un test qui n'en fournirait que quatre
+    # ferait echouer [8a] pour une raison qui n'est pas celle qu'il teste.
+    df = pd.DataFrame({c: [1.0] for c in sc.FLUX_LUS})
     plein = sc._flux(df, 0, recalculs=True)
     vide = sc._flux(df, 0, recalculs=False)
-    check("[8a] frame FIABLE : les quatre nombres sont rendus",
-          all(v is not None for v in plein.values()), plein)
+    check("[8a] frame FIABLE : tous les nombres du flux sont rendus",
+          all(v is not None for v in plein.values()) and len(plein) == len(sc.FLUX_LUS), plein)
     check("[8b] frame SANS recalculs : toutes les colonnes `_r` sont videes",
           all(vide[c] is None for c in sc.FLUX_RECALCULES), vide)
-    check("[8c] ... et delta_pct, qui n'est pas recalcule, survit",
-          vide["delta_pct"] == 0.02, vide)
+    check("[8c] ... et les colonnes NON recalculees survivent (delta_pct, delta_bar, meches)",
+          all(vide[c] is not None for c in sc.FLUX_LUS if c not in sc.FLUX_RECALCULES), vide)
     check("[8d] les colonnes recalculees sont bien un sous-ensemble du flux lu",
           set(sc.FLUX_RECALCULES) < set(sc.FLUX_LUS))
     check("[8e] une colonne absente vaut None dans les deux cas",
           sc._flux(pd.DataFrame({"delta_pct": [0.02]}), 0)["rvol_r"] is None)
+    check("[8f] le flux porte bien les colonnes dont la FICHE DE TOUCHE a besoin",
+          {"delta_bar", "finish_delta_pct", "bar_lower_wick_pct"} <= set(sc.FLUX_LUS))
 
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0

@@ -1,0 +1,71 @@
+# TAUX DE FOND — a quelle frequence chaque signe apparait PARTOUT, sans zone.
+#
+# C'est le vaccin de la fiche de touche. Un signe qui s'allume une fois sur deux
+# n'importe ou n'est pas une information quand il s'allume dans une zone. Sans
+# ce nombre a cote de chaque ligne, la fiche montrerait du bruit avec l'air
+# d'une trouvaille.
+#
+# MESURE : 352 barres de 15 min par instrument, 16 jours, TOUTES les barres de
+# la seance — celles en zone comprises, puisqu'on veut le taux de FOND, pas le
+# taux conditionnel.
+#
+# CORRECTION D'UNE ETIQUETTE FAUSSE, 12/09. Le squelette annoncait « les trois
+# familles d'accord arrive sur 19 % des barres sans zone ». Deux erreurs :
+#   1. la conception corrigee n'a que DEUX familles directionnelles (flux+forme,
+#      meche) — le volume qualifie et ne vote pas. « Trois familles » n'existe
+#      plus ;
+#   2. le 19 % avait ete mesure sur « delta ET finish ET meche tous vers le
+#      HAUT », c'est-a-dire une CO-OCCURRENCE dirigee, pas un ACCORD. Les deux
+#      sont des nombres legitimes mais ils ne repondent pas a la meme question,
+#      et ils different du simple au double.
+# Les deux sont donc ecrits ici, nommes sans ambiguite, et la fiche affiche
+# celui qui correspond a ce qu'elle montre a l'ecran.
+
+version: 2026-09-12
+mesure:
+  barres_par_instrument: 352
+  jours: 16
+  perimetre: "toutes les barres de 15 min de la seance"
+
+# Une famille « penche vers le haut » quand au moins deux de ses trois membres
+# connus le font. Membres : delta_bar > 0, cvd_sess_r > 0, finish_delta_pct > 0,5.
+flux_forme_penche_haut:
+  ES: 0.540
+  NQ: 0.543
+
+# `bar_lower_wick_pct` > 0,33 du range de la barre.
+meche_basse_longue:
+  ES: 0.375
+  NQ: 0.352
+
+# CE QUE LA FICHE MONTRE quand elle dit « acheteur » sur les deux lignes :
+# les deux familles pointent vers le HAUT en meme temps. C'est CE nombre qui
+# doit s'afficher en pied de fiche quand la fiche penche.
+deux_familles_vers_le_haut:
+  ES: 0.247
+  NQ: 0.205
+
+# Les deux familles sont d'accord, QUEL QUE SOIT le sens. A ne PAS confondre
+# avec le precedent : il est deux fois plus grand, et il repond a une autre
+# question (« se contredisent-elles ? ») que celle de la fiche.
+deux_familles_d_accord:
+  ES: 0.580
+  NQ: 0.514
+
+# `rvol_r` > 1,2. Le volume QUALIFIE la reaction (« reelle » ou « molle ») et ne
+# penche jamais : mesure d'accord avec les autres signes, 43 a 53 % — c'est-a-dire
+# aucun lien directionnel.
+volume_eleve:
+  ES: 0.480
+  NQ: 0.480
+
+# LE CHIFFRE QUI TRANCHE, mesure separement sur 48 jours (`mesure_signes.py`) :
+# l'accord des deux familles arrive-t-il PLUS souvent dans une zone que dehors ?
+# ES 57,7 % dedans contre 58,0 % dehors, ecart -0,2 point. NQ 53,5 % contre
+# 52,9 %, ecart +0,6 point. Les deux ecarts sont nuls et de signes OPPOSES.
+# LES SIGNES DE BARRE NE DISCRIMINENT PAS. C'est pourquoi la fiche montre
+# d'abord la memoire de la zone et le gele, et la barre en DERNIER.
+discrimination_zone_vs_hors_zone:
+  ES: -0.002
+  NQ: +0.006
+  verdict: "nul — les signes de barre ne distinguent pas une zone du reste"

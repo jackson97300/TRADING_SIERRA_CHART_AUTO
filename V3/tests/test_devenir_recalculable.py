@@ -74,12 +74,10 @@ def lignes_campagne():
     return out
 
 
-def declencheur(d):
-    """Le nom du declencheur, quel que soit le champ qui le porte ce jour-la."""
-    for c in NOMS_DECLENCHEUR:
-        if d.get(c):
-            return d[c]
-    return None
+# Le lecteur normalise vit dans `campagne.py` — SOURCE UNIQUE. Une copie ici
+# deriverait le jour ou une quatrieme convention apparait, et le jour 61 lirait
+# deux verites differentes selon le fichier qui l'interroge.
+from V3.campagne import declencheur, NOMS_DECLENCHEUR as NOMS_CAMPAGNE   # noqa: E402
 
 
 def main():
@@ -132,6 +130,10 @@ def main():
     noms = {c for cles in schemas for c in cles if c in NOMS_DECLENCHEUR}
     check("[2b] les noms du declencheur vus sont tous connus du lecteur du jour 61",
           noms <= set(NOMS_DECLENCHEUR), sorted(noms))
+    check("[2c] le lecteur normalise de `campagne.py` connait les MEMES noms — source unique",
+          set(NOMS_CAMPAGNE) == set(NOMS_DECLENCHEUR), (NOMS_CAMPAGNE, NOMS_DECLENCHEUR))
+    check("[2d] il lit les trois conventions sur de VRAIES lignes des quatre jours",
+          all(declencheur(d) for _, d in lignes if d))
     if len(schemas) > 1:
         print("     ATTENTION : le schema a deja bouge. Un lecteur qui ne chercherait")
         print("     que `hypothese` compterait ZERO sur les premiers jours, sans planter.")

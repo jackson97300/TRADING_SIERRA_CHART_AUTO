@@ -63,7 +63,12 @@ def _cote_hvl(df15, i):
     return 0 if d == 0 else (1 if d < 0 else -1)
 
 
-FLUX_LUS = ("vwap_slope_r", "cvd_sess_r", "rvol_r", "delta_pct")
+# Les quatre premieres sont nees du biais (11/09) ; les quatre suivantes de la
+# FICHE DE TOUCHE (12/09) : elle a besoin du delta en contrats, de la position
+# de la cloture dans le range et des deux meches. Toutes sont des statistiques
+# de la barre COURANTE — aucune ne regarde une barre suivante.
+FLUX_LUS = ("vwap_slope_r", "cvd_sess_r", "rvol_r", "delta_pct",
+            "delta_bar", "finish_delta_pct", "bar_lower_wick_pct", "bar_upper_wick_pct")
 # Les colonnes en `_r` sont RECALCULEES par la chaine. Sur un frame sans
 # recalculs elles peuvent exister quand meme, calculees sur trois jours de
 # chauffe au lieu de vingt — « un rvol_r qui existe et qui ment », mot pour mot

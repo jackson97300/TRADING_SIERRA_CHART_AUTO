@@ -120,6 +120,25 @@ def signaux_l3(df):
     return sorted(out), comptes
 
 
+# Le nom du declencheur a porte TROIS noms en quatre jours de campagne :
+# `setup` et `famille` du 08 au 10/09, `hypothese` a partir du 11/09. Un lecteur
+# du jour 61 qui ne chercherait que `hypothese` compterait ZERO sur les trois
+# premiers jours — et il ne planterait PAS, il rendrait un zero credible. C'est
+# le defaut le plus dangereux d'une campagne de soixante jours : il est
+# silencieux. Tout lecteur de journal passe par ici.
+NOMS_DECLENCHEUR = ("hypothese", "setup", "famille")
+
+
+def declencheur(ligne):
+    """Le nom du declencheur d'une ligne de journal, quelle que soit la
+    convention du jour ou elle a ete ecrite. None si aucune ne s'applique."""
+    for champ in NOMS_DECLENCHEUR:
+        v = ligne.get(champ)
+        if v:
+            return v
+    return None
+
+
 def contrat_ok(sym, jour):
     """Le contrat du fichier est-il LE contrat actif du calendrier ?
 
