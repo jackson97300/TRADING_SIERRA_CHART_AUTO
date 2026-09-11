@@ -1,27 +1,36 @@
 # GEL 1b — ce qui a change dans le perimetre gele depuis `campagne-ombre-1` (61d76a1, 08/09 09h06)
 
-*Prepare le 10/09 au soir pour la relecture de Fable a 9h00 : le diff des SEULS fichiers du perimetre
-gele, entre le tag actuel `campagne-ombre-1` (miroir `61d76a1` = local `eaf69be`) et la tete du miroir
-(`2670789`). Ce qui n'a pas bouge a deja ete relu ; ce qui a bouge est ci-dessous, ligne a ligne.*
+*Regenere le 11/09 a 10h45, APRES la revision de la regle 38 : la version d'hier soir ne la contenait
+pas. Diff des SEULS fichiers du perimetre gele, entre `campagne-ombre-1` (miroir `61d76a1` = local
+`eaf69be`) et la tete du miroir (`0e08ddc`). Ce qui n'a pas bouge a deja ete relu.*
 
-## Le nom du tag de demain, et pourquoi il y en a deux
+## LIRE CECI EN PREMIER — la regle 38 a ete REVISEE ce matin, avant le tag
 
-`campagne-ombre-1` reste sur `61d76a1` : un tag qui bouge n'est plus un tag. Le gel de demain (11/09, avant
-l'ouverture) s'appelle **`campagne-ombre-1b`**. Phrase pour DECISIONS, a poser avec le hash au moment du tag :
+La version du 10/09 au soir coupait les deux jambes de H3 **pour le verdict**. Projection depuis le lot
+sur 60 jours x 2 instruments : H3 entiere ~50, H3 short seul ~33, H3 long seul ~17, H6p ~24, H2p ~3,
+H8p ~3. **H3 entiere est la seule case de toute la campagne au-dessus de N = 40** : la version d'hier
+soir rendait la campagne incapable de conclure sur quoi que ce soit. La regle 9 l'interdisait deja dans
+les deux sens (ni fusionner, ni decouper sous la puissance). Version revisee : le verdict porte sur H3
+ENTIERE, la jambe est marquee (le `snapshot_id` finit deja par L ou S — aucune ligne de code a changer)
+et lue descriptivement ; un resultat sur une jambe seule se pre-enregistre au cycle 2.
+
+## Le nom du tag, et pourquoi il y en a deux
+
+`campagne-ombre-1` reste sur `61d76a1` : un tag qui bouge n'est plus un tag. Le gel d'aujourd'hui
+s'appelle **`campagne-ombre-1b`**. Phrase pour DECISIONS, a poser avec le hash au moment du tag :
 *« Deux tags, deux dates, une seule campagne : `campagne-ombre-1` (61d76a1) a fige l'etat du 08/09 ;
-`campagne-ombre-1b` fige l'etat CORRIGE — DST, unites, `atr_ref`, B3, A1 minimal, les regles 1-39 — sur lequel
-courent les soixante jours. Un lecteur du jour 61 doit pouvoir dire lequel des deux a couru quel jour :
-le 08/09 et le 09/09 ont couru sous 1 (sans `atr_ref` avant le re-rejeu, cf DECISIONS 09/09), du 10/09 au
-jour 60 sous 1b. »*
+`campagne-ombre-1b` fige l'etat CORRIGE — DST, unites, `atr_ref`, B3, A1 minimal, les regles 1-39 dont
+la 38 revisee — sur lequel courent les soixante jours. Un lecteur du jour 61 doit pouvoir dire lequel
+des deux a couru quel jour : le 08/09 et le 09/09 ont couru sous 1, du 10/09 au jour 60 sous 1b. »*
 
 ## Le stat
 
 ```
- DECISIONS.md                       |  31 ++++++++
- LECTURE_JOUR_61.md                 | 157 ++++++++++++++++++++++++++++++++++++-
- layers/L0_interrupteur/seuils.yaml |  66 ++++++++++++----
- layers/L5_risque/seuils.yaml       |  14 +++-
- 4 files changed, 247 insertions(+), 21 deletions(-)
+ DECISIONS.md                       |  37 ++++++++
+ LECTURE_JOUR_61.md                 | 171 ++++++++++++++++++++++++++++++++++++-
+ layers/L0_interrupteur/seuils.yaml |  66 ++++++++++----
+ layers/L5_risque/seuils.yaml       |  14 ++-
+ 4 files changed, 267 insertions(+), 21 deletions(-)
 CORE/research/hypotheses.py (local eaf69be..HEAD, hors miroir) : 1 file changed, 27 insertions(+), 17 deletions(-)
 ```
 
@@ -193,7 +202,7 @@ index da1e301..8f17387 100644
 
 ```diff
 diff --git a/LECTURE_JOUR_61.md b/LECTURE_JOUR_61.md
-index ef00170..5dc1c87 100644
+index ef00170..82c8cd4 100644
 --- a/LECTURE_JOUR_61.md
 +++ b/LECTURE_JOUR_61.md
 @@ -48,9 +48,12 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
@@ -226,7 +235,7 @@ index ef00170..5dc1c87 100644
      un lieu à 9h35 sur l'ATR de la VEILLE dans une journée à gap de 2 ATR
      est un lieu sur une échelle fausse pour CETTE journée. Les signaux
      `veille` et `barre` sont deux populations — la colonne est dans chaque
-@@ -92,6 +100,147 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
+@@ -92,6 +100,161 @@ complète par commit AVANT le jour 61 ; il ne se modifie plus après.*
      (4,9 SL de 1 ATR sur NQ) — si une séance ferme dessus, ses signaux
      post-fermeture n'existent pas dans le journal officiel, et la comparer
      aux journées pleines fausserait les deux.
@@ -348,18 +357,32 @@ index ef00170..5dc1c87 100644
 +    puis clôture dedans » comme sa docstring le dit. Le journal porte la
 +    vraie VAL ; le déclencheur reste tel qu'il a été tagué et mesuré.
 +
-+38. **H3-VPOC se lit en DEUX JAMBES** (Fable, 10/09, relecture du lieu —
-+    mesure : `close + dist_cur_val × tick = cur_val_lvl` à 100 % sur 4 × 390
-+    barres, `h3` gelé reconstruit la VAL au signe inverse). La jambe SHORT
-+    (rejet au VAH) est l'hypothèse pré-enregistrée. La jambe LONG tire quand
-+    la clôture est juste SOUS la VAL avec une mèche basse — ce n'est pas
-+    « sorti sous la VAL puis revenu dedans », c'est autre chose : **une
-+    hypothèse ACCIDENTELLE, sans attendu écrit, que personne n'a
-+    pré-enregistrée**. Elle se lit À PART et NE PEUT PAS « passer » : un
-+    résultat sur elle est une DÉCOUVERTE à pré-enregistrer au cycle 2
-+    (NEXT_CYCLE §5 septies), jamais un verdict. Rien ne bouge au tag. Sa
-+    taille est mesurée dans DECISIONS (10/09 soir : longs / shorts H3 sur le
-+    lot) — c'est la jambe qu'on isole.
++38. **H3-VPOC se lit ENTIÈRE, la jambe long est MARQUÉE, jamais verdictée**
++    (Fable, 11/09, révision AVANT le tag — la version du 10/09 au soir était
++    un piège, dite ci-dessous). Le fait mesuré ne bouge pas : `close +
++    dist_cur_val × tick = cur_val_lvl` à 100 % sur 4 × 390 barres, et `h3`
++    gelé reconstruit la VAL au signe inverse ; la jambe SHORT (rejet au VAH)
++    est l'hypothèse pré-enregistrée, la jambe LONG tire quand la clôture est
++    juste SOUS la VAL avec une mèche basse — **une hypothèse ACCIDENTELLE,
++    sans attendu écrit, que personne n'a pré-enregistrée** (NEXT_CYCLE
++    §5 septies).
++    **Ce qui change, et pourquoi.** « Lire à part » ne veut pas dire
++    « partitionner le verdict ». Projection depuis le lot sur 60 jours × 2
++    instruments : H3 entière ≈ 50 signaux, H3 short seul ≈ 33, H3 long seul
++    ≈ 17 ; H6p ≈ 24, H2p ≈ 3, H8p ≈ 3. H3 entière est **la seule case de
++    toute la campagne au-dessus de N = 40**. La version du 10/09, en coupant
++    les jambes pour le verdict, faisait passer la seule hypothèse testable
++    sous le seuil : soixante jours qui ne peuvent conclure sur rien. La
++    règle 9 l'interdit déjà dans les deux sens — ni fusionner, ni découper
++    sous la puissance.
++    **Donc** : le verdict du jour 61 porte sur **H3 ENTIÈRE** (N ≈ 50). La
++    jambe est marquée sur chaque signal — elle est déjà dans le journal, le
++    `snapshot_id` finit par `L` ou `S` — et se lit **descriptivement** : sa
++    part, son heure, son comportement. Un résultat sur le short seul (≈ 33)
++    ou le long seul (≈ 17) est une **observation à pré-enregistrer au
++    cycle 2**, jamais une conclusion du jour 61. Le long ne peut toujours pas
++    « passer » ; il ne peut pas non plus faire échouer H3 à lui seul.
++    Taille mesurée : DECISIONS 10/09 (45 H3 sur le lot, 30 shorts / 15 longs).
 +
 +39. **Le scénario est sur chaque ligne ; il DÉCRIT, il ne DÉCOUPE pas**
 +    (Fable, 10/09, module SCÉNARIOS — pré-enregistrée avant que le module
@@ -379,10 +402,10 @@ index ef00170..5dc1c87 100644
 
 ```diff
 diff --git a/DECISIONS.md b/DECISIONS.md
-index 2066004..bbdb19f 100644
+index 2066004..c48706c 100644
 --- a/DECISIONS.md
 +++ b/DECISIONS.md
-@@ -41,3 +41,34 @@
+@@ -41,3 +41,40 @@
  | 08/09 (audit) | **la dette DST L0 est FERMEE LE JOUR MEME** — pas au 31/10 : `est_cash` + `initial_balance` sur `minutes_et` (la session cash est en HEURE DE L'EST, plus jamais en UTC fige) | audit Fable pt 2 : « le 2/11, L0 elle-meme deplacerait la session d'une heure — dette L0, pas C2, cette semaine » | LA PREUVE : l'annee synthetique 2026, la SEULE a contenir de l'EST (ecarts uniquement aux bords de fenetre attendus) ; le lot reel, ENTIEREMENT EDT, ne prouve rien sur l'hiver — il est la NON-REGRESSION : 0/271 940 barres, 152 fichiers (ordre corrige par la revue B2). Residuel RECHERCHE (classer_colonnes, test_ctx, sync_vps — surveillance_l6 migre le 08/09, c'est le chien de garde du 2/11) : A_FAIRE pt 19, deadline 31/10 |
  | 08/09 (revue) | **la revue de coherence Fable (be87301) executee POINT PAR POINT, aucune omise** : A1 le yaml fige ne redecrit plus le gamma (pointeur unique vers seuils L5 + DECISIONS — le fait faux « mesure sur le proxy » disparait) ; A2 le stop SIM re-etiquete « PEU PROBABLE sur NQ, mesurable » (4,9 SL — jamais « inerte par construction ») + regle 16 ; A3 STATUS reecrit (jour 1, prochains pas reels ; regle : PROMPT_REPRISE cite STATUS, jamais l'inverse) ; A4 le tag `campagne-ombre-1` DEPLACE UNE FOIS (jamais pousse nulle part auparavant) sur le commit qui court le premier rejeu officiel, et publier.sh pousse desormais le tag SUR LE MIROIR (un tag du depot principal ne survit pas au split) | une revue de coherence ne cherche pas des bugs — elle cherche ou le depot dit une chose et fait l'autre ; trois des quatre trouvailles etaient dans les documents que la methode designe comme LA memoire | B1 exception L0 SESSION_CLOTURE → NEXT_CYCLE 5 ter (avec son test, ecrit MAINTENANT) ; B2 preuve DST re-ordonnee (l'annee synthetique EST la preuve, le lot EDT la non-regression) + L6 continuite migre sur minutes_et ; B3 defenses_du_niveau sous reserve du diagnostic pt 11 sinon TROU_DEFENSES ; B4 provenance du buffer ecrite (fiches prev_* 1 min, immunisee des ecarts cur_*) ; B5 + A2-journal + PF_PERTE_JOUR + B-BOUEE → pt 21 DEMAIN (ordre E2) ; B6 A_FAIRE reordonne ; B7 regle 11 completee (les quatre = un setup de 11h-13h EN PRATIQUE) ; C → regles 14-16 (cote_reentree journalise par le code, atr_source separe, stop SIM a part) + NEXT_CYCLE 5 quater (V1/V2 retournes par famille, signe attendu ecrit) |
  | 08/09 (audit) | **les trois arbitrages Fable ACTES et EXECUTES** : A) EOD = DEUX verdicts en colonnes (side_pur/rend_pts tous les jours — le papier ET le filtre, side_pur=0 = no-trade, sortie close_1545) ; B) atr_ref GENERALISE (atr_barre sinon ATR-veille, atr_source journalise) — DIV v2 : lieux x4,2 ES / x3 NQ a P10 constant ; C) POOR v2 = MEMOIRE D'EPISODE en fiche F23 (sommet plat touche par >= 2 barres, persiste jusqu'a reparation), apres F23 hors quarantaine | l'attendu d'un effet de niveau A se lit tel que publie (A) ; le trou etait un defaut de feature, pas de setup (B) ; un flag roulant ne portera jamais un episode (C) | A et B executes le jour meme (commits f00574b + suivant, reviews GO appliquees) ; C attend F23 hors quarantaine (A_FAIRE pt 20, ordre Fable §6.8). 80PCT enrichi au passage : fenetre_reentree_barres + cible_atteinte (regle d'OUVERTURE de Dalton, journalise d'abord, filtre au cycle 2) |
@@ -417,12 +440,18 @@ index 2066004..bbdb19f 100644
 +| 10/09 16h30 Paris | **SCENARIOS — RELECTURE FABLE A `c6c12dd` : la grammaire est celle decidee, les mesures honnetes, trois arbitrages nets** — (1) LA COUVERTURE = les scenarios VALIDES a la cloture (58 % ES / 53 % NQ, dans l'intervalle) : le 93 % « en cours » est une POSITION deguisee en scenario (toute ouverture hors VA est une TEND tant que rien ne l'invalide) — la relectrice note que sa definition pre-enregistree etait mal posee ; l'« en cours » reste journalise comme part de journees avec une hypothese ouverte ; consequence : le titre porte l'ETAT (`en cours, non valide` en gris / `valide 10h45`), un scenario non valide ne fait rien s'armer (`arme: false`). (2) La tenue a 10h30 sur N = 5 / 4 : vrai et trop petit, PAS DE VERDICT — se lit au jour 20 de w1 ; la 2 bis (67 / 64 % sur 54) est le proxy DECLARE, un chiffre sur la position. (3) Les deux definitions validees avec une correction de NOM : `S_OUV_HAUT_REJET` disparait, `S_OUV_HAUT_REINT` (famille) avec `precision` dans {PULL, TRAV, null}, miroir EXACT de `S_OUV_BAS_REINT` — les codes sont des familles, PULL / TRAV des precisions datees, jamais des codes ; une famille sans precision est un canonique ; rejet au VPOC 1 / 57 reste S_AUTRE, revu au jour 20. Ce qui compte : S_AUTRE 4 / 57, tirage battu de +68 / +67, HEADFAKE tous valides, 0,9 bascule par jour, etape 8 retenue avant le tag. DEMANDES avant le mode vivant, FAITES le 10/09 soir : (a) le renommage HAUT_REINT (miroir exact, la famille REINT validee par l'acceptation des deux cotes — c'est le choix qui rend le miroir exact, dit tel quel) ; (b) `etat_scenario` dans {en_cours, valide, invalide} + `titre` sur chaque ligne ; (c) la reserve w0 en gras en tete du rapport : les vrais nombres commencent ce soir, 23h01, sur le 10/09. Tag demain 9h00 Paris sur la tete. |
 +| 10/09 16h45 Paris | **SCENARIOS — MESURE APRES LES TROIS DEMANDES de c6c12dd** (familles en miroir exact, REINT validee par l'acceptation des deux cotes ; `rapports/scenarios_57j.md`) : COUVERTURE = canoniques VALIDES a la cloture **61 % ES / 56 % NQ** (attendu 60, 45-80 : dans l'intervalle — les deux journees BAS_REINT sans precision comptent desormais, comme leur miroir HAUT) ; hypothese ouverte 93 % (description) ; tenue a 10h30 : 71 % / 71 % sur N = 7 / 7 — pas de verdict, jour 20 de w1 ; large 69 / 66 % sur 54 / 53 ; tirage battu de **+67 / +65 points** (p95 26 / 28 %). Rien n'a bouge d'autre. |
 +| 10/09 17h30 Paris | **SCENARIOS — LISTE FUSIONNEE (Fable) : PHASE A CODEE sur ordre de Jackson** (seize fichiers, trois phases ; le document de Fable fait foi, `MISSION.md`) : `SPEC_VITRINE.md` (cinq phrases, frontiere des ecritures = journal_manuel + alertes_ + MUET) ; l'ECRIVAIN `boucle.py` (un processus, recalcule la journee entiere a chaque barre complete, `direct_<jour>.jsonl` DISTINCT du rejeu `scenarios_<jour>.jsonl` — la paire que 5b/5 compare, heartbeat_scenarios.json, dort hors cash / ferie / week-end) + garde toutes les 5 min avec backoff (Python, comme le coureur) ; `vitrine.py` + `vitrine.html` (une seule source HTML, `/etat.json`, ecrivain muet > 60 s, bandeau NON MESURE w1, un scenario non valide n'arme rien) ; `alertes.py` (cinq evenements, gabarits dans le yaml, silence 9h30-9h35, MUET, idempotence) ; `noter.py` (NOTER -> journal manuel, HORS_SCENARIO, side jamais infere) ; `fenetre.py` (pywebview, pose `scenarios_visibles : oui` le jour ou elle tourne) ; `pourquoi_plus` lit `carte_visible` et `scenarios_visibles` (deux populations). `grammaire_version` + `seuils_version` sur chaque ligne. Premier tour reel de l'ecrivain a 11h12 ET sur le 10/09 ; premieres alertes reelles : ovn_low cassee 10h00, et un 0DTE dormant qui sonnait -> tu (les zones dormantes n'ont ni memoire ni evenement avant 14h00). Rien n'est lance en tache avant le tag ; les `.bat` portent la commande `schtasks`. |
++| 10/09 18h00 Paris | **SCENARIOS — PHASE A RELUE A `2670789` PAR FABLE : ELLE PASSE** — verifie sur le code : la frontiere tient (seules ecritures : journal_manuel, alertes_<jour>, MUET ; `grep` confirme ; NOTER en .tmp + os.replace, side jamais deduit, rien efface) ; les deux journaux sont distincts (boucle -> direct_<jour>, rejeu -> scenarios_<jour> : la paire que 5b/5 compare, FUITE a deux choses a confronter) ; les alertes obeissent (silence depuis les seuils, MUET par fichier, idempotence (ts, sym, type, objet), `muet` / `silence` / `sonne` portes separement — on saura toujours ce qui AURAIT sonne) ; le garde en Python comme le coureur, 300 s, backoff : d'accord ; aucun mot interdit. Deux remarques, pas des corrections : (1) alertes.py reecrit le fichier entier a chaque passage (atomique, sur) — si un jour la boucle ralentit, c'est la (NEXT_CYCLE) ; (2) WebView2 non confirme : le premier lancement de la fenetre se fait AVEC JACKSON DEVANT, pas en tache — si elle s'ouvre vide, c'est ca, pas la page. Ce soir 23h01, 5b/5 sur le 10/09 : premiere comparaison direct / rejeu d'une vraie journee. Demain 9h00 : la tete, le tag, puis scenarios.bat, le garde, la vitrine, la fenetre — dans cet ordre, rien avant le tag. « Le module a existe une journee en direct, a sonne deux fois, a ete tu une fois pour une bonne raison, et n'a touche a rien. » |
++| 10/09 19h15 Paris | **SCENARIOS — PHASE B1 ET B5 CODEES (GO Jackson, soir du 10/09)** — B1 `zones.setups_armes` : pour chaque zone, ce qui tirerait ici et ce qui manque encore, LU dans la decomposition `marges_quatre.exposer` des quatre (marge / porte / regime / reactions dans l'ordre de la docstring gelee — la PREMIERE condition fausse nomme le manque), jamais une condition recopiee : H6p sur ib_high / ib_low, H8p sur la plus proche de ses dix niveaux qui est une zone ; H3 (VA courante, quarantaine) et H2p (bandes VWAP) ne sont pas des zones et sont rendus a part (`setups_hors_zones`, avec leur lieu) ; metre ou colonne absents -> `lieu_inconnu` / « x (colonne absente) », rien d'invente ; C2 : aucune decomposition exposee en v0, absent. Vu sur ES 09/09 : 12h30 ib_low H6p short lieu atteint (-1,3 t), manque `cloture_au_dela` ; 15h45 lieu atteint, manque `finish`. B5 `carnet.py` : cumul par type (compte, jours, EXEMPLE, candidat cycle suivant), par jour, par bloc de deux semaines (le taux, spec §8), recalcule depuis les fichiers (idempotent), un seul ecrivain (`carnet_maj` retire d'erreurs.py) ; ne touche rien d'autre (test : hash de seuils.yaml identique). La vitrine porte « ce qui tirerait ici », « hors zones » et le bloc « hier » (erreurs de la veille + carnet). Rien ne touche la chaine : B2 / B3 (chaine.py, barrieres du jour) restent apres le tag et relecture. |
++| 10/09 19h40 Paris | **SCENARIOS — le module lit LE MEME FRAME que la chaine** (`scenarios.charger` = charger_jour + chauffe 1 min + `injecter_recalculs`, comme `campagne._boucle`) : sans l'injection, `marges_quatre.exposer` rendait « rvol faux » pour une colonne ABSENTE — une condition qui ment, attrapee par test_grammaire [9c] avant tout affichage. Les trois mesures de la grammaire gardent `lot.journees` (trois jours de chauffe : elles ne lisent pas `setups_armes`), dit dans lot.py. |
++| 10/09 22h47 Paris | **RYTHME DU SOIR DU 10/09 lance a la main (Jackson : « lance tout »), et ce qu'il a trouve** — L6 : `reset_vwap ALERTE` sur NQ (saut de 8 pts du VWAP a 13h30 UTC, le VWAP reste a 168 pts du prix : la premiere minute de cash d'un gap de 5,7 ATR-veille, PAS un reset) ; `L0_DATA_L6_ALERTE` appliquee aurait FERME le live du 11/09 sur un faux positif. Mesure sur le lot AVANT de qualifier : les vrais resets posent le VWAP a 0,1-10 pts du prix pour des sauts de 10-270. Correction (CORE/research/surveillance_l6.py, hors perimetre gele, GO Jackson 22h47) : un reset = saut > seuil ET |vwap - close| < saut ; test_l6 [6a-6c] ; L6 rejouee sur le 10/09 -> NQ INFO « deplacement, pas un reset », verdict sans ALERTE, `etat_l6(20260911) = False`. Deuxieme incident : l'afficheur de L6 ne connaissait pas l'etat CONNU (KeyError), verdict ES ampute — corrige (INCIDENT_LOG x2). Campagne 10/09 : 0 signal des quatre sur ES et NQ (1 ombre16 chacun, 1 C2 NQ, 1 lieu muet ES) ; volumetrie cash 390 / 390 ; contrat 100 % U26 (pas de bascule : L0_CONTRAT_INACTIF reste observee). 5b/5 : ES et NQ `S_OUV_BAS_TEND`, 0 erreur, **direct = rejeu sur la premiere vraie journee : aucune FUITE**. Copilote lance a 22h50 (ecrivain, garde toutes les 5 min, vitrine, fenetre avec Jackson devant) — il dort jusqu'a 15h30 Paris, apres le tag. |
++| 11/09 10h30 Paris | **REGLE 38 REVISEE AVANT LE TAG — H3 se lit ENTIERE (N ~ 50), la jambe long est MARQUEE, jamais verdictee** (arbitrage Fable, sur mesure de Claude Code du matin). CE QUI A ETE MESURE : projection depuis le lot (73 signaux / 54 j x 2) sur 60 j x 2 — H3 entiere ~50, H3 short seul ~33, H3 long seul ~17, H6p ~24, H2p ~3, H8p ~3. H3 ENTIERE EST LA SEULE CASE DE TOUTE LA CAMPAGNE AU-DESSUS DE N = 40. La version de la regle 38 ecrite le 10/09 au soir, en coupant les jambes POUR LE VERDICT, faisait passer la seule hypothese testable sous le seuil : soixante jours sans pouvoir conclure sur rien — un piege, ecrit de bonne foi pour etre honnete, jamais recalcule derriere. La regle 9 l'interdisait deja dans les deux sens (ni fusionner, ni decouper sous la puissance). DECISION : le verdict du jour 61 porte sur H3 ENTIERE ; la jambe est marquee sur chaque signal — elle est DEJA dans le journal, `snapshot_id` finit par L ou S, aucune ligne de code a changer — et se lit DESCRIPTIVEMENT (part, heure, comportement) ; un resultat sur le short seul ou le long seul est une observation a PRE-ENREGISTRER au cycle 2, jamais une conclusion. Le long ne peut toujours pas « passer », il ne peut pas non plus faire echouer H3 a lui seul. Une regle de LECTURE a le droit d'etre completee avant le gel : c'est ce que `LECTURE_JOUR_61` dit de lui-meme, et c'est fait AVANT le tag, pas apres. Fond assume et redit : la campagne est sous-puissante (regle 10), le jour 61 aura UN verdict solide, des dizaines de signaux descriptifs, et un cycle 2 qui demarre avec trente hypotheses deja en ombre au lieu de zero. |
++| 11/09 10h35 Paris | **ROLLOVER, jour 2 de la ligne B : rien ne change** — le fichier du 11/09 ouvre en **U26** (ES 557 lignes 100 % ESU26 a 10h30 ; NQ verrouille par le coureur au moment du controle, meme fichier, meme source) alors que `calendrier.contrat_actif('20260911')` dit Z26. L'ecart mesure le 10/09 est donc MAINTENU au deuxieme jour : `L0_CONTRAT_INACTIF` reste **observee**, aucune modification du YAML, aucune porte touchee avant le tag. Remise en `appliquee` le premier jour ou un fichier OUVRE en Z26, avec sa ligne. |
 ```
 
 ## hypotheses.py — LES_QUATRE (CORE, hors miroir : le diff est colle ici pour la relecture)
 
-*Ce que `test_spec_l3` epingle n'a pas bouge ; ce qui a bouge dans le fichier, c'est le METRE
-(`atr_ref` a la place de `atr_barre`, brique 1 du 09/09) et la docstring datee de l'exception.*
+*Ce que `test_spec_l3` epingle n'a pas bouge ; ce qui a bouge, c'est le METRE (`atr_ref` a la place
+de `atr_barre`, brique 1 du 09/09) et la docstring datee de l'exception.*
 
 ```diff
 diff --git a/CORE/research/hypotheses.py b/CORE/research/hypotheses.py
