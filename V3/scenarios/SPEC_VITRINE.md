@@ -25,6 +25,23 @@ premier fichier. Cinq phrases qui ne bougent plus ; chacune a son test.*
    Une seule source HTML (`vitrine.html`), servie sur `localhost:8765` en local,
    copiée telle quelle sur le dashboard par `publier`, jamais éditée à la main.
 
+## Ce que la page montre AVANT la première barre (11/09)
+La capture du 11/09 disait tout : « aucune barre complète aujourd'hui », et rien
+d'autre — alors que c'est le moment où Jackson prépare sa journée. Depuis, quand
+aucune barre de 15 min n'est complète, la page montre les **niveaux figés qui
+serviront** (VA de la veille, PDH/PDL, murs, HVL, extrêmes de la nuit), le
+dernier prix connu, et la distance à chacun **en ticks, en points, et en dollars
+SUR UN MICRO** — parce que c'est un micro qui part, et qu'une distance en ticks
+ne dit rien tant qu'on ne l'a pas traduite.
+
+Le diviseur est écrit dans le code (`MICRO_PAR_STANDARD`), jamais recopié : la
+valeur de tick de `CORE` est celle du E-mini STANDARD, le micro vaut un dixième.
+Six confusions d'unités en une semaine dans ce dépôt, toutes d'un facteur
+constant — celle-ci ne s'ajoutera pas à la liste.
+
+Et cela ne franchit aucune des cinq phrases : ce sont des faits et des
+distances. La page dit où est le prix, jamais quoi en faire.
+
 ## Ce que Fable vérifie à chaque livraison
 - la frontière (les écritures) ; les mots interdits ; direct = rétrospectif
   chaque soir (`FUITE` = incident) et `grammaire_version` sur chaque ligne ;

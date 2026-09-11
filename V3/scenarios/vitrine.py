@@ -27,6 +27,12 @@ if RACINE not in sys.path:
 
 from V3.scenarios import alertes, carnet, lot, noter, scenarios, sorties   # noqa: E402
 
+# TICK_VALUE de CORE est celui du E-mini STANDARD (ES 12,50 $, NQ 5,00 $). La
+# campagne et EXEC envoient UN MICRO — un dixieme. Ecrire le diviseur ici plutot
+# que de recopier 1,25 et 0,50 : six confusions d'unites en une semaine dans ce
+# depot, toutes d'un facteur constant (memoire `feedback_unite_points_ticks`).
+MICRO_PAR_STANDARD = 10
+
 HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vitrine.html")
 HEARTBEAT = os.path.join(RACINE, "LOGS", "heartbeat_scenarios.json")
 MESURE_W1 = os.path.join(scenarios.JOURNAL_DIR, "mesure_w1.json")
@@ -72,7 +78,8 @@ def etat_courant(jour=None, seuils=None):
            "ecrivain_muet": age is None or age > cfg["heartbeat_max_s"],
            "non_mesure_w1": not os.path.exists(MESURE_W1), "muet": alertes.muet(s["alertes"]),
            "genere_a": int(time.time() * 1000), "sym": {},
-           "hier": carnet.hier(jour), "carnet": {k: v["compte"] for k, v in carnet.charger().get("types", {}).items()}}
+           "hier": carnet.hier(jour), "carnet": {k: v["compte"] for k, v in carnet.charger().get("types", {}).items()},
+           "avant": None}
     fen = cfg["fenetre_minutes"] * 60_000
     al = scenarios.lire(alertes.chemin_alertes(jour))
     for sym in ("ES", "NQ"):
@@ -103,6 +110,66 @@ def etat_courant(jour=None, seuils=None):
             "alertes": [a for a in al if a["sym"] == sym and a["ts"] >= d["ts"] - fen],
             "grammaire_version": d.get("grammaire_version"), "confiance": None,
         }
+    if not out["sym"]:
+        out["avant"] = avant_ouverture(jour, s)     # la page n'est plus vide avant la 1re barre
+    return out
+
+
+def _dollars_micro(sym, ticks):
+    """Un trajet en ticks -> ce qu'il vaut sur UN MICRO, en dollars."""
+    from CORE.constants import get_tick_value
+    return round(abs(ticks) * get_tick_value(sym) / MICRO_PAR_STANDARD, 2)
+
+
+def avant_ouverture(jour, seuils=None):
+    """Ce que la page montre AVANT la premiere barre complete : les niveaux
+    FIGES qui serviront aujourd'hui, le dernier prix de la nuit, et la distance
+    a chacun — en ticks, en points, et en dollars SUR UN MICRO. Des faits et des
+    distances ; aucun conseil, aucune direction (SPEC_VITRINE 3).
+
+    C'est le moment ou Jackson prepare sa journee, et c'est celui ou la page
+    etait vide : « aucune barre complete aujourd'hui » et rien d'autre."""
+    import pandas as pd
+    from CORE.bot_terminal import charger_jour
+    from CORE.features import recalc
+    s = seuils or lot.seuils()
+    out = {}
+    for sym in ("ES", "NQ"):
+        try:
+            _, nuit = charger_jour(sym, jour, 15, avec_1min=True, cash_only=False)
+        except Exception:                                   # noqa: BLE001 — pas de fichier = rien a montrer
+            continue
+        if nuit.empty:
+            continue
+        close = float(nuit["close"].iloc[-1])
+        m = int(recalc.minutes_et(pd.Series([int(nuit["ts"].iloc[-1])]).pipe(
+            pd.to_datetime, unit="ms", utc=True)).iloc[0])
+        niveaux = []
+        for nom, col in (("prev_vah", "dist_prev_vah"), ("prev_vpoc", "dist_prev_vpoc"),
+                         ("prev_val", "dist_prev_val"), ("pdh", "dist_pdh"), ("pdl", "dist_pdl"),
+                         ("mq_call", "dist_mq_call"), ("mq_put", "dist_mq_put"),
+                         ("mq_hvl", "dist_mq_hvl")):
+            if col not in nuit.columns:
+                continue
+            d = pd.to_numeric(nuit[col], errors="coerce")
+            if not d.notna().any():
+                continue
+            prix = round(close + float(d.iloc[-1]) * lot.TICK, 2)
+            ticks = round((prix - close) / lot.TICK, 1)
+            niveaux.append({"nom": nom, "prix": prix, "ticks": ticks,
+                            "points": round(prix - close, 2), "dollars": _dollars_micro(sym, ticks)})
+        niveaux.append({"nom": "ON high (nuit)", "prix": round(float(nuit["high"].max()), 2),
+                        "ticks": round((float(nuit["high"].max()) - close) / lot.TICK, 1),
+                        "points": round(float(nuit["high"].max()) - close, 2),
+                        "dollars": _dollars_micro(sym, (float(nuit["high"].max()) - close) / lot.TICK)})
+        niveaux.append({"nom": "ON low (nuit)", "prix": round(float(nuit["low"].min()), 2),
+                        "ticks": round((float(nuit["low"].min()) - close) / lot.TICK, 1),
+                        "points": round(float(nuit["low"].min()) - close, 2),
+                        "dollars": _dollars_micro(sym, (float(nuit["low"].min()) - close) / lot.TICK)})
+        out[sym] = {"close": close, "heure_et": "%02dh%02d" % (m // 60, m % 60),
+                    "barres_nuit": int(len(nuit)),
+                    "niveaux": sorted(niveaux, key=lambda z: -z["prix"]),
+                    "minutes_avant_cash": max(0, 570 - m)}
     return out
 
 
