@@ -12,6 +12,7 @@ rem
 rem  Options, a ajouter apres le nom du script si besoin :
 rem     --sans-fenetre   ne pas ouvrir la fenetre epinglee
 rem     --une-fois       afficher l'etat une seule fois, puis rendre la main
+rem     --defiler        empiler les etats au lieu de redessiner en place
 rem
 rem  Chemins relatifs a ce fichier (%~dp0 = son dossier, deux crans au-dessus =
 rem  la racine du depot) : aucun chemin de machine ici.

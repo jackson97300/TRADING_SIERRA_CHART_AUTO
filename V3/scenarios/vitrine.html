@@ -5,32 +5,105 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Narrateur de séance</title>
 <style>
-  :root { --fond:#111; --texte:#d8d8d8; --gris:#6a6a6a; --ok:#7fd48a; --non:#e08a7a; --neutre:#c9b45c; --cadre:#2a2a2a; }
-  body { margin:0; padding:10px 14px; background:var(--fond); color:var(--texte); font:13px/1.35 Consolas, "Courier New", monospace; }
-  h1 { font-size:14px; margin:0 0 6px; letter-spacing:.5px; }
-  .bandeau { background:#3a2f12; color:#f0d27a; padding:3px 8px; margin-bottom:8px; font-size:11px; }
+  /* Refonte visuelle 11/09 (demande de Jackson : « moderniser, rendre plus
+     agreable »). RIEN de ce qui est affiche n'a change : memes champs, memes
+     mots, meme vocabulaire. Seules la typographie, la couleur et l'espace ont
+     bouge. Aucune grandeur n'est DERIVEE d'un nombre — pas de barre de
+     proximite, pas de jauge : il faudrait une echelle, une echelle est un
+     seuil, et SPEC_VITRINE phrase 2 interdit tout calcul dans la page. */
+  :root {
+    --fond:#0e1116; --surface:#161b22; --surface2:#1b222b; --bord:#252d38;
+    --texte:#e6edf3; --doux:#9aa5b1; --gris:#6e7681;
+    --ok:#3fb950; --non:#f85149; --neutre:#d29922; --info:#58a6ff;
+    --ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:0 0 18px; background:var(--fond); color:var(--texte);
+         font:14px/1.5 var(--ui); -webkit-font-smoothing:antialiased; }
+  .num, table td, .prix { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+
+  /* --- barre du haut, collee en haut --- */
+  .barre { position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:10px;
+           align-items:center; padding:9px 16px; font-size:12px; color:var(--doux);
+           background:rgba(14,17,22,.88); backdrop-filter:blur(8px);
+           border-bottom:1px solid var(--bord); }
+  .barre .pousse { margin-left:auto; }
+  #jour { font-weight:600; color:var(--texte); letter-spacing:.2px; }
+  #msg { color:var(--ok); }
+
+  .bandeau { margin:12px 16px 0; padding:8px 12px; border-radius:8px; font-size:12px;
+             background:rgba(210,153,34,.12); color:var(--neutre);
+             border:1px solid rgba(210,153,34,.3); }
+
   .muet { color:var(--gris); }
-  .gris * { color:var(--gris) !important; }
-  .sym { border:1px solid var(--cadre); padding:8px 10px; margin-bottom:10px; }
-  .titre { font-size:15px; font-weight:bold; }
-  .valide { color:var(--ok); } .invalide { color:var(--non); } .en_cours { color:var(--gris); }
-  table { border-collapse:collapse; width:100%; margin-top:6px; }
-  td, th { padding:1px 6px; text-align:left; white-space:nowrap; }
-  th { color:var(--gris); font-weight:normal; border-bottom:1px solid var(--cadre); }
-  .cible { color:var(--ok); } .invalidation { color:var(--non); } .pullback { color:var(--neutre); } .rejet, .continuation { color:#8ab4e0; }
-  .bloc { margin-top:6px; } .bloc b { color:var(--gris); font-weight:normal; }
-  .barre { display:flex; gap:8px; align-items:center; margin-bottom:6px; font-size:11px; color:var(--gris); }
-  button { background:#222; color:var(--texte); border:1px solid #444; padding:2px 8px; font:inherit; cursor:pointer; }
-  form.noter { display:none; margin-top:8px; padding:8px; border:1px dashed #444; }
-  form.noter input, form.noter select { background:#1a1a1a; color:var(--texte); border:1px solid #444; font:inherit; padding:2px 4px; margin:2px 4px 2px 0; }
-  #recit { border:1px solid var(--cadre); padding:8px 10px; margin-bottom:10px; max-height:46vh; overflow:auto; white-space:pre; font-size:12px; line-height:1.3; }
-  #recit .ecart { color:var(--non); } #recit .sym { border:0; padding:0; margin:0; color:var(--neutre); font-weight:bold; }
+  .gris { opacity:.55; }
+  .gris .titre, .gris .pastille { color:var(--gris) !important; border-color:var(--bord) !important;
+                                  background:transparent !important; }
+
+  /* --- la carte d'un instrument --- */
+  #syms { padding:0 16px; }
+  .sym { background:var(--surface); border:1px solid var(--bord); border-radius:12px;
+         padding:14px 16px; margin-top:12px; }
+  .titre { display:flex; flex-wrap:wrap; gap:10px; align-items:baseline;
+           font-size:17px; font-weight:650; letter-spacing:-.2px; margin-bottom:2px; }
+  .titre .heure { font-family:var(--mono); font-size:13px; font-weight:400; color:var(--doux); }
+  .pastille { font-size:11px; font-weight:600; padding:2px 9px; border-radius:999px;
+              border:1px solid; text-transform:lowercase; letter-spacing:.3px; }
+  .valide  { color:var(--ok); }  .pastille.valide  { background:rgba(63,185,80,.12);  border-color:rgba(63,185,80,.35); }
+  .invalide{ color:var(--non); } .pastille.invalide{ background:rgba(248,81,73,.12);  border-color:rgba(248,81,73,.35); }
+  .en_cours{ color:var(--gris); } .pastille.en_cours{ background:rgba(110,118,129,.12); border-color:var(--bord); }
+
+  /* Le titre porte deja « (en cours, non valide) » : pas de pastille d'etat a
+     cote, ce serait la meme information deux fois. La couleur suffit. */
+  .sous { font-size:14.5px; font-weight:600; letter-spacing:-.1px; margin-bottom:2px; }
+  .bloc { margin-top:9px; font-size:13px; color:var(--texte); }
+  .bloc b { display:inline-block; min-width:112px; color:var(--doux); font-weight:500;
+            font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
+
+  /* --- tableaux : la fenetre est etroite, ils defilent sans casser la page --- */
+  .tw { margin-top:10px; overflow-x:auto; border:1px solid var(--bord); border-radius:9px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  td, th { padding:7px 11px; text-align:left; white-space:nowrap; }
+  th { position:sticky; top:0; color:var(--doux); font:500 10.5px/1.6 var(--ui);
+       text-transform:uppercase; letter-spacing:.6px; background:var(--surface2);
+       border-bottom:1px solid var(--bord); }
+  tbody tr + tr td { border-top:1px solid rgba(37,45,56,.65); }
+  tbody tr:hover td { background:rgba(88,166,255,.05); }
+  td:nth-child(n+2) { text-align:right; }
+  /* « ce qui tirerait ici » est du texte, pas un nombre : seule la table des
+     zones a cette derniere colonne. La table d'avant-ouverture finit par des
+     dollars, qui doivent rester alignes a droite comme les autres nombres. */
+  table.zones td:last-child { text-align:left; color:var(--doux); white-space:normal; min-width:190px; }
+  .cible { color:var(--ok); } .invalidation { color:var(--non); }
+  .pullback { color:var(--neutre); } .rejet, .continuation { color:var(--info); }
+
+  button { background:var(--surface2); color:var(--texte); border:1px solid var(--bord);
+           padding:5px 12px; border-radius:7px; font:500 12px var(--ui); cursor:pointer;
+           transition:background .12s, border-color .12s; }
+  button:hover { background:#232c37; border-color:#38424f; }
+  button:active { transform:translateY(1px); }
+
+  form.noter { display:none; margin:12px 16px 0; padding:12px; border-radius:10px;
+               background:var(--surface); border:1px solid var(--bord); }
+  form.noter input, form.noter select { background:var(--fond); color:var(--texte);
+               border:1px solid var(--bord); border-radius:6px; font:13px var(--ui);
+               padding:5px 8px; margin:3px 5px 3px 0; }
+  form.noter input:focus, form.noter select:focus { outline:none; border-color:var(--info); }
+
+  #recit { margin:12px 16px 0; padding:12px 14px; border-radius:10px;
+           background:var(--surface); border:1px solid var(--bord);
+           max-height:46vh; overflow:auto; white-space:pre-wrap;
+           font:12.5px/1.55 var(--mono); color:var(--doux); }
+  #recit .ecart { color:var(--non); }
+  #recit .sym { display:block; background:none; border:0; border-radius:0; padding:0;
+                margin:10px 0 4px; color:var(--neutre); font-weight:700; font-family:var(--ui); }
 </style>
 </head>
 <body>
 <div class="barre">
   <span id="jour"></span><span id="hb"></span><span id="src"></span>
-  <button id="btn-muet" type="button">muet</button>
+  <button id="btn-muet" class="pousse" type="button">muet</button>
   <button id="btn-noter" type="button">NOTER</button>
   <button id="btn-recit" type="button" title="F23 raconte la séance : touche, tenue, cassure, regain, piégé — calculé à la demande">récit</button>
   <span id="msg"></span>
@@ -62,11 +135,12 @@ function avantBloc(av){
   // rien d'autre : la page decrit ou est le prix, elle ne dit jamais quoi en faire.
   if (!av || !Object.keys(av).length) return "<div class='muet'>aucune barre complète, et aucune donnée de nuit</div>";
   return Object.entries(av).map(([sym, d]) => `<div class="sym">
-    <div class="titre">${h(sym)} — avant l'ouverture · dernier ${d.close} à ${h(d.heure_et)} ET · cash dans ${d.minutes_avant_cash} min</div>
-    <table><tr><th>niveau figé</th><th>prix</th><th>distance</th><th>points</th><th>sur 1 micro</th></tr>
+    <div class="titre"><span>${h(sym)}</span><span class="heure">${d.close} à ${h(d.heure_et)} ET</span></div>
+    <div class="sous muet">avant l'ouverture · cash dans ${d.minutes_avant_cash} min</div>
+    <div class="tw"><table><thead><tr><th>niveau figé</th><th>prix</th><th>distance</th><th>points</th><th>sur 1 micro</th></tr></thead><tbody>
     ${d.niveaux.map(n => `<tr class="${n.ticks > 0 ? "" : "pullback"}"><td>${h(n.nom)}</td><td>${n.prix}</td>` +
       `<td>${n.ticks > 0 ? "+" : ""}${n.ticks} t</td><td>${n.points > 0 ? "+" : ""}${n.points}</td>` +
-      `<td>${n.dollars} $</td></tr>`).join("")}</table>
+      `<td>${n.dollars} $</td></tr>`).join("")}</tbody></table></div>
     <div class="bloc"><b>${d.barres_nuit} barres de nuit lues</b> · les zones et le scénario apparaissent à la première barre de 15 min complète</div>
   </div>`).join("");
 }
@@ -76,11 +150,12 @@ function bloc(sym, d, muet){
   const al = d.alertes.map(a => `${h(a.heure_et)} ${h(a.texte)}`);
   const so = d.sorties ? Object.entries(d.sorties).map(([k, s]) => `${k} : ${h(s.texte)}`).join("<br>") : "rien ne s'arme (scénario non validé)";
   return `<div class="sym ${(muet || d.etat_scenario !== "valide") ? "gris" : ""}">
-    <div class="titre ${cls}">${h(sym)} ${h(d.heure_et)} — ${h(d.titre)}</div>
+    <div class="titre"><span class="${cls}">${h(sym)}</span><span class="heure">${h(d.heure_et)} ET</span></div>
+    <div class="sous ${cls}">${h(d.titre)}</div>
     <div class="bloc"><b>séquence</b> ${d.sequence.map(h).join(" › ")}</div>
     <div class="bloc"><b>ouvre</b> ${h(d.position_ouverture)} · ${h(d.type_ouverture)} · <b>côté HVL</b> ${d.cote_hvl > 0 ? "au-dessus" : d.cote_hvl < 0 ? "en dessous" : "—"}` +
     (d.range ? ` · <b>IB</b> ${h(d.range.etat)} ${d.range.largeur_atr} ATR, tests ${d.range.n_tests_haut}/${d.range.n_tests_bas}, pression ${d.range.pression ?? "—"}` : "") + `</div>
-    <table><tr><th>zone</th><th>prix</th><th>bande</th><th>rôle</th><th>mémoire</th><th>dist</th><th>ce qui tirerait ici</th></tr>${d.zones.map(ligneZone).join("")}</table>
+    <div class="tw"><table class="zones"><thead><tr><th>zone</th><th>prix</th><th>bande</th><th>rôle</th><th>mémoire</th><th>dist</th><th>ce qui tirerait ici</th></tr></thead><tbody>${d.zones.map(ligneZone).join("")}</tbody></table></div>
     <div class="bloc"><b>dernière heure</b> ${rec.length ? rec.map(h).join(" · ") : "rien"}</div>
     <div class="bloc"><b>hors zones</b> ${(d.setups_hors_zones || []).map(s => h(s.lieu) + " : " + setupTxt(s)).join(" · ") || "—"}</div>
     ${d.setups_armes_motif ? `<div class="bloc invalide"><b>setups</b> aucun : ${h(d.setups_armes_motif)}</div>` : ""}

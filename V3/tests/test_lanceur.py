@@ -17,6 +17,7 @@ DECISION (demarrer ou non), sans jamais lancer de processus.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -105,6 +106,30 @@ def main():
         check("[4-%s] le mot '%s' est absent" % (mot[:4], mot), mot not in src.lower())
     check("[4e] aucune ecriture dans LOGS/scenarios (journaux de campagne)",
           "LOGS/scenarios" not in src.replace("\\", "/") or "direct_" not in src)
+
+    print("\n[5] la couleur ne doit RIEN decaler")
+    # Les codes ANSI sont invisibles a l'ecran mais comptent dans un `%-10s`.
+    # Colorer avant de completer decale toutes les colonnes d'une dizaine de
+    # caracteres — et personne ne le voit dans un test qui ne lit que des
+    # sous-chaines. On compare donc les deux rendus, codes retires.
+    etat = {"jour": "20260911", "source": "direct", "carnet": {"ZONE_TROP_LARGE": 1},
+            "sym": {"ES": {"heure_et": "09h30", "titre": "S_OUV_HAUT_TEND", "etat_scenario": "en_cours"},
+                    "NQ": {"heure_et": "09h30", "titre": "S_DANS_CASSURE_HAUT", "etat_scenario": "valide"}}}
+    hb = {"motif": "cash", "env": {"python": "3.13.4", "pandas": "2.3.3"}}
+    ansi = re.compile(r"\033\[[0-9;]*m")
+    avant = lanceur.COULEUR
+    try:
+        lanceur.COULEUR = False
+        sans = lanceur.bloc(8765, etat, 12.0, hb)
+        lanceur.COULEUR = True
+        avec = lanceur.bloc(8765, etat, 12.0, hb)
+    finally:
+        lanceur.COULEUR = avant
+    check("[5a] la couleur emet bien des codes", len(ansi.findall(avec)) > 10)
+    check("[5b] codes retires, le rendu est IDENTIQUE (aucune colonne decalee)",
+          ansi.sub("", avec) == sans, "les codes ANSI decalent le texte")
+    check("[5c] sans terminal, aucun code (pas de [32m dans un journal)",
+          ansi.search(sans) is None)
 
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0

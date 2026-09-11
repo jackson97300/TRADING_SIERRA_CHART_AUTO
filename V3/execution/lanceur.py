@@ -158,45 +158,84 @@ def assurer_fenetre():
 
 # --- l'affichage -------------------------------------------------------------
 
+def _activer_ansi():
+    """Windows n'interprete les couleurs que si on le lui demande. En cas de
+    refus (console redirigee vers un fichier, terminal ancien), on rend False
+    et tout s'affiche sans code : jamais de `[32m` en clair dans un journal."""
+    if not sys.stdout.isatty():
+        return False
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        poignee = k.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if not k.GetConsoleMode(poignee, ctypes.byref(mode)):
+            return False
+        return bool(k.SetConsoleMode(poignee, mode.value | 0x0004))
+    except Exception:                             # noqa: BLE001 — sans couleur, ca marche aussi
+        return False
+
+
+COULEUR = _activer_ansi()
+CLAIR = "\033[H\033[2J" if COULEUR else ""       # redessiner en place, pas empiler
+TONS = {"vert": "32", "rouge": "31", "gris": "90", "jaune": "33", "bleu": "36", "gras": "1"}
+
+
+def t(texte, ton):
+    return "\033[%sm%s\033[0m" % (TONS[ton], texte) if COULEUR and ton in TONS else texte
+
+
 def _ligne(etiquette, texte):
-    return "  %-10s %s" % (etiquette, texte)
+    # On COMPLETE a dix caracteres AVANT de colorer : les codes ANSI sont
+    # invisibles a l'ecran mais comptent dans un %-10s, et l'alignement saute.
+    return "  %s %s" % (t("%-10s" % etiquette, "gris"), texte)
 
 
 def bloc(port, etat, age, hb):
     """Le pave affiche. `etat` = /etat.json (ou None), `hb` = le heartbeat sur
     disque, lu en repli QUAND la vitrine ne repond pas : le moniteur doit
     pouvoir dire pourquoi il ne dit rien."""
-    out = ["-" * LARGE,
-           "  NARRATEUR DE SEANCE" + " " * 21 + datetime.now().strftime("%d/%m/%Y  %H:%M:%S"),
-           "-" * LARGE]
+    barre = t("-" * LARGE, "gris")
+    out = [barre,
+           "  " + t("NARRATEUR DE SEANCE", "gras") + " " * 21
+           + t(datetime.now().strftime("%d/%m/%Y  %H:%M:%S"), "gris"),
+           barre]
 
     if age is None:
-        out.append(_ligne("ECRIVAIN", "AUCUN BATTEMENT — rien ne s'ecrit"))
+        out.append(_ligne("ECRIVAIN", t("AUCUN BATTEMENT - rien ne s'ecrit", "rouge")))
     elif age > garde_scenarios.MAX_AGE_S:
-        out.append(_ligne("ECRIVAIN", "MUET depuis %.0f s (seuil %d s) — le garde va le relancer"
-                          % (age, garde_scenarios.MAX_AGE_S)))
+        out.append(_ligne("ECRIVAIN", t("MUET depuis %.0f s (seuil %d s) - le garde va le relancer"
+                                        % (age, garde_scenarios.MAX_AGE_S), "rouge")))
     else:
-        out.append(_ligne("ECRIVAIN", "bat il y a %.0f s   motif %s"
-                          % (age, (hb or {}).get("motif", "?"))))
+        out.append(_ligne("ECRIVAIN", "%s   motif %s"
+                          % (t("bat il y a %.0f s" % age, "vert"), (hb or {}).get("motif", "?"))))
     env = (hb or {}).get("env") or {}
     if env:
         out.append(_ligne("", "python %s . pandas %s"
                           % (env.get("python", "?"), env.get("pandas", "?"))))
 
     if etat is None:
-        out.append(_ligne("VITRINE", "MUETTE sur le port %d — voir LOGS/vitrine_console.log" % port))
-        out += ["-" * LARGE, "  Ctrl-C ferme ce moniteur. L'ecrivain continue.", ""]
+        out.append(_ligne("VITRINE", t("MUETTE sur le port %d - voir LOGS/vitrine_console.log"
+                                       % port, "rouge")))
+        out += [barre, "  " + t("Ctrl-C ferme ce moniteur. L'ecrivain continue.", "gris"), ""]
         return "\n".join(out)
 
-    out.append(_ligne("VITRINE", "http://localhost:%d   jour %s   source %s"
-                      % (port, etat.get("jour", "?"), etat.get("source", "?"))))
+    out.append(_ligne("VITRINE", "%s   jour %s   source %s"
+                      % (t("http://localhost:%d" % port, "bleu"),
+                         etat.get("jour", "?"), etat.get("source", "?"))))
 
     syms = etat.get("sym") or {}
     if syms:
         for s in sorted(syms):
             d = syms[s] or {}
+            # Meme regle que la page : un scenario non valide est GRIS et n'arme
+            # rien (SPEC_VITRINE phrase 4). Le terminal ne dit pas autre chose
+            # que la fenetre.
+            ton = {"valide": "vert", "invalide": "rouge"}.get(d.get("etat_scenario"), "gris")
             out.append(_ligne(s, "%s   %s" % (d.get("heure_et", "--h--"),
-                                              str(d.get("titre") or "-")[:46])))
+                                              t(str(d.get("titre") or "-")[:46], ton))))
     else:
         avant = etat.get("avant") or {}
         for s in sorted(avant):
@@ -213,8 +252,8 @@ def bloc(port, etat, age, hb):
     if etat.get("non_mesure_w1"):
         out.append(_ligne("", "NON MESURE w1 — le dehors de VA_veille est provisoire (jour 20)"))
 
-    out += ["-" * LARGE,
-            "  Ctrl-C ferme ce moniteur. L'ecrivain et la vitrine CONTINUENT.", ""]
+    out += [barre,
+            "  " + t("Ctrl-C ferme ce moniteur. L'ecrivain et la vitrine CONTINUENT.", "gris"), ""]
     return "\n".join(out)
 
 
@@ -230,9 +269,14 @@ def main(argv):
         print("  fenetre  : %s" % assurer_fenetre()[1], flush=True)
     print()
 
+    # On REDESSINE en place au lieu d'empiler : a cinq secondes le tour, une
+    # seance de six heures cracherait plus de quatre mille paves et le terminal
+    # ne servirait plus a rien. `--defiler` garde l'ancien comportement, utile
+    # quand la sortie part dans un fichier.
+    efface = "" if ("--defiler" in argv or "--une-fois" in argv) else CLAIR
     while True:
-        print(bloc(port, etat_vitrine(port), garde_scenarios.age_heartbeat(), heartbeat()),
-              flush=True)
+        print(efface + bloc(port, etat_vitrine(port), garde_scenarios.age_heartbeat(),
+                            heartbeat()), flush=True)
         if "--une-fois" in argv:
             return 0
         time.sleep(RAFRAICHIR_S)
