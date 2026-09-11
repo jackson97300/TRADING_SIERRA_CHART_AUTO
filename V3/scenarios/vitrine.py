@@ -173,6 +173,32 @@ def avant_ouverture(jour, seuils=None):
     return out
 
 
+def recit_du_jour(sym, jour):
+    """Le RECIT de la seance par F23 — `V3/recit.py`, capture tel quel.
+
+    Il est CALCULE A LA DEMANDE (une trentaine de secondes : il relit la session
+    entiere, 1 min comprise, et RECOMPTE chaque piege depuis les barres brutes
+    pour se contredire lui-meme si la fiche ment). C'est la raison du bouton :
+    on ne le fait pas tourner toutes les quinze secondes pour rien.
+
+    Lexique ferme (touche, tenue, cassure, regain, piege), chaque phrase porte
+    son niveau EN PRIX et l'heure de CHAQUE evenement — jamais l'heure du test
+    pour tout (contre-lecture du 08/09). Les lignes `ECART` sont le recit qui
+    se prend lui-meme en defaut : elles restent affichees."""
+    import contextlib
+    import io
+    from V3 import recit as _recit
+    tampon = io.StringIO()
+    with contextlib.redirect_stdout(tampon):
+        try:
+            ecarts = _recit.raconter(sym, jour)
+        except Exception as e:                              # noqa: BLE001 — un recit rate ne casse pas la page
+            return {"sym": sym, "jour": jour, "erreur": "%s: %s" % (type(e).__name__, e), "lignes": []}
+    lignes = [l.rstrip() for l in tampon.getvalue().splitlines() if l.strip()]
+    return {"sym": sym, "jour": jour, "ecarts": ecarts if isinstance(ecarts, int) else None,
+            "lignes": lignes, "n": len(lignes)}
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def _envoyer(self, code, corps, ctype="application/json; charset=utf-8"):
         self.send_response(code)
@@ -191,6 +217,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             import hashlib
             h = hashlib.sha256(open(HTML, "rb").read()).hexdigest()[:12]
             return self._envoyer(200, json.dumps({"html": h}))
+        if self.path.startswith("/recit"):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            jour = q.get("jour", [None])[0] or etat_courant()["jour"]
+            sym = q.get("sym", ["ES"])[0]
+            return self._envoyer(200, json.dumps(recit_du_jour(sym, jour), ensure_ascii=False))
         if self.path.startswith("/etat.json"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             return self._envoyer(200, json.dumps(etat_courant(q.get("jour", [None])[0]), ensure_ascii=False, default=str))

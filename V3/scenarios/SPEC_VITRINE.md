@@ -51,6 +51,21 @@ compare toutes les quinze secondes : si le code a changé, elle se recharge
 seule. Sans ça, chaque amélioration exige de fermer la fenêtre — et on finit
 par croire que la page est cassée alors qu'elle est simplement périmée.
 
+## Le récit F23, à la demande (11/09)
+Demande de Jackson : *« le récit de la journée au fur et à mesure, avec F23,
+pas en dur et apparent, plutôt discret, avec un bouton — quand j'en ai besoin
+je clique, il calcule et je le vois. »* C'est le bon réglage, et pour une
+raison technique autant qu'ergonomique : `recit.py` relit la **session
+entière**, 1 min comprise, et **recompte chaque piégé depuis les barres
+brutes** pour se contredire lui-même si la fiche ment. Le faire tourner toutes
+les quinze secondes serait du gâchis ; à la demande, il coûte trois secondes.
+
+Le bouton `récit` est dans la barre, replié par défaut, et se replie au
+deuxième clic. Les lignes `ECART` — le récit qui se prend lui-même en défaut —
+s'affichent en rouge et ne sont jamais masquées. Lexique fermé : touche, tenue,
+cassure, regain, piégé, rien d'autre, et chaque phrase porte son niveau en prix
+et l'heure de **chaque** événement.
+
 ## Ce que Fable vérifie à chaque livraison
 - la frontière (les écritures) ; les mots interdits ; direct = rétrospectif
   chaque soir (`FUITE` = incident) et `grammaire_version` sur chaque ligne ;
