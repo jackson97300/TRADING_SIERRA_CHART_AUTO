@@ -51,6 +51,11 @@ DETACHE = garde_scenarios.DETACHE        # survit a la fermeture du moniteur
 SANS_FENETRE_CONSOLE = 0x08000000        # l'inventaire des processus, sans flash noir
 RAFRAICHIR_S = 5                         # le moniteur ; la page a son propre reglage
 LARGE = 74
+# La classe de caracteres porte DEUX barres obliques inversees : par `-Command`
+# (le chemin livre) PowerShell y lit `[\\/]`, qui correspond a `\` comme a `/`.
+# Avec une seule, elle ne correspond a RIEN — et on ne verrait jamais la fenetre
+# deja ouverte. Verifie sur le processus reel, pas deduit.
+MOTIF_FENETRE = "scenarios[\\\\/]fenetre"
 
 
 def port_vitrine():
@@ -135,13 +140,20 @@ def assurer_vitrine(port):
 
 
 def assurer_fenetre():
-    vivante = processus_vivant("scenarios[\\\\/]fenetre")
+    """Comme la vitrine : on VERIFIE qu'elle est apparue avant de le dire.
+    Annoncer « ouverte » sans regarder, c'est ce que faisait la premiere
+    version — et si pywebview manque, elle ne s'ouvre jamais en ecrivant
+    seulement une ligne dans son journal. Un lanceur qui ment sur ce qu'il a
+    fait est pire qu'un lanceur qui echoue."""
+    vivante = processus_vivant(MOTIF_FENETRE)
     if vivante is True:
         return False, "deja ouverte"
     _detacher(os.path.join("V3", "scenarios", "fenetre.py"), "fenetre_console.log")
-    if vivante is None:
-        return True, "ouverte (inventaire des processus muet : si tu en as deux, ferme-en une)"
-    return True, "ouverte"
+    for _ in range(6):                          # pywebview met quelques secondes
+        if processus_vivant(MOTIF_FENETRE) is True:
+            return True, "ouverte"
+        time.sleep(1.0)
+    return True, "lancee, mais je ne la vois pas encore — voir LOGS/fenetre_console.log"
 
 
 # --- l'affichage -------------------------------------------------------------
