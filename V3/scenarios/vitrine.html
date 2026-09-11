@@ -155,7 +155,7 @@ function bloc(sym, d, muet){
     <div class="bloc"><b>séquence</b> ${d.sequence.map(h).join(" › ")}</div>
     <div class="bloc"><b>ouvre</b> ${h(d.position_ouverture)} · ${h(d.type_ouverture)} · <b>côté HVL</b> ${d.cote_hvl > 0 ? "au-dessus" : d.cote_hvl < 0 ? "en dessous" : "—"}` +
     (d.range ? ` · <b>IB</b> ${h(d.range.etat)} ${d.range.largeur_atr} ATR, tests ${d.range.n_tests_haut}/${d.range.n_tests_bas}, pression ${d.range.pression ?? "—"}` : "") + `</div>
-    <div class="tw"><table class="zones"><thead><tr><th>zone</th><th>prix</th><th>bande</th><th>rôle</th><th>mémoire</th><th>dist</th><th>ce qui tirerait ici</th></tr></thead><tbody>${d.zones.map(ligneZone).join("")}</tbody></table></div>
+    <div class="tw"><table class="zones"><thead><tr><th>zone</th><th>prix</th><th>bande</th><th>rôle</th><th>mémoire</th><th>dist au ${h(d.heure_et)}</th><th>ce qui tirerait ici</th></tr></thead><tbody>${d.zones.map(ligneZone).join("")}</tbody></table></div>
     <div class="bloc"><b>dernière heure</b> ${rec.length ? rec.map(h).join(" · ") : "rien"}</div>
     <div class="bloc"><b>hors zones</b> ${(d.setups_hors_zones || []).map(s => h(s.lieu) + " : " + setupTxt(s)).join(" · ") || "—"}</div>
     ${d.setups_armes_motif ? `<div class="bloc invalide"><b>setups</b> aucun : ${h(d.setups_armes_motif)}</div>` : ""}
@@ -168,8 +168,17 @@ async function rafraichir(){
   try {
     const r = await fetch("/etat.json", {cache:"no-store"}); const e = await r.json();
     document.getElementById("jour").textContent = e.jour + " · grammaire " + (Object.values(e.sym)[0]?.grammaire_version || "?");
-    document.getElementById("hb").textContent = e.ecrivain_muet ? "ÉCRIVAIN MUET (" + (e.heartbeat_age_s ?? "absent") + " s)" : "écrivain " + e.heartbeat_age_s + " s";
-    document.getElementById("hb").className = e.ecrivain_muet ? "invalide" : "";
+    // DEUX âges. L'écrivain peut battre depuis 8 s pendant que la donnée
+    // affichée a 14 minutes : une barre de 15 min servie à une page qui se
+    // rafraîchit toutes les 15 s. N'afficher que le premier, c'est peindre en
+    // vert une photo périmée.
+    const ad = e.age_donnee_s;
+    const donnee = ad == null ? "donnée : —"
+                 : "donnée " + (ad < 90 ? Math.round(ad) + " s" : Math.floor(ad / 60) + " min");
+    document.getElementById("hb").textContent =
+      (e.ecrivain_muet ? "ÉCRIVAIN MUET (" + (e.age_ecrivain_s ?? "absent") + " s)" : "écrivain " + e.age_ecrivain_s + " s")
+      + " · " + donnee;
+    document.getElementById("hb").className = e.ecrivain_muet ? "invalide" : (ad != null && ad > 900 ? "pullback" : "");
     document.getElementById("src").textContent = e.source === "rejeu" ? "source : rejeu du soir" : "";
     document.getElementById("btn-muet").textContent = e.muet ? "muet ✓" : "muet";
     document.getElementById("bandeau").hidden = !e.non_mesure_w1;

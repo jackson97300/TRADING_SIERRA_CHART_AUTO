@@ -93,6 +93,19 @@ def main():
           e["sym"]["ES"]["arme"] and e["sym"]["ES"]["sorties"] and "meurt a" in e["sym"]["ES"]["sorties"]["long"]["texte"], e["sym"]["ES"]["sorties"])
     check("[1c] en cours non valide (NQ) -> rien d'arme, sorties None",
           not e["sym"]["NQ"]["arme"] and e["sym"]["NQ"]["sorties"] is None)
+    # DEUX ages, jamais un seul (11/09). `heartbeat_age_s` mesure L'ECRIVAIN.
+    # Il valait 8 s pendant que la donnee affichee avait 14 minutes : une barre
+    # de 15 min servie a une page qui se rafraichit toutes les 15 s. Un voyant
+    # vert sur une photo perimee dit le CONTRAIRE de ce qui est.
+    check("[1a-bis] l'etat porte DEUX ages distincts, l'ecrivain et la donnee",
+          "age_ecrivain_s" in e and "age_donnee_s" in e and e["age_ecrivain_s"] == e["heartbeat_age_s"],
+          (e.get("age_ecrivain_s"), e.get("age_donnee_s")))
+    ad = e["sym"]["ES"]["age_donnee_s"]
+    check("[1a-ter] l'age de la DONNEE se compte depuis la CLOTURE de la barre, pas depuis le battement",
+          ad is not None and ad > e["age_ecrivain_s"] and e["age_donnee_s"] == max(
+              v["age_donnee_s"] for v in e["sym"].values()), (ad, e["age_ecrivain_s"]))
+    check("[1a-quater] chaque instrument porte l'heure a laquelle sa distance a ete calculee",
+          all(v.get("heure_reference") == v.get("heure_et") for v in e["sym"].values()))
     heartbeat(120)
     e2 = vitrine.etat_courant(jour, cfg)
     check("[1d] heartbeat de 120 s > 60 -> ecrivain muet", e2["ecrivain_muet"] and e2["heartbeat_age_s"] >= 120)

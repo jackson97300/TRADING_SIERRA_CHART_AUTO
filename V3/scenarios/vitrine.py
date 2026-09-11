@@ -75,6 +75,13 @@ def etat_courant(jour=None, seuils=None):
         lignes, source = scenarios.lire(scenarios.chemin_rejeu(jour)), "rejeu"
     age = age_heartbeat()
     out = {"jour": jour, "source": source, "heartbeat_age_s": None if age is None else round(age, 1),
+           # DEUX ages, jamais un seul (11/09). `heartbeat_age_s` mesure
+           # L'ECRIVAIN ; il valait 8 s pendant que la donnee affichee avait 14
+           # minutes, parce qu'une barre de 15 min est servie a une page qui se
+           # rafraichit toutes les 15 s. Un voyant vert sur une photo perimee
+           # est le pire des mensonges : il dit le contraire de ce qui est.
+           "age_ecrivain_s": None if age is None else round(age, 1),
+           "age_donnee_s": None,                      # rempli par instrument ci-dessous
            "ecrivain_muet": age is None or age > cfg["heartbeat_max_s"],
            "non_mesure_w1": not os.path.exists(MESURE_W1), "muet": alertes.muet(s["alertes"]),
            "genere_a": int(time.time() * 1000), "sym": {},
@@ -109,7 +116,14 @@ def etat_courant(jour=None, seuils=None):
             "setups_armes_motif": d.get("setups_armes_motif"),
             "alertes": [a for a in al if a["sym"] == sym and a["ts"] >= d["ts"] - fen],
             "grammaire_version": d.get("grammaire_version"), "confiance": None,
+            # L'age de la DONNEE : depuis la CLOTURE de la barre (`ts` est son
+            # ouverture, elle se ferme a ts + 15 min). C'est l'age de ce que
+            # Jackson LIT, pas celui du processus qui l'ecrit.
+            "age_donnee_s": round(max(0.0, out["genere_a"] - (d["ts"] + scenarios.BARRE_MS)) / 1000.0, 1),
+            "heure_reference": d["heure_et"],
         }
+    ages = [v["age_donnee_s"] for v in out["sym"].values() if v.get("age_donnee_s") is not None]
+    out["age_donnee_s"] = max(ages) if ages else None
     if not out["sym"]:
         out["avant"] = avant_ouverture(jour, s)     # la page n'est plus vide avant la 1re barre
     return out

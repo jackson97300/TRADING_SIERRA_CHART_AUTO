@@ -22,6 +22,7 @@ sys.path.insert(0, str(RACINE))
 os.chdir(RACINE)
 
 from CORE.bot_terminal import charger_jour                    # noqa: E402
+from V3.scenarios import scenarios                             # noqa: E402
 
 PASSED = FAILED = 0
 
@@ -34,9 +35,17 @@ def check(nom, ok, detail=""):
 
 
 def cote_hvl(dist):
-    """+1 au-dessus du HVL (dist < 0), -1 en dessous (dist > 0), 0 dessus / absent."""
+    """Version VECTORISEE, pour la parite de masse sur les barres 1 min
+    seulement. Elle n'est PAS la reference : la reference est
+    `scenarios._cote_hvl`, et les tests [0*] verifient que les deux disent la
+    meme chose. Jusqu'au 11/09 ce fichier ne testait que cette copie — la
+    fonction de production pouvait deriver sans faire echouer un seul test."""
     d = pd.to_numeric(dist, errors="coerce")
     return np.where(~np.isfinite(d) | (d == 0), 0, np.where(d < 0, 1, -1))
+
+
+def _frame(valeurs):
+    return pd.DataFrame({"dist_mq_hvl": valeurs})
 
 
 def main():
@@ -60,7 +69,24 @@ def main():
         au_dessus = (close > niveau)[m]
         check("[%s] close > niveau reconstruit <=> cote +1 (par construction, 100 %%)" % sym,
               bool(((au_dessus.values) == (c == 1)).all()))
-    check("[0] dist 0 ou NaN -> cote 0", list(cote_hvl(pd.Series([0.0, np.nan, -3.0, 8.0]))) == [0, 0, 1, -1])
+    # --- les TROIS etats de la fonction de PRODUCTION (revision 11/09) -------
+    # Avant : colonne absente, NaN et prix pile sur le HVL rendaient tous `0`.
+    # Un capteur mort etait alors compte comme une mesure, et toute force qui
+    # compte les composantes mesurees MONTAIT quand le capteur mourait.
+    prod = scenarios._cote_hvl
+    check("[0a] colonne absente -> None (on ne SAIT pas)",
+          prod(pd.DataFrame({"close": [1.0]}), 0) is None)
+    check("[0b] distance NaN -> None (on ne SAIT pas)",
+          prod(_frame([np.nan]), 0) is None)
+    check("[0c] distance nulle -> 0 (prix SUR le HVL : une mesure, pas un trou)",
+          prod(_frame([0.0]), 0) == 0)
+    check("[0d] dist < 0 -> +1 au-dessus ; dist > 0 -> -1 en dessous",
+          prod(_frame([-3.0]), 0) == 1 and prod(_frame([8.0]), 0) == -1)
+    check("[0e] None et 0 ne sont PAS le meme etat",
+          prod(_frame([np.nan]), 0) is not prod(_frame([0.0]), 0))
+    ref = list(cote_hvl(pd.Series([-3.0, 8.0])))
+    check("[0f] production == reference vectorisee sur les cas non degeneres",
+          [prod(_frame([-3.0]), 0), prod(_frame([8.0]), 0)] == ref, ref)
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0
 

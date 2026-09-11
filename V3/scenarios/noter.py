@@ -110,3 +110,27 @@ def visibles(jour):
         return None
     m = re.search(r"`scenarios_visibles` *: *(\S+)", open(p, encoding="utf-8").read())
     return m.group(1) if m else None
+
+
+def lire(jour):
+    """Les trades deja notes ce jour-la, dans l'ordre d'ecriture.
+
+    Ajoute le 11/09 pour `mon_module` : Jackson journalise ses trades manuels
+    et veut les RELIRE dans la journee, pas seulement les ecrire. Le lecteur
+    vit ici, avec `ecrire` et `COLONNES` — le format a UN proprietaire ; un
+    lecteur pose ailleurs se desynchronise a la premiere colonne ajoutee.
+    Rend [] si le fichier n'existe pas, jamais une exception : une journee
+    sans trade est le cas NORMAL d'une campagne en ombre.
+    """
+    p = chemin(jour)
+    if not os.path.exists(p):
+        return []
+    out = []
+    for m in re.finditer(r"^\|(.*)\|\s*$", open(p, encoding="utf-8").read(), flags=re.M):
+        cells = [c.strip() for c in m.group(1).split("|")]
+        if len(cells) != len(COLONNES):
+            continue
+        if cells[0] in ("heure_et", "") or set(cells[0]) <= {"-"}:
+            continue                                  # l'entete et le trait
+        out.append(dict(zip(COLONNES, cells)))
+    return out

@@ -43,10 +43,44 @@ JOURNAL_DIR = os.path.join(RACINE, "LOGS", "scenarios")
 
 
 def _cote_hvl(df15, i):
-    d = pd.to_numeric(df15.get("dist_mq_hvl"), errors="coerce") if "dist_mq_hvl" in df15.columns else None
-    if d is None or not np.isfinite(d.iloc[i]) or d.iloc[i] == 0:
-        return 0
-    return 1 if d.iloc[i] < 0 else -1
+    """TROIS etats distincts, jamais confondus (revise le 11/09) :
+
+      None  la colonne manque, ou la distance n'est pas finie — on ne SAIT pas
+      0     le prix est exactement sur le HVL — un equilibre, c'est une mesure
+      +1/-1 au-dessus / en dessous (convention `dist = niveau - close`)
+
+    Avant cette revision les trois rendaient `0`. Un capteur mort et un
+    equilibre portaient donc la meme valeur, et tout ce qui compte les
+    composantes mesurees comptait le capteur mort comme une mesure : la PANNE
+    faisait MONTER la force affichee. Ce depot a deja paye ce prix deux fois,
+    `vix_level` a 0 pendant quatre jours et `gamma` cable a 0.0.
+    """
+    if "dist_mq_hvl" not in df15.columns:
+        return None
+    d = pd.to_numeric(df15["dist_mq_hvl"], errors="coerce").iloc[i]
+    if not np.isfinite(d):
+        return None
+    return 0 if d == 0 else (1 if d < 0 else -1)
+
+
+FLUX_LUS = ("vwap_slope_r", "cvd_sess_r", "rvol_r", "delta_pct")
+
+
+def _flux(df15, i):
+    """Le flux de la barre, LU tel quel — quatre nombres du present, aucun
+    devenir. Ajoute le 11/09 : `mon_module` a besoin de la pente de la VWAP et
+    du CVD de session pour composer le biais, et relire le frame coute dix-huit
+    secondes (mesure du 11/09) — impossible au moment ou Jackson clique. Une
+    colonne absente vaut None : un TROU se voit, un zero invente ment.
+    N'entre dans AUCUNE porte : ce sont des champs de lecture."""
+    out = {}
+    for col in FLUX_LUS:
+        if col not in df15.columns:
+            out[col] = None
+            continue
+        v = pd.to_numeric(df15[col], errors="coerce").iloc[i]
+        out[col] = float(v) if np.isfinite(v) else None
+    return out
 
 
 def _heure_et(ts):
@@ -107,10 +141,14 @@ def derouler(df15, brut, sym, seuils=None):
         cote = _cote_hvl(df15, i)
         for z in zones:
             if z["nature"] == "MUR_call_put" and z["role"] in (None, "neutre"):
-                z["role"] = "rejet" if cote > 0 else "continuation" if cote < 0 else "neutre"
+                # `cote` peut valoir None (HVL inconnu) : comparer None a 0 leve
+                # en Python 3. Un cote inconnu laisse le role neutre, comme un
+                # prix pile sur le HVL — l'inverse d'avant n'existe plus.
+                z["role"] = "rejet" if cote == 1 else "continuation" if cote == -1 else "neutre"
         hors = Z.setups_armes(zones, df15, i, expo)
         ph, pb = Z.prochaines(zones, c)
         r.update({"sym": sym, "heure_et": _heure_et(df15["ts"].iloc[i]), "close": c, "cote_hvl": cote,
+                  "flux": _flux(df15, i),
                   "range": {k: lignes_range[i][k] for k in ("etat", "evenement", "n_tests_haut", "n_tests_bas",
                                                              "pression", "barres_depuis_pose", "largeur_atr")}
                   if i in lignes_range else None,

@@ -61,32 +61,45 @@ def types(errs):
     return sorted({e["type"] for e in errs})
 
 
+# Les entrees de CONTROLE du couple direct/rejeu, ajoutees le 11/09. Elles ne
+# decrivent pas une erreur de lecture du marche mais l'etat du controle
+# lui-meme ; les tests 1a-1h portent sur les sept erreurs nommees et ne leur
+# passent aucun direct, donc ils recevraient FUITE_NON_VERIFIABLE a chaque
+# fois. On les filtre ICI plutot que de faire taire le controle : un controle
+# qu'on n'a pas pu faire doit se voir dans le rapport du soir.
+CONTROLES = ("FUITE_NON_VERIFIABLE", "DIRECT_AVEUGLE", "VERSION_CHANGEE")
+
+
+def ev(*a, **k):
+    return [e for e in erreurs.evaluer(*a, **k) if e["type"] not in CONTROLES]
+
+
 def main():
     # 1. les erreurs, une par une
     L = journal(final="S_OUV_BAS_REINT_PULL", validations=[{"i": 2, "quoi": "x", "zone": "prev_val"},
                                                           {"i": 9, "quoi": "pullback_tenu", "zone": "prev_val"}])
-    e = erreurs.evaluer(L, SEUILS)
+    e = ev(L, SEUILS)
     check("[1a] valide a 10h30, autre scenario a 16h -> VALIDATION_PRECOCE, avec ce qui aurait ete juste",
           types(e) == ["VALIDATION_PRECOCE"] and "pullback_tenu" in e[0]["ce_qui_aurait_ete_juste"], e)
     b = [{"i": 6, "de": "S_OUV_BAS_TEND", "vers": "S_OUV_BAS_REINT", "cause": "reintegration_acceptee"},
          {"i": 9, "de": "S_OUV_BAS_REINT", "vers": "S_OUV_BAS_TEND", "cause": "reprise"}]
-    e = erreurs.evaluer(journal(bascules=b), SEUILS)
+    e = ev(journal(bascules=b), SEUILS)
     check("[1b] A -> B -> A en 3 barres (<= 4) -> BASCULE_FANTOME", types(e) == ["BASCULE_FANTOME"], e)
     b2 = [dict(b[0]), dict(b[1], i=11)]
-    check("[1c] retour en 5 barres (> 4) -> rien", erreurs.evaluer(journal(bascules=b2), SEUILS) == [])
-    e = erreurs.evaluer(journal(zones=[zone("pdh", 120, etat="testee", n_tests=2, n_tenues=0)]), SEUILS)
+    check("[1c] retour en 5 barres (> 4) -> rien", ev(journal(bascules=b2), SEUILS) == [])
+    e = ev(journal(zones=[zone("pdh", 120, etat="testee", n_tests=2, n_tenues=0)]), SEUILS)
     check("[1d] zone testee deux fois, 0 tenue, 0 cassure -> ZONE_TROP_LARGE", types(e) == ["ZONE_TROP_LARGE"], e)
-    e = erreurs.evaluer(journal(zones=[zone("pdh", 120, etat="testee", n_tests=1, n_tenues=1, dep=21.5, dehors=20.0)]), SEUILS)
+    e = ev(journal(zones=[zone("pdh", 120, etat="testee", n_tests=1, n_tenues=1, dep=21.5, dehors=20.0)]), SEUILS)
     check("[1e] tenue avec depassement 21,5 t pour dehors 20 (1,5 t hors bande) -> ZONE_TROP_ETROITE",
           types(e) == ["ZONE_TROP_ETROITE"] and "21.5" in e[0]["ce_qui_aurait_ete_juste"], e)
-    e = erreurs.evaluer(journal(zones=[zone("pdh", 120, etat="testee", n_tests=1, n_tenues=1, dep=26.0, dehors=20.0)]), SEUILS)
+    e = ev(journal(zones=[zone("pdh", 120, etat="testee", n_tests=1, n_tenues=1, dep=26.0, dehors=20.0)]), SEUILS)
     check("[1f] depassement 6 t hors bande (> 2) -> pas TROP_ETROITE (c'est une cassure tentee)", e == [])
     zs = [zone("prev_vpoc", 105, role="cible", etat="intacte"), zone("prev_val", 100, role="invalidation", etat="cassee", n_tests=1)]
-    e = erreurs.evaluer(journal(zones=zs), SEUILS)
+    e = ev(journal(zones=zs), SEUILS)
     check("[1g] cible jamais atteinte + invalidation cassee -> ROLE_INVERSE (et pas TROP_LARGE sur la cassee)",
           types(e) == ["ROLE_INVERSE"], e)
     zs = [zone("prev_val", 100, etat="testee", n_tests=1, n_tenues=1, cote=-1)]
-    e = erreurs.evaluer(journal(zones=zs, hors=[{"setup": "long@prev_val", "raison": "fade"}]), SEUILS)
+    e = ev(journal(zones=zs, hors=[{"setup": "long@prev_val", "raison": "fade"}]), SEUILS)
     check("[1h] 'long@prev_val ne se trade pas', mais la VAL a tenu par le dessus -> EXCLUSION_FAUSSE",
           types(e) == ["EXCLUSION_FAUSSE"], e)
     L = journal()
@@ -95,9 +108,36 @@ def main():
     e = erreurs.evaluer(L, SEUILS, direct=D)
     check("[1i] direct != rejeu a la barre 8 -> FUITE, une seule, marquee INCIDENT",
           types(e) == ["FUITE"] and len(e) == 1 and e[0]["i"] == 8 and "INCIDENT" in e[0]["ce_qui_aurait_ete_juste"], e)
+    propre = journal(zones=[zone("prev_val", 100, role="pullback", etat="testee", n_tests=1, n_tenues=1, dep=3.0, cote=-1)],
+                     hors=[{"setup": "short@prev_val", "raison": "x"}])
     check("[1j] une journee propre (meme scenario, validee, zones tenues) -> aucune erreur",
-          erreurs.evaluer(journal(zones=[zone("prev_val", 100, role="pullback", etat="testee", n_tests=1, n_tenues=1, dep=3.0, cote=-1)],
-                                  hors=[{"setup": "short@prev_val", "raison": "x"}]), SEUILS, direct=journal()) == [])
+          erreurs.evaluer(propre, SEUILS, direct=[dict(l) for l in propre]) == [])
+    # --- le controle direct/rejeu porte sur la LIGNE ENTIERE (11/09) ---------
+    # Avant, il comparait quatre scalaires. Ni les zones, ni les setups, ni les
+    # distances, ni le flux n'etaient regardes : tout ce qu'un tableau de bord
+    # afficherait naissait HORS du controle.
+    base = journal()
+    neuf_rejeu = [dict(l, champ_tout_neuf={"a": 1}) for l in base]
+    e = erreurs.evaluer(neuf_rejeu, SEUILS, direct=[dict(l) for l in base])
+    check("[1l] un champ NEUF absent du direct -> DIRECT_AVEUGLE (le live en savait moins)",
+          types(e) == ["DIRECT_AVEUGLE"] and "champ_tout_neuf" in e[0]["ce_qui_aurait_ete_juste"], e)
+    contredit = [dict(l, champ_tout_neuf={"a": 2}) for l in base]
+    e = erreurs.evaluer(neuf_rejeu, SEUILS, direct=contredit)
+    check("[1m] un champ NEUF qui se CONTREDIT -> FUITE (couvert par defaut, sans liste blanche)",
+          types(e) == ["FUITE"], e)
+    # la distinction se mesure en PROFONDEUR : le 10/09 a 10h45 le direct portait
+    # `setups_armes: []` dans une zone, le rejeu la liste pleine — meme zone, meme
+    # nom, donc « different » a la racine et pourtant aucun mensonge.
+    profond = [dict(l, zones=[{"nom": "pdh", "setups_armes": [{"setup": "H6p"}], "fiche": {"etat": "intacte"},
+                               "role": "neutre", "prix": 1, "dehors_ticks": 20.0}]) for l in base]
+    creux = [dict(l, zones=[{"nom": "pdh", "setups_armes": [], "fiche": {"etat": "intacte"},
+                             "role": "neutre", "prix": 1, "dehors_ticks": 20.0}]) for l in base]
+    e = erreurs.evaluer(profond, SEUILS, direct=creux)
+    check("[1n] vide contre plein DANS une structure imbriquee -> AVEUGLE, pas FUITE",
+          "FUITE" not in types(e), e)
+    e = erreurs.evaluer(base, SEUILS, direct=None)
+    check("[1o] aucun direct -> le controle le DIT, il ne se tait pas",
+          "FUITE_NON_VERIFIABLE" in types(e), e)
     check("[1k] chaque type d'erreur a un candidat pre-enregistre pour le cycle suivant",
           all(t in erreurs.CANDIDATS for t in ("VALIDATION_PRECOCE", "BASCULE_FANTOME", "ZONE_TROP_LARGE",
                                                 "ZONE_TROP_ETROITE", "ROLE_INVERSE", "EXCLUSION_FAUSSE", "FUITE")))

@@ -97,14 +97,115 @@ def evaluer(lignes, seuils=None, direct=None):
         if z and z["fiche"].get("n_tenues") and z["fiche"].get("dernier_cote") == (-1 if side == "long" else 1):
             out.append(_err("EXCLUSION_FAUSSE", z["fiche"].get("dernier_test_i"), fin["heure_et"], nom, fin["scenario_en_cours"],
                             "la zone a tenu dans le sens exclu (%s) : l'exclusion n'a pas tenu" % side))
-    if direct:
-        cle = lambda x: (x["scenario_en_cours"], x.get("precision"), x["valide"], len(x["bascules"]))   # noqa: E731
-        par_i = {l["i"]: l for l in direct}
-        for l in lignes:
-            if l["i"] in par_i and cle(par_i[l["i"]]) != cle(l):
-                out.append(_err("FUITE", l["i"], l["heure_et"], None, l["scenario_en_cours"],
-                                "INCIDENT : direct %s != rejeu %s" % (cle(par_i[l["i"]]), cle(l))))
-                break
+    out += _confronter(lignes, direct)
+    return out
+
+
+# --- direct contre rejeu : la LIGNE ENTIERE, pas quatre champs ---------------
+# Jusqu'au 11/09 la comparaison portait sur `(scenario_en_cours, precision,
+# valide, len(bascules))`. Quatre scalaires. Ni les zones, ni les setups, ni
+# les distances, ni le flux n'etaient regardes : tout ce qu'un tableau de bord
+# afficherait naissait HORS du controle, et un `i+1` glisse dans `exposer` ou
+# dans `_flux` serait passe tous les soirs sans rien lever.
+# On compare desormais la ligne entiere moins une LISTE NOIRE courte — pour
+# qu'un champ NEUF soit couvert par defaut, jamais l'inverse.
+FUITE_IGNORE = ("mode", "ecrit_a")
+
+
+def _j(v):
+    return json.dumps(v, sort_keys=True, default=str)
+
+
+def _vide(v):
+    return v is None or v == [] or v == {}
+
+
+def _nature(a, b):
+    """Compare EN PROFONDEUR et rend None (identiques), "aveugle" ou "contra".
+
+    Il faut descendre : la difference du 10/09 portait sur `zones`, une liste
+    de dictionnaires non vides des deux cotes — donc « different » a la racine.
+    En profondeur, la seule difference etait `setups_armes: []` contre une
+    liste pleine : le live n'avait pas la donnee, il ne disait pas le
+    contraire. Comparer a la racine transformait un aveuglement en INCIDENT,
+    et un incident qui crie pour rien finit par etre ignore.
+    """
+    if _j(a) == _j(b):
+        return None
+    if _vide(a) and not _vide(b):
+        return "aveugle"
+    if isinstance(a, dict) and isinstance(b, dict):
+        sous = {_nature(a.get(k), b.get(k)) for k in set(a) | set(b)}
+        return "contra" if "contra" in sous else ("aveugle" if "aveugle" in sous else None)
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        sous = {_nature(x, y) for x, y in zip(a, b)}
+        return "contra" if "contra" in sous else ("aveugle" if "aveugle" in sous else None)
+    return "contra"
+
+
+def _confronter_ligne(o, l):
+    """Rend (contradictions, aveuglements).
+
+    La distinction est mesuree, pas theorique. Le 10/09 a 10h45, sur les deux
+    instruments, le direct portait `setups_hors_zones: null` la ou le rejeu
+    portait les marges. Ce n'est PAS une fuite : le direct en savait MOINS
+    (les colonnes n'etaient pas encore toutes la au moment d'ecrire), il ne
+    disait pas le CONTRAIRE. Verifie par ailleurs : `derouler` est causal,
+    frame tronque et frame complet rendent la meme ligne (teste sur 6, 10 et
+    20 barres, les deux instruments).
+      - le direct est VIDE la ou le rejeu est plein  -> aveuglement du live
+      - les deux sont pleins et different            -> contradiction = FUITE
+    """
+    contra, aveugle = [], []
+    for k in sorted(set(o) | set(l)):
+        if k in FUITE_IGNORE:
+            continue
+        n = _nature(o.get(k), l.get(k))
+        if n == "contra":
+            contra.append(k)
+        elif n == "aveugle":
+            aveugle.append(k)
+    return contra, aveugle
+
+
+def _confronter(lignes, direct):
+    """Le controle du soir. Un direct absent n'est PAS un silence : c'est un
+    controle qu'on n'a pas pu faire, et ca s'ecrit."""
+    if not lignes:
+        return []
+    if not direct:
+        f = lignes[-1]
+        return [_err("FUITE_NON_VERIFIABLE", f["i"], f["heure_et"], None, f["scenario_en_cours"],
+                     "aucune ligne directe pour cet instrument : direct vs rejeu n'a PAS ete verifie")]
+    out, par_i = [], {l["i"]: l for l in direct}
+    versions, aveugles = [], {}
+    for l in lignes:
+        o = par_i.get(l["i"])
+        if o is None:
+            continue
+        if (o.get("grammaire_version"), o.get("seuils_version")) != \
+           (l.get("grammaire_version"), l.get("seuils_version")):
+            versions.append(l)
+            continue
+        contra, aveugle = _confronter_ligne(o, l)
+        if contra:
+            out.append(_err("FUITE", l["i"], l["heure_et"], None, l["scenario_en_cours"],
+                            "INCIDENT : direct et rejeu se contredisent sur %s" % ", ".join(contra[:6])))
+            break                                     # un incident suffit, on ne noie pas le rapport
+        if aveugle:
+            aveugles.setdefault(tuple(aveugle), []).append(l)
+    # Regroupes : « flux absent sur 21 barres » se lit, vingt-et-une lignes
+    # identiques ne se lisent pas — et un rapport qu'on ne lit plus ne protege rien.
+    for champs, ls in sorted(aveugles.items()):
+        out.append(_err("DIRECT_AVEUGLE", ls[0]["i"], ls[0]["heure_et"], None, ls[0]["scenario_en_cours"],
+                        "le live n'avait pas %s sur %d barre(s) (i=%d a %d) : le rejeu du soir reste la mesure"
+                        % (", ".join(champs[:6]), len(ls), ls[0]["i"], ls[-1]["i"])))
+    if versions:
+        f = versions[0]
+        out.append(_err("VERSION_CHANGEE", f["i"], f["heure_et"], None, f["scenario_en_cours"],
+                        "%d barre(s) ecrites sous une autre version du code (i=%d a %d) : "
+                        "non comparables, le controle direct/rejeu ne porte PAS dessus"
+                        % (len(versions), versions[0]["i"], versions[-1]["i"])))
     return out
 
 
