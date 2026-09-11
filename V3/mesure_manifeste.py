@@ -3,12 +3,24 @@
     python -X utf8 V3/mesure_manifeste.py [jour]
 
 POURQUOI IL EST GENERE ET NON ECRIT. Un catalogue tape a la main ment des la
-premiere derive, et personne ne s'en apercoit : c'est exactement comme ca que
-`CLAUDE.md` a fini par affirmer « `atr` en points, `atr_14m` en ticks » alors
-que la MESURE sur les deux instruments dit l'inverse (voir `_unite`). Six
-confusions d'unites en une semaine dans ce depot, toutes d'un facteur constant.
-Ici, chaque unite est DEDUITE des valeurs reelles du frame, jamais recopiee
-d'une note.
+premiere derive, et personne ne s'en apercoit. Chaque unite est donc DEDUITE
+des valeurs reelles du frame, ou SOURCEE au producteur quand les valeurs seules
+ne peuvent pas trancher.
+
+CE QUE LA PREMIERE VERSION A RATE, ET LA LEÇON. Elle devinait l'unite de la
+famille ATR en comparant chaque colonne a l'etendue mediane d'une barre de 15
+minutes, et concluait triomphalement que `CLAUDE.md` avait tout faux. C'etait
+l'inverse : `CLAUDE.md` a raison, `atr` est en POINTS et `atr_14m` en TICKS, et
+le C++ le dit noir sur blanc (`DMP_Calc_ATR_14m` rend `atr_price / tick_size`).
+L'heuristique comparait un ATR JOURNALIER a une barre de quinze minutes — deux
+periodes sans rapport — et `atr_14m` (10,25 ticks) tombait par coincidence pres
+de l'etendue en points (9,62). Une proximite de magnitude entre grandeurs de
+periodes differentes ne prouve RIEN.
+
+D'ou la regle de ce fichier : ce qui peut se deduire se deduit, ce qui ne le
+peut pas se source au producteur — et `verifier_atr()` confronte les unites
+declarees a un ATR RECALCULE depuis les barres brutes a chaque generation, pour
+qu'une affirmation d'unite ne puisse plus vivre sans preuve.
 
 SOURCES DE VERITE, dans cet ordre :
   1. le frame 15 min REELLEMENT produit par la chaine (`scenarios.charger`, qui
@@ -53,6 +65,26 @@ CLASSES = {"A": "reproduite en C++ et verifiee par IDENTITE",
            "S": "suspecte, a recalculer",
            "chaine": "produite par la CHAINE, pas par le C++ — absente de la table "
                      "DMP, et c'est normal : la table catalogue les colonnes du dumper"}
+
+# LA FAMILLE ATR — sourcee, jamais deduite. La premiere version de ce fichier
+# la DEVINAIT en comparant chaque colonne a l'etendue mediane d'une barre de 15
+# minutes, et concluait que `CLAUDE.md` avait tout faux. C'etait MOI qui avais
+# tort : `atr` est un ATR JOURNALIER, qu'on ne peut pas comparer a une barre de
+# 15 minutes, et `atr_14m` (10,25 sur ES) tombait par coincidence pres de
+# l'etendue en points (9,62) alors qu'il est en TICKS. Une heuristique de
+# proximite sur des grandeurs de periodes differentes ne mesure rien.
+# Les unites viennent donc du PRODUCTEUR, et `verifier_atr()` les confronte a un
+# ATR recalcule depuis les barres brutes a chaque generation.
+ATR_UNITES = {
+    "atr": ("points", "ATR JOURNALIER, lu sur le chart daily de Sierra en PRIX "
+                      "(`DMP_Reader.h`, `DMP_ReadDaily` -> `atr_daily`)"),
+    "atr_14m": ("ticks", "ATR(14) sur barres 1 min : `DMP_Calc_ATR_14m` rend "
+                         "`atr_price / tick_size` — le C++ le dit en toutes lettres"),
+    "atr_barre": ("points", "ATR de la barre agregee 15 min, recalcule par la chaine"),
+    "atr_veille": ("points", "ATR de la veille, meme famille qu'`atr_barre`"),
+    "atr_ref": ("points", "= `atr_barre` si fini, sinon `atr_veille` ; `atr_source` dit lequel"),
+    "atr_source": ("sans dimension", "etiquette : barre / veille / aucun"),
+}
 
 BLOCS = (("VWAP et bandes", r"vwap"),
          ("Valeur : VA, VPOC, composite", r"(prev_v|cur_v|va_|vpoc|poc_|inside_prev)"),
@@ -109,8 +141,8 @@ def _proxys():
 
 
 def _unite(col, s, etendue_pts, tick):
-    """L'unite, DEDUITE des valeurs. Jamais recopiee d'une note : c'est ainsi
-    que `CLAUDE.md` a fini par dire l'inverse de la realite sur l'ATR."""
+    """L'unite : DEDUITE des valeurs quand elles suffisent, SOURCEE au
+    producteur quand elles ne suffisent pas (famille ATR, cf ATR_UNITES)."""
     v = pd.to_numeric(s, errors="coerce").dropna()
     if v.empty:
         return "—", "aucune valeur finie sur la journee mesuree"
@@ -129,10 +161,8 @@ def _unite(col, s, etendue_pts, tick):
         return "contrats", "cumul du delta depuis 17h ET — la NUIT est dedans, ce n'est PAS depuis 9h30"
     if col.startswith("vwap") and not col.startswith("vwap_slope"):
         return "prix absolu", "un niveau, pas une distance"
-    if col.startswith("atr"):
-        med = float(v.median())
-        en_pts = abs(med - etendue_pts) < abs(med - etendue_pts / tick)
-        return ("points" if en_pts else "ticks"), "MESURE contre l'etendue mediane d'une barre"
+    if col in ATR_UNITES:
+        return ATR_UNITES[col]
     if col.endswith("_pct"):
         return ("part (0 a 1)" if float(v.abs().max()) <= 1.5 else "pourcent (0 a 100)"), \
             "PAS un pourcentage affichable tel quel" if float(v.abs().max()) <= 1.5 else ""
@@ -143,6 +173,35 @@ def _unite(col, s, etendue_pts, tick):
     if col in ("open", "high", "low", "close") or col.endswith("_lvl"):
         return "prix absolu", "ne JAMAIS mettre dans un modele : niveau de prix"
     return "sans dimension", ""
+
+
+def verifier_atr(df, brut, tick):
+    """CONFRONTE les unites declarees a un ATR recalcule depuis les barres.
+
+    C'est le garde-fou ne de l'erreur du 11/09 : une unite affirmee doit etre
+    verifiable, sinon elle se perime comme n'importe quelle note. On recalcule
+    le vrai ATR(14) sur les barres 1 min et sur les barres 15 min, et on exige
+    que la colonne colle a la lecture DECLAREE, pas a l'autre.
+    """
+    def _atr(d, h, l, c, n=14, mini=None):
+        H, L, C = (pd.to_numeric(d[x], errors="coerce") for x in (h, l, c))
+        P = C.shift(1)
+        tr = pd.concat([H - L, (H - P).abs(), (L - P).abs()], axis=1).max(axis=1)
+        return float(tr.rolling(n, min_periods=mini or n).mean().median())
+
+    out = []
+    vrai_1m = _atr(brut, "bar_high", "bar_low", "close")
+    vrai_15 = _atr(df, "high", "low", "close", mini=5)
+    for col, vrai_pts in (("atr_14m", vrai_1m), ("atr_barre", vrai_15)):
+        if col not in df.columns:
+            continue
+        med = float(pd.to_numeric(df[col], errors="coerce").median())
+        declare = ATR_UNITES[col][0]
+        attendu = vrai_pts if declare == "points" else vrai_pts / tick
+        autre = vrai_pts / tick if declare == "points" else vrai_pts
+        ok = abs(med - attendu) < abs(med - autre)
+        out.append((col, declare, med, attendu, ok))
+    return out
 
 
 def _note(col, prov, motif, proxy, recalc, dans_brut):
@@ -194,75 +253,17 @@ def construire(jour):
             "dans_brut": col in cols_brut,
             "note": _note(col, p, motif, col in proxys, recalc, col in cols_brut),
         })
-    return lignes, etendue
-
-
-def rendre(lignes, jour):
-    total = len(lignes)
-    par_prov = {}
-    for l in lignes:
-        par_prov[l["provenance"]] = par_prov.get(l["provenance"], 0) + 1
-    out = ["# MANIFESTE DES DONNEES — ce que V3 consomme vraiment", "",
-           "*GENERE par `V3/mesure_manifeste.py`, jamais ecrit a la main. Regenerer",
-           "apres toute modification d'une colonne : un catalogue tape ment des la",
-           "premiere derive. Mesure sur le %s, ES et NQ.*" % jour, "",
-           "## La source, en une ligne", "",
-           "`DATA/live_enriched/sierra/{ES,NQ}/*.jsonl`, barres de 1 minute, agregees",
-           "en 15 minutes par la chaine (`injecter_recalculs`, chauffe vingt jours).",
-           "**Le frame que la chaine LIT porte %d colonnes** ; le brut 1 min en porte" % total,
-           "plusieurs centaines — tout ce qui n'est pas dans la liste ci-dessous meurt",
-           "a l'agregation et n'existe pas pour V3.", "",
-           "## Le compte", "",
-           "| provenance | colonnes | ce que ca veut dire |", "|---|---|---|"]
-    for cl in sorted(par_prov):
-        out.append("| `%s` | %d | %s |" % (cl, par_prov[cl],
-                                            "recalculee par la chaine (`_r`)" if cl == "recalc"
-                                            else "proxy refuse par `lecture.py`" if cl == "proxy"
-                                            else CLASSES.get(cl, "?")))
-    etoiles = [l for l in lignes if l["etoile"]]
-    out += ["", "> Les colonnes `recalc` sont calculees par la chaine avec VINGT jours",
-            "> de chauffe. Sur un frame `lot` de trois jours elles peuvent etre absentes",
-            "> — ou pire, PRESENTES ET FAUSSES. C'est pourquoi la ligne de journal porte",
-            "> `setups_armes_motif` et `flux_motif` quand le frame n'est pas fiable.", "",
-            "## Ce sur quoi repose la decision (★)", "",
-            "**%d colonnes** sur %d sont lues par LES_QUATRE et les setups" % (len(etoiles), total),
-            "(citees dans `V3/marges_quatre.py`). Tout le reste est du contexte :", "",
-            "`" + "`, `".join(l["nom"] for l in etoiles) + "`", "",
-            "## Les pieges d'unite, mesures", "",
-            "| colonne | unite MESUREE | ce que disait la note |", "|---|---|---|",
-            "| `atr` | ticks | `CLAUDE.md` dit « points » — **l'inverse** |",
-            "| `atr_14m`, `atr_barre`, `atr_veille`, `atr_ref` | points | `CLAUDE.md` dit « ticks » — **l'inverse** |",
-            "| `dist_*` | ticks | conforme (`niveau = close + dist x tick`) |",
-            "| `*_pct` | part de 0 a 1 | **pas** un pourcentage affichable tel quel |", ""]
-    vus = set()
-    for titre, motif in BLOCS:
-        rx = re.compile(motif)
-        bloc = [l for l in lignes if l["nom"] not in vus and rx.search(l["nom"])]
-        if not bloc:
-            continue
-        vus |= {l["nom"] for l in bloc}
-        out += ["## %s" % titre, "",
-                "| colonne | fam. | prov. | unite | note |", "|---|---|---|---|---|"]
-        for l in bloc:
-            out.append("| %s`%s` | %s | `%s` | %s | %s |" % (
-                "★ " if l["etoile"] else "", l["nom"], l["famille"], l["provenance"],
-                l["unite"] + (" — " + l["piege"] if l["piege"] else ""), l["note"] or "—"))
-        out.append("")
-    reste = [l for l in lignes if l["nom"] not in vus]
-    if reste:
-        out += ["## Hors bloc", "", "| colonne | fam. | prov. | unite | note |", "|---|---|---|---|---|"]
-        for l in reste:
-            out.append("| %s`%s` | %s | `%s` | %s | %s |" % (
-                "★ " if l["etoile"] else "", l["nom"], l["famille"], l["provenance"],
-                l["unite"], l["note"] or "—"))
-        out.append("")
-    return "\n".join(out) + "\n"
+    return lignes, etendue, verifier_atr(df, brut, tick)
 
 
 def main(argv):
     jour = argv[1] if len(argv) > 1 else "20260910"
-    lignes, etendue = construire(jour)
-    texte = rendre(lignes, jour)
+    lignes, etendue, verif = construire(jour)
+    for col, declare, med, attendu, ok in verif:
+        print("  %-11s declare %-7s mediane %8.2f  attendu %8.2f  %s"
+              % (col, declare, med, attendu, "OK" if ok else "INCOHERENT <<<"))
+    from V3.manifeste_rendu import rendre       # importe ICI : le rendu importe ce module
+    texte = rendre(lignes, jour, verif)
     open(SORTIE, "w", encoding="utf-8", newline="\n").write(texte)
     print("  %s : %d colonnes, %d lignes ecrites" % (SORTIE, len(lignes), texte.count("\n")))
     print("  etendue mediane d'une barre ES : %.2f points" % etendue)

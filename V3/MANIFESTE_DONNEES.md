@@ -35,14 +35,31 @@ a l'agregation et n'existe pas pour V3.
 
 `atr_ref`, `atr_source`, `close`, `delta_bar`, `delta_pct`, `dist_cur_vah`, `dist_cur_val`, `dist_ib_high`, `dist_ib_low`, `dist_vwap_rth_sd2d_r`, `dist_vwap_rth_sd2u_r`, `finish_delta_pct`, `high`, `ib_broken_dn`, `ib_broken_up`, `jour`, `low`, `open`, `rvol`, `rvol_r`, `ts`
 
-## Les pieges d'unite, mesures
+## Les pieges d'unite
 
-| colonne | unite MESUREE | ce que disait la note |
+Sept confusions d'unites en une semaine dans ce depot, toutes d'un facteur
+constant. Les quatre qui comptent :
+
+| colonne | unite | d'ou elle vient |
 |---|---|---|
-| `atr` | ticks | `CLAUDE.md` dit « points » — **l'inverse** |
-| `atr_14m`, `atr_barre`, `atr_veille`, `atr_ref` | points | `CLAUDE.md` dit « ticks » — **l'inverse** |
-| `dist_*` | ticks | conforme (`niveau = close + dist x tick`) |
-| `*_pct` | part de 0 a 1 | **pas** un pourcentage affichable tel quel |
+| `atr` | **points** | ATR JOURNALIER, lu du chart daily de Sierra en prix |
+| `atr_14m` | **ticks** | ATR(14) 1 min ; le C++ divise par `tick_size` avant de rendre |
+| `atr_barre`, `atr_veille`, `atr_ref` | **points** | recalcules par la chaine sur la barre agregee |
+| `dist_*` | **ticks** | `niveau = close + dist x tick` (CONVENTIONS §8) |
+| `*_pct` | **part de 0 a 1** | PAS un pourcentage affichable tel quel |
+
+> `atr` et `atr_14m` n'ont ni la meme periode ni la meme unite : l'un est
+> JOURNALIER en points, l'autre est sur 14 barres de 1 MINUTE en ticks. Les
+> comparer par leur ordre de grandeur ne prouve rien — c'est l'erreur que la
+> premiere version de ce manifeste a commise, en affirmant a tort que
+> `CLAUDE.md` disait l'inverse de la realite. `CLAUDE.md` avait raison.
+
+### Verification, a chaque generation
+
+| colonne | unite declaree | mediane du jour | ATR recalcule des barres | verdict |
+|---|---|---|---|---|
+| `atr_14m` | ticks | 10.25 | 10.43 | coherent |
+| `atr_barre` | points | 11.63 | 12.34 | coherent |
 
 ## VWAP et bandes
 
@@ -144,12 +161,12 @@ a l'agregation et n'existe pas pour V3.
 
 | colonne | fam. | prov. | unite | note |
 |---|---|---|---|---|
-| `atr` | F22 | `B` | ticks — MESURE contre l'etendue mediane d'une barre | — |
-| `atr_14m` | F22 | `B` | points — MESURE contre l'etendue mediane d'une barre | — |
-| `atr_barre` | hors famille | `chaine` | points — MESURE contre l'etendue mediane d'une barre | nee a l'agregation 15 min |
-| ★ `atr_ref` | hors famille | `chaine` | points — MESURE contre l'etendue mediane d'une barre | nee a l'agregation 15 min ; = `atr_barre` si fini, sinon `atr_veille` ; `atr_source` dit lequel |
+| `atr` | F22 | `B` | points — ATR JOURNALIER, lu sur le chart daily de Sierra en PRIX (`DMP_Reader.h`, `DMP_ReadDaily` -> `atr_daily`) | — |
+| `atr_14m` | F22 | `B` | ticks — ATR(14) sur barres 1 min : `DMP_Calc_ATR_14m` rend `atr_price / tick_size` — le C++ le dit en toutes lettres | — |
+| `atr_barre` | hors famille | `chaine` | points — ATR de la barre agregee 15 min, recalcule par la chaine | nee a l'agregation 15 min |
+| ★ `atr_ref` | hors famille | `chaine` | points — = `atr_barre` si fini, sinon `atr_veille` ; `atr_source` dit lequel | nee a l'agregation 15 min ; = `atr_barre` si fini, sinon `atr_veille` ; `atr_source` dit lequel |
 | ★ `atr_source` | hors famille | `chaine` | — — aucune valeur finie sur la journee mesuree | nee a l'agregation 15 min |
-| `atr_veille` | hors famille | `chaine` | points — MESURE contre l'etendue mediane d'une barre | nee a l'agregation 15 min |
+| `atr_veille` | hors famille | `chaine` | points — ATR de la veille, meme famille qu'`atr_barre` | nee a l'agregation 15 min |
 
 ## Barre courante et meches
 
