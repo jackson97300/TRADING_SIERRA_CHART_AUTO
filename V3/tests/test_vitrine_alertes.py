@@ -105,6 +105,22 @@ def main():
     check("[1f] aucun mot interdit dans vitrine.html ni dans /etat.json", not INTERDITS.search(html) and not INTERDITS.search(dump),
           (INTERDITS.search(html) or INTERDITS.search(dump)))
     check("[1g] NON MESURE w1 tant que mesure_w1.json est absent", e["non_mesure_w1"] is True)
+    # [1h] LA SYNTAXE DU JAVASCRIPT. Le 11/09, un caractere d'echappement ecrit comme un
+    # VRAI saut de ligne dans un `.join()` a casse TOUT le script : la fenetre affichait
+    # ses boutons et plus rien d'autre, et le serveur repondait parfaitement — l'erreur
+    # etait muette cote page, et c'est Jackson qui l'a vue. Publie sans etre verifie.
+    import shutil, subprocess, tempfile as _tf
+    js = html.split("<script>")[1].split("</script>")[0] if "<script>" in html else ""
+    node = shutil.which("node")
+    if not node:
+        check("[1h] syntaxe JS non verifiee (node absent) — a verifier a la main", True)
+    else:
+        f = os.path.join(_tf.mkdtemp(), "v.js")
+        open(f, "w", encoding="utf-8").write(js)
+        r = subprocess.run([node, "--check", f], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        check("[1h] le JavaScript de vitrine.html est SYNTAXIQUEMENT valide (node --check)",
+              r.returncode == 0, (r.stderr or "").strip().splitlines()[:3])
     # 2. alertes
     b = [{"i": 2, "ts": T0 + 2 * 900_000, "de": "S_OUV_BAS_TEND", "vers": "S_OUV_BAS_REINT", "cause": "reintegration_acceptee"}]
     L2 = L + [ligne("ES", 2, scenario="S_OUV_BAS_REINT", bascules=b, validations=L[1]["validations"],

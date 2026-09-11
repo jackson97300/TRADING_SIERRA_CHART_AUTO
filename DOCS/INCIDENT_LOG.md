@@ -33,6 +33,18 @@
 
 ---
 
+### 2026-09-11 (15h00) — [VALIDATION_MISS] — un caractere d'echappement ecrit comme un vrai saut de ligne a tue TOUT le JavaScript de la vitrine ; publie sans etre verifie, c'est Jackson qui l'a vu
+**Contexte** : ajout du bouton « recit » a la vitrine. Le code JS contenait `.join("
+")` — ecrit depuis un script Python dont l'echappement a produit un VRAI saut de ligne dans le fichier HTML au lieu du caractere `
+`.
+**Ce qui a mal tourne** : la chaine JavaScript n'etait jamais fermee -> erreur de SYNTAXE -> **aucune ligne du script ne s'executait**. La fenetre affichait ses trois boutons (HTML statique) et RIEN d'autre : pas de bandeau, pas d'etat, pas de zones. Le serveur, lui, repondait parfaitement (`/etat.json` portait bien le bloc avant-ouverture). L'erreur etait MUETTE cote page — aucune trace, aucun log, juste du vide. Commit et publication faits avant toute verification ; c'est Jackson qui l'a signalee par une capture.
+**Cause racine** : deux fautes qui se cumulent. (1) Un echappement perdu en passant par un heredoc + Python pour ecrire du JS — le meme piege qu'avec les caracteres accentues dans les heredocs bash (deja consigne). (2) **Aucun controle de syntaxe du JavaScript** : `test_vitrine_alertes` verifiait les mots interdits, le rendu, les alertes — jamais que le script PARSE. Un HTML dont le JS est mort passe tous les tests de contenu.
+**Aggravant** : la meme faute a ete refaite IMMEDIATEMENT APRES, dans le test Python cense l'attraper (`
+` redevenu un saut de ligne reel dans la chaine de test). Le piege n'est pas l'inattention, c'est l'outil : ecrire du code dans une chaine, dans un script, dans un heredoc.
+**Lecon** : ce qui ne leve pas d'exception n'est pas teste. Un JS casse est SILENCIEUX — c'est la categorie de bug la plus chere, parce qu'elle se decouvre a l'usage et pas au commit. Et : ne jamais ecrire de code contenant des echappements via un heredoc — utiliser l'ecriture directe de fichier.
+**Trigger prevention** : `test_vitrine_alertes` [1h] extrait le `<script>` et le passe a `node --check` ; il echoue si le JS ne parse pas. Le test tourne dans la suite, donc sur le VPS aussi. Pour tout futur fichier portant du JS : meme controle.
+**Reviewed** : Jackson (a vu la fenetre vide), self (diagnostic et correction)
+
 ### 2026-09-11 (11h30) — [CONTEXT_MISS] — un brief EXEC designait `V1_ARCHIVE/sierra_dtc_connector.py` comme source : son bracket (OCO 206 + IsParentOrder) est REJETE par Sierra depuis le 02/04
 **Contexte** : squelette d'`exec_sim.py` ecrit par Fable pour le lundi 14/09. Il prescrivait « copier V1 » et decrivait le bracket ainsi : parent avec `IsParentOrder=1`, enfants en `SUBMIT_NEW_OCO_ORDER` (206) lies par `ParentTriggerClientOrderID`.
 **Ce qui a mal tourne** : ces trois mecanismes ont ete testes et REJETES le 02/04/2026 — Sierra Chart en serveur DTC les ignore SILENCIEUSEMENT (CLAUDE.md, tableau des bugs connus, et « Type 206 / IsParentOrder : teste et REJETE »). Suivre le brief, c'etait passer la journee de lundi a envoyer des ordres avales sans un mot, et redecouvrir en deux jours ce qui avait coute une journee en avril. Detecte par la question de Jackson : « pourquoi un faux DTC alors que l'execution marchait deja sur les quatre bots ? » — la bonne question de bon sens, posee au bon moment.

@@ -125,12 +125,10 @@ document.getElementById("btn-recit").onclick = async () => {
       const r = await (await fetch("/recit?sym=" + s + "&jour=" + jour, {cache:"no-store"})).json();
       if (r.erreur) { out.push(`<span class="sym">${h(s)}</span> — ${h(r.erreur)}`); continue; }
       out.push(`<span class="sym">${h(s)} — ${r.n} ligne(s)` + (r.ecarts ? `, ${r.ecarts} écart(s) que le récit se signale à lui-même` : "") + `</span>`);
-      out.push(r.lignes.map(l => l.includes("ECART") ? `<span class="ecart">${h(l)}</span>` : h(l)).join("
-"));
+      out.push(r.lignes.map(l => l.includes("ECART") ? `<span class="ecart">${h(l)}</span>` : h(l)).join("\n"));
     } catch (e) { out.push(`<span class="sym">${h(s)}</span> — indisponible (${h(e)})`); }
   }
-  box.innerHTML = out.join("
-");
+  box.innerHTML = out.join("\n");
 };
 document.getElementById("btn-muet").onclick = async () => { await fetch("/muet", {method:"POST"}); rafraichir(); };
 document.getElementById("btn-noter").onclick = () => { const f = document.getElementById("form-noter"); f.style.display = f.style.display === "block" ? "none" : "block"; };
