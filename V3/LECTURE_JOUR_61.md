@@ -218,18 +218,32 @@ devenirs par famille. Écrites après la confrontation `research/parite_barriere
     puis clôture dedans » comme sa docstring le dit. Le journal porte la
     vraie VAL ; le déclencheur reste tel qu'il a été tagué et mesuré.
 
-38. **H3-VPOC se lit en DEUX JAMBES** (Fable, 10/09, relecture du lieu —
-    mesure : `close + dist_cur_val × tick = cur_val_lvl` à 100 % sur 4 × 390
-    barres, `h3` gelé reconstruit la VAL au signe inverse). La jambe SHORT
-    (rejet au VAH) est l'hypothèse pré-enregistrée. La jambe LONG tire quand
-    la clôture est juste SOUS la VAL avec une mèche basse — ce n'est pas
-    « sorti sous la VAL puis revenu dedans », c'est autre chose : **une
-    hypothèse ACCIDENTELLE, sans attendu écrit, que personne n'a
-    pré-enregistrée**. Elle se lit À PART et NE PEUT PAS « passer » : un
-    résultat sur elle est une DÉCOUVERTE à pré-enregistrer au cycle 2
-    (NEXT_CYCLE §5 septies), jamais un verdict. Rien ne bouge au tag. Sa
-    taille est mesurée dans DECISIONS (10/09 soir : longs / shorts H3 sur le
-    lot) — c'est la jambe qu'on isole.
+38. **H3-VPOC se lit ENTIÈRE, la jambe long est MARQUÉE, jamais verdictée**
+    (Fable, 11/09, révision AVANT le tag — la version du 10/09 au soir était
+    un piège, dite ci-dessous). Le fait mesuré ne bouge pas : `close +
+    dist_cur_val × tick = cur_val_lvl` à 100 % sur 4 × 390 barres, et `h3`
+    gelé reconstruit la VAL au signe inverse ; la jambe SHORT (rejet au VAH)
+    est l'hypothèse pré-enregistrée, la jambe LONG tire quand la clôture est
+    juste SOUS la VAL avec une mèche basse — **une hypothèse ACCIDENTELLE,
+    sans attendu écrit, que personne n'a pré-enregistrée** (NEXT_CYCLE
+    §5 septies).
+    **Ce qui change, et pourquoi.** « Lire à part » ne veut pas dire
+    « partitionner le verdict ». Projection depuis le lot sur 60 jours × 2
+    instruments : H3 entière ≈ 50 signaux, H3 short seul ≈ 33, H3 long seul
+    ≈ 17 ; H6p ≈ 24, H2p ≈ 3, H8p ≈ 3. H3 entière est **la seule case de
+    toute la campagne au-dessus de N = 40**. La version du 10/09, en coupant
+    les jambes pour le verdict, faisait passer la seule hypothèse testable
+    sous le seuil : soixante jours qui ne peuvent conclure sur rien. La
+    règle 9 l'interdit déjà dans les deux sens — ni fusionner, ni découper
+    sous la puissance.
+    **Donc** : le verdict du jour 61 porte sur **H3 ENTIÈRE** (N ≈ 50). La
+    jambe est marquée sur chaque signal — elle est déjà dans le journal, le
+    `snapshot_id` finit par `L` ou `S` — et se lit **descriptivement** : sa
+    part, son heure, son comportement. Un résultat sur le short seul (≈ 33)
+    ou le long seul (≈ 17) est une **observation à pré-enregistrer au
+    cycle 2**, jamais une conclusion du jour 61. Le long ne peut toujours pas
+    « passer » ; il ne peut pas non plus faire échouer H3 à lui seul.
+    Taille mesurée : DECISIONS 10/09 (45 H3 sur le lot, 30 shorts / 15 longs).
 
 39. **Le scénario est sur chaque ligne ; il DÉCRIT, il ne DÉCOUPE pas**
     (Fable, 10/09, module SCÉNARIOS — pré-enregistrée avant que le module
