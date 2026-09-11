@@ -60,15 +60,27 @@ def noter_relance(chemin=RELANCES, maintenant=None):
     return l
 
 
-def tuer_ecrivains():
+def tuer(motif):
+    """Tue les processus python dont la ligne de commande contient `motif`.
+
+    UN SEUL endroit sait tuer un processus V3. Le motif porte DEUX barres
+    obliques inversees : par `-Command` — le chemin utilise ici — PowerShell y
+    lit la classe `[\\/]`, qui correspond a `\\` comme a `/`. Avec une seule,
+    elle ne correspond a RIEN et le garde ne tuerait jamais personne, en
+    silence (verifie le 11/09 sur le processus reel).
+    """
     cmd = ("Get-CimInstance Win32_Process -Filter \"Name LIKE 'python%'\" | "
-           "Where-Object { $_.CommandLine -match 'scenarios[\\\\/]boucle' } | "
+           "Where-Object { $_.CommandLine -match '" + motif + "' } | "
            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
     try:
         subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True,
                        timeout=60, creationflags=0x08000000)
     except (subprocess.TimeoutExpired, OSError) as e:
         print("kill : %s (la relance continue)" % type(e).__name__)
+
+
+def tuer_ecrivains():
+    tuer("scenarios[\\\\/]boucle")
 
 
 def relancer():

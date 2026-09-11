@@ -155,6 +155,28 @@ def main():
     check("[7z] le CODE ne calcule aucun taux (aucune division par un compte)",
           "/ connues" not in code and "alignees /" not in code and "/ N_COMPOSANTES" not in code)
 
+    print("\n[8] une ligne ne doit JAMAIS se contredire elle-meme")
+    # Mesure du 11/09 : sur un frame ampute, la ligne portait a la fois
+    # `setups_armes_motif: frame_sans_recalculs` — « ce frame n'est pas fiable,
+    # je n'expose aucun setup » — ET `flux.rvol_r: 0.9259`, un nombre tire de ce
+    # meme frame. On ne sait pas laquelle des deux moities croire.
+    import pandas as pd
+    from V3.scenarios import scenarios as sc
+    df = pd.DataFrame({"vwap_slope_r": [0.3], "cvd_sess_r": [700.0],
+                       "rvol_r": [1.4], "delta_pct": [0.02]})
+    plein = sc._flux(df, 0, recalculs=True)
+    vide = sc._flux(df, 0, recalculs=False)
+    check("[8a] frame FIABLE : les quatre nombres sont rendus",
+          all(v is not None for v in plein.values()), plein)
+    check("[8b] frame SANS recalculs : toutes les colonnes `_r` sont videes",
+          all(vide[c] is None for c in sc.FLUX_RECALCULES), vide)
+    check("[8c] ... et delta_pct, qui n'est pas recalcule, survit",
+          vide["delta_pct"] == 0.02, vide)
+    check("[8d] les colonnes recalculees sont bien un sous-ensemble du flux lu",
+          set(sc.FLUX_RECALCULES) < set(sc.FLUX_LUS))
+    check("[8e] une colonne absente vaut None dans les deux cas",
+          sc._flux(pd.DataFrame({"delta_pct": [0.02]}), 0)["rvol_r"] is None)
+
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0
 

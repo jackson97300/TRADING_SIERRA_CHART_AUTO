@@ -35,6 +35,10 @@
   .bandeau { margin:12px 16px 0; padding:8px 12px; border-radius:8px; font-size:12px;
              background:rgba(210,153,34,.12); color:var(--neutre);
              border:1px solid rgba(210,153,34,.3); }
+  /* Le serveur perime est plus grave qu'un bandeau d'information : la page
+     entiere peut afficher des trous sans qu'aucune erreur ne soit levee. */
+  .bandeau.grave { background:rgba(248,81,73,.14); color:var(--non);
+                   border-color:rgba(248,81,73,.4); font-weight:600; }
 
   .muet { color:var(--gris); }
   .gris { opacity:.55; }
@@ -108,6 +112,7 @@
   <button id="btn-recit" type="button" title="F23 raconte la séance : touche, tenue, cassure, regain, piégé — calculé à la demande">récit</button>
   <span id="msg"></span>
 </div>
+<div id="bandeau-serveur" class="bandeau grave" hidden>SERVEUR PÉRIMÉ — le code a changé depuis son démarrage. Recharger la page n'y change rien : relance la vitrine (LANCER_NARRATEUR).</div>
 <div id="bandeau" class="bandeau" hidden>NON MESURÉ w1 — les nombres du lot sont sur un profil antérieur (w0)</div>
 <form class="noter" id="form-noter">
   <input name="heure_et" placeholder="heure_et" size="6"><input name="sym" placeholder="sym" size="3">
@@ -145,6 +150,12 @@ function avantBloc(av){
   </div>`).join("");
 }
 function bloc(sym, d, muet){
+  // Un instrument absent du journal se DIT. Il ne disparaît pas : « rien sur
+  // NQ » et « NQ n'a pas été écrit » ne sont pas la même phrase, et seule la
+  // seconde est vraie quand l'écrivain n'a rien mis.
+  if (d.indisponible) return `<div class="sym gris">
+    <div class="titre"><span>${h(sym)}</span><span class="heure">indisponible</span></div>
+    <div class="sous muet">${h(d.motif)}</div></div>`;
   const cls = (d.etat_scenario === "valide" && !muet) ? "valide" : (d.etat_scenario === "invalide" ? "invalide" : "en_cours");
   const rec = [...d.validations.map(v => `validé ${h(v.quoi)} sur ${h(v.zone)}`), ...d.invalidations.map(v => `invalidé ${h(v.quoi)} sur ${h(v.zone)}`)];
   const al = d.alertes.map(a => `${h(a.heure_et)} ${h(a.texte)}`);
@@ -229,6 +240,18 @@ let versionHtml = null;
 async function verifierVersion(){
   try {
     const v = await (await fetch("/version", {cache:"no-store"})).json();
+    // Le SERVEUR d'abord. Son Python vit en mémoire depuis son démarrage ; le
+    // HTML, lui, est relu du disque à chaque requête. Une page neuve servie
+    // par un serveur périmé demande des champs qu'il n'envoie pas et affiche
+    // des trous, en silence (mesuré le 11/09). Recharger la page ne répare
+    // rien : seul un redémarrage du serveur le fait. Donc on le DIT, et on ne
+    // boucle pas sur un rechargement inutile.
+    // Une réponse SANS la clé `serveur` vient d'un serveur d'avant ce contrôle :
+    // il est périmé par définition. Sans ce cas, le tout premier serveur à
+    // corriger serait le seul que le contrôle ne saurait pas détecter.
+    const perime = v.serveur_perime || !("serveur" in v);
+    document.getElementById("bandeau-serveur").hidden = !perime;
+    if (perime) return;
     if (versionHtml && v.html !== versionHtml) { location.reload(); return; }
     versionHtml = v.html;
   } catch (e) { /* serveur absent : le bandeau du heartbeat le dit deja */ }

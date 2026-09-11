@@ -18,15 +18,12 @@ CE QU'IL GARANTIT, ET C'EST SA RAISON D'ETRE :
   sous un autre nom. Le demarrage passe par `garde_scenarios.relancer`, qui
   pose deja le battement tampon anti-course (leçon du 08/09).
 
-Ce qu'il fait, dans l'ordre : il regarde ce qui tourne deja, il demarre ce qui
-MANQUE et rien d'autre, puis il affiche l'etat au premier plan. Fermer le
-moniteur (Ctrl-C) ne tue NI l'ecrivain NI la vitrine : ils sont detaches, la
-campagne ne s'arrete pas parce qu'on ferme une fenetre.
+Dans l'ordre : il regarde ce qui tourne, demarre ce qui MANQUE et rien d'autre
+(sauf une vitrine PERIMEE, qu'il relance — c'est le seul correctif possible),
+puis affiche l'etat au premier plan. Ctrl-C ne tue ni l'ecrivain ni la vitrine.
 
-Il ne decide rien et n'ecrit dans aucun journal. Il lit `/etat.json`, la meme
-source que la page — jamais un calcul a lui (SPEC_VITRINE, phrase 2). Console
-sans accents, comme le reste de `V3/execution` : une console Windows mal reglee
-ne doit pas pouvoir casser l'affichage de l'etat.
+Il ne decide rien, n'ecrit dans aucun journal, et lit `/etat.json` — la meme
+source que la page, jamais un calcul a lui (SPEC_VITRINE, phrase 2).
 """
 
 from __future__ import annotations
@@ -49,13 +46,11 @@ from V3.scenarios import lot                                      # noqa: E402
 
 DETACHE = garde_scenarios.DETACHE        # survit a la fermeture du moniteur
 SANS_FENETRE_CONSOLE = 0x08000000        # l'inventaire des processus, sans flash noir
-RAFRAICHIR_S = 5                         # le moniteur ; la page a son propre reglage
+RAFRAICHIR_S = 5                         # le moniteur a son rythme, la page au sien
 LARGE = 74
-# La classe de caracteres porte DEUX barres obliques inversees : par `-Command`
-# (le chemin livre) PowerShell y lit `[\\/]`, qui correspond a `\` comme a `/`.
-# Avec une seule, elle ne correspond a RIEN — et on ne verrait jamais la fenetre
-# deja ouverte. Verifie sur le processus reel, pas deduit.
+# DEUX barres obliques inversees : la raison est dans `garde_scenarios.tuer`.
 MOTIF_FENETRE = "scenarios[\\\\/]fenetre"
+MOTIF_VITRINE = "scenarios[\\\\/]vitrine"
 
 
 def port_vitrine():
@@ -71,8 +66,7 @@ def heartbeat():
         return None
 
 
-# --- ce qui tourne deja ------------------------------------------------------
-
+# --- ce qui tourne deja ---
 def processus_vivant(motif):
     """Un processus python dont la ligne de commande contient `motif`.
     Rend None si la question n'a pas pu etre posee — jamais False : « je ne
@@ -89,12 +83,23 @@ def processus_vivant(motif):
         return None
 
 
-def vitrine_debout(port, delai=2.0):
+def etat_serveur(port, delai=2.0):
+    """Rend (debout, perime) en UNE requete. `perime` = le serveur tourne sous
+    un code plus vieux que celui du disque : son Python vit en memoire depuis
+    son demarrage, le HTML est relu a chaque requete. Une page neuve servie par
+    un serveur vieux demande des champs qu'il n'envoie pas et affiche des
+    trous, sans lever la moindre erreur (mesure du 11/09).
+
+    Un serveur qui repond SANS la cle `serveur` est perime par definition : il
+    date d'avant ce controle. Sans ce cas, le tout premier serveur a corriger
+    serait le seul que le controle ne saurait pas detecter.
+    """
     try:
         with urllib.request.urlopen("http://localhost:%d/version" % port, timeout=delai) as r:
-            return r.status == 200
+            d = json.loads(r.read().decode("utf-8"))
+            return True, bool(d.get("serveur_perime")) or "serveur" not in d
     except (urllib.error.URLError, OSError, ValueError):
-        return False
+        return False, False
 
 
 def etat_vitrine(port, delai=4.0):
@@ -129,14 +134,18 @@ def assurer_ecrivain():
 
 
 def assurer_vitrine(port):
-    if vitrine_debout(port):
-        return False, "deja debout sur le port %d" % port
+    debout, perime = etat_serveur(port)
+    if debout:
+        if not perime:
+            return False, "deja debout sur le port %d" % port
+        garde_scenarios.tuer(MOTIF_VITRINE)       # perimee : la relancer EST le correctif
+        time.sleep(1.0)
     _detacher(os.path.join("V3", "scenarios", "vitrine.py"), "vitrine_console.log")
     for _ in range(20):                                   # ~10 s : un serveur met un instant
         time.sleep(0.5)
-        if vitrine_debout(port):
-            return True, "demarree sur le port %d" % port
-    return True, "demarree, mais muette — voir LOGS/vitrine_console.log"
+        if etat_serveur(port)[0]:
+            return True, "demarree (ou relancee) sur le port %d" % port
+    return True, "relancee, mais muette — voir LOGS/vitrine_console.log"
 
 
 def assurer_fenetre():

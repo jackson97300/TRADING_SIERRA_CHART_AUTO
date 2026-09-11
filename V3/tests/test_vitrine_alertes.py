@@ -32,7 +32,8 @@ RACINE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(RACINE))
 os.chdir(RACINE)
 
-from V3.scenarios import alertes, boucle, fenetre, lot, noter, scenarios, vitrine   # noqa: E402
+from V3.scenarios import (alertes, boucle, fenetre, fraicheur, lot, noter,   # noqa: E402
+                          scenarios, vitrine)
 
 PASSED = FAILED = 0
 INTERDITS = re.compile(r"\b(va monter|va baisser|devrait|conseil|conseillé|achète|achete|vends|signal|TP conseill|SL conseill)\b", re.I)
@@ -106,6 +107,40 @@ def main():
               v["age_donnee_s"] for v in e["sym"].values()), (ad, e["age_ecrivain_s"]))
     check("[1a-quater] chaque instrument porte l'heure a laquelle sa distance a ete calculee",
           all(v.get("heure_reference") == v.get("heure_et") for v in e["sym"].values()))
+    # Un instrument ABSENT se DECLARE. Le repli direct -> rejeu se fait par
+    # FICHIER : avec ES ecrit et NQ non, le fichier n'est pas vide, donc pas de
+    # repli, et NQ disparaissait de la page sans un mot. Lire « rien sur NQ »
+    # quand la verite est « NQ n'a pas ete ecrit » est une absence
+    # d'information rendue comme une absence d'evenement.
+    scenarios.ecrire(scenarios.chemin_direct(jour), [l for l in L if l["sym"] == "ES"])
+    solo = vitrine.etat_courant(jour, cfg)
+    check("[1a-5] un instrument sans ligne est PRESENT et marque indisponible",
+          set(solo["sym"]) == {"ES", "NQ"} and solo["sym"]["NQ"].get("indisponible") is True
+          and "NQ" in solo["sym"]["NQ"]["motif"], sorted(solo["sym"]))
+    check("[1a-6] l'instrument servi n'est pas abime par l'absent",
+          not solo["sym"]["ES"].get("indisponible") and solo["sym"]["ES"]["close"] is not None)
+    scenarios.ecrire(scenarios.chemin_direct(jour), [])
+    vide = vitrine.etat_courant(jour, cfg)
+    check("[1a-7] AUCUN instrument -> les deux marques indisponibles, et `avant` calcule",
+          all(v.get("indisponible") for v in vide["sym"].values()) and "avant" in vide)
+    # Le SERVEUR peut tourner sous un code perime. Son Python vit en memoire
+    # depuis son demarrage ; le HTML est relu a chaque requete. Mesure du
+    # 11/09 : processus demarre a 14h59, `vitrine.py` modifie a 17h13, et
+    # `/etat.json` ne portait toujours pas les deux ages — le JavaScript neuf
+    # les demandait, recevait `undefined`, affichait « donnee : — » en silence.
+    e0 = fraicheur.empreinte_code()
+    check("[1a-8] l'empreinte du code est stable a donnee constante",
+          e0 == fraicheur.empreinte_code() and e0 == fraicheur.EMPREINTE_DEMARRAGE, e0)
+    mouchard = os.path.join(os.path.dirname(vitrine.HTML), "_zz_mouchard_test.py")
+    try:
+        open(mouchard, "w", encoding="utf-8").write("# fichier temporaire du test\n")
+        check("[1a-9] un fichier .py qui change fait BOUGER l'empreinte",
+              fraicheur.empreinte_code() != e0, fraicheur.empreinte_code())
+    finally:
+        os.remove(mouchard)
+    check("[1a-10] ... et elle revient a l'identique une fois le fichier retire",
+          fraicheur.empreinte_code() == e0)
+    scenarios.ecrire(scenarios.chemin_direct(jour), L)
     heartbeat(120)
     e2 = vitrine.etat_courant(jour, cfg)
     check("[1d] heartbeat de 120 s > 60 -> ecrivain muet", e2["ecrivain_muet"] and e2["heartbeat_age_s"] >= 120)

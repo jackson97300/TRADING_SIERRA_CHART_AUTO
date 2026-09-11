@@ -64,18 +64,31 @@ def _cote_hvl(df15, i):
 
 
 FLUX_LUS = ("vwap_slope_r", "cvd_sess_r", "rvol_r", "delta_pct")
+# Les colonnes en `_r` sont RECALCULEES par la chaine. Sur un frame sans
+# recalculs elles peuvent exister quand meme, calculees sur trois jours de
+# chauffe au lieu de vingt — « un rvol_r qui existe et qui ment », mot pour mot
+# le piege que `derouler` nomme deja pour refuser d'exposer les setups.
+FLUX_RECALCULES = ("vwap_slope_r", "cvd_sess_r", "rvol_r")
 
 
-def _flux(df15, i):
+def _flux(df15, i, recalculs=True):
     """Le flux de la barre, LU tel quel — quatre nombres du present, aucun
     devenir. Ajoute le 11/09 : `mon_module` a besoin de la pente de la VWAP et
     du CVD de session pour composer le biais, et relire le frame coute dix-huit
     secondes (mesure du 11/09) — impossible au moment ou Jackson clique. Une
     colonne absente vaut None : un TROU se voit, un zero invente ment.
-    N'entre dans AUCUNE porte : ce sont des champs de lecture."""
+    N'entre dans AUCUNE porte : ce sont des champs de lecture.
+
+    `recalculs=False` VIDE les colonnes en `_r`. Sans cette garde, une meme
+    ligne portait `setups_armes_motif: frame_sans_recalculs` — « ce frame n'est
+    pas fiable, je n'expose aucun setup » — ET un `rvol_r` chiffre tire de ce
+    meme frame. Une ligne qui se contredit elle-meme est pire qu'une ligne
+    vide : on ne sait pas laquelle des deux moities croire. Mesure du 11/09 sur
+    un frame ampute : motif pose, `rvol_r = 0.9259` rendu quand meme.
+    """
     out = {}
     for col in FLUX_LUS:
-        if col not in df15.columns:
+        if col not in df15.columns or (not recalculs and col in FLUX_RECALCULES):
             out[col] = None
             continue
         v = pd.to_numeric(df15[col], errors="coerce").iloc[i]
@@ -127,9 +140,12 @@ def derouler(df15, brut, sym, seuils=None):
     # frame sans recalculs, exposer rendrait « rvol faux » (colonne absente) ou, pire,
     # un rvol_r calcule sur trois jours qui existe et qui ment. Alors : aucun setup,
     # et le motif sur la ligne (Fable, relecture 8ba1d64).
-    if "rvol_r" in df15.columns and "dist_vwap_rth_sd2u_r" in df15.columns:
+    recalculs = "rvol_r" in df15.columns and "dist_vwap_rth_sd2u_r" in df15.columns
+    if recalculs:
         expo, motif_setups = marges_quatre.exposer(df15), None
     else:
+        # LE MEME drapeau vide aussi les colonnes `_r` du flux : sans ca, la
+        # ligne disait « frame non fiable » et portait quand meme ses nombres.
         expo, motif_setups = {}, "frame_sans_recalculs"
     out = []
     for i in range(len(df15)):
@@ -148,7 +164,8 @@ def derouler(df15, brut, sym, seuils=None):
         hors = Z.setups_armes(zones, df15, i, expo)
         ph, pb = Z.prochaines(zones, c)
         r.update({"sym": sym, "heure_et": _heure_et(df15["ts"].iloc[i]), "close": c, "cote_hvl": cote,
-                  "flux": _flux(df15, i),
+                  "flux": _flux(df15, i, recalculs),
+                  "flux_motif": None if recalculs else "frame_sans_recalculs",
                   "range": {k: lignes_range[i][k] for k in ("etat", "evenement", "n_tests_haut", "n_tests_bas",
                                                              "pression", "barres_depuis_pose", "largeur_atr")}
                   if i in lignes_range else None,

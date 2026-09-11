@@ -25,7 +25,7 @@ RACINE = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.p
 if RACINE not in sys.path:
     sys.path.insert(0, RACINE)
 
-from V3.scenarios import alertes, carnet, lot, noter, scenarios, sorties   # noqa: E402
+from V3.scenarios import alertes, carnet, fraicheur, lot, noter, scenarios, sorties   # noqa: E402
 
 # TICK_VALUE de CORE est celui du E-mini STANDARD (ES 12,50 $, NQ 5,00 $). La
 # campagne et EXEC envoient UN MICRO — un dixieme. Ecrire le diviseur ici plutot
@@ -36,8 +36,6 @@ MICRO_PAR_STANDARD = 10
 HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vitrine.html")
 HEARTBEAT = os.path.join(RACINE, "LOGS", "heartbeat_scenarios.json")
 MESURE_W1 = os.path.join(scenarios.JOURNAL_DIR, "mesure_w1.json")
-
-
 def age_heartbeat():
     try:
         d = json.load(open(HEARTBEAT, encoding="utf-8"))
@@ -92,6 +90,15 @@ def etat_courant(jour=None, seuils=None):
     for sym in ("ES", "NQ"):
         ls = [l for l in lignes if l["sym"] == sym]
         if not ls:
+            # Un instrument ABSENT se declare (11/09). Le repli direct -> rejeu
+            # se fait par FICHIER : si l'ecrivain a ecrit ES et pas NQ, le
+            # fichier n'est pas vide, donc pas de repli, et NQ disparaissait de
+            # la page sans un mot. Lire « rien sur NQ » quand la verite est
+            # « NQ n'a pas ete ecrit » est le pire rendu possible : une absence
+            # d'information rendue comme une absence d'evenement.
+            out["sym"][sym] = {"indisponible": True, "sym": sym,
+                               "motif": "aucune ligne pour %s dans le journal %s du %s"
+                                        % (sym, source, jour)}
             continue
         d = max(ls, key=lambda x: x["i"])
         d.setdefault("atr_ref", None)
@@ -124,7 +131,10 @@ def etat_courant(jour=None, seuils=None):
         }
     ages = [v["age_donnee_s"] for v in out["sym"].values() if v.get("age_donnee_s") is not None]
     out["age_donnee_s"] = max(ages) if ages else None
-    if not out["sym"]:
+    # `avant` se calcule quand AUCUN instrument n'a de ligne — la condition
+    # regarde desormais les instruments SERVIS, pas la taille du dict : depuis
+    # que les absents y figurent avec leur motif, le dict n'est jamais vide.
+    if not any(not v.get("indisponible") for v in out["sym"].values()):
         out["avant"] = avant_ouverture(jour, s)     # la page n'est plus vide avant la 1re barre
     return out
 
@@ -230,7 +240,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # etait en place. Le JS compare et se recharge tout seul.
             import hashlib
             h = hashlib.sha256(open(HTML, "rb").read()).hexdigest()[:12]
-            return self._envoyer(200, json.dumps({"html": h}))
+            # ... et le hash du CODE PYTHON, fige au demarrage du serveur.
+            # Le HTML est relu du disque a chaque requete ; le Python, lui,
+            # vit en memoire depuis le demarrage. Mesure du 11/09 : le
+            # processus avait demarre a 14h59, `vitrine.py` avait change a
+            # 17h13, et `/etat.json` ne portait toujours pas les deux ages —
+            # le nouveau JavaScript les demandait, recevait `undefined`, et
+            # affichait « donnee : — » en silence. Moitie deployee, aucune
+            # erreur. Recharger la PAGE n'y change rien : il faut relancer le
+            # serveur, donc la page doit le DIRE au lieu de boucler.
+            return self._envoyer(200, json.dumps(dict({"html": h}, **fraicheur.etat())))
         if self.path.startswith("/recit"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             jour = q.get("jour", [None])[0] or etat_courant()["jour"]
