@@ -120,5 +120,22 @@ check("repli ancre sur entonnoir_",
       'glob.glob("LOGS/entonnoir/entonnoir_*.jsonl")' in source
       and 'glob.glob("LOGS/entonnoir/*.jsonl")' not in source)
 
+
+# 8. L'HEURE DU TRADER — ne du rythme du soir du 11/09. Le lecteur n'acceptait
+#    que `HH:MM` alors que TOUT le module ecrit `10h45` (`scenarios._heure_et`
+#    rend `"%02dh%02d"`) et que Jackson tape `10H11` dans le formulaire. Son
+#    trade du jour etait rejete en « ligne illisible », et la comparaison
+#    trader contre machine — l'une des DEUX jambes du jour 61 — perdait ses
+#    clics EN SILENCE. Le module ecrivait dans un format que son lecteur
+#    refusait.
+from V3 import pourquoi_plus                                     # noqa: E402
+for texte, attendu in (("10h11", 611), ("10H11", 611), ("10:11", 611),
+                       ("09h30", 570), ("9:05", 545), (" 15 h 45 ", 945)):
+    check("heure %r -> %s" % (texte, attendu), pourquoi_plus._minutes(texte) == attendu,
+          pourquoi_plus._minutes(texte))
+for mauvais in ("", None, "xx", "25h00", "10h99", "1011"):
+    check("heure illisible %r -> None" % mauvais, pourquoi_plus._minutes(mauvais) is None,
+          pourquoi_plus._minutes(mauvais))
+
 print("pourquoi (trois journaux) : %d PASS, %d FAIL" % (PASSED, FAILED))
 sys.exit(1 if FAILED else 0)

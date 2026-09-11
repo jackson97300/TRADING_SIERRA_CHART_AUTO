@@ -126,6 +126,24 @@ def _lignes_trader(chemin):
     return rows
 
 
+def _minutes(heure):
+    """« 10h11 », « 10H11 » ou « 10:11 » -> 611 minutes. None si illisible.
+
+    NE DU RYTHME DU SOIR DU 11/09. Le lecteur n'acceptait que `HH:MM`, alors
+    que TOUT LE MODULE ecrit l'heure en `10h45` (`scenarios._heure_et` rend
+    `"%02dh%02d"`) et que Jackson tape naturellement `10H11` dans le formulaire.
+    Resultat : son trade du jour — NQ long 29254 vers 29330 — etait rejete en
+    « ligne illisible », et la comparaison trader contre machine, qui est
+    l'une des DEUX jambes de la lecture du jour 61, perdait ses clics en
+    silence. Le module ecrivait dans un format que son propre lecteur refusait.
+    """
+    m = re.match(r"^\s*(\d{1,2})\s*[hH:]\s*(\d{2})\s*$", str(heure or ""))
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    return h * 60 + mi if 0 <= h <= 23 and 0 <= mi <= 59 else None
+
+
 def trader_vs_machine(jour, ecrire=False):
     """2. Le clic face aux signaux de la machine a la meme heure (± 15 min)."""
     chemin = "V3/journal_manuel/%s.md" % jour
@@ -148,11 +166,9 @@ def trader_vs_machine(jour, ecrire=False):
     if not trades:
         print("  journal present, AUCUN clic note (tableau vide).")
     for t in trades:
-        try:
-            hh, mm = t[0].split(":")
-            m_t = int(hh) * 60 + int(mm)
-        except ValueError:
-            print("  ligne illisible : %s" % t)
+        m_t = _minutes(t[0])
+        if m_t is None:
+            print("  heure illisible (attendu 10h11, 10H11 ou 10:11) : %s" % t)
             continue
         proches = [x for x in machine if x[2] == t[1] and abs(x[0] - m_t) <= FENETRE_MIN]
         print("  trader %s %s %s @ %s  |  machine (± %d min) : %s" % (
