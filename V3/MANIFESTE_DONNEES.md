@@ -71,7 +71,7 @@ constant. Les quatre qui comptent :
 | ★ `dist_vwap_rth_sd2u_r` | F10 | `recalc` | ticks — convention `niveau = close + dist x tick` (CONVENTIONS §8) | recalc (chauffe 20 j) |
 | `dist_vwap_w` | F1 | `A` | ticks — convention `niveau = close + dist x tick` (CONVENTIONS §8) | — |
 | `vwap_rth_r` | recalc | `recalc` | prix absolu — un niveau, pas une distance | recalc (chauffe 20 j) |
-| `vwap_slope_10` | F10 | `B` | sans dimension | — |
+| `vwap_slope_10` | F10 | `B` | points par barre — « Pente VWAP 10 barres (pts/barre) » (`DMP_Transform.h`). PIEGE : `vwap_slope_r` est en ATR sur 4 barres — deux pentes, deux unites, deux fenetres | — |
 | `vwap_slope_r` | F10 | `recalc` | ATR par 4 barres — pente de `vwap_rth_r` sur 4 barres, normalisee par `atr_barre` | recalc (chauffe 20 j) |
 
 ## Valeur : VA, VPOC, composite
@@ -85,7 +85,7 @@ constant. Les quatre qui comptent :
 | `dist_prev_val` | F3 | `A` | ticks — convention `niveau = close + dist x tick` (CONVENTIONS §8) | — |
 | `dist_prev_vpoc` | F3 | `A` | ticks — convention `niveau = close + dist x tick` (CONVENTIONS §8) | — |
 | `inside_prev_va` | F3 | `B` | booleen | — |
-| `poc_migration_dir` | F6 | `B` | sans dimension | — |
+| `poc_migration_dir` | F6 | `B` | signe -1 / 0 / +1 — sens de migration du POC (`DMP_Transform.h`) | — |
 
 ## Initial Balance
 
@@ -112,11 +112,11 @@ constant. Les quatre qui comptent :
 |---|---|---|---|---|
 | `ask_pct` | F13 | `A` | part (0 a 1) — PAS un pourcentage affichable tel quel | — |
 | `bid_pct` | F13 | `A` | part (0 a 1) — PAS un pourcentage affichable tel quel | — |
-| `cvd_day` | F13 | `B` | sans dimension | — |
-| `cvd_day_dir` | F13 | `B` | sans dimension | — |
+| `cvd_day` | F13 | `B` | contrats — « CVD cumulatif journee » (`DMP_Transform.h`) | — |
+| `cvd_day_dir` | F13 | `B` | signe -1 / 0 / +1 — « Direction CVD » (`DMP_Transform.h`) | — |
 | `cvd_sess_r` | F13 | `recalc` | contrats — cumul du delta depuis 17h ET — la NUIT est dedans, ce n'est PAS depuis 9h30 | recalc (chauffe 20 j) |
-| `cvd_session` | F13 | `C` | sans dimension | hors noyau (alias ou §7) |
-| ★ `delta_bar` | F13 | `A` | sans dimension | — |
+| `cvd_session` | F13 | `C` | contrats — `cvd_day` moins le snapshot a l'ouverture RTH ; INVALIDE hors RTH. A ne PAS confondre avec `cvd_sess_r`, qui cumule depuis 17h ET — la nuit comprise | hors noyau (alias ou §7) |
+| ★ `delta_bar` | F13 | `A` | contrats (signe) — « Delta barre (ask - bid volume) » (`DMP_Transform.h`) | — |
 | ★ `delta_pct` | F13 | `A` | part (0 a 1) — PAS un pourcentage affichable tel quel | — |
 | `dist_big_ask_nearest_dn` | F16 | `C` | ticks — convention `niveau = close + dist x tick` (CONVENTIONS §8) | desaccord structurel ES/NQ |
 | `dist_big_ask_nearest_up` | F16 | `C` | booleen — unite DIFFERENTE sur NQ (ticks) | desaccord structurel ES/NQ |
@@ -131,9 +131,9 @@ constant. Les quatre qui comptent :
 | `n_big_bid_t4` | F16 | `C` | compte — unite DIFFERENTE sur NQ (booleen) | desaccord structurel ES/NQ |
 | `retest_high_count` | F21 | `B` | compte — unite DIFFERENTE sur NQ (booleen) | — |
 | `retest_low_count` | F21 | `B` | compte | — |
-| ★ `rvol` | F7 | `B` | sans dimension | — |
-| ★ `rvol_r` | F7 | `recalc` | sans dimension | recalc (chauffe 20 j) |
-| `rvol_zscore` | F7 | `B` | sans dimension | — |
+| ★ `rvol` | F7 | `B` | ratio — « Volume relatif (1.0 = normal, >2.0 = spike) » (`DMP_Transform.h`) | — |
+| ★ `rvol_r` | F7 | `recalc` | ratio — volume de la barre / mediane de la MEME MINUTE de session sur 20 jours (`recalc.rvol`) ; 1,0 = volume habituel. Toujours positif | recalc (chauffe 20 j) |
+| `rvol_zscore` | F7 | `B` | ecarts-types — « Z-Score volume » (`DMP_Transform.h`) | — |
 | `sweep_high_this_bar` | F17 | `B` | booleen | — |
 | `sweep_low_this_bar` | F17 | `B` | booleen | — |
 | `total_vol` | F19 | `A` | compte | — |
@@ -154,7 +154,7 @@ constant. Les quatre qui comptent :
 
 | colonne | fam. | prov. | unite | note |
 |---|---|---|---|---|
-| `vix_level` | F7 | `B` | sans dimension | — |
+| `vix_level` | F7 | `B` | points d'indice — « Prix courant du VIX » (`DMP_Reader.h`) | — |
 | `vix_regime` | F7 | `B` | booleen | — |
 
 ## ATR

@@ -66,16 +66,17 @@ CLASSES = {"A": "reproduite en C++ et verifiee par IDENTITE",
            "chaine": "produite par la CHAINE, pas par le C++ — absente de la table "
                      "DMP, et c'est normal : la table catalogue les colonnes du dumper"}
 
-# LA FAMILLE ATR — sourcee, jamais deduite. La premiere version de ce fichier
-# la DEVINAIT en comparant chaque colonne a l'etendue mediane d'une barre de 15
-# minutes, et concluait que `CLAUDE.md` avait tout faux. C'etait MOI qui avais
-# tort : `atr` est un ATR JOURNALIER, qu'on ne peut pas comparer a une barre de
-# 15 minutes, et `atr_14m` (10,25 sur ES) tombait par coincidence pres de
-# l'etendue en points (9,62) alors qu'il est en TICKS. Une heuristique de
-# proximite sur des grandeurs de periodes differentes ne mesure rien.
-# Les unites viennent donc du PRODUCTEUR, et `verifier_atr()` les confronte a un
-# ATR recalcule depuis les barres brutes a chaque generation.
-ATR_UNITES = {
+# LES UNITES SOURCEES — celles que les valeurs seules ne peuvent pas trancher.
+# Chaque entree cite le fichier qui PRODUIT la colonne. Elles sont ici parce que
+# la premiere version de ce manifeste les DEVINAIT : elle comparait chaque
+# colonne `atr*` a l'etendue mediane d'une barre de 15 minutes et concluait que
+# `CLAUDE.md` avait tout faux. C'etait l'inverse — `atr` est un ATR JOURNALIER,
+# incomparable a une barre de quinze minutes, et `atr_14m` (10,25 TICKS)
+# tombait par coincidence pres de l'etendue en POINTS (9,62).
+# Une proximite de magnitude entre grandeurs de PERIODES DIFFERENTES ne prouve
+# rien. `verifier_atr()` confronte ces declarations a un ATR recalcule depuis
+# les barres brutes, a chaque generation.
+UNITES_SOURCEES = {
     "atr": ("points", "ATR JOURNALIER, lu sur le chart daily de Sierra en PRIX "
                       "(`DMP_Reader.h`, `DMP_ReadDaily` -> `atr_daily`)"),
     "atr_14m": ("ticks", "ATR(14) sur barres 1 min : `DMP_Calc_ATR_14m` rend "
@@ -83,7 +84,25 @@ ATR_UNITES = {
     "atr_barre": ("points", "ATR de la barre agregee 15 min, recalcule par la chaine"),
     "atr_veille": ("points", "ATR de la veille, meme famille qu'`atr_barre`"),
     "atr_ref": ("points", "= `atr_barre` si fini, sinon `atr_veille` ; `atr_source` dit lequel"),
-    "atr_source": ("sans dimension", "etiquette : barre / veille / aucun"),
+    "atr_source": ("etiquette", "barre / veille / aucun"),
+    # Sourcees le 11/09 apres l'episode ATR : elles tombaient dans le repli
+    # « sans dimension », qui n'est pas une mesure mais une AFFIRMATION sans
+    # preuve — la meme faute en plus petit. Le C++ les declare toutes.
+    "vix_level": ("points d'indice", "« Prix courant du VIX » (`DMP_Reader.h`)"),
+    "delta_bar": ("contrats (signe)", "« Delta barre (ask - bid volume) » (`DMP_Transform.h`)"),
+    "cvd_day": ("contrats", "« CVD cumulatif journee » (`DMP_Transform.h`)"),
+    "cvd_day_dir": ("signe -1 / 0 / +1", "« Direction CVD » (`DMP_Transform.h`)"),
+    "cvd_session": ("contrats", "`cvd_day` moins le snapshot a l'ouverture RTH ; "
+                                "INVALIDE hors RTH. A ne PAS confondre avec `cvd_sess_r`, "
+                                "qui cumule depuis 17h ET — la nuit comprise"),
+    "vwap_slope_10": ("points par barre", "« Pente VWAP 10 barres (pts/barre) » (`DMP_Transform.h`). "
+                                          "PIEGE : `vwap_slope_r` est en ATR sur 4 barres — "
+                                          "deux pentes, deux unites, deux fenetres"),
+    "rvol": ("ratio", "« Volume relatif (1.0 = normal, >2.0 = spike) » (`DMP_Transform.h`)"),
+    "rvol_zscore": ("ecarts-types", "« Z-Score volume » (`DMP_Transform.h`)"),
+    "rvol_r": ("ratio", "volume de la barre / mediane de la MEME MINUTE de session sur "
+                        "20 jours (`recalc.rvol`) ; 1,0 = volume habituel. Toujours positif"),
+    "poc_migration_dir": ("signe -1 / 0 / +1", "sens de migration du POC (`DMP_Transform.h`)"),
 }
 
 BLOCS = (("VWAP et bandes", r"vwap"),
@@ -142,7 +161,7 @@ def _proxys():
 
 def _unite(col, s, etendue_pts, tick):
     """L'unite : DEDUITE des valeurs quand elles suffisent, SOURCEE au
-    producteur quand elles ne suffisent pas (famille ATR, cf ATR_UNITES)."""
+    producteur quand elles ne suffisent pas (famille ATR, cf UNITES_SOURCEES)."""
     v = pd.to_numeric(s, errors="coerce").dropna()
     if v.empty:
         return "—", "aucune valeur finie sur la journee mesuree"
@@ -161,8 +180,8 @@ def _unite(col, s, etendue_pts, tick):
         return "contrats", "cumul du delta depuis 17h ET — la NUIT est dedans, ce n'est PAS depuis 9h30"
     if col.startswith("vwap") and not col.startswith("vwap_slope"):
         return "prix absolu", "un niveau, pas une distance"
-    if col in ATR_UNITES:
-        return ATR_UNITES[col]
+    if col in UNITES_SOURCEES:
+        return UNITES_SOURCEES[col]
     if col.endswith("_pct"):
         return ("part (0 a 1)" if float(v.abs().max()) <= 1.5 else "pourcent (0 a 100)"), \
             "PAS un pourcentage affichable tel quel" if float(v.abs().max()) <= 1.5 else ""
@@ -172,7 +191,11 @@ def _unite(col, s, etendue_pts, tick):
         return "compte", ""
     if col in ("open", "high", "low", "close") or col.endswith("_lvl"):
         return "prix absolu", "ne JAMAIS mettre dans un modele : niveau de prix"
-    return "sans dimension", ""
+    # REPLI. Ne JAMAIS affirmer « sans dimension » ici : c'est une affirmation
+    # sans preuve, et c'est la meme faute que l'ATR en plus discret. Une unite
+    # qu'on n'a pas etablie se dit NON DETERMINEE, et se source au producteur
+    # le jour ou une colonne en a besoin.
+    return "non determinee", "unite non etablie : ni deduite des valeurs, ni sourcee au producteur"
 
 
 def verifier_atr(df, brut, tick):
@@ -196,7 +219,7 @@ def verifier_atr(df, brut, tick):
         if col not in df.columns:
             continue
         med = float(pd.to_numeric(df[col], errors="coerce").median())
-        declare = ATR_UNITES[col][0]
+        declare = UNITES_SOURCEES[col][0]
         attendu = vrai_pts if declare == "points" else vrai_pts / tick
         autre = vrai_pts / tick if declare == "points" else vrai_pts
         ok = abs(med - attendu) < abs(med - autre)
