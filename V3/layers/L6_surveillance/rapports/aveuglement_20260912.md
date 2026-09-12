@@ -49,24 +49,24 @@ quarantaine effective ZÉRO ; aucun jour mixte. Aucun devenir lu.*
 
 ### Barres — causes lisibles sans recalcul
 
-| cause | barres | part | lecture |
-|---|---|---|---|
-| `barre_incomplete` | 30 | 1.84 % | aveuglement |
-| `colonne_absente:gamma_absent` | 121 | 7.44 % | colonne ABSENTE de la trame ce jour-là |
-| `gamma_absent` | 24 | 1.48 % | aveuglement |
-| `hvl_absent` | 3 | 0.18 % | aveuglement |
-| `vix_absent_ou_nul` | 21 | 1.29 % | aveuglement |
-| `volumetrie_nulle` | 0 | 0.00 % | aveuglement |
+| cause | barres | sur | part | lecture |
+|---|---|---|---|---|
+| `barre_incomplete` | 30 | 1627 | 1.84 % | aveuglement |
+| `colonne_absente:gamma_absent` | 121 | 1627 | 7.44 % | colonne ABSENTE de la trame ce jour-là |
+| `gamma_absent` | 24 | 1506 | 1.59 % | aveuglement |
+| `hvl_absent` | 3 | 1627 | 0.18 % | aveuglement |
+| `vix_absent_ou_nul` | 21 | 1627 | 1.29 % | aveuglement |
+| `volumetrie_nulle` | 0 | 1627 | 0.00 % | aveuglement |
 
 ### Barres — causes qui exigent la chauffe
 
-| cause | barres | part | lecture |
-|---|---|---|---|
-| `atr_barre_chauffe` | 336 | 24.10 % | dépendance déclarée, PAS un aveuglement |
-| `atr_de_la_veille` | 336 | 24.10 % | dépendance déclarée, PAS un aveuglement |
-| `atr_aucune_source` | 0 | 0.00 % | aveuglement |
-| `atr_ref_absent` | 0 | 0.00 % | aveuglement |
-| `rvol_r_absent` | 27 | 1.94 % | aveuglement |
+| cause | barres | sur | part | lecture |
+|---|---|---|---|---|
+| `atr_barre_chauffe` | 336 | 1394 | 24.10 % | dépendance déclarée, PAS un aveuglement |
+| `atr_de_la_veille` | 336 | 1394 | 24.10 % | dépendance déclarée, PAS un aveuglement |
+| `atr_aucune_source` | 0 | 1394 | 0.00 % | aveuglement |
+| `atr_ref_absent` | 0 | 1394 | 0.00 % | aveuglement |
+| `rvol_r_absent` | 27 | 1394 | 1.94 % | aveuglement |
 
 ## NQ
 
@@ -109,24 +109,24 @@ quarantaine effective ZÉRO ; aucun jour mixte. Aucun devenir lu.*
 
 ### Barres — causes lisibles sans recalcul
 
-| cause | barres | part | lecture |
-|---|---|---|---|
-| `barre_incomplete` | 29 | 1.78 % | aveuglement |
-| `colonne_absente:gamma_absent` | 121 | 7.44 % | colonne ABSENTE de la trame ce jour-là |
-| `gamma_absent` | 24 | 1.48 % | aveuglement |
-| `hvl_absent` | 55 | 3.38 % | aveuglement |
-| `vix_absent_ou_nul` | 20 | 1.23 % | aveuglement |
-| `volumetrie_nulle` | 0 | 0.00 % | aveuglement |
+| cause | barres | sur | part | lecture |
+|---|---|---|---|---|
+| `barre_incomplete` | 29 | 1626 | 1.78 % | aveuglement |
+| `colonne_absente:gamma_absent` | 121 | 1626 | 7.44 % | colonne ABSENTE de la trame ce jour-là |
+| `gamma_absent` | 24 | 1505 | 1.59 % | aveuglement |
+| `hvl_absent` | 55 | 1626 | 3.38 % | aveuglement |
+| `vix_absent_ou_nul` | 20 | 1626 | 1.23 % | aveuglement |
+| `volumetrie_nulle` | 0 | 1626 | 0.00 % | aveuglement |
 
 ### Barres — causes qui exigent la chauffe
 
-| cause | barres | part | lecture |
-|---|---|---|---|
-| `atr_barre_chauffe` | 336 | 24.10 % | dépendance déclarée, PAS un aveuglement |
-| `atr_de_la_veille` | 336 | 24.10 % | dépendance déclarée, PAS un aveuglement |
-| `atr_aucune_source` | 0 | 0.00 % | aveuglement |
-| `atr_ref_absent` | 0 | 0.00 % | aveuglement |
-| `rvol_r_absent` | 28 | 2.01 % | aveuglement |
+| cause | barres | sur | part | lecture |
+|---|---|---|---|---|
+| `atr_barre_chauffe` | 336 | 1394 | 24.10 % | dépendance déclarée, PAS un aveuglement |
+| `atr_de_la_veille` | 336 | 1394 | 24.10 % | dépendance déclarée, PAS un aveuglement |
+| `atr_aucune_source` | 0 | 1394 | 0.00 % | aveuglement |
+| `atr_ref_absent` | 0 | 1394 | 0.00 % | aveuglement |
+| `rvol_r_absent` | 28 | 1394 | 2.01 % | aveuglement |
 
 ## Ce que la passe a tenu
 

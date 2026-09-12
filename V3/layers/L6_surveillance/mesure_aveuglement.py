@@ -107,11 +107,13 @@ def _cause_jour_vide(sym, jour):
         return "aucune_ligne_stable", detail
     if pd.Timestamp(jour).dayofweek == 6:
         return "dimanche_globex_seul", detail
-    # La seance cash ouvre vers 13:30 UTC (EDT). Une collecte qui s'arrete
-    # AVANT ne pouvait produire aucune barre cash ; une collecte qui va au-dela
-    # aurait du en produire — celle-la reste a instruire.
-    if fin is not None and fin.hour < 14:
-        return "collecte_arretee_avant_cash", detail
+    # EN MINUTES ET, JAMAIS EN HEURES UTC (revue 12/09). `fin.hour < 14`
+    # supposait l'ouverture cash a 13:30 UTC, vraie en EDT seulement : des le
+    # 1er novembre, DANS la campagne, le cash ouvre a 14:30 UTC et un fichier
+    # arrete a 14:10 aurait ete classe « a instruire » tout le dernier mois.
+    if fin is not None:
+        if int(recalc.minutes_et(pd.Series([fin])).iloc[0]) < PREMIERE_CASH_ET:
+            return "collecte_arretee_avant_cash", detail
     return "inconnu_a_instruire", detail
 
 
@@ -205,7 +207,11 @@ def _passe(sym):
 
 
 def _table(causes, total, s):
-    s += ["| cause | barres | part | lecture |", "|---|---|---|---|"]
+    """UN DENOMINATEUR PAR CAUSE (revue 12/09). Diviser tout par le meme total
+    sous-estime mecaniquement une cause dont la colonne a manque certains
+    jours : ces barres n'ont jamais pu etre jugees. Le module se reclamait de
+    cette discipline en tete et ne l'appliquait pas a sa propre table."""
+    s += ["| cause | barres | sur | part | lecture |", "|---|---|---|---|---|"]
     for nom, n in sorted(causes.items()):
         if nom.startswith(ABSENTE):
             lecture, affiche = "colonne ABSENTE de la trame ce jour-là", nom
@@ -213,8 +219,9 @@ def _table(causes, total, s):
             lecture, affiche = "dépendance déclarée, PAS un aveuglement", nom[1:]
         else:
             lecture, affiche = "aveuglement", nom
-        part = "—" if not total else "%.2f %%" % (100.0 * n / total)
-        s.append("| `%s` | %d | %s | %s |" % (affiche, n, part, lecture))
+        d = total if nom.startswith(ABSENTE) else total - causes.get(ABSENTE + nom, 0)
+        part = "—" if not d else "%.2f %%" % (100.0 * n / d)
+        s.append("| `%s` | %d | %d | %s | %s |" % (affiche, n, d, part, lecture))
     s.append("")
 
 

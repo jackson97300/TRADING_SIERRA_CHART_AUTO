@@ -23,9 +23,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 
 import numpy as np
+
+RACINE = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 3))
+if RACINE not in sys.path:
+    sys.path.insert(0, RACINE)
 
 
 def charger(chemin):
@@ -84,9 +89,36 @@ def rapport(lignes, sym):
                and lo <= x["barres_depuis_entree"] <= hi])
 
 
+def _verrou(chemin):
+    """Refuse un journal de JOUR DE CAMPAGNE tant que le dossier est ferme.
+
+    NE D'UNE REVUE (12/09). Ce lecteur imprime la MOYENNE, l'INTERVALLE et la
+    SOMME de `fantome_pnl_atr`, ventilees par `issue_position_ouverte` : un
+    P&L simule et son issue. C'est exactement ce que `pourquoi.py` vient de
+    cesser d'afficher, en plus detaille — et ici le chemin vient de la ligne de
+    commande, donc `entonnoir_20260908.jsonl` suffisait. Couvrir le CHAMP dans
+    `CHAMPS_DEVENIR` sans fermer le LECTEUR ne protege de rien : le lecteur ne
+    passe pas par le filtre. Le defaut (`portes57_15min.jsonl`, archive
+    d'avant la campagne) reste ouvert : la mesure du cout de la regle garde
+    tout son sens sur l'archive.
+    """
+    from V3 import devenir
+    m = re.search(r"(\d{8})", os.path.basename(chemin))
+    if m and m.group(1) >= devenir.JOUR_1 and not devenir.ouvert():
+        e = devenir.etat()
+        print("REFUS : %s est un jour de campagne (jour %d sur %d)."
+              % (m.group(1), e["jours_courus"], e["n_jours"]))
+        print("  Ce lecteur affiche une somme de P&L simule. Le dossier est"
+              " FERME — il reste %d jour(s)." % e["reste"])
+        return False
+    return True
+
+
 def main():
     defaut = "LOGS/entonnoir/portes57_15min.jsonl"
     chemin = sys.argv[1] if len(sys.argv) > 1 else defaut
+    if not _verrou(chemin):
+        return 2
     lignes = charger(chemin)
     if not lignes:
         print("aucun trade fantome dans %s" % chemin)
