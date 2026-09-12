@@ -31,7 +31,17 @@ sys.path.insert(0, str(RACINE))
 os.chdir(RACINE)
 
 from V3 import devenir                                            # noqa: E402
+from V3.mon_module import biais as B                              # noqa: E402
 from V3.mon_module import declencheurs as D                       # noqa: E402
+
+# `biais.alignement` doit attendre la convention TEXTUELLE du journal. On le
+# verifie sur le comportement, pas sur le source : la chaine « long » doit etre
+# acceptee, et un entier +1 doit tomber en `non_applicable` — preuve qu'il ne
+# compare pas un side a un nombre.
+_B = B.composer({"position_ouverture": "au_dessus", "cote_hvl": 1,
+                 "flux": {"vwap_slope_r": 0.3, "cvd_sess_r": 900.0}})
+B_ALIGN_TEXTE = (B.alignement("long", _B) in ("aligne", "contre")
+                 and B.alignement(1, _B) == "non_applicable")
 
 PASSED = FAILED = 0
 
@@ -150,6 +160,30 @@ def main():
     txt_att = D.texte(D.assembler(ligne(atteint=True), "20260911", "ES"))
     check("[7z] un lieu ATTEINT se rend sans lever, avec son sens en toutes lettres",
           "short" in txt_att and "H3-VPOC" in txt_att, txt_att[:120])
+
+    print("\n[8] LA FRONTIERE DES DEUX `side` — deux conventions, deux couches")
+    # Il y a DEUX `side` dans ce depot, et ils sont legitimes tous les deux :
+    #   - celui de la CHAINE, en memoire, rendu par les hypotheses : un ENTIER
+    #     +/-1. `chaine.py`, `vetos.py`, `barrieres.py` le comparent a 0, et
+    #     c'est correct.
+    #   - celui du JOURNAL, ecrit pour etre relu par un humain : une CHAINE
+    #     « long » / « short ».
+    # Le plantage du 12/09 vient d'avoir compare le second comme le premier.
+    # Ce test fixe la frontiere : tout ce qui lit le JOURNAL passe par `_sens`,
+    # et aucun fichier de `mon_module/` ne compare un `side` a un nombre.
+    import re as _re
+    for f in sorted((RACINE / "V3" / "mon_module").glob("*.py")):
+        code = "\n".join(l for l in f.read_text(encoding="utf-8").splitlines()
+                         if not l.lstrip().startswith("#"))
+        corps = code.split('"""')
+        corps = "".join(corps[i] for i in range(0, len(corps), 2))   # hors docstrings
+        m = _re.search(r"side[a-z_]*\s*(>|<|>=|<=|==|!=)\s*-?\d", corps)
+        check("[8a-%s] aucune comparaison numerique sur un `side` de journal" % f.stem,
+              m is None, m.group(0) if m else "")
+    check("[8b] `biais.alignement` attend bien la convention TEXTUELLE",
+          B_ALIGN_TEXTE, "il compare side a un nombre")
+    check("[8c] `_sens` est le seul point de passage du radar",
+          D.radar(ligne(), "ES")[0]["sens"] in ("long", "short"))
 
     print("\n[6] la frontiere : aucun mot conclusif")
     rendu = json.dumps(a, ensure_ascii=False) + txt
