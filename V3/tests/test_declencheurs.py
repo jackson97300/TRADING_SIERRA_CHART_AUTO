@@ -51,10 +51,10 @@ def ligne(atteint=False):
                      "bar_lower_wick_pct": 0.4, "bar_upper_wick_pct": 0.1,
                      "delta_pct": 0.02},
             "setups_hors_zones": [
-                {"setup": "H3-VPOC", "side": -1, "lieu": "cur_vah",
+                {"setup": "H3-VPOC", "side": "short", "lieu": "cur_vah",
                  "lieu_atteint": atteint, "condition_restante": "finish",
                  "marge_ticks": 0.0 if atteint else 40.0},
-                {"setup": "H2p", "side": 1, "lieu": "vwap_rth_sd2d",
+                {"setup": "H2p", "side": "long", "lieu": "vwap_rth_sd2d",
                  "lieu_atteint": False, "condition_restante": "lieu",
                  "marge_ticks": 12.0}],
             "zones": []}
@@ -120,6 +120,36 @@ def main():
     check("[5b] les valeurs sont celles de `biais.alignement`, pas un vocabulaire local",
           aligns <= {"aligne", "contre", "biais_partage", "biais_non_mesure",
                      "non_applicable"}, aligns)
+
+    print("\n[7] LE TYPE DE `side` — un decor qui ne ressemble pas aux donnees ne teste rien")
+    # PLANTAGE LATENT du 12/09. `side` est une CHAINE dans les journaux des
+    # quatre (800 occurrences sur quatre jours, jamais un entier) ; le code
+    # faisait `side > 0`, ce qui leve. Il ne levait pas a l'essai parce que la
+    # ligne n'est atteinte que si un lieu est ATTEINT : un plantage qui n'arrive
+    # QUE sur les 7 % de barres qui comptent — et c'est la barre du seul signal
+    # de la campagne. Le test ne l'a pas vu parce que SA ligne d'exemple portait
+    # un entier : un decor qui ne ressemble pas aux donnees ne prouve rien.
+    from V3.scenarios import scenarios as SC
+    vus = set()
+    for j in ("20260908", "20260909", "20260910", "20260911"):
+        for l in SC.lire(SC.chemin_rejeu(j)):
+            for s in (l.get("setups_hors_zones") or []):
+                vus.add(type(s.get("side")).__name__)
+            for z in (l.get("zones") or []):
+                for s in (z.get("setups_armes") or []):
+                    vus.add(type(s.get("side")).__name__)
+    check("[7a] les journaux REELS portent `side` en chaine", vus == {"str"}, vus)
+    exemple = ligne()["setups_hors_zones"][0]["side"]
+    check("[7b] la ligne d'exemple de CE test porte le MEME type que le reel",
+          type(exemple).__name__ in vus, (type(exemple).__name__, vus))
+    for v, attendu in (("long", "long"), ("short", "short"), ("LONG", "long"),
+                       (1, "long"), (-1, "short"), (1.0, "long"),
+                       (None, None), ("x", None)):
+        check("[7-%s] `_sens(%r)` rend %s" % (str(v)[:4], v, attendu),
+              D._sens(v) == attendu, D._sens(v))
+    txt_att = D.texte(D.assembler(ligne(atteint=True), "20260911", "ES"))
+    check("[7z] un lieu ATTEINT se rend sans lever, avec son sens en toutes lettres",
+          "short" in txt_att and "H3-VPOC" in txt_att, txt_att[:120])
 
     print("\n[6] la frontiere : aucun mot conclusif")
     rendu = json.dumps(a, ensure_ascii=False) + txt

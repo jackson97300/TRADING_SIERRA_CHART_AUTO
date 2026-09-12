@@ -61,6 +61,28 @@ def _en_atr(marge_ticks, atr_ref_points):
     return round(marge_ticks * TICK / atr_ref_points, 2)
 
 
+def _sens(v):
+    """Le sens, quel que soit le type qui le porte. NE D'UN PLANTAGE LATENT du
+    12/09 : `side` est une CHAINE (« long » / « short ») dans les journaux des
+    quatre — 800 occurrences sur quatre jours, JAMAIS un entier — tandis que
+    les journaux d'ombre portent un entier ou un flottant (`side`, `side_pur`).
+    Le code faisait `side > 0`, ce qui leve sur une chaine. Il ne levait pas a
+    l'essai parce que la ligne n'est atteinte que si un lieu est ATTEINT : un
+    plantage qui n'arrive QUE sur les 7 % de barres qui comptent. Et le test ne
+    l'a pas vu parce que sa ligne d'exemple portait un entier — un decor qui ne
+    ressemblait pas aux donnees.
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip().lower()
+        return s if s in ("long", "short") else None
+    try:
+        return "long" if float(v) > 0 else "short"
+    except (TypeError, ValueError):
+        return None
+
+
 def radar(ligne, sym, b=None):
     """Les QUATRE a cette barre : une entree par (setup, side), avec la
     distance au lieu, ce qui manque, et l'alignement au biais du jour.
@@ -81,6 +103,7 @@ def radar(ligne, sym, b=None):
         out.append({
             "setup": s.get("setup"), "side": side,
             "lieu": s.get("lieu") or nom_zone,
+            "sens": _sens(side),
             "lieu_atteint": bool(s.get("lieu_atteint")),
             "manque": s.get("condition_restante"),
             "marge_ticks": marge,
@@ -124,6 +147,7 @@ def ombres_tirees(jour, sym):
             out.append({"famille": famille, "setup": net.get("setup"),
                         "side": net.get("side") or net.get("side_pur"),
                         "ts": net.get("ts"), "heure_et": _heure(net.get("ts")),
+                        "sens": _sens(net.get("side") or net.get("side_pur")),
                         "motif": net.get("motif")})
     return sorted(out, key=lambda d: d.get("ts") or 0)
 
@@ -166,7 +190,7 @@ def texte(a):
         out.append("  LIEU ATTEINT")
         for d in a["atteints"]:
             out.append("     %-10s %-6s %-16s manque %-14s %s"
-                       % (d["setup"], "long" if (d["side"] or 0) > 0 else "short",
+                       % (d["setup"], d["sens"] or "?",
                           d["lieu"] or "-", d["manque"] or "rien", _align(d["alignement"])))
     else:
         out.append("  LIEU ATTEINT   aucun")
@@ -180,7 +204,7 @@ def texte(a):
         for d in om:
             out.append("     %-6s %-4s %-28s %s"
                        % (d["heure_et"] or "--h--", d["famille"], d["setup"],
-                          "long" if (d["side"] or 0) > 0 else "short"))
+                          _sens(d["side"]) or "?"))
     else:
         out.append("  ombres         aucune n'a tire aujourd'hui")
     return "\n".join(out)
