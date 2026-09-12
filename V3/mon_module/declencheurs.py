@@ -65,7 +65,7 @@ def _sens(v):
     """Le sens, quel que soit le type qui le porte. NE D'UN PLANTAGE LATENT du
     12/09 : `side` est une CHAINE (« long » / « short ») dans les journaux des
     quatre — 800 occurrences sur quatre jours, JAMAIS un entier — tandis que
-    les journaux d'ombre portent un entier ou un flottant (`side`, `side_pur`).
+    les journaux d'ombre portent un entier ou un flottant (`side`).
     Le code faisait `side > 0`, ce qui leve sur une chaine. Il ne levait pas a
     l'essai parce que la ligne n'est atteinte que si un lieu est ATTEINT : un
     plantage qui n'arrive QUE sur les 7 % de barres qui comptent. Et le test ne
@@ -144,10 +144,16 @@ def ombres_tirees(jour, sym):
             if d.get("sym") != sym:
                 continue
             net = devenir.sans_devenir(d)
+            # PLUS DE REPLI SUR `side_pur` (12/09). Il valait
+            # `np.sign(rend_pts)` : le signe du rendement du jour. Sur les
+            # lignes C2 ou `side` est absent — 5 mesurees —, le radar affichait
+            # donc LE RESULTAT comme le « sens » de l'ombre. Une ombre sans
+            # `side` n'a pas de direction annoncee : elle se rend « ? », et un
+            # point d'interrogation est une information honnete.
             out.append({"famille": famille, "setup": net.get("setup"),
-                        "side": net.get("side") or net.get("side_pur"),
+                        "side": net.get("side"),
                         "ts": net.get("ts"), "heure_et": _heure(net.get("ts")),
-                        "sens": _sens(net.get("side") or net.get("side_pur")),
+                        "sens": _sens(net.get("side")),
                         "motif": net.get("motif")})
     return sorted(out, key=lambda d: d.get("ts") or 0)
 

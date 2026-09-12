@@ -86,6 +86,33 @@ def main():
     src = (RACINE / "V3" / "mon_module" / "declencheurs.py").read_text(encoding="utf-8")
     check("[1d] le filtre est SUR LE CHEMIN des ombres, pas seulement disponible",
           "devenir.sans_devenir(d)" in src)
+    # [1e] LE TROU QUE [1a-1d] LAISSAIENT — trouve le 12/09 par l'audit croise.
+    # Les quatre controles ci-dessus cherchent des NOMS de champs. Or
+    # `side_pur` vaut `np.sign(rend_pts)` (`setups_c2.py:142`) : le SIGNE DU
+    # RENDEMENT. `ombres_tirees` faisait `net.get("side") or net.get("side_pur")`,
+    # donc sur une ligne C2 sans `side` — 5 mesurees dans les journaux — le
+    # radar affichait le RESULTAT sous l'etiquette « sens ». Le nom ne fuyait
+    # pas, la valeur fuyait. Un test qui ne regarde que les cles est aveugle a
+    # ca : celui-ci regarde la VALEUR.
+    fixture = [{"sym": "ES", "setup": "C2_80PCT", "ts": 1789154100000,
+                "side_pur": 1.0, "rend_pts": 3.0, "cible_atteinte_long": True,
+                "motif": "lieu_sans_reaction"}]      # `side` ABSENT, comme le reel
+    vrai_lire = D._lire
+    D._lire = lambda chemin: fixture if "ombre_c2" in chemin else []
+    try:
+        fuite = D.ombres_tirees("20260911", "ES")
+    finally:
+        D._lire = vrai_lire
+    check("[1e] une ombre sans `side` ne se voit PAS attribuer le signe du rendement",
+          len(fuite) == 1 and fuite[0]["sens"] is None and fuite[0]["side"] is None,
+          fuite)
+    check("[1f] et `side_pur` ne survit pas au filtre de structure",
+          "side_pur" in devenir.CHAMPS_DEVENIR
+          and "side_pur" not in devenir.sans_devenir(fixture[0]))
+    check("[1g] les cibles atteintes non plus — c'est une issue, pas un decor",
+          not any(c in devenir.sans_devenir(fixture[0])
+                  for c in ("cible_atteinte_long", "cible_atteinte_short")))
+
     om = D.ombres_tirees("20260911", "ES")
     dump = json.dumps(om, ensure_ascii=False)
     for mot in ("rendement", "rend_pts", "pnl", "issue"):

@@ -81,11 +81,20 @@ def resumer(lignes, sym):
         c = x.get("couche") or "?"
         par_couche.setdefault(c, collections.Counter())[m] += 1
 
-    fantomes = [x.get("fantome_pnl_atr") for x in l
-                if x.get("fantome") and x.get("fantome_pnl_atr") is not None]
+    # LA SOMME DES FANTOMES A ETE RETIREE le 12/09. Ce lecteur affichait
+    # « fantomes : N refuses simules, somme +X.X ATR » — une somme de P&L en
+    # ATR, chaque soir, sous un en-tete qui dit « JAMAIS le P&L ». Les champs
+    # `fantome_pnl_atr` n'existent pas encore sur les jours de campagne (la
+    # porte `L0_POSITION_OUVERTE` n'a pas tire : mesure du 12/09, presents sur
+    # trois jours d'archive, zero jour de campagne), donc la ligne n'avait
+    # encore rien fuite — elle aurait fuite au premier jour ou EXEC tient une
+    # position. Le COMPTE reste : « combien de refus simules » est un fait de
+    # structure. Ce qu'ils auraient rapporte est exactement ce que la campagne
+    # s'interdit de regarder avant le jour 61.
+    fantomes_n = sum(1 for x in l if x.get("fantome"))
     return {"n_signaux": len(signaux), "n_passes": len(passes),
             "par_couche": par_couche, "trous": trous,
-            "fantomes_n": len(fantomes), "fantomes_somme": sum(fantomes)}
+            "fantomes_n": fantomes_n}
 
 
 def afficher(r, sym, n_barres_attendues=26):
@@ -109,8 +118,8 @@ def afficher(r, sym, n_barres_attendues=26):
         detail = ", ".join("%s %d" % (m, k) for m, k in r["trous"].most_common(4))
         print("     TROUS (« je ne sais pas », jamais un feu vert) : %s" % detail)
     if r["fantomes_n"]:
-        print("     fantomes : %d refuses simules, somme %+.1f ATR"
-              % (r["fantomes_n"], r["fantomes_somme"]))
+        print("     fantomes : %d refus simules (leur devenir est scelle)"
+              % r["fantomes_n"])
     couches_muettes = [c for c in ("L0", "L5") if c not in r["par_couche"]]
     if couches_muettes and r["n_signaux"]:
         print("     ATTENTION : %s n'a rien ecrit — couche muette ou journee sans"

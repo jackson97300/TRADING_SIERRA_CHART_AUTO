@@ -40,8 +40,40 @@ if RACINE not in sys.path:
 JOUR_1 = "20260908"
 N_JOURS = 61
 # Les champs qui portent un devenir. Tout acces a l'un d'eux passe par ici.
+#
+# NEUF NOMS AJOUTES LE 12/09, tous MESURES dans les journaux, apres un audit
+# croise a deux agents. La liste d'origine protegeait les champs dont le NOM dit
+# le resultat ; elle laissait passer ceux qui le disent sans le dire :
+#
+#   `side_pur` vaut `np.sign(rend_pts)` (`setups_c2.py:142`) — le SIGNE DU
+#   RENDEMENT DU JOUR. Mesure : sur les journaux d'ombre C2, 5 lignes portent un
+#   `side_pur` renseigne alors que `side` est absent. Le radar du module perso
+#   les affichait comme le « sens » de l'ombre : un devenir A L'ECRAN, au jour 4
+#   sur 61, derriere un test qui cherchait des noms de champs et non des valeurs.
+#
+#   `cible_atteinte_long` / `_short` (`setups_c2.py:82-83`) disent si la barre du
+#   signal a touche le bord oppose — la cible B-NAT de L5. C'est une issue.
+#   Mesure : 30 occurrences.
+#
+#   `fantome_*` et `issue_position_ouverte` (`chaine.py:207-227`) portent un P&L
+#   simule sur chaque blocage `L0_POSITION_OUVERTE`. Mesure : presents sur trois
+#   jours d'archive (01/07, 14/07, 11/08), ZERO jour de campagne — cette porte
+#   n'a pas encore tire. Ils tireront le jour ou EXEC tiendra une position, donc
+#   on ferme avant, pas apres.
+#
+#   `mfe_atr` / `mae_atr` (`triple_barriere_ref.py:127`) sont l'excursion
+#   favorable et defavorable : un devenir non encore journalise.
+#
+# CE QUI N'EST PAS AJOUTE, et pourquoi : `range_pts` (le range du jour, un fait
+# de structure qui ne dit ni sens ni gain une fois `rend_pts` retire) et les
+# colonnes de `LOGS/reactions/` (`exc_*`, `reaction_atr`, `t_extreme_barres`) —
+# celles-la regardent vers l'avant et meritent un arbitrage a part, pas une
+# ligne ajoutee en silence : le module de reaction les consomme.
 CHAMPS_DEVENIR = ("pnl_atr", "issue", "motif_issue", "rendement_r", "rend_pts",
-                  "devenir_atr", "devenir", "gain", "pnl")
+                  "devenir_atr", "devenir", "gain", "pnl",
+                  "side_pur", "cible_atteinte_long", "cible_atteinte_short",
+                  "fantome_pnl_atr", "fantome_issue", "fantome_barres",
+                  "issue_position_ouverte", "mfe_atr", "mae_atr")
 
 
 class DevenirFerme(Exception):
