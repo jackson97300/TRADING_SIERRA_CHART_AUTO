@@ -73,11 +73,45 @@ def main():
     print("\n[4] le compteur de jours ne peut pas ouvrir le dossier trop tot")
     n = devenir.jour_campagne()
     jours = devenir.jours_courus()
-    check("[4a] le compte egale le nombre de jours distincts trouves", n == len(jours), (n, len(jours)))
-    check("[4b] aucun jour anterieur au jour 1 n'est compte",
-          all(j >= devenir.JOUR_1 for j in jours), [j for j in jours if j < devenir.JOUR_1])
-    check("[4c] aucune sauvegarde `_avant_` n'est comptee comme un jour",
-          all(len(j) == 8 and j.isdigit() for j in jours), jours)
+    # CINQ TAUTOLOGIES RETIREES ICI le 12/09 (revue). Les anciens [4a]/[4b]/
+    # [4c]/[4g]/[4h] verifiaient sur `jours` les proprietes que le glob de
+    # `jours_courus` avait DEJA imposees pour le construire : que le compte
+    # egale la longueur de la liste, que tout jour soit >= JOUR_1, que chaque
+    # nom fasse huit chiffres, que le fichier existe. Aucune ne pouvait
+    # echouer. Cinq PASS sur seize, et le SEUL vrai risque du compteur n'etait
+    # teste par rien : `LOGS/entonnoir/` contient SIX AUTRES familles de
+    # journaux — `live_`, `ombre16_`, `ombre_c2_`, `portes57_`, `scrutateur_`,
+    # `.tmp_live_` — et le compteur ne tient que sur son PREFIXE. Elargir le
+    # glob d'un caractere ferait bondir l'horloge des 61 jours.
+    # On teste donc la DISCRIMINATION, sur un dossier temporaire.
+    import tempfile
+    vraie_racine = devenir.RACINE
+    with tempfile.TemporaryDirectory() as tmp:
+        d = os.path.join(tmp, "LOGS", "entonnoir")
+        os.makedirs(d)
+        for nom, contenu in (
+                ("entonnoir_20260908.jsonl", ""),            # vide = couru MUET
+                ("entonnoir_20260909.jsonl", '{"a":1}\n'),    # couru avec signal
+                ("entonnoir_20260907.jsonl", '{"a":1}\n'),    # avant le jour 1
+                ("entonnoir_20260910_avant_lecture.jsonl", '{"a":1}\n'),
+                ("live_20260911.jsonl", '{"a":1}\n'),
+                ("ombre16_20260911.jsonl", '{"a":1}\n'),
+                ("ombre_c2_20260911.jsonl", '{"a":1}\n'),
+                ("portes57_20260911.jsonl", '{"a":1}\n'),
+                ("scrutateur_20260911.jsonl", '{"a":1}\n'),
+                (".tmp_live_20260911_ES.jsonl", '{"a":1}\n')):
+            open(os.path.join(d, nom), "w", encoding="utf-8").write(contenu)
+        devenir.RACINE = tmp
+        try:
+            vus = set(devenir.jours_courus())
+        finally:
+            devenir.RACINE = vraie_racine
+    check("[4a] un journal VIDE compte (couru muet), un ABSENT ne compte pas",
+          "20260908" in vus and "20260912" not in vus, sorted(vus))
+    check("[4b] les SIX autres familles du meme dossier ne sont JAMAIS comptees",
+          "20260911" not in vus, sorted(vus))
+    check("[4c] ni une sauvegarde `_avant_`, ni un jour anterieur au jour 1",
+          vus == {"20260908", "20260909"}, sorted(vus))
     # LE compteur lit LA MESURE OFFICIELLE, ni un producteur commode ni une
     # union. Deux erreurs successives l'ont montre : adosse au seul journal du
     # narrateur il annoncait 3 jours au lieu de 4 (le narrateur n'existait pas
@@ -87,13 +121,6 @@ def main():
     # dossier trop tot.
     check("[4d] le compteur lit la MESURE OFFICIELLE (`entonnoir_`), pas un producteur commode",
           [d for d, _ in devenir.JOURNAUX] == ["entonnoir"], devenir.JOURNAUX)
-    import os as _os
-    manquants = [j for j in jours
-                 if not _os.path.exists("LOGS/entonnoir/entonnoir_%s.jsonl" % j)]
-    check("[4g] tout jour compte a bien sa mesure officielle sur disque",
-          not manquants, manquants)
-    check("[4h] un jour SANS mesure officielle n'est PAS compte",
-          "20260912" not in jours or _os.path.exists("LOGS/entonnoir/entonnoir_20260912.jsonl"))
     check("[4e] le dossier est ferme tant que les 61 jours ne sont pas courus",
           devenir.ouvert() == (n >= devenir.N_JOURS))
     e = devenir.etat()

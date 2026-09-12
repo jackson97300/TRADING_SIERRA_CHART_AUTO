@@ -48,6 +48,11 @@ B_ALIGN_TEXTE = (B.alignement("long", _B) in ("aligne", "contre")
 # operateur : c'est l'erreur de la premiere version, verifiee par execution.
 MOTIF_SIDE_NU = r"""side(?:_pur)?(?:["'\]\)]|\b)[^\n]{0,18}?(>|<|>=|<=|==|!=)\s*-?\d"""
 
+# Les SEPT cles qu'une ombre rendue porte, et rien d'autre. C'est la liste
+# blanche de `ombres_tirees` : la vraie protection du verrou sur ce chemin, car
+# une ligne de journal recopiee en bloc emporterait son devenir avec elle.
+CLES_OMBRE = {"famille", "setup", "side", "ts", "heure_et", "sens", "motif"}
+
 PASSED = FAILED = 0
 
 
@@ -119,18 +124,44 @@ def main():
     check("[1e] repli RETIRE : meme avec `side_pur` sous la main, aucun sens n'est"
           " invente", len(fuite) == 1 and fuite[0]["sens"] is None
           and fuite[0]["side"] is None, fuite)
-    check("[1f] et `side_pur` ne survit pas au filtre de structure",
-          "side_pur" in devenir.CHAMPS_DEVENIR
-          and "side_pur" not in devenir.sans_devenir(fixture[0]))
-    check("[1g] les cibles atteintes non plus — c'est une issue, pas un decor",
-          not any(c in devenir.sans_devenir(fixture[0])
-                  for c in ("cible_atteinte_long", "cible_atteinte_short")))
+    # [1f] LA LISTE BLANCHE, qui est la VRAIE protection. Les quatre controles
+    # « le mot X est absent du rendu » retires ici le 12/09 ne pouvaient pas
+    # echouer : `ombres_tirees` construit un dict de SEPT cles fixes, donc
+    # aucun de ces mots ne pouvait y apparaitre, meme sans filtre. Quatre PASS
+    # gratuits qui donnaient l'illusion de garder le verrou. Ce qui garde
+    # vraiment, c'est que la ligne du journal ne soit JAMAIS recopiee en bloc —
+    # et c'est ca qu'on verifie : la liste des cles emises, exactement.
+    check("[1f] les ombres rendues portent EXACTEMENT les sept cles prevues —"
+          " la ligne brute n'est jamais recopiee",
+          set(fuite[0]) == CLES_OMBRE, sorted(set(fuite[0]) ^ CLES_OMBRE))
 
-    om = D.ombres_tirees("20260911", "ES")
-    dump = json.dumps(om, ensure_ascii=False)
-    for mot in ("rendement", "rend_pts", "pnl", "issue"):
-        check("[1-%s] « %s » absent des ombres rendues" % (mot[:5], mot),
-              mot not in dump.lower(), dump[:90])
+    # [1g] LA COUVERTURE DU VERROU, sur les VRAIS journaux. C'est le controle
+    # qui aurait attrape `side_pur` avant qu'il n'arrive a l'ecran, et c'est le
+    # seul de ce fichier qui vieillit avec les donnees : toute cle NEUVE du
+    # vocabulaire d'un devenir le fait echouer jusqu'a ce qu'un humain tranche
+    # — couverte, ou exemptee AVEC SA RAISON. Mesure du 12/09 : onze cles
+    # matchent, neuf sont couvertes, deux sont exemptees ci-dessous.
+    HORS_DEVENIR = {
+        "cible_prix": "un NIVEAU calcule ex-ante (le bord oppose de la VA),"
+                      " connu a la decision — pas une issue",
+        "sortie": "le NOM de la regle de sortie (« close_1545 »), pas son"
+                  " resultat",
+    }
+    VOCAB = re.compile(r"rend|pnl|issue|gain|perte|cible|mfe|mae|devenir"
+                       r"|sortie|_pur|atteinte", re.I)
+    cles = set()
+    for f in sorted((RACINE / "LOGS" / "entonnoir").glob("*.jsonl")):
+        if "_avant_" in f.name:
+            continue
+        for ln in f.read_text(encoding="utf-8", errors="ignore").splitlines():
+            try:
+                cles |= set(json.loads(ln))
+            except ValueError:
+                continue
+    nues = sorted(c for c in cles if VOCAB.search(c)
+                  and c not in devenir.CHAMPS_DEVENIR and c not in HORS_DEVENIR)
+    check("[1g] aucune cle de devenir des journaux n'echappe au verrou sans"
+          " raison ecrite", not nues, nues)
 
     print("\n[2] deux natures, jamais melangees")
     a = D.assembler(ligne(), "20260911", "ES")

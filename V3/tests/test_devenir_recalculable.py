@@ -127,13 +127,24 @@ def main():
                  if (set(MINIMUM) - set(c)) and "motif_ligne" not in c]
     check("[2a] aucun schema ne perd un champ du minimum SANS declarer son motif",
           not manquants, manquants[:2])
-    noms = {c for cles in schemas for c in cles if c in NOMS_DECLENCHEUR}
-    check("[2b] les noms du declencheur vus sont tous connus du lecteur du jour 61",
-          noms <= set(NOMS_DECLENCHEUR), sorted(noms))
+    # TAUTOLOGIE CORRIGEE le 12/09 (revue). L'ancien [2b] faisait
+    # `noms = {c for ... if c in NOMS_DECLENCHEUR}` puis verifiait
+    # `noms <= set(NOMS_DECLENCHEUR)` : un ensemble construit en filtrant sur
+    # l'appartenance a X est TOUJOURS inclus dans X. Il ne pouvait pas echouer,
+    # et il etait precisement cense detecter la derive pour laquelle ce fichier
+    # existe — trois noms de declencheur apparus en quatre jours. On collecte
+    # donc les candidats par VOCABULAIRE, sans filtrer, et on exige l'inclusion.
+    # Mesure du 12/09 : sur tous les journaux, ce vocabulaire ne ramene que
+    # `hypothese`, `setup` et `famille` — aucun faux positif. Une QUATRIEME
+    # convention fait desormais echouer le test au lieu de passer inapercue.
+    import re as _re
+    VOCAB = _re.compile(r"hypothese|setup|famille|declench", _re.I)
+    candidats = {c for cles in schemas for c in cles if VOCAB.search(c)}
+    inconnus = sorted(candidats - set(NOMS_DECLENCHEUR))
+    check("[2b] aucun nom de declencheur inconnu du lecteur du jour 61",
+          not inconnus, inconnus)
     check("[2c] le lecteur normalise de `campagne.py` connait les MEMES noms — source unique",
           set(NOMS_CAMPAGNE) == set(NOMS_DECLENCHEUR), (NOMS_CAMPAGNE, NOMS_DECLENCHEUR))
-    check("[2d] il lit les trois conventions sur de VRAIES lignes des quatre jours",
-          all(declencheur(d) for _, d in lignes if d))
     if len(schemas) > 1:
         print("     ATTENTION : le schema a deja bouge. Un lecteur qui ne chercherait")
         print("     que `hypothese` compterait ZERO sur les premiers jours, sans planter.")
