@@ -78,12 +78,22 @@ def main():
           all(j >= devenir.JOUR_1 for j in jours), [j for j in jours if j < devenir.JOUR_1])
     check("[4c] aucune sauvegarde `_avant_` n'est comptee comme un jour",
           all(len(j) == 8 and j.isdigit() for j in jours), jours)
-    # Le compteur lit une UNION de journaux : adosse a `scenarios_*` seul, il
-    # annoncait 3 jours au lieu de 4 le 11/09 — le narrateur n'existait pas au
-    # jour 1. Un compteur qui depend d'un seul producteur se trompe des que ce
-    # producteur nait ou meurt, et se tromper ici veut dire ouvrir trop tot.
-    check("[4d] le compteur lit PLUSIEURS journaux, pas un seul",
-          len(devenir.JOURNAUX) >= 3, devenir.JOURNAUX)
+    # LE compteur lit LA MESURE OFFICIELLE, ni un producteur commode ni une
+    # union. Deux erreurs successives l'ont montre : adosse au seul journal du
+    # narrateur il annoncait 3 jours au lieu de 4 (le narrateur n'existait pas
+    # au jour 1) ; adosse a l'union de quatre journaux il comptait le 11/09
+    # alors que le rejeu officiel de ce jour-la avait PLANTE sur un verrou de
+    # fichier et s'etait efface. La seconde faute est la pire : elle ouvre le
+    # dossier trop tot.
+    check("[4d] le compteur lit la MESURE OFFICIELLE (`entonnoir_`), pas un producteur commode",
+          [d for d, _ in devenir.JOURNAUX] == ["entonnoir"], devenir.JOURNAUX)
+    import os as _os
+    manquants = [j for j in jours
+                 if not _os.path.exists("LOGS/entonnoir/entonnoir_%s.jsonl" % j)]
+    check("[4g] tout jour compte a bien sa mesure officielle sur disque",
+          not manquants, manquants)
+    check("[4h] un jour SANS mesure officielle n'est PAS compte",
+          "20260912" not in jours or _os.path.exists("LOGS/entonnoir/entonnoir_20260912.jsonl"))
     check("[4e] le dossier est ferme tant que les 61 jours ne sont pas courus",
           devenir.ouvert() == (n >= devenir.N_JOURS))
     e = devenir.etat()

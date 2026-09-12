@@ -48,14 +48,22 @@ class DevenirFerme(Exception):
     """Levee quand on tente de lire un devenir avant la fin de la campagne."""
 
 
-# Un jour compte s'il a laisse UNE trace, quelle qu'elle soit. La liste est une
-# UNION et non un seul journal : le 11/09 j'ai compte sur `scenarios_*` seul et
-# le compteur annoncait 3 jours au lieu de 4 — le narrateur n'existait pas
-# encore au jour 1, son journal manque pour le 08/09. Un compteur adosse a un
-# seul producteur se trompe des que ce producteur naît ou meurt, et ici se
-# tromper veut dire ouvrir le dossier au mauvais moment.
-JOURNAUX = (("scenarios", "scenarios"), ("barrieres", "barrieres"),
-            ("marges", "marges"), ("reactions", "reactions"))
+# UN jour de campagne = une journee dont LA MESURE OFFICIELLE existe, et rien
+# d'autre. Cette mesure est `LOGS/entonnoir/entonnoir_<jour>.jsonl`, ecrit par
+# `campagne.courir` : present et vide = jour couru MUET, ABSENT = jour NON
+# couru. `campagne` efface d'ailleurs ses trois journaux s'il echoue, par
+# conception, precisement pour qu'un incident ne passe pas pour un jour muet.
+#
+# DEUX ERREURS CORRIGEES, dans cet ordre :
+#   1. adosse au seul journal du narrateur, le compteur annoncait 3 jours au
+#      lieu de 4 — le narrateur n'existait pas au jour 1 ;
+#   2. adosse a l'UNION de quatre journaux, il comptait le 11/09 alors que le
+#      rejeu officiel de ce jour-la avait PLANTE (verrou de fichier) et s'etait
+#      efface. Compter un jour que la mesure ne couvre pas, c'est ouvrir le
+#      dossier trop tot — la faute exactement inverse de la premiere.
+# La bonne source n'est ni un producteur commode ni une union : c'est celle qui
+# DEFINIT la mesure.
+JOURNAUX = (("entonnoir", "entonnoir"),)
 
 
 def jours_courus():

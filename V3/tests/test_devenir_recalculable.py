@@ -77,7 +77,7 @@ def lignes_campagne():
 # Le lecteur normalise vit dans `campagne.py` — SOURCE UNIQUE. Une copie ici
 # deriverait le jour ou une quatrieme convention apparait, et le jour 61 lirait
 # deux verites differentes selon le fichier qui l'interroge.
-from V3.campagne import declencheur, NOMS_DECLENCHEUR as NOMS_CAMPAGNE   # noqa: E402
+from V3.journal_lecture import declencheur, NOMS_DECLENCHEUR as NOMS_CAMPAGNE  # noqa: E402
 
 
 def main():

@@ -43,6 +43,11 @@ from CORE.research import hypotheses as H                        # noqa: E402
 from CORE.research.hypothesis_runner import (                    # noqa: E402
     injecter_recalculs, signaux_par_franchissement)
 from V3 import calendrier, chaine, lecture                       # noqa: E402
+# Les deux lecteurs vivent a part depuis le 12/09 : `campagne` FAIT courir la
+# journee, `journal_lecture` sait LIRE ce qui en sort meme quand la convention
+# a change ou que le fichier est momentanement verrouille.
+from V3.journal_lecture import (NOMS_DECLENCHEUR, declencheur,    # noqa: E402,F401
+                                ouvrir_patient)
 from V3.layers.L3_declencheurs import ombre16, ombre_c2          # noqa: E402
 
 # Ce que `injecter_recalculs` consomme du 1 min : hlc3 + volume + horodatage
@@ -120,25 +125,6 @@ def signaux_l3(df):
     return sorted(out), comptes
 
 
-# Le nom du declencheur a porte TROIS noms en quatre jours de campagne :
-# `setup` et `famille` du 08 au 10/09, `hypothese` a partir du 11/09. Un lecteur
-# du jour 61 qui ne chercherait que `hypothese` compterait ZERO sur les trois
-# premiers jours — et il ne planterait PAS, il rendrait un zero credible. C'est
-# le defaut le plus dangereux d'une campagne de soixante jours : il est
-# silencieux. Tout lecteur de journal passe par ici.
-NOMS_DECLENCHEUR = ("hypothese", "setup", "famille")
-
-
-def declencheur(ligne):
-    """Le nom du declencheur d'une ligne de journal, quelle que soit la
-    convention du jour ou elle a ete ecrite. None si aucune ne s'applique."""
-    for champ in NOMS_DECLENCHEUR:
-        v = ligne.get(champ)
-        if v:
-            return v
-    return None
-
-
 def contrat_ok(sym, jour):
     """Le contrat du fichier est-il LE contrat actif du calendrier ?
 
@@ -156,7 +142,7 @@ def contrat_ok(sym, jour):
     # fois). Le VERDICT reste celui de la premiere ligne (gel) ; l'ensemble
     # est IMPRIME pour que le jour du roll se lise, jamais devine.
     contrats, premier = set(), None
-    for ln in open(fs[0], encoding="utf-8", errors="ignore"):
+    for ln in ouvrir_patient(fs[0]):
         p = ln.find('"contract":')
         if p < 0:
             continue
