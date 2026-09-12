@@ -38,6 +38,7 @@ if RACINE not in sys.path:
     sys.path.insert(0, RACINE)
 
 from CORE import entonnoir                                       # noqa: E402
+from V3 import devenir                                           # noqa: E402
 from CORE.bot_terminal import charger_jour                       # noqa: E402
 from CORE.research import hypotheses as H                        # noqa: E402
 from CORE.research.hypothesis_runner import (                    # noqa: E402
@@ -161,12 +162,24 @@ def contrat_ok(sym, jour):
     return attendu in premier
 
 
-def courir(jour, strict=False, minutes=15):
+def courir(jour, strict=False, minutes=15, rejouer_officiel=False):
     # Fail-loud AVANT la troncature (review 08/09, R2) : un seuil C2 manquant
     # ne doit jamais laisser un entonnoir officiel PARTIEL passer pour couru.
     ombre_c2.verifier_seuils()
     chemin = "LOGS/entonnoir/entonnoir_%s.jsonl" % jour
     os.makedirs(os.path.dirname(chemin), exist_ok=True)
+    # GARDE ANTI-RECUL DE L'HORLOGE (12/09, audit croise). Ce qui suit TRONQUE
+    # le journal officiel et l'efface a la moindre exception (R8) — or
+    # `devenir.jours_courus()` COMPTE ces fichiers : rejouer un jour qui compte
+    # deja ne peut que faire RECULER l'horloge. Le lot CONTIENT les jours de
+    # campagne : un backtest qui le balaie entre ici sur chacun d'eux, et un
+    # `PermissionError` (08/09, puis 11/09 ou il a coute une journee) suffirait.
+    if jour >= devenir.JOUR_1 and os.path.exists(chemin) and not rejouer_officiel:
+        print("  REFUS : %s compte DEJA parmi les jours courus (%d sur %d). Le"
+              " rejouer ne peut que faire reculer l'horloge."
+              % (jour, devenir.jour_campagne(), devenir.N_JOURS))
+        print("  Si c'est une reprise apres incident : --rejouer-officiel.")
+        return None
     # Le jour se rejoue entier, jamais en append — et le fichier EXISTE même
     # sans signal : vide = jour couru muet, absent = jour jamais couru. Sans
     # cette distinction, la majorité des 60 jours (signaux rares par
@@ -265,6 +278,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("jour", nargs="?", default=None)
     ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--rejouer-officiel", action="store_true",
+                    help="rejouer un jour de campagne qui compte deja (reprise)")
     a = ap.parse_args()
     os.chdir(RACINE)
     jour = a.jour or dernier_jour()
@@ -273,8 +288,8 @@ def main():
         return 1
     print("CAMPAGNE ombre-1 — journee %s, mode %s"
           % (jour, "STRICT (live)" if a.strict else "rejeu (strict=False)"))
-    chemin = courir(jour, strict=a.strict)
-    if chemin is None:      # demi-mesure effacee (R8) : le jour est un incident
+    chemin = courir(jour, strict=a.strict, rejouer_officiel=a.rejouer_officiel)
+    if chemin is None:      # demi-mesure effacee (R8), ou refus de la garde
         return 1
     print("\nlecture : python -X utf8 V3/pourquoi.py %s" % jour)
     return 0
