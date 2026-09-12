@@ -85,7 +85,18 @@ def main():
         # 84 battements du jour 1 sur un verdict de 4 jours. Observateur pur.
         _etape("0/5 surveillance L6", ["CORE/research/surveillance_l6.py",
                                        *args]),
-        _etape("1/5 campagne (LA mesure)", ["V3/campagne.py", *args]),
+        # `--rejouer-officiel` (12/09, revue) : la garde anti-recul de
+        # `campagne.courir` refuse un jour de campagne dont le journal existe
+        # deja. Or une passe lancee EN SEANCE garde son journal (les deux
+        # instruments ont deja plus de six barres cash), et le rejeu de 21:01
+        # serait alors REFUSE : la mesure officielle du jour resterait la passe
+        # partielle de l'apres-midi, definitivement, et les etapes suivantes la
+        # liraient. Le rejeu du soir EST la mesure officielle par definition —
+        # c'est le seul appelant qui a le droit de la refaire. La garde protege
+        # tous les autres points d'entree, qui sont la menace visee : un
+        # balayage du lot par un backtest.
+        _etape("1/5 campagne (LA mesure)",
+               ["V3/campagne.py", *args, "--rejouer-officiel"]),
         # Brique 2 (Fable 09/09) : la marge des QUATRE — de combien le lieu a
         # manque, et lequel des deux manquait. Observateur pur, journal separe.
         # AVANT pourquoi (review 10/09, R3) : pourquoi_plus la lit.

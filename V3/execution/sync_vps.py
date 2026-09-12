@@ -65,7 +65,14 @@ def synchroniser(sym, jour, hote, chemin_donnees):
     # partout ailleurs dans le depot ; la synchro etait le dernier endroit a ne
     # pas la respecter. Et ce correctif est INDEPENDANT de la bascule VPS : la
     # course est entre le `scp` et le rejeu, pas entre les deux coureurs.
-    tmp = final + ".tmp"
+    # UNIQUE PAR PROCESS (12/09, revue). `final + ".tmp"` seul : deux coureurs
+    # simultanes — le cas du 08/09, PC et VPS ensemble — ecrivent le MEME `.tmp`
+    # puis font `os.replace`. Le resultat a l'air complet et il est melange,
+    # alors que l'ecriture directe d'avant donnait un fichier partiel qui
+    # plantait bruyamment. Sans le PID, le correctif rend ce scenario-la plus
+    # SILENCIEUX, pas moins. Le suffixe PID est deja la convention du depot
+    # (`L0_interrupteur/mesure_57j.py`), ecrite apres ce genre de collision.
+    tmp = "%s.%d.tmp" % (final, os.getpid())
     os.makedirs(dossier, exist_ok=True)
     try:
         # CREATE_NO_WINDOW : lance detache (sans console), chaque scp

@@ -78,9 +78,15 @@ def _sens(v):
         s = v.strip().lower()
         return s if s in ("long", "short") else None
     try:
-        return "long" if float(v) > 0 else "short"
+        f = float(v)
     except (TypeError, ValueError):
         return None
+    # ZERO N'EST PAS UN SENS (12/09, revue). `_sens(0)` rendait « short », et
+    # `_sens("0")` rendait None : deux reponses pour la meme valeur selon son
+    # type. Or LECTURE_JOUR_61 regle 13 dit que `side_pur = 0` — une journee
+    # exactement plate au tick — est un NO-TRADE, pas une direction. Afficher
+    # « short » sur un jour plat, c'est inventer un sens.
+    return None if f == 0 else ("long" if f > 0 else "short")
 
 
 def radar(ligne, sym, b=None):

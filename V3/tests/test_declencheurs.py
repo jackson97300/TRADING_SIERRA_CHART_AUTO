@@ -43,6 +43,11 @@ _B = B.composer({"position_ouverture": "au_dessus", "cote_hvl": 1,
 B_ALIGN_TEXTE = (B.alignement("long", _B) in ("aligne", "contre")
                  and B.alignement(1, _B) == "non_applicable")
 
+# Le motif qui garde la frontiere des deux `side`. Il doit voir l'idiome REEL
+# du depot — `d["side"] or 0) > 0` — et pas seulement un `side` nu suivi d'un
+# operateur : c'est l'erreur de la premiere version, verifiee par execution.
+MOTIF_SIDE_NU = r"""side(?:_pur)?(?:["'\]\)]|\b)[^\n]{0,18}?(>|<|>=|<=|==|!=)\s*-?\d"""
+
 PASSED = FAILED = 0
 
 
@@ -97,15 +102,23 @@ def main():
     fixture = [{"sym": "ES", "setup": "C2_80PCT", "ts": 1789154100000,
                 "side_pur": 1.0, "rend_pts": 3.0, "cible_atteinte_long": True,
                 "motif": "lieu_sans_reaction"}]      # `side` ABSENT, comme le reel
-    vrai_lire = D._lire
+    # LE FILTRE EST NEUTRALISE ICI, ET C'EST TOUT LE POINT (corrige le 12/09
+    # apres revue). La premiere version de ce controle laissait `sans_devenir`
+    # agir : comme `side_pur` vient d'entrer dans `CHAMPS_DEVENIR`, il etait
+    # retire AVANT que `ombres_tirees` ne le lise, donc l'ancienne expression
+    # `net.get("side") or net.get("side_pur")` rendait None elle aussi. Le test
+    # passait avec le code casse — un FAUX TEMOIN, exactement le defaut qu'il
+    # etait cense fermer. Filtre neutralise, il echoue si le repli revient.
+    vrai_lire, vrai_filtre = D._lire, D.devenir.sans_devenir
     D._lire = lambda chemin: fixture if "ombre_c2" in chemin else []
+    D.devenir.sans_devenir = lambda l: dict(l)
     try:
         fuite = D.ombres_tirees("20260911", "ES")
     finally:
-        D._lire = vrai_lire
-    check("[1e] une ombre sans `side` ne se voit PAS attribuer le signe du rendement",
-          len(fuite) == 1 and fuite[0]["sens"] is None and fuite[0]["side"] is None,
-          fuite)
+        D._lire, D.devenir.sans_devenir = vrai_lire, vrai_filtre
+    check("[1e] repli RETIRE : meme avec `side_pur` sous la main, aucun sens n'est"
+          " invente", len(fuite) == 1 and fuite[0]["sens"] is None
+          and fuite[0]["side"] is None, fuite)
     check("[1f] et `side_pur` ne survit pas au filtre de structure",
           "side_pur" in devenir.CHAMPS_DEVENIR
           and "side_pur" not in devenir.sans_devenir(fixture[0]))
@@ -179,8 +192,14 @@ def main():
     exemple = ligne()["setups_hors_zones"][0]["side"]
     check("[7b] la ligne d'exemple de CE test porte le MEME type que le reel",
           type(exemple).__name__ in vus, (type(exemple).__name__, vus))
+    # ZERO EST DANS LA TABLE depuis le 12/09. `_sens(0)` rendait « short » et
+    # `_sens("0")` rendait None — deux reponses pour la meme valeur selon son
+    # type, alors que LECTURE_JOUR_61 regle 13 fait de `side_pur = 0` (journee
+    # plate au tick) un NO-TRADE. Afficher « short » sur un jour plat invente
+    # un sens que rien ne porte.
     for v, attendu in (("long", "long"), ("short", "short"), ("LONG", "long"),
                        (1, "long"), (-1, "short"), (1.0, "long"),
+                       (0, None), (0.0, None), ("0", None),
                        (None, None), ("x", None)):
         check("[7-%s] `_sens(%r)` rend %s" % (str(v)[:4], v, attendu),
               D._sens(v) == attendu, D._sens(v))
@@ -204,9 +223,18 @@ def main():
                          if not l.lstrip().startswith("#"))
         corps = code.split('"""')
         corps = "".join(corps[i] for i in range(0, len(corps), 2))   # hors docstrings
-        m = _re.search(r"side[a-z_]*\s*(>|<|>=|<=|==|!=)\s*-?\d", corps)
+        m = _re.search(MOTIF_SIDE_NU, corps)
         check("[8a-%s] aucune comparaison numerique sur un `side` de journal" % f.stem,
               m is None, m.group(0) if m else "")
+    # META-CONTROLE (12/09, revue) : un detecteur incapable de detecter est pire
+    # que pas de detecteur. Le motif d'origine etait
+    # `side[a-z_]*\s*(>|<|...)\s*-?\d` : il exigeait `side` SUIVI d'un espace ou
+    # d'un identifiant, alors que l'idiome du depot est `d["side"]`. Verifie par
+    # execution sur `git show f1d34df:...` : il ne voyait PAS le bug qu'il etait
+    # cense commemorer. Ce controle-ci echoue si le motif reperd cette capacite.
+    check("[8a-meta] le motif attrape l'idiome REEL du bug du 12/09",
+          _re.search(MOTIF_SIDE_NU, 'x = "long" if (d["side"] or 0) > 0 else "short"')
+          is not None)
     check("[8b] `biais.alignement` attend bien la convention TEXTUELLE",
           B_ALIGN_TEXTE, "il compare side a un nombre")
     check("[8c] `_sens` est le seul point de passage du radar",
