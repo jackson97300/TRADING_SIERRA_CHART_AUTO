@@ -209,6 +209,62 @@ def _barrieres_ombres(df, sym, jour, s, fh, incidents):
     return n
 
 
+def _controle_couverture(jour):
+    """CHAQUE TIR D'OMBRE DU JOUR A-T-IL SA LIGNE ? Le compteur qui manquait.
+
+    NE DU 11/09 (constate le 13/09). Le rejeu officiel de ce jour-la avait
+    plante et efface ses journaux ; la reprise a bien ramene l'entonnoir et les
+    journaux d'ombre, mais PAS ce journal-ci, qui est en aval. Resultat : 16
+    tirs reels sans bracket, donc 16 devenirs NON RECALCULABLES au jour 61 —
+    et rien ne s'est allume pendant deux jours. Les autres jours etaient
+    complets (10, 11, 3) ; seul le 11/09 avait perdu les siens.
+
+    Le defaut n'etait pas l'absence du mecanisme : `_barrieres_ombres` est bien
+    ecrit, et son invariant est SANS EXCEPTION — tout tir reel produit une
+    ligne, meme en probleme (`ts_introuvable`, `fenetre_absente`,
+    `atr_invalide`), avec son `motif_ligne`. Ce qui manquait, c'est le controle
+    SUR le mecanisme. On peut donc exiger l'egalite stricte : ce compteur ne
+    criera jamais au loup, et une alarme qui crie au loup finit ignoree.
+
+    Ne lit aucun devenir : des cles (`sym`, `ts`, `setup`), rien d'autre."""
+    tirs = set()
+    for nom_j in ("ombre16", "ombre_c2"):
+        p = "LOGS/entonnoir/%s_%s.jsonl" % (nom_j, jour)
+        if not os.path.exists(p):
+            continue
+        for l in open(p, encoding="utf-8"):
+            try:
+                o = json.loads(l)
+            except ValueError:
+                continue
+            # le MEME critere que `_barrieres_ombres` : ni muet, ni
+            # lieu_sans_reaction — ceux-la sont du denominateur, pas des tirs.
+            if o.get("side") is None or o.get("motif"):
+                continue
+            tirs.add((o.get("sym"), int(o.get("ts")), o.get("setup")))
+    couverts = set()
+    chemin = "LOGS/barrieres/barrieres_%s.jsonl" % jour
+    if os.path.exists(chemin):
+        for l in open(chemin, encoding="utf-8"):
+            try:
+                o = json.loads(l)
+            except ValueError:
+                continue
+            cle = (o.get("sym"), o.get("ts"), o.get("setup"))
+            if cle in tirs:                     # aucune classification a faire
+                couverts.add(cle)
+    manquants = sorted(tirs - couverts)
+    print("  couverture : %d tir(s) d'ombre, %d bracket(s)"
+          % (len(tirs), len(couverts)))
+    if manquants:
+        print("  ALARME : %d tir(s) SANS bracket — leur devenir ne sera PAS"
+              " recalculable au jour 61 :" % len(manquants))
+        for m in manquants[:6]:
+            print("     %s %s %s" % m)
+        print("  reparer : python -X utf8 %s %s" % (__file__, jour))
+    return len(manquants)
+
+
 def main():
     os.chdir(RACINE)
     jour = sys.argv[1] if len(sys.argv) > 1 else dernier_jour()
@@ -216,7 +272,8 @@ def main():
         print("aucun fichier de donnees")
         return 1
     print("BARRIERES — journee %s (B-ATR / B-NIV / B-NAT par signal)" % jour)
-    return courir(jour)
+    courir(jour)
+    return _controle_couverture(jour)
 
 
 if __name__ == "__main__":
