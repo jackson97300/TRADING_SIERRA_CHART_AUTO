@@ -164,21 +164,33 @@ def _rang(lec, etat, s):
 def _stop_jour(lec, etat, s):
     """Garde-fou SIM — PEU PROBABLE sur NQ (4,9 SL de 1 ATR), improbable
     sur ES (13,2), MESURABLE : jamais « inerte par construction » (revue
-    08/09, A2). Une seance fermee dessus se lit A PART (LECTURE regle 16)."""
-    return etat["pnl_jour"] <= s["usd"]
+    08/09, A2). Une seance fermee dessus se lit A PART (LECTURE regle 16).
+
+    TROU tant que rien n'ecrit le P&L du jour (revue L0, 14/09) : une porte
+    qui ne peut pas calculer sa condition doit le DIRE, pas rendre faux."""
+    p = etat["pnl_jour"]
+    return None if p is None else p <= s["usd"]
 
 
 @porte("L0_STOP_PROPFIRM", "L0")
 def _stop_propfirm(lec, etat, s):
-    """La vraie regle Douglas, en observation."""
-    return etat["pnl_jour"] <= s["usd"]
+    """La vraie regle Douglas, en observation. TROU tant que le P&L du jour
+    n'est pas tenu — cf `_stop_jour`."""
+    p = etat["pnl_jour"]
+    return None if p is None else p <= s["usd"]
 
 
 @porte("L0_COOLDOWN", "L0")
 def _cooldown(lec, etat, s):
     """Delai apres un trade. 90/60 min, pas les 3/5 min de janvier : en barres
-    de 15 min, trois minutes ne sautent meme pas une barre."""
-    return lec["ts"] < etat["fin_cooldown"]
+    de 15 min, trois minutes ne sautent meme pas une barre.
+
+    TROU tant que rien n'ecrit la fin du cooldown — meme raison que les deux
+    portes de stop. Mesure du 14/09 : a 90/60 min, le cooldown plafonne la
+    journee a 5,2 trades sur le cash et 18,4 sur toutes les sessions. Ce n'est
+    donc pas un detail de confort : c'est le plafond de trades du systeme."""
+    fin = etat["fin_cooldown"]
+    return None if fin is None else lec["ts"] < fin
 
 
 # --- famille E — ETAT DE L'EXECUTION ----------------------------------------

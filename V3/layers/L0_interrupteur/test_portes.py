@@ -167,6 +167,41 @@ def couverture():
     return manque
 
 
+def declaration_tenable():
+    """UNE PORTE APPLIQUEE DOIT POUVOIR REPONDRE — sinon sa declaration ment.
+
+    NE DE LA REVUE L0 DU 14/09. `L0_STOP_JOURNALIER` etait declaree APPLIQUEE
+    alors que rien n'ecrit `pnl_jour` : elle ne pouvait structurellement pas
+    s'appliquer. Ce n'etait pas une porte fainaante, c'etait une DECLARATION
+    FAUSSE — et personne ne confrontait le mode a la realite.
+
+    Le controle : sur une barre COMPLETE (aucune donnee de marche absente) et
+    l'etat que la chaine fabrique reellement, une porte appliquee ne doit pas
+    rendre un trou. Si elle en rend un, la cause ne peut etre que l'etat —
+    donc un champ que personne n'ecrit.
+
+    Et l'enjeu n'est pas cosmetique : en mode strict, un trou sur une porte
+    APPLIQUEE bloque (fail-closed, `chaine.py`). Une declaration fausse ferme
+    donc toutes les barres du live le jour ou la porte dit enfin la verite.
+    """
+    from V3.chaine import etat_neuf
+    etat = etat_neuf()
+    menteuses = []
+    for n in sorted(registre.REGISTRE):
+        if n not in APPLIQUEES:
+            continue
+        try:
+            r = registre.REGISTRE[n]["fn"](dict(BARRE), dict(etat), SEUILS.get(n, {}))
+        except Exception as e:                                   # noqa: BLE001
+            menteuses.append("%s leve %s" % (n, type(e).__name__))
+            continue
+        if r is None:
+            menteuses.append("%s : declaree APPLIQUEE mais rend un TROU sur"
+                             " l'etat neuf — elle lit une entree que personne"
+                             " n'ecrit" % n)
+    return menteuses
+
+
 def pas_de_feu_vert_invente():
     """Une porte qui lit une donnee absente doit rendre None, jamais False.
 
@@ -188,7 +223,8 @@ def pas_de_feu_vert_invente():
 
 
 def main():
-    echecs = rien_de_cache() + couverture() + pas_de_feu_vert_invente()
+    echecs = (rien_de_cache() + couverture() + declaration_tenable()
+              + pas_de_feu_vert_invente())
     echecs += [m for m in (_un_cas(*c) for c in CAS) if m]
     trous = len({n for n, _b, _e, a in CAS if a is None})
     print("  L0 + L5 — %d portes, %d cas dont %d portes testees sur donnee "

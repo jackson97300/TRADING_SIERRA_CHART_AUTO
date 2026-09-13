@@ -80,8 +80,17 @@ def etat_neuf():
     repondent a des questions differentes : avec une seule position a la fois,
     on n'atteint jamais le 15e trade, on atteint tres bien le 15e signal.
     """
-    return {"n_jour": 0, "n_signaux_jour": 0, "pnl_jour": 0.0,
-            "fin_cooldown": -1, "libre_a": -1, "side_ouvert": 0,
+    # `pnl_jour` et `fin_cooldown` valent None, PAS zero (revue L0, 14/09).
+    # Un zero est une REPONSE : « le P&L du jour est nul, donc le stop ne
+    # declenche pas ». Or rien n'ecrit ces deux champs — la vraie reponse est
+    # « je ne sais pas ». Avec un zero, les trois portes qui les lisent se
+    # taisaient, et dans le journal « je n'ai pas bloque » etait indiscernable
+    # de « je n'ai pas pu repondre ». Au jour 61, on aurait lu zero blocage du
+    # stop journalier et conclu qu'il n'a jamais eu a servir — un zero de
+    # cablage manquant pris pour de la rarete, le piege ombre16 une fois de
+    # plus. Avec None, elles rendent un TROU et l'inertie devient LISIBLE.
+    return {"n_jour": 0, "n_signaux_jour": 0, "pnl_jour": None,
+            "fin_cooldown": None, "libre_a": -1, "side_ouvert": 0,
             "i_entree": -1, "issue_ouverte": None}
 
 

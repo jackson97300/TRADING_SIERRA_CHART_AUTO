@@ -154,7 +154,15 @@ portes:
   # Cablage = cycle 2 (le fantome L0_POSITION_OUVERTE porte deja un pnl_atr
   # simule — c'est la brique). Jamais pendant la campagne.
   L0_STOP_JOURNALIER:
-    mode: appliquee
+    # OBSERVEE depuis le 14/09, et c'est une CORRECTION DE DECLARATION, pas un
+    # assouplissement : elle etait declaree APPLIQUEE alors qu'elle est
+    # structurellement incapable de s'appliquer (rien n'ecrit `pnl_jour`). Une
+    # porte appliquee qui rend un trou BLOQUE en mode strict (fail-closed,
+    # chaine.py) — donc la laisser appliquee aurait ferme toutes les barres du
+    # live des qu'elle dit enfin la verite. Elle repassera appliquee le jour ou
+    # la reconciliation ecrit le P&L du jour, et le fail-closed reprendra son
+    # sens.
+    mode: observee
     seuils: {usd: -1000.0}
     mesure: "INERTE PAR CONSTRUCTION (pnl_jour jamais ecrit) — cf bloc ci-dessus.
              Le seuil lui-meme reste atteignable : si le cablage arrive et
