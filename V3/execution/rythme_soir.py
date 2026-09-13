@@ -95,6 +95,13 @@ def main():
         # c'est le seul appelant qui a le droit de la refaire. La garde protege
         # tous les autres points d'entree, qui sont la menace visee : un
         # balayage du lot par un backtest.
+        # 0b : L'EMPREINTE DES COUCHES, avant la mesure (14/09). Trois couches
+        # sur six n'ecrivent aucun journal quotidien — leurs verdicts se
+        # RECALCULENT au jour 61 depuis la trame conservee. Mais un recalcul
+        # n'est une mesure que si le code n'a pas bouge : cette ligne dit, pour
+        # chaque jour, quel code a juge. Sans elle, le recalcul du terme est
+        # une supposition deguisee en mesure.
+        _etape("0b/5 empreintes des couches", ["V3/empreintes.py", *args]),
         _etape("1/5 campagne (LA mesure)",
                ["V3/campagne.py", *args, "--rejouer-officiel"]),
         # Brique 2 (Fable 09/09) : la marge des QUATRE — de combien le lieu a
