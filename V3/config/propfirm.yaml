@@ -1,0 +1,87 @@
+# LES REGLES DE LA SOCIETE DE FINANCEMENT — configuration, jamais du code.
+#
+# Elles changent selon la firme, le plan et la taille du compte. Rien ici ne
+# doit etre recopie dans un module : un nombre en dur qu'on oublie de mettre a
+# jour a la prochaine evaluation est une perte de compte silencieuse.
+#
+# SOURCE : a verifier sur le site de la firme AVANT chaque nouvelle evaluation,
+# et la date de verification ecrite ci-dessous. Une regle lue il y a six mois
+# n'est pas une regle connue.
+verifie_le: "2026-09-14"
+plan: "LucidFlex 50K"
+source: "pages publiques de la firme — drawdown, consistance, politique de retrait"
+
+compte:
+  taille: 50000.0
+  # Le drawdown est un PLANCHER qui monte avec les cloture gagnantes et ne
+  # redescend jamais.
+  dd_montant: 2000.0
+
+  # COMMENT LE PLANCHER SE MET A JOUR. Trois politiques existent selon les
+  # firmes, et elles ne donnent pas du tout la meme survie :
+  #   eod           le plancher suit le solde de CLOTURE (le plus clement)
+  #   fin_de_trade  il suit le solde apres chaque trade ferme
+  #   intraday      il suit le plus haut atteint, meme non realise (le plus dur)
+  dd_maj: "eod"
+
+  # ET IL EST APPLIQUE EN TEMPS REEL, quelle que soit la politique de mise a
+  # jour. Toucher le plancher en seance tue le compte IMMEDIATEMENT, meme si on
+  # se redresse avant la cloture. Mettre a jour et faire respecter sont deux
+  # choses differentes — les confondre fait croire qu'on a jusqu'au soir.
+  dd_applique_en_temps_reel: true
+
+  # LE VERROU — la regle qui change toute la strategie. Quand le plancher
+  # atteindrait `taille + verrou_marge`, il s'y FIGE et ne bouge plus jamais.
+  # Pour un compte de 50 000 avec 2 000 de drawdown : le plancher se verrouille
+  # a 50 100, ce qui arrive quand le solde de cloture atteint 52 100.
+  # Consequence : la partie se joue en DEUX PHASES, et la premiere est la
+  # dangereuse. Voir `propfirm.py`.
+  verrou_marge: 100.0
+  # Demander un retrait verrouille le plancher immediatement, meme avant le
+  # seuil. C'est un ARBITRAGE, pas un detail : on echange du potentiel de
+  # plancher contre de la securite.
+  verrou_au_retrait: true
+
+  # PERTE JOURNALIERE IMPOSEE PAR LA FIRME. Sur ce plan elle est OPTIONNELLE :
+  # on la choisit a l'achat (option activee = moins cher, desactivee = plus
+  # cher), et le choix suit jusqu'en phase financee. `null` = option
+  # DESACTIVEE, donc la firme n'impose rien — ce n'est PAS « non verifie ».
+  # A renseigner avec le montant exact si l'option a ete prise.
+  perte_journaliere_max: null
+
+  # NOTRE PROPRE REGLE, ajoutee le 14/09, et elle est plus fine qu'un plafond
+  # en dollars : ne jamais perdre plus de cette PART DE LA MARGE RESTANTE en
+  # une journee. Exprimee en part, elle se resserre toute seule quand le
+  # compte va mal — apres une mauvaise journee le plafond du lendemain a
+  # baisse d'autant. On ne peut donc jamais mourir d'une suite de journees
+  # perdantes : seule une secousse intra-journaliere le peut, et c'est
+  # exactement ce contre quoi une limite journaliere ne peut rien.
+  # La limite effective est la PLUS STRICTE des deux.
+  perte_journaliere_pct_marge: 0.50
+
+# LA CONSISTANCE — le « 50 % » du plan, et il ne concerne QUE l'evaluation.
+# Plus gros gain d'UNE journee divise par le gain TOTAL, qui ne doit pas
+# depasser cette part. Elle disparait entierement une fois finance.
+# Elle punit le coup de chance et recompense la regularite : elle va dans le
+# sens d'une strategie a petits gains repetes, pas contre elle.
+consistance:
+  part_max: 0.50
+  seulement_en_evaluation: true
+
+retrait:
+  # PAS d'objectif de gain sur ce plan — les conditions sont differentes :
+  jours_gagnants_minimum: 5        # journees SEPAREES, dans le cycle
+  gain_minimum_par_jour: 150.0     # une journee ne compte que si elle atteint ca
+  gain_net_positif: true           # sur l'ensemble du cycle
+  retrait_minimum: 500.0
+  # Plafond par demande : la plus petite des deux.
+  part_max_du_cycle: 0.50
+  plafond_absolu: 2000.0
+  part_trader: 0.90
+
+# LE SUIVI, demande le 14/09 : on numerote les comptes a partir de 1, on garde
+# la trace de ceux qui sont perdus et de leur cause, et l'historique des
+# retraits. L'etat vit hors depot (`LOGS/`), la regle vit ici.
+suivi:
+  premier_numero: 1
+  chemin_etat: "LOGS/propfirm/comptes.json"
