@@ -148,15 +148,19 @@ def _signe_change_le_verdict():
 # declaree, testee, et morte. Elles etaient CINQ le 14/09 au matin — B1n, B4,
 # B5 et B5b n'avaient JAMAIS rien rendu d'autre que `None` sur les 1394 barres.
 #
-# DEUX ONT ETE REVEILLEES le 14/09 : `open_vs_va` et `barres_inside_prev_va`,
-# donc B5 et B5b vivent. Le cliquet a fait exactement son travail — il a REFUSE
+# TROIS ONT ETE REVEILLEES le 14/09 : `open_vs_va` et
+# `barres_inside_prev_va` (B5 et B5b vivent), puis `d_vwap_w_autre` —
+# le VETO. Celle-la n'est pas calculee par le lecteur : elle arrive par
+# `live`, l'appelant lisant les DEUX instruments et passant a chacun la
+# valeur de l'autre. Absente, elle rend un trou, et un trou ne vaut pas
+# veto — les appelants qui ne la fournissent pas sont inchanges. Le cliquet a fait exactement son travail — il a REFUSE
 # le changement tant que cette liste n'etait pas mise a jour, avec le message
 # « retirer la de TROUS_CONNUS et mesurer la composante qu'elle reveille ».
 #
 # Cette liste est une DETTE DECLAREE, pas une permission. Le controle echoue
 # dans les deux sens : si une nouvelle cle disparait du lecteur, et aussi si
 # l'une des trois restantes est enfin produite sans mise a jour.
-TROUS_CONNUS = {"d_vwap_w_autre", "issue_vwap_w", "smt_div"}
+TROUS_CONNUS = {"issue_vwap_w", "smt_div"}
 
 
 def _le_lecteur_produit_ce_que_L1_consomme():

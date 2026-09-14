@@ -214,6 +214,34 @@ def main():
     check("[5i] idem sur l'autre niveau — un seul manquant suffit a se taire",
           lecture._ouverture_vs_va(vide2) is None, lecture._ouverture_vs_va(vide2))
 
+    # --- 6. B4, le VETO : l'autre instrument arrive par `live` --------------
+    # JAMAIS en ouvrant un second fichier dans le lecteur : ce serait une
+    # entree-sortie dans un chemin de lecture chaud, et une dependance cachee.
+    # L'appelant lit les deux instruments et passe a chacun la valeur de
+    # l'autre, alignee par `ts`. Absente => trou => PAS de veto.
+    tr = _pd.DataFrame({
+        # ts CALE SUR LA GRILLE 15 min depuis 9h30 ET : la garde B3 refuse
+        # toute autre barre, et elle a refuse la premiere version de ce cas.
+        "ts": [1788999340000], "atr_barre": [8.0], "atr_ref": [8.0],
+        "atr_source": ["barre"], "dist_vwap_w": [-64.0], "close": [7600.0],
+    })
+    print("")
+    print("[6] B4 — l'autre instrument passe par `live`")
+    sans = lecture.lire(tr, 0, sym="ES")
+    check("[6a] sans `live` : `d_vwap_w_autre` reste None — les appelants qui ne"
+          " le fournissent pas sont INCHANGES", sans["d_vwap_w_autre"] is None)
+    avec = lecture.lire(tr, 0, sym="ES", live={"d_vwap_w_autre": -1.7})
+    check("[6b] fourni, il arrive tel quel — le lecteur ne le recalcule pas",
+          avec["d_vwap_w_autre"] == -1.7, avec["d_vwap_w_autre"])
+    from V3.layers.L1_biais.composantes import COMPOSANTES as _C
+    check("[6c] absent -> B4 rend un TROU, et un trou NE VAUT PAS veto",
+          _C["B4"](sans, {}) is None, _C["B4"](sans, {}))
+    check("[6d] cotes OPPOSES -> 0, c'est-a-dire desaccord (jamais un cote)",
+          _C["B4"](avec, {}) == 0, _C["B4"](avec, {}))
+    meme = lecture.lire(tr, 0, sym="ES", live={"d_vwap_w_autre": 1.7})
+    check("[6e] memes cotes -> 1, c'est-a-dire accord (jamais « long »)",
+          _C["B4"](meme, {}) == 1, _C["B4"](meme, {}))
+
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0
 

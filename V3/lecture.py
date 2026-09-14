@@ -114,6 +114,17 @@ def lire(df, i, sym="ES", live=None, side=None):
         "d_vwap_w": _prix_vs_niveau(df, "dist_vwap_w", i, a_ref),
         "open_vs_va": _ouverture_vs_va(df),
         "barres_inside_prev_va": _barres_dedans(df, i),
+        # B4 (le VETO) exige l'AUTRE instrument. Il arrive par `live`, comme
+        # tout ce que le lecteur ne peut pas calculer seul — JAMAIS en ouvrant
+        # un second fichier ici : une entree-sortie dans un chemin de lecture
+        # chaud, et une dependance cachee. L'appelant lit les deux instruments
+        # et passe a chacun la valeur de l'autre, alignee par `ts`.
+        #
+        # Absent => `None` => B4 rend un TROU, et un trou NE VAUT PAS VETO
+        # (`composantes.py` : « ne pas savoir si les instruments s'accordent
+        # n'est pas savoir qu'ils divergent »). Les appelants qui ne le
+        # fournissent pas gardent donc exactement le comportement d'avant.
+        "d_vwap_w_autre": live.get("d_vwap_w_autre"),
         # --- famille E : puis-je passer l'ordre ? --------------------------
         "dtc_connecte": live.get("dtc_connecte"),
         "contrat_actif": live.get("contrat_actif"),
