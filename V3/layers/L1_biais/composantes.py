@@ -29,6 +29,24 @@ def composante(nom: str):
     return enrober
 
 
+# Les issues de F23, triees par CE QU'ELLES AUTORISENT B1n a dire. Liste
+# blanche : une etiquette absente des deux listes — `en_cours`, `None`, ou une
+# valeur neuve — est un TROU, jamais un avis.
+#
+# `en_cours` est le piege, et il etait ouvert : il veut dire « la fenetre n'est
+# pas close », et l'ancienne ecriture `0 if issue == "casse" else cote` le
+# rangeait avec `tenu`. B1n affirmait donc un cote sur un avenir qu'il ne
+# connaissait pas. Mesure du 15/09, 62 jours d'archive, trame de production :
+# ES 5,5 % / NQ 3,8 % des barres portent `en_cours`, et le defaut se
+# materialisait sur 0,4 % / 0,3 % — la zone morte de B1p absorbait le reste.
+# Rare n'est pas nul, et c'est le meme silent fallback qu'en tete de fichier.
+#
+# `indetermine` est l'INVERSE d'un trou : la fenetre EST close et rien de
+# decisif n'y est arrive. On a regarde, on n'a pas d'avis -> 0.
+PORTENT_LE_COTE = ("tenu", "regagne")
+SANS_AVIS = ("casse", "indetermine")
+
+
 @composante("B1p")
 def b1_photo(lec, s):
     """VWAP semaine — la PHOTO : où le prix est maintenant.
@@ -59,26 +77,47 @@ def b1_narratif(lec, s):
     if cote is None or cote == 0:
         return cote
     issue = lec.get("issue_vwap_w")
-    if issue is None:
-        return None
-    return 0 if issue == "casse" else cote
+    if issue in PORTENT_LE_COTE:
+        return cote
+    if issue in SANS_AVIS:
+        return 0
+    return None
 
 
 @composante("B4")
 def b4_intermarket(lec, s):
     """Accord ES/NQ — VETO PUR. Elle ne peut qu'annuler, jamais orienter.
 
-    Rend 0 si les deux instruments sont de côtés opposés de leur VWAP semaine,
-    ou si le SMT diverge. Sinon +1, qui veut dire « accord », pas « long ».
+    Rend 0 si les deux instruments sont de côtés opposés de leur VWAP semaine.
+    Sinon +1, qui veut dire « accord », pas « long ».
 
     Le signe de sortie n'est PAS un côté : cette composante ne participe à
     aucune décision d'orientation. C'est pour ça que la série l'utilise comme
     interrupteur et non comme terme.
+
+    LE SMT A ETE RETIRE LE 15/09, et retiré plutôt que corrigé. L'écriture
+    précédente était `0 if (...) or lec.get("smt_div") else 1` : un `smt_div` à
+    `None` est **faux** en Python, donc un trou se transformait en « accord ».
+    Le retrait supprime le défaut PAR CONSTRUCTION au lieu de le garder et de
+    le garder correct. Trois mesures convergentes, 77 jours d'archive :
+
+    - `im_smt_divergence` tire sur 5,70 % des barres ES et 22,32 % des NQ,
+      **ratio 3,9×** — son seuil est ±10 ticks pour deux instruments dont
+      l'amplitude diffère d'un facteur 4. C'est la faute que `INCIDENT_LOG`
+      condamne déjà : un rayon en ticks n'est pas calibrable cross-instrument.
+    - c'est la seule des DIX colonnes cross-instrument disponibles qui soit
+      quasi muette ; et aucune des dix ne survit à l'agrégation 15 min.
+    - quatre invalidations indépendantes en production : 0 fold positif sur 12,
+      IC bootstrap traversant zéro, droppée du dataset v4, déjà remplacée.
+
+    Le retrait est INERTE aujourd'hui : `smt_div` n'est produit par aucune
+    lecture, donc l'expression valait déjà sa seule jambe VWAP. Ce qui change
+    est qu'on ne peut plus la rebrancher par accident.
     """
     a, b = lec.get("d_vwap_w"), lec.get("d_vwap_w_autre")
     if a is None or b is None:
         return None
-    return 0 if (a > 0) != (b > 0) or lec.get("smt_div") else 1
+    return 0 if (a > 0) != (b > 0) else 1
 
 
 @composante("B5")

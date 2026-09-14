@@ -63,6 +63,11 @@ import pandas as pd
 ISSUES = ("tenu", "casse", "regagne", "en_cours", "indetermine")
 MS_PAR_BARRE = 15 * 60 * 1000
 
+# Fenetre de scan de `_issue`. Nommee parce qu'elle sert DEUX fois : a borner
+# le scan, et a calculer `i_sur`. Un 8 ecrit en dur aux deux endroits se
+# desynchronise au premier reglage — et la desynchronisation serait une fuite.
+FENETRE_ISSUE = 8
+
 
 def _num(s):
     return pd.to_numeric(s, errors="coerce")
@@ -106,11 +111,19 @@ def _cote(df, col, i):
     return 1 if v > 0 else -1
 
 
-def _issue(df, col, i, cote, fenetre=8):
+def _issue(df, col, i, cote, fenetre=FENETRE_ISSUE):
     """Rend (issue, i_connu, i_premiere_barre_au_dela).
 
-    `i_connu` est la barre où l'issue devient CONNUE — pas celle du test. Une
-    couche qui lit avant cette barre ne doit rien voir.
+    `i_connu` est la barre où l'ÉVÉNEMENT a lieu — la seconde clôture au-delà,
+    la seconde revenue. C'est une date de récit : `recit.py` l'écrit à l'écran
+    (« cassée à 14h15 »), `reactions.py` en tire `barres_restantes`.
+
+    **Ce n'est PAS une garde de causalité, et le prendre pour telle a été le
+    défaut.** Trois des quatre étiquettes sont des verdicts SUR LA FENÊTRE
+    ENTIÈRE : `tenu` veut dire « et rien n'a cassé dans les huit barres »,
+    `casse` veut dire « et rien n'a regagné ensuite ». Un observateur placé à
+    `i_connu` ne sait aucune de ces deux choses. La garde est `i_sur`, calculée
+    dans `fiches()` — voir son commentaire.
     """
     d = _num(df[col])
     n_contre = n_revenu = 0
@@ -234,9 +247,25 @@ def fiches(df15, df1=None, col="dist_cur_vah", tick=0.25, z_touche=0.0,
         # TEST — « cassee 03:00 » pour une cassure de 04:15 — et le piege
         # etait invérifiable a la main.
         _d = _val(df15, col, i)
+        # `i_sur` : la barre A PARTIR DE LAQUELLE tout le contenu de la fiche
+        # est un fait pour un observateur place la. Elle borne les DEUX
+        # regards vers l'avant : le scan de `_issue` (FENETRE_ISSUE barres) et
+        # l'excursion de `_reaction_atr` (k_reaction barres). Mesure du 15/09 :
+        # la garde `i_connu` laissait passer 26 ecarts entre rejeu et live, 26
+        # DANS LE MEME SENS — le rejeu voyait la reaction plus forte, jusqu'a
+        # +1,22 ATR. Pas de clamp sur len(df15) : une fenetre qui deborde la
+        # trame n'est PAS finie, et une fiche de fin de journee ne devient
+        # jamais sure. C'est exactement ce qu'on veut.
+        i_sur = i + max(FENETRE_ISSUE, k_reaction)
         f = {
-            "i": i, "i_connu": i_connu, "ts": int(df15["ts"].iloc[i]),
+            "i": i, "i_connu": i_connu, "i_sur": i_sur,
+            "ts": int(df15["ts"].iloc[i]),
             "ts_connu": int(df15["ts"].iloc[min(i_connu, len(df15) - 1)]),
+            # `None` = cette fiche n'est JAMAIS devenue sure dans la journee :
+            # sa fenetre debordait la seance. Un lecteur doit la laisser de
+            # cote, pas la lire « au mieux ».
+            "ts_sur": (int(df15["ts"].iloc[i_sur])
+                       if i_sur < len(df15) else None),
             "ts_casse": (int(df15["ts"].iloc[i_debut])
                          if i_debut is not None else None),
             "niveau_prix": (round(float(df15["close"].iloc[i]) + _d * tick, 2)
@@ -263,9 +292,15 @@ def fiches(df15, df1=None, col="dist_cur_vah", tick=0.25, z_touche=0.0,
 def scalaires(fiches_du_niveau, i_courant):
     """Ce que `lecture.py` expose. Une porte ne lit pas une liste.
 
-    **Rien de ce qui n'est pas encore connu n'est révélé.** Une fiche dont
-    l'issue tombe à `i_connu > i_courant` rend `en_cours`, et sa réaction comme
-    son piège restent `None`.
+    **Rien de ce qui n'est pas encore SÛR n'est révélé.** La garde est
+    `i_sur`, pas `i_connu` : voir le commentaire de `fiches()`. Une fiche dont
+    la fenêtre n'est pas close rend `en_cours`, et sa réaction comme son piège
+    restent `None`.
+
+    Corollaire à ne pas perdre : `en_cours` veut dire **« je ne sais pas
+    encore »**, pas « ça a tenu ». Une couche qui traite les deux pareil
+    affirme un côté sur un trou — c'est le silent fallback nommé en tête de
+    `V3/layers/L1_biais/composantes.py`.
 
     `effort` et `resultat` restent SÉPARÉS. Leur produit confondrait un gros
     effort sans résultat — une faiblesse — avec un petit effort qui suffit —
@@ -278,9 +313,10 @@ def scalaires(fiches_du_niveau, i_courant):
                 "resultat_dernier": None, "defense_tendance": None,
                 "cvd_cote_defense": None, "piege_volume": None}
     d = vus[-1]
-    connu = d["i_connu"] <= i_courant
-    # la tendance ne compare que des reactions DEJA connues
-    connues = [f for f in vus if f["i_connu"] <= i_courant
+    connu = d["i_sur"] <= i_courant
+    # la tendance ne compare que des reactions DEJA sures — elle heritait
+    # integralement de la fuite tant qu'elle filtrait sur `i_connu`
+    connues = [f for f in vus if f["i_sur"] <= i_courant
                and f.get("reaction_atr") is not None
                and np.isfinite(f["reaction_atr"])]
     tendance = None

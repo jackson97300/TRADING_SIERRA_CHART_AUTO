@@ -33,8 +33,9 @@ from V3 import calendrier
 # appelants (chaine, campagne, coureur_live, barrieres, L4, tests).
 from V3.lecture_colonnes import (N_ACCEPTATION, REQUISES,      # noqa: F401
                                  REQUISES_L4, SOURCES_DECLAREES, _barres_dedans,
-                                 _ouverture_vs_va, _refusee_proxy, _texte, val,
-                                 verifier_colonnes, vrai)
+                                 _fenetre_melangee, _ouverture_vs_va,
+                                 _refusee_proxy, _texte, val, verifier_colonnes,
+                                 vrai)
 
 OUVERTURE_ET = 570          # 9h30 ET, la fenetre d'`est_cash` (CONVENTIONS §1)
 BARRE_MIN = 15              # la barre de la campagne
@@ -80,7 +81,7 @@ def lire(df, i, sym="ES", live=None, side=None):
         # champ vaut `stable` par construction, la porte ne rejette rien. Pas
         # une porte inerte : une porte hors de son terrain — le live.
         "qualite": _texte(df, "data_quality_flag", i),
-        "fenetre_melangee": _fenetre_melangee(df),
+        "fenetre_melangee": _fenetre_melangee(df, i),
         "barre_complete": (bool(df["barre_complete"].iloc[i])
                            if "barre_complete" in df.columns else None),
         "rang_du_jour": (m_et - OUVERTURE_ET) // BARRE_MIN,
@@ -142,20 +143,6 @@ def lire(df, i, sym="ES", live=None, side=None):
 def _jour(df, i):
     """La date de la barre, pour le calendrier."""
     return pd.Timestamp(int(df["ts"].iloc[i]), unit="ms", tz="UTC").date()
-
-
-def _fenetre_melangee(df):
-    """La journee melange-t-elle deux versions de fenetre glissante ?
-
-    Ce qui est dangereux n'est PAS d'etre en `w0` — tout l'historique l'est, et
-    c'est normal. C'est de MELANGER : « un lot qui melange les deux sur une
-    colonne de session doit etre refuse, pas moyenne »
-    (`recalc.window_version`). Une porte qui exigerait `w1` fermerait 100 % du
-    lot historique et ne dirait rien de vrai.
-    """
-    if "window_version" not in df.columns:
-        return None
-    return int(df["window_version"].nunique(dropna=True)) > 1
 
 
 def _prix_vs_niveau(df, colonne, i, a):

@@ -52,13 +52,17 @@ composantes:
 
   B4:
     mode: observee
-    # UNE colonne SMT, TOUJOURS la meme (point 5 de la nuit du 08/09) : les
-    # deux fichiers portent chacun leur `im_smt_divergence` et ils DIVERGENT
-    # (ES -1, NQ 0 au meme ts). Reference = ES : c'est sa colonne qui a
-    # detecte la divergence observee, et l'indice large est la reference
-    # naturelle du spread. Revisable par commit avant le gel du 12/09 —
-    # jamais « celle de l'instrument courant », qui ferait deux B4.
-    seuils: {colonne_smt: im_smt_divergence, instrument_smt: ES}
+    # LE SMT A ETE RETIRE LE 15/09 — retire, pas corrige. Les deux cles qui
+    # vivaient ici (`colonne_smt`, `instrument_smt`) n'etaient lues par AUCUNE
+    # ligne de Python : de la configuration morte decrivant une composante qui
+    # n'a jamais tourne. Le constat du 08/09 « les deux fichiers DIVERGENT au
+    # meme ts » etait exact mais mal interprete : la formule est asymetrique
+    # PAR CONSTRUCTION (`target` contre `other`), donc la divergence est
+    # normale. Le vrai defaut est ailleurs — le seuil de +/-10 ticks, le meme
+    # pour deux instruments d'amplitude x4 : mesure sur 77 jours d'archive,
+    # ES tire sur 5,70 % des barres, NQ sur 22,32 %, RATIO 3,9x.
+    # B4 garde donc sa seule jambe VWAP, calibree et symetrique.
+    seuils: {}
     role: veto            # peut ANNULER, jamais orienter ni inverser
     mesure: "accord ES/NQ. Part de jours vetoes a mesurer. Rend 1 pour
              « accord » et 0 pour « desaccord » — ce n'est PAS un cote."

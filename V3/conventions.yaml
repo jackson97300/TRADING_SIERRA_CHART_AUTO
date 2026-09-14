@@ -151,10 +151,20 @@ colonnes:
     signe: direct
     controle: valeurs
     valeurs: [-1, 0, 1]
+    lue_par_v3: false
     mesure: "trois etats seulement, mesures sur 10 jours x 2 instruments
-             (14/09). seuils.yaml B4 impose de lire TOUJOURS la colonne d ES,
-             pour les deux instruments : les deux fichiers portent chacun la
-             leur et elles DIVERGENT au meme ts (constat du 08/09)."
+             (14/09). RETIREE DE V3 LE 15/09, entree gardee pour la lecon.
+             Le constat du 08/09 - les deux fichiers DIVERGENT au meme ts -
+             etait exact mais mal lu : la formule est asymetrique PAR
+             CONSTRUCTION (`target` contre `other`, intermarket_streaming.py
+             l.195-199), donc ES != NQ est NORMAL. Le vrai defaut est le seuil
+             de +/-10 TICKS, identique pour deux instruments d amplitude x4 :
+             sur 77 jours d archive ES tire sur 5,70 % des barres, NQ sur
+             22,32 %, RATIO 3,9x - la faute que INCIDENT_LOG condamne deja
+             (un rayon en ticks n est pas calibrable cross-instrument).
+             Note de methode : j avais moi-meme conclu a un probleme de
+             DEFINITION sans avoir lu la formule. Lire le producteur AVANT de
+             qualifier un ecart d anomalie - regle 2 de CLAUDE.md."
   is_news_60m:
     producteur: "DMP C++"
     unite: aucune

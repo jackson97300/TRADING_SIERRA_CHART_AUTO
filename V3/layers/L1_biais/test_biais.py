@@ -26,7 +26,7 @@ S = {"B1p": {"z1_atr": 0.2}, "B1n": {"z1_atr": 0.2, "tendance_fort": 1.0},
      "B4": {}, "B5": {}, "B5b": {"barres_acceptation": 3}}
 
 # une lecture nominale : au-dessus de la VWAP semaine, tout va bien
-LEC = {"d_vwap_w": 1.5, "d_vwap_w_autre": 1.2, "smt_div": False,
+LEC = {"d_vwap_w": 1.5, "d_vwap_w_autre": 1.2,
        "issue_vwap_w": "tenu", "open_vs_va": 1, "barres_inside_prev_va": 0}
 
 CAS = [
@@ -41,10 +41,18 @@ CAS = [
      {"issue_vwap_w": "casse"}, 0),
     ("B1n regagnee -> le cote revient", "B1n", {"issue_vwap_w": "regagne"}, 1),
     ("B1n sans historique -> None", "B1n", {"issue_vwap_w": None}, None),
+    # Les trois cas qui manquaient, et par ou le defaut du 15/09 passait :
+    # l'ecriture etait `0 if issue == "casse" else cote`, donc TOUT le reste
+    # portait le cote — « je ne sais pas encore » compris.
+    ("B1n fenetre PAS CLOSE -> None, jamais le cote", "B1n",
+     {"issue_vwap_w": "en_cours"}, None),
+    ("B1n fenetre close, rien de decisif -> 0 : on a regarde", "B1n",
+     {"issue_vwap_w": "indetermine"}, 0),
+    ("B1n etiquette inconnue -> trou, jamais un avis", "B1n",
+     {"issue_vwap_w": "etiquette_neuve"}, None),
     # --- B4 : veto pur ---------------------------------------------------
     ("B4 accord -> 1 (accord, PAS un cote)", "B4", {}, 1),
     ("B4 cotes opposes -> veto", "B4", {"d_vwap_w_autre": -1.2}, 0),
-    ("B4 divergence SMT -> veto", "B4", {"smt_div": True}, 0),
     ("B4 autre instrument absent -> None", "B4", {"d_vwap_w_autre": None}, None),
     # --- B5 / B5b ---------------------------------------------------------
     ("B5 ouverture au-dessus de la VA veille", "B5", {}, 1),
@@ -58,7 +66,8 @@ CAS = [
 # (nom, ce qui change, cote attendu, force attendue)
 SERIE = [
     ("nominal : B1 long, accord, B5 confirme", {}, "LONG", "fort"),
-    ("B4 divergent ANNULE le candidat", {"smt_div": True}, "AUCUN", None),
+    ("B4 divergent ANNULE le candidat", {"d_vwap_w_autre": -1.2},
+     "AUCUN", None),
     # LE cas qui distingue une serie d'une somme : B5 contre le candidat ne
     # peut PAS produire un SHORT. Une somme le ferait.
     ("B5 contre -> LONG faible, JAMAIS short", {"open_vs_va": -1},
@@ -160,7 +169,7 @@ def _signe_change_le_verdict():
 # Cette liste est une DETTE DECLAREE, pas une permission. Le controle echoue
 # dans les deux sens : si une nouvelle cle disparait du lecteur, et aussi si
 # l'une des trois restantes est enfin produite sans mise a jour.
-TROUS_CONNUS = {"issue_vwap_w", "smt_div"}
+TROUS_CONNUS = {"issue_vwap_w"}
 
 
 def _le_lecteur_produit_ce_que_L1_consomme():

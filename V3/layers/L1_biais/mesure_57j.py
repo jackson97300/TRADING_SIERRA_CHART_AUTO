@@ -123,15 +123,15 @@ def lire_l1(df, i, atr_ref):
     ouv = None
     if np.isfinite(vah) and np.isfinite(val):
         ouv = 1 if vah < 0 else (-1 if val > 0 else 0)
-    # B4 exige l'AUTRE instrument et la colonne SMT declaree (seuils.yaml B4 :
-    # im_smt_divergence, reference ES). Cette passe est MONO-instrument : on
-    # ne fabrique ni un accord (`d_vwap_w_autre = dv` comparait l'instrument
-    # a lui-meme) ni une absence de divergence (`smt_div = False` en dur) —
-    # des TROUS, et B4 rend None, qui ne vaut pas veto (biais.py).
+    # B4 exige l'AUTRE instrument. Cette passe est MONO-instrument : on ne
+    # fabrique pas un accord (`d_vwap_w_autre = dv` comparait l'instrument a
+    # lui-meme) — un TROU, et B4 rend None, qui ne vaut pas veto (biais.py).
+    # Le SMT a ete retire de B4 le 15/09 : seuil en ticks non calibrable
+    # cross-instrument, 3,9x d'ecart de taux entre ES et NQ sur 77 jours.
     # DEUX FABRICATIONS RETIREES LE 14/09, sur les lignes memes ou le
     # commentaire ci-dessus se felicite de ne rien fabriquer : `"tenu"` rendait
     # B1n egal a B1p (le duel comparait B1p a lui-meme), `0` empechait B5b.
-    return {"d_vwap_w": dv, "d_vwap_w_autre": None, "smt_div": None,
+    return {"d_vwap_w": dv, "d_vwap_w_autre": None,
             "issue_vwap_w": None, "open_vs_va": ouv,
             "barres_inside_prev_va": None, "_absdist": abs(dv) if dv else None}
 

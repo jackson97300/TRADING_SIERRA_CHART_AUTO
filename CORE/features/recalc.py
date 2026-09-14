@@ -754,6 +754,7 @@ def _fiches_bord(df, col, tick, z_touche, z_reset, decalage):
         g["tenu_a"] = (j + decalage) if np.isfinite(v) and ((v > 0) == (g["cote"] > 0)) else None
         g["i"] += decalage
         g["i_connu"] += decalage
+        g["i_sur"] += decalage
         out.append(g)
     return out
 

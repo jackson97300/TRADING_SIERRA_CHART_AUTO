@@ -8,19 +8,27 @@ graphique**. Une fiche plausible qui décrit autre chose que la réalité est
 exactement le genre de sortie qui traverse un chantier entier sans se faire
 prendre.
 
-Sept contrôles :
+Neuf contrôles :
     touche      la barre englobe bien le niveau (écart <= z_touche)
     hystérésis  entre deux touches, le prix s'est écarté d'au moins z_reset
     cassure     DEUX clôtures de l'autre côté, jamais une seule
     piège       du volume au-delà seulement si le niveau a cédé
     scalaires   n_tests suit les fiches
-    AVENIR      rien de ce qui n'est pas encore connu n'est révélé
+    AVENIR      rien de ce qui n'est pas encore sûr n'est révélé
+    étiquette   l'issue produite figure dans `f23.ISSUES`
     regain      DEUX clôtures revenues, symétrique de la cassure
+    CAUSALITÉ   le rejeu rend exactement ce que le direct aurait lu
 
-**Le sixième est le plus important.** Mesuré le 07/09 sur ES : cinq fiches sur
-six ont une issue différée, dont une de cinq barres et une de six. Sans ce
-contrôle, une couche lisant à la barre du test verrait « cassé » **soixante-quinze
-à quatre-vingt-dix minutes avant que la cassure existe**.
+**Le neuvième est le plus important, et il existe parce que le sixième n'a pas
+suffi.** Le sixième n'évalue qu'à la barre du test ; la fuite trouvée le 15/09
+ne commençait qu'une barre plus tard, quand la garde `i_connu` s'ouvrait alors
+que `reaction_atr` lisait encore trois barres devant. Mesure : 26 écarts entre
+rejeu et direct, **26 dans le même sens**, le rejeu voyant toujours la réaction
+plus forte — jusqu'à +1,22 ATR. Un contrôle qui regarde au mauvais endroit est
+un contrôle qui rassure.
+
+Les trois sabotages passés le 15/09 — garde remise sur `i_connu`, `i_sur`
+réduit à `k_reaction`, `i_sur` borné à la trame — rendent 71, 12 et 153 échecs.
 """
 
 from __future__ import annotations
@@ -119,18 +127,25 @@ def controler(sym, jour):
                          % (sym, jour, col, i, s["n_tests"], attendu))
 
             # --- 6. AUCUNE FUITE D'AVENIR ---------------------------------
-            # A la barre du test, l'issue n'est pas encore connue : elle tombe
-            # a i_connu, jusqu'a huit barres plus tard. Une couche qui lirait
-            # « casse » ici lirait deux heures dans le futur.
-            if f["i_connu"] > i:
+            # La garde est `i_sur`, PAS `i_connu` : `i_connu` est la date de
+            # l'evenement, et trois etiquettes sur quatre sont des verdicts sur
+            # la fenetre entiere (« tenu » = « et rien n'a casse ensuite »).
+            if f["i_sur"] > i:
                 if s["issue"] != "en_cours":
                     e.append("%s %s %s i=%d : issue=%s revelee alors qu'elle "
-                             "n'est connue qu'a i=%d — FUITE D'AVENIR"
-                             % (sym, jour, col, i, s["issue"], f["i_connu"]))
+                             "n'est sure qu'a i=%d — FUITE D'AVENIR"
+                             % (sym, jour, col, i, s["issue"], f["i_sur"]))
                 for cle in ("resultat_dernier", "piege_volume"):
                     if s[cle] is not None:
-                        e.append("%s %s %s i=%d : %s revele avant i_connu=%d"
-                                 % (sym, jour, col, i, cle, f["i_connu"]))
+                        e.append("%s %s %s i=%d : %s revele avant i_sur=%d"
+                                 % (sym, jour, col, i, cle, f["i_sur"]))
+
+            # --- 6 bis. L'ETIQUETTE EST DECLAREE ---------------------------
+            # `f23.ISSUES` etait une constante morte : zero reference dans le
+            # depot. Elle sert ici, sinon elle ment un jour en silence.
+            if f["issue"] not in f23.ISSUES:
+                e.append("%s %s %s i=%d : issue=%r hors de f23.ISSUES"
+                         % (sym, jour, col, i, f["issue"]))
 
             # --- 7. REGAIN SYMETRIQUE : deux clotures revenues -------------
             if f["issue"] == "regagne":
@@ -143,6 +158,26 @@ def controler(sym, jour):
                     e.append("%s %s %s i=%d : regagne avec moins de DEUX "
                              "clotures revenues — asymetrique avec la cassure"
                              % (sym, jour, col, i))
+
+        # --- 8. CAUSALITE : le rejeu doit rendre EXACTEMENT le direct ------
+        # Le controle 6 ne regarde qu'a la barre du test. La fuite du 15/09 ne
+        # commencait qu'a `i_connu` : garde sur `i_connu`, fenetre de reaction
+        # a i+4, et rien ne liait les deux — 26 ecarts mesures, 26 dans le
+        # MEME sens, le rejeu voyant toujours la reaction plus forte. Un
+        # controle qui n'evalue qu'a `i` ne peut structurellement pas le voir.
+        # Ici on compare, A CHAQUE BARRE, ce qu'une couche lit sur la journee
+        # TRONQUEE — ce qu'elle aurait vu en direct — a ce qu'elle lit sur la
+        # journee entiere. Toute difference EST une fuite.
+        for b in range(len(df15)):
+            direct = f23.scalaires(
+                f23.fiches(df15.iloc[:b + 1].copy(), df1, col,
+                           TICK, Z_TOUCHE, Z_RESET), b)
+            rejeu = f23.scalaires(fs, b)
+            for cle, vu in rejeu.items():
+                if repr(vu) != repr(direct[cle]):
+                    e.append("%s %s %s barre %d : %s rejeu=%r direct=%r — "
+                             "FUITE D'AVENIR"
+                             % (sym, jour, col, b, cle, vu, direct[cle]))
     return e, n
 
 
@@ -155,7 +190,7 @@ def main():
         print("  %s %s : %d fiches" % (sym, jour, n))
     if total == 0:
         echecs.append("aucune fiche produite sur deux journees — F23 est muet")
-    print("  F23 au tick — %d fiches sur %d journees, 7 controles chacune"
+    print("  F23 au tick — %d fiches sur %d journees, 9 controles chacune"
           % (total, len(JOURS)))
     if echecs:
         print("  %d ECHEC(S) :" % len(echecs))

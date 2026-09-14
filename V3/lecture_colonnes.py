@@ -179,3 +179,26 @@ def _barres_dedans(df, i):
             return None                  # une barre illisible : on ne devine pas
         n += int(v > 0)
     return n
+def _fenetre_melangee(df, i):
+    """La journee melange-t-elle deux versions de fenetre glissante ?
+
+    Ce qui est dangereux n'est PAS d'etre en `w0` — tout l'historique l'est, et
+    c'est normal. C'est de MELANGER : « un lot qui melange les deux sur une
+    colonne de session doit etre refuse, pas moyenne »
+    (`recalc.window_version`). Une porte qui exigerait `w1` fermerait 100 % du
+    lot historique et ne dirait rien de vrai.
+
+    **JUSQU'A LA BARRE `i`, jamais au-dela.** Lire `nunique()` sur la journee
+    entiere donnait a la barre 5 ce que fait la barre 20 : en direct cette
+    information n'existe pas, et le rejeu doit rendre ce que le direct aurait
+    lu. Impact mesure le 15/09 sur les 132 jours-instruments du lot : NUL —
+    `window_version` vaut w0 sur 122, w1 sur 10, et **aucun jour ne melange**.
+    C'est precisement pourquoi le defaut etait invisible : il ne se declenche
+    que le jour ou la porte servirait a quelque chose.
+    """
+    if "window_version" not in df.columns:
+        return None
+    vu = df["window_version"].iloc[:i + 1]
+    return int(vu.nunique(dropna=True)) > 1
+
+

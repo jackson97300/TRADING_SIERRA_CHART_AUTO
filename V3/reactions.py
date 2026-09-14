@@ -37,23 +37,13 @@ if RACINE not in sys.path:
 
 from CORE.features import f23                                    # noqa: E402
 from V3 import calendrier                                        # noqa: E402
+from V3.reactions_contrat import AVERTISSEMENT                   # noqa: E402
 from V3.recit import _charger_session_entiere, _recompter        # noqa: E402
 
 NIVEAUX_VERSION = "2026-09-08"
 DOSSIER = "LOGS/reactions"
 TICK = {"ES": 0.25, "NQ": 0.25}
 
-AVERTISSEMENT = (
-    "DESCRIPTION DE SESSION — MIA V3. Ce fichier dit ce que le marche a FAIT a "
-    "des niveaux decides d'avance. Il ne dit JAMAIS ce qu'il aurait fallu "
-    "faire. Aucun champ n'est un gain, un R, un tick de profit, un prix "
-    "d'entree, de sortie ou un stop, et aucun n'en est deductible : il n'y a "
-    "ici ni regle d'entree, ni regle de sortie, ni position. Toute phrase de la "
-    "forme « on aurait du », « ca aurait fait », « ce niveau a marche » tiree "
-    "de ces lignes est un contresens d'usage. Chaque ligne porte l'instant ou "
-    "son contenu etait CONNU (ts_connu) : s'en servir avant, c'est fabriquer "
-    "du futur. Lecture agregee au jour 61 seulement, jamais un episode isole. "
-    "Le P&L reste ferme jusque-la.")
 
 # LE REGISTRE — les autres listes en sont des SOUS-ENSEMBLES (jamais deux
 # listes qui divergent) : barrieres.COLONNES_NIVEAUX (13) et recit.NIVEAUX (6).
