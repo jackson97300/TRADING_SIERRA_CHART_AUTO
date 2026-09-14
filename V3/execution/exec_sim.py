@@ -9,9 +9,9 @@ journalise CHAQUE verdict — jamais un refus silencieux. UN micro par
 instrument, un compte de simulation par instrument (les noms vivent dans
 `config/comptes.local.yaml`, hors depot).
 
-CE QU'IL NE FAIT JAMAIS : decider (c'est la chaine), choisir une taille,
-poser un ordre limite, lire un devenir, toucher un seuil, ecrire ailleurs
-que dans son journal et `etat_<sym>.json`.
+CE QU'IL NE FAIT JAMAIS : decider (c'est la chaine), choisir une taille, poser
+un ordre limite, lire un devenir, toucher un seuil, ecrire ailleurs que dans son
+journal et `etat_<sym>.json`.
 
 DEUX CORRECTIONS AU SQUELETTE (11/09, relecture croisee Claude Code / Fable) :
 
@@ -27,6 +27,11 @@ DEUX CORRECTIONS AU SQUELETTE (11/09, relecture croisee Claude Code / Fable) :
    et l'annulation du jumeau echouait sans un mot — l'ordre orphelin en seance.
    V1 n'a pas ce fix. C'est la raison de fond de la correction 1 : `BOT/` n'est
    pas seulement le bon code, c'est celui qui a le PLUS de lecons.
+
+Tout ce qui TRADUIT entre V3 et DTC vit dans `V3/execution/pont_dtc.py` — un
+seul endroit, garde par `V3/tests/test_pont_dtc.py` qui interdit aux constantes
+de diverger de la source. Deux endroits divergeraient en silence, et c'est
+exactement le defaut trouve le 14/09.
 
 CE QUI N'EST PAS ICI, ET POURQUOI : le pas 2b (L0 qui LIT cet etat) touche
 `L0_POSITION_OUVERTE`, une porte GELEE par `campagne-ombre-1b` le 11/09 au
@@ -56,7 +61,8 @@ if RACINE not in sys.path:
 
 from CORE.constants import get_tick_size                        # noqa: E402
 from V3 import calendrier                                       # noqa: E402
-from V3.execution import etat_exec                              # noqa: E402
+from V3.execution import etat_exec, pont_dtc                    # noqa: E402
+from V3.execution.pont_dtc import buysell as _buysell           # noqa: E402
 from V3.execution.comptes import (MOTIF_COMPTE_SIM,             # noqa: E402
                                   charger_comptes)
 
@@ -111,8 +117,7 @@ class ExecSim:
     def connecter(self):
         if self.dtc is not None:
             return True
-        from BOT.dtc_connector import DTCConnector      # import tardif : les tests n'en ont pas besoin
-        self.dtc = DTCConnector()
+        self.dtc = pont_dtc.connecteur()
         if not self.dtc.connect():
             raise RuntimeError("DTC : connexion refusee — aucun ordre ne part")
         self.nettoyer_orphelins()
@@ -184,16 +189,55 @@ class ExecSim:
         sym, side = intent["sym"], intent["side"]
         compte, tick = self.comptes[sym], get_tick_size(sym)
         b = intent["barriere"]
+        # LA TRADUCTION SE FAIT HORS DU `try` (14/09). Dedans, le `except
+        # Exception` la transformait en refus « rejet_dtc » : une erreur de
+        # PROGRAMMATION se deguisait en rejet du BROKER, et le journal aurait
+        # accuse Sierra d'un defaut qui est le notre. Un cote intraduisible
+        # doit remonter, bruyamment.
+        bs = _buysell(side)
         try:
             resultat = self.dtc.send_market_order(
                 symbol=calendrier.symbole_sierra(sym, intent["contrat"]),
-                side=side, quantity=int(intent["taille"]), trade_account=compte,
+                side=bs, quantity=int(intent["taille"]), trade_account=compte,
                 sl_ticks=int(b["sl_ticks"]), tp_ticks=int(b["tp_ticks"]), tick_size=tick)
         except Exception as e:                        # noqa: BLE001 — un rejet ne relance jamais tout seul
             return self._refus(intent, "rejet_dtc", now, dict(obs, erreur="%s: %s" % (type(e).__name__, e)))
         if not resultat or (isinstance(resultat, tuple) and not resultat[0]):
             return self._refus(intent, "rejet_dtc", now, dict(obs, resultat=str(resultat)))
         parent = resultat[0] if isinstance(resultat, tuple) else resultat
+        # R1 — LA POSITION NUE. `BOT/dtc_connector.py` rend `(parent, "", "")`
+        # quand l'ordre parent est parti mais que le bracket n'a PAS ete pose,
+        # et les trois identifiants quand tout est en place. Sans ce controle,
+        # EXEC ne regardait que `resultat[0]` et journalisait « envoye » sur une
+        # position SANS STOP.
+        #
+        # Le depot a deja paye cette faute : incident du 18/06 (DEPLOY_UNSAFE),
+        # « SL jamais pose a l'entree, position nue latente ». Une position sans
+        # stop est un risque NON BORNE, contre un budget de 500 $ par jour et un
+        # drawdown suiveur de 2 000.
+        #
+        # On ne tente pas de reposer le bracket : si l'envoi a echoue une fois,
+        # rien ne dit qu'il reussira, et chaque seconde compte. On APLATIT, on
+        # pose le STOP (plus aucun ordre ne part), et on journalise un incident
+        # — jamais un « envoye ».
+        tp_cid, sl_cid = "", ""
+        if isinstance(resultat, tuple) and len(resultat) >= 3:
+            tp_cid, sl_cid = resultat[1], resultat[2]
+        if not tp_cid or not sl_cid:
+            try:
+                self.dtc.send_close_market(
+                    symbol=calendrier.symbole_sierra(sym, intent["contrat"]),
+                    side=_buysell(-side), quantity=int(intent["taille"]),
+                    trade_account=compte)
+                aplati = True
+            except Exception as e:                    # noqa: BLE001
+                aplati = "%s: %s" % (type(e).__name__, e)
+            open(FICHIER_STOP, "w").close()
+            return self._ligne({"verdict": "incident", "motif": "position_nue",
+                                "snapshot_id": intent["snapshot_id"], "sym": sym,
+                                "side": side, "compte": compte, "parent_id": str(parent),
+                                "tp_cid": str(tp_cid), "sl_cid": str(sl_cid),
+                                "aplati": aplati, "stop_pose": True, "ts": now})
         self.emis.add(intent["snapshot_id"])
         etat, _ = etat_exec.lire_etat(sym, now, ttl_s=TTL_ETAT_S)
         etat = etat or etat_exec.etat_neuf(sym, intent["contrat"])
@@ -210,7 +254,7 @@ class ExecSim:
         ferme une position : deux copies divergent, trois encore plus."""
         self.dtc.send_close_market(
             symbol=calendrier.symbole_sierra(sym, etat["contrat"]),
-            side=-etat["position"]["sens"],
+            side=_buysell(-etat["position"]["sens"]),
             quantity=int(etat["position"]["taille"]),
             trade_account=self.comptes[sym])
 

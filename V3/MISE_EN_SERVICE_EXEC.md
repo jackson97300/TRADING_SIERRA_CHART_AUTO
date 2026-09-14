@@ -179,3 +179,72 @@ jamais échoué n'a rien prouvé : c'est la leçon du 12/09, où deux contrôles
 centraux passaient avec le code cassé.
 
 Une régression sur un point vert arrête le bot. Pas « on note et on continue ».
+
+---
+
+## Le POURQUOI d'`exec_sim`, sorti du code le 14/09
+
+La règle des 300 lignes a forcé à sortir ces raisons du fichier. Elles ne sont
+pas perdues, elles sont ici — et un document peut grandir, un module non.
+`exec_sim.py` y pointe en deux lignes.
+
+### Le connecteur : lequel, et pourquoi celui-là
+
+Le code vivant est **`BOT/dtc_connector.py`** : trois ordres Type 208 séparés et
+OCO géré à la main. Il est **IMPORTÉ, jamais recopié** — une copie diverge en
+silence. Tout ce qui le concerne vit dans `V3/execution/pont_dtc.py`.
+
+**PAS `V1_ARCHIVE/sierra_dtc_connector.py`.** Son bracket pose
+`SUBMIT_NEW_OCO_ORDER` (206), `IsParentOrder` et `ParentTriggerClientOrderID` :
+**les trois ont été testés et REJETÉS le 02/04 — Sierra Chart en serveur DTC les
+ignore SILENCIEUSEMENT** (`CLAUDE.md`, tableau des bugs connus). Un brief du
+11/09 le désignait pourtant comme source : incident `CONTEXT_MISS` du 11/09,
+détecté par la question de Jackson « pourquoi un faux DTC alors que l'exécution
+marchait déjà sur les quatre bots ? ».
+
+**Et `BOT/` porte une leçon que V1 n'a pas** : la paire OCO est enregistrée
+**AVANT** l'envoi des enfants (fix du 04/05). Un **TP rempli en 596 ms sur NQ**
+arrivait avant l'enregistrement, l'annulation du jumeau échouait sans un mot, et
+l'ordre restait orphelin en séance. C'est la raison de fond du choix : `BOT/`
+n'est pas seulement le bon code, c'est celui qui a le **plus de leçons**.
+Détail dans `V3/DECISIONS.md`.
+
+### Ce qui n'est pas dans `exec_sim`, et pourquoi
+
+Le **pas 2b** — L0 qui LIT l'état écrit par EXEC — touche
+`L0_POSITION_OUVERTE`, une porte **GELÉE par le tag `campagne-ombre-1b`** le
+11/09 au matin (périmètre dans `V3/GEL_1B_PERIMETRE.md`). EXEC **écrit** l'état ;
+L0 le lira au cycle 2, **ou sur décision explicite avec un nouveau tag**.
+
+Tant que ce n'est pas fait, les trois portes `STOP_JOURNALIER`,
+`POSITION_OUVERTE` et `COOLDOWN` restent **inertes côté chaîne** — EXEC les
+applique pour lui-même, via E1, E2 et E6.
+
+### E3 et E4 : observés, pas appliqués
+
+Pendant les **deux premières semaines** (`V3/PLAN_ENTREE_EXEC.md`, règle
+souveraine : aucun seuil sans distribution), E3 (fraîcheur) et E4 (gap)
+**journalisent `observe_e3` et `observe_e4` puis laissent passer**. Le
+glissement des intentions tardives EST la distribution qui posera `delai_max_s`.
+On ne pose pas le seuil avant de l'avoir mesuré.
+
+### La bascule de journée, et la dette DST
+
+`BASCULE_JOUR_UTC_H = 22` en dur divergeait d'**une heure** de
+`recalc.ouverture_sess_utc`, qui rend 21 en heure d'été : pendant toute la
+campagne, la clé `jour` du journal d'exécution ne coïncidait pas avec celle de
+l'entonnoir entre 21h et 22h UTC. **Un test écrit en novembre serait passé** —
+c'est aujourd'hui que c'était faux.
+
+Et la docstring d'`ouverture_sess_utc` le disait elle-même : la dette DST
+disparaît « le jour où l'appelant utilise cette fonction ». **EXEC était cet
+appelant qui ne l'utilisait pas** (revue du 12/09). L'import de `recalc` reste
+**paresseux** — il tire pandas, et le chemin d'ordre doit rester léger au
+démarrage ; même geste que `charger_comptes` avec yaml.
+
+### Un bracket orphelin au démarrage
+
+Un bracket sans intention connue est un **INCIDENT**, pas un héritage. On ne le
+reprend **jamais** : STOP posé, et on attend un humain. La procédure est la
+réconciliation **broker → fichier → journal**, décrite dans
+`V3/execution/etat_exec.py`.

@@ -39,6 +39,27 @@ EXEMPTS = {"tests/test_structure.py"}
 TAILLE_MAX = 1_000_000          # 1 Mo : au-dela, c'est une donnee, pas du code
 LIGNES_MAX = 300                # regle du chantier : un fichier se relit
 
+# DEUX EXCEPTIONS NOMMEES, autorisees par Jackson le 14/09 — et BORNEES.
+#
+# POURQUOI. En ramenant `exec_sim` sous 300 lignes, la compaction a coute des
+# choses reelles : le nom du tag de gel (`campagne-ombre-1b`), les documents de
+# rattachement (`PLAN_ENTREE_EXEC`, `PLAN §2b`), le raisonnement sur la dette
+# DST — et surtout UNE ASSERTION DE TEST, la quantite verifiee a l'aplatissement
+# d'une position nue. Une regression de COUVERTURE, pas seulement de la prose.
+#
+# La regle protege la RELECTURE. Elle ne doit pas s'acheter au prix du POURQUOI
+# ni d'un controle. Ces deux fichiers portent le chemin d'ordre — le seul
+# endroit du depot ou une erreur coute de l'argent reel — et leur excedent est
+# de la documentation et des assertions, pas de la logique.
+#
+# On NOMME l'exception plutot que de relever `LIGNES_MAX` : relever la limite
+# globale autoriserait TOUS les fichiers a grossir en silence, ce qui n'est pas
+# la decision prise. Et le plafond reste FINI : franchir 360 rouvre la question.
+PLAFOND_PARTICULIER = {
+    "execution/exec_sim.py": 360,
+    "tests/test_exec_sim.py": 360,
+}
+
 
 def fichiers():
     """Seuls les fichiers que GIT SUIVRAIT. Un fichier ignore ne part jamais
@@ -100,9 +121,10 @@ def controler():
 
         if rel.endswith(".py"):
             n = txt.count("\n") + 1
-            if n > LIGNES_MAX:
+            plafond = PLAFOND_PARTICULIER.get(rel, LIGNES_MAX)
+            if n > plafond:
                 echecs.append("%s : %d lignes (max %d) — a decouper"
-                              % (rel, n, LIGNES_MAX))
+                              % (rel, n, plafond))
             # B1 (audit Fable) : les couts micros (2.82/4.32) ne vivent qu'en
             # SOURCE UNIQUE (CORE/hypothesis_runner) ; V3 les IMPORTE, jamais ne
             # les recopie. Une copie qui reapparait fait echouer le commit.

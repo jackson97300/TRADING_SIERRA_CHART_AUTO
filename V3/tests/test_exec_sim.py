@@ -16,8 +16,8 @@ NOTRE code dans les situations qu'on ne peut pas commander sur le vrai.
     et le redemarrage avec un bracket orphelin.
 Rien n'est teste ici contre un compte reel : `ExecSim` leve sur tout nom de
 compte qui ne soit pas un compte de SIMULATION Sierra, et c'est le premier test.
-Les noms reels vivent dans `config/comptes.local.yaml`, hors depot : les tests les
-construisent, ils ne les ecrivent pas.
+Les noms reels vivent dans `config/comptes.local.yaml`, hors depot : les tests
+les construisent, ils ne les ecrivent pas.
 """
 import json
 import os
@@ -44,13 +44,39 @@ def check(nom, ok, detail=""):
 
 
 class FauxDTC:
-    """Le faux connecteur : il repond ce qu'on lui dit de repondre."""
+    """Le faux connecteur : il repond ce qu'on lui dit de repondre — mais il
+    EXIGE le contrat DTC, comme le ferait le vrai.
+
+    POURQUOI CE DURCISSEMENT (14/09). La version precedente etait un simple
+    enregistreur : elle acceptait n'importe quel `side`. Le test affirmait donc
+    `env["side"] == -1` et passait au vert pendant qu'`exec_sim` envoyait la
+    convention V3 (+1 / -1) a un connecteur qui attend celle de DTC (1 / 2).
+    Un faux temoin de la meme famille que le `LEC` ecrit a la main de
+    `test_biais` : valide contre une entree fabriquee, jamais contre le
+    contrat reel.
+
+    Le vrai Sierra en serveur DTC n'aurait pas leve non plus — il **ignore
+    silencieusement** ce qu'il ne comprend pas. C'est precisement pour ca que
+    le faux doit etre PLUS strict que le vrai : il est le seul endroit ou
+    l'erreur peut encore faire du bruit. La traduction elle-meme est testee a
+    part, dans `V3/tests/test_pont_dtc.py`.
+    """
+
+    COTES_DTC = (1, 2)          # BOT/dtc_connector.py l.66-67 : BUY=1, SELL=2
 
     def __init__(self, ouverts=None, leve=False, rend=None):
         self.ouverts, self.leve, self.rend = ouverts or [], leve, rend
         self.envois, self.fermetures = [], []
 
+    def _exiger_cote(self, kw, quoi):
+        s = kw.get("side")
+        if s not in self.COTES_DTC:
+            raise ValueError(
+                "%s : BuySell DTC attendu dans %s, recu %r — la convention V3"
+                " (+1/-1) n'a pas ete traduite" % (quoi, self.COTES_DTC, s))
+
     def send_market_order(self, **kw):
+        self._exiger_cote(kw, "send_market_order")
         if self.leve:
             raise ConnectionResetError("socket fermee pendant l'envoi")
         self.envois.append(kw)
@@ -60,6 +86,7 @@ class FauxDTC:
         return self.ouverts
 
     def send_close_market(self, **kw):
+        self._exiger_cote(kw, "send_close_market")
         self.fermetures.append(kw)
         return True
 
@@ -219,13 +246,36 @@ def main():
     r = ex.traiter(intention(side=-1), NOW)
     env = ex.dtc.envois[0]
     etat, _ = etat_exec.lire_etat("ES", NOW, dossier=tmp)
-    check("[12a] UN micro, sens court, compte de simulation ES, bracket en TICKS (jamais en prix)",
-          env["quantity"] == 1 and env["side"] == -1 and env["trade_account"] == sim_es
+    # SHORT en V3 = -1 ; SELL en DTC = 2. Le test exigeait -1 : il gravait
+    # l'absence de traduction (corrige le 14/09).
+    check("[12a] UN micro, SELL DTC (2) pour un short V3 (-1), compte SIM, bracket en TICKS",
+          env["quantity"] == 1 and env["side"] == 2 and env["trade_account"] == sim_es
           and env["sl_ticks"] == 20 and env["tp_ticks"] == 40 and "sl_price" not in env, env)
     check("[12b] l'ordre parent entre dans `ordres_en_vol` de l'etat — c'est E2 du prochain signal",
           etat["ordres_en_vol"] == [str(r["parent_id"])], etat["ordres_en_vol"])
     check("[12c] la ligne du journal porte le verdict, la famille et le contrat",
           r["verdict"] == "envoye" and r["hypothese"] == "H3-VPOC" and r["compte"] == sim_es)
+
+    # --- 12d. LA POSITION NUE (R1). Le connecteur rend `(parent, "", "")`
+    # quand l'ordre est parti mais que le BRACKET N'A PAS ETE POSE. EXEC ne
+    # regardait que `resultat[0]` : il journalisait « envoye » sur une position
+    # SANS STOP. Le depot a deja paye cette faute le 18/06 (« SL jamais pose a
+    # l'entree, position nue latente »). Risque NON BORNE contre 500 $ par jour
+    # et 2 000 de drawdown suiveur.
+    neuf(tmp)
+    ex = frais(FauxDTC(rend=("PARENT-NU", "", "")))
+    r = ex.traiter(intention(side=-1), NOW)
+    check("[12d] bracket absent -> verdict 'incident' / 'position_nue', JAMAIS 'envoye'",
+          r["verdict"] == "incident" and r["motif"] == "position_nue", r)
+    check("[12d-plat] la position est APLATIE aussitot, du bon cote DTC et de la"
+          " bonne QUANTITE",
+          len(ex.dtc.fermetures) == 1 and ex.dtc.fermetures[0]["side"] == 1
+          and ex.dtc.fermetures[0]["quantity"] == 1, ex.dtc.fermetures)
+    check("[12d-stop] STOP pose : plus aucun ordre apres un bracket manquant",
+          os.path.exists(exec_sim.FICHIER_STOP) and r.get("stop_pose") is True, r)
+    check("[12d-trace] l'incident dit QUELS identifiants manquaient",
+          r["parent_id"] == "PARENT-NU" and not r["tp_cid"] and not r["sl_cid"], r)
+    os.remove(exec_sim.FICHIER_STOP)
 
     # --- 13. idempotence APRES redemarrage (le journal relu)
     ex2 = exec_sim.ExecSim(connecteur=FauxDTC(), maintenant_ms=NOW)
@@ -254,12 +304,14 @@ def main():
     ex = frais()
     check("[16a] avant 15h55 ET -> aucune fermeture", ex.plat_si_besoin("ES", 950, 955, NOW) is None)
     r = ex.plat_si_besoin("ES", 955, 955, NOW)
-    check("[16b] a 15h55 ET -> plat, sens INVERSE de la position, sortie 'EOD'",
-          r["motif"] == "EOD" and ex.dtc.fermetures[0]["side"] == -1 and ex.dtc.fermetures[0]["quantity"] == 1, r)
+    check("[16b] a 15h55 ET -> plat : fermer un LONG envoie SELL DTC (2), sortie 'EOD'",
+          r["motif"] == "EOD" and ex.dtc.fermetures[0]["side"] == 2 and ex.dtc.fermetures[0]["quantity"] == 1, r)
     neuf(tmp, position={"sens": -1, "taille": 1, "prix_entree": 7600.0, "ts_entree": NOW, "snapshot_id": "x"})
     ex = frais()
     r = ex.kill(NOW)
-    check("[17] kill -> plat (sens inverse), journal 'KILL'",
+    # Celui-la etait juste PAR ACCIDENT : fermer un short envoie +1 en V3 et
+    # BUY vaut 1 en DTC. C'est exactement ce qui rendait le defaut invisible.
+    check("[17] kill -> plat : fermer un SHORT envoie BUY DTC (1), journal 'KILL'",
           r["motif"] == "KILL" and ex.dtc.fermetures and ex.dtc.fermetures[0]["side"] == 1, r)
 
     # --- 18. aucun refus silencieux : tout verdict est dans le journal
