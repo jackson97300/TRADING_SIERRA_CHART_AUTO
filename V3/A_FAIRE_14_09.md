@@ -15,14 +15,22 @@ mesure.
 
 ## 1. BLOQUANT — avant toute mise en ligne
 
-- [ ] **Le chemin d'ordre. R1, R2, R3, non commités.**
-      Dont la traduction **`BuySell = ±1` côté bot contre `1/2` en DTC**.
-      C'est la **même famille de bug** que celui d'aujourd'hui — une convention
-      non vérifiée — sauf qu'ici un signe inversé **envoie le mauvais côté au
-      broker**. Plus : garde de position nue, `sys.path` du connecteur.
-      *Protocole* : attendu écrit avant, vérification contre ce que Sierra a
-      **réellement reçu**, sabotage, puis `--un-tour` réel sur le compte SIM.
-      **Ne rien committer avant le tour réel.**
+- [x] **Le chemin d'ordre. R1, R2, R3 — corrigés et commités** (`a7647b7`).
+      Les trois étaient **réels**, et deux invisibles pour la suite entière.
+      **R2** : `BuySell = −1` partait sur tout SHORT à l'entrée et toute sortie
+      de LONG ; le test gravait l'erreur contre un faux connecteur permissif.
+      **R1** : `(parent, "", "")` = position sans stop, journalisée « envoyé ».
+      **R3** : l'import du connecteur **échouait** — EXEC aurait planté au
+      premier tour réel. Plus un quatrième : une erreur de programmation
+      déguisée en `rejet_dtc`. 6 sabotages sur 6, 54 PASS.
+      `V3/execution/pont_dtc.py` : un seul endroit traduit V3 ↔ DTC.
+
+- [ ] **LE `--un-tour` RÉEL sur le compte de simulation.** Aucun test ne peut
+      le remplacer : il faut vérifier **dans ce que Sierra a REÇU** qu'un short
+      part bien en SELL, que le bracket est posé avec ses trois ordres, et
+      qu'aucun orphelin ne reste. Tout le reste, aujourd'hui, ce sont nos
+      propres affirmations testées contre elles-mêmes.
+      **Demande le go explicite de Jackson** — action sortante vers un compte.
 
 - [ ] **Vérifier que `big_ask_cluster_*` / `big_bid_cluster_*` sont vivantes.**
       16 features mortes **26 jours** avant d'être réparées le 13/04. C1 de la
