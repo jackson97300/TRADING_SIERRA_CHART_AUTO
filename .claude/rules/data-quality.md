@@ -10,6 +10,45 @@ Hierarchie des regles V2 :
 
 ---
 
+## REGISTRE DES CONVENTIONS — regle souveraine (Jackson 14/09/2026)
+
+> **AUCUNE COLONNE N'ENTRE DANS V3 SANS PASSER PAR LE REGISTRE.**
+
+Source unique : `V3/conventions.yaml`. Applique par `V3/tests/test_conventions.py`
+(controles dans `V3/conventions.py`), qui **echoue** si une colonne lue par V3
+n'y figure pas. Prouve par sabotage le 14/09 : 5 sur 5 detectes.
+
+**Pourquoi cette regle existe.** Le 14/09, la cle `d_vwap_w` a ete ajoutee en
+lisant `dist_vwap_w` sans declarer sa convention. Or tout le depot suit
+`dist_X = (niveau - prix) / tick` : un prix AU-DESSUS rend un nombre NEGATIF.
+La couche L1 a donc dit SHORT quand le prix etait au-dessus de sa VWAP semaine,
+**sur 100 % des barres**. La verification ecrite le meme matin comparait la
+distribution de la VALEUR ABSOLUE a celle publiee : un controle d'amplitude ne
+peut pas voir une direction.
+
+**Trois conventions coexistent, et c'est le cas NORMAL** (cf. regle de methode
+n.2 de `CLAUDE.md`) :
+
+| producteur | famille | convention |
+|---|---|---|
+| DMP C++ / enricher Sierra | `dist_*` | **inversee** — `(niveau - prix)/tick` |
+| recalc V3 (`hypothesis_runner`) | `*_r` | **directe** |
+| DMP C++ | les trois ATR | `atr_14m` TICKS 1 min ; `atr_barre` POINTS 15 min ; `atr` TICKS fenetre large |
+
+**Deux pieges nommes dans le registre**, a ne jamais oublier :
+- `prev_vah` / `prev_val` (niveaux) ne designent PAS le meme niveau que
+  `dist_prev_vah` / `dist_prev_val` (distances) : ecart mesure jusqu'a 63
+  points. V3 n'utilise QUE les distances et reconstruit ses niveaux.
+- `vix_level` vaut 0,00 hors seance : un zero n'est PAS un VIX bas.
+
+**Avant d'ajouter une colonne** : entree au registre + convention MESUREE
+contre une grandeur reconstruite depuis le prix ou le volume bruts. Jamais
+contre une autre colonne derivee, jamais sur une valeur absolue, et **jour par
+jour** — cumuler a travers les journees ou comparer un ATR 1 min a un true
+range 15 min sont les erreurs exactes commises pendant l'audit du 14/09.
+
+---
+
 ## NE JAMAIS FAIRE
 
 ### Rechute #1 — Valider un dataset sur sa FORME uniquement

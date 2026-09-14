@@ -1,0 +1,268 @@
+# REGISTRE DES CONVENTIONS DE COLONNE - source unique de verite.
+#
+# POURQUOI CE FICHIER EXISTE. Le 14/09/2026, la cle `d_vwap_w` a ete ecrite
+# sans negation : `dist_vwap_w` suit la convention `(niveau - prix) / tick`, un
+# prix AU-DESSUS rend un nombre NEGATIF. B1p a donc dit SHORT quand le prix
+# etait au-dessus de sa VWAP semaine, sur 100 % des barres. La verification qui
+# accompagnait le code comparait la distribution de la VALEUR ABSOLUE a celle
+# publiee : un controle d'amplitude, aveugle a la direction.
+#
+# Le meme jour, en auditant, je me suis trompe TROIS fois de plus - cumul du
+# CVD a travers les journees, ATR 1 min compare a un true range 15 min, moyenne
+# agregee la ou il fallait regarder jour par jour. Aucune de ces erreurs n'est
+# une donnee qui ment : ce sont trois conventions coexistantes, documentees a
+# trois endroits differents, et nulle part rassemblees.
+#
+# REGLE : aucune colonne n'entre dans V3 sans une entree ici, et
+# `V3/tests/test_conventions.py` echoue si une colonne lue n'y figure pas.
+#
+# CHAMPS
+#   producteur : qui fabrique la colonne (DMP C++ / enricher, ou recalc V3)
+#   unite      : ticks | points | ratio | contrats | aucune
+#   signe      : inverse | direct | aucun
+#   controle   : comment le TEST le verifie - jumeau, booleen, niveau_implique,
+#                reconstruction, cumul, echelle, valeurs, aucun
+
+familles:
+  dist:
+    producteur: "DMP C++ / enricher Sierra"
+    unite: ticks
+    signe: inverse
+    note: "dist_X = (X - prix) / tick. Verifie le 14/09 sur les 25 colonnes
+           dist_* a niveau jumeau : accord ~0 partout, n > 4000 par colonne.
+           Pour obtenir la position DU PRIX il faut NIER.
+           Reference : CORE/audit_phase0.py l.117-119."
+
+colonnes:
+
+  # --- A. distances, convention INVERSEE ---------------------------------
+  dist_vwap_w:
+    famille: dist
+    controle: jumeau
+    jumeau: vwap_w
+    mesure: "0 accord sur 1556 barres ES et 1558 NQ (14/09)"
+  dist_vwap_d:
+    famille: dist
+    controle: jumeau
+    jumeau: vwap_d
+    mesure: "0 accord sur 4496 barres (14/09)"
+  dist_mq_hvl:
+    famille: dist
+    controle: booleen
+    jumeau: bool_above_mq_hvl
+    mesure: "0,45 % d accord sur 4452 barres (14/09)"
+  dist_prev_vah:
+    famille: dist
+    controle: niveau_implique
+    jumeau: prev_vah
+    mesure: "ANOMALIE 14/09 - le niveau implique par la distance est CONSTANT
+             dans la journee (la colonne est donc coherente), mais il DIFFERE
+             de la colonne prev_vah de -8,5 a +63,25 points selon le jour.
+             Deux niveaux sous un meme nom. V3 n utilise QUE la distance et
+             reconstruit son niveau (setups_c2.py l.52-53) : il est coherent
+             avec lui-meme. NE JAMAIS melanger les deux familles."
+  dist_prev_val:
+    famille: dist
+    controle: niveau_implique
+    jumeau: prev_val
+    mesure: "meme anomalie que dist_prev_vah (14/09)"
+
+  # --- B. recalcule par V3, convention DIRECTE ---------------------------
+  vwap_slope_r:
+    producteur: "recalc V3 (hypothesis_runner l.271)"
+    unite: ratio
+    signe: direct
+    controle: reconstruction
+    base: vwap_rth_r
+    decalage: 4
+    mesure: "100,00 % d accord sur 308 barres (14/09). ATTENTION : pente de
+             vwap_rth_r (VWAP RTH) sur QUATRE barres, PAS la pente de la VWAP
+             du jour sur une barre - cette confusion m a fait conclure a tort a
+             une colonne ambigue (80 % d accord)."
+  cvd_sess_r:
+    producteur: "recalc V3"
+    unite: ratio
+    signe: direct
+    controle: cumul
+    base: delta_bar
+    mesure: "100,00 % d accord avec le delta cumule PAR SESSION, 299 barres.
+             Cumuler a travers les journees donne 54,8 % : c est l erreur, pas
+             la colonne."
+  vwap_rth_r:
+    producteur: "recalc V3"
+    unite: points
+    signe: aucun
+    controle: aucun
+    mesure: "niveau de prix, aucun signe a verifier"
+
+  # --- C. les TROIS ATR, trois echelles ----------------------------------
+  atr_14m:
+    producteur: "DMP C++"
+    unite: ticks
+    signe: aucun
+    controle: echelle
+    reference: tr_1min
+    plage: [0.7, 2.0]
+    mesure: "mediane 7,77 ticks = 1,94 pt = 1,04 x le true range median 1 min"
+  atr_barre:
+    producteur: "recalc V3"
+    unite: points
+    signe: aucun
+    controle: echelle
+    reference: tr_15min
+    plage: [0.7, 2.0]
+    mesure: "mediane 9,21 pts = 1,21 x le true range median 15 min"
+  atr_ref:
+    producteur: "recalc V3"
+    unite: points
+    signe: aucun
+    controle: echelle
+    reference: tr_15min
+    plage: [0.7, 2.0]
+    mesure: "= atr_barre, ou l ATR de la VEILLE avant la 7e barre (atr_source
+             le dit). Mesure 14/09 : |d| mediane 2,30 sur barre contre 2,21
+             sur veille - la bascule ne fausse pas l echelle."
+  atr:
+    producteur: "DMP C++"
+    unite: ticks
+    signe: aucun
+    controle: echelle
+    reference: tr_15min
+    plage: [1.2, 2.8]
+    mesure: "mediane 60,03 ticks = 15,0 pts = 1,98 x le TR median 15 min.
+             Fenetre PLUS LARGE que 15 min : jamais interchangeable avec
+             atr_barre. C est le champ que le labeler a lu par erreur
+             (memoire 04/07)."
+
+  # --- D. booleens et etats ----------------------------------------------
+  inside_prev_va:
+    producteur: "DMP C++"
+    unite: aucune
+    signe: aucun
+    controle: entre_niveaux
+    bornes: [dist_prev_val, dist_prev_vah]
+    mesure: "100,00 % d accord avec close entre les deux niveaux RECONSTRUITS
+             depuis dist_prev_val et dist_prev_vah, sur 2940 barres par
+             instrument (14/09). Prouve du meme coup que la famille dist_prev_*
+             est coherente avec elle-meme."
+  im_smt_divergence:
+    producteur: "DMP C++"
+    unite: aucune
+    signe: direct
+    controle: valeurs
+    valeurs: [-1, 0, 1]
+    mesure: "trois etats seulement, mesures sur 10 jours x 2 instruments
+             (14/09). seuils.yaml B4 impose de lire TOUJOURS la colonne d ES,
+             pour les deux instruments : les deux fichiers portent chacun la
+             leur et elles DIVERGENT au meme ts (constat du 08/09)."
+  is_news_60m:
+    producteur: "DMP C++"
+    unite: aucune
+    signe: aucun
+    controle: valeurs
+    valeurs: [0, 1]
+  is_session_blocked:
+    producteur: "DMP C++"
+    unite: aucune
+    signe: aucun
+    controle: valeurs
+    valeurs: [0, 1]
+  barre_complete:
+    producteur: "recalc V3"
+    unite: aucune
+    signe: aucun
+    controle: valeurs
+    valeurs: [false, true]
+  gamma_block_long:
+    producteur: "DMP C++"
+    unite: aucune
+    signe: aucun
+    controle: valeurs
+    valeurs: [false, true]
+  vix_regime:
+    producteur: "DMP C++"
+    unite: aucune
+    signe: aucun
+    controle: valeurs
+    valeurs: [0, 1]
+  window_version:
+    producteur: "enricher"
+    unite: aucune
+    signe: aucun
+    controle: valeurs
+    valeurs: ["w0", "w1"]
+
+  # --- E. prix, volumes, identite ----------------------------------------
+  close:
+    producteur: "DMP C++"
+    unite: points
+    signe: aucun
+    controle: aucun
+  high:
+    producteur: "DMP C++"
+    unite: points
+    signe: aucun
+    controle: aucun
+  low:
+    producteur: "DMP C++"
+    unite: points
+    signe: aucun
+    controle: aucun
+  open:
+    producteur: "DMP C++"
+    unite: points
+    signe: aucun
+    controle: aucun
+  total_vol:
+    producteur: "DMP C++"
+    unite: contrats
+    signe: aucun
+    controle: aucun
+  delta_bar:
+    producteur: "DMP C++"
+    unite: contrats
+    signe: direct
+    controle: aucun
+    mesure: "positif = acheteur ; sert de base au controle de cvd_sess_r"
+  rvol_zscore:
+    producteur: "DMP C++"
+    unite: ratio
+    signe: direct
+    controle: aucun
+    mesure: "z-score : min -1,96 p50 -0,29 max 4,32 sur le lot d audit"
+  vix_level:
+    producteur: "DMP C++"
+    unite: points
+    signe: aucun
+    controle: aucun
+    mesure: "ATTENTION : vaut 0,00 hors seance - un zero n est PAS un VIX bas"
+  ts:
+    producteur: "DMP C++"
+    unite: aucune
+    signe: aucun
+    controle: aucun
+  ts_raw_ms:
+    producteur: "DMP C++"
+    unite: aucune
+    signe: aucun
+    controle: aucun
+  jour:
+    producteur: "recalc V3"
+    unite: aucune
+    signe: aucun
+    controle: aucun
+  contract:
+    producteur: "DMP C++"
+    unite: aucune
+    signe: aucun
+    controle: aucun
+  data_quality_flag:
+    producteur: "enricher"
+    unite: aucune
+    signe: aucun
+    controle: aucun
+  atr_source:
+    producteur: "recalc V3"
+    unite: aucune
+    signe: aucun
+    controle: aucun
