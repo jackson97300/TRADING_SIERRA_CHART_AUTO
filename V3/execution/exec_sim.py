@@ -46,7 +46,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -58,46 +57,40 @@ if RACINE not in sys.path:
 from CORE.constants import get_tick_size                        # noqa: E402
 from V3 import calendrier                                       # noqa: E402
 from V3.execution import etat_exec                              # noqa: E402
+from V3.execution.comptes import (MOTIF_COMPTE_SIM,             # noqa: E402
+                                  charger_comptes)
 
-# Les NOMS de comptes ne sont nulle part dans le code : ils vivent dans
-# `config/comptes.local.yaml`, ignore par git. Un nom de compte de trading
-# n'a rien a faire dans un depot public, meme simule — le jour ou il passe en
-# reel, il serait deja expose. Ici on ne garde que la FORME admise : un compte
-# de SIMULATION Sierra, et rien d'autre. Tout autre nom leve a la construction.
-MOTIF_COMPTE_SIM = re.compile(r"^%s[0-9]$" % "Sim")
 FICHIER_STOP = os.path.join(RACINE, "LOGS", "STOP")
 JOURNAL_DIR = os.path.join(RACINE, "LOGS", "execution")
-BASCULE_JOUR_UTC_H = 22          # la journee de trading bascule a 22:00 UTC (incident 07/09)
 CYCLE_S = 5
 TTL_ETAT_S = 120
 
 
 def jour_de_trading(maintenant_ms=None):
-    d = datetime.fromtimestamp((maintenant_ms or int(time.time() * 1000)) / 1000, timezone.utc)
-    if d.hour >= BASCULE_JOUR_UTC_H:
-        d = d.replace(hour=0) + __import__("datetime").timedelta(days=1)
+    """La journee de trading bascule a l'OUVERTURE GLOBEX, lue a la source
+    unique du depot — jamais une heure UTC en dur.
+
+    `BASCULE_JOUR_UTC_H = 22` divergeait d'UNE HEURE de
+    `recalc.ouverture_sess_utc`, qui rend 21 en heure d'ete : pendant toute la
+    campagne, la cle `jour` du journal d'execution ne coincidait pas avec celle
+    de l'entonnoir entre 21h et 22h UTC. Un test ecrit en novembre serait
+    passe — c'est AUJOURD'HUI que c'etait faux. Et la docstring de
+    `ouverture_sess_utc` dit elle-meme que la dette DST disparait « le jour ou
+    l'appelant utilise cette fonction » : EXEC etait cet appelant qui ne
+    l'utilisait pas (revue 12/09).
+
+    Import PARESSEUX : `recalc` tire pandas, et le chemin d'ordre doit rester
+    leger au demarrage. Meme geste que `charger_comptes` avec yaml."""
+    import pandas as pd
+    from CORE.features import recalc
+    d = pd.to_datetime(maintenant_ms or int(time.time() * 1000), unit="ms", utc=True)
+    if d.hour >= int(recalc.ouverture_sess_utc(pd.Series([d])).iloc[0]):
+        d = d + pd.Timedelta(days=1)
     return d.strftime("%Y%m%d")
 
 
 def chemin_journal(jour):
     return os.path.join(JOURNAL_DIR, "exec_%s.jsonl" % jour)
-
-
-def charger_comptes(chemin=None):
-    """`config/comptes.local.yaml` -> {sym: compte}. Absent = on ne trade pas :
-    EXEC ne devine JAMAIS un nom de compte."""
-    import yaml
-    p = chemin or os.path.join(RACINE, "V3", "config", "comptes.local.yaml")
-    if not os.path.exists(p):
-        raise FileNotFoundError(
-            "comptes.local.yaml absent — copier comptes.example.yaml et le renseigner. "
-            "EXEC ne devine pas un nom de compte.")
-    cfg = yaml.safe_load(open(p, encoding="utf-8")) or {}
-    comptes = {sym: cfg.get("COMPTE_%s" % sym) for sym in ("ES", "NQ")}
-    manquants = [s for s, c in comptes.items() if not c]
-    if manquants:
-        raise ValueError("comptes.local.yaml : COMPTE_%s manquant" % ", COMPTE_".join(manquants))
-    return comptes
 
 
 class ExecSim:
@@ -193,9 +186,9 @@ class ExecSim:
         b = intent["barriere"]
         try:
             resultat = self.dtc.send_market_order(
-                symbol=intent["contrat"], side=side, quantity=int(intent["taille"]),
-                trade_account=compte, sl_ticks=int(b["sl_ticks"]), tp_ticks=int(b["tp_ticks"]),
-                tick_size=tick)
+                symbol=calendrier.symbole_sierra(sym, intent["contrat"]),
+                side=side, quantity=int(intent["taille"]), trade_account=compte,
+                sl_ticks=int(b["sl_ticks"]), tp_ticks=int(b["tp_ticks"]), tick_size=tick)
         except Exception as e:                        # noqa: BLE001 — un rejet ne relance jamais tout seul
             return self._refus(intent, "rejet_dtc", now, dict(obs, erreur="%s: %s" % (type(e).__name__, e)))
         if not resultat or (isinstance(resultat, tuple) and not resultat[0]):
@@ -212,6 +205,15 @@ class ExecSim:
                             "hypothese": intent.get("hypothese"), "ts": now, **obs})
 
     # --- sorties ------------------------------------------------------------
+    def _plat(self, sym, etat):
+        """Ferme au marche. UN SEUL endroit construit le symbole d'ordre et
+        ferme une position : deux copies divergent, trois encore plus."""
+        self.dtc.send_close_market(
+            symbol=calendrier.symbole_sierra(sym, etat["contrat"]),
+            side=-etat["position"]["sens"],
+            quantity=int(etat["position"]["taille"]),
+            trade_account=self.comptes[sym])
+
     def plat_si_besoin(self, sym, minutes_et, sortie_horaire_et, now=None):
         """A l'heure de sortie de la FAMILLE (portee par l'intention, jamais
         devinee) : plat. Jamais de position apres la cloture cash."""
@@ -221,9 +223,7 @@ class ExecSim:
         etat, _ = etat_exec.lire_etat(sym, now, ttl_s=TTL_ETAT_S)
         if not etat or not etat_exec.position_ouverte(etat):
             return None
-        self.dtc.send_close_market(symbol=etat["contrat"], side=-etat["position"]["sens"],
-                                   quantity=int(etat["position"]["taille"]),
-                                   trade_account=self.comptes[sym])
+        self._plat(sym, etat)
         return self._ligne({"verdict": "sortie", "motif": "EOD", "sym": sym,
                             "minutes_et": minutes_et, "ts": now})
 
@@ -233,9 +233,7 @@ class ExecSim:
         for sym in self.comptes:
             etat, _ = etat_exec.lire_etat(sym, now, ttl_s=TTL_ETAT_S)
             if etat and etat_exec.position_ouverte(etat):
-                self.dtc.send_close_market(symbol=etat["contrat"], side=-etat["position"]["sens"],
-                                           quantity=int(etat["position"]["taille"]),
-                                           trade_account=self.comptes[sym])
+                self._plat(sym, etat)
         return self._ligne({"verdict": "sortie", "motif": "KILL", "ts": now})
 
     # --- journal : un ecrivain, jamais un refus silencieux -------------------

@@ -148,6 +148,35 @@ def contrat_actif(jour):
     raise ValueError("contrat introuvable pour %s" % jour)   # inatteignable
 
 
+def symbole_sierra(sym, contrat):
+    """Le symbole que Sierra attend pour un ORDRE : racine + contrat + place.
+
+    NE D'UN DEFAUT TROUVE A FROID le 12/09, qui n'a jamais tire parce qu'EXEC
+    n'a pas d'appelant — il aurait tire au premier ordre. `contrat_actif` rend
+    un code de mois NU (« Z26 »), et `exec_sim._executer` le passait tel quel
+    en `symbol=` : ES et NQ auraient envoye LE MEME symbole, sans racine
+    d'instrument. Trois raisons pour lesquelles rien ne l'aurait rattrape :
+
+      - `BOT/dtc_connector._to_contract` rend INCHANGE tout ce qui n'est pas
+        dans sa table (defense « backward-compat »), et « Z26 » n'y est pas ;
+      - sa table est restee sur le trimestre PRECEDENT (U26) alors que le
+        calendrier a bascule sur Z26 le 10/09 — meme en passant « ES » brut,
+        on aurait envoye le contrat mort ;
+      - la porte E8 ne peut structurellement pas le voir : les DEUX cotes de
+        sa comparaison ignorent l'instrument, elle ne confronte que des
+        trimestres.
+
+    Le contrat reste un FAIT DE CALENDRIER dans l'intention et dans l'etat —
+    c'est ce que E8 compare. Le symbole d'ordre se construit ICI, au seul
+    endroit qui connait la regle, et jamais au point d'envoi : trois sites
+    ordonnent (une ouverture, deux fermetures) et trois copies divergent.
+    """
+    if not sym or not contrat:
+        raise ValueError("symbole_sierra exige un instrument ET un contrat"
+                         " (%r, %r) — jamais de defaut devine" % (sym, contrat))
+    return "%s%s-CME" % (sym, contrat)
+
+
 def _en_date(jour):
     if isinstance(jour, _dt.datetime):
         return jour.date()

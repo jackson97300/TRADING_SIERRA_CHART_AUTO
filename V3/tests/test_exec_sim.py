@@ -141,6 +141,35 @@ def main():
     check("[2] meme snapshot_id deux fois -> un seul envoi, le second refuse 'doublon' (E9)",
           r1["verdict"] == "envoye" and r2["motif"] == "doublon" and len(ex.dtc.envois) == 1, (r1, r2))
 
+    # --- 2b-2c. LE SYMBOLE D'ORDRE — defaut trouve a froid le 12/09.
+    # `symbol=intent["contrat"]` envoyait « Z26 », un code de mois NU, pour les
+    # DEUX instruments. Rien ne pouvait le rattraper : `_to_contract` rend
+    # inchange ce qui n'est pas dans sa table (et sa table est restee sur le
+    # trimestre precedent), et la porte E8 ne compare que des trimestres — ses
+    # deux cotes ignorent l'instrument. Ca n'a jamais tire parce qu'EXEC n'a pas
+    # d'appelant ; ca aurait tire au PREMIER ordre.
+    envoye = ex.dtc.envois[0]["symbol"]
+    check("[2b] le symbole envoye porte la RACINE de l'instrument, jamais le contrat nu",
+          envoye.startswith("ES") and envoye != "Z26", envoye)
+    a, b = calendrier.symbole_sierra("ES", "Z26"), calendrier.symbole_sierra("NQ", "Z26")
+    check("[2c] ES et NQ ne peuvent pas produire le MEME symbole", a != b, (a, b))
+
+    # --- 2d-2e. LA FRONTIERE DE JOURNEE suit l'heure d'ete, comme le reste du
+    # depot. `BASCULE_JOUR_UTC_H = 22` en dur divergeait d'une heure de
+    # `recalc.ouverture_sess_utc` (21 en EDT) : la cle `jour` du journal
+    # d'execution ne coincidait pas avec celle de l'entonnoir entre 21h et 22h
+    # UTC, pendant TOUTE la campagne. Un test ecrit en novembre serait passe —
+    # d'ou les deux saisons ici.
+    import pandas as _pd
+
+    def _j(iso):
+        return exec_sim.jour_de_trading(int(_pd.Timestamp(iso).timestamp() * 1000))
+
+    check("[2d] heure d'ETE : la journee bascule a 21h UTC",
+          _j("2026-09-13T20:59:00Z") == "20260913" and _j("2026-09-13T21:01:00Z") == "20260914")
+    check("[2e] heure d'HIVER : elle bascule a 22h UTC",
+          _j("2026-11-10T21:01:00Z") == "20261110" and _j("2026-11-10T22:01:00Z") == "20261111")
+
     # --- 3-5. E1 position, E2 ordre en vol, cooldown
     neuf(tmp, position={"sens": 1, "taille": 1, "prix_entree": 7600.0, "ts_entree": NOW, "snapshot_id": "x"})
     check("[3] position deja ouverte -> refus (E1), l'etat REEL fait foi",
