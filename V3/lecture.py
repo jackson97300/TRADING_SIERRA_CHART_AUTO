@@ -31,12 +31,14 @@ from V3 import calendrier
 # Re-exportes tels quels : `lecture.val`, `lecture.verifier_colonnes`,
 # `lecture.SOURCES_DECLAREES`, `lecture.REQUISES` restent le chemin des
 # appelants (chaine, campagne, coureur_live, barrieres, L4, tests).
-from V3.lecture_colonnes import (REQUISES, REQUISES_L4,        # noqa: F401
-                                 SOURCES_DECLAREES, _refusee_proxy, _texte,
-                                 val, verifier_colonnes, vrai)
+from V3.lecture_colonnes import (N_ACCEPTATION, REQUISES,      # noqa: F401
+                                 REQUISES_L4, SOURCES_DECLAREES, _barres_dedans,
+                                 _ouverture_vs_va, _refusee_proxy, _texte, val,
+                                 verifier_colonnes, vrai)
 
 OUVERTURE_ET = 570          # 9h30 ET, la fenetre d'`est_cash` (CONVENTIONS §1)
 BARRE_MIN = 15              # la barre de la campagne
+
 
 
 def lire(df, i, sym="ES", live=None, side=None):
@@ -110,6 +112,8 @@ def lire(df, i, sym="ES", live=None, side=None):
         # garde-fou `verifier_colonnes` surveillait la TRAME, ou la colonne est
         # bien presente ; le maillon casse etait ici.
         "d_vwap_w": _prix_vs_niveau(df, "dist_vwap_w", i, a_ref),
+        "open_vs_va": _ouverture_vs_va(df),
+        "barres_inside_prev_va": _barres_dedans(df, i),
         # --- famille E : puis-je passer l'ordre ? --------------------------
         "dtc_connecte": live.get("dtc_connecte"),
         "contrat_actif": live.get("contrat_actif"),

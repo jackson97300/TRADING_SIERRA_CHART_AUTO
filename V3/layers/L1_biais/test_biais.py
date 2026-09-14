@@ -143,16 +143,20 @@ def _signe_change_le_verdict():
     return []
 
 
-# CE QUE `lecture.lire` NE PRODUIT PAS AUJOURD'HUI, mesure le 14/09.
+# CE QUE `lecture.lire` NE PRODUIT PAS AUJOURD'HUI.
 # Une composante dont la cle n'existe pas rend `None` a chaque barre : elle est
-# declaree, testee, et morte. Ces cinq-la le sont — B1n, B4, B5 et B5b n'ont
-# JAMAIS rien rendu d'autre que `None` sur les 1394 barres du lot.
+# declaree, testee, et morte. Elles etaient CINQ le 14/09 au matin — B1n, B4,
+# B5 et B5b n'avaient JAMAIS rien rendu d'autre que `None` sur les 1394 barres.
+#
+# DEUX ONT ETE REVEILLEES le 14/09 : `open_vs_va` et `barres_inside_prev_va`,
+# donc B5 et B5b vivent. Le cliquet a fait exactement son travail — il a REFUSE
+# le changement tant que cette liste n'etait pas mise a jour, avec le message
+# « retirer la de TROUS_CONNUS et mesurer la composante qu'elle reveille ».
 #
 # Cette liste est une DETTE DECLAREE, pas une permission. Le controle echoue
-# dans les deux sens : si une sixieme cle disparait du lecteur, et aussi si
-# l'une de ces cinq est enfin produite sans que la liste soit mise a jour.
-TROUS_CONNUS = {"barres_inside_prev_va", "d_vwap_w_autre", "issue_vwap_w",
-                "open_vs_va", "smt_div"}
+# dans les deux sens : si une nouvelle cle disparait du lecteur, et aussi si
+# l'une des trois restantes est enfin produite sans mise a jour.
+TROUS_CONNUS = {"d_vwap_w_autre", "issue_vwap_w", "smt_div"}
 
 
 def _le_lecteur_produit_ce_que_L1_consomme():
@@ -206,6 +210,27 @@ def _le_lecteur_produit_ce_que_L1_consomme():
     return e
 
 
+def _seuil_b5b_coherent():
+    """`N_ACCEPTATION` du lecteur == `B5b.barres_acceptation` du YAML.
+
+    Le lecteur doit compter les N premieres barres SANS dependre de la config
+    d'une couche — d'ou une constante chez lui. Mais une copie non gardee derive
+    en silence : si le YAML passe a 4 et pas le lecteur, B5b jugerait sur trois
+    barres en croyant en juger quatre, et rien ne le dirait. Meme geste que les
+    constantes DTC du pont d'execution.
+    """
+    from V3 import lecture
+    attendu = (biais.charger_seuils().get("B5b") or {}).get("barres_acceptation")
+    if attendu is None:
+        return ["seuils.yaml : B5b.barres_acceptation absent — le lecteur compte"
+                " sur un nombre que la config ne declare plus"]
+    if lecture.N_ACCEPTATION != attendu:
+        return ["lecture.N_ACCEPTATION = %r mais seuils.yaml dit %r — B5b"
+                " jugerait sur un nombre de barres different de celui declare"
+                % (lecture.N_ACCEPTATION, attendu)]
+    return []
+
+
 def main():
     echecs = []
     for nom, comp, mod, attendu in CAS:
@@ -221,7 +246,7 @@ def main():
                           % (nom, cote, force, r["cote"], r["force"]))
 
     echecs += (_anti_score() + _seuils_null()
-               + _signe_change_le_verdict()
+               + _signe_change_le_verdict() + _seuil_b5b_coherent()
                + _le_lecteur_produit_ce_que_L1_consomme())
 
     # la relation portee par chaque signal L3

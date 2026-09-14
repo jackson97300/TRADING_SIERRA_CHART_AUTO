@@ -160,6 +160,60 @@ def main():
           "l'agregation (en strict, le trou bloquerait tous les shorts)",
           "L5_VETO_GAMMA" not in appliquees, sorted(appliquees))
 
+    # --- 5. B5 / B5b : les deux cles reveillees le 14/09 ------------------
+    # B5b est le piege de look-ahead le plus facile a commettre ici. Elle
+    # demande « les N PREMIERES barres » : a la barre 0 ou 1 ce compte n'est
+    # PAS ENCORE UN FAIT. Un `groupby(jour).head(3)` vectorise ecrirait la meme
+    # valeur sur toutes les barres et ferait lire deux barres du futur.
+    import pandas as _pd
+    from V3.lecture_colonnes import N_ACCEPTATION
+    n = 8
+    # LES NIVEAUX VARIENT D'UNE BARRE A L'AUTRE, et c'est volontaire : avec une
+    # colonne constante, lire la barre 0 ou la derniere donne le meme resultat
+    # et le test ne peut pas prouver qu'on lit bien l'OUVERTURE. Trouve par
+    # sabotage le 14/09 — la premiere version de ce cas ne detectait pas un
+    # lecteur qui prenait la barre courante.
+    # Barre 0 : VAH SOUS le prix (-40) -> ouverture AU-DESSUS, +1.
+    # Barres 1+ : VAH au-dessus et VAL sous le prix -> -1 si on lisait la fin.
+    trame = _pd.DataFrame({
+        "ts": [1789000000000 + k * 900_000 for k in range(n)],
+        "dist_prev_vah": [-40.0] + [40.0] * (n - 1),
+        "dist_prev_val": [-90.0] + [90.0] * (n - 1),
+        "inside_prev_va": [1, 1, 0, 1, 0, 0, 1, 1],
+    })
+    vus = [lecture._barres_dedans(trame, k) for k in range(n)]
+    print("")
+    print("[5] B5 et B5b — les cles reveillees le 14/09")
+    check("[5a] B5b se TAIT tant que les %d premieres barres ne sont pas la"
+          % N_ACCEPTATION,
+          all(v is None for v in vus[:N_ACCEPTATION - 1]), vus)
+    check("[5b] puis elle compte, et ne compte QUE les %d premieres" % N_ACCEPTATION,
+          vus[N_ACCEPTATION - 1] == 2 and len(set(vus[N_ACCEPTATION - 1:])) == 1, vus)
+    check("[5c] elle ne bouge plus ensuite — un fait du matin ne se recalcule pas",
+          vus[-1] == vus[N_ACCEPTATION - 1], vus)
+    ouv = [lecture._ouverture_vs_va(trame.iloc[:k + 1]) for k in range(n)]
+    check("[5d] B5 rend le meme cote a TOUTES les barres — l'ouverture est un"
+          " fait de la barre 0", len(set(ouv)) == 1 and ouv[0] == 1, ouv)
+    bas = trame.assign(dist_prev_vah=[40.0] * n, dist_prev_val=[90.0] * n)
+    check("[5e] SIGNE : la convention INVERSEE du registre — VAH au-dessus du"
+          " prix veut dire ouverture SOUS la valeur",
+          lecture._ouverture_vs_va(bas) == -1, lecture._ouverture_vs_va(bas))
+    dedans = trame.assign(dist_prev_vah=[40.0] * n, dist_prev_val=[-90.0] * n)
+    check("[5f] entre les deux niveaux -> 0, et 0 n'est PAS None",
+          lecture._ouverture_vs_va(dedans) == 0)
+    check("[5g] COLONNE absente -> None, jamais 0",
+          lecture._ouverture_vs_va(trame.drop(columns=["dist_prev_vah"])) is None)
+    # DEUX CAS DISTINCTS, et le second manquait : la colonne peut EXISTER avec
+    # une valeur absente a la barre 0. Sabotage du 14/09 — rendre 0 au lieu de
+    # None passait inapercu, parce que le seul cas teste tombait sur la garde
+    # « colonne absente » posee plus haut.
+    vide = trame.assign(dist_prev_vah=[float("nan")] * n)
+    check("[5h] colonne PRESENTE mais valeur absente a la barre 0 -> None",
+          lecture._ouverture_vs_va(vide) is None, lecture._ouverture_vs_va(vide))
+    vide2 = trame.assign(dist_prev_val=[float("nan")] * n)
+    check("[5i] idem sur l'autre niveau — un seul manquant suffit a se taire",
+          lecture._ouverture_vs_va(vide2) is None, lecture._ouverture_vs_va(vide2))
+
     print("\n  %d PASS / %d FAIL" % (PASSED, FAILED))
     return 1 if FAILED else 0
 
