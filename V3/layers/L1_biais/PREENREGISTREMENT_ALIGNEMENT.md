@@ -86,6 +86,40 @@ mauvais : sélectionner après coup est exactement ce que ce document interdit.
 - Si ça continuera de marcher.
 - Rien sur les jours de campagne : ils ne sont pas dans le lot.
 
+## AMENDEMENT du 14/09, écrit AVANT d'avoir vu le moindre résultat
+
+Jackson a précisé le travail du biais : *« donner la direction que le trader
+devrait prendre pour avoir le plus de chances d'être aligné à la tendance —
+s'il dit acheteur, les futures données devraient être acheteuses plus de
+fois »*. Deux corrections en découlent, et elles améliorent le protocole :
+
+**1. La métrique devient un ÉCART ENTRE GROUPES, pas un taux.**
+
+    P(aligné | le biais dit LONG) − P(aligné | le biais dit SHORT)
+
+« Plus de fois » ne veut rien dire sans référence. La période 2026 est
+majoritairement haussière : un biais qui dirait toujours LONG serait « aligné »
+bien plus de 50 % du temps sans rien savoir. L'écart entre les deux groupes
+annule la dérive, qui les touche identiquement. Un biais sans information rend
+zéro. L'étalon « toujours LONG » reste rapporté, mais il n'est plus le juge.
+
+**2. DEUX métriques d'alignement, pas une.**
+
+  - `prix` : `close(t+k) − close(t) > 0`
+  - `flux` : somme de `delta_bar` sur `t+1..t+k` > 0 — c'est le sens littéral
+    de « données acheteuses », et ce n'est pas la même question que le prix.
+
+Un biais qui prédit le flux mais pas le prix, ou l'inverse, est un fait qu'on
+veut voir. Les rapporter séparément.
+
+**Conséquence sur les tests multiples** : 6 candidats x 4 horizons x 2
+métriques = **48 tests**, et non 24. Le nombre est redéclaré ici pour le
+haircut. Tous les résultats seront rapportés.
+
+**Colonnes utilisées, toutes au registre** (règle du 14/09) : `dist_vwap_w`,
+`dist_vwap_d`, `vwap_slope_r`, `cvd_sess_r`, `dist_mq_hvl`, `dist_prev_vah`,
+`dist_prev_val`, `delta_bar`, `close`.
+
 ## Règle d'arrêt
 
 Si un candidat bat les deux étalons avec |t| > 2,0 au niveau session, il est
