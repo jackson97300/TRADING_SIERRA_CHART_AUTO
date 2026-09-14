@@ -76,10 +76,25 @@ def evaluer(lec, cfg):
         return dict(AUCUN, composantes=sorties, trous=trous, motif="veto_B4")
 
     # --- 3. la qualification ------------------------------------------------
+    # UN TROU SUR B5 N'EST PAS UNE FORCE (corrige le 14/09). La version
+    # precedente posait `force = "fort"` en valeur par defaut et ne la
+    # corrigeait que si B5 etait lisible. Mesure sur les 1394 barres de chaque
+    # instrument : B5 est en trou sur 100 % des barres — la cle `open_vs_va`
+    # n'existe pas dans la sortie de `lecture.lire` — donc les 1053 avis d'ES
+    # et les 1115 de NQ sortaient TOUS etiquetes « fort ». Pas un seul
+    # « faible » en 2168 avis. Le mot n'etait pas une mesure, c'etait la valeur
+    # d'une branche jamais prise.
+    #
+    # `None` dit « non qualifie » et le trou reste nomme dans `trous`. Le cas
+    # « B5b a annule » garde `fort` : c'est une intention declaree par le test
+    # (l.66-68), pas un defaut.
     b5, b5b = lire("B5"), lire("B5b")
-    force = "fort"
-    if b5b != 1 and b5 is not None and b5 != 0:
+    if b5 is None:
+        force = None
+    elif b5b != 1 and b5 != 0:
         force = "fort" if b5 == b1 else "faible"
+    else:
+        force = "fort"
 
     return {"cote": "LONG" if b1 > 0 else "SHORT", "force": force,
             "composantes": sorties, "trous": trous, "motif": ""}
@@ -118,4 +133,15 @@ def charger_seuils(chemin=SEUILS_YAML):
             "seuils null en mode applique : %s — la distribution n'a pas encore "
             "ete mesuree, la composante ne peut pas s'appliquer"
             % ", ".join(manquants))
-    return cfg
+    # LA FORME QUE `evaluer` ATTEND (corrige le 14/09). Le YAML imbrique les
+    # reglages sous `composantes.<nom>.seuils` ; `evaluer` — et le test, qui
+    # est l'autorite sur l'intention — les cherchent au PREMIER niveau. Le
+    # chargeur rendait le YAML brut, donc `cfg.get("B1p")` valait None,
+    # `z1_atr` etait introuvable, et B1p rendait un TROU sur 208 barres sur
+    # 208 : la couche entiere disait AUCUN 156 fois sur 156. Le seuil etait
+    # ecrit dans le fichier depuis le 07/09 ; il n'a jamais ete lu.
+    # `composantes` reste disponible : on APLATIT, on ne remplace pas.
+    plat = dict(cfg)
+    for nom, d in comp.items():
+        plat[nom] = (d or {}).get("seuils") or {}
+    return plat

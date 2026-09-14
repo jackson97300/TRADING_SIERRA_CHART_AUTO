@@ -70,6 +70,13 @@ SERIE = [
      {"d_vwap_w": 0.1}, "AUCUN", None),
     ("B1 en trou -> AUCUN, jamais un cote par defaut",
      {"d_vwap_w": None}, "AUCUN", None),
+    # LE CAS QUI MANQUAIT, ET QUI TIRE 100 % DU TEMPS EN REEL (ajoute le
+    # 14/09). `open_vs_va` n'existe pas dans `lecture.lire` : B5 est en trou
+    # sur les 1394 barres des deux instruments. La force par defaut disait
+    # alors « fort » sur les 2168 avis du lot, sans qu'aucune mesure de force
+    # n'ait eu lieu. Un cote peut survivre a un trou de B5 ; une FORCE, non.
+    ("B5 en trou -> le cote tient, la force ne s'invente pas",
+     {"open_vs_va": None}, "LONG", None),
 ]
 
 
@@ -136,6 +143,69 @@ def _signe_change_le_verdict():
     return []
 
 
+# CE QUE `lecture.lire` NE PRODUIT PAS AUJOURD'HUI, mesure le 14/09.
+# Une composante dont la cle n'existe pas rend `None` a chaque barre : elle est
+# declaree, testee, et morte. Ces cinq-la le sont — B1n, B4, B5 et B5b n'ont
+# JAMAIS rien rendu d'autre que `None` sur les 1394 barres du lot.
+#
+# Cette liste est une DETTE DECLAREE, pas une permission. Le controle echoue
+# dans les deux sens : si une sixieme cle disparait du lecteur, et aussi si
+# l'une de ces cinq est enfin produite sans que la liste soit mise a jour.
+TROUS_CONNUS = {"barres_inside_prev_va", "d_vwap_w_autre", "issue_vwap_w",
+                "open_vs_va", "smt_div"}
+
+
+def _le_lecteur_produit_ce_que_L1_consomme():
+    """LA QUESTION QU'AUCUN TEST NE POSAIT — et qui a coute la couche entiere.
+
+    `LEC`, plus haut, est ecrit a la main avec les six cles presentes. Il
+    prouve que les composantes fonctionnent SI on leur donne une lecture
+    complete. Il ne dit rien de la lecture reelle. Resultat : `d_vwap_w`
+    n'existait pas dans `lecture.lire`, B1p rendait un trou sur 208 barres sur
+    208, L1 disait AUCUN sur 156 barres sur 156 — et ce fichier passait au
+    vert. C'est la meme famille que les deux faux temoins du 12/09 : un
+    controle qui ne peut pas echouer sur ce qu'il garde.
+
+    On confronte donc la source des composantes a la source du lecteur.
+    """
+    import ast
+
+    def _cles_lues(chemin):
+        arbre = ast.parse(open(chemin, encoding="utf-8").read())
+        return {n.args[0].value for n in ast.walk(arbre)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "get" and isinstance(n.func.value, ast.Name)
+                and n.func.value.id == "lec" and n.args
+                and isinstance(n.args[0], ast.Constant)}
+
+    def _cles_produites(chemin):
+        arbre = ast.parse(open(chemin, encoding="utf-8").read())
+        for n in ast.walk(arbre):
+            if isinstance(n, ast.FunctionDef) and n.name == "lire":
+                return {c.value for d in ast.walk(n)
+                        if isinstance(d, ast.Dict) for c in d.keys
+                        if isinstance(c, ast.Constant) and isinstance(c.value, str)}
+        return set()
+
+    consommees = _cles_lues(os.path.join(ICI, "composantes.py"))
+    produites = _cles_produites(os.path.join(RACINE, "V3", "lecture.py"))
+    if not consommees or not produites:
+        return ["le meta-controle n'a rien lu (%d consommees, %d produites) :"
+                " il ne garde plus rien" % (len(consommees), len(produites))]
+    manquantes = consommees - produites
+    if manquantes == TROUS_CONNUS:
+        return []
+    e = []
+    for k in sorted(manquantes - TROUS_CONNUS):
+        e.append("`%s` est consommee par une composante L1 et n'est produite "
+                 "par AUCUNE ligne de lecture.lire : la composante rendra "
+                 "None a chaque barre" % k)
+    for k in sorted(TROUS_CONNUS - manquantes):
+        e.append("`%s` est enfin produite par lecture.lire : retirer la de "
+                 "TROUS_CONNUS et mesurer la composante qu'elle reveille" % k)
+    return e
+
+
 def main():
     echecs = []
     for nom, comp, mod, attendu in CAS:
@@ -150,7 +220,9 @@ def main():
             echecs.append("%s : attendu %s/%s, obtenu %s/%s"
                           % (nom, cote, force, r["cote"], r["force"]))
 
-    echecs += _anti_score() + _seuils_null() + _signe_change_le_verdict()
+    echecs += (_anti_score() + _seuils_null()
+               + _signe_change_le_verdict()
+               + _le_lecteur_produit_ce_que_L1_consomme())
 
     # la relation portee par chaque signal L3
     if biais.relation({"cote": "LONG"}, 1) != "avec":

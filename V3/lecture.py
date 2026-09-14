@@ -101,6 +101,15 @@ def lire(df, i, sym="ES", live=None, side=None):
         "vix_regime": (val(df, "vix_regime", i)
                        if (val(df, "vix_level", i) or 0.0) > 0.0 else None),
         "dist_hvl_atr": _dist_hvl_atr(df, i, a_ref),
+        # B1 de L1 lisait `d_vwap_w` — que cette lecture n'a JAMAIS produit.
+        # Mesure du 14/09 : `B1p` rendait None sur 208 barres sur 208, motif
+        # `B1_trou`, donc la couche L1 entiere disait AUCUN 156 fois sur 156.
+        # Personne ne s'en apercevait parce que personne ne consomme L1 — c'est
+        # exactement l'incident que `lecture_colonnes` documente deja pour
+        # cette meme colonne (« biais() rendait 0 EN PERMANENCE »). Le
+        # garde-fou `verifier_colonnes` surveillait la TRAME, ou la colonne est
+        # bien presente ; le maillon casse etait ici.
+        "d_vwap_w": _prix_vs_niveau(df, "dist_vwap_w", i, a_ref),
         # --- famille E : puis-je passer l'ordre ? --------------------------
         "dtc_connecte": live.get("dtc_connecte"),
         "contrat_actif": live.get("contrat_actif"),
@@ -132,6 +141,38 @@ def _fenetre_melangee(df):
     if "window_version" not in df.columns:
         return None
     return int(df["window_version"].nunique(dropna=True)) > 1
+
+
+def _prix_vs_niveau(df, colonne, i, a):
+    """La position du PRIX par rapport au niveau, en multiples d'ATR.
+    POSITIF = le prix est AU-DESSUS du niveau.
+
+    LE SIGNE EST INVERSE A LA SOURCE, ET C'EST LA CONVENTION DE TOUT LE DEPOT :
+    `dist_X = (X - prix) / tick`, donc un prix au-dessus rend un nombre NEGATIF
+    (`CORE/audit_phase0.py` l.117-119). D'ou la negation ici, et elle seule.
+
+    MESURE DU 14/09 : « close > vwap_w » coincide avec « dist_vwap_w > 0 »
+    ZERO fois sur 1556 barres ES et ZERO sur 1558 NQ ; les 25 colonnes `dist_*`
+    du frame qui ont un niveau jumeau donnent le meme accord nul. Exemple
+    ES 08/09 : close 7713,75, vwap_w 7709,23, dist_vwap_w -18,07.
+
+    CE QUE LA PREMIERE VERSION A COUTE, le matin meme. Ecrite sans negation,
+    elle a fait dire SHORT a B1p quand le prix etait AU-DESSUS de sa VWAP
+    semaine, sur 100 % des barres. Et la verification qui l'accompagnait
+    comparait la distribution de la VALEUR ABSOLUE a celle publiee : un
+    controle d'amplitude, aveugle a la direction. C'est exactement la faute que
+    `test_biais._signe_change_le_verdict` existe pour interdire, commise a
+    l'etage d'en dessous. `V3/tests/test_convention_signe.py` la garde
+    desormais sur TOUTES les colonnes `dist_*`, pas seulement celle-ci.
+
+    `_dist_hvl_atr` garde la convention brute SANS negation : sa porte L0 lit
+    `abs(d)` (portes.py:136), le signe n'y entre pas. Ne pas « harmoniser »
+    sans mesurer ce qui la consomme.
+    """
+    d = val(df, colonne, i)
+    if d is None or not a or a <= 0:
+        return None
+    return -(d * 0.25) / a
 
 
 def _dist_hvl_atr(df, i, a):

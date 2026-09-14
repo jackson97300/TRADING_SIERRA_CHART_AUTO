@@ -17,11 +17,10 @@ donnait des intervalles trop étroits.
    d'aucun setup : devenir d'un long hypothétique sur toutes les barres cash,
    jours LONG contre jours SHORT.
 
-LE CONFONDANT QUE CES TESTS CHERCHENT. `|dist_vwap_w|` médian vaut 2,13 ATR :
-le côté de B1 mesure surtout **dans quel sens le prix est étiré**. Les signaux
-« contre » sont à 91 % des sweep + reclaim — un fade. « Fader un prix étiré
-marche mieux que le suivre » n'est pas un biais à l'envers, c'est de la
-réversion intrajour lue à travers un déclencheur de réversion.
+[SUSPENDU LE 14/09] Le CSV et son commentaire datent d'avant la correction du
+signe : B1 était calculé **à l'envers**, donc `avec` et `contre` étaient
+échangés et chaque écart publié change de signe. CSV renommé `_PERIMEE_SIGNE`,
+narratif suspendu. Relancer exige un attendu écrit AVANT.
 
 ATTENDU, ÉCRIT AVANT LA RELANCE (sinon ce n'est pas une prédiction) :
     - l'IC contient zéro sur les deux instruments ;
@@ -50,6 +49,7 @@ if RACINE not in sys.path:
 from CORE.bot_terminal import charger_jour                       # noqa: E402
 from CORE.research import hypotheses as H                        # noqa: E402
 from V3 import stats                                             # noqa: E402
+from V3.devenir import JOUR_1                                    # noqa: E402
 from V3.layers.L1_biais import biais                             # noqa: E402
 
 HORIZON = 20
@@ -57,11 +57,19 @@ DECLENCHEURS = {"H3": H.h3, "H6": H.h6, "H7": H.h7, "H8": H.h8}
 
 
 def jours_du_lot(sym):
-    out = []
-    for f in sorted(glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym)):
-        m = re.search(r"(\d{8})", os.path.basename(f))
-        if m:
-            out.append(m.group(1))
+    """Les jours d'ARCHIVE, strictement avant le jour 1 de la campagne.
+
+    PIEGE 14/09 : aucun filtre ici alors que `devenir()` calcule un rendement
+    FUTUR — relancer lirait le devenir de la campagne (ferme jusqu'au jour 61).
+    Rien n'a fuite : CSV du 07/09, veille du jour 1. Filtre ICI.
+    """
+    fs = sorted(glob.glob("DATA/live_enriched/sierra/%s/*.jsonl" % sym))
+    tous = [m.group(1) for f in fs
+            for m in [re.search(r"(\d{8})", os.path.basename(f))] if m]
+    out = [j for j in tous if j < str(JOUR_1)]
+    if len(out) != len(tous):
+        print("  %s : %d jour(s) de campagne ECARTES — devenir ferme"
+              % (sym, len(tous) - len(out)))
     return out
 
 
@@ -107,7 +115,10 @@ def lire_l1(df, i, atr_ref):
     interchangeable avec `atr_barre`, qui est en POINTS sur la barre agrégée.
     """
     d = _num(df, "dist_vwap_w", i)
-    dv = (float(d) * 0.25 / atr_ref) if np.isfinite(d) and atr_ref else None
+    # LA NEGATION (14/09) : `dist_X = (X - prix)/tick`, un prix au-dessus rend
+    # un NEGATIF. Sans elle B1 sortait inverse sur 100 % des barres, alors que
+    # `ouv` dessous avait deja la bonne convention. Garde test_convention_signe.
+    dv = (-float(d) * 0.25 / atr_ref) if np.isfinite(d) and atr_ref else None
     vah, val = _num(df, "dist_prev_vah", i), _num(df, "dist_prev_val", i)
     ouv = None
     if np.isfinite(vah) and np.isfinite(val):
@@ -117,9 +128,12 @@ def lire_l1(df, i, atr_ref):
     # ne fabrique ni un accord (`d_vwap_w_autre = dv` comparait l'instrument
     # a lui-meme) ni une absence de divergence (`smt_div = False` en dur) —
     # des TROUS, et B4 rend None, qui ne vaut pas veto (biais.py).
+    # DEUX FABRICATIONS RETIREES LE 14/09, sur les lignes memes ou le
+    # commentaire ci-dessus se felicite de ne rien fabriquer : `"tenu"` rendait
+    # B1n egal a B1p (le duel comparait B1p a lui-meme), `0` empechait B5b.
     return {"d_vwap_w": dv, "d_vwap_w_autre": None, "smt_div": None,
-            "issue_vwap_w": "tenu", "open_vs_va": ouv,
-            "barres_inside_prev_va": 0, "_absdist": abs(dv) if dv else None}
+            "issue_vwap_w": None, "open_vs_va": ouv,
+            "barres_inside_prev_va": None, "_absdist": abs(dv) if dv else None}
 
 
 def collecter(sym, minutes, cfg):
